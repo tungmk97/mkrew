@@ -98,6 +98,10 @@ impl Shell {
                             .active(|style| style.opacity(opacity::ACTIVE))
                     })
                     .when(tab.transient && !dirty, |el| el.italic())
+                    .when(is_active, |el| {
+                        el.relative()
+                            .child(record_bounds(Anchor::FileTab(tab.path.clone()), cx))
+                    })
                     .tooltip(tooltip(theme, &tab.path, ""))
                     .on_click(
                         cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {

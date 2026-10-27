@@ -165,6 +165,9 @@ pub enum Command {
     VoiceInput,
     /// Ask an agent any question, outside every project (ADR 0061).
     AskAi,
+    /// Open the menu a right-click would open on what has the keyboard (SPEC §13); pressed
+    /// while a menu is open it closes it.
+    ContextMenu,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -290,6 +293,7 @@ impl Command {
             Command::ToggleInspector,
             Command::VoiceInput,
             Command::AskAi,
+            Command::ContextMenu,
         ]);
         all.extend(CardKey::ALL.map(Command::Card));
         all
@@ -381,6 +385,7 @@ impl Command {
             Command::ToggleInspector => "toggle_inspector".into(),
             Command::VoiceInput => "voice_input".into(),
             Command::AskAi => "ask_ai".into(),
+            Command::ContextMenu => "context_menu".into(),
         }
     }
 
@@ -494,6 +499,7 @@ impl Command {
             Command::ToggleInspector => "ctrl-shift-y".into(),
             Command::VoiceInput => "ctrl-shift-d".into(),
             Command::AskAi => "ctrl-shift-g".into(),
+            Command::ContextMenu => "shift-f10".into(),
         }
     }
 
@@ -1059,6 +1065,9 @@ mod tests {
         assert_eq!(Command::VoiceInput.context(), None);
         assert_eq!(bound("ctrl-shift-g"), Some(Command::AskAi));
         assert_eq!(Command::AskAi.context(), None);
+        assert_eq!(bound("shift-f10"), Some(Command::ContextMenu));
+        assert_eq!(Command::ContextMenu.context(), None);
+        assert_eq!(keymap.label(Command::ContextMenu), "Shift+F10");
         assert_eq!(Command::OpenSettings.context(), None);
         assert_eq!(
             bound("alt-shift-left"),

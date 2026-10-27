@@ -3,9 +3,11 @@
 
 use gpui::{Keystroke, SharedString};
 use mkrew_protocol::WORKSPACE_COLORS;
+use ulid::Ulid;
 
+use crate::board::View;
 use crate::icons::Icon;
-use crate::sidebar::Badge;
+use crate::sidebar::{Badge, Target};
 use crate::split::Preset;
 
 /// Swatches of a color row: "no color", then the workspace palette.
@@ -367,9 +369,150 @@ pub fn key<A>(
     }
 }
 
+/// What a context menu opens on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Owner {
+    Pane(Ulid),
+    FileRow {
+        path: String,
+        is_dir: bool,
+    },
+    FileTab(String),
+    SidebarRow(Target),
+    Card(Ulid),
+    /// No owner: the active workspace's menu.
+    Workspace,
+}
+
+/// What has the keyboard, as far as the context menu cares (gathered by the shell).
+#[derive(Debug, Clone, Default)]
+pub struct Focus {
+    pub view: View,
+    /// The session whose terminal pane has the keyboard.
+    pub terminal: Option<Ulid>,
+    /// The sidebar filter has the keyboard and highlights this row.
+    pub sidebar_row: Option<Target>,
+    pub files_tree_focused: bool,
+    /// The Files tree's cursor row and whether it is a folder.
+    pub files_cursor: Option<(String, bool)>,
+    /// The active Files tab.
+    pub file_tab: Option<String>,
+    /// The Board's selected card, when this workspace has it.
+    pub card: Option<Ulid>,
+}
+
+/// The menu a right-click would open on what has the keyboard (SPEC §13). The tree is a
+/// focusable element, so its focus (not the shown view) says it has the keyboard.
+pub fn owner(focus: &Focus) -> Owner {
+    if let Some(session) = focus.terminal {
+        return Owner::Pane(session);
+    }
+    if let Some(target) = focus.sidebar_row {
+        return Owner::SidebarRow(target);
+    }
+    if focus.files_tree_focused
+        && let Some((path, is_dir)) = &focus.files_cursor
+    {
+        return Owner::FileRow {
+            path: path.clone(),
+            is_dir: *is_dir,
+        };
+    }
+    match focus.view {
+        View::Files => focus
+            .file_tab
+            .clone()
+            .map_or(Owner::Workspace, Owner::FileTab),
+        View::Board => focus.card.map_or(Owner::Workspace, Owner::Card),
+        _ => Owner::Workspace,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn id(n: u128) -> Ulid {
+        Ulid::from(n)
+    }
+
+    #[test]
+    fn the_owner_is_what_has_the_keyboard() {
+        let pane = Focus {
+            view: View::Terminals,
+            terminal: Some(id(1)),
+            ..Focus::default()
+        };
+        assert_eq!(owner(&pane), Owner::Pane(id(1)));
+        let filter = Focus {
+            sidebar_row: Some(Target::Workspace(id(2))),
+            ..Focus::default()
+        };
+        assert_eq!(owner(&filter), Owner::SidebarRow(Target::Workspace(id(2))));
+        let tree = Focus {
+            view: View::Files,
+            files_tree_focused: true,
+            files_cursor: Some(("src".into(), true)),
+            file_tab: Some("README.md".into()),
+            ..Focus::default()
+        };
+        assert_eq!(
+            owner(&tree),
+            Owner::FileRow {
+                path: "src".into(),
+                is_dir: true
+            }
+        );
+        let editor = Focus {
+            files_tree_focused: false,
+            ..tree.clone()
+        };
+        assert_eq!(owner(&editor), Owner::FileTab("README.md".into()));
+        let board = Focus {
+            view: View::Board,
+            card: Some(id(3)),
+            ..Focus::default()
+        };
+        assert_eq!(owner(&board), Owner::Card(id(3)));
+        // The tree has the keyboard in any view (it may live in a side panel).
+        let panel = Focus {
+            view: View::Terminals,
+            ..tree
+        };
+        assert!(matches!(owner(&panel), Owner::FileRow { .. }));
+    }
+
+    #[test]
+    fn the_owner_falls_back_to_the_workspace() {
+        // Nothing focused, a filter with nothing highlighted, a tree without a cursor and
+        // without a tab, a Board without a selected card, Docs and Git: the workspace menu.
+        assert_eq!(owner(&Focus::default()), Owner::Workspace);
+        for view in [View::Terminals, View::Docs, View::Git] {
+            let focus = Focus {
+                view,
+                ..Focus::default()
+            };
+            assert_eq!(owner(&focus), Owner::Workspace);
+        }
+        let bare_tree = Focus {
+            view: View::Files,
+            files_tree_focused: true,
+            ..Focus::default()
+        };
+        assert_eq!(owner(&bare_tree), Owner::Workspace);
+        let board = Focus {
+            view: View::Board,
+            ..Focus::default()
+        };
+        assert_eq!(owner(&board), Owner::Workspace);
+        // A tab of the Files view does not own the keyboard while another view is shown.
+        let hidden_tab = Focus {
+            view: View::Terminals,
+            file_tab: Some("a".into()),
+            ..Focus::default()
+        };
+        assert_eq!(owner(&hidden_tab), Owner::Workspace);
+    }
 
     fn item(label: &'static str) -> MenuRow<u8> {
         MenuItem::new(label, 0u8).row()

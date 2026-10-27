@@ -221,6 +221,10 @@ pub(crate) fn task_card(
         })
         .cursor_pointer()
         .group(group.clone())
+        .when(selected, |el| {
+            el.relative()
+                .child(record_bounds(Anchor::Card(task_id), cx))
+        })
         .child(
             div()
                 .flex()

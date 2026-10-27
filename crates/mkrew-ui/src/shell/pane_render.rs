@@ -253,7 +253,9 @@ impl Shell {
                         .gap(px(space::S))
                         .text_size(font_size::META)
                         .children(self.pane_status(info, now, theme, cx))
-                        .children(self.pane_controls(info, theme, cx)),
+                        .children(self.pane_controls(info, theme, cx))
+                        .relative()
+                        .child(record_bounds(Anchor::PaneHeader(info.id), cx)),
                 )
             })
             .child(
@@ -820,6 +822,8 @@ impl Shell {
             .child(self.pane_title(info, theme, cx))
             .children(self.pane_status(info, now, theme, cx))
             .children(self.pane_controls(info, theme, cx))
+            .relative()
+            .child(record_bounds(Anchor::PaneHeader(session), cx))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |shell, event: &MouseDownEvent, window, cx| {

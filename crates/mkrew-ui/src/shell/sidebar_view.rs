@@ -24,6 +24,8 @@ impl Render for SidebarView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let now = status::now_ms();
+        // It records its own menu anchors (the Shell frame start keeps them: this view is cached).
+        cx.global::<MenuAnchors>().clear_sidebar();
         self.shell
             .update(cx, |shell, cx| {
                 if shell.sidebar_layout.compact() {

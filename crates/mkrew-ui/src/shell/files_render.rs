@@ -962,6 +962,10 @@ pub(crate) fn file_row(
         .when(!at_cursor && !opened, |el| {
             el.hover(move |style| style.bg(rgb(hover)))
         })
+        .when(at_cursor, |el| {
+            el.relative()
+                .child(record_bounds(Anchor::FileRow(entry.path.clone()), cx))
+        })
         .active(|style| style.opacity(opacity::ACTIVE))
         .child(
             div()

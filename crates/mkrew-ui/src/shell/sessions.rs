@@ -137,13 +137,25 @@ impl Shell {
         if *command == Command::VoiceInput {
             return self.toggle_voice(window, cx);
         }
-        // A shortcut ends every open popover and gives the keyboard back before it acts.
+        // A shortcut ends every open popover and gives the keyboard back before it acts. The
+        // context menu key pressed while a menu is open only closes it.
+        let menu_was_open = self.menu_open();
         self.dismiss_menus(window, cx);
         // Shortcuts still fire while a title is edited: save it first (closing its tab, …).
         self.finish_rename(true, window, cx);
         // Its own shortcut closes the palette again.
         if *command == Command::CommandPalette && self.palette.is_some() {
             return self.close_palette(window, cx);
+        }
+        // The context menu acts before the focused-field guards below: it must work from a
+        // pane, the Files tree or the sidebar filter, and never takes the key from a dialog.
+        if *command == Command::ContextMenu {
+            if self.modal_open() {
+                cx.propagate();
+            } else if !menu_was_open {
+                self.context_menu(window, cx);
+            }
+            return;
         }
         // The dialogs are modal: bound keys go on to their key handler (e.g. Ctrl+Alt+digit
         // is AltGr on many layouts) instead of acting behind them.
@@ -423,6 +435,7 @@ impl Shell {
             // Handled at the top of `run`.
             Command::VoiceInput => {}
             Command::AskAi => self.open_ask(window, cx),
+            Command::ContextMenu => {}
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),

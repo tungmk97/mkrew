@@ -118,10 +118,6 @@ impl Shell {
     }
 
     /// Opens the menu of `task_id`'s card at `position` (its bottom-left).
-    #[expect(
-        dead_code,
-        reason = "first caller is the Shift+F10 command (wave 1, Task 10)"
-    )]
     pub(crate) fn open_card_menu(
         &mut self,
         task_id: Ulid,

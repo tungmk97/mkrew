@@ -512,14 +512,18 @@ impl Shell {
 pub(crate) enum Anchor {
     /// The title bar's workspace switcher: where every owner falls back to.
     Switcher,
+    PaneHeader(Ulid),
+    FileRow(String),
+    FileTab(String),
+    WorkspaceRow(Ulid),
+    SessionRow(Ulid),
+    Card(Ulid),
 }
 
 impl Anchor {
     /// Owners inside the cached sidebar view (it re-records them only when it re-renders).
     fn in_sidebar(&self) -> bool {
-        match self {
-            Self::Switcher => false,
-        }
+        matches!(self, Self::WorkspaceRow(_) | Self::SessionRow(_))
     }
 }
 
@@ -532,8 +536,14 @@ pub(crate) struct MenuAnchors(Rc<RefCell<HashMap<Anchor, Bounds<Pixels>>>>);
 impl gpui::Global for MenuAnchors {}
 
 impl MenuAnchors {
+    /// Forgets every anchor but the sidebar's (the `Shell` frame start).
     pub(crate) fn clear(&self) {
         self.0.borrow_mut().retain(|key, _| key.in_sidebar());
+    }
+
+    /// Forgets the sidebar's anchors (it records them again while it renders).
+    pub(crate) fn clear_sidebar(&self) {
+        self.0.borrow_mut().retain(|key, _| !key.in_sidebar());
     }
 
     fn bottom_left(&self, key: &Anchor) -> Option<Point<Pixels>> {
@@ -569,5 +579,121 @@ impl Shell {
                     theme::rems_px(theme::TITLE_BAR_HEIGHT).to_pixels(window.rem_size()),
                 )
             })
+    }
+}
+
+impl Shell {
+    /// What has the keyboard, for [`menu_model::owner`].
+    fn menu_focus_state(&self, project_id: Ulid, window: &Window, cx: &App) -> menu_model::Focus {
+        let terminal = self.focused_session().filter(|session| {
+            self.panes
+                .get(session)
+                .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
+        });
+        let files = self.files.get(&project_id);
+        menu_model::Focus {
+            view: self.view(),
+            terminal,
+            sidebar_row: self
+                .filter_focus
+                .is_focused(window)
+                .then(|| {
+                    self.sidebar
+                        .highlighted(&self.sidebar.view(&self.viewed).rows)
+                })
+                .flatten(),
+            files_tree_focused: self.files_focus.is_focused(window),
+            files_cursor: files.and_then(|view| {
+                let cursor = view.cursor.as_deref()?;
+                view.rows().iter().find_map(|row| match row {
+                    files_view::Row::Entry { entry, .. } if entry.path == cursor => {
+                        Some((entry.path.clone(), entry.is_dir))
+                    }
+                    _ => None,
+                })
+            }),
+            file_tab: files.and_then(|view| view.file().map(str::to_owned)),
+            card: (self.view() == View::Board && !self.jira_side_shown())
+                .then_some(self.selected_card)
+                .flatten()
+                .filter(|&id| {
+                    self.board
+                        .task(id)
+                        .is_some_and(|task| task.project_id == project_id)
+                }),
+        }
+    }
+
+    /// `Command::ContextMenu`: the menu a right-click would open on what has the keyboard,
+    /// under that owner's bottom-left (the switcher's when the owner was not painted).
+    pub(crate) fn context_menu(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        let owner = menu_model::owner(&self.menu_focus_state(project_id, window, cx));
+        let key = match &owner {
+            menu_model::Owner::Pane(session) => Anchor::PaneHeader(*session),
+            menu_model::Owner::FileRow { path, .. } => Anchor::FileRow(path.clone()),
+            menu_model::Owner::FileTab(path) => Anchor::FileTab(path.clone()),
+            menu_model::Owner::SidebarRow(sidebar::Target::Workspace(id)) => {
+                Anchor::WorkspaceRow(*id)
+            }
+            menu_model::Owner::SidebarRow(sidebar::Target::Session(id)) => Anchor::SessionRow(*id),
+            menu_model::Owner::Card(task_id) => Anchor::Card(*task_id),
+            menu_model::Owner::Workspace => Anchor::Switcher,
+        };
+        let at = self.menu_anchor(&key, window, cx);
+        match owner {
+            menu_model::Owner::Pane(session) => self.open_pane_menu(session, at, window, cx),
+            menu_model::Owner::FileRow { path, is_dir } => {
+                self.open_file_menu(project_id, path, is_dir, at, window, cx);
+            }
+            menu_model::Owner::FileTab(path) => {
+                self.open_file_tab_menu(project_id, path, at, window, cx);
+            }
+            menu_model::Owner::SidebarRow(sidebar::Target::Workspace(id)) => {
+                self.open_workspace_menu(id, at, true, window, cx);
+            }
+            menu_model::Owner::SidebarRow(sidebar::Target::Session(id)) => {
+                // As the right-click does: the pane is shown first (its menu renames the header).
+                self.open_session(id, window, cx);
+                self.open_pane_menu(id, at, window, cx);
+            }
+            menu_model::Owner::Card(task_id) => self.open_card_menu(task_id, at, window, cx),
+            menu_model::Owner::Workspace => {
+                self.open_workspace_menu(project_id, at, true, window, cx);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_cached_sidebar_keeps_its_anchors_across_shell_frames() {
+        let id = Ulid::from(1u128);
+        let anchors = MenuAnchors::default();
+        for key in [
+            Anchor::Switcher,
+            Anchor::PaneHeader(id),
+            Anchor::WorkspaceRow(id),
+            Anchor::SessionRow(id),
+        ] {
+            anchors.0.borrow_mut().insert(key, Bounds::default());
+        }
+        anchors.clear();
+        let left = |anchors: &MenuAnchors| {
+            let mut keys: Vec<_> = anchors.0.borrow().keys().cloned().collect();
+            keys.sort_by_key(|key| format!("{key:?}"));
+            keys
+        };
+        assert_eq!(
+            left(&anchors),
+            [Anchor::SessionRow(id), Anchor::WorkspaceRow(id)]
+        );
+        anchors.clear_sidebar();
+        assert!(left(&anchors).is_empty());
     }
 }

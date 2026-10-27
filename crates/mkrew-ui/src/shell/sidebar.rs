@@ -1195,6 +1195,10 @@ pub(crate) fn workspace_row(
         .cursor_pointer()
         .when(active, |el| el.bg(rgb(theme.selected)))
         .hover(move |style| style.bg(rgb(hover)))
+        .when(active, |el| {
+            el.relative()
+                .child(record_bounds(Anchor::WorkspaceRow(project_id), cx))
+        })
         .tooltip(tooltip(theme, &row.path, ""))
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.click_workspace_row(project_id, window, cx);
@@ -1386,6 +1390,10 @@ pub(crate) fn session_row(
         })
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(hover)))
+        .when(selected, |el| {
+            el.relative()
+                .child(record_bounds(Anchor::SessionRow(session_id), cx))
+        })
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.open_session(session_id, window, cx);
         }))
@@ -1525,6 +1533,10 @@ pub(crate) fn compact_workspace_row(
         .cursor_pointer()
         .when(active, |el| el.bg(rgb(theme.selected)))
         .hover(move |style| style.bg(rgb(hover)))
+        .when(active, |el| {
+            el.relative()
+                .child(record_bounds(Anchor::WorkspaceRow(project_id), cx))
+        })
         .tooltip(tooltip(theme, &sidebar::workspace_tip(&row), ""))
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.click_workspace_row(project_id, window, cx);
@@ -1583,6 +1595,10 @@ pub(crate) fn compact_session_row(
             el.bg(theme.tint(theme.status_done))
         })
         .hover(move |style| style.bg(rgb(hover)))
+        .when(selected, |el| {
+            el.relative()
+                .child(record_bounds(Anchor::SessionRow(session_id), cx))
+        })
         .tooltip(tooltip(theme, &sidebar::session_tip(&row, now), ""))
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.open_session(session_id, window, cx);

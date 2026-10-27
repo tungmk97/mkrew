@@ -286,6 +286,7 @@ pub fn title(command: Command) -> String {
         Command::ToggleInspector => "View: Toggle session panel".into(),
         Command::VoiceInput => "Global: Voice input (start / stop)".into(),
         Command::AskAi => "Global: Ask AI…".into(),
+        Command::ContextMenu => "Global: Open context menu".into(),
     }
 }
 
@@ -319,7 +320,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ShowGit
         | Command::QuickOpen
         | Command::ToggleInspector
-        | Command::NewTask => context.workspace,
+        | Command::NewTask
+        | Command::ContextMenu => context.workspace,
         Command::ShowDocs => context.workspace && context.features.docs,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
         Command::Tab(n) => context.workspace && usize::from(n) <= context.tabs,
