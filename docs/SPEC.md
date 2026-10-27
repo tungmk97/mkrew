@@ -1098,6 +1098,17 @@ Only edit this file. When done, for EACH comment run:
   or binary: a read-only notice and "Open in Zed". A scroll bar on the right shows where the
   view is (only when the file is taller than the view): drag its thumb, or press the track to
   jump there.
+- **Tabs** (ADR 0080): every opened file has a tab above the header (pinned tabs first; the
+  strip scrolls sideways). A single click (tree, Enter, quick open, a terminal link) opens a
+  transient tab (italic) that the next one replaces while it is clean; a double click, an edit,
+  Pin or "New file…" keeps it. `●` marks unsaved text; ✕ (on the active tab and on hover), a
+  middle click, `Ctrl+W` or `Ctrl+Shift+W` closes a tab, asking "Save / Don't save / Cancel"
+  first (Cancel closes nothing); the right neighbour, else the left one, is shown. Right-click:
+  Close, Close others, Close to the right, Close all (these three skip pinned tabs), Pin /
+  Unpin, Copy path. Tabs are dragged within their group (pinned / unpinned). `Ctrl+Tab` /
+  `Ctrl+Shift+Tab` cycle, `Ctrl+Alt+1–9` jump (9 = last). One find bar for the view, searched
+  on the shown tab. `git.changed` reads the shown tab; the others are read when shown. Tabs
+  live in memory only; another worktree starts with none.
 - **Change gutter** (ADR 0047): right of each line number a thin bar marks how the line differs
   from the file's text in the git index (what the Git view calls unstaged): added
   (`diff-add-text`), changed (`diff-mod-text`), and a short `diff-del-text` mark at the top of
@@ -1107,9 +1118,9 @@ Only edit this file. When done, for EACH comment run:
   have no bars; the bar column is always there so the text never moves.
 - Unsaved text is never replaced (§2.5). If the file changes on disk meanwhile (an agent), or
   Save finds another version on disk, a banner "Changed on disk — Reload · Keep mine" offers
-  "Reload" (drop your changes) or "Keep mine" (Save overwrites it). Opening another file,
-  switching to another worktree or closing the window with unsaved changes asks "Save / Don't
-  save / Cancel". Switching workspace or view keeps them.
+  "Reload" (drop your changes) or "Keep mine" (Save overwrites it). Closing a tab, switching
+  to another worktree or closing the window with unsaved changes asks "Save / Don't save /
+  Cancel" (once per unsaved tab). Switching workspace or view keeps them.
 - **Markdown preview:** a `.md` file opens as a rendered preview, by the Docs renderer (§12,
   §14: the same typography tokens for light and dark, highlighted code blocks, ```` ```mermaid ````
   blocks drawn as diagrams, built off the UI thread). The header has a `Preview | Source`
@@ -1124,12 +1135,12 @@ Only edit this file. When done, for EACH comment run:
   changed since the field opened. The preview is built from
   the editor's text, so unsaved changes show in it and toggling never loses them; it is parsed
   when the file is read and when switching to Preview after an edit, never per keystroke. Find
-  and "Open at a line" switch to Source. Another file starts in Preview. Links in the preview
+  and "Open at a line" switch to Source. A new tab starts in Preview. Links in the preview
   are not clickable (ADR 0021). `.md` files also offer "Review in Docs". The page is a virtual
   list (only the blocks on screen are laid out; every block's height is measured once per page)
   with the editor's scroll bar, so long files scroll smoothly; Docs shows its preview the same
-  way. A re-read or edited page keeps the scroll position; another file (or the same file opened
-  again) starts at the top, and a live font change measures the page again.
+  way. A re-read or edited page keeps the scroll position; another tab (or the same file
+  opened again) starts at the top, and a live font change measures the page again.
 - **Quick open** (`Ctrl+Shift+O`, or the "Search files…" entry at the top of the tree)
   fuzzy-finds files of the current workspace, in the folder the Files view shows (project or
   task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
@@ -1281,9 +1292,9 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Task | New task / run selected task | Ctrl+Shift+N / Ctrl+Enter |
 | Run | Start all / restart all / stop all (§10 Run) | Ctrl+F5 / Ctrl+Shift+F5 / Ctrl+Alt+F5 |
 | Tabs | New shell tab / new agent tab (pick profile) | Ctrl+Shift+T / Ctrl+Shift+A |
-| Tabs | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
-| Tabs | Jump to tab 1–9 | Ctrl+Alt+1 … Ctrl+Alt+9 |
-| Tabs | Rename / close tab | Ctrl+Shift+R / Ctrl+Shift+W |
+| Tabs | Next / previous tab (file tabs while the Files view is shown) | Ctrl+Tab / Ctrl+Shift+Tab |
+| Tabs | Jump to tab 1–9 (file tabs while the Files view is shown; 9 = the last) | Ctrl+Alt+1 … Ctrl+Alt+9 |
+| Tabs | Rename / close tab (close: the active file tab while the Files view is shown) | Ctrl+Shift+R / Ctrl+Shift+W |
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
@@ -1304,6 +1315,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Files | Toggle ignored files | Ctrl+Shift+H |
 | Files | Save the opened file | Ctrl+S |
 | Files | Find / replace in the opened file (replace all: Ctrl+Alt+Enter in the bar) | Ctrl+F / Ctrl+H |
+| Files | Close the active file tab (asks about unsaved text; ADR 0080) | Ctrl+W |
 | Git | Next / previous file | ↓ / ↑ (or j / k) |
 | Git | Next / previous hunk | n / p |
 | Git | Stage / unstage selected file or hunk | s / u |

@@ -263,6 +263,8 @@ fn availability_follows_the_view() {
     assert!(commands(&context(View::Files)).contains(&Command::ToggleIgnored));
     assert!(commands(&context(View::Files)).contains(&Command::SaveFile));
     assert!(commands(&context(View::Files)).contains(&Command::ReplaceInFile));
+    assert!(commands(&context(View::Files)).contains(&Command::CloseFileTab));
+    assert!(!commands(&context(View::Terminals)).contains(&Command::CloseFileTab));
 
     let lone = commands(&Context {
         workspaces: 1,

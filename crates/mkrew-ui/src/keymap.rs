@@ -94,6 +94,8 @@ pub enum Command {
     FindInFile,
     /// Files only: open the find bar with its replace row (Ctrl+H).
     ReplaceInFile,
+    /// Files only: close the active tab, asking about unsaved text (Ctrl+W).
+    CloseFileTab,
     /// Show the active workspace's Git view.
     ShowGit,
     /// Git only: switch between Working changes and Against base.
@@ -238,6 +240,7 @@ impl Command {
             Command::SaveFile,
             Command::FindInFile,
             Command::ReplaceInFile,
+            Command::CloseFileTab,
             Command::ShowGit,
             Command::GitToggleMode,
             Command::GitToggleHistory,
@@ -321,6 +324,7 @@ impl Command {
             Command::SaveFile => "save_file".into(),
             Command::FindInFile => "find_in_file".into(),
             Command::ReplaceInFile => "replace_in_file".into(),
+            Command::CloseFileTab => "close_file_tab".into(),
             Command::ShowGit => "show_git".into(),
             Command::GitToggleMode => "git_toggle_mode".into(),
             Command::GitToggleHistory => "git_toggle_history".into(),
@@ -416,6 +420,7 @@ impl Command {
             Command::SaveFile => "ctrl-s".into(),
             Command::FindInFile => "ctrl-f".into(),
             Command::ReplaceInFile => "ctrl-h".into(),
+            Command::CloseFileTab => "ctrl-w".into(),
             Command::ShowGit => "ctrl-shift-4".into(),
             Command::GitToggleMode => "b".into(),
             Command::GitToggleHistory => "h".into(),
@@ -459,7 +464,8 @@ impl Command {
             Command::ToggleIgnored
             | Command::SaveFile
             | Command::FindInFile
-            | Command::ReplaceInFile => Some(FILES_CONTEXT),
+            | Command::ReplaceInFile
+            | Command::CloseFileTab => Some(FILES_CONTEXT),
             Command::GitToggleMode
             | Command::GitToggleHistory
             | Command::GitNextHunk
@@ -1050,6 +1056,17 @@ mod tests {
                 "{command:?}"
             );
         }
+    }
+
+    #[test]
+    fn ctrl_w_closes_a_file_tab_in_files_only() {
+        let keymap = Keymap::defaults();
+        assert_eq!(
+            keymap.command_for(&keystroke("ctrl-w")),
+            Some(Command::CloseFileTab)
+        );
+        assert_eq!(Command::CloseFileTab.context(), Some(FILES_CONTEXT));
+        assert_eq!(keymap.label(Command::CloseFileTab), "Ctrl+W");
     }
 
     #[test]

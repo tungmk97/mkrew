@@ -59,7 +59,7 @@ use mkrew_ui::editor::{self, EditKey, Pos};
 use mkrew_ui::fanout::{self, Compare, FanOutPicker};
 use mkrew_ui::field::{Caret, caret_mouse, caret_text, copy_selection};
 use mkrew_ui::file_ops;
-use mkrew_ui::files_view::{self, Content, FilesView, Requests};
+use mkrew_ui::files_view::{self, Close, Content, FileTab, FilesView, Open, Requests};
 use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::git_actions::{self, Remote};
@@ -307,6 +307,15 @@ struct FileMenu {
     position: gpui::Point<gpui::Pixels>,
 }
 
+/// The right-click menu of a Files tab (SPEC §12A): Close, Close others, Close to the right,
+/// Close all, Pin / Unpin, Copy path.
+struct FileTabMenu {
+    project_id: Ulid,
+    path: String,
+    /// Window position of the click.
+    position: gpui::Point<gpui::Pixels>,
+}
+
 /// The open popover of the Git view's side panel or diff toolbar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GitMenu {
@@ -409,6 +418,8 @@ struct Shell {
     workspace_menu: Option<WorkspaceMenu>,
     /// The open right-click menu of the Files tree.
     file_menu: Option<FileMenu>,
+    /// The open right-click menu of a Files tab.
+    file_tab_menu: Option<FileTabMenu>,
     /// The open tab menu (Pin, Split right / down, Rename, Close).
     tab_menu: Option<TabMenu>,
     /// The sidebar-row or tab reorder drag in progress (stale once no drag is active).
@@ -549,6 +560,8 @@ struct Shell {
     files_focus: FocusHandle,
     /// Keeps the Files tree cursor in view.
     files_scroll: UniformListScrollHandle,
+    /// Keeps the active Files tab in view in the tab strip.
+    file_tabs_scroll: ScrollHandle,
     /// The Files viewer's find field (outside `FILES_CONTEXT`'s arrow keys).
     file_find_focus: FocusHandle,
     /// The Files find bar's replace field.
@@ -557,6 +570,9 @@ struct Shell {
     file_code_scroll: UniformListScrollHandle,
     /// Where the Files editor's scroll bar thumb is held while it is dragged.
     file_code_drag: scrollbar::Drag,
+    /// What waits for a Files save in flight (a "Save" answered while one was already sent):
+    /// `(workspace, path, then)`, run after that save succeeds.
+    files_after_save: Vec<(Ulid, String, AfterSave)>,
     /// The Files editor (ADR 0028): typing goes there while it has focus.
     file_editor_focus: FocusHandle,
     /// The block edit field of the Files Markdown preview (ADR 0072).
@@ -890,6 +906,15 @@ impl Render for Shell {
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_menu(menu, &theme, cx)),
+                    )
+                    .children(
+                        (self.file_tab_menu.as_ref())
+                            .filter(|menu| {
+                                self.workspace == Some(menu.project_id)
+                                    && self.view() == View::Files
+                                    && !self.modal_open()
+                            })
+                            .map(|menu| self.render_file_tab_menu(menu, &theme, cx)),
                     )
                     .children(self.render_toasts(&theme, cx)),
             )

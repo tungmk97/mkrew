@@ -34,6 +34,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Reconnect / Retry:** in a sandbox (`MKREW_DATA_DIR`, `MKREW_CONFIG_DIR`, `MKREW_SOCKET` set to temp values), start a dev `mkrew.exe`, then stop that sandbox daemon (`mk daemon stop` with the same variables) → "The daemon connection closed." with Reconnect; Reconnect shows "Connecting…", starts the daemon again and brings the workspaces back. "Cannot reach the daemon." (e.g. `mkrew-daemon.exe` missing next to the dev build) shows Retry.
 - [ ] **Tooltips:** tab strip `+` names the agent / shell tab keys; split shows Alt+Shift+=; title bar `+ New` shows Alt+Shift+A / Alt+Shift+S.
 
+### To verify — 2026-10-26 Files view tabs (ADR 0080)
+
+- [ ] **Tab strip look:** check it in light theme (active tab, transient italic, `●`, pin mark, drop line, tab menu); dark was checked by screenshot.
+
 ### To verify — 2026-10-25 Theme picker and built-in themes (ADR 0078)
 
 - [ ] **New themes:** check the 10 new themes visually (Terminals, Git, Files, dialogs) via Ctrl+Alt+J; Mkrew Dark / Light must look unchanged (ADR 0078).

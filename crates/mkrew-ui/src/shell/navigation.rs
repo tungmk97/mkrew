@@ -205,7 +205,15 @@ impl Shell {
             return;
         }
         let project_id = open.project_id;
-        self.open_revealed(project_id, open.worktree_task_id, path, None, window, cx);
+        self.reveal_file(
+            project_id,
+            open.worktree_task_id,
+            path,
+            None,
+            Open::Transient,
+            window,
+            cx,
+        );
     }
 
     /// Where links typed in `session`'s terminal point: its project, the task worktree its
@@ -248,7 +256,7 @@ impl Shell {
     }
 
     /// Shows `path` of the Files view on `target` (the project, or a task worktree) with the
-    /// caret on `line`. Another target starts the view over, so unsaved text is asked about
+    /// caret on `line`. Another target starts the view over, so unsaved tabs are asked about
     /// first (as the chooser does).
     pub(crate) fn open_file_at(
         &mut self,
@@ -260,58 +268,39 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         if self.files_view(project_id).worktree_task_id != target {
-            if self.files_view(project_id).unsaved().is_some() {
+            let unsaved = self.files_view(project_id).unsaved_paths();
+            if !unsaved.is_empty() {
                 let again: AfterSave = Box::new(move |shell, window, cx| {
                     shell.open_file_at(project_id, target, path, line, window, cx);
                 });
-                return self.leave_file(project_id, again, window, cx);
+                return self.leave_files(project_id, unsaved, again, window, cx);
             }
             self.set_files_target(project_id, target, window, cx);
         }
-        self.open_revealed(project_id, target, path, line, window, cx);
+        self.reveal_file(project_id, target, path, line, Open::Transient, window, cx);
     }
 
     /// Puts the caret on the line a link asked for and scrolls there, once the file is shown
     /// (after `reveal` when it already was, after the read otherwise).
     pub(crate) fn show_pending_line(&mut self, project_id: Ulid, target: Option<Ulid>) {
-        if let Some(line) =
-            (self.files_at(project_id, target)).and_then(FilesView::apply_pending_line)
+        if let Some(line) = (self.files_at(project_id, target))
+            .and_then(|view| view.tab_mut()?.apply_pending_line())
         {
             self.file_code_scroll
                 .scroll_to_item(line, ScrollStrategy::Center);
         }
     }
 
-    /// Quick open's file: asks about unsaved changes first (before the workspace or view
-    /// switches, so Cancel leaves everything as it was). The answer's continuation comes back
-    /// here, because text typed while a save was in flight is unsaved again.
-    pub(crate) fn open_revealed(
-        &mut self,
-        project_id: Ulid,
-        target: Option<Ulid>,
-        path: String,
-        line: Option<u32>,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let leaves =
-            (self.files_at(project_id, target)).is_some_and(|view| view.leaves_unsaved(&path));
-        if leaves {
-            let reveal: AfterSave = Box::new(move |shell, window, cx| {
-                shell.open_revealed(project_id, target, path, line, window, cx);
-            });
-            return self.leave_file(project_id, reveal, window, cx);
-        }
-        self.reveal_file(project_id, target, path, line, window, cx);
-    }
-
-    /// Shows `path` in the Files view of `project_id` (its folders open, the cursor lands on it).
+    /// Shows `path` in the Files view of `project_id` (its folders open, the cursor lands on
+    /// it, its tab shows).
+    #[allow(clippy::too_many_arguments)] // The open's target, file, line and kind.
     pub(crate) fn reveal_file(
         &mut self,
         project_id: Ulid,
         target: Option<Ulid>,
         path: String,
         line: Option<u32>,
+        how: Open,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -323,7 +312,7 @@ impl Shell {
         let Some(view) = self.files_at(project_id, target) else {
             return;
         };
-        let requests = view.reveal(&path, line);
+        let requests = view.reveal(&path, line, how);
         let at = view.rows().iter().position(
             |row| matches!(row, files_view::Row::Entry { entry, .. } if entry.path == path),
         );
@@ -332,7 +321,7 @@ impl Shell {
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
         self.files_requests(project_id, requests, window, cx);
-        self.show_pending_line(project_id, target);
+        self.file_tab_shown(project_id, None, window, cx);
     }
 
     /// The command palette (Ctrl+Shift+P): the commands that can act where the keyboard is,
@@ -371,9 +360,11 @@ impl Shell {
             workspace: workspace.is_some(),
             view: self.view(),
             workspaces: self.sidebar.projects().len(),
-            tabs: workspace
-                .and_then(|id| self.tabs.get(&id))
-                .map_or(0, |tabs| tabs.tabs().len()),
+            tabs: match (workspace, self.view()) {
+                (Some(id), View::Files) => self.files.get(&id).map_or(0, |view| view.tabs().len()),
+                (Some(id), _) => self.tabs.get(&id).map_or(0, |tabs| tabs.tabs().len()),
+                (None, _) => 0,
+            },
             terminal: terminal.is_some(),
             discard,
             task_changes,

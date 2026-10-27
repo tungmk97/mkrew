@@ -220,7 +220,7 @@ impl Shell {
         let file = self
             .files
             .get(&project_id)
-            .and_then(|view| view.file.clone())
+            .and_then(|view| view.file().map(str::to_owned))
             .or_else(|| {
                 self.git
                     .get(&project_id)
@@ -255,7 +255,7 @@ impl Shell {
         match view {
             View::Files => {
                 let files = self.files.get(&project_id)?;
-                let (Some(path), Some(shown)) = (&files.file, files.shown()) else {
+                let (Some(path), Some(shown)) = (files.file(), files.shown()) else {
                     return None;
                 };
                 // The selected lines, else the caret's line.
@@ -268,7 +268,7 @@ impl Shell {
                 };
                 let text = editor.lines().get(first..=last)?.join("\n");
                 let line = |index: usize| u32::try_from(index + 1).ok();
-                Some((path.clone(), line(first)?, line(last)?, text))
+                Some((path.to_owned(), line(first)?, line(last)?, text))
             }
             View::Git => {
                 let git = self.git.get(&project_id)?;

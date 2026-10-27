@@ -33,20 +33,12 @@ impl Shell {
         if self.files_view(project_id).worktree_task_id == target {
             return;
         }
-        if self
-            .files
-            .get(&project_id)
-            .and_then(FilesView::unsaved)
-            .is_some()
-        {
-            return self.leave_file(
-                project_id,
-                Box::new(move |shell, window, cx| {
-                    shell.set_files_target(project_id, target, window, cx);
-                }),
-                window,
-                cx,
-            );
+        let unsaved = (self.files.get(&project_id)).map_or_else(Vec::new, FilesView::unsaved_paths);
+        if !unsaved.is_empty() {
+            let again: AfterSave = Box::new(move |shell, window, cx| {
+                shell.set_files_target(project_id, target, window, cx);
+            });
+            return self.leave_files(project_id, unsaved, again, window, cx);
         }
         self.files
             .insert(project_id, FilesView::new(project_id, target));
@@ -55,7 +47,7 @@ impl Shell {
     }
 
     /// Lists the root and open folders of the Files view of `project_id` again and re-reads
-    /// its opened file.
+    /// its active tab.
     pub(crate) fn refresh_files(
         &mut self,
         project_id: Ulid,
@@ -123,7 +115,7 @@ impl Shell {
         .detach();
     }
 
-    /// `fs.read` of the opened file, highlighted on the background executor; while one is in
+    /// `fs.read` of a tab's file, highlighted on the background executor; while one is in
     /// flight, the file is read once more after it answers.
     pub(crate) fn read_file(
         &mut self,
@@ -136,7 +128,8 @@ impl Shell {
             return;
         };
         let view = self.files_view(project_id);
-        if !view.begin_read() {
+        let opening = view.tab_for(&path).map(|tab| tab.opening);
+        if !view.begin_read(&path) {
             return;
         }
         let target = view.worktree_task_id;
@@ -161,8 +154,9 @@ impl Shell {
                 if let Err(error) = &read {
                     tracing::warn!(%project_id, path, "fs.read failed: {error}");
                 }
-                let again = shell
-                    .files_at(project_id, target)
+                // Dropped when its tab was closed (and maybe opened again) meanwhile.
+                let again = (shell.files_at(project_id, target))
+                    .filter(|view| view.tab_for(&path).map(|tab| tab.opening) == opening)
                     .and_then(|view| view.read(&path, read));
                 if let Some(path) = again {
                     shell.read_file(project_id, path, window, cx);
@@ -188,7 +182,7 @@ impl Shell {
             return;
         };
         let target = view.worktree_task_id;
-        let Some((stamp, text)) = view.preview_request() else {
+        let Some((stamp, text)) = view.tab_mut().and_then(FileTab::preview_request) else {
             return;
         };
         let background = cx.background_executor().clone();
@@ -226,25 +220,26 @@ impl Shell {
         self.files_requests(project_id, requests, window, cx);
     }
 
-    /// A click on a tree row: opens or closes a folder, opens a file.
+    /// A click on a tree row: opens or closes a folder, opens a file (`Kept` for a double
+    /// click).
     pub(crate) fn click_file(
         &mut self,
         project_id: Ulid,
         path: &str,
+        how: Open,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         window.focus(&self.files_focus, cx);
-        if self.files_view(project_id).leaves_unsaved(path) {
-            let path = path.to_owned();
-            return self.leave_file(
-                project_id,
-                Box::new(move |shell, window, cx| shell.click_file(project_id, &path, window, cx)),
-                window,
-                cx,
-            );
+        // The shown path is compared, not the index: a file opened over the transient tab
+        // keeps the same index.
+        let view = self.files_view(project_id);
+        let before = view.file().map(str::to_owned);
+        let requests = view.click(path, how);
+        if view.file() != before.as_deref() {
+            // A file click lists nothing; only the read matters.
+            return self.file_tab_shown(project_id, requests.read, window, cx);
         }
-        let requests = self.files_view(project_id).click(path);
         self.files_requests(project_id, requests, window, cx);
     }
 
@@ -263,7 +258,7 @@ impl Shell {
         if key == files_view::Key::Enter
             && let Some(cursor) = self.files_view(project_id).enter_target()
         {
-            return self.click_file(project_id, &cursor, window, cx);
+            return self.click_file(project_id, &cursor, Open::Transient, window, cx);
         }
         let view = self.files_view(project_id);
         let requests = view.key(key);
@@ -471,12 +466,12 @@ impl Shell {
         cx.notify();
     }
 
-    /// Ctrl+S / "Save" (§12A): `fs.write` of the opened file over the version it was read as.
-    /// `then` runs after a successful save (dropped if a save is already in flight: the user
-    /// asks again).
+    /// Ctrl+S / "Save" (§12A): `fs.write` of tab `path` over the version it was read as.
+    /// `then` runs after a successful save; while one is in flight already, after that one.
     pub(crate) fn save_file(
         &mut self,
         project_id: Ulid,
+        path: String,
         then: Option<AfterSave>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -488,7 +483,13 @@ impl Shell {
             return;
         };
         let target = view.worktree_task_id;
-        let Some(save) = view.begin_save() else {
+        let opening = view.tab_for(&path).map(|tab| tab.opening);
+        let Some(save) = view.begin_save(&path) else {
+            if let Some(then) = then
+                && view.tab_for(&path).is_some_and(FileTab::is_saving)
+            {
+                self.files_after_save.push((project_id, path, then));
+            }
             return;
         };
         let written = connection.call::<FsWritten>(Request::FsWrite(FsWriteParams {
@@ -506,15 +507,25 @@ impl Shell {
                 }
                 let done = matches!(&written, Ok(written) if written.saved);
                 let unshown = match shell.files_at(project_id, target) {
-                    Some(view) => view.saved(&save.path, save.point, written),
-                    // The workspace's Files view is gone.
-                    None => files_view::unshown_save(written),
+                    // Its tab is still the one that asked (not closed and opened again).
+                    Some(view) if view.tab_for(&save.path).map(|tab| tab.opening) == opening => {
+                        view.saved(&save.path, save.point, written)
+                    }
+                    // The tab or the workspace's Files view is gone.
+                    _ => files_view::unshown_save(written),
                 };
                 if let Some(message) = unshown {
                     shell.toast_error(message, cx);
                 }
-                if let (true, Some(then)) = (done, then) {
-                    then(shell, window, cx);
+                let (waiting, others): (Vec<_>, Vec<_>) =
+                    std::mem::take(&mut shell.files_after_save)
+                        .into_iter()
+                        .partition(|(id, path, _)| *id == project_id && *path == save.path);
+                shell.files_after_save = others;
+                if done {
+                    for then in then.into_iter().chain(waiting.into_iter().map(|w| w.2)) {
+                        then(shell, window, cx);
+                    }
                 }
                 cx.notify();
             });
@@ -522,25 +533,27 @@ impl Shell {
         .detach();
     }
 
-    /// Runs `then` once the unsaved changes of `project_id`'s opened file are dealt with:
-    /// - at once if there are none;
-    /// - after "Save" and a successful save;
-    /// - after "Don't save".
+    /// Runs `then` once the unsaved changes of `paths` (tabs of `project_id`'s Files view)
+    /// are dealt with, asking about one tab at a time (shown while asked):
+    /// - at once when none is unsaved;
+    /// - after "Save" and a successful save, or "Don't save", for each of them.
     ///
-    /// "Cancel" keeps everything (§2.5).
-    pub(crate) fn leave_file(
+    /// "Cancel" stops: `then` does not run (§2.5).
+    pub(crate) fn leave_files(
         &mut self,
         project_id: Ulid,
+        paths: Vec<String>,
         then: AfterSave,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(path) = (self.files.get(&project_id))
-            .and_then(FilesView::unsaved)
-            .map(str::to_owned)
-        else {
+        // A tab saved meanwhile is skipped; one typed into during its save is asked again.
+        let next = (self.files.get(&project_id)).and_then(|view| view.first_unsaved(&paths));
+        let Some(path) = next else {
             return then(self, window, cx);
         };
+        // Its tab exists (it is unsaved): `open` only shows it.
+        self.open_file_tab(project_id, &path, Open::Transient, window, cx);
         let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
         let workspace = (self.sidebar.projects().iter())
             .find(|project| project.id == project_id)
@@ -555,15 +568,23 @@ impl Shell {
         );
         cx.spawn_in(window, async move |this, cx| {
             let choice = files_view::leave_choice(answer.await.ok());
-            let _ = this.update_in(cx, |shell, window, cx| match choice {
-                Some(files_view::Leave::Save) => {
-                    shell.save_file(project_id, Some(then), window, cx)
+            let _ = this.update_in(cx, |shell, window, cx| {
+                let rest: AfterSave = Box::new(move |shell, window, cx| {
+                    shell.leave_files(project_id, paths, then, window, cx);
+                });
+                match choice {
+                    Some(files_view::Leave::Save) => {
+                        shell.save_file(project_id, path, Some(rest), window, cx);
+                    }
+                    Some(files_view::Leave::DontSave) => {
+                        // The tab shows the file on disk again (it may stay open on Cancel).
+                        let read = shell.files_view(project_id).drop_changes(&path);
+                        let requests = Requests { list: vec![], read };
+                        shell.files_requests(project_id, requests, window, cx);
+                        rest(shell, window, cx);
+                    }
+                    None => {}
                 }
-                Some(files_view::Leave::DontSave) => {
-                    shell.files_view(project_id).discard();
-                    then(shell, window, cx);
-                }
-                None => {}
             });
         })
         .detach();
@@ -602,10 +623,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> bool {
-        let unsaved = (self.files.values())
-            .find(|view| view.unsaved().is_some())
-            .map(|view| view.project_id);
-        let Some(project_id) = unsaved else {
+        let unsaved = (self.files.values()).find_map(|view| {
+            let paths = view.unsaved_paths();
+            (!paths.is_empty()).then_some((view.project_id, paths))
+        });
+        let Some((project_id, paths)) = unsaved else {
             return false;
         };
         // A confirmation is open (Alt+F4 reaches here): answer it first; asking now would
@@ -617,7 +639,7 @@ impl Shell {
             self.activate_workspace(project_id, window, cx);
         }
         self.show_view(View::Files, window, cx);
-        self.leave_file(project_id, then, window, cx);
+        self.leave_files(project_id, paths, then, window, cx);
         true
     }
 
@@ -696,7 +718,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// After an edit, find follows the new text, and the highlight follows once typing pauses.
+    /// After an edit, the tab is kept (no longer transient), find follows the new text, and
+    /// the highlight follows once typing pauses (in that tab, whichever is shown by then).
     pub(crate) fn file_edited(
         &mut self,
         project_id: Ulid,
@@ -704,8 +727,12 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let view = self.files_view(project_id);
+        view.keep();
         view.search();
-        let Some(version) = view.shown().map(|shown| shown.editor.version()) else {
+        let Some((path, version)) = view
+            .tab()
+            .and_then(|tab| Some((tab.path.clone(), tab.shown()?.editor.version())))
+        else {
             return;
         };
         let target = view.worktree_task_id;
@@ -713,16 +740,17 @@ impl Shell {
         cx.spawn_in(window, async move |this, cx| {
             background.timer(theme::REHIGHLIGHT_DELAY).await;
             let Ok(Some(content)) = this.update(cx, |shell, _| {
-                shell
-                    .files_at(project_id, target)
-                    .and_then(|view| view.highlight_request(version))
+                (shell.files_at(project_id, target))
+                    .and_then(|view| view.tab_for(&path))
+                    .and_then(|tab| tab.highlight_request(version))
             }) else {
                 return;
             };
             let code = background.spawn(async move { Code::new(&content) }).await;
             let _ = this.update(cx, |shell, cx| {
-                let view = shell.files_at(project_id, target);
-                if view.is_some_and(|view| view.highlighted(version, code)) {
+                let tab =
+                    (shell.files_at(project_id, target)).and_then(|view| view.tab_for_mut(&path));
+                if tab.is_some_and(|tab| tab.highlighted(version, code)) {
                     cx.notify();
                 }
             });
@@ -774,13 +802,16 @@ impl Shell {
         Some(worktree_target::join_relative(dir, path))
     }
 
-    /// Opens the opened file of the Files view in Zed, at the selected line if any; a failure
-    /// shows in the viewer header.
+    /// Opens the active tab's file in Zed, at the selected line if any; a failure shows in
+    /// the viewer header.
     pub(crate) fn open_file_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
         let Some(view) = self.files.get(&project_id) else {
             return;
         };
-        let (Some(path), line) = (view.file.clone(), view.line()) else {
+        let (Some(path), line) = (
+            view.file().map(str::to_owned),
+            view.tab().and_then(FileTab::line),
+        ) else {
             return;
         };
         let Some(full) = self.target_file(project_id, view.worktree_task_id, &path) else {

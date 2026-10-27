@@ -1,6 +1,7 @@
-//! Drag to reorder, one look for the sidebar's workspace cards and rows and the tab strip: a
-//! small chip follows the pointer, the dragged item stays dim in its place and an accent line
-//! marks the gap it lands in (the half of the item under the pointer picks the side).
+//! Drag to reorder, one look for the sidebar's workspace cards and rows, the tab strip and the
+//! Files tabs: a small chip follows the pointer, the dragged item stays dim in its place and an
+//! accent line marks the gap it lands in (the half of the item under the pointer picks the
+//! side).
 
 use crate::*;
 
@@ -13,6 +14,8 @@ pub(crate) enum ReorderList {
     Tabs(Ulid, bool),
     /// The pinned (`true`) or unpinned workspace cards of the full sidebar.
     Workspaces(bool),
+    /// A workspace's pinned (`true`) or unpinned Files tabs.
+    FileTabs(Ulid, bool),
 }
 
 /// Payload of a reorder drag: the `index`-th item of `list`.
@@ -150,6 +153,9 @@ impl Shell {
             }
             ReorderList::Tabs(project_id, pinned) => {
                 self.drop_tab(project_id, pinned, item.index, to, window, cx);
+            }
+            ReorderList::FileTabs(project_id, pinned) => {
+                self.files_view(project_id).move_tab(pinned, item.index, to);
             }
             ReorderList::Workspaces(pinned) => {
                 self.drop_workspace(pinned, item.index, to, window, cx);
