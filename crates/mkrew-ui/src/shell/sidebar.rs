@@ -24,6 +24,14 @@ impl RowGroup {
 }
 
 impl Shell {
+    /// Workspace ids in the order the sidebar shows them (the rail keeps empty ones in place,
+    /// the full sidebar draws them last): Alt+1…9 and Next/Previous workspace follow it.
+    pub(crate) fn shown_workspaces(&self) -> Vec<Ulid> {
+        let rows = self.sidebar.view(&self.viewed).rows;
+        let park = !self.sidebar_layout.compact();
+        self.sidebar.shown_workspaces(&rows, self.workspace, park)
+    }
+
     /// The sidebar's edge was released: saves the dragged width as `[ui] sidebar_width`.
     pub(crate) fn end_sidebar_drag(&mut self, cx: &mut Context<'_, Self>) {
         if std::mem::take(&mut self.sidebar_dragging) {
@@ -705,7 +713,7 @@ impl Shell {
                             || highlighted == Some(sidebar::Target::Workspace(project_id));
                         // Nothing to show under it: on the "N empty workspaces" line instead
                         // (the shown and pinned ones stay in place).
-                        if row.empty && !active && !row.pinned && !filtering {
+                        if row.parked(active, filtering) {
                             empty.push(row);
                             continue;
                         }

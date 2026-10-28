@@ -321,8 +321,8 @@ impl Shell {
         match *command {
             Command::AddWorkspace => self.add_workspace(window, cx),
             Command::Workspace(n) => {
-                let nth = self.sidebar.projects().get(usize::from(n) - 1);
-                if let Some(project_id) = nth.map(|project| project.id) {
+                let nth = self.shown_workspaces().get(usize::from(n) - 1).copied();
+                if let Some(project_id) = nth {
                     self.activate_workspace(project_id, window, cx);
                 }
             }

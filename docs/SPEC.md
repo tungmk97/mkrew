@@ -1338,8 +1338,8 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Focus the sidebar filter with the active row highlighted (shows the sidebar if hidden, widens the compact rail; again returns to the pane) | Alt+0 |
 | Global | Open the context menu of what has the keyboard (the menu a right-click opens: terminal pane, file tree cursor row, editor tab, sidebar row, Board card; else the workspace menu under the switcher); again closes it | Shift+F10 (the Menu key: bind `context_menu` in Settings) |
 | View | Toggle the right panel (Files / Session / Git tabs; keeps the tab) | Ctrl+Shift+Y |
-| Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
-| Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
+| Workspace | Jump to workspace 1–9, counted top to bottom as the sidebar shows them (parked empty workspaces after the cards) | Alt+1 … Alt+9 |
+| Workspace | Next / previous workspace (same order) | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
 | Workspace | Add workspace (folder or clone) | Ctrl+Shift+K |
 | View | Terminals / Board / Docs | Ctrl+Shift+1 / 2 / 5 |
 | View | Show Git panel (right panel, the Git list gets the keyboard; ADR 0084) | Ctrl+Shift+4 |

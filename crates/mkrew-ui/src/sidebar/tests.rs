@@ -263,19 +263,40 @@ fn a_color_reply_sets_only_the_color() {
 }
 
 #[test]
-fn workspaces_cycle_in_sidebar_order() {
-    let mut sidebar = Sidebar::default();
-    assert_eq!(sidebar.workspace_at_offset(None, 1), None);
-    let (a, b, c) = (project("a"), project("b"), project("c"));
-    let ids = [a.id, b.id, c.id];
-    sidebar.load(vec![a, b, c], Vec::new());
-    assert_eq!(sidebar.workspace_at_offset(Some(ids[0]), 1), Some(ids[1]));
-    assert_eq!(sidebar.workspace_at_offset(Some(ids[2]), 1), Some(ids[0]));
-    assert_eq!(sidebar.workspace_at_offset(Some(ids[0]), -1), Some(ids[2]));
-    assert_eq!(sidebar.workspace_at_offset(None, -1), Some(ids[0]));
+fn workspaces_cycle_in_the_given_order() {
+    assert_eq!(workspace_at_offset(&[], None, 1), None);
+    let ids = [Ulid::new(), Ulid::new(), Ulid::new()];
+    assert_eq!(workspace_at_offset(&ids, Some(ids[0]), 1), Some(ids[1]));
+    assert_eq!(workspace_at_offset(&ids, Some(ids[2]), 1), Some(ids[0]));
+    assert_eq!(workspace_at_offset(&ids, Some(ids[0]), -1), Some(ids[2]));
+    assert_eq!(workspace_at_offset(&ids, None, -1), Some(ids[0]));
     assert_eq!(
-        sidebar.workspace_at_offset(Some(Ulid::new()), 1),
+        workspace_at_offset(&ids, Some(Ulid::new()), 1),
         Some(ids[0])
+    );
+}
+
+/// Alt+1…9 count what the full sidebar draws: empty workspaces sit on the "N empty
+/// workspaces" line below every card, unless shown or pinned; the rail keeps them in place.
+#[test]
+fn shown_workspaces_put_parked_empty_ones_last() {
+    let (a, b, c) = (project("a"), project("b"), project("c"));
+    let live = session(&b, 1, SessionState::Idle);
+    let mut sidebar = Sidebar::default();
+    sidebar.load(vec![a.clone(), b.clone(), c.clone()], vec![live]);
+    let rows = sidebar.rows();
+    assert_eq!(
+        sidebar.shown_workspaces(&rows, None, true),
+        [b.id, a.id, c.id]
+    );
+    // The shown workspace keeps its card in place.
+    assert_eq!(
+        sidebar.shown_workspaces(&rows, Some(c.id), true),
+        [b.id, c.id, a.id]
+    );
+    assert_eq!(
+        sidebar.shown_workspaces(&rows, None, false),
+        [a.id, b.id, c.id]
     );
 }
 
@@ -322,7 +343,9 @@ fn pinned_workspaces_lead_and_unpinning_restores_the_old_order() {
     }));
     assert_eq!(names(&sidebar), ["b", "c", "a"]);
     assert!(workspace(&sidebar.rows()[0]).pinned);
-    assert_eq!(sidebar.workspace_at_offset(Some(c.id), 1), Some(a.id));
+    let rows = sidebar.rows();
+    let order = sidebar.shown_workspaces(&rows, None, false);
+    assert_eq!(workspace_at_offset(&order, Some(c.id), 1), Some(a.id));
 
     sidebar.apply(&Event::ProjectUpdated(Project {
         pinned: false,

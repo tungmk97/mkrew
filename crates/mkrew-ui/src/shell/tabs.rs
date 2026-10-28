@@ -9,7 +9,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(project_id) = self.sidebar.workspace_at_offset(self.workspace, offset) {
+        let order = self.shown_workspaces();
+        if let Some(project_id) = sidebar::workspace_at_offset(&order, self.workspace, offset) {
             self.activate_workspace(project_id, window, cx);
         }
     }

@@ -274,8 +274,17 @@ pub struct WorkspaceRow {
     pub color: Option<String>,
     /// Pinned workspaces lead the list (SPEC §10).
     pub pinned: bool,
-    /// No live session and no run command: drawn on the sidebar's "N empty workspaces" line.
+    /// No live session and no run command: drawn on the sidebar's "N empty workspaces" line
+    /// (see [`WorkspaceRow::parked`]).
     pub empty: bool,
+}
+
+impl WorkspaceRow {
+    /// Drawn on the full sidebar's "N empty workspaces" line, not in its place: empty, not the
+    /// shown workspace (`active`), not pinned, and no filter active.
+    pub fn parked(&self, active: bool, filtering: bool) -> bool {
+        self.empty && !active && !self.pinned && !filtering
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -364,18 +373,21 @@ impl Sidebar {
         &self.projects
     }
 
-    /// The workspace `offset` places after `current` in sidebar order, wrapping around; the
-    /// first one if `current` is unknown. `None` without workspaces.
-    pub fn workspace_at_offset(&self, current: Option<Ulid>, offset: isize) -> Option<Ulid> {
-        let len = self.projects.len() as isize;
-        if len == 0 {
-            return None;
+    /// Workspace ids top to bottom as the sidebar draws `rows` with `active` shown: what
+    /// Alt+1…9 and Next/Previous workspace step through. With `park` (the full sidebar) the
+    /// parked ones come last, as their "N empty workspaces" line does; the rail keeps them in
+    /// place.
+    pub fn shown_workspaces(&self, rows: &[Row], active: Option<Ulid>, park: bool) -> Vec<Ulid> {
+        let filtering = self.filtering();
+        let (mut placed, mut parked) = (Vec::new(), Vec::new());
+        for row in rows {
+            if let Row::Workspace(row) = row {
+                let parks = park && row.parked(active == Some(row.project_id), filtering);
+                if parks { &mut parked } else { &mut placed }.push(row.project_id);
+            }
         }
-        let next = match current.and_then(|id| self.projects.iter().position(|p| p.id == id)) {
-            Some(index) => (index as isize + offset).rem_euclid(len) as usize,
-            None => 0,
-        };
-        Some(self.projects[next].id)
+        placed.extend(parked);
+        placed
     }
 
     /// Every known session, as last listed and updated by events.
@@ -848,6 +860,20 @@ fn targets(rows: &[Row], every_row: bool) -> Vec<Target> {
             _ => None,
         })
         .collect()
+}
+
+/// The workspace `offset` places after `current` in `order`, wrapping around; the first one if
+/// `current` is not in it. `None` without workspaces.
+pub fn workspace_at_offset(order: &[Ulid], current: Option<Ulid>, offset: isize) -> Option<Ulid> {
+    let len = order.len() as isize;
+    if len == 0 {
+        return None;
+    }
+    let next = match current.and_then(|id| order.iter().position(|p| *p == id)) {
+        Some(index) => (index as isize + offset).rem_euclid(len) as usize,
+        None => 0,
+    };
+    Some(order[next])
 }
 
 /// The place `by` steps from `from` in a list of `len`, `None` past either end (no wrap).
