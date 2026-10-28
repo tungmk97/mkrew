@@ -152,9 +152,9 @@ impl Daemon {
             Ok(target) => target,
             Err(outcome) => return outcome,
         };
-        let hub = Arc::clone(&self.hub);
+        let (hub, git) = (Arc::clone(&self.hub), Arc::clone(&self.git));
         let found = tokio::task::spawn_blocking(move || {
-            let all = hub.file_index.files(target.key(), &target.dir);
+            let all = hub.file_index.files(&*git, target.key(), &target.dir);
             files::find(&all, &params.query, params.limit as usize)
         })
         .await;

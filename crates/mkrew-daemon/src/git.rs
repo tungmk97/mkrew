@@ -24,6 +24,9 @@ pub trait GitBackend: Send + Sync {
     /// Untracked, non-ignored files under `dir`, relative to it.
     fn untracked_files(&self, dir: &Path) -> io::Result<Vec<String>>;
 
+    /// Files in the index under `dir`, relative to it (deleted ones included).
+    fn tracked_files(&self, dir: &Path) -> io::Result<Vec<String>>;
+
     /// Index and working copy of the tracked files under `dir` back to `commit`.
     fn restore(&self, dir: &Path, commit: &str) -> io::Result<()>;
 
@@ -282,6 +285,12 @@ impl GitBackend for GitCli {
             "--",
             ".",
         ]);
+        Ok(nul_separated(&run(command)?))
+    }
+
+    fn tracked_files(&self, dir: &Path) -> io::Result<Vec<String>> {
+        let mut command = view_git(dir);
+        command.args(["ls-files", "--cached", "-z", "--", "."]);
         Ok(nul_separated(&run(command)?))
     }
 

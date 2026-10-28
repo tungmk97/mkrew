@@ -239,6 +239,9 @@ mod tests {
         fn untracked_files(&self, _: &Path) -> io::Result<Vec<String>> {
             Ok(Vec::new())
         }
+        fn tracked_files(&self, _: &Path) -> io::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
         fn restore(&self, _: &Path, _: &str) -> io::Result<()> {
             Ok(())
         }

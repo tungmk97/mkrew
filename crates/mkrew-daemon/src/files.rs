@@ -43,7 +43,7 @@ impl FileIndex {
     }
 
     /// The sorted project-relative files under `root` (see [`walk_files`]), cached.
-    pub fn files(&self, project: Ulid, root: &Path) -> Arc<Vec<String>> {
+    pub fn files(&self, git: &dyn GitBackend, project: Ulid, root: &Path) -> Arc<Vec<String>> {
         let generation = match lock(&self.projects).get(&project) {
             Some(Indexed {
                 files: Some(files), ..
@@ -51,7 +51,7 @@ impl FileIndex {
             Some(indexed) => indexed.generation,
             None => 0,
         };
-        let files = Arc::new(walk_files(root));
+        let files = Arc::new(walk_files(git, root));
         let mut projects = lock(&self.projects);
         let indexed = projects.entry(project).or_default();
         if indexed.generation == generation {
@@ -81,14 +81,32 @@ fn walker(dir: &Path) -> ignore::WalkBuilder {
     walk
 }
 
-/// Every not-ignored file under `root`, as sorted `/`-separated relative paths.
-pub fn walk_files(root: &Path) -> Vec<String> {
-    let mut files: Vec<String> = walker(root)
+/// Every not-ignored file under `root`, as sorted `/`-separated relative paths. Tracked files
+/// count even when `.gitignore` matches them (git still shows them; the walk cannot tell), from
+/// the root's repository and each child one (ADR 0029); never under `node_modules` / `target`.
+pub fn walk_files(git: &dyn GitBackend, root: &Path) -> Vec<String> {
+    let mut files: HashSet<String> = walker(root)
         .build()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_some_and(|t| t.is_file()))
         .filter_map(|entry| relative(root, entry.path()))
         .collect();
+    let child = |repo: String| {
+        let tracked = git.tracked_files(&root.join(&repo)).unwrap_or_default();
+        tracked
+            .into_iter()
+            .map(move |path| format!("{repo}/{path}"))
+    };
+    // Outside a repository `ls-files` fails: the walk's answer stands.
+    let tracked = git.tracked_files(root).unwrap_or_default().into_iter();
+    for path in tracked.chain(child_repos(root).into_iter().flat_map(child)) {
+        let always = path.split('/').any(|part| ALWAYS_IGNORED.contains(&part));
+        // Deleted from disk but still in the index: nothing to open.
+        if !always && !files.contains(&path) && root.join(&path).is_file() {
+            files.insert(path);
+        }
+    }
+    let mut files: Vec<String> = files.into_iter().collect();
     files.sort();
     files
 }
@@ -801,11 +819,38 @@ mod tests {
         write(root, "target/debug/c.rs", b"c");
         let index = FileIndex::default();
         let project = Ulid::new();
-        assert_eq!(*index.files(project, root), [".hidden/b.rs", "a.rs"]);
+        assert_eq!(
+            *index.files(&GitCli, project, root),
+            [".hidden/b.rs", "a.rs"]
+        );
         write(root, "d.rs", b"d");
-        assert_eq!(index.files(project, root).len(), 2, "cached");
+        assert_eq!(index.files(&GitCli, project, root).len(), 2, "cached");
         index.invalidate(project);
-        assert_eq!(index.files(project, root).len(), 3);
+        assert_eq!(index.files(&GitCli, project, root).len(), 3);
+    }
+
+    #[test]
+    fn walk_files_keeps_tracked_files_that_gitignore_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q", "-b", "main"]);
+        write(root, ".gitignore", b"*.log\nfe/\n");
+        write(root, "keep.log", b"k");
+        write(root, "gone.log", b"g");
+        write(root, "run.log", b"r");
+        git(root, &["add", "-f", ".gitignore", "keep.log", "gone.log"]);
+        std::fs::remove_file(root.join("gone.log")).unwrap();
+        // A child repository (ADR 0029) the parent ignores.
+        let fe = root.join("fe");
+        git(root, &["init", "-q", "-b", "main", "fe"]);
+        write(&fe, ".gitignore", b".tanstack\n");
+        write(&fe, ".tanstack/t.json", b"t");
+        write(&fe, ".tanstack/tmp.json", b"x");
+        git(&fe, &["add", "-f", ".tanstack/t.json"]);
+        assert_eq!(
+            walk_files(&GitCli, root),
+            [".gitignore", "fe/.tanstack/t.json", "keep.log"]
+        );
     }
 
     #[test]
@@ -822,11 +867,11 @@ mod tests {
         let index = FileIndex::default();
         let project = Ulid::new();
         let started = std::time::Instant::now();
-        assert_eq!(index.files(project, root).len(), 10_000);
+        assert_eq!(index.files(&GitCli, project, root).len(), 10_000);
         let walk = started.elapsed();
         let search = || {
             let started = std::time::Instant::now();
-            let found = find(&index.files(project, root), "pkg3 mod5 file_9", 50);
+            let found = find(&index.files(&GitCli, project, root), "pkg3 mod5 file_9", 50);
             (started.elapsed(), found)
         };
         let (_, found) = search();
