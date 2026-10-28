@@ -186,8 +186,8 @@ impl Shell {
         }
     }
 
-    /// The recording pill (§20G), centered at the bottom over the content: a breathing dot, the
-    /// waveform, the time and the stop key while it records; the `working` dots and
+    /// The recording pill (§20G), centered at the bottom over the content: a steady dot, the
+    /// waveform, the time and the stop key while it records; the loading dots and
     /// `Transcribing` after. It fades and slides in once; it never takes a click or the
     /// keyboard.
     pub(crate) fn render_voice_pill(&self, theme: &Theme, cx: &App) -> Option<gpui::AnyElement> {

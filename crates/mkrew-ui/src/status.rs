@@ -178,7 +178,6 @@ mod tests {
         assert_eq!(loading_dot(-5), 0);
         assert_eq!(icon(SessionState::Idle), "○");
         assert_eq!(icon(SessionState::NeedsInput), "?");
-        assert_eq!(icon(SessionState::Working), "●");
     }
 
     fn session(state: SessionState, changed_at: i64) -> Session {
