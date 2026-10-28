@@ -33,6 +33,9 @@ impl Shell {
             // Nothing is kept for the workspace that is no longer shown.
             self.git_summary = None;
         }
+        // First: the daemon answers one connection's requests in order, so an attach sent
+        // after the git/files loads below waits for all of them (a git.status can take 1 s).
+        self.sync_panes(window, cx);
         if switched || self.git_summary.is_none() {
             self.load_git_summary(project_id, window, cx);
         }
@@ -48,7 +51,6 @@ impl Shell {
         if switched && self.git_shown() {
             self.refresh_git(project_id, window, cx);
         }
-        self.sync_panes(window, cx);
         cx.notify();
     }
 
