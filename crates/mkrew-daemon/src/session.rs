@@ -369,10 +369,16 @@ impl Hub {
     /// again unless another session of the project is live.
     pub fn spawn(self: &std::sync::Arc<Self>, spec: SpawnSpec) -> Result<(), SpawnError> {
         let project_id = spec.session.project_id;
-        self.watch_project(project_id, &spec.project_dir, false);
+        let project_dir = spec.project_dir.clone();
+        self.watch_project(project_id, &project_dir, false);
         let spawned = self.spawn_watched(spec);
         if spawned.is_err() {
             self.unwatch_idle_project(project_id);
+        } else {
+            // A `watch.release` from another connection can land between the watch above and
+            // the session joining `live`, dropping the watcher: watch again now that this
+            // session keeps it (returns at once when the watcher exists).
+            self.watch_project(project_id, &project_dir, false);
         }
         spawned
     }
@@ -1623,14 +1629,6 @@ impl Actor {
     }
 
     fn finish(mut self, exit_code: Option<i32>) {
-        // An exit cut off the trailing scan: a run session still owes the ports it printed.
-        // (Not the state: a process that exited is not waiting for input.) Before the ports
-        // map entry is removed below.
-        if self.scan.take_pending() && self.ports.is_some() {
-            let lines = self.screen_lines();
-            let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
-            self.scan_ports(&lines);
-        }
         if let Err(e) = self.log.flush() {
             tracing::warn!(id = %self.session.id, "session log flush failed: {e}");
         }

@@ -54,11 +54,6 @@ impl ScanRate {
         self.last = Some(now);
         self.pending = false;
     }
-
-    /// Takes the owed scan: `true` if there was one (the session ended before it fired).
-    pub fn take_pending(&mut self) -> bool {
-        std::mem::take(&mut self.pending)
-    }
 }
 
 /// ADR 0015 at scan time: `true` when the visible text changed since the previous scan
@@ -100,7 +95,6 @@ mod tests {
         assert_eq!(rate.deadline(), Some(t0 + ms(250)));
         rate.scanned(t0 + ms(250));
         assert_eq!(rate.deadline(), None);
-        assert!(!rate.take_pending());
         // Quiet for a whole gap: the next output scans at once again.
         assert!(rate.on_output(t0 + ms(500), false));
     }
@@ -144,17 +138,6 @@ mod tests {
         let mut rate = ScanRate::new(SCAN_GAP);
         assert!(rate.on_output(t0, false));
         assert!(rate.on_output(t0 + ms(1), true));
-        assert_eq!(rate.deadline(), None);
-    }
-
-    #[test]
-    fn an_exit_can_claim_the_owed_scan_once() {
-        let t0 = Instant::now();
-        let mut rate = ScanRate::new(SCAN_GAP);
-        rate.on_output(t0, false);
-        rate.on_output(t0 + ms(5), false);
-        assert!(rate.take_pending());
-        assert!(!rate.take_pending());
         assert_eq!(rate.deadline(), None);
     }
 
