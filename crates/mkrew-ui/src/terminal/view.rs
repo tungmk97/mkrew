@@ -150,19 +150,17 @@ impl TerminalPane {
         Self::with_emulator(session_id, emulator, None, connection, painted, window, cx)
     }
 
-    /// A read-only pane replaying `log` (output of the finished `session`) on the session's
-    /// screen size: never attached, takes no input and never resizes the session.
+    /// A read-only pane showing `emulator`, which already replayed the output of the finished
+    /// `session` on the session's screen size (built off the UI thread, ADR 0088): never
+    /// attached, takes no input and never resizes the session.
     pub fn replay(
         session: &Session,
-        log: &[u8],
+        emulator: Emulator,
         connection: Rc<Connection>,
         painted: async_channel::Sender<()>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
-        let mut emulator =
-            Emulator::for_replay(session.cols.max(1).into(), session.rows.max(1).into());
-        emulator.advance(log);
         let exited = Some(session.exit_code);
         Self::with_emulator(
             session.id, emulator, exited, connection, painted, window, cx,

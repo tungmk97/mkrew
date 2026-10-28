@@ -41,3 +41,19 @@ The UI scrollback and the History replay costs are decided in the sections appen
 - Not done: a `zerowidth: Option<Box<[char]>>` grid cell and a reused grid buffer (old plan 2026-10-10 Task 14).
   `Vec::new()` does not allocate, so a cell allocates only for a real combining mark, and a rebuild is at most 60 per second per visible pane (`shared_grid`, 4cbea62); neither was measurable.
 - Consequence: a pane scrolls back at most 1,000 lines, and Ctrl+Shift+F searches those; older output is in History (the session log).
+
+## History replay (Task 6)
+
+Opening an exited session in History stalled the window.
+The log is read off the UI thread, but the replay (`Emulator::advance` over up to 2 MiB) ran inside `update_in` on it.
+
+- The dialog replays the newest 1 MiB of the log (was 2 MiB, `history::TAIL_BYTES`).
+  A cut stream starts after its first line break, else at the first ESC, else after the continuation bytes of a cut char (`mkrew_core::log_tail::replay_start`).
+  So the emulator never starts inside a char or an escape sequence, also for a TUI log with no line break.
+  `mk web` shares the function and keeps its own 512 KiB cap.
+- The emulator is built and fed inside the `background_executor` task that reads the file.
+  `TerminalPane::replay` takes the ready `Emulator`, so the UI thread only creates the entity.
+  `Emulator` is `Send` (no `Rc`; `Term`, `Processor`, `RegexSearch` and `Grid` are plain data), checked by the compiler at the `spawn`.
+- Rejected: advancing in chunks across frames.
+  It keeps the work on the UI thread and needs a state machine in the pane, for no gain once the work is off it.
+- Older output stays in the log (`mk session history`), as ADR 0030 says for output beyond the daemon's scrollback.

@@ -59,6 +59,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   - With six panes flooding (the stress setup of T2.9) note the UI memory: it is well below the 10,000-line figure of that entry (about 100 MB for six full panes in the headless test process).
   - Phone page (`mk web`): scrolling back in the terminal still works past 1,000 lines.
 
+- [ ] **History replay, no stall (ADR 0088):** in a pwsh pane run `1..60000 | % { "`e[32mline $_`e[0m" }` (a log of more than 1 MB), exit the session, open History and select it.
+  The window keeps answering while it loads (move the mouse over the sidebar, press Esc and reopen), the "Older output is left out" note shows, the last line is `line 60000` in green, and after scrolling to the top the first line is a whole `line N` (no stray `[32m`, no `?` box at its start).
+  Pick another session while one loads: only the last pick shows.
+  A short session (a few KB) replays completely with no note. A full-screen TUI session (claude or omp) shows its last screen without garbage at the top.
+
 ### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0085)
 
 - Every check in this entry is done in both dark and light.
@@ -2028,7 +2033,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   sessions newest first (title/agent, "exited (code) · ran … · … ago"); the newest log replays
   in the right pane (colors, last screen, mouse-wheel scrollback, Ctrl+Shift+F find,
   Ctrl+Shift+C copy of a selection); ↑ / ↓ and clicks pick other sessions; Esc / Close returns
-  the keyboard to the focused pane. A log > 2 MB shows the "Older output is left out" note.
+  the keyboard to the focused pane. A log > 1 MB shows the "Older output is left out" note.
   Empty workspace → "No finished sessions in this workspace yet." Dark + light screenshots §14.
 
 - [ ] (T5.11) **M5 wrap-up — the unticked M5 criteria.** Watcher ignores and daily backups are
@@ -3008,12 +3013,12 @@ _Decisions the agent made on its own. Override them here if you disagree._
   (the task allowed sidebar or Terminals menu; a dialog needs no layout slot and never touches
   `terminal_tab`). No keyboard shortcut (SPEC §13 has none; add one there if wanted). The log is
   replayed into a fresh UI emulator at the session's recorded cols/rows (no resize, no input),
-  newest 2 MiB only, starting after the first line break past the cut; a session that ended on
+  newest 1 MiB only (ADR 0088), starting after the first line break past the cut (at the first escape sequence when there is none); a session that ended on
   the alternate screen (full-screen TUI) shows that last screen with little scrollback. The list
   is read once on open (sessions exiting meanwhile appear on the next open). Open review
-  SHOULDs (backlog): parse the tail off the UI thread (a 2 MiB log may stall one frame), a
-  Retry button on list/log failures, focusable rows with a focus ring (↑ / ↓ work), a primary
-  action in the empty state, a clean exit's ✕ is muted (only non-zero codes use the exited color).
+  SHOULDs (backlog): a Retry button on list/log failures, focusable rows with a focus ring
+  (↑ / ↓ work), a primary action in the empty state, a clean exit's ✕ is muted (only non-zero
+  codes use the exited color).
 - (T5.10) Daily backups are named by the **UTC** date (no time-zone crate; SPEC does not say
   which), so the "day" flips at local UTC midnight. The daemon checks at startup and then every
   hour (not every 24 h: monotonic timers pause during suspend) and writes `VACUUM INTO`

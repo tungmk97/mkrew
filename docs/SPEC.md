@@ -1643,7 +1643,7 @@ exist; body text contrast ≥ 4.5:1; status never conveyed by color alone; run a
 | Security | IPC endpoint accessible by the current user only; the daemon has no network listener (`mk web` — started by the user, or by the daemon as a child while the user turned phone access on, ADR 0053 — listens on 127.0.0.1 by default and requires its token on every WebSocket, ADR 0052); with `[web] push = true` `mk web` also POSTs encrypted Web Push messages to the push service host (Apple, Google, Mozilla, Microsoft only) of each subscribed phone, ADR 0067; `hook.report` rejected unless the session id belongs to a live session |
 | Data | SQLite WAL; daily DB backup, keep 7 |
 | Errors | panics logged with backtrace; UI shows an error instead of dying silently |
-| History | per-session output log, rotated at 5 MB |
+| History | per-session output log, rotated at 5 MB; the History dialog replays its newest 1 MiB, built off the UI thread (ADR 0088) |
 | Throughput | 6 panes each receiving a continuous 50 MB output flood: UI keeps < 16 ms input latency, RAM stays flat (no unbounded growth), daemon CPU < 1 core |
 | Git | status refresh on a 10,000-file repo < 150 ms on Windows |
 

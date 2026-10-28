@@ -8,8 +8,8 @@ use ulid::Ulid;
 
 use crate::status;
 
-/// Most log bytes replayed (the newest ones); `mk session history <id>` prints all of it.
-pub const TAIL_BYTES: u64 = 2 * 1024 * 1024;
+/// Most log bytes replayed (the newest ones, ADR 0088); `mk session history <id>` prints all of it.
+pub const TAIL_BYTES: u64 = 1024 * 1024;
 
 /// The workspace's sessions, as far as `session.list` answered.
 #[derive(Debug, Clone, PartialEq)]

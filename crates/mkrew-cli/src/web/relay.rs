@@ -36,7 +36,7 @@ const READ_BUFFER: usize = 64 * 1024;
 const OUTBOX: usize = 64;
 /// Browser ids start at 1.
 const HELLO_ID: u64 = 0;
-/// Newest log bytes the page replays for an ended session (the desktop History dialog shows 2 MiB).
+/// Newest log bytes the page replays for an ended session (the desktop History dialog shows 1 MiB).
 const TAIL_BYTES: u64 = 512 * 1024;
 
 /// Browser `session.history` requests waiting for their reply: id → session. The relay sends the

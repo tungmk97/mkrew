@@ -323,6 +323,13 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
+        let Some((cols, rows)) = (self.history.as_ref())
+            .and_then(|dialog| dialog.selected_session())
+            .filter(|selected| selected.id == session)
+            .map(|selected| (selected.cols.max(1), selected.rows.max(1)))
+        else {
+            return;
+        };
         let serial = self.dialog_serial;
         self.history_pane = None;
         // The dialog keeps the keyboard while no pane shows.
@@ -333,10 +340,22 @@ impl Shell {
         }));
         let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
-            let tail = match files.await {
+            // Read the log and replay it into the emulator on the background executor: the
+            // advance over up to 1 MiB of output is what used to freeze the window.
+            let replayed = match files.await {
                 Ok(history) => background
                     .spawn(async move {
-                        mkrew_core::log_tail::read_tail(&history.files, history::TAIL_BYTES)
+                        let tail =
+                            mkrew_core::log_tail::read_tail(&history.files, history::TAIL_BYTES)?;
+                        let emulator = (!tail.bytes.is_empty()).then(|| {
+                            let mut emulator = mkrew_ui::terminal::emulator::Emulator::for_replay(
+                                cols.into(),
+                                rows.into(),
+                            );
+                            emulator.advance(&tail.bytes);
+                            emulator
+                        });
+                        Ok::<_, std::io::Error>((tail.cut, emulator))
                     })
                     .await
                     .map_err(|error| format!("Cannot read the log: {error}")),
@@ -354,19 +373,14 @@ impl Shell {
                     // Another session was picked meanwhile.
                     return;
                 };
-                match tail {
-                    Ok(tail) if tail.bytes.is_empty() => dialog.log = Log::Empty,
-                    Ok(tail) => {
-                        dialog.log = Log::Shown { cut: tail.cut };
+                match replayed {
+                    Ok((_, None)) => dialog.log = Log::Empty,
+                    Ok((cut, Some(emulator))) => {
+                        dialog.log = Log::Shown { cut };
                         let painted = shell.painted.clone();
                         let pane = cx.new(|cx| {
                             TerminalPane::replay(
-                                &selected,
-                                &tail.bytes,
-                                connection,
-                                painted,
-                                window,
-                                cx,
+                                &selected, emulator, connection, painted, window, cx,
                             )
                         });
                         shell.history_pane = Some(pane);
