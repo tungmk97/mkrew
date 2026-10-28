@@ -58,7 +58,6 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   - Open History (a finished session of more than 3,000 lines): the mouse wheel and Shift+PgUp go back far past 1,000 lines (up to 10,000), and Ctrl+Shift+F finds text from there.
   - With six panes flooding (the stress setup of T2.9) note the UI memory: it is well below the 10,000-line figure of that entry (about 100 MB for six full panes in the headless test process).
   - Phone page (`mk web`): scrolling back in the terminal still works past 1,000 lines.
-
 - [ ] **History replay, no stall (ADR 0088):** in a pwsh pane run `1..60000 | % { "`e[32mline $_`e[0m" }` (a log of more than 1 MB), exit the session, open History and select it.
   The window keeps answering while it loads (move the mouse over the sidebar, press Esc and reopen), the "Older output is left out" note shows, the last line is `line 60000` in green, and after scrolling to the top the first line is a whole `line N` (no stray `[32m`, no `?` box at its start).
   Pick another session while one loads: only the last pick shows.
