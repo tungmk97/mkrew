@@ -71,6 +71,7 @@ pub mod preview;
 pub mod preview_select;
 pub mod prompt_picker;
 pub mod quick_open;
+pub mod redraw;
 pub mod router;
 pub mod run;
 pub mod run_setup;

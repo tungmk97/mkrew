@@ -801,6 +801,36 @@ impl Shell {
         }
     }
 
+    /// What the window draws now, for [`redraw::event_needs_redraw`].
+    pub(crate) fn shown(&self, window: &Window) -> redraw::Shown {
+        let view = self.view();
+        let tabs = (self.workspace)
+            .filter(|_| view == View::Terminals)
+            .and_then(|id| self.tabs.get(&id));
+        redraw::Shown {
+            workspace: self.workspace,
+            view,
+            panes: on_screen(window.is_visible(), tabs),
+            focused: self.focused_session(),
+            panel: self.panel_shown().then_some(self.right_panel.tab),
+            panel_session: self.panel_session(),
+            sidebar: self.sidebar_layout.mode(),
+            modal: self.modal_open(),
+        }
+    }
+
+    /// [`Self::shown`], built at most once per batch: an output-only batch (up to ~60/s) never
+    /// asks, so it allocates nothing. A batch that switches workspace or view (a notification
+    /// click) notifies on its own and the render after it reads every model, so a stale value
+    /// can only cost one redraw, never a stale screen.
+    fn batch_shown<'a>(
+        &self,
+        slot: &'a mut Option<redraw::Shown>,
+        window: &Window,
+    ) -> &'a redraw::Shown {
+        slot.get_or_insert_with(|| self.shown(window))
+    }
+
     /// Routes a batch of incoming frames; returns whether a pane got new content.
     pub(crate) fn dispatch(
         &mut self,
@@ -811,26 +841,26 @@ impl Shell {
         let mut fed: Vec<Entity<TerminalPane>> = Vec::new();
         let mut layout_changed = false;
         let mut peek_changed = false;
+        let mut shown_now: Option<redraw::Shown> = None;
         for incoming in batch {
             if let Incoming::Event(event) = &incoming {
+                // Every model keeps its data; the root only redraws what the window draws.
+                // `|=` (not `||`): each model must see the event.
+                let mut data_changed = false;
                 if self.board.apply(event) {
                     self.drop_gone_targets(window, cx);
-                    cx.notify();
+                    data_changed = true;
                 }
-                if self.turns.apply(event) {
-                    cx.notify();
-                }
-                if self.usages.apply(event) {
-                    cx.notify();
-                }
-                if self.plans.apply(event) {
-                    cx.notify();
-                }
-                if self.ports.apply(event) {
-                    cx.notify();
-                }
-                if self.composers.apply(event) {
-                    cx.notify();
+                data_changed |= self.turns.apply(event);
+                data_changed |= self.usages.apply(event);
+                data_changed |= self.plans.apply(event);
+                data_changed |= self.ports.apply(event);
+                data_changed |= self.composers.apply(event);
+                if data_changed {
+                    let shown = self.batch_shown(&mut shown_now, window);
+                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
+                        cx.notify();
+                    }
                 }
                 if let Some(wait) = self.follow.apply(event) {
                     self.follow_wait(wait, window, cx);
@@ -860,7 +890,11 @@ impl Shell {
                 }
                 // After the board and sidebar, so a task leaving Running clears its warning.
                 let detected = self.conflicts.apply(event);
-                if self.conflicts.prune(&self.board, self.sidebar.sessions()) || detected {
+                // `prune` runs on every event; only its notify is gated.
+                let pruned = self.conflicts.prune(&self.board, self.sidebar.sessions());
+                if (pruned || detected)
+                    && redraw::conflicts_need_redraw(self.batch_shown(&mut shown_now, window))
+                {
                     cx.notify();
                 }
                 for tabs in self.tabs.values_mut() {
@@ -886,7 +920,10 @@ impl Shell {
                     for view in self.git.values_mut() {
                         view.comments.apply_event(view.project_id, comment);
                     }
-                    cx.notify();
+                    let shown = self.batch_shown(&mut shown_now, window);
+                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
+                        cx.notify();
+                    }
                 }
                 if matches!(event, Event::GitChanged(_)) {
                     self.files_event(event, window, cx);
@@ -907,7 +944,10 @@ impl Shell {
                         dialog.answered(done.generation_id, result.clone());
                     }
                     self.composers.enhanced(done.generation_id, result);
-                    cx.notify();
+                    let shown = self.batch_shown(&mut shown_now, window);
+                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
+                        cx.notify();
+                    }
                 }
                 if let Event::ProjectCloned(done) = event {
                     self.workspace_cloned(done, window, cx);
