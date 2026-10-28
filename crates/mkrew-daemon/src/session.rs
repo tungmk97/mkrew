@@ -1236,6 +1236,12 @@ impl Actor {
                     self.deliver();
                 }
                 () = sleep_until(tick_at), if tick_at.is_some() => {
+                    if self.scan.deadline().is_some() {
+                        // A trailing scan is owed: classify the final screen first.
+                        let now = Instant::now();
+                        self.scan.scanned(now);
+                        self.scan_screen(now);
+                    }
                     let lines = self.screen_tail();
                     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
                     if let Some(state) = self.machine.tick(Instant::now(), &lines) {
@@ -1285,7 +1291,11 @@ impl Actor {
         // The screen work runs at most every `SCAN_GAP` (ADR 0088). A waiting `session.send`
         // needs the current state when `deliver()` runs below, so it scans every batch.
         let now = Instant::now();
-        if self.scan.on_output(now, !self.queue.is_empty()) {
+        // A run session scans every batch: its port line may scroll off within one gap.
+        if self
+            .scan
+            .on_output(now, !self.queue.is_empty() || self.ports.is_some())
+        {
             self.scan_screen(now);
         }
         if !self.send_writing {
@@ -1428,7 +1438,18 @@ impl Actor {
         }
         let print = self.emulator().text_fingerprint();
         let starting = self.machine.state() == SessionState::Starting;
+        let had_baseline = self.screen_print.is_some();
         if !scan::changed(&mut self.screen_print, print, starting) {
+            if !had_baseline && active {
+                // First look after a skipped stretch: the machine reads the tail without
+                // counting it as activity (`tick` never sets `working`), so a prompt that is
+                // the first thing printed after a hook window is not missed.
+                let tail = self.screen_tail();
+                let tail: Vec<&str> = tail.iter().map(String::as_str).collect();
+                if let Some(state) = self.machine.tick(now, &tail) {
+                    self.set_state(state, StateSource::Screen);
+                }
+            }
             return;
         }
         if self.ports.is_some() {

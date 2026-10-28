@@ -229,4 +229,34 @@ mod tests {
         assert!(!changed(&mut print, 7, false));
         assert!(changed(&mut print, 8, false));
     }
+
+    /// First scan after a hook window: the baseline is silent for `changed`, but the machine
+    /// still reads the tail via `tick`, so a prompt is classified and a `done` session stays.
+    #[test]
+    fn a_baseline_scan_classifies_a_prompt_but_never_turns_a_done_session_working() {
+        let t0 = Instant::now();
+        let mut m = StateMachine::new(&StateConfig {
+            mode: StateMode::HookScreen,
+            idle_after_ms: 3000,
+            needs_input_patterns: vec![r"(?i)do you want to".into()],
+        })
+        .unwrap();
+        m.on_hook(t0, mkrew_core::HookEvent::Done);
+        let later = t0 + ms(11_000);
+        let mut emu = Emulator::new(40, 6);
+        let mut print = None;
+        emu.advance(b"moving text\r\n");
+        assert!(!changed(&mut print, emu.text_fingerprint(), false));
+        let tail = emu.tail_to_cursor(PATTERN_TAIL_LINES);
+        let tail: Vec<&str> = tail.iter().map(String::as_str).collect();
+        assert_eq!(m.tick(later, &tail), None);
+        assert_eq!(m.state(), SessionState::Done);
+
+        let mut print = None;
+        emu.advance(b"Do you want to proceed?\r\n");
+        assert!(!changed(&mut print, emu.text_fingerprint(), false));
+        let tail = emu.tail_to_cursor(PATTERN_TAIL_LINES);
+        let tail: Vec<&str> = tail.iter().map(String::as_str).collect();
+        assert_eq!(m.tick(later, &tail), Some(SessionState::NeedsInput));
+    }
 }

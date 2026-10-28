@@ -478,7 +478,7 @@ hook event arrived in the last 10 s. Patterns match the last lines of the **emul
 cursor movement, so stripping ANSI from the raw stream gives garbage.
 
 The daemon scans a session's screen at most 4 times a second (a scan after the last output closes the gap, so the final screen is always classified) and the state machine reads only the last 4 non-blank rows up to the cursor; a state shown by the screen can therefore appear up to 250 ms after the output (ADR 0088).
-A session with a queued `session.send` is scanned on every output, and while the machine ignores the screen (hook-only profile, or a hook event in the last 10 s) no scan work is done.
+A session with a queued `session.send`, and a run session, is scanned on every output, and while the machine ignores the screen (hook-only profile, or a hook event in the last 10 s) no scan work is done.
 
 **Hook integrations — `mk integration install|uninstall|status <agent>`**
 

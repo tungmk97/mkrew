@@ -17,14 +17,14 @@ The UI scrollback and the History replay costs are decided in the sections appen
   A run session still builds every row for its port scan (SPEC §10).
 - A session's screen is scanned at most every 250 ms (`scan::ScanRate`).
   Output inside the gap is scanned by a trailing scan when the gap ends, so a prompt that is the last thing printed is never missed.
-  A session with a queued `session.send` scans every batch, because the send queue needs the current state.
+  A session with a queued `session.send`, and a run session (its port line can scroll off within one gap), scan every batch.
 - When the machine ignores the screen (`StateMachine::screen_active` is false) and the session is not a run session, the scan does no fingerprint and builds no rows; the machine still sees that output happened.
-  The first scan after such a stretch only sets the fingerprint baseline, so a `done` session does not turn `working` because its screen moved while nobody looked.
+  The first scan after such a stretch only sets the fingerprint baseline (the machine still reads the tail without counting it as activity, so a prompt printed first after a hook window is classified), so a `done` session does not turn `working` because its screen moved while nobody looked.
 - The fingerprint (ADR 0015) is compared between two scans, not two batches.
   A change that is undone inside one gap is not seen.
 
 ## Consequences
 
-- `working` and `needs_input` can show up to 250 ms late; `idle` (3 s quiet) is unaffected.
+- `working` and `needs_input` can show up to 250 ms late; `idle` (3 s quiet) can be up to 250 ms late too (the tick runs the owed scan first).
 - During a hook window, invisible output (cursor, title) now moves `last_output`, which the fingerprint gate used to filter: a TUI that keeps blinking through the end of the window goes `idle` up to `idle_after_ms` after the window ends, not after its last visible change.
 - SPEC §6 and §8 say so.
