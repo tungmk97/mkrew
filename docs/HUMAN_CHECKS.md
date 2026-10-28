@@ -45,6 +45,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Watchers stop with their view:** start the daemon with `MKREW_LOG=debug`. Add a second workspace B with no agent running. In B open the Files tab, then switch to workspace A: the log shows `watch released` and `stopped watching project files` for B. In B open the Git tab on a task worktree (worktree chooser), then hide the right panel: `watch released` with that task id. Open the panel again: Files / Git refresh, and an edit made outside the app shows (the Git list updates).
 - [ ] **A live agent keeps its watcher:** leave a working agent in workspace B, switch to A: B's `watch released` is logged but `stopped watching` is not; B's file changes still count for its session (the Git list of B, shown again, lists them).
 - [ ] **`git.changed` rate:** with one agent `working` and writing files all the time, the Git tab and the title bar git summary refresh about every 5 s (not every 2 s). Once the agent is idle, the next change shows within about 0.5 s. A commit or `git fetch` from outside still shows within about 0.5 s with no agent working. A background `git gc` (only `.git/objects`) changes nothing on screen.
+- [ ] **Terminal path, screen scan (ADR 0088):** restart the daemon. With claude (patterns only) and a fake agent or a shell in the other two panes:
+  - Ask claude something that needs approval: the pane shows `needs_input` and the notification fires within about half a second, also when the prompt is the last thing printed and the pane is in a background tab.
+  - Answer it: the state goes back to `working`, then `idle` about 3 s after the output stops.
+  - `mk send <id> "one"` and `mk send <id> "two"` while the agent works: both are typed one after the other, "two" only after the agent reacted to "one".
+  - A run command that prints `Local: http://localhost:5173` shows `:5173` in the Run button, also when it prints that line and exits at once.
+  - A claude turn that ends (hook `done`) and then sits at its prompt for a minute stays `done`/`idle`, it does not flip back to `working` by itself.
+  - Task Manager: the daemon's CPU with three agents `working` is lower than before (note the numbers here).
 
 ### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0085)
 

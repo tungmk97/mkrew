@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
+use mkrew_core::state::PATTERN_TAIL_LINES;
 use mkrew_core::turn::{TurnEvent, TurnTracker};
 use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
@@ -31,6 +32,7 @@ use crate::emulator::Emulator;
 use crate::files::FileIndex;
 use crate::git::{GitBackend, GitCli};
 use crate::launch;
+use crate::scan::{self, SCAN_GAP, ScanRate};
 use crate::session_log::SessionLog;
 use crate::snapshot::Snapshots;
 use crate::turns;
@@ -558,6 +560,7 @@ impl Hub {
             emulator: None,
             machine,
             screen_print: None,
+            scan: ScanRate::new(SCAN_GAP),
             queue,
             log,
             attachments: Vec::new(),
@@ -1053,9 +1056,11 @@ struct Actor {
     /// Created lazily so a session that never prints costs no grid memory.
     emulator: Option<Emulator>,
     machine: StateMachine,
-    /// [`Emulator::text_fingerprint`] after the last output; output that leaves it unchanged
-    /// is not activity (ADR 0015).
+    /// [`Emulator::text_fingerprint`] after the last scan; output that leaves it unchanged
+    /// is not activity (ADR 0015). `None` until the first scan and after skipped scans.
     screen_print: Option<u64>,
+    /// At most one screen scan per [`SCAN_GAP`], plus a trailing one (ADR 0088).
+    scan: ScanRate,
     /// `session.send` texts waiting for the session to be ready.
     queue: SendQueue,
     log: SessionLog,
@@ -1090,6 +1095,7 @@ impl Actor {
                 .machine
                 .next_deadline()
                 .map(tokio::time::Instant::from_std);
+            let scan_at = self.scan.deadline().map(tokio::time::Instant::from_std);
             tokio::select! {
                 event = output.recv(), if waiting.is_none() => match event {
                     Some(PtyEvent::Output(mut bytes)) => {
@@ -1222,8 +1228,15 @@ impl Actor {
                     }
                     None => commands_open = false,
                 },
+                () = sleep_until(scan_at), if scan_at.is_some() => {
+                    // The scan `ScanRate` held back: the final screen is always classified.
+                    let now = Instant::now();
+                    self.scan.scanned(now);
+                    self.scan_screen(now);
+                    self.deliver();
+                }
                 () = sleep_until(tick_at), if tick_at.is_some() => {
-                    let lines = self.screen_lines();
+                    let lines = self.screen_tail();
                     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
                     if let Some(state) = self.machine.tick(Instant::now(), &lines) {
                         self.set_state(state, StateSource::Screen);
@@ -1269,17 +1282,11 @@ impl Actor {
         for attachment in &self.attachments {
             attachment.push(bytes);
         }
-        // Only visible changes are work: idle TUIs keep sending cursor/title/progress bytes,
-        // which would otherwise hold the session in `working` forever (ADR 0015). The first
-        // batch always counts, so hook-only profiles still leave `starting`.
-        let print = self.emulator().text_fingerprint();
-        if self.screen_print.replace(print) != Some(print) {
-            let lines = self.screen_lines();
-            let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
-            self.scan_ports(&lines);
-            if let Some(state) = self.machine.on_output(Instant::now(), &lines) {
-                self.set_state(state, StateSource::Screen);
-            }
+        // The screen work runs at most every `SCAN_GAP` (ADR 0088). A waiting `session.send`
+        // needs the current state when `deliver()` runs below, so it scans every batch.
+        let now = Instant::now();
+        if self.scan.on_output(now, !self.queue.is_empty()) {
+            self.scan_screen(now);
         }
         if !self.send_writing {
             self.queue.on_output();
@@ -1389,11 +1396,55 @@ impl Actor {
         self.save();
     }
 
+    /// Every row up to the cursor: only [`Actor::scan_ports`] of a run session needs it.
     fn screen_lines(&self) -> Vec<String> {
         self.emulator
             .as_ref()
             .map(Emulator::lines_to_cursor)
             .unwrap_or_default()
+    }
+
+    /// The rows the state machine reads ([`PATTERN_TAIL_LINES`]), built without the rest.
+    fn screen_tail(&self) -> Vec<String> {
+        self.emulator
+            .as_ref()
+            .map(|emulator| emulator.tail_to_cursor(PATTERN_TAIL_LINES))
+            .unwrap_or_default()
+    }
+
+    /// The screen work of output: the ports a run session printed, then the state machine.
+    /// `now` is when the scan runs (the trailing scan fires up to [`SCAN_GAP`] after the output).
+    fn scan_screen(&mut self, now: Instant) {
+        let active = self.machine.screen_active(now);
+        if !active && self.ports.is_none() {
+            // The machine ignores the screen (hook-only profile, or a hook fired in the last
+            // 10 s): no fingerprint, no rows. It still sees the output, so a hook-only profile
+            // leaves `starting`. The next scan starts from a new baseline.
+            self.screen_print = None;
+            if let Some(state) = self.machine.on_output(now, &[]) {
+                self.set_state(state, StateSource::Screen);
+            }
+            return;
+        }
+        let print = self.emulator().text_fingerprint();
+        let starting = self.machine.state() == SessionState::Starting;
+        if !scan::changed(&mut self.screen_print, print, starting) {
+            return;
+        }
+        if self.ports.is_some() {
+            let lines = self.screen_lines();
+            let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+            self.scan_ports(&lines);
+        }
+        let tail = if active {
+            self.screen_tail()
+        } else {
+            Vec::new()
+        };
+        let tail: Vec<&str> = tail.iter().map(String::as_str).collect();
+        if let Some(state) = self.machine.on_output(now, &tail) {
+            self.set_state(state, StateSource::Screen);
+        }
     }
 
     fn set_state(&mut self, state: SessionState, source: StateSource) {
@@ -1551,6 +1602,14 @@ impl Actor {
     }
 
     fn finish(mut self, exit_code: Option<i32>) {
+        // An exit cut off the trailing scan: a run session still owes the ports it printed.
+        // (Not the state: a process that exited is not waiting for input.) Before the ports
+        // map entry is removed below.
+        if self.scan.take_pending() && self.ports.is_some() {
+            let lines = self.screen_lines();
+            let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+            self.scan_ports(&lines);
+        }
         if let Err(e) = self.log.flush() {
             tracing::warn!(id = %self.session.id, "session log flush failed: {e}");
         }

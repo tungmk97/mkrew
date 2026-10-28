@@ -477,6 +477,9 @@ hook event arrived in the last 10 s. Patterns match the last lines of the **emul
 (the daemon's per-session terminal emulator, §8), never the raw byte stream: TUIs redraw with
 cursor movement, so stripping ANSI from the raw stream gives garbage.
 
+The daemon scans a session's screen at most 4 times a second (a scan after the last output closes the gap, so the final screen is always classified) and the state machine reads only the last 4 non-blank rows up to the cursor; a state shown by the screen can therefore appear up to 250 ms after the output (ADR 0088).
+A session with a queued `session.send` is scanned on every output, and while the machine ignores the screen (hook-only profile, or a hook event in the last 10 s) no scan work is done.
+
 **Hook integrations — `mk integration install|uninstall|status <agent>`**
 
 - The daemon sets `MKREW_SESSION_ID`, `MKREW_SOCKET` and `MKREW_MK` (the absolute path of the
@@ -675,8 +678,8 @@ Protocol 47 (ADR 0069): `Project.position`, `project.update` `position?`.
   snapshots, which carry those lines (ADR 0030).
   Memory budget: a cell costs about 24 bytes (≈ 2.9 MB per full 120-column history), so the
   daemon scrollback stays bounded. Long history lives in the session log file on disk.
-- Output fan-out per chunk: emulator → state detector, session log file (buffered writer),
-  attached clients (binary frames, §7).
+- Output fan-out per chunk: emulator → state detector (at most 4 scans/s per session, ADR 0088),
+  session log file (buffered writer), attached clients (binary frames, §7).
 - **Command lookup:** on Windows try `PATHEXT` (`claude.cmd`, `.ps1` shims). Clear error if not found.
 - **State detection:** one state machine per session (lives in `mkrew-core`, pure, unit-tested).
 - **Send queue:** `session.send` while the session is `working` is queued and delivered when the

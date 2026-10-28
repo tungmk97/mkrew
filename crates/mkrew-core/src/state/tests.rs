@@ -94,6 +94,26 @@ fn patterns_only_match_the_screen_tail() {
 }
 
 #[test]
+fn the_screen_is_read_only_by_screen_modes_and_not_just_after_a_hook() {
+    let c = clock();
+    assert!(machine(StateMode::Screen).screen_active(c.at(0)));
+    assert!(!machine(StateMode::Hook).screen_active(c.at(0)));
+
+    let mut m = machine(StateMode::HookScreen);
+    assert!(m.screen_active(c.at(0)));
+    m.on_hook(c.at(100), HookEvent::Busy);
+    assert!(!m.screen_active(c.at(100)));
+    assert!(!m.screen_active(c.at(100) + HOOK_PRIORITY - Duration::from_millis(1)));
+    assert!(m.screen_active(c.at(100) + HOOK_PRIORITY));
+    // A `screen` profile ignores hooks: its screen is always read.
+    let mut m = machine(StateMode::Screen);
+    m.on_hook(c.at(100), HookEvent::Busy);
+    assert!(m.screen_active(c.at(100)));
+    m.on_exit();
+    assert!(!m.screen_active(c.at(200)));
+}
+
+#[test]
 fn multiline_patterns_see_joined_tail() {
     let cfg = StateConfig {
         needs_input_patterns: vec![r"Allow\?\n❯ 1\. Yes".into()],

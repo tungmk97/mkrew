@@ -18,6 +18,7 @@ pub mod lock;
 mod notify;
 mod plan;
 mod retention;
+mod scan;
 mod server;
 mod session;
 mod session_log;

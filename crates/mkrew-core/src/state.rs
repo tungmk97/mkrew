@@ -17,7 +17,7 @@ pub const HOOK_PRIORITY: Duration = Duration::from_secs(10);
 
 /// How many trailing non-blank screen lines `needs_input_patterns` are matched against.
 /// Small on purpose: an answered prompt must scroll out of this window for the session to
-/// leave `needs_input`. The daemon passes the screen up to the cursor row.
+/// leave `needs_input`. The daemon builds only these rows (`Emulator::tail_to_cursor`) of the screen up to the cursor row.
 pub const PATTERN_TAIL_LINES: usize = 4;
 
 /// What an agent hook reported. Hooks arrive in M3; the machine already honours them.
@@ -133,7 +133,10 @@ impl StateMachine {
         self.mode != StateMode::Hook
     }
 
-    fn screen_active(&self, now: Instant) -> bool {
+    /// Whether the machine reads the screen at `now`: the mode includes `screen`, no hook
+    /// fired in the last [`HOOK_PRIORITY`] and the process has not exited. When `false`,
+    /// building the screen text for [`on_output`](Self::on_output) is wasted work.
+    pub fn screen_active(&self, now: Instant) -> bool {
         let hook_recent = self.mode != StateMode::Screen
             && self
                 .last_hook

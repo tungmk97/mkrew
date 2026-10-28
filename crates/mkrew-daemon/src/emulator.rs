@@ -109,23 +109,48 @@ impl Emulator {
     }
 
     /// Visible lines from the top of the screen down to the cursor row, trailing blanks
-    /// trimmed. What the state machine matches `needs_input_patterns` against (SPEC §6).
+    /// trimmed. Every row: only a run session's port scan needs all of it (SPEC §10); the
+    /// state machine reads [`Self::tail_to_cursor`] (SPEC §6).
     pub fn lines_to_cursor(&self) -> Vec<String> {
-        let grid = self.term.grid();
-        let cursor_row = self.term.grid().cursor.point.line.0.max(0);
-        let last = usize::try_from(cursor_row)
-            .unwrap_or(0)
-            .min(self.term.screen_lines().saturating_sub(1));
-        (0..=last)
-            .map(|row| {
-                let line = &grid[Line(i32::try_from(row).unwrap_or(i32::MAX))];
-                let mut text: String = (0..self.term.columns())
-                    .map(|c| line[Column(c)].c)
-                    .collect();
-                text.truncate(text.trim_end().len());
-                text
-            })
+        (0..=self.cursor_row())
+            .map(|row| self.row_text(row))
             .collect()
+    }
+
+    /// The last `count` non-blank rows from the top of the screen down to the cursor row, top
+    /// to bottom, trailing blanks trimmed: what the state machine matches
+    /// `needs_input_patterns` against (`PATTERN_TAIL_LINES` rows). Walks up from the cursor and
+    /// builds a `String` only for the rows it keeps.
+    pub fn tail_to_cursor(&self, count: usize) -> Vec<String> {
+        let mut lines: Vec<String> = (0..=self.cursor_row())
+            .rev()
+            .filter(|&row| !self.row_chars(row).all(char::is_whitespace))
+            .take(count)
+            .map(|row| self.row_text(row))
+            .collect();
+        lines.reverse();
+        lines
+    }
+
+    /// The screen row the cursor is on (clamped to the screen).
+    fn cursor_row(&self) -> usize {
+        let row = self.term.grid().cursor.point.line.0.max(0);
+        usize::try_from(row)
+            .unwrap_or(0)
+            .min(self.term.screen_lines().saturating_sub(1))
+    }
+
+    /// The characters of screen row `row`, one per column.
+    fn row_chars(&self, row: usize) -> impl Iterator<Item = char> + '_ {
+        let line = &self.term.grid()[Line(i32::try_from(row).unwrap_or(i32::MAX))];
+        (0..self.term.columns()).map(move |column| line[Column(column)].c)
+    }
+
+    /// Screen row `row` as text, trailing blanks trimmed.
+    fn row_text(&self, row: usize) -> String {
+        let mut text: String = self.row_chars(row).collect();
+        text.truncate(text.trim_end().len());
+        text
     }
 
     /// Hash of the visible screen's characters (no colors, no cursor): unchanged when output
@@ -318,6 +343,53 @@ mod tests {
         assert_eq!(emu.lines_to_cursor(), ["one", "two", "three"]);
         emu.advance(b"\x1b[1;1H");
         assert_eq!(emu.lines_to_cursor(), ["one"]);
+    }
+
+    /// What the state machine took of the old full text: the last `count` non-blank rows
+    /// (trailing blanks trimmed), top to bottom.
+    fn old_feed(emu: &Emulator, count: usize) -> Vec<String> {
+        let mut tail: Vec<String> = emu
+            .lines_to_cursor()
+            .into_iter()
+            .rev()
+            .filter(|line| !line.trim_end().is_empty())
+            .take(count)
+            .collect();
+        tail.reverse();
+        tail
+    }
+
+    #[test]
+    fn the_tail_is_what_the_full_text_fed_the_state_machine() {
+        let scrolled: String = (0..12).map(|n| format!("line{n}\r\n")).collect();
+        let screens: [(&str, &[u8]); 9] = [
+            ("empty", b""),
+            ("one line", b"hello"),
+            ("blank rows between", b"a\r\n\r\n   \r\nb\r\n\r\n\r\nc"),
+            ("more than four", b"1\r\n2\r\n3\r\n4\r\n5\r\n6"),
+            ("wide char", "形x\r\nok".as_bytes()),
+            (
+                "cursor above the content",
+                b"1\r\n2\r\n3\r\n4\r\n5\r\n\x1b[2;1H",
+            ),
+            ("scrolled", scrolled.as_bytes()),
+            ("whitespace-only rows", b"x\r\n \t \r\ny"),
+            (
+                "colored prompt with trailing blanks",
+                b"\x1b[32mDo you want to proceed? (y/n)\x1b[0m   \r\n",
+            ),
+        ];
+        for (name, bytes) in screens {
+            let mut emu = Emulator::new(20, 8);
+            emu.advance(bytes);
+            for count in [1, 2, mkrew_core::state::PATTERN_TAIL_LINES] {
+                assert_eq!(
+                    emu.tail_to_cursor(count),
+                    old_feed(&emu, count),
+                    "{name}, {count}"
+                );
+            }
+        }
     }
 
     #[test]
