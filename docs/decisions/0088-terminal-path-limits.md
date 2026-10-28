@@ -28,3 +28,16 @@ The UI scrollback and the History replay costs are decided in the sections appen
 - `working` and `needs_input` can show up to 250 ms late; `idle` (3 s quiet) can be up to 250 ms late too (the tick runs the owed scan first).
 - During a hook window, invisible output (cursor, title) now moves `last_output`, which the fingerprint gate used to filter: a TUI that keeps blinking through the end of the window goes `idle` up to `idle_after_ms` after the window ends, not after its last visible change.
 - SPEC §6 and §8 say so.
+
+## UI scrollback
+
+- An attached pane's UI emulator keeps 1,000 lines (was 10,000), the same as the daemon (ADR 0082).
+  A pane is re-attached from the daemon snapshot after every tab or workspace switch, so the lines above 1,000 lived only until the next switch.
+  A full history costs about 1,000 rows x cols x 24 bytes: about 2.9 MB at 120 columns, so six attached panes use about 17 MB instead of about 173 MB.
+- The History replay pane (`TerminalPane::replay`) keeps 10,000 lines through `Emulator::for_replay`.
+  It shows the tail of a session log with far more than 1,000 lines, there is one at a time, and it is dropped when the dialog closes.
+- `INCREMENTAL_SEARCH_LINES` (1,000) stays: on an attached pane the whole history is now inside it, so only the replay pane sees the difference between a query edit and Enter.
+- The mobile web page keeps 10,000 lines of xterm scrollback: one session, and the reader renders from it.
+- Not done: a `zerowidth: Option<Box<[char]>>` grid cell and a reused grid buffer (old plan 2026-10-10 Task 14).
+  `Vec::new()` does not allocate, so a cell allocates only for a real combining mark, and a rebuild is at most 60 per second per visible pane (`shared_grid`, 4cbea62); neither was measurable.
+- Consequence: a pane scrolls back at most 1,000 lines, and Ctrl+Shift+F searches those; older output is in History (the session log).

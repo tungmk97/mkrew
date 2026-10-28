@@ -26,10 +26,16 @@ use crate::terminal::copy_mode::{CopyKey, Select};
 use crate::terminal::input::InputMode;
 use crate::terminal::links::SPACER;
 
-/// UI-side scrollback for attached panes (SPEC §10).
-const SCROLLBACK_LINES: usize = 10_000;
+/// UI-side scrollback for attached panes: what the daemon keeps and a re-attach brings back
+/// (ADR 0082, ADR 0088), so a larger number would only last until the next tab switch.
+const SCROLLBACK_LINES: usize = 1_000;
 
-/// How far back a find-bar query edit looks (Enter searches the whole history).
+/// Scrollback of a History replay pane ([`Emulator::for_replay`]): one pane at a time, dropped when
+/// the dialog closes, fed the tail of a log that holds far more than 1,000 lines (ADR 0088).
+const REPLAY_SCROLLBACK_LINES: usize = 10_000;
+
+/// How far back a find-bar query edit looks (Enter searches the whole history). An attached pane's
+/// history is no longer than this; only a replay pane sees the difference.
 const INCREMENTAL_SEARCH_LINES: usize = 1_000;
 
 /// Output held back while the screen must stay as it is (copy mode, link labels) is applied at
@@ -149,8 +155,17 @@ pub struct Emulator {
 
 impl Emulator {
     pub fn new(cols: usize, rows: usize) -> Self {
+        Self::with_scrollback(cols, rows, SCROLLBACK_LINES)
+    }
+
+    /// An emulator for a History replay pane, which keeps [`REPLAY_SCROLLBACK_LINES`].
+    pub fn for_replay(cols: usize, rows: usize) -> Self {
+        Self::with_scrollback(cols, rows, REPLAY_SCROLLBACK_LINES)
+    }
+
+    fn with_scrollback(cols: usize, rows: usize, lines: usize) -> Self {
         let config = Config {
-            scrolling_history: SCROLLBACK_LINES,
+            scrolling_history: lines,
             default_cursor_style: CursorStyle {
                 shape: CursorShape::Beam,
                 blinking: false,
@@ -516,7 +531,7 @@ impl Emulator {
 
     /// Grid point of a visible cell, accounting for the scrolled-back view.
     fn view_point(&self, row: usize, col: usize) -> Point {
-        // Screen sizes are u16 and the history 10k lines, so these fit in i32.
+        // Screen sizes are u16 and the history at most 10k lines, so these fit in i32.
         let line = row as i32 - self.display_offset() as i32;
         Point::new(Line(line), Column(col))
     }
@@ -843,7 +858,8 @@ mod tests {
 
     #[test]
     fn nearby_search_stops_short_of_old_history() {
-        let mut emu = Emulator::new(10, 2);
+        // Only a replay pane has more history than the incremental window.
+        let mut emu = Emulator::for_replay(10, 2);
         emu.advance(b"needle\r\n");
         numbered_lines(&mut emu, INCREMENTAL_SEARCH_LINES + 10);
         assert!(emu.set_search("needle"));
@@ -911,6 +927,56 @@ mod tests {
         numbered_lines(&mut emu, SCROLLBACK_LINES + 50);
         emu.scroll_lines(1_000_000);
         assert_eq!(emu.display_offset(), SCROLLBACK_LINES);
+    }
+
+    /// ADR 0088: an attached pane keeps what the daemon keeps (1,000 lines), no more.
+    #[test]
+    fn an_attached_pane_scrolls_back_1000_lines() {
+        let mut emu = Emulator::new(10, 2);
+        numbered_lines(&mut emu, 1_500);
+        emu.scroll_lines(1_000_000);
+        assert_eq!(emu.display_offset(), 1_000);
+    }
+
+    /// A pane re-attached after the daemon's history is full (1,000 lines) keeps every line of it.
+    #[test]
+    fn a_full_daemon_history_fits_the_pane_scrollback() {
+        let line = |text: String| {
+            vec![CellRun {
+                text,
+                fg: TermColor::Default,
+                bg: TermColor::Default,
+                flags: 0,
+            }]
+        };
+        let snapshot = ScreenSnapshot {
+            cols: 10,
+            rows: 3,
+            lines: vec![vec![], vec![], vec![]],
+            history: (0..1_000).map(|n| line(format!("old{n}"))).collect(),
+            cursor: CursorSnapshot {
+                row: 0,
+                col: 0,
+                visible: true,
+            },
+            modes: TermModes::default(),
+        };
+        let mut emu = Emulator::from_snapshot(&snapshot);
+        emu.scroll_lines(1_000_000);
+        assert_eq!(emu.display_offset(), 1_000);
+        assert!(
+            emu.grid().to_text().starts_with("old0\nold1\nold2\n"),
+            "the oldest daemon line is still there"
+        );
+    }
+
+    /// The History dialog replays a log tail with far more than 1,000 lines and scrolls through it.
+    #[test]
+    fn a_replay_pane_keeps_10000_lines() {
+        let mut emu = Emulator::for_replay(10, 2);
+        numbered_lines(&mut emu, 12_000);
+        emu.scroll_lines(1_000_000);
+        assert_eq!(emu.display_offset(), 10_000);
     }
 
     #[test]

@@ -30,3 +30,4 @@ It is a one-constant change and keeps the ADR 0030 path.
 - An attach snapshot carries up to 1,000 rows of JSON (at most a few MB for colorful output), far below the 16 MiB frame limit (§7).
 - SPEC §7, §8 and §10 are updated.
   Older output is still in the History dialog (session log).
+- Amended 2026-10-28 (ADR 0088): the UI scrollback of an attached pane is 1,000 lines too, so a re-attach no longer loses history.

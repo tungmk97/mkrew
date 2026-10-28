@@ -52,6 +52,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   - A run command that prints `Local: http://localhost:5173` shows `:5173` in the Run button, also when it prints that line and exits at once.
   - A claude turn that ends (hook `done`) and then sits at its prompt for a minute stays `done`/`idle`, it does not flip back to `working` by itself.
   - Task Manager: the daemon's CPU with three agents `working` is lower than before (note the numbers here).
+- [ ] **Terminal scrollback 1,000 lines (ADR 0088):**
+  - In a pwsh pane run `1..3000 | % { "line $_" }`, then Shift+PgUp until it stops: the oldest line is about `line 2000`-`2100`, and Ctrl+Shift+F finds `line 2900` but not `line 100`.
+    Switch to another tab and back: the pane scrolls back the same amount, and nothing above the screen changed.
+  - Open History (a finished session of more than 3,000 lines): the mouse wheel and Shift+PgUp go back far past 1,000 lines (up to 10,000), and Ctrl+Shift+F finds text from there.
+  - With six panes flooding (the stress setup of T2.9) note the UI memory: it is well below the 10,000-line figure of that entry (about 100 MB for six full panes in the headless test process).
+  - Phone page (`mk web`): scrolling back in the terminal still works past 1,000 lines.
 
 ### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0085)
 

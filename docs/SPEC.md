@@ -958,7 +958,8 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   "Working…" ends the list while the agent works. The list follows the bottom unless scrolled
   up (ADR 0057).
 - **Terminal rendering:** cell grid from `alacritty_terminal`; 256-color/truecolor, cursor,
-  selection & copy, paste (bracketed), scrollback (UI-side, 10,000 lines, only for attached panes),
+  selection & copy, paste (bracketed), scrollback (UI-side, 1,000 lines like the daemon's, only for
+  attached panes; the History replay pane keeps 10,000; ADR 0088),
   search, resize → `session.resize`. Performance rules (mandatory — this is the hottest path):
     - Batch adjacent cells with identical style into one shaped text run per row (as Zed's
       terminal element does). Never one GPUI element per cell.

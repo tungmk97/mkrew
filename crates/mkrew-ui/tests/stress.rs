@@ -45,8 +45,8 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(300);
 /// get headroom on the tail.
 const FRAME: Duration = Duration::from_millis(16);
 const TAIL_LIMIT: Duration = Duration::from_millis(250);
-/// A pane fed this many lines has a full scrollback (the UI emulator keeps 10,000) and screen.
-const WARM_LINES: usize = 10_100;
+/// A pane fed this many lines has a full scrollback (the UI emulator keeps 1,000) and screen.
+const WARM_LINES: usize = 1_100;
 /// Growth allowed after the first sample with every scrollback full ("RAM stays flat").
 const MEMORY_GROWTH: u64 = 16 * 1024 * 1024;
 /// The daemon's per-attachment queues (4 MB each, `CLIENT_QUEUE_BYTES`) may still fill later.

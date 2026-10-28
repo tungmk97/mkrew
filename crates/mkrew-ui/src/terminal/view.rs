@@ -160,7 +160,8 @@ impl TerminalPane {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
-        let mut emulator = Emulator::new(session.cols.max(1).into(), session.rows.max(1).into());
+        let mut emulator =
+            Emulator::for_replay(session.cols.max(1).into(), session.rows.max(1).into());
         emulator.advance(log);
         let exited = Some(session.exit_code);
         Self::with_emulator(
