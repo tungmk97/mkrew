@@ -1420,7 +1420,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
 | Panes | New agent pane / new shell pane (split right with the workspace default, like + New ▾ → Agent / Shell) | Alt+Shift+A / Alt+Shift+S |
-| Panes | Move focus | Alt+←↑→↓ |
+| Panes | Move focus; past the outer pane (or from Board, Docs, Editor, Diff) ← enters the sidebar filter and → the right panel's file tree or Git list, only while on screen (the compact rail widens); from those ← / → come back to the center | Alt+←↑→↓ |
 | Panes | Resize | Alt+Shift+←↑→↓ |
 | Panes | Zoom / unzoom pane | Ctrl+Shift+M |
 | Panes | Close pane (asks if agent running) | Ctrl+Shift+X |

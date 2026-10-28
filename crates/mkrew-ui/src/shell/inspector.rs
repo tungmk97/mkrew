@@ -130,11 +130,56 @@ impl Shell {
     /// The keyboard back to the center after the panel's focused tab went away: the editor
     /// in the Editor view, else the focused pane. (In the Git / Diff view the diff card holds
     /// `git_focus` itself: `git_shown` stays true there.)
-    fn focus_center(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    pub(crate) fn focus_center(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.view() == View::Editor {
             window.focus(&self.file_editor_focus, cx);
         } else {
             self.focus_pane(window, cx);
+        }
+    }
+
+    /// Alt+arrows (SPEC §13): the next pane that way. Past the edge (or without panes) ←
+    /// enters the sidebar and → the right panel's file tree or Git list, only while on screen;
+    /// from the panel ← comes back to the center.
+    pub(crate) fn move_focus(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let sideways = matches!(direction, Direction::Left | Direction::Right);
+        let in_panel = (self.file_tree_shown() && self.files_focus.is_focused(window))
+            || (self.git_panel_shown() && self.git_focus.is_focused(window));
+        if sideways && in_panel {
+            if direction == Direction::Left {
+                self.focus_center(window, cx);
+            }
+            return;
+        }
+        if self.view() == View::Terminals
+            && self
+                .active_tabs_mut()
+                .is_some_and(|tabs| tabs.focus_neighbour(direction))
+        {
+            // A focus move ends a zoom: the hidden panes come back (and re-attach).
+            self.sync_panes(window, cx);
+            cx.notify();
+            return;
+        }
+        match direction {
+            // The compact rail widens (it has no filter); a hidden sidebar stays hidden.
+            Direction::Left if !self.sidebar_layout.hidden() => self.focus_sidebar(window, cx),
+            Direction::Right => {
+                // Without loaded tabs the Terminals view draws no panel.
+                let drawn = self.view() != View::Terminals
+                    || self.workspace.is_some_and(|id| self.tabs.contains_key(&id));
+                if drawn && self.file_tree_shown() {
+                    window.focus(&self.files_focus, cx);
+                } else if drawn && self.git_panel_shown() {
+                    window.focus(&self.git_focus, cx);
+                }
+            }
+            _ => {}
         }
     }
 

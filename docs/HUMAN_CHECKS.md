@@ -123,6 +123,15 @@ Say so if one is wrong.
   Pick another session while one loads: only the last pick shows.
   A short session (a few KB) replays completely with no note. A full-screen TUI session (claude or omp) shows its last screen without garbage at the top.
 
+### To verify - 2026-10-28 Alt+←/→ cross into the side panels
+
+- [ ] **Edges:** two panes side by side, right panel open on Files.
+  From the left pane Alt+← puts the keyboard in the sidebar filter (active row highlighted); Alt+→ there comes back to the pane.
+  From the right pane Alt+→ gives the tree the keyboard (↑/↓ move its cursor); Alt+← there comes back to the pane.
+  Same with the panel on Git (j / k act on the list), from the Board (Alt+← only) and from the Editor (the editor takes the keyboard back).
+- [ ] **Hidden panels:** with the sidebar hidden or the right panel closed (or on its Session tab), Alt+← / Alt+→ at the edge do nothing; with the compact rail Alt+← widens it.
+  Not run: needs a person at the keyboard.
+
 ### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0085)
 
 - Every check in this entry is done in both dark and light.

@@ -104,7 +104,7 @@ use mkrew_ui::run_setup::{self, RunSetup};
 use mkrew_ui::scrollbar;
 use mkrew_ui::settings_dialog::{self, SettingsDialog};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
-use mkrew_ui::split::{Axis, Divider, Preset, drop_axis};
+use mkrew_ui::split::{Axis, Direction, Divider, Preset, drop_axis};
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{

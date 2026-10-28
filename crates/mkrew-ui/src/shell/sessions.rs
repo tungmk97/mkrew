@@ -167,6 +167,16 @@ impl Shell {
             cx.propagate();
             return;
         }
+        // Alt+→ takes the keyboard from the sidebar filter back to the center; Alt+← stays.
+        if self.filter_focus.is_focused(window)
+            && let Command::Focus(direction @ (Direction::Left | Direction::Right)) = *command
+        {
+            if direction == Direction::Right {
+                self.sidebar.end_browse();
+                self.focus_center(window, cx);
+            }
+            return;
+        }
         // Alt+0 acts before the field guards below: it must work from the composer, a comment
         // draft or the commit box. While the filter has the keyboard it gives it back.
         if *command == Command::FocusSidebar {
@@ -312,7 +322,7 @@ impl Shell {
                 Command::RenameTab
                 | Command::RenamePane
                 | Command::CloseTab
-                | Command::Focus(_)
+                | Command::Focus(Direction::Up | Direction::Down)
                 | Command::Resize(_)
                 | Command::EqualizePanes
                 | Command::ZoomPane
@@ -365,16 +375,7 @@ impl Shell {
             Command::SplitAgent => self.new_pane(SessionKind::Agent, Axis::Vertical, window, cx),
             Command::SplitShell => self.new_pane(SessionKind::Shell, Axis::Vertical, window, cx),
             Command::Layout(preset) => self.apply_layout(preset, window, cx),
-            Command::Focus(direction) => {
-                if self
-                    .active_tabs_mut()
-                    .is_some_and(|tabs| tabs.focus_neighbour(direction))
-                {
-                    // A focus move ends a zoom: the hidden panes come back (and re-attach).
-                    self.sync_panes(window, cx);
-                    cx.notify();
-                }
-            }
+            Command::Focus(direction) => self.move_focus(direction, window, cx),
             Command::Resize(direction) => {
                 let Some(project_id) = self.workspace else {
                     return;
