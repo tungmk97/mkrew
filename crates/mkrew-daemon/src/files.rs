@@ -172,11 +172,51 @@ fn visible(folder: &Path) -> HashSet<String> {
         .collect()
 }
 
+/// Names in `folder` (folder `dir` of `root`) the tree flags ignored: those the walk skips (all
+/// of them below an ignored folder), minus what git still tracks - `.gitignore` does not hide a
+/// tracked file, so `git check-ignore` has the last word. `node_modules` / `target` and their
+/// insides stay ignored; outside a repository the walk's answer stands.
+fn ignored_names(
+    git: &dyn GitBackend,
+    root: &Path,
+    dir: &str,
+    folder: &Path,
+    names: &[String],
+) -> HashSet<String> {
+    let always = |name: &str| ALWAYS_IGNORED.contains(&name);
+    // Below an ignored folder everything is ignored; a walk starting inside it cannot tell.
+    let mut parent = root.to_path_buf();
+    let mut inside_ignored = false;
+    for part in dir.split('/').filter(|p| !p.is_empty()) {
+        if always(part) {
+            return names.iter().cloned().collect();
+        }
+        if !inside_ignored && !visible(&parent).contains(part) {
+            inside_ignored = true;
+        }
+        parent.push(part);
+    }
+    let visible = visible(folder);
+    let candidates: Vec<String> = names
+        .iter()
+        .filter(|name| inside_ignored || !visible.contains(*name))
+        .cloned()
+        .collect();
+    match git.ignored(folder, &candidates) {
+        Ok(ignored) => ignored
+            .into_iter()
+            .chain(candidates.into_iter().filter(|name| always(name)))
+            .collect(),
+        Err(_) => candidates.into_iter().collect(),
+    }
+}
+
 /// The children of folder `dir` (`""` = the root; already checked to stay inside it):
 /// folders first, then by name ignoring case. Git-ignored entries (and `node_modules` /
-/// `target`) only with `show_ignored`, flagged `ignored`; `.git` never. Deleted files the
-/// markers know of are listed too, so their `D` shows.
+/// `target`) only with `show_ignored`, flagged `ignored`; tracked files never are; `.git`
+/// never listed. Deleted files the markers know of are listed too, so their `D` shows.
 pub fn list(
+    git: &dyn GitBackend,
     root: &Path,
     dir: &str,
     show_ignored: bool,
@@ -186,16 +226,17 @@ pub fn list(
     if !folder.is_dir() {
         return Err(io::ErrorKind::NotFound.into());
     }
-    let visible = visible(&folder);
-    // Below an ignored folder everything is ignored; a walk starting inside it cannot tell.
-    let mut parent = root.to_path_buf();
-    let mut inside_ignored = false;
-    for part in dir.split('/').filter(|p| !p.is_empty()) {
-        if !inside_ignored && !self::visible(&parent).contains(part) {
-            inside_ignored = true;
+    let mut children = Vec::new();
+    for entry in std::fs::read_dir(&folder)? {
+        let entry = entry?;
+        if let Ok(name) = entry.file_name().into_string()
+            && name != ".git"
+        {
+            children.push((name, entry.path()));
         }
-        parent.push(part);
     }
+    let names: Vec<String> = children.iter().map(|(name, _)| name.clone()).collect();
+    let ignored_names = ignored_names(git, root, dir, &folder, &names);
     let path_of = |name: &str| match dir {
         "" => name.to_owned(),
         dir => format!("{dir}/{name}"),
@@ -206,17 +247,13 @@ pub fn list(
         .flat_map(|p| p.match_indices('/').map(move |(at, _)| &p[..at]))
         .collect();
     let mut entries = Vec::new();
-    for entry in std::fs::read_dir(&folder)? {
-        let entry = entry?;
-        let Ok(name) = entry.file_name().into_string() else {
-            continue;
-        };
-        let ignored = inside_ignored || !visible.contains(&name);
-        if name == ".git" || (ignored && !show_ignored) {
+    for (name, full) in children {
+        let ignored = ignored_names.contains(&name);
+        if ignored && !show_ignored {
             continue;
         }
         // Follows symlinks: a link to a folder opens like one.
-        let is_dir = entry.path().is_dir();
+        let is_dir = full.is_dir();
         let path = path_of(&name);
         let (marker, has_changes) = if is_dir {
             (None, changed_dirs.contains(path.as_str()))
@@ -521,12 +558,16 @@ mod tests {
         let repo = tempfile::tempdir().unwrap();
         let root = repo.path();
         git(root, &["init", "-q", "-b", "main"]);
-        write(root, ".gitignore", b"build/\n*.log\n");
+        write(root, ".gitignore", b"build/\n*.log\nvendor/\n");
         write(root, "src/lib.rs", b"one\n");
         write(root, "src/old.rs", b"old\n");
         write(root, "README.md", b"hi\n");
         write(root, "docs/a.md", b"a\n");
+        // Tracked although `.gitignore` matches them: git (and the tree) still show them.
+        write(root, "keep.log", b"k\n");
+        write(root, "vendor/lib.c", b"c\n");
         git(root, &["add", "."]);
+        git(root, &["add", "-f", "keep.log", "vendor/lib.c"]);
         git(root, &["commit", "-q", "-m", "one"]);
         write(root, "src/lib.rs", b"two\n");
         std::fs::remove_file(root.join("src/old.rs")).unwrap();
@@ -534,15 +575,24 @@ mod tests {
         write(root, "Zeta.txt", b"z\n");
         write(root, "build/out.bin", b"x\n");
         write(root, "run.log", b"x\n");
+        write(root, "vendor/tmp.c", b"x\n");
         write(root, "node_modules/x/index.js", b"x\n");
 
         let repo_info = GitCli.repo(root).unwrap().unwrap();
         let markers = markers(&GitCli.status(root, &repo_info).unwrap());
 
-        let top = list(root, "", false, &markers).unwrap();
+        let top = list(&GitCli, root, "", false, &markers).unwrap();
         assert_eq!(
             names(&top),
-            ["docs", "src", ".gitignore", "README.md", "Zeta.txt"]
+            [
+                "docs",
+                "src",
+                "vendor",
+                ".gitignore",
+                "keep.log",
+                "README.md",
+                "Zeta.txt"
+            ]
         );
         let src = top.iter().find(|e| e.name == "src").unwrap();
         assert!(src.is_dir && src.has_changes && src.marker.is_none());
@@ -552,7 +602,7 @@ mod tests {
         assert_eq!(zeta.marker, Some(GitMarker::Untracked));
         assert!(top.iter().all(|e| !e.ignored));
 
-        let all = list(root, "", true, &markers).unwrap();
+        let all = list(&GitCli, root, "", true, &markers).unwrap();
         let ignored: Vec<&str> = all
             .iter()
             .filter(|e| e.ignored)
@@ -560,19 +610,27 @@ mod tests {
             .collect();
         assert_eq!(ignored, ["build", "node_modules", "run.log"]);
         assert!(all.iter().all(|e| e.name != ".git"));
+        let vendor = list(&GitCli, root, "vendor", true, &markers).unwrap();
+        let flags: Vec<(&str, bool)> = vendor
+            .iter()
+            .map(|e| (e.name.as_str(), e.ignored))
+            .collect();
+        assert_eq!(flags, [("lib.c", false), ("tmp.c", true)]);
         for dir in ["build", "node_modules", "node_modules/x"] {
-            let inside = list(root, dir, true, &markers).unwrap();
+            let inside = list(&GitCli, root, dir, true, &markers).unwrap();
             assert!(
                 !inside.is_empty() && inside.iter().all(|e| e.ignored),
                 "{dir}"
             );
             assert!(
-                list(root, dir, false, &markers).unwrap().is_empty(),
+                list(&GitCli, root, dir, false, &markers)
+                    .unwrap()
+                    .is_empty(),
                 "{dir}"
             );
         }
 
-        let src = list(root, "src", false, &markers).unwrap();
+        let src = list(&GitCli, root, "src", false, &markers).unwrap();
         let marked: Vec<(&str, &str, Option<GitMarker>)> = src
             .iter()
             .map(|e| (e.name.as_str(), e.path.as_str(), e.marker))
@@ -586,7 +644,7 @@ mod tests {
             ]
         );
 
-        let err = list(root, "missing", false, &markers).unwrap_err();
+        let err = list(&GitCli, root, "missing", false, &markers).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 

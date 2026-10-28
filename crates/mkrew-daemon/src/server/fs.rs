@@ -56,7 +56,7 @@ impl Daemon {
                     markers.extend(nested.map(|(path, marker)| (format!("{repo}/{path}"), marker)));
                 }
             }
-            files::list(&root, &folder, params.show_ignored, &markers)
+            files::list(&*git, &root, &folder, params.show_ignored, &markers)
         })
         .await;
         match listed {
