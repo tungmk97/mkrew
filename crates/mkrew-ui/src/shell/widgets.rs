@@ -1,7 +1,6 @@
 //! Shared widgets: buttons, text fields, menus, status marks, tooltips.
 
 use crate::*;
-use gpui::{Animation, AnimationExt, pulsating_between};
 
 /// A centered message: optional title, one sentence, optional smaller detail (an
 /// [`empty_state`] without a glyph).
@@ -881,33 +880,34 @@ pub(crate) fn conflict_badge(
         )
 }
 
-/// A session's status mark (SPEC §11): three dots taking turns while working, else the glyph.
-/// Fixed width, so rows with different states line up.
-pub(crate) fn status_mark(state: SessionState, now: i64, theme: &Theme) -> gpui::AnyElement {
-    let color = rgb(sidebar::status_color(theme, state));
+/// A session's status mark (SPEC §11): one still dot in the state's color while working, else
+/// the state's glyph in its color. Fixed width, so rows with different states line up.
+pub(crate) fn status_mark(state: SessionState, theme: &Theme) -> gpui::AnyElement {
+    let color = sidebar::status_color(theme, state);
     let mark = div()
         .flex_none()
         .w(theme::rems_px(theme::STATUS_MARK_WIDTH))
         .flex()
         .items_center()
         .justify_center();
-    if state != SessionState::Working {
-        return mark
-            .text_color(color)
-            .child(status::icon(state))
-            .into_any_element();
+    if state == SessionState::Working {
+        return mark.child(status_dot(color, false)).into_any_element();
     }
-    mark.child(working_dots(now, color)).into_any_element()
+    mark.text_color(rgb(color))
+        .child(status::icon(state))
+        .into_any_element()
 }
 
-/// The `working` mark's three dots taking turns, lit per [`theme::STATUS_TICK`].
-pub(crate) fn working_dots(now: i64, color: gpui::Rgba) -> gpui::Div {
-    let lit = status::working_dot(now);
+/// The loading mark: three dots taking turns, one lit per [`theme::STATUS_TICK`] (a pane being
+/// started, a voice transcription, a Jira fetch: all last seconds, ADR 0086). The status loop
+/// keeps the root redrawing while one is on screen (`connection.rs` `due`).
+pub(crate) fn loading_dots(now: i64, color: gpui::Rgba) -> gpui::Div {
+    let lit = status::loading_dot(now);
     div()
         .flex()
         .items_center()
         .gap(theme::rems_px(theme::STATUS_DOT_GAP))
-        .children((0..status::WORKING_DOTS).map(move |i| {
+        .children((0..status::LOADING_DOTS).map(move |i| {
             div()
                 .size(theme::rems_px(theme::STATUS_DOT))
                 .rounded_full()
@@ -920,34 +920,17 @@ pub(crate) fn working_dots(now: i64, color: gpui::Rgba) -> gpui::Div {
         }))
 }
 
-/// A round status dot: filled in `color`, or `hollow` (a ring: idle, stopped). `pulse` breathes
-/// its opacity (working); gpui draws it still under reduce-motion. `id` keys the animation.
-pub(crate) fn status_dot(
-    id: impl Into<gpui::ElementId>,
-    color: u32,
-    hollow: bool,
-    pulse: bool,
-) -> gpui::AnyElement {
-    let dot = div()
+/// A round status dot: filled in `color`, or `hollow` (a ring: idle, stopped). Always still: a
+/// looping animation renders the whole window for as long as it is on screen (ADR 0086).
+pub(crate) fn status_dot(color: u32, hollow: bool) -> gpui::Div {
+    div()
         .flex_none()
         .size(theme::rems_px(theme::STATUS_DOT_LARGE))
         .rounded_full()
         .when(hollow, |el| {
             el.border(px(theme::BORDER_WIDTH)).border_color(rgb(color))
         })
-        .when(!hollow, |el| el.bg(rgb(color)));
-    if !pulse {
-        return dot.into_any_element();
-    }
-    dot.with_animation(
-        id,
-        Animation::new(theme::PULSE_PERIOD)
-            .repeat_synced()
-            .with_easing(pulsating_between(theme::PULSE_MIN_OPACITY, opacity::FULL))
-            .with_max_fps(theme::PULSE_FPS),
-        |dot, value| dot.opacity(value),
-    )
-    .into_any_element()
+        .when(!hollow, |el| el.bg(rgb(color)))
 }
 
 /// The voice waveform (§20G): one bar per height in `bars` (0..=1, [`crate::voice::bars`]).

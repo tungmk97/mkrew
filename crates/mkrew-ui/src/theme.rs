@@ -80,7 +80,7 @@ pub const TOAST_DURATION: Duration = Duration::from_secs(4);
 pub const TOAST_WIDTH: f32 = 320.0;
 pub const TOAST_MAX_LINES: usize = 4;
 
-/// Status refresh period: one step of the `working` dots and the elapsed/idle time update
+/// Status refresh period: one step of the loading dots and the elapsed/idle time update
 /// (SPEC §11, §14).
 pub const STATUS_TICK: Duration = Duration::from_millis(500);
 
@@ -90,14 +90,14 @@ pub const STATUS_TICK: Duration = Duration::from_millis(500);
 pub const PHONE_TICK: Duration = Duration::from_secs(1);
 pub const PHONE_POLL_IDLE: Duration = Duration::from_secs(5);
 
-/// Diameter of one dot of the `working` mark (SPEC §11).
+/// Diameter of one dot of the loading mark (SPEC §11).
 pub const STATUS_DOT: f32 = 4.0;
-/// Gap between the dots of the `working` mark.
+/// Gap between the dots of the loading mark.
 pub const STATUS_DOT_GAP: f32 = 2.0;
 /// Width of every status mark, so glyph and dot rows line up (3 × 4 + 2 × 2 = 16). These three
 /// are px at the default 13 px body and scale with `[ui] font_size` ([`rems_px`]).
 pub const STATUS_MARK_WIDTH: f32 = space::L;
-/// The sidebar's narrower mark slot: one blinking dot while working, else the glyph.
+/// The sidebar's narrower mark slot: one still dot while working, else the glyph.
 pub const SIDEBAR_MARK_WIDTH: f32 = space::S;
 
 /// Voice input waveform in the recording pill (§20G): bars this wide and this far apart, from
@@ -198,7 +198,7 @@ pub mod opacity {
     pub const DISABLED: f32 = 0.5;
     /// A changed-file row marked as viewed (SPEC §12B): dimmed, still readable.
     pub const VIEWED: f32 = 0.6;
-    /// The unlit dots of the `working` mark.
+    /// The unlit dots of the loading mark.
     pub const STATUS_DOT_DIM: f32 = 0.35;
     /// Hover-revealed actions (SPEC §14 progressive disclosure): hidden, then fully shown.
     pub const HIDDEN: f32 = 0.0;
@@ -1778,7 +1778,7 @@ pub const WORKSPACE_AVATAR_TINY: f32 = 14.0;
 pub const WORKSPACE_STRIPE_WIDTH: f32 = 3.0;
 /// A status dot (run pill, tab, RUN row, working pill): px at the default font size.
 pub const STATUS_DOT_LARGE: f32 = 6.0;
-/// One breath of a pulsing status dot (working, running); its lowest opacity.
+/// One breath of the voice input ring ([`crate::voice::pulse`]); its lowest opacity.
 pub const PULSE_PERIOD: Duration = Duration::from_millis(1600);
 pub const PULSE_MIN_OPACITY: f32 = 0.35;
 /// A pane's status pill ("Idle · 2m") in the tab strip and the pane header.
@@ -1788,8 +1788,6 @@ pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
 /// Reading width of an agent pane: the terminal is at most this wide (≈ 120–140 columns at
 /// the default font) and centered, so the program wraps there (the PTY gets fewer columns).
 pub const READING_WIDTH: f32 = 960.0;
-/// A pulse redraws at most this often (each redraw renders the window: keep it low).
-pub const PULSE_FPS: f32 = 12.0;
 pub const EMPTY_STATE_MAX_WIDTH: f32 = 320.0;
 pub const EMPTY_STATE_TILE: f32 = 44.0;
 

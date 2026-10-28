@@ -599,7 +599,7 @@ impl Shell {
                         div()
                             .flex_none()
                             .text_size(font_size::BODY)
-                            .child(status_mark(session.state, now, theme)),
+                            .child(status_mark(session.state, theme)),
                     )
                     .child(
                         div()

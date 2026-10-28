@@ -215,7 +215,7 @@ impl Shell {
                             }),
                         )
                 })
-                .child(status_dot(id.clone(), color, hollow, false))
+                .child(status_dot(color, hollow))
                 .child(
                     div()
                         .flex_1()
@@ -1056,21 +1056,18 @@ impl Shell {
             .when(self.modal_open(), |el| el.relative().child(inert_layer()))
     }
 
-    /// Voice input (§20G): a breathing dot while it records, the `working` dots while it
+    /// Voice input (§20G): a steady dot while it records, the loading dots while it
     /// transcribes (the recording pill says the rest), or the last outcome; `None` while idle.
     /// `compact`: the rail, which has no room for the outcome text.
     pub(crate) fn voice_status(&self, compact: bool, theme: &Theme) -> Option<gpui::Div> {
         let row = || div().min_w_0().flex().items_center().gap(px(space::XS));
         match &self.voice {
             voice::State::Idle => None,
-            voice::State::Recording { .. } => Some(row().child(status_dot(
-                "voice-status-dot",
-                theme.status_needs_input,
-                false,
-                true,
-            ))),
+            voice::State::Recording { .. } => {
+                Some(row().child(status_dot(theme.status_needs_input, false)))
+            }
             voice::State::Transcribing => {
-                Some(row().child(working_dots(status::now_ms(), rgb(theme.text_muted))))
+                Some(row().child(loading_dots(status::now_ms(), rgb(theme.text_muted))))
             }
             voice::State::Message(text) => {
                 (!compact).then(|| row().child(notice(theme.text_muted, text.clone())))
@@ -1178,12 +1175,7 @@ pub(crate) fn workspace_row(
                 .bg(rgb(theme.accent_bg))
                 .text_size(font_size::META)
                 .text_color(rgb(theme.accent_text))
-                .child(status_dot(
-                    SharedString::from(format!("workspace-working-{project_id}")),
-                    theme.status_working,
-                    false,
-                    true,
-                ))
+                .child(status_dot(theme.status_working, false))
                 .child(format!("{} working", row.working)),
         )
     } else {
@@ -1623,15 +1615,15 @@ pub(crate) fn compact_session_row(
                 shell.open_pane_menu(session_id, event.position, window, cx);
             }),
         )
-        .child(mark_slot(row.mark(), now, theme))
+        .child(mark_slot(row.mark(), theme))
         .child(agent_chip(badge, theme.text, theme))
         .into_any_element()
 }
 
 /// A sidebar row's state mark in a narrow fixed slot (empty without a mark), so agent chips
-/// stay in one column without pushing the rows in: one dot that blinks on the status tick
-/// while working, else the state glyph.
-fn mark_slot(mark: Option<SessionState>, now: i64, theme: &Theme) -> gpui::AnyElement {
+/// stay in one column without pushing the rows in: one still dot in the state's color while
+/// working, else the state glyph.
+fn mark_slot(mark: Option<SessionState>, theme: &Theme) -> gpui::AnyElement {
     let slot = div()
         .flex_none()
         .w(theme::rems_px(theme::SIDEBAR_MARK_WIDTH))
@@ -1641,24 +1633,12 @@ fn mark_slot(mark: Option<SessionState>, now: i64, theme: &Theme) -> gpui::AnyEl
     let Some(state) = mark else {
         return slot.into_any_element();
     };
-    let color = rgb(sidebar::status_color(theme, state));
-    if state != SessionState::Working {
-        return slot
-            .text_size(font_size::META)
-            .text_color(color)
-            .child(status::icon(state))
-            .into_any_element();
+    let color = sidebar::status_color(theme, state);
+    if state == SessionState::Working {
+        return slot.child(status_dot(color, false)).into_any_element();
     }
-    slot.child(
-        div()
-            .size(theme::rems_px(theme::STATUS_DOT))
-            .rounded_full()
-            .bg(color)
-            .opacity(if status::working_dot(now) == 0 {
-                opacity::STATUS_DOT_DIM
-            } else {
-                opacity::FULL
-            }),
-    )
-    .into_any_element()
+    slot.text_size(font_size::META)
+        .text_color(rgb(color))
+        .child(status::icon(state))
+        .into_any_element()
 }

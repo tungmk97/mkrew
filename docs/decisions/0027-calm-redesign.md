@@ -59,7 +59,7 @@ SPEC §10 (layout), §11 (sidebar rows), §13 (Toggle theme), §14 (tokens, them
 - Status glyphs stay wherever no text label sits beside them (tab label, §11).
 - Not matched from the reference, and why:
   - the single pulsing dot became three dots stepping on the 500 ms status tick (a GPUI
-    animation redraws the whole window every frame);
+    animation redraws the whole window every frame); ADR 0086 later made the working mark a still colored dot too;
   - SVG icons became Unicode glyphs (no icon asset pipeline);
   - the empty state's `Ctrl+Shift+S` chip shows the real `NewShellTab` key (Ctrl+Shift+T), and
     the chips name the new-tab shortcuts while the buttons add a pane to the current tab;

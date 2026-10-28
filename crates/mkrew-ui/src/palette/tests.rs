@@ -954,7 +954,7 @@ fn go_to_workspaces_live_sessions_and_tasks() {
     let working = all
         .iter()
         .find(|entry| entry.action == Action::GoTo(Target::Session(sessions[0].id)));
-    assert_eq!(working.map(|e| e.shortcut.as_str()), Some("••• working"));
+    assert_eq!(working.map(|e| e.shortcut.as_str()), Some("● working"));
 
     // A session that needs input leads the list, before the commands.
     let asking = session(app.id, Some("deploy?"), SessionState::NeedsInput);

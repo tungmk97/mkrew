@@ -151,14 +151,7 @@ impl Shell {
                             .truncate()
                             .child(label.unwrap_or(&tab.title).to_owned()),
                     )
-                    .children(dot.map(|(color, hollow, pulse)| {
-                        status_dot(
-                            SharedString::from(format!("tab-dot-{tab_id}")),
-                            color,
-                            hollow,
-                            pulse,
-                        )
-                    }))
+                    .children(dot.map(|(color, hollow)| status_dot(color, hollow)))
                     .child(
                         row_action(
                             SharedString::from(format!("tab-close-{tab_id}")),
@@ -639,7 +632,7 @@ impl Shell {
             now,
             self.turns.get(session),
         );
-        parts.push(status_pill(info, pill, now, theme).into_any_element());
+        parts.push(status_pill(info, pill, theme).into_any_element());
         let paths = self.conflicts.for_session(session);
         if !paths.is_empty() {
             parts.push(
@@ -889,15 +882,16 @@ impl Shell {
         self.draggable_pane(header, info, theme)
     }
 
-    /// A tab's status dot from its most urgent pane: amber needs input, red exited, a pulsing
-    /// accent while an agent works, green for done or a live run process, else a hollow ring
-    /// (idle, starting). `(color, hollow, pulse)`; `None` for an empty tab.
+    /// A tab's status dot from its most urgent pane, always still and one color per state:
+    /// amber needs input, red exited, indigo while an agent works, green for done or a live run
+    /// process, else a hollow gray ring (idle, starting). `(color, hollow)`; `None` for an
+    /// empty tab.
     pub(crate) fn tab_dot(
         &self,
         tab: &Tab,
         urgent: Option<&Session>,
         theme: &Theme,
-    ) -> Option<(u32, bool, bool)> {
+    ) -> Option<(u32, bool)> {
         let urgent = urgent?;
         let sessions = self.sidebar.sessions();
         let run_live = tab.sessions().iter().any(|id| {
@@ -908,14 +902,14 @@ impl Shell {
             })
         });
         Some(match urgent.state {
-            SessionState::NeedsInput => (theme.status_needs_input, false, false),
-            SessionState::Exited => (theme.status_exited, false, false),
+            SessionState::NeedsInput => (theme.status_needs_input, false),
+            SessionState::Exited => (theme.status_exited, false),
             SessionState::Working if urgent.kind == SessionKind::Agent => {
-                (theme.status_working, false, true)
+                (theme.status_working, false)
             }
-            _ if run_live => (theme.status_done, false, false),
-            SessionState::Done => (theme.status_done, false, false),
-            _ => (theme.status_idle, true, false),
+            _ if run_live => (theme.status_done, false),
+            SessionState::Done => (theme.status_done, false),
+            _ => (theme.status_idle, true),
         })
     }
 
@@ -944,7 +938,7 @@ impl Shell {
     }
 }
 
-/// The button of a pane being started: "Starting agent" with the `working` dots, no click.
+/// The button of a pane being started: "Starting agent" with the loading dots, no click.
 pub(crate) fn starting_button(
     id: &'static str,
     kind: SessionKind,
@@ -965,7 +959,7 @@ pub(crate) fn starting_button(
         .opacity(opacity::FULL)
         .gap(px(space::S))
         .cursor(CursorStyle::OperationNotAllowed)
-        .child(working_dots(now, rgb(color)))
+        .child(loading_dots(now, rgb(color)))
         .into_any_element()
 }
 
@@ -1020,7 +1014,6 @@ pub(crate) fn drop_catcher(session: Ulid, cx: &Context<'_, Shell>) -> impl IntoE
 pub(crate) fn status_pill(
     session: &Session,
     pill: String,
-    now: i64,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let (state, changed_at) = (session.state, session.state_changed_at);
@@ -1042,7 +1035,7 @@ pub(crate) fn status_pill(
             session.state_source,
             changed_at,
         ))
-        .child(status_mark(state, now, theme))
+        .child(status_mark(state, theme))
         .child(pill)
 }
 

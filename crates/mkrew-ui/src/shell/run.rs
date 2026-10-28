@@ -373,9 +373,7 @@ impl Shell {
             }))
             // ponytail: a steady dot, not a pulse: a pulse re-renders the window for as long as
             // a dev server runs (hours), against the idle CPU budget (SPEC §15).
-            .when(live, |el| {
-                el.child(status_dot("run-pill-dot", dot, false, false))
-            })
+            .when(live, |el| el.child(status_dot(dot, false)))
             .when(!live, |el| {
                 el.child(icon_svg(
                     Icon::Play,

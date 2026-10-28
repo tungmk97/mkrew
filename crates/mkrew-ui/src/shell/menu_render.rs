@@ -65,7 +65,7 @@ fn item_row(
         Tone::Accent => theme.accent_text,
     };
     let checked = item.check == Some(true);
-    let lead = lead_element(&item.lead, id, ix, color, theme);
+    let lead = lead_element(&item.lead, color, theme);
     let (action, toggle) = (item.action.clone(), item.toggle);
     // A row that cannot act: the same box without the hover, faded, no click.
     let frame = if enabled {
@@ -129,13 +129,7 @@ fn item_row(
         .into_any_element()
 }
 
-fn lead_element(
-    lead: &Lead,
-    id: &str,
-    ix: usize,
-    color: u32,
-    theme: &Theme,
-) -> Option<gpui::AnyElement> {
+fn lead_element(lead: &Lead, color: u32, theme: &Theme) -> Option<gpui::AnyElement> {
     Some(match lead {
         Lead::None => return None,
         Lead::Icon(glyph) => icon_svg(*glyph, theme::ICON_SIZE_SMALL, color).into_any_element(),
@@ -155,13 +149,7 @@ fn lead_element(
                 Dot::Exited => (theme.status_exited, false),
                 Dot::Stopped => (theme.status_idle, true),
             };
-            status_dot(
-                SharedString::from(format!("{id}-dot-{ix}")),
-                color,
-                hollow,
-                false,
-            )
-            .into_any_element()
+            status_dot(color, hollow).into_any_element()
         }
     })
 }

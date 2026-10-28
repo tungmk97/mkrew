@@ -786,7 +786,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   Each workspace is a card (ADR 0062): `card` fill, faint border, radius 8, 8 px between cards,
   a 3 px stripe of the workspace color on its left edge (none without a color). Its header row:
   chevron, colored letter avatar, bold name (card-title size), 📌, then its status: a
-  `● 1 working` pill (pulsing dot) while an agent works, else muted `2 idle`, plus amber `? N`
+  `● 1 working` pill (a still dot) while an agent works, else muted `2 idle`, plus amber `? N`
   while N need input; the ⋯ menu on hover (or right-click). Its sessions sit indented in the
   card, agents first without a label (TERMINAL is labeled beside agents or RUN): agent glyph
   (in an accent chip while working; its hover says the state), title
@@ -872,7 +872,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   Shift+F10 on the selected card opens its menu: Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents… (each as its hover button; the buttons stay and call the same functions).
 - **Terminals:** tab bar on top; each tab is a split tree of panes; each pane is a session.
   Each tab shows an icon of its focused pane (the agent's badge chip, or `>_` for a shell; none
-  for a tab without panes), one status dot of its most urgent pane (§11: pulsing accent while an
+  for a tab without panes), one status dot of its most urgent pane (§11: a still accent dot while an
   agent works, amber needs input, green done or a live run process, red exited, a hollow ring
   idle), its title and a ✕ (always on the active tab, on hover for the others); closing never
   activates the tab first. `+` (new tab) follows the tabs. At the right end of the strip: for a
@@ -1035,13 +1035,14 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
 | State | Icon | Extra |
 | --- | --- | --- |
 | starting | ◌ | |
-| working | ••• three dots taking turns, one step per status tick (500 ms) | elapsed time |
+| working | ● a still dot in the working color (no animation, ADR 0086) | elapsed time |
 | needs_input | ? | highlighted pane border, counted in "Needs you" |
 | idle | ○ | idle time |
 | done | ✓ | counted in "Needs you" until viewed |
 | exited | ✕ | exit code (History); its sidebar row and pane close (ADR 0033) |
 | unknown | · | |
 
+- Each state's mark has its own color (`status_working`, `status_needs_input`, `status_done`, `status_exited`, `status_idle`; dark and light), drawn beside its icon or text, never alone. Nothing loops while an agent works: the dot is still and the time text moves (ADR 0086). The loading mark (a pane being started, a transcription, a Jira fetch) is three dots taking turns on the status tick.
 - Pane status (ADR 0054), shown at the right end of the tab strip for a single pane (it has no
   header) and in the compact header of each pane of a split: the task folder (only for a task
   that runs in a worktree, shown as its branch without `mkrew/`), **one status pill** (the
@@ -1066,7 +1067,7 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   colored pane tints its agent chip and draws a thin line under its header (a single pane: on
   top of its terminal); the border still shows state (ADR 0037).
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
-- Workspace row: `● N working` (a pill, pulsing dot) while an agent works, else `N idle`; amber
+- Workspace row: `● N working` (a pill, a still dot) while an agent works, else `N idle`; amber
   `? N` while N need input; no token total (the Session tab shows usage). Sidebar session rows
   sit indented in the workspace's card (ADR 0062): agent chip (an accent chip while working;
   its hover gives the
@@ -1459,7 +1460,7 @@ The terminal is the hero; everything else steps back.
    under the header of a colored pane.
 3. **One accent color** for selection, primary buttons, focus. Status colors only for agent states.
 4. **Progressive disclosure.** Secondary actions on cards, pane headers and rows appear on hover/focus.
-5. **Gentle motion.** Panels, view switches, drag & drop: 120–180 ms ease-out. Small, slow working dots.
+5. **Gentle motion.** Panels, view switches, drag & drop: 120–180 ms ease-out. Nothing loops while an agent works: its mark is a still dot and its time text moves (ADR 0086).
    Respect the OS reduce-motion setting.
 6. **Helpful empty states.** One short sentence plus one primary action with its shortcut.
 7. **Keyboard = mouse.** Everything clickable has a visible focus ring; tooltips show shortcuts.
@@ -2255,17 +2256,17 @@ Speak instead of typing, in Vietnamese or English (mixed and accented speech inc
    terminal, a text field or a dialog has the keyboard. A recording stops by itself after
    `[voice] max_seconds` (§20.0). While transcribing, the key does nothing.
 2. **Recording pill.** While recording, a pill floats centered at the bottom of the window
-   content. It fades and slides in over `theme::motion::SLOW`. It holds a breathing dot, a
+   content. It fades and slides in over `theme::motion::SLOW`. It holds a steady dot, a
    seven-bar waveform, `m:ss`, and `Ctrl+Shift+D stops`. The waveform follows the microphone
    loudness, smoothed: quick up, slow down. A wave runs across the bars, and in silence they keep a
    low breath, so a live microphone never looks still. It is redrawn every
-   `theme::VOICE_METER_TICK`. While transcribing, the pill shows the `working` dots and
+   `theme::VOICE_METER_TICK`. While transcribing, the pill shows the loading dots and
    `Transcribing`, and after that it disappears. It never takes a click or the keyboard.
    The field or terminal pane that has the keyboard gets an accent ring over its border. The ring
-   breathes while recording and holds steady while transcribing. Under reduce motion, the dots,
-   the ring, and the wave stand still, and the bars still follow the loudness.
+   breathes while recording and holds steady while transcribing. Under reduce motion, the ring
+   and the wave stand still, and the bars still follow the loudness.
    The sidebar footer (the title bar while the sidebar is hidden, and the rail) shows only the
-   breathing dot or the `working` dots. Errors and notes (`✕ Voice: …`) show there and stay until
+   steady dot or the loading dots. Errors and notes (`✕ Voice: …`) show there and stay until
    the next start.
 3. **Speech to text.** One `POST {base_url}/audio/transcriptions` (OpenAI-compatible: Groq by
    default, OpenAI, or a local server) carries the recording as 16-bit mono WAV in multipart form
@@ -2331,7 +2332,7 @@ speech to text, this is the second user-configured use of the network, and only 
    stops; no polling). The list shows once every page arrived. JQL `project in (PROJ, BILL) AND
    statusCategory != Done ORDER BY updated DESC`; `Mine` adds `AND assignee = currentUser()`
    before `statusCategory`. While it runs:
-   "Loading Jira issues…" with working dots. A row: issue type, key, summary (one line, cut with
+   "Loading Jira issues…" with loading dots. A row: issue type, key, summary (one line, cut with
    `…`), status and, when a task is linked, that task's column (`Todo`, `Running`, `Review`,
    `Done`) as a chip. Nothing found: "No open issues in PROJ, BILL" (`Mine`: "No open issues
    assigned to you in PROJ, BILL"). The "Filter issues" field keeps the issues whose key or
@@ -2351,7 +2352,7 @@ speech to text, this is the second user-configured use of the network, and only 
 4. **Open.** A task belongs to issue `PROJ-123` when it is in the workspace and its title starts
    with `PROJ-123 ` (the key and one space; `PROJ-12` does not match `PROJ-123 x`; no column,
    ADR 0066). Click a row with a linked task: the Board switches to `Tasks` and the task's edit
-   dialog opens; no second task is made. Click a row without one: the row shows working dots
+   dialog opens; no second task is made. Click a row without one: the row shows loading dots
    while `GET /rest/api/3/issue/PROJ-123?fields=summary,description` runs, then the New task
    dialog opens with title `PROJ-123 <summary>`, the workspace's default agent, "Run in a
    worktree" off (the dialog's own choice), and the prompt

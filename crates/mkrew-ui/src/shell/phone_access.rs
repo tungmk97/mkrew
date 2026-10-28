@@ -183,7 +183,7 @@ impl Shell {
                             .absolute()
                             .top(px(space::XS))
                             .right(px(space::XS))
-                            .child(status_dot("phone-on", theme.status_done, false, false)),
+                            .child(status_dot(theme.status_done, false)),
                     )
                 })
                 .tooltip(tooltip(theme, text, ""))

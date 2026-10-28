@@ -371,7 +371,7 @@ impl Shell {
                             cx.notify();
                         }
                     }))
-                    .child(status_mark(choice.state, now, theme))
+                    .child(status_mark(choice.state, theme))
                     .child(
                         div()
                             .flex_1()

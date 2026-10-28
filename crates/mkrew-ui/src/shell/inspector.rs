@@ -566,7 +566,7 @@ impl Shell {
                     ))
                     .child(div().min_w_0().truncate().child(card.agent.clone()))
                     .child(div().flex_1())
-                    .child(status_mark(session.state, now, theme)),
+                    .child(status_mark(session.state, theme)),
             )
             .child(
                 div()

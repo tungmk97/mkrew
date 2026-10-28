@@ -661,7 +661,7 @@ impl Board {
     }
 
     /// Whether a run time on `project_id`'s board reads differently at `now_ms` than at
-    /// `last_ms` (session spinners are covered by [`status::redraw_due`]).
+    /// `last_ms` (session times are covered by [`status::redraw_due`]).
     pub fn redraw_due(
         &self,
         project_id: Ulid,

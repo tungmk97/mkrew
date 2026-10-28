@@ -662,7 +662,7 @@ impl Shell {
                             )),
                         )
                         .when(saving, |el| {
-                            el.child(working_dots(now, rgb(theme.text_muted)))
+                            el.child(loading_dots(now, rgb(theme.text_muted)))
                         }),
                 )
                 .children(error.map(|error| notice(theme.text, format!("✕ {error}"))))
@@ -671,7 +671,7 @@ impl Shell {
         match view.map_or(&Load::NotLoaded, |v| &v.load) {
             Load::Loading => message(theme, None, "Loading Jira issues…".into(), None)
                 .flex_1()
-                .child(working_dots(now, rgb(theme.text_muted)))
+                .child(loading_dots(now, rgb(theme.text_muted)))
                 .into_any_element(),
             Load::Failed(reason) => message(
                 theme,
@@ -702,7 +702,7 @@ impl Shell {
                 let row_error = view.and_then(|v| v.row_error.as_ref());
                 let filter = view.map_or("", |v| v.filter.as_str());
                 let dots = |key: &str| {
-                    (opening == Some(key)).then(|| working_dots(now, rgb(theme.text_muted)))
+                    (opening == Some(key)).then(|| loading_dots(now, rgb(theme.text_muted)))
                 };
                 let error_under = |key: &str| {
                     row_error

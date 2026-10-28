@@ -39,7 +39,7 @@ pub struct StatusDisplay {
 pub fn status_display(state: SessionState) -> StatusDisplay {
     let (icon, label) = match state {
         SessionState::Starting => ("◌", "starting"),
-        SessionState::Working => ("•••", "working"),
+        SessionState::Working => ("●", "working"),
         SessionState::NeedsInput => ("?", "needs input"),
         SessionState::Idle => ("○", "idle"),
         SessionState::Done => ("✓", "done"),

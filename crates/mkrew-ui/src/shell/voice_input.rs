@@ -201,7 +201,7 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap(px(space::S))
-                    .child(status_dot("voice-pill-dot", color, false, true))
+                    .child(status_dot(color, false))
                     .child(voice_meter(&bars, rgb(color)))
                     .child(
                         div()
@@ -221,7 +221,7 @@ impl Shell {
                 .flex()
                 .items_center()
                 .gap(px(space::S))
-                .child(working_dots(status::now_ms(), rgb(theme.text_muted)))
+                .child(loading_dots(status::now_ms(), rgb(theme.text_muted)))
                 .child(
                     div()
                         .text_size(font_size::BODY)

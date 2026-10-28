@@ -72,7 +72,7 @@ impl Shell {
             this.update(cx, |shell, cx| shell.window_should_close(window, cx))
                 .unwrap_or(true)
         });
-        // Spinner and elapsed/idle times move on their own (§11).
+        // Elapsed/idle times and the loading marks move on their own (§11).
         cx.spawn_in(window, async move |this, cx| {
             let mut last = status::now_ms();
             loop {

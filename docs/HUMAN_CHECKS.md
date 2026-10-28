@@ -27,6 +27,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   A `settings.toml` with `[ui] right_panel = "session"` opens on Files.
   Set `[features] session = true`: the Session tab is back, live, without a restart.
 
+### To verify - 2026-10-28 perf (plan docs/superpowers/plans/2026-10-28-perf-redraw-terminal.md)
+
+- [ ] **Still working dot, check working dot visually (dark + light) (A1, N1, ADR 0086):** start 2 agents that work for a minute or more. In the sidebar session row, the workspace `● 2 working` pill, the tab dot, the pane pill, the Board cards and the inspector, a working agent shows one steady indigo dot (nothing pulses or steps) next to `working · 12s`; the text still counts seconds, then minutes. Needs input is an amber `?`, done a green `✓`, exited a red `✕`, idle a gray `○` (a hollow gray ring on the tab). The five colors are told apart at a glance in dark and in light, and the dot is readable on the selected row and on the workspace pill. The sidebar slot's dot is now 6 px (it was 4 px): it must not touch the agent chip.
+- [ ] **Loading marks keep moving:** a pane being started shows `Starting agent` with three dots taking turns; a voice transcription shows the dots and `Transcribing`; a Jira fetch shows the dots. Recording shows a steady amber dot, the waveform and the ring still breathe.
+- [ ] **CPU (A1, N1):** with 2-3 agents `working` and the window visible, `mkrew-ui` CPU in Task Manager over one minute is lower than before this task (before: the dots 2 renders per second plus the 12 fps pulse).
+
 ### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0085)
 
 - Every check in this entry is done in both dark and light.
@@ -232,9 +238,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 ### To verify — 2026-10-27 Voice recording animation (SPEC §20G)
 
-- [ ] **Pill (dark + light):** press Ctrl+Shift+D. A pill fades and slides up at the bottom center of the window. It shows a breathing dot, 7 bars, `0:03`, and the `Ctrl+Shift+D stops` key. Speak: the bars jump up with your voice and sink slowly, with a wave running across them. Stay silent: the bars stay low but keep breathing. Press again: the pill shows the dots and `Transcribing`, then disappears.
+- [ ] **Pill (dark + light):** press Ctrl+Shift+D. A pill fades and slides up at the bottom center of the window. It shows a steady dot, 7 bars, `0:03`, and the `Ctrl+Shift+D stops` key. Speak: the bars jump up with your voice and sink slowly, with a wave running across them. Stay silent: the bars stay low but keep breathing. Press again: the pill shows the dots and `Transcribing`, then disappears.
 - [ ] **Ring:** start dictating in the composer, the sidebar filter, and the Git commit box. The focused field gets a breathing accent ring over its border, and the ring holds steady while transcribing. Start with a terminal pane focused: the pane gets the ring. With several panes, only the focused pane gets it.
-- [ ] **Footer:** while recording, the sidebar footer (the title bar while the sidebar is hidden, and the compact rail) shows only a breathing dot, then the working dots. Errors such as `✕ Voice: heard nothing` still show there.
+- [ ] **Footer:** while recording, the sidebar footer (the title bar while the sidebar is hidden, and the compact rail) shows only a steady dot, then the loading dots. Errors such as `✕ Voice: heard nothing` still show there.
 
 ### To verify — 2026-10-27 UX packs 2 and 3 (branch `feat/ux-pack-2-3`)
 
@@ -458,7 +464,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   saved. Refresh reloads; the Jira tab keeps its issues when you switch to Tasks and back (until
   you restart or press Refresh).
 - [ ] **Issue rows (dark + light):** type, key (medium weight), summary cut with `…` when the
-  window is narrow, status; working dots on the clicked row while the ticket loads; a linked
+  window is narrow, status; loading dots on the clicked row while the ticket loads; a linked
   task shows its column chip; a failed fetch shows `✕ <reason>` under that row only.
 - [ ] **Open:** click an issue → New task dialog with `KEY summary` and the ticket text (lists,
   code, links readable). Tick "Run in a worktree", Save, Run the card → branch `mkrew/key-…`.
@@ -936,7 +942,7 @@ by telling the agent.
 ### To verify — 2026-10-12 sidebar marks, remove idle agents
 
 - [ ] **Sidebar marks (dark + light):** idle agent rows show no `○`; a working agent shows one
-  blinking dot in a narrow slot; chips of idle / working / `?` rows stay in one column. A shell
+  still dot in a narrow slot; chips of idle / working / `?` rows stay in one column. A shell
   you type in shows no mark, no time, and is not counted as working (summary, Working chip).
 - [ ] **Remove idle agents:** with an idle agent, `⌫` appears left of `▾` in the sidebar header;
   click → "Remove N idle agents?" → Remove: they vanish from the sidebar and their panes close.
@@ -1121,7 +1127,7 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
 
 - [ ] **Loading mark (dark and light):** + Agent (title bar), New agent (empty tab) and
   Ctrl+Shift+A / Alt+Shift+A: until the pane shows, the clicked button reads `Starting agent`
-  with the three working dots taking turns, the other (+ Shell) is faded; clicking again or the
+  with the three loading dots taking turns, the other (+ Shell) is faded; clicking again or the
   shortcut does not start a second agent. Same with + Shell (`Starting shell`). A spawn error
   (e.g. rename the agent's exe) brings the buttons back with the error in the tab bar.
 - [ ] **Faster cold start (optional, admin):** most of the ~2 s is Windows Defender scanning the
@@ -1176,7 +1182,7 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   returns the rail. After a restart the sidebar is full width.
 - [ ] **Rail content (dark and light):** each workspace shows its avatar in its color, `?` in the
   needs-input color while a session asks, else its working count; the active workspace and the
-  focused session are highlighted; session rows show the working dots / status glyph and the agent
+  focused session are highlighted; session rows show a still working dot / status glyph and the agent
   chip; the `⇤` / `⇥` glyphs render (not boxes). Nothing is clipped at `[ui] font_size = 18`.
 - [ ] **Tooltips:** hover a session with a long title → `claude · <the full title>` and
   `working · 2m` on a second line; a session without a title → agent and status only. Hover a
@@ -1553,12 +1559,10 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
 ### To verify — 2026-10-08 inbox 3: dots, drop, paste, icons, redesign (plan docs/superpowers/plans/2026-10-08-inbox-dots-drop-paste-redesign.md)
 
 - [ ] **Hooks (user setup, item 18):** run `mk integration install claude`, `… codex`, `… omp`,
-  `… copilot`, restart the agents and the daemon. Claude: prompt → three dots; a permission
+  `… copilot`, restart the agents and the daemon. Claude: prompt → a still dot; a permission
   prompt → amber `?` + amber pane border; turn ends → `✓ done` + Inbox entry; later `○ idle`.
   Hover a status: source `hook`. Without the install `done` never appears (SPEC §6).
-- [ ] **Working dots:** a working session shows three dots taking turns (~1.5 s cycle) in the
-  sidebar row, the workspace pill, the tab, the pane header, the Inbox and board cards; rows with
-  other states line up with it.
+- [ ] **Working dot:** a working session shows one still dot in the working color in the sidebar row, the workspace pill, the tab, the pane header, the Inbox and board cards; rows with other states line up with it.
 - [ ] **File drop:** drag 2 files (one path with a space) from Explorer onto (1) the terminal,
   (2) the open composer (Ctrl+Shift+Enter), (3) the pane header → paths typed, the spaced one
   quoted, no Enter; with the composer open they go into the draft and it keeps the keyboard.
@@ -1578,7 +1582,7 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   `[ui] theme = "…"` with your comments kept; Ctrl+Shift+J does the same. In System mode, change
   Windows' app mode → the app follows live. A broken settings.toml → the toggle still switches,
   the palette shows the error, the file is untouched.
-- [ ] **Both themes, these states visible:** hover, selected session, active tab, working dots,
+- [ ] **Both themes, these states visible:** hover, selected session, active tab, the still working dot,
   the Inbox card empty and non-empty (superseded by ADR 0034/0036), the empty-state buttons with their Ctrl+Shift+A / T chips.
   Muted text on the sidebar and status labels is readable in light mode. Screenshots of each
   view in light and dark for §14 (`docs/screenshots/`).
@@ -1590,11 +1594,11 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
 ### To verify — 2026-10-08 inbox: status, drop, badges (plan docs/superpowers/plans/2026-10-08-inbox-status-drop-badges.md)
 
 - [ ] **States with hooks (user setup):** run `mk integration install claude`, `… codex`,
-  `… omp`, `… copilot`, then restart the agents. Claude: send a prompt → the three dots take turns; it asks for a
+  `… omp`, `… copilot`, then restart the agents. Claude: send a prompt → the still working dot shows; it asks for a
   permission → `?` and an amber pane border; the turn ends → `✓ done` and an Inbox entry; wait →
   `○ idle`. Same in omp. Hover a status: the source says `hook`. Without the install, `done`
   never appears and omp/Copilot never show `?` (SPEC §6: done is hook-only).
-- [ ] Collapse a workspace with a working agent: its `••• N` count steps.
+- [ ] Collapse a workspace with a working agent: its `● N working` pill shows the count.
 - [ ] **File drop** (T10.8 check below, still open): drag 2 files (one with a space) from
   Explorer onto a Claude pane and a pwsh pane → both paths typed, the spaced one quoted, no Enter.
   Mkrew must not run as administrator: Windows blocks Explorer drops into elevated windows.
@@ -1897,7 +1901,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
 
 - [ ] (T3.6) **Per-session status, dark and light** (§11, §14): spawn the fake agent and a
   shell in split panes. Each pane header shows icon, agent, title and `working · Ns` with
-  three dots taking turns, then `needs input` with an amber pane border; the tab label shows the
+  a still dot, then `needs input` with an amber pane border; the tab label shows the
   most urgent state's icon (needs input over done over working); the sidebar row text matches;
   the workspace row shows the working count and `?`. Hover the status in a pane header and in
   the sidebar → "<state> · from hook|screen|daemon · Ns ago". Idle shows `idle · Nm`; an
@@ -2785,11 +2789,10 @@ _Decisions the agent made on its own. Override them here if you disagree._
   main run loop). A click with no UI connected is dropped (the UI is not launched). New
   `notification.clicked` event → protocol v3 (restart an old daemon after updating).
 - (T3.6) Status display: a 500 ms check (`theme::STATUS_TICK`) redraws only while the window
-  is visible and something shown changed: every tick while a session works (4-frame spinner),
-  for idle only when its time text changes (each second, then each minute). Hover ages are
-  computed when the tooltip opens. gpui has no
-  reduce-motion query, so the spinner always turns (slow enough to pass; revisit if gpui adds
-  one). Time = since the last state change (working → elapsed, idle → idle time), `12s` / `4m` /
+  is visible and something shown changed: for a working or idle session only when its time text
+  changes (each second, then each minute; ADR 0086). Hover ages are
+  computed when the tooltip opens.
+  Time = since the last state change (working → elapsed, idle → idle time), `12s` / `4m` /
   `1h 5m`. Tab label ranks starting/unknown below exited. Pane header = icon, agent profile id,
   title, status text; it takes one row from the terminal. "Run again" / "Resume" on exited
   sessions are not in T3.6 (still backlog; not yet in a task).

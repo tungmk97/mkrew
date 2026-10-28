@@ -163,6 +163,18 @@ fn every_state_has_an_icon_and_text() {
 }
 
 #[test]
+fn each_status_has_its_own_dot_color_in_both_themes() {
+    use SessionState::*;
+    for theme in [Theme::dark(), Theme::light()] {
+        let colors: HashSet<u32> = [Working, NeedsInput, Idle, Done, Exited]
+            .into_iter()
+            .map(|state| status_color(&theme, state))
+            .collect();
+        assert_eq!(colors.len(), 5, "{}", theme.name);
+    }
+}
+
+#[test]
 fn agent_badge_prefers_the_logo_then_the_profile_icon_then_the_first_letter() {
     // A copied omp profile still carries the old sample glyph: the logo wins.
     assert_eq!(agent_badge(Some("π"), "omp"), Badge::Logo(AgentLogo::Omp));

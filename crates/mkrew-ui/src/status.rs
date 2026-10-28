@@ -1,4 +1,4 @@
-//! Per-session status display (SPEC §11): working dots, elapsed/idle time, tab urgency, hover text
+//! Per-session status display (SPEC §11): working/idle time, tab urgency, hover text
 //! and the pane border. Pure; `main.rs` renders the result with [`crate::sidebar::status_display`]
 //! icons and [`crate::sidebar::status_color`] colors.
 
@@ -10,8 +10,9 @@ use ulid::Ulid;
 use crate::sidebar::status_display;
 use crate::theme::{self, Theme};
 
-/// Dots of the `working` mark (SPEC §11); one is lit per [`theme::STATUS_TICK`].
-pub const WORKING_DOTS: usize = 3;
+/// Dots of the loading mark (a pane being started, a voice transcription, a Jira fetch): one
+/// is lit per [`theme::STATUS_TICK`]. A working session shows one still dot instead (ADR 0086).
+pub const LOADING_DOTS: usize = 3;
 
 /// Unix ms now (0 if the clock is before 1970).
 pub fn now_ms() -> i64 {
@@ -21,14 +22,14 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// The lit dot of the `working` mark at `now_ms`: steps on the status tick, so the mark costs
-/// no more redraws than the old spinner.
-pub fn working_dot(now_ms: i64) -> usize {
+/// The lit dot of the loading mark at `now_ms`: steps on the status tick.
+pub fn loading_dot(now_ms: i64) -> usize {
     let step = theme::STATUS_TICK.as_millis().max(1) as i64;
-    (now_ms.max(0) / step) as usize % WORKING_DOTS
+    (now_ms.max(0) / step) as usize % LOADING_DOTS
 }
 
-/// The state's glyph; `working` is drawn as dots (see [`working_dot`]) wherever there is room.
+/// The state's glyph; `working` is drawn as a still dot (`widgets::status_dot`) wherever there
+/// is room for a mark.
 pub fn icon(state: SessionState) -> &'static str {
     status_display(state).icon
 }
@@ -103,16 +104,11 @@ pub fn most_urgent<'a>(sessions: &'a [Session], ids: &[Ulid]) -> Option<&'a Sess
 }
 
 /// Whether the status display changed between `last_ms` and `now_ms` (checked every
-/// [`theme::STATUS_TICK`]): the working dots step while a session works; an idle time changes
-/// once per second, then once per minute.
+/// [`theme::STATUS_TICK`]): a working or idle session's time text changes once per second,
+/// then once per minute. Nothing animates (ADR 0086).
 pub fn redraw_due(sessions: &[Session], last_ms: i64, now_ms: i64) -> bool {
-    sessions.iter().any(|s| match s.state {
-        SessionState::Working => true,
-        SessionState::Idle => {
-            format_duration(last_ms - s.state_changed_at)
-                != format_duration(now_ms - s.state_changed_at)
-        }
-        _ => false,
+    sessions.iter().any(|s| {
+        time(s.state, s.state_changed_at, last_ms) != time(s.state, s.state_changed_at, now_ms)
     })
 }
 
@@ -173,15 +169,16 @@ mod tests {
     }
 
     #[test]
-    fn working_dots_take_turns_one_per_tick() {
+    fn loading_dots_take_turns_one_per_tick() {
         let step = theme::STATUS_TICK.as_millis() as i64;
-        let lit: Vec<usize> = (0..4).map(|i| working_dot(i * step)).collect();
+        let lit: Vec<usize> = (0..4).map(|i| loading_dot(i * step)).collect();
         assert_eq!(lit, [0, 1, 2, 0]);
         // Mid-tick stays on the same dot; a clock before 1970 is dot 0.
-        assert_eq!(working_dot(step + step / 2), 1);
-        assert_eq!(working_dot(-5), 0);
+        assert_eq!(loading_dot(step + step / 2), 1);
+        assert_eq!(loading_dot(-5), 0);
         assert_eq!(icon(SessionState::Idle), "○");
         assert_eq!(icon(SessionState::NeedsInput), "?");
+        assert_eq!(icon(SessionState::Working), "●");
     }
 
     fn session(state: SessionState, changed_at: i64) -> Session {
@@ -277,15 +274,26 @@ mod tests {
         ];
         assert!(!redraw_due(&still, 0, 600 * SEC));
 
-        // The spinner turns on every tick.
-        let working = [session(SessionState::Working, 0)];
-        assert!(redraw_due(&working, 10 * SEC, 10 * SEC + tick));
-
-        // Idle: each second under a minute, then only when the minute changes.
-        let idle = [session(SessionState::Idle, 0)];
-        assert!(redraw_due(&idle, 4 * SEC + 600, 5 * SEC + 100));
-        assert!(!redraw_due(&idle, 5 * SEC + 100, 5 * SEC + 600));
-        assert!(!redraw_due(&idle, 90 * SEC, 90 * SEC + tick));
-        assert!(redraw_due(&idle, 119 * SEC + 800, 120 * SEC + 300));
+        // Working and idle show a time: each second under a minute, then only when the
+        // minute changes. Nothing else moves while an agent works (ADR 0086).
+        for state in [SessionState::Working, SessionState::Idle] {
+            let sessions = [session(state, 0)];
+            assert!(
+                redraw_due(&sessions, 4 * SEC + 600, 5 * SEC + 100),
+                "{state:?}"
+            );
+            assert!(
+                !redraw_due(&sessions, 5 * SEC + 100, 5 * SEC + 600),
+                "{state:?}"
+            );
+            assert!(
+                !redraw_due(&sessions, 90 * SEC, 90 * SEC + tick),
+                "{state:?}"
+            );
+            assert!(
+                redraw_due(&sessions, 119 * SEC + 800, 120 * SEC + 300),
+                "{state:?}"
+            );
+        }
     }
 }

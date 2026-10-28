@@ -346,7 +346,7 @@ pub(crate) fn task_card(
                         session.state_source,
                         session.state_changed_at,
                     ))
-                    .child(status_mark(session.state, now, theme))
+                    .child(status_mark(session.state, theme))
                     .child(status::text(
                         session.state,
                         session.exit_code,
@@ -690,7 +690,7 @@ pub(crate) fn fan_out_child_row(child: fanout::ChildLine, now: i64, theme: &Them
     let icon = child
         .session
         .as_ref()
-        .map(|session| status_mark(session.state, now, theme));
+        .map(|session| status_mark(session.state, theme));
     div()
         .flex()
         .items_center()

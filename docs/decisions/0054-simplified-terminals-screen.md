@@ -28,9 +28,7 @@ empty, detail on demand — without losing any feature.
 - **Run pill:** `● 2 running :8080 ▾` (green tokens) or a muted `Run ▾`; a click opens one menu
   with every Run action (per command ↻ / ■ / ▶, Restart all, Stop all or Start all, Show Run tab,
   Run setup…). The dot is steady: a pulse redraws the whole window for as long as a dev server
-  runs, against SPEC §15's idle CPU budget. Working dots (sidebar pill, tab dot) do pulse
-  (`with_animation`, which gpui draws still under reduce-motion); an agent that works prints
-  output anyway.
+  runs, against SPEC §15's idle CPU budget. Working dots (sidebar pill, tab dot) pulsed in this ADR; ADR 0086 made them still.
 - **Sidebar:** filter field (`/` focuses it in the root key context only, `×` clears it) with
   remove-idle, collapse-all and `+` beside it; a segmented All / Working / Needs you (amber count);
   workspace rows with a working pill or muted idle count, ⋯ on hover; session rows with the glyph
