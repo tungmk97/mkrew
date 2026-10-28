@@ -95,6 +95,7 @@ pub mod undo_dialog;
 pub mod update;
 pub mod usage;
 pub mod voice;
+pub mod watches;
 pub mod workspace_menu;
 pub mod worktree_dialog;
 pub mod worktree_target;

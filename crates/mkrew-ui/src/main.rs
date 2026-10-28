@@ -116,6 +116,7 @@ use mkrew_ui::turns_dialog::{self, TurnsDialog};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
 use mkrew_ui::usage::{self, Usages};
 use mkrew_ui::voice;
+use mkrew_ui::watches;
 use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
 use mkrew_ui::worktree_dialog::{self, WorktreeDialog};
 use mkrew_ui::worktree_target;
@@ -646,6 +647,8 @@ struct Shell {
     /// A summary request is in flight / another change arrived meanwhile.
     git_summary_busy: bool,
     git_summary_again: bool,
+    /// The daemon watchers this window uses for what it shows (`watches`, ADR 0087).
+    watch_needs: watches::Needs,
     /// Focused while a Git view is shown, so its single-key shortcuts work.
     git_focus: FocusHandle,
     /// The commit box of the shown Git view (outside `GIT_CONTEXT`, so typing never stages).

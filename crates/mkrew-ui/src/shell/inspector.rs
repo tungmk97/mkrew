@@ -123,6 +123,7 @@ impl Shell {
         {
             self.settings_write_failed("the right panel", error, cx);
         }
+        self.sync_watches(cx);
         cx.notify();
     }
 

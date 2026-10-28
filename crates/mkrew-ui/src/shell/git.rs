@@ -172,6 +172,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.sync_watches(cx);
         self.load_git_repos(project_id, window, cx);
         let requests = self.git_view(project_id).refresh();
         self.git_requests(project_id, requests, window, cx);

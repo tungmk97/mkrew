@@ -75,6 +75,25 @@ fn param_less_requests_omit_params() {
     );
 }
 
+/// `worktree_task_id` may be left out: it names the project's own watcher.
+#[test]
+fn watch_release_without_a_worktree_means_the_project_folder() {
+    let wire = json!({
+        "type": "request", "id": 3, "method": "watch.release",
+        "params": {"project_id": sid().to_string()}
+    });
+    let Message::Request { request, .. } = serde_json::from_value(wire).unwrap() else {
+        panic!("a request");
+    };
+    assert_eq!(
+        request,
+        Request::WatchRelease(WatchReleaseParams {
+            project_id: sid(),
+            worktree_task_id: None,
+        })
+    );
+}
+
 #[test]
 fn every_m1_request_round_trips() {
     let requests = vec![
@@ -248,6 +267,10 @@ fn every_m1_request_round_trips() {
         }),
         Request::SessionUsage(ProjectRef { project_id: sid() }),
         Request::SessionPorts(ProjectRef { project_id: sid() }),
+        Request::WatchRelease(WatchReleaseParams {
+            project_id: sid(),
+            worktree_task_id: Some(sid()),
+        }),
         Request::SessionLinkPlan(SessionLinkPlanParams {
             session_id: sid(),
             path: Some("docs/PLAN.md".into()),

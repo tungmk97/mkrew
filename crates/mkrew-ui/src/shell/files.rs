@@ -55,6 +55,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.sync_watches(cx);
         let requests = self.files_view(project_id).refresh();
         self.files_requests(project_id, requests, window, cx);
     }

@@ -20,7 +20,7 @@ use crate::files::{
     AiGenerateParams, AiGeneratedEvent, FsFindParams, FsListParams, FsReadParams, FsWriteParams,
     GitChangedEvent, GitCommitParams, GitDiffParams, GitDiscardParams, GitLogParams,
     GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams,
-    GitStatusParams, ProjectRef,
+    GitStatusParams, ProjectRef, WatchReleaseParams,
 };
 
 /// One JSON frame.
@@ -275,6 +275,11 @@ pub enum Request {
     /// Returns `SessionPortsEvent[]`: the ports of the project's live run sessions (SPEC §10).
     #[serde(rename = "session.ports")]
     SessionPorts(ProjectRef),
+    /// Returns nothing (`null`): the client no longer shows what kept the project's file
+    /// watcher (or, with `worktree_task_id`, that task worktree's) running. The watcher
+    /// stops unless a session of the project is live (SPEC §7, ADR 0087).
+    #[serde(rename = "watch.release")]
+    WatchRelease(WatchReleaseParams),
     /// Returns the [`Session`] (also announced as `session.updated`): links the Markdown file
     /// `path` as the plan of a live session, or unlinks it (`null`). The daemon announces
     /// `session.plan` at once and after each change of the file. `invalid_request` for a path
@@ -386,7 +391,8 @@ pub enum Event {
     /// A review comment was created, replied to, re-anchored or changed status (SPEC §12).
     #[serde(rename = "comment.updated")]
     CommentUpdated(Box<DocComment>),
-    /// The git state of a workspace changed (debounced, ≤ once per 300 ms; SPEC §12B).
+    /// The git state of a workspace changed (debounced: 300 ms quiet, at most 2 s after the
+    /// first change, 5 s while an agent session of the project is working; SPEC §12B).
     #[serde(rename = "git.changed")]
     GitChanged(GitChangedEvent),
     /// The answer to the `ai.generate` with this `generation_id`.

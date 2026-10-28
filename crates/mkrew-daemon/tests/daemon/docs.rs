@@ -149,7 +149,8 @@ fn two_sessions_editing_one_file_raise_a_conflict() {
     let env = Env::new();
     let repo = env.repo();
     // The first spinner lets the project watcher start (it starts after the first spawn); the
-    // second keeps the session `working` until the batch landed (≤ `watch::MAX_DELAY` = 2 s).
+    // second keeps the session `working` until the batch landed (300 ms quiet; a stream that
+    // never goes quiet would wait ≤ `watch::MAX_DELAY_WORKING` = 5 s).
     let scenario = env.dir.path().join("writer.toml");
     std::fs::write(
         &scenario,

@@ -51,6 +51,7 @@ impl Shell {
         if switched && self.git_shown() {
             self.refresh_git(project_id, window, cx);
         }
+        self.sync_watches(cx);
         cx.notify();
     }
 
@@ -398,6 +399,7 @@ impl Shell {
         if view == View::Diff {
             window.focus(&self.git_focus, cx);
         }
+        self.sync_watches(cx);
         if shown != view {
             self.sync_panes(window, cx);
             cx.notify();
@@ -411,6 +413,39 @@ impl Shell {
                 &self.file_editor_focus
             };
             window.focus(target, cx);
+        }
+    }
+
+    /// Gives the daemon back the file watchers this window no longer shows anything for
+    /// (`watch.release`, [`watches`]). Cheap: it compares two small sets.
+    pub(crate) fn sync_watches(&mut self, cx: &mut Context<'_, Self>) {
+        let files = self
+            .files_on_screen()
+            .then(|| self.workspace.and_then(|id| self.files.get(&id)))
+            .flatten()
+            .and_then(|view| view.worktree_task_id);
+        let git = self
+            .git_shown()
+            .then(|| self.workspace.and_then(|id| self.git.get(&id)))
+            .flatten()
+            .and_then(|view| view.worktree_task_id);
+        let needs = watches::Needs::of(self.workspace, files, git);
+        let released = self.watch_needs.released(&needs);
+        self.watch_needs = needs;
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        for params in released {
+            let project_id = params.project_id;
+            let reply = connection.request(Request::WatchRelease(params));
+            cx.spawn(async move |_, _| match reply.await {
+                Ok(Outcome::Result(_)) => {}
+                Ok(Outcome::Error(body)) => {
+                    tracing::warn!(%project_id, "watch.release failed: {}", body.message);
+                }
+                Err(error) => tracing::warn!(%project_id, "watch.release failed: {error:#}"),
+            })
+            .detach();
         }
     }
 }

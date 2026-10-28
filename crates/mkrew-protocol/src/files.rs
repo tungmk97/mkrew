@@ -15,6 +15,15 @@ pub struct ProjectRef {
     pub project_id: Ulid,
 }
 
+/// Params of `watch.release`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchReleaseParams {
+    pub project_id: Ulid,
+    /// The task worktree whose watcher is released; `None` = the project folder.
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
+}
+
 /// Params of `git.fetch` and `git.push`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitRemoteParams {

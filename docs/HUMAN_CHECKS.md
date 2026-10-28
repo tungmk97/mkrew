@@ -41,6 +41,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   - Git tab: Generate a commit message while on the Git tab: the text appears without touching the mouse. Diff view: an agent reply to a diff comment shows up at once.
   - The footer `N need you` count, the sidebar dots and the OS notifications still follow every agent, also with the window on another workspace, on the Editor and with the compact rail. Focus a `done` pane: it leaves the count at once.
 - [ ] **CPU (Task 2):** Task Manager > Details > `mkrew.exe`, 3 agents in `working` (long tasks), window visible on Terminals, read CPU over 60 s. Before: build of the commit before this plan (copy its `target\release\mkrew.exe` aside first). After: this task's build. Before ___ % / after ___ % of one core. (The drop is the avoided renders from other sessions' and hidden panes' events; the 500 ms working-dot tick and output frames are other tasks.)
+- [ ] **Restart the daemon first** (protocol 49). An old UI against the new daemon shows the "restart the daemon" message (expected); a running `mk web` must be restarted too.
+- [ ] **Watchers stop with their view:** start the daemon with `MKREW_LOG=debug`. Add a second workspace B with no agent running. In B open the Files tab, then switch to workspace A: the log shows `watch released` and `stopped watching project files` for B. In B open the Git tab on a task worktree (worktree chooser), then hide the right panel: `watch released` with that task id. Open the panel again: Files / Git refresh, and an edit made outside the app shows (the Git list updates).
+- [ ] **A live agent keeps its watcher:** leave a working agent in workspace B, switch to A: B's `watch released` is logged but `stopped watching` is not; B's file changes still count for its session (the Git list of B, shown again, lists them).
+- [ ] **`git.changed` rate:** with one agent `working` and writing files all the time, the Git tab and the title bar git summary refresh about every 5 s (not every 2 s). Once the agent is idle, the next change shows within about 0.5 s. A commit or `git fetch` from outside still shows within about 0.5 s with no agent working. A background `git gc` (only `.git/objects`) changes nothing on screen.
 
 ### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0085)
 
@@ -2943,7 +2947,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
   watch starts (nested `.gitignore`, `.git/info/exclude`, the global excludes file and edits to
   `.gitignore` while sessions run are not applied); matching is case-sensitive even on Windows.
   `.git`, `node_modules`, `target` are always ignored at any depth. Batches = 300 ms quiet, at
-  most 2 s; existing directories are dropped, removed paths are reported (a removed directory
+  most 2 s (5 s while an agent session of the project is `working`, ADR 0087); existing directories are dropped, removed paths are reported (a removed directory
   looks like a file). Each batch becomes a `files_changed` session event (`{"paths": [...]}`,
   `/`-separated, relative) on EVERY live session of the project (attribution is T5.6). Review
   SHOULD left open: on Linux/macOS a recursive inotify/kqueue watch walks the whole tree
@@ -3018,9 +3022,9 @@ _Decisions the agent made on its own. Override them here if you disagree._
   Review globs: `*`/`?` never cross `/` (`*.md` = root files only), `**` spans directories;
   matching is case-sensitive (`PLAN.MD` does not match `*.md`, also on Windows).
 - (T6.4) **How md files are watched with no live session:** `doc.list` or `doc.read` on a
-  project starts (or marks) its recursive file watcher as "docs", and it then stays until the
-  daemon stops — even after the last session exits (one watcher per project ever opened in
-  the Docs view; no unwatch on client disconnect / archive). `doc.changed` fires for any `.md`
+  project starts (or marks) its recursive file watcher as "docs", and it then stays until the UI gives it back
+  (`watch.release`, ADR 0087: that workspace is no longer shown) or the daemon stops — even after
+  the last session exits (no unwatch on client disconnect / archive). `doc.changed` fires for any `.md`
   file (any case) the watcher reports (`.md` files are reported even when `.gitignore`d, so
   `files_changed`/conflicts now see ignored Markdown too) or `doc.read` returns, whose content
   hash differs from the last one this daemon saw — so the first sight after a daemon start
@@ -3138,7 +3142,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
   "nothing to commit" comes back as `internal` with git's message (not `invalid_state`).
   `git.changed`: every watcher batch (working files or root `.git/{HEAD,index,packed-refs,refs/…}`)
   + right after each successful daemon mutation, so two events may come < 300 ms apart.
-  `git.status` keeps the project watched until the daemon stops (like docs). Outside changes to a
+  `git.status` keeps the project watched until released or the daemon stops (like docs, ADR 0087). Outside changes to a
   `.git` dir outside the project folder (repo subfolder, worktree) only show via working-file
   changes. Open review items: discard runs one `ls-files` per path; paths are `trim()`med
   (`docs::relative_path`).

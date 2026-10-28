@@ -4,10 +4,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mkrew_protocol::{ErrorCode, Outcome, Project};
+use mkrew_protocol::{ErrorCode, Outcome, Project, WatchReleaseParams};
 use ulid::Ulid;
 
-use super::{Daemon, store_outcome, task_dir};
+use super::{Daemon, ok, store_outcome, task_dir};
 use crate::{docs, files};
 
 /// A resolved request target.
@@ -138,5 +138,12 @@ impl Daemon {
             }
         }
         Ok(target)
+    }
+
+    /// `watch.release`: the client left the view that kept this watcher (ADR 0087).
+    pub(super) fn watch_release(&self, params: WatchReleaseParams) -> Outcome {
+        self.hub
+            .release_watch(params.project_id, params.worktree_task_id);
+        ok(&())
     }
 }

@@ -445,6 +445,7 @@ impl Daemon {
             Request::SessionPorts(params) => {
                 (self.session_ports(params.project_id), After::Continue)
             }
+            Request::WatchRelease(params) => (self.watch_release(params), After::Continue),
             Request::SessionLinkPlan(params) => {
                 (self.session_link_plan(params).await, After::Continue)
             }

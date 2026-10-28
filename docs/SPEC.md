@@ -542,6 +542,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `project.run_restart` | `project_id`, `name?`, `cols`/`rows` | `RunStarted` — stops the targets like `run_stop` (5 s grace, then forced kill), waits until they exited (max 10 s, else `timeout`, nothing started), then starts them like `run_start`; the new session (a new id: a run is one session with its own log and History entry) takes the old pane's place in the `run` tab and keeps its color and pin |
 | `project.run_stop` | `project_id`, `name?` | ok — asks the run sessions to terminate (without `name`: every live run session of the project, also one whose name left the config); ok when nothing runs. Each one leaves the `run` tab when it exits (§10) |
 | `session.ports` | `project_id` | `[{session_id, ports}]` of the project's live sessions with ports (kept in daemon memory only) |
+| `watch.release` | `project_id`, `worktree_task_id?` | ok (`null`) - the UI no longer shows that workspace (or task worktree): it gives back the file watcher that `doc.*`, `fs.*` and `git.status` keep running. The watcher stops unless a session of the project is live; a later request of those kinds keeps it again (ADR 0087) |
 | `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task (`list`: Task[], filters `project_id?`/`status?`; `create` = Todo card, `title`, `prompt`, `agent_profile?` (none = project `default_agent` at run time, stored as `''`), `position?` (after the last Todo card); `update`: `title`/`prompt`/`agent_profile`, absent = unchanged, `null` agent = default; `move`: `status` + `position`; `delete` returns ok, `invalid_state` while a session of the task is not exited, its exited sessions stay as history with `task_id` = NULL — ADR 0004) |
 | `task.run` | `task_id`, `cols`, `rows` | `session_id` |
 | `task.undo_preview` | `task_id` | `checkpoint`, `fingerprint` (opaque), `changed[]` (tracked files restored), `added[]` (tracked since the checkpoint, deleted), `created[]` (untracked files created since, deleted), `diff` (≤ 1 MiB) + `diff_truncated`; `invalid_state` without a checkpoint (ADR 0005) |
@@ -569,8 +570,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `tab.set_layout` | `tab_id`, `layout` | ok |
 | `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`omp`/`copilot`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
 | `agent.profiles` | – | AgentProfile[] (each with `installed`: its program, or the OS shell for a shell without `command`, is found on PATH) + parse errors |
-| `doc.list` | `project_id` | `DocFile[]` sorted by path: md files matching review globs + md files in `files_changed` session events of the last 24 h + files with unresolved comments (existing files only); each with `open_comments` (unresolved thread roots), `last_session_id?`/`last_changed_at?` (newest such event). Keeps the project watched for `doc.changed` until the daemon stops |
-| `doc.read` | `project_id`, `file_path` | `file_path`, `content`, `hash` (opaque); ≤ 2 MiB UTF-8; `invalid_request` for absolute/`..` paths. Also keeps the project watched |
+| `doc.list` | `project_id` | `DocFile[]` sorted by path: md files matching review globs + md files in `files_changed` session events of the last 24 h + files with unresolved comments (existing files only); each with `open_comments` (unresolved thread roots), `last_session_id?`/`last_changed_at?` (newest such event). Keeps the project watched for `doc.changed` until released (`watch.release`) or the daemon stops |
+| `doc.read` | `project_id`, `file_path` | `file_path`, `content`, `hash` (opaque); ≤ 2 MiB UTF-8; `invalid_request` for absolute/`..` paths. Also keeps the project watched (until released) |
 | `comment.list/create/reply/resolve/reopen` | `file_path`, `start_line`, `end_line`, `quote`, `body` | DocComment (every comment carries `context`: `doc` (default) or `diff`, replies = their root's; `list`: `project_id` + `file_path?` + `context?` → DocComment[], roots and replies oldest first; `create`: `project_id`, 1-based inclusive lines, `context?` (`diff` = new-side lines of a diff); `reply`: `comment_id`, `body`, `mkrew_session_id?` (set by `mk comment reply` = agent author); `resolve`/`reopen`: `comment_id`). Ids are `c_` + ULID; the prefix is optional when parsing |
 | `comment.send_to_agent` | `comment_ids[]`, `session_id` | the thread roots, now `sent` (`sent_to`, `sent_snapshot` = file content), request order; reply ids stand for their thread; all on one file of the live session's project and of one `context` (`diff` → the prompt asks to "Fix the code in <file>" instead of "Update <file>", without "Only edit this file"). The §12 prompt is queued like `session.send` (submit); multi-line sends are wrapped as a bracketed paste when the program enabled mode 2004 |
 | `fs.list` | `project_id`, `dir`, `show_ignored` | children (lazy) with git status |
@@ -613,7 +614,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `doc.changed` | a watched md file changed (`project_id`, `file_path`, new `hash`, `null` = deleted); its comments are re-anchored right after (`comment.updated`) |
 | `comment.updated` | comment created/replied/state changed (incl. agent replies via CLI) |
 | `notification.clicked` | user clicked an OS notification on Linux (UI focuses that pane; Windows uses a `mkrew://` link, §8) |
-| `git.changed` | workspace git state changed (debounced, ≤ once per 300 ms) |
+| `git.changed` | workspace git state changed (debounced: 300 ms quiet, at most 2 s after the first change, 5 s while an agent session of the project is `working`; a batch with nothing to report after filtering sends nothing) |
 | `ai.generated` | answer to an `ai.generate` (`generation_id`, `project_id?` = the request's, `text?` trimmed and, except for `ask`, unfenced, `error?`) |
 | `project.cloned` | end of a `project.clone` (`clone_id`, `project?` the added workspace, `error?` git's message) |
 
@@ -645,6 +646,8 @@ Rules: on
 v2 adds requests and events in §20; each milestone that changes the protocol bumps `PROTOCOL_VERSION`.
 
 Protocol 40 (ADR 0053): `daemon.status` gains `web`.
+
+Protocol 49 (ADR 0087): request `watch.release`.
 
 Protocol 41: `session.move` and `Session.position`.
 
@@ -1231,7 +1234,7 @@ Windows (tens of ms, worse with antivirus), so:
   lookup and (Working mode) the staged/unstaged `git diff --numstat` for the +/− counts
   (ADR 0007); Against-base mode adds `merge-base` (cached until HEAD or base moves) and one
   numstat diff since it.
-- Refresh is triggered by the file watcher (debounced 300 ms) and when its tab or the Diff view comes on screen; never polled.
+- Refresh is triggered by the file watcher (debounced 300 ms, §7 `git.changed`) and when its tab or the Diff view comes on screen; never polled.
 - Diffs are computed per file on demand and cached by (path, mode, mtime/size, HEAD).
 - Never run git for workspaces whose Git tab or Diff view is not on screen, except the cheap status used for
   sidebar markers (at most once per 2 s per workspace).

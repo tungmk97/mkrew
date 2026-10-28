@@ -321,6 +321,7 @@ impl Shell {
             git_summary: None,
             git_summary_busy: false,
             git_summary_again: false,
+            watch_needs: watches::Needs::default(),
             git_focus: cx.focus_handle(),
             git_commit_focus: cx.focus_handle(),
             git_filter_focus: cx.focus_handle(),

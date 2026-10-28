@@ -77,6 +77,9 @@ pub struct Hub {
     /// One file watcher per project with live sessions or read docs, and one per task worktree
     /// a Files or Git view opened (keyed by the task id). Lock order: `watches`, then `live`.
     watches: Mutex<HashMap<Ulid, ProjectWatch>>,
+    /// Agent sessions in `working` and their project, kept by `Actor::set_state`: the
+    /// watcher's batch cap reads it instead of the store. Never held with another lock.
+    working: Mutex<HashMap<Ulid, Ulid>>,
     /// Last content hash (`None` = deleted) of each Markdown file the watchers reported, by
     /// project and relative path. Never held with another lock.
     doc_hashes: Mutex<HashMap<(Ulid, String), Option<String>>>,
@@ -184,8 +187,8 @@ fn coalesce(bytes: &mut Vec<u8>, output: &mut mpsc::Receiver<PtyEvent>) -> Optio
 }
 
 /// A project's file watcher. `kept`: a client listed or read its docs or opened its Git view,
-/// so it stays watched after its last session exits, until the daemon stops (HUMAN_CHECKS
-/// T6.4).
+/// so it stays watched after its last session exits, until a client releases it
+/// (`watch.release`, ADR 0087) or the daemon stops (HUMAN_CHECKS T6.4).
 struct ProjectWatch {
     _watch: Watch,
     kept: bool,
@@ -323,6 +326,7 @@ impl Hub {
             events: broadcast::channel(256).0,
             live: Mutex::default(),
             watches: Mutex::default(),
+            working: Mutex::default(),
             doc_hashes: Mutex::default(),
             conflicts: Mutex::default(),
             file_index: FileIndex::default(),
@@ -634,14 +638,15 @@ impl Hub {
         }
     }
 
-    /// Keeps project `project_id` (folder `root`) watched for doc and git changes until the
-    /// daemon stops, whether or not it has live sessions.
+    /// Keeps project `project_id` (folder `root`) watched for doc and git changes until released
+    /// ([`Hub::release_watch`]) or the daemon stops, whether or not it has live sessions.
     pub fn keep_watched(self: &Arc<Self>, project_id: Ulid, root: &Path) {
         self.watch_project(project_id, root, true);
     }
 
     /// Keeps the worktree of task `task_id` (project `project_id`; `root` = the project's folder
-    /// inside it) watched for the Files and Git views until the daemon stops: each batch
+    /// inside it) watched for the Files and Git views until released ([`Hub::release_watch`])
+    /// or the daemon stops: each batch
     /// broadcasts `git.changed` with `worktree_task_id` and invalidates `fs.find`'s list
     /// (keyed by the task id). Changes there are not attributed to sessions or turns.
     pub fn keep_worktree_watched(self: &Arc<Self>, project_id: Ulid, task_id: Ulid, root: &Path) {
@@ -653,6 +658,38 @@ impl Hub {
     pub fn unwatch_worktree(&self, task_id: Ulid) {
         lock(&self.watches).remove(&task_id);
         self.file_index.invalidate(task_id);
+    }
+
+    /// A client closed the view that kept the watcher of project `project_id` (or, with
+    /// `worktree_task_id`, of that task's worktree). The worktree watch stops at once; the
+    /// project's stops unless a session of the project is live, whose exit drops it then (see
+    /// [`Hub::unwatch_idle_project`]; ADR 0087).
+    pub fn release_watch(&self, project_id: Ulid, worktree_task_id: Option<Ulid>) {
+        tracing::debug!(%project_id, ?worktree_task_id, "watch released");
+        match worktree_task_id {
+            Some(task_id) => self.unwatch_worktree(task_id),
+            None => {
+                if let Some(watch) = lock(&self.watches).get_mut(&project_id) {
+                    watch.kept = false;
+                }
+                self.unwatch_idle_project(project_id);
+            }
+        }
+    }
+
+    /// Records whether the agent session `id` of `project_id` is `working`.
+    fn set_working(&self, id: Ulid, project_id: Ulid, working: bool) {
+        let mut sessions = lock(&self.working);
+        if working {
+            sessions.insert(id, project_id);
+        } else {
+            sessions.remove(&id);
+        }
+    }
+
+    /// Is an agent session of the project `working`?
+    fn has_working(&self, project_id: Ulid) -> bool {
+        lock(&self.working).values().any(|&p| p == project_id)
     }
 
     /// Starts watching `root` for project `project_id` unless it is watched already; `kept`
@@ -678,7 +715,13 @@ impl Hub {
             return;
         }
         let hub = Arc::downgrade(self);
-        let started = watch::watch(root, move |batch| {
+        let working_hub = Arc::downgrade(self);
+        let working = move || {
+            working_hub
+                .upgrade()
+                .is_some_and(|hub| hub.has_working(project_id))
+        };
+        let started = watch::watch(root, working, move |batch| {
             if let Some(hub) = hub.upgrade() {
                 if !batch.files.is_empty() {
                     hub.file_index.invalidate(key);
@@ -1356,6 +1399,11 @@ impl Actor {
     fn set_state(&mut self, state: SessionState, source: StateSource) {
         tracing::debug!(id = %self.session.id, ?state, ?source, "session state");
         self.session.state = state;
+        self.hub.set_working(
+            self.session.id,
+            self.session.project_id,
+            self.session.kind == SessionKind::Agent && state == SessionState::Working,
+        );
         self.session.state_source = source;
         self.session.state_changed_at = crate::server::now_ms();
         self.save();
@@ -1702,5 +1750,84 @@ mod tests {
         for i in 1..1000 {
             assert!(!rate.add(t0 + ms(200 + i), 64));
         }
+    }
+
+    fn hub() -> (tempfile::TempDir, Arc<Hub>, Ulid) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("mkrew.db")).unwrap();
+        let project = store.add_project(dir.path(), Some("repo")).unwrap();
+        (dir, Arc::new(Hub::new(store)), project.id)
+    }
+
+    fn watched(hub: &Hub, key: Ulid) -> bool {
+        lock(&hub.watches).contains_key(&key)
+    }
+
+    /// A session of the project registered as live (no process behind it).
+    fn live(hub: &Hub, project_id: Ulid) -> Ulid {
+        let id = Ulid::new();
+        let (commands, _rx) = mpsc::channel(8);
+        let (input, _input_rx) = mpsc::channel(1);
+        lock(&hub.live).insert(
+            id,
+            Live {
+                project_id,
+                commands,
+                input: Arc::new(tokio::sync::Mutex::new(input)),
+            },
+        );
+        id
+    }
+
+    /// The view that kept a project watched closes: the watch stops at once, except while a
+    /// session of the project is live (its exit drops it then, as it always did).
+    #[tokio::test]
+    async fn releasing_a_kept_project_watch_drops_it_unless_a_session_lives() {
+        let (dir, hub, project) = hub();
+        hub.keep_watched(project, dir.path());
+        assert!(watched(&hub, project));
+        hub.release_watch(project, None);
+        assert!(!watched(&hub, project), "released and nothing runs");
+
+        hub.keep_watched(project, dir.path());
+        let session = live(&hub, project);
+        hub.release_watch(project, None);
+        assert!(watched(&hub, project), "a live session still needs it");
+        lock(&hub.live).remove(&session);
+        hub.unwatch_idle_project(project);
+        assert!(
+            !watched(&hub, project),
+            "no longer kept: its last exit drops it"
+        );
+    }
+
+    /// A task worktree's watcher only exists for its Files / Git view: release drops it, and
+    /// releasing something never watched is a no-op.
+    #[tokio::test]
+    async fn releasing_a_worktree_watch_drops_it() {
+        let (dir, hub, project) = hub();
+        let task = Ulid::new();
+        hub.keep_worktree_watched(project, task, dir.path());
+        assert!(watched(&hub, task));
+        hub.release_watch(project, Some(task));
+        assert!(!watched(&hub, task));
+        hub.release_watch(project, Some(Ulid::new()));
+        hub.release_watch(Ulid::new(), None);
+    }
+
+    /// `has_working` is per project; two working sessions of one project count until both stop.
+    #[test]
+    fn has_working_follows_the_sessions_of_each_project() {
+        let (_dir, hub, project) = hub();
+        let (a, b, other) = (Ulid::new(), Ulid::new(), Ulid::new());
+        assert!(!hub.has_working(project));
+        hub.set_working(a, project, true);
+        hub.set_working(b, project, true);
+        assert!(hub.has_working(project));
+        assert!(!hub.has_working(other));
+        hub.set_working(a, project, false);
+        assert!(hub.has_working(project), "b still works");
+        hub.set_working(b, project, false);
+        assert!(!hub.has_working(project));
     }
 }

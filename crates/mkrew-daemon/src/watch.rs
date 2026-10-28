@@ -16,6 +16,9 @@ use tokio::sync::mpsc;
 pub const QUIET: Duration = Duration::from_millis(300);
 /// A batch is delivered after this long even while changes keep coming.
 pub const MAX_DELAY: Duration = Duration::from_secs(2);
+/// [`MAX_DELAY`] while a session of the project is working: an agent writes files all the
+/// time, and every batch makes each UI client run `git status` (perf B5).
+pub const MAX_DELAY_WORKING: Duration = Duration::from_secs(5);
 /// Directories never reported, whatever `.gitignore` says.
 pub const ALWAYS_IGNORED: [&str; 3] = [".git", "node_modules", "target"];
 
@@ -219,9 +222,15 @@ pub struct Watch {
 /// Watches `root` recursively and calls `on_batch` with the sorted, de-duplicated relative
 /// paths of the files changed (created, modified, removed, renamed) in each batch, and whether
 /// the git state changed. A removed directory cannot be told from a removed file, so it is
-/// reported too (T5.6 attributes such paths like files). Non-UTF-8 paths are skipped. Must run
-/// inside the tokio runtime.
-pub fn watch(root: &Path, on_batch: impl Fn(Batch) + Send + 'static) -> ::notify::Result<Watch> {
+/// reported too (T5.6 attributes such paths like files). Non-UTF-8 paths are skipped.
+/// `working` is asked when a batch starts: while it is true the batch may wait
+/// [`MAX_DELAY_WORKING`] instead of [`MAX_DELAY`]. A batch with nothing to report after
+/// filtering is never delivered. Must run inside the tokio runtime.
+pub fn watch(
+    root: &Path,
+    working: impl Fn() -> bool + Send + 'static,
+    on_batch: impl Fn(Batch) + Send + 'static,
+) -> ::notify::Result<Watch> {
     let (tx, rx) = mpsc::unbounded_channel();
     let mut watcher = ::notify::recommended_watcher(
         move |event: ::notify::Result<::notify::Event>| match event {
@@ -233,15 +242,17 @@ pub fn watch(root: &Path, on_batch: impl Fn(Batch) + Send + 'static) -> ::notify
         },
     )?;
     watcher.watch(root, RecursiveMode::Recursive)?;
-    tokio::spawn(debounce(Filter::new(root), rx, on_batch));
+    tokio::spawn(debounce(Filter::new(root), rx, working, on_batch));
     Ok(Watch { _watcher: watcher })
 }
 
-/// Collects paths until [`QUIET`] passes without a change (or [`MAX_DELAY`] since the first
-/// one), then delivers the batch. Ends when the watcher is dropped.
+/// Collects paths until [`QUIET`] passes without a change (or [`MAX_DELAY`], or
+/// [`MAX_DELAY_WORKING`] when `working()` says so at the first change, since the first one),
+/// then delivers the batch. Ends when the watcher is dropped.
 async fn debounce(
     filter: Filter,
     mut rx: mpsc::UnboundedReceiver<Vec<PathBuf>>,
+    working: impl Fn() -> bool,
     on_batch: impl Fn(Batch),
 ) {
     let mut batch = BTreeSet::new();
@@ -260,7 +271,12 @@ async fn debounce(
     };
     while let Some(paths) = rx.recv().await {
         add(&mut batch, &mut git, paths);
-        let deadline = tokio::time::Instant::now() + MAX_DELAY;
+        let cap = if working() {
+            MAX_DELAY_WORKING
+        } else {
+            MAX_DELAY
+        };
+        let deadline = tokio::time::Instant::now() + cap;
         let open = loop {
             let quiet_end = (tokio::time::Instant::now() + QUIET).min(deadline);
             match tokio::time::timeout_at(quiet_end, rx.recv()).await {
@@ -530,10 +546,15 @@ mod tests {
         let root = dir.path().to_path_buf();
         let (tx, rx) = mpsc::unbounded_channel();
         let (out_tx, mut out) = mpsc::unbounded_channel();
-        let task = tokio::spawn(debounce(Filter::new(&root), rx, move |batch: Batch| {
-            assert!(!batch.git);
-            let _ = out_tx.send((tokio::time::Instant::now(), batch.files));
-        }));
+        let task = tokio::spawn(debounce(
+            Filter::new(&root),
+            rx,
+            || false,
+            move |batch: Batch| {
+                assert!(!batch.git);
+                let _ = out_tx.send((tokio::time::Instant::now(), batch.files));
+            },
+        ));
         let start = tokio::time::Instant::now();
         tx.send(vec![root.join("b.rs"), root.join("target/x")])
             .unwrap();
@@ -578,6 +599,34 @@ mod tests {
         );
     }
 
+    /// A stream of changes (one every 100 ms, never quiet) is cut 5 s after its first change
+    /// while a session of the project is working (perf B5).
+    #[tokio::test(start_paused = true)]
+    async fn a_working_session_stretches_the_cap_to_five_seconds() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (out_tx, mut out) = mpsc::unbounded_channel();
+        tokio::spawn(debounce(
+            Filter::new(&root),
+            rx,
+            || true,
+            move |_: Batch| {
+                let _ = out_tx.send(tokio::time::Instant::now());
+            },
+        ));
+        let start = tokio::time::Instant::now();
+        for i in 0..100 {
+            tx.send(vec![root.join(format!("f{i}"))]).unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Ok(at) = out.try_recv() {
+                assert_eq!(at - start, MAX_DELAY_WORKING);
+                return;
+            }
+        }
+        panic!("no batch after 10 s of changes");
+    }
+
     #[test]
     fn git_state_is_head_index_and_refs_of_the_root_or_a_child_git_dir() {
         let (dir, filter) = filter("");
@@ -617,9 +666,14 @@ mod tests {
         let root = dir.path().to_path_buf();
         let (tx, rx) = mpsc::unbounded_channel();
         let (out_tx, mut out) = mpsc::unbounded_channel();
-        let task = tokio::spawn(debounce(Filter::new(&root), rx, move |batch| {
-            let _ = out_tx.send(batch);
-        }));
+        let task = tokio::spawn(debounce(
+            Filter::new(&root),
+            rx,
+            || false,
+            move |batch| {
+                let _ = out_tx.send(batch);
+            },
+        ));
         tx.send(vec![root.join(".git/index.lock"), root.join(".git/index")])
             .unwrap();
         tx.send(vec![root.join(".git/objects/ab/cd")]).unwrap();
@@ -654,9 +708,13 @@ mod tests {
             std::fs::create_dir(root.join(sub)).unwrap();
         }
         let (tx, mut batches) = mpsc::unbounded_channel();
-        let _watch = watch(&root, move |batch| {
-            let _ = tx.send(batch);
-        })
+        let _watch = watch(
+            &root,
+            || false,
+            move |batch| {
+                let _ = tx.send(batch);
+            },
+        )
         .unwrap();
         // Ignored writes first, so a batch containing the tracked file has seen them too.
         for ignored in ["target/a.o", "node_modules/b.js", ".git/index", "debug.log"] {
