@@ -42,6 +42,16 @@ impl FollowUp {
         }
     }
 
+    /// The draft as it carries over a lost connection (spec §8): typed text, nothing in flight.
+    pub fn into_draft(mut self) -> Option<FollowUp> {
+        if self.text.text().is_empty() {
+            return None;
+        }
+        self.busy = false;
+        self.error = None;
+        Some(self)
+    }
+
     /// Enter types a new line, Ctrl+Enter sends, Esc leaves; edits are ignored while sending.
     pub fn key(&mut self, key: DialogKey) -> Outcome {
         match key {
@@ -128,5 +138,19 @@ mod tests {
         draft.text.clear();
         draft.insert(" \n ");
         assert_eq!(draft.send_params(), None, "blanks only");
+    }
+
+    #[test]
+    fn into_draft_keeps_typed_text_only_and_nothing_in_flight() {
+        let (task, session) = (Ulid::new(), Ulid::new());
+        assert_eq!(FollowUp::new(task, session).into_draft(), None);
+        let mut draft = FollowUp::new(task, session);
+        draft.insert("fix it");
+        draft.busy = true;
+        draft.error = Some("Cannot send".into());
+        let kept = draft.into_draft().expect("typed text is kept");
+        assert_eq!((kept.task_id, kept.session_id), (task, session));
+        assert_eq!(kept.text.text(), "fix it");
+        assert!(!kept.busy && kept.error.is_none());
     }
 }

@@ -485,7 +485,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(connection) = self.connection.clone() else {
+        // Without a connection the save says so (the text stays; it is kept over a reconnect).
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let Some(view) = self.files.get_mut(&project_id) else {
@@ -613,13 +614,20 @@ impl Shell {
             return false;
         }
         let again: AfterSave = Box::new(|shell, window, cx| shell.close_when_saved(window, cx));
-        !self.ask_unsaved(again, window, cx)
+        if self.ask_unsaved(again, window, cx) {
+            return false;
+        }
+        // No tray to hide to (macOS, Linux): closing this window ends Mkrew, so the machine
+        // windows are asked to quit here, not left to the drop of the `Shell`.
+        self.close_machines();
+        true
     }
 
     /// Closes the window once no Files change is unsaved, asking about the rest first.
     fn close_when_saved(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let again: AfterSave = Box::new(|shell, window, cx| shell.close_when_saved(window, cx));
         if !self.ask_unsaved(again, window, cx) {
+            self.close_machines();
             window.remove_window();
         }
     }
@@ -809,6 +817,24 @@ impl Shell {
         let root = self.board.task(task_id)?.worktree_path.as_deref()?;
         let dir = worktree_target::project_dir(Path::new(&project.path), Path::new(root));
         Some(worktree_target::join_relative(dir, path))
+    }
+
+    /// [`Self::target_file`] as the text of a path on the other computer (a machine window,
+    /// where `/` or `\` follows its project's path and nothing is read from this computer's
+    /// disk). A task worktree gives its root: the folder of a project inside a repository is
+    /// not worked out here.
+    pub(crate) fn remote_file(
+        &self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        path: &str,
+    ) -> Option<String> {
+        let project = (self.sidebar.projects().iter()).find(|p| p.id == project_id)?;
+        let base = match target {
+            None => project.path.as_str(),
+            Some(task_id) => self.board.task(task_id)?.worktree_path.as_deref()?,
+        };
+        Some(worktree_target::join_remote(base, path))
     }
 
     /// Opens the active tab's file in Zed, at the selected line if any; a failure shows in

@@ -168,6 +168,17 @@ impl Docs {
         }
     }
 
+    /// The view as it carries over a lost connection (spec §8): only a typed comment draft, on
+    /// its file, which is listed and read again when the view is shown. `None` without one.
+    pub fn into_draft(self) -> Option<Docs> {
+        let comments = self.comments.into_draft()?;
+        Some(Docs {
+            selected: comments.file_path.clone(),
+            comments,
+            ..Docs::new(self.project_id)
+        })
+    }
+
     /// A `doc.list` is about to be sent; `false` = one is in flight already (it is sent again
     /// once that one answers).
     pub fn begin_list(&mut self) -> bool {
@@ -190,6 +201,11 @@ impl Docs {
                 self.files = Files::Loaded(files);
                 match (&self.selected, first) {
                     (None, Some(first)) => self.select(&first),
+                    // Kept with a draft over a lost connection: its file is read again.
+                    (Some(kept), _) if matches!(self.doc, Doc::None) => {
+                        let kept = kept.clone();
+                        self.select(&kept)
+                    }
                     _ => None,
                 }
             }
@@ -205,7 +221,7 @@ impl Docs {
     /// whose read failed (a retry).
     pub fn select(&mut self, file_path: &str) -> Option<String> {
         let same = self.selected.as_deref() == Some(file_path);
-        if same && !matches!(self.doc, Doc::Failed(_) | Doc::Deleted) {
+        if same && !matches!(self.doc, Doc::None | Doc::Failed(_) | Doc::Deleted) {
             return None;
         }
         if !same {
@@ -667,5 +683,37 @@ mod tests {
         assert_eq!(shown.line_units().len(), 7);
         assert_eq!(shown.line_units()[3], (4, 4));
         assert!(Shown::from_text("").block_units().is_empty());
+    }
+
+    #[test]
+    fn into_draft_keeps_a_comment_draft_and_reads_its_file_again() {
+        let project = Ulid::new();
+        let mut docs = Docs::new(project);
+        docs.select("a.md");
+        docs.read("a.md", Ok(shown("a.md", "a", "h1")));
+        docs.comments.begin_list("a.md");
+        docs.comments.start_reply(CommentId(Ulid::new()));
+        assert!(
+            docs.into_draft().is_none(),
+            "a view without typed text is dropped"
+        );
+
+        let mut docs = Docs::new(project);
+        docs.select("a.md");
+        docs.read("a.md", Ok(shown("a.md", "a", "h1")));
+        docs.comments.begin_list("a.md");
+        docs.comments.start_reply(CommentId(Ulid::new()));
+        docs.comments.draft.as_mut().unwrap().insert("why");
+        let mut kept = docs.into_draft().expect("the draft is kept");
+        assert_eq!(kept.project_id, project);
+        assert_eq!(kept.selected.as_deref(), Some("a.md"));
+        assert!(matches!(kept.doc, Doc::None));
+        assert_eq!(kept.comments.draft.as_ref().unwrap().text, "why");
+        // The next listing reads the file again (the first file is not picked instead).
+        assert!(kept.begin_list());
+        let (read, _) = kept.listed(Ok(vec![file("PLAN.md", 0), file("a.md", 1)]));
+        assert_eq!(read.as_deref(), Some("a.md"));
+        assert_eq!(kept.comments.begin_list("a.md").as_deref(), Some("a.md"));
+        assert!(kept.comments.draft.is_some());
     }
 }

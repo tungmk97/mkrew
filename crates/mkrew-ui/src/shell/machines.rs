@@ -38,11 +38,17 @@ impl Shell {
         }
     }
 
-    /// Ends every machine window this one started (Quit, update install).
+    /// Asks every machine window this one started to quit (Quit, update install, closing this
+    /// window): each asks about its own unsaved Files changes and exits by itself.
     pub(crate) fn close_machines(&mut self) {
         if let Some((launcher, _)) = self.launcher.as_mut() {
             launcher.close_all();
         }
+    }
+
+    /// Whether a machine window this one started still runs.
+    pub(crate) fn machines_open(&mut self) -> bool {
+        (self.launcher.as_mut()).is_some_and(|(launcher, _)| launcher.any_running())
     }
 
     /// Takes the state lines the children wrote since the last tick.

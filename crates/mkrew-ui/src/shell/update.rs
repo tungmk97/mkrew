@@ -5,6 +5,9 @@ use mkrew_ui::update::{self, InstallKind, Release};
 use crate::*;
 
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
+/// How long the update waits silently for the machine windows to quit before it says what holds
+/// it up (a window asking "Save changes?" waits for its user).
+const MACHINES_GRACE: Duration = Duration::from_secs(10);
 /// `window.prompt` answers; Cancel is also Esc. "What's new" opens the release page and asks
 /// again.
 const ANSWERS: [&str; 3] = ["Update", "What's new", "Cancel"];
@@ -178,11 +181,29 @@ impl Shell {
             return;
         }
         self.updating = true;
-        // The installer replaces the exe the machine windows run: they end first (they start
-        // again if the update fails).
+        // The installer replaces the exe the machine windows run: they quit first, each asking
+        // about its own unsaved Files changes (they start again if the update fails). The
+        // installer starts only when they are all gone.
         self.close_machines();
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
+            let waiting = Instant::now();
+            let mut told = false;
+            loop {
+                let Ok(open) = this.update(cx, |shell, _| shell.machines_open()) else {
+                    return;
+                };
+                if !open {
+                    break;
+                }
+                if !told && waiting.elapsed() >= MACHINES_GRACE {
+                    told = true;
+                    let _ = this.update(cx, |shell, cx| {
+                        shell.toast_info("Close the machine windows to install the update.", cx);
+                    });
+                }
+                cx.background_executor().timer(theme::STATUS_TICK).await;
+            }
             let result = cx
                 .background_executor()
                 .spawn(async move { update::apply(&kind, &file) })

@@ -1,12 +1,39 @@
 //! This computer's window as the launcher (spec 2026-10-29 §4.5): one `mkrew --machine <name>`
-//! child per machine, each child's state lines read on a thread. No GPUI types.
+//! child per machine, each child's state lines read on a thread, and a `quit` line on its stdin
+//! to end it (the child asks about unsaved Files changes like on any window close). No GPUI
+//! types.
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command as Process, Stdio};
 
 use crate::launch::{self, Launch};
 use crate::machines::MachineState;
+
+/// What a machine window reads on its stdin, one per line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    /// Run the window's own quit path (it asks about unsaved changes first).
+    Quit,
+}
+
+const QUIT_LINE: &str = "quit";
+
+/// The commands in `reader` (unknown lines skipped). The end of the stream is no command: the
+/// launcher is gone (crashed) and the window keeps working.
+pub fn read_commands(reader: impl BufRead) -> impl Iterator<Item = Command> {
+    reader
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|line| (line.trim() == QUIT_LINE).then_some(Command::Quit))
+}
+
+/// Writes the `quit` line; `false` when it could not be delivered.
+fn write_quit(to: &mut impl Write) -> bool {
+    writeln!(to, "{QUIT_LINE}")
+        .and_then(|()| to.flush())
+        .is_ok()
+}
 
 /// The states a child's stdout reports (unknown lines skipped), then [`MachineState::Closed`]
 /// when the stream ends: the child exited.
@@ -21,8 +48,24 @@ pub fn read_states(reader: impl BufRead) -> impl Iterator<Item = MachineState> {
 pub struct Launcher {
     exe: PathBuf,
     /// Started children by machine name.
-    children: Vec<(String, Child)>,
+    children: Vec<Started>,
     states: async_channel::Sender<(String, MachineState)>,
+}
+
+struct Started {
+    name: String,
+    child: Child,
+    /// `None` once `quit` was sent (or could not be).
+    stdin: Option<ChildStdin>,
+}
+
+impl Started {
+    /// Sends `quit` once; `false` if it could not be delivered (the child is not listening).
+    fn ask_quit(&mut self) -> bool {
+        self.stdin
+            .take()
+            .is_none_or(|mut stdin| write_quit(&mut stdin))
+    }
 }
 
 impl Launcher {
@@ -55,18 +98,25 @@ impl Launcher {
         }
     }
 
-    /// Ends `name`'s window (Remove).
+    /// Asks `name`'s window to quit (Remove): it asks about unsaved text, then exits by itself.
     pub fn close(&mut self, name: &str) {
         if let Some(at) = self.position(name) {
-            end(self.children.swap_remove(at).1);
+            self.children[at].ask_quit();
         }
     }
 
-    /// Ends every window this launcher started (Quit, update install).
+    /// Asks every window this launcher started to quit (Quit, update install).
     pub fn close_all(&mut self) {
-        for (_, child) in self.children.drain(..) {
-            end(child);
+        for started in &mut self.children {
+            started.ask_quit();
         }
+    }
+
+    /// Whether any window this launcher started still runs (exited ones are dropped).
+    pub fn any_running(&mut self) -> bool {
+        self.children
+            .retain_mut(|started| matches!(started.child.try_wait(), Ok(None)));
+        !self.children.is_empty()
     }
 
     /// Whether the child of `name` still runs (an exited one is dropped).
@@ -74,7 +124,7 @@ impl Launcher {
         let Some(at) = self.position(name) else {
             return false;
         };
-        if matches!(self.children[at].1.try_wait(), Ok(None)) {
+        if matches!(self.children[at].child.try_wait(), Ok(None)) {
             return true;
         }
         self.children.swap_remove(at);
@@ -82,14 +132,14 @@ impl Launcher {
     }
 
     fn position(&self, name: &str) -> Option<usize> {
-        (self.children.iter()).position(|(started, _)| started.eq_ignore_ascii_case(name))
+        (self.children.iter()).position(|started| crate::machines::same_name(&started.name, name))
     }
 
     fn spawn(&mut self, name: &str) {
-        let child = Command::new(&self.exe)
+        let child = Process::new(&self.exe)
             .arg("--machine")
             .arg(name)
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn();
@@ -120,14 +170,28 @@ impl Launcher {
                 tracing::warn!(machine = name, "cannot read the machine window: {error}");
             }
         }
-        self.children.push((name.to_owned(), child));
+        let stdin = child.stdin.take();
+        self.children.push(Started {
+            name: name.to_owned(),
+            child,
+            stdin,
+        });
     }
 }
 
-/// Whichever way this window ends, its machine windows go with it.
+/// Whichever way this window ends, its machine windows are asked to quit. They finish their own
+/// questions and exit by themselves: only a child that cannot be asked (its stdin is broken) is
+/// killed, the one last resort. ponytail: no kill after a grace time, it would also kill a
+/// window that still asks "Save changes?".
 impl Drop for Launcher {
     fn drop(&mut self) {
-        self.close_all();
+        for mut started in self.children.drain(..) {
+            if !started.ask_quit() {
+                // Already gone is fine: the goal is no unreachable process left.
+                let _ = started.child.kill();
+                let _ = started.child.wait();
+            }
+        }
     }
 }
 
@@ -138,12 +202,6 @@ fn instance(name: &str) -> String {
         jump: None,
     };
     launch::instance_id(&launch, "")
-}
-
-fn end(mut child: Child) {
-    // Already gone is fine: the goal is no process left.
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[cfg(test)]
@@ -163,5 +221,31 @@ mod tests {
                 MachineState::Closed,
             ]
         );
+    }
+
+    #[test]
+    fn the_quit_line_is_read_back_and_the_end_of_the_stream_is_ignored() {
+        let mut sent = Vec::new();
+        assert!(write_quit(&mut sent));
+        let commands: Vec<Command> = read_commands(&sent[..]).collect();
+        assert_eq!(commands, [Command::Quit]);
+        // Noise is skipped; EOF alone (the launcher crashed) is no command.
+        assert_eq!(read_commands(&b"hello\n"[..]).count(), 0);
+        assert_eq!(read_commands(&b""[..]).count(), 0);
+        assert_eq!(read_commands(&b" quit \r\n"[..]).count(), 1);
+    }
+
+    #[test]
+    fn a_closed_pipe_is_a_failed_quit() {
+        struct Broken;
+        impl Write for Broken {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        assert!(!write_quit(&mut Broken));
     }
 }

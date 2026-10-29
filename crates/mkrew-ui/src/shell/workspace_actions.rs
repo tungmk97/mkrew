@@ -576,7 +576,8 @@ impl Shell {
         }
     }
 
-    /// "Copy path" on a Files path: its absolute path, native separators.
+    /// "Copy path" on a Files path: its absolute path, native separators (in a machine window
+    /// the separators of the other computer's path).
     pub(crate) fn copy_file_path(
         &mut self,
         project_id: Ulid,
@@ -585,8 +586,13 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.file_menu = None;
-        if let Some(full) = self.target_file(project_id, target, path) {
-            cx.write_to_clipboard(ClipboardItem::new_string(full.display().to_string()));
+        let full = if self.target.is_machine() {
+            self.remote_file(project_id, target, path)
+        } else {
+            (self.target_file(project_id, target, path)).map(|full| full.display().to_string())
+        };
+        if let Some(full) = full {
+            cx.write_to_clipboard(ClipboardItem::new_string(full));
             self.toast_info("Path copied", cx);
         }
         cx.notify();

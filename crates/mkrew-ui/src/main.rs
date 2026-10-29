@@ -478,6 +478,9 @@ struct Shell {
     connect_gen: u64,
     /// Failed or lost connects since the last good one (0 = none), indexing the backoff.
     reconnect_attempts: u32,
+    /// A machine window was connected at least once (a later attempt reports "Reconnecting…";
+    /// before that the last "Not reachable" stays).
+    was_connected: bool,
     /// The wait before the next automatic retry, shown in the status line.
     reconnect_in: Option<Duration>,
     /// Set while a lost connection is down: the workspace that was shown. The screen stays

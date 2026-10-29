@@ -1416,6 +1416,28 @@ fn keys_are_unmodified_arrows_and_j_k() {
     assert_eq!(parse("x"), None);
 }
 
+#[test]
+fn into_commit_draft_keeps_only_the_typed_message() {
+    assert!(loaded().into_commit_draft().is_none(), "nothing typed");
+    let task = Some(Ulid::new());
+    let mut view = GitView::new(Ulid::new(), task);
+    view.begin_status();
+    view.status_loaded(Ok(working()));
+    view.commit.text.insert("fix: the thing");
+    view.commit.busy = true;
+    view.commit.error = Some("hook failed".into());
+    view.commit.generating = Some(Ulid::new());
+    let project = view.project_id;
+
+    let kept = view.into_commit_draft().expect("the message is kept");
+    assert_eq!((kept.project_id, kept.worktree_task_id), (project, task));
+    assert_eq!(kept.commit.text.text(), "fix: the thing");
+    assert!(!kept.commit.busy && kept.commit.error.is_none());
+    assert!(kept.commit.generating.is_none());
+    assert!(matches!(kept.status, Status::Loading), "read again");
+    assert!(!kept.started);
+}
+
 fn viewed_file(path: &str, staged: bool) -> ViewedFile {
     ViewedFile {
         path: path.into(),

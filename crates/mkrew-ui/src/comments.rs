@@ -230,6 +230,25 @@ impl Comments {
         }
     }
 
+    /// What outlives a lost connection (spec §8): a typed draft with its file and lines, and
+    /// nothing in flight (its answer is lost, the draft can be sent again). The list is `Failed`
+    /// so the next [`Comments::begin_list`] of that file asks for it again (nothing shows it
+    /// before). `None` without typed text.
+    pub fn into_draft(self) -> Option<Comments> {
+        let mut draft = self.draft.filter(|draft| !draft.text.as_str().is_empty())?;
+        draft.busy = false;
+        draft.error = None;
+        Some(Comments {
+            file_path: self.file_path,
+            list: List::Failed("not listed since the connection was lost".into()),
+            selection: self.selection,
+            head: self.head,
+            draft: Some(draft),
+            serial: self.serial,
+            ..Comments::new(self.context)
+        })
+    }
+
     /// Starts over for `file_path` when it is not this one's, or its listing failed; returns
     /// it when `comment.list` has to be sent.
     pub fn begin_list(&mut self, file_path: &str) -> Option<String> {
@@ -844,5 +863,35 @@ mod tests {
         draft.key(DialogKey::DeleteWord);
         assert_eq!(draft.text, "ok", "frozen while saving");
         assert!(!draft.text.all_selected());
+    }
+
+    #[test]
+    fn into_draft_keeps_only_a_typed_draft_on_its_file_and_lists_again() {
+        let mut comments = Comments::new(CommentContext::Doc);
+        comments.begin_list("PLAN.md");
+        comments.listed("PLAN.md", Ok(vec![]));
+        comments.pick(2, 3, false);
+        comments.start_reply(CommentId(Ulid(1)));
+        assert!(
+            comments.clone().into_draft().is_none(),
+            "an empty draft is not kept"
+        );
+        let draft = comments.draft.as_mut().unwrap();
+        draft.insert("why this");
+        draft.busy = true;
+        draft.error = Some("x".into());
+
+        let mut kept = comments.into_draft().expect("typed text is kept");
+        let draft = kept.draft.as_ref().unwrap();
+        assert_eq!(draft.text, "why this");
+        assert_eq!(draft.target, Target::Reply(CommentId(Ulid(1))));
+        assert!(!draft.busy && draft.error.is_none(), "nothing in flight");
+        assert_eq!(kept.selection, Some(Selection { start: 2, end: 3 }));
+        // Shown again: the comments of the file are asked for, the draft stays.
+        assert_eq!(kept.begin_list("PLAN.md").as_deref(), Some("PLAN.md"));
+        assert!(kept.draft.is_some());
+        // Another file drops it, like before.
+        assert_eq!(kept.begin_list("other.md").as_deref(), Some("other.md"));
+        assert!(kept.draft.is_none());
     }
 }

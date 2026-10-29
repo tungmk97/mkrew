@@ -4,14 +4,24 @@
 //! rows, its footer and "next Inbox entry". Pure and tested headlessly.
 
 use std::collections::HashMap;
-use std::path::Path;
 
 use mkrew_protocol::{Event, Project, Session, SessionKind, SessionState, StateSource};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-/// The file of the viewed state, in the data dir (UI-only: the daemon never reads it).
+/// The file of this computer's viewed state, in the data dir (UI-only: the daemon never reads it).
 pub const VIEWED_FILE: &str = "ui_viewed.json";
+
+/// The viewed file of a window: [`VIEWED_FILE`] for this computer's window (`None`), its own
+/// `ui_viewed-<key>.json` for a machine window (`instance` = its instance id, e.g.
+/// `machine:<name>`; the key is the hash of [`crate::desktop::instance_key`]). Each window has
+/// its own because [`Viewed::save`] drops the sessions its own daemon does not list.
+pub fn viewed_file(instance: Option<&str>) -> String {
+    instance.map_or_else(
+        || VIEWED_FILE.to_owned(),
+        |id| format!("ui_viewed-{}.json", crate::desktop::instance_key("", id)),
+    )
+}
 
 /// One Inbox line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +45,8 @@ pub struct Entry {
 /// in [`VIEWED_FILE`] ([`Viewed::load`], [`Viewed::save`]).
 #[derive(Debug, Default)]
 pub struct Viewed {
+    /// Where [`Viewed::save`] writes; `None` = nowhere (a state made by hand).
+    path: Option<std::path::PathBuf>,
     /// Session → `state_changed_at` of the state it was last viewed in.
     seen: HashMap<Ulid, i64>,
     /// Agent session → `state_changed_at` of its `working → idle`: an agent without a `done`
@@ -83,23 +95,27 @@ impl Viewed {
         serde_json::to_string(&saved).unwrap_or_default()
     }
 
-    /// Reads [`VIEWED_FILE`] of the data dir `dir`; empty when it is missing or corrupt.
-    pub fn load(dir: &Path) -> Viewed {
-        std::fs::read_to_string(dir.join(VIEWED_FILE))
-            .map_or_else(|_| Viewed::default(), |json| Viewed::from_json(&json))
+    /// Reads `path`; empty when it is missing or corrupt. [`Viewed::save`] writes it back.
+    pub fn load(path: std::path::PathBuf) -> Viewed {
+        let mut viewed = std::fs::read_to_string(&path)
+            .map_or_else(|_| Viewed::default(), |json| Viewed::from_json(&json));
+        viewed.path = Some(path);
+        viewed
     }
 
-    /// Writes the state to [`VIEWED_FILE`] of the data dir `dir` once something changed since
-    /// the last call (else nothing happens, not even an allocation), after dropping the
-    /// sessions that are not in `sessions` any more. A failed write is only logged: the file
-    /// is a cache of what the user saw.
-    pub fn save(&mut self, sessions: &[Session], dir: &Path) {
+    /// Writes the state to its file once something changed since the last call (else nothing
+    /// happens, not even an allocation), after dropping the sessions that are not in
+    /// `sessions` any more. A failed write is only logged: the file is a cache of what the
+    /// user saw.
+    pub fn save(&mut self, sessions: &[Session]) {
         if !self.take_changed() {
             return;
         }
         self.prune(sessions);
-        let file = dir.join(VIEWED_FILE);
-        if let Err(error) = std::fs::write(&file, self.to_json()) {
+        let Some(file) = &self.path else {
+            return;
+        };
+        if let Err(error) = std::fs::write(file, self.to_json()) {
             tracing::warn!("cannot save {}: {error}", file.display());
         }
     }
@@ -686,9 +702,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // Only the seen session and the marked one are still listed.
         let live = [sessions[0].clone(), sessions[2].clone()];
-        viewed.save(&live, dir.path());
+        viewed.path = Some(dir.path().join(VIEWED_FILE));
+        viewed.save(&live);
 
-        let reloaded = Viewed::load(dir.path());
+        let reloaded = Viewed::load(dir.path().join(VIEWED_FILE));
         assert!(!needs_you(&sessions[0], &reloaded), "still seen");
         assert!(needs_you(&sessions[2], &reloaded), "still marked");
         assert_eq!(reloaded.seen.len() + reloaded.unread.len(), 2);
@@ -705,18 +722,18 @@ mod tests {
         let done = session(&api, SessionState::Done, 3);
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join(VIEWED_FILE);
-        let mut viewed = Viewed::default();
-        viewed.save(std::slice::from_ref(&done), dir.path());
+        let mut viewed = Viewed::load(file.clone());
+        viewed.save(std::slice::from_ref(&done));
         assert!(!file.exists(), "nothing changed yet");
 
         assert!(viewed.view(&done));
-        viewed.save(std::slice::from_ref(&done), dir.path());
+        viewed.save(std::slice::from_ref(&done));
         assert!(file.exists());
         std::fs::remove_file(&file).unwrap();
         // Looking at the same state again changes nothing: no write.
         viewed.activated();
         assert!(!viewed.view(&done));
-        viewed.save(std::slice::from_ref(&done), dir.path());
+        viewed.save(std::slice::from_ref(&done));
         assert!(!file.exists());
     }
 
@@ -726,13 +743,42 @@ mod tests {
         let file = dir.path().join(VIEWED_FILE);
         let api = project("api");
         let done = session(&api, SessionState::Done, 3);
-        assert!(needs_you(&done, &Viewed::load(dir.path())));
+        assert!(needs_you(&done, &Viewed::load(file.clone())));
         for junk in ["", "not json", "[1,2]", "{\"seen\": {\"x\": 1}}"] {
             std::fs::write(&file, junk).unwrap();
-            assert!(needs_you(&done, &Viewed::load(dir.path())), "{junk:?}");
+            assert!(needs_you(&done, &Viewed::load(file.clone())), "{junk:?}");
         }
         // Unknown keys and absent maps are fine.
         let partial = Viewed::from_json(&format!("{{\"seen\": {{\"{}\": 3}}, \"x\": 1}}", done.id));
         assert!(!needs_you(&done, &partial));
+    }
+
+    #[test]
+    fn windows_do_not_overwrite_each_others_viewed_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let machine_file = viewed_file(Some("machine:home pc"));
+        assert_ne!(machine_file, VIEWED_FILE);
+        assert_ne!(machine_file, viewed_file(Some("machine:work")));
+        assert_eq!(machine_file, viewed_file(Some("machine:HOME PC")));
+        assert_eq!(viewed_file(None), VIEWED_FILE);
+
+        let api = project("api");
+        let (mine, theirs) = (
+            session(&api, SessionState::Done, 3),
+            session(&api, SessionState::Done, 4),
+        );
+        let mut local = Viewed::load(dir.path().join(viewed_file(None)));
+        assert!(local.view(&mine));
+        local.save(std::slice::from_ref(&mine));
+        // The machine window knows none of this computer's sessions: it must not prune them.
+        let mut machine = Viewed::load(dir.path().join(&machine_file));
+        assert!(machine.view(&theirs));
+        machine.save(std::slice::from_ref(&theirs));
+
+        let local = Viewed::load(dir.path().join(viewed_file(None)));
+        assert!(!needs_you(&mine, &local), "still seen here");
+        let machine = Viewed::load(dir.path().join(&machine_file));
+        assert!(!needs_you(&theirs, &machine));
+        assert!(needs_you(&mine, &machine), "not seen there");
     }
 }

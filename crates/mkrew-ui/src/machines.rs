@@ -93,7 +93,7 @@ impl Machines {
         if name.chars().count() > MAX_NAME {
             return invalid(Field::Name, "Use at most 40 characters.");
         }
-        if name.eq_ignore_ascii_case(THIS_COMPUTER) || self.get(&name).is_some() {
+        if same_name(&name, THIS_COMPUTER) || self.get(&name).is_some() {
             return invalid(Field::Name, "That name is already used.");
         }
         if host.is_empty() {
@@ -111,19 +111,38 @@ impl Machines {
         if mk.as_deref().is_some_and(|mk| mk.starts_with('-')) {
             return invalid(Field::Mk, "A path does not start with \"-\".");
         }
+        // ssh joins the remote command into one line for the remote shell: a space would split
+        // the path there.
+        if mk
+            .as_deref()
+            .is_some_and(|mk| mk.chars().any(char::is_whitespace))
+        {
+            return invalid(
+                Field::Mk,
+                "Use a path without spaces, or put mk on the PATH there.",
+            );
+        }
         self.list.push(Machine { name, host, mk });
         Ok(())
     }
 
+    /// Removes `name` (trimmed, compared like [`same_name`]); `false` when there is none.
     pub fn remove(&mut self, name: &str) -> bool {
+        let name = name.trim();
         let before = self.list.len();
-        self.list.retain(|m| !m.name.eq_ignore_ascii_case(name));
+        self.list.retain(|m| !same_name(&m.name, name));
         self.list.len() != before
     }
 
     pub fn get(&self, name: &str) -> Option<&Machine> {
-        self.list.iter().find(|m| m.name.eq_ignore_ascii_case(name))
+        self.list.iter().find(|m| same_name(&m.name, name))
     }
+}
+
+/// Whether two machine names are the same: Unicode lower case, like the instance id of the
+/// machine's window ([`crate::launch::instance_id`]).
+pub fn same_name(a: &str, b: &str) -> bool {
+    a.to_lowercase() == b.to_lowercase()
 }
 
 /// `ssh` and its arguments for `machine` (spec §4.3).
@@ -160,9 +179,13 @@ pub fn hint(stderr: &str, machine: &Machine) -> Option<String> {
             "Add this computer's SSH key to {name} (ssh-copy-id, or its authorized_keys)."
         ))
     } else if has("host key verification failed") || has("remote host identification has changed") {
+        // `user@` is only for ssh's login; the key of the host is stored without it.
+        let host = machine
+            .host
+            .rsplit_once('@')
+            .map_or(machine.host.as_str(), |(_, host)| host);
         Some(format!(
-            "{name}'s host key changed. If that is expected, remove the old key with `ssh-keygen -R {}`.",
-            machine.host
+            "{name}'s host key changed. If that is expected, remove the old key with `ssh-keygen -R {host}`."
         ))
     } else if has("mk") && (has("not found") || has("not recognized") || has("no such file")) {
         Some(format!(
@@ -223,6 +246,17 @@ impl MachineState {
         }
     }
 
+    /// What a machine window reports when it starts an attempt after `attempts` failed or lost
+    /// ones: "connecting" for the first; "reconnecting" for a retry only when the machine was
+    /// connected before, else `None` (the last "unreachable" stays, no flicker).
+    pub fn when_connecting(attempts: u32, was_connected: bool) -> Option<Self> {
+        match (attempts, was_connected) {
+            (0, _) => Some(Self::Connecting),
+            (_, true) => Some(Self::Reconnecting),
+            (_, false) => None,
+        }
+    }
+
     /// "Connected", "Not reachable: …", … for the Machines page and the tray.
     pub fn label(&self) -> String {
         match self {
@@ -260,10 +294,11 @@ pub fn local_files_refused(machine: &str) -> String {
 }
 
 /// The line at the top of the Settings pages in the window of `machine`: the dialog edits this
-/// computer's `settings.toml`, but the daemon behind the window reads its own.
+/// computer's `settings.toml`; the daemon behind the window reads its own, but the toasts of
+/// this window follow this computer's `[notify]`.
 pub fn daemon_settings_note(machine: &str) -> String {
     format!(
-        "Daemon settings (notifications, retention, features) are {machine}'s own; change them on {machine}."
+        "Retention, features and other daemon settings are {machine}'s own; change them on {machine}. Notifications from this window follow this computer's settings."
     )
 }
 
@@ -391,15 +426,51 @@ mod tests {
     }
 
     #[test]
+    fn names_fold_unicode_case_and_remove_trims() {
+        let mut machines = Machines::default();
+        machines.add(machine("Büro", "h")).unwrap();
+        assert_eq!(
+            machines
+                .clone()
+                .add(machine("BÜRO", "h2"))
+                .unwrap_err()
+                .field,
+            Field::Name
+        );
+        assert!(machines.get("büro").is_some());
+        assert!(machines.remove("  BÜRO "));
+        assert!(machines.list.is_empty());
+    }
+
+    #[test]
+    fn an_mk_path_with_a_space_is_refused() {
+        let mut spaced = machine("A", "h");
+        spaced.mk = Some("/opt/my tools/mk".into());
+        let error = Machines::default().add(spaced).unwrap_err();
+        assert_eq!(error.field, Field::Mk);
+        assert_eq!(
+            error.message,
+            "Use a path without spaces, or put mk on the PATH there."
+        );
+    }
+
+    #[test]
     fn hints_match_the_usual_ssh_failures() {
         let m = machine("Home PC", "home-pc");
         let hint = |text: &str| hint(text, &m).unwrap_or_default();
         assert!(hint("me@home-pc: Permission denied (publickey).").contains("SSH key"));
-        assert!(hint("Host key verification failed.").contains("ssh-keygen -R home-pc"));
+        assert!(hint("Host key verification failed.").contains("ssh-keygen -R home-pc`"));
         assert!(
             hint("@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@")
                 .contains("ssh-keygen -R")
         );
+        // The login name is not part of the key's host; an alias or host:port stays as is.
+        let key_of = |host: &str| {
+            super::hint("Host key verification failed.", &machine("Box", host)).unwrap_or_default()
+        };
+        assert!(key_of("me@box").contains("ssh-keygen -R box`"));
+        assert!(key_of("box:2222").contains("ssh-keygen -R box:2222`"));
+        assert!(key_of("alias").contains("ssh-keygen -R alias`"));
         assert!(hint("bash: line 1: mk: command not found").contains("mk path"));
         assert!(
             hint("'mk' is not recognized as an internal or external command").contains("mk path")
@@ -440,6 +511,18 @@ mod tests {
     }
 
     #[test]
+    fn only_a_machine_that_was_connected_reports_reconnecting() {
+        assert_eq!(
+            MachineState::when_connecting(0, false),
+            Some(MachineState::Connecting)
+        );
+        assert_eq!(MachineState::when_connecting(3, false), None);
+        assert_eq!(
+            MachineState::when_connecting(1, true),
+            Some(MachineState::Reconnecting)
+        );
+    }
+    #[test]
     fn refusals_and_the_settings_note_name_the_machine() {
         assert_eq!(
             opens_local_files_only("Home PC"),
@@ -451,7 +534,7 @@ mod tests {
         );
         assert_eq!(
             daemon_settings_note("Home PC"),
-            "Daemon settings (notifications, retention, features) are Home PC's own; change them on Home PC."
+            "Retention, features and other daemon settings are Home PC's own; change them on Home PC. Notifications from this window follow this computer's settings."
         );
     }
 }

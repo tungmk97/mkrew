@@ -9,8 +9,7 @@ impl Shell {
     /// nothing changed; called on session events, after a list load and when a view changed
     /// what needs the user, never per frame. A changed viewed state is saved here too (A2).
     pub(crate) fn sync_attention(&mut self, cx: &mut Context<'_, Self>) {
-        self.viewed
-            .save(self.sidebar.sessions(), &self.paths.data_dir);
+        self.viewed.save(self.sidebar.sessions());
         self.sync_tray(false, cx);
     }
 
@@ -91,8 +90,8 @@ impl Shell {
             self.restore_window(window, cx);
             return;
         }
-        // The machine windows end with this one (closing the window without a tray does the
-        // same when the launcher is dropped).
+        // The machine windows are asked to quit too (each asks about its own unsaved changes and
+        // ends by itself; this process does not wait for them).
         self.close_machines();
         self.desktop.remove_tray();
         cx.quit();

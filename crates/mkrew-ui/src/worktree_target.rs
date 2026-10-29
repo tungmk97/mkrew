@@ -84,6 +84,25 @@ pub fn join_relative(base: PathBuf, rel: &str) -> PathBuf {
         .fold(base, |full, part| full.join(part))
 }
 
+/// [`join_relative`] for a path on another computer (a machine window): a string joined in the
+/// style of `base` (`\` when it has backslashes and no `/`, else `/`), never with this
+/// computer's separators.
+pub fn join_remote(base: &str, rel: &str) -> String {
+    let sep = if base.contains('\\') && !base.contains('/') {
+        '\\'
+    } else {
+        '/'
+    };
+    let mut full = base.to_owned();
+    for part in rel.split('/').filter(|part| !part.is_empty()) {
+        if !full.ends_with(['/', '\\']) {
+            full.push(sep);
+        }
+        full.push_str(part);
+    }
+    full
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,6 +168,21 @@ mod tests {
         assert_eq!(
             join_relative(base, "src//a.rs/"),
             Path::new("proj").join("src").join("a.rs")
+        );
+    }
+
+    #[test]
+    fn a_remote_path_is_joined_in_the_style_of_its_base() {
+        assert_eq!(
+            join_remote("/home/me/repo", "src/a.rs"),
+            "/home/me/repo/src/a.rs"
+        );
+        assert_eq!(join_remote("/home/me/repo/", "a.rs"), "/home/me/repo/a.rs");
+        assert_eq!(join_remote("/", "a"), "/a");
+        assert_eq!(join_remote("/home/me/repo", ""), "/home/me/repo");
+        assert_eq!(
+            join_remote(r"C:\Users\me\repo", "src/a.rs"),
+            r"C:\Users\me\repo\src\a.rs"
         );
     }
 

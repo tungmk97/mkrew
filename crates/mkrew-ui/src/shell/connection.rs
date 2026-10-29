@@ -84,6 +84,33 @@ impl Shell {
             }
         })
         .detach();
+        // A machine window started by the launcher reads `quit` lines on its stdin (Quit, update
+        // install and Remove of this computer's window): its own quit path asks about unsaved
+        // changes. Nothing on stdin (a window started by hand) or its end does nothing.
+        if matches!(target, Target::Machine(_)) {
+            let (commands, commands_rx) = async_channel::unbounded();
+            let reader = std::thread::Builder::new()
+                .name("mkrew-launcher-commands".into())
+                .spawn(move || {
+                    for command in mkrew_ui::launcher::read_commands(std::io::stdin().lock()) {
+                        if commands.send_blocking(command).is_err() {
+                            return;
+                        }
+                    }
+                });
+            if let Err(error) = reader {
+                tracing::warn!("cannot read the launcher's commands: {error}");
+            }
+            cx.spawn_in(window, async move |this, cx| {
+                while let Ok(mkrew_ui::launcher::Command::Quit) = commands_rx.recv().await {
+                    let quit = this.update_in(cx, |shell, window, cx| shell.quit_ui(window, cx));
+                    if quit.is_err() {
+                        return;
+                    }
+                }
+            })
+            .detach();
+        }
         // Unsaved Files changes (§2.5): the close button asks first.
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
@@ -205,8 +232,13 @@ impl Shell {
             }
         });
         let (painted, painted_rx) = async_channel::bounded(1);
-        // What the user saw before this start (A2): a corrupt or missing file is empty.
-        let viewed = Viewed::load(&paths.data_dir);
+        // What the user saw before this start (A2): a corrupt or missing file is empty. A
+        // machine window has its own file: it knows none of this computer's sessions.
+        let viewed = Viewed::load(
+            paths
+                .data_dir
+                .join(inbox::viewed_file((!local).then_some(id.as_str()))),
+        );
         // This computer's window is the launcher of the machine windows (spec §4.5); the list
         // is read here, once, and again before each change made on the Machines page.
         let machines = if local {
@@ -254,6 +286,7 @@ impl Shell {
             machine_states: HashMap::new(),
             connect_gen: 0,
             reconnect_attempts: 0,
+            was_connected: false,
             reconnect_in: None,
             kept_workspace: None,
             focus_handle,
@@ -429,7 +462,11 @@ impl Shell {
             toasts: Toasts::default(),
             pending_jump: jump,
         };
-        if !matches!(shell.status, Status::NoMachine(_)) {
+        if let Status::NoMachine(text) = &shell.status {
+            // The launcher would show "Connecting…" for ever without a line.
+            let reason = MachineState::Unreachable(text.clone());
+            shell.report_machine_state(reason);
+        } else {
             // Not `connect`: the status starts as Connecting and that one refuses then.
             shell.start_connect(window, cx);
         }
@@ -452,10 +489,10 @@ impl Shell {
     /// line, for the window that started this one (spec §4.5). Only changes are written; nobody
     /// may be reading (a window started by hand), so write errors are ignored.
     fn report_machine_state(&mut self, state: MachineState) {
-        if !matches!(self.target, Target::Machine(_)) || self.machine_state.as_ref() == Some(&state)
-        {
+        if !self.target.is_machine() || self.machine_state.as_ref() == Some(&state) {
             return;
         }
+        self.was_connected |= state == MachineState::Connected;
         let mut out = std::io::stdout().lock();
         let _ = writeln!(out, "{}", state.line());
         let _ = out.flush();
@@ -502,11 +539,12 @@ impl Shell {
         let generation = self.connect_gen;
         self.reconnect_in = None;
         self.status = Status::Connecting;
-        self.report_machine_state(if self.reconnect_attempts > 0 {
-            MachineState::Reconnecting
-        } else {
-            MachineState::Connecting
-        });
+        // Before the first good connect the last "Not reachable" stays between the attempts.
+        if let Some(state) =
+            MachineState::when_connecting(self.reconnect_attempts, self.was_connected)
+        {
+            self.report_machine_state(state);
+        }
         cx.notify();
         let paths = self.paths.clone();
         let painted_rx = self.painted_rx.clone();
@@ -746,14 +784,22 @@ impl Shell {
         self.history_pane = None;
         self.doc_dialog = None;
         self.diagram_dialog = None;
-        self.follow_up = None;
-        self.docs.clear();
+        // Typed drafts outlive the connection too (spec §8): a card's follow-up, a Docs comment
+        // and a commit message stay; everything else of those views is read again.
+        self.follow_up = self.follow_up.take().and_then(FollowUp::into_draft);
+        self.docs = std::mem::take(&mut self.docs)
+            .into_iter()
+            .filter_map(|(id, docs)| Some((id, docs.into_draft()?)))
+            .collect();
         // Unsaved Files text outlives the connection: Save writes it with the old hash (§8).
         self.files = std::mem::take(&mut self.files)
             .into_iter()
             .filter_map(|(id, view)| Some((id, view.into_unsaved()?)))
             .collect();
-        self.git.clear();
+        self.git = std::mem::take(&mut self.git)
+            .into_iter()
+            .filter_map(|(id, view)| Some((id, view.into_commit_draft()?)))
+            .collect();
         self.git_summary = None;
         self.close_popups(window, cx);
     }
@@ -822,13 +868,14 @@ impl Shell {
                 match listed {
                     Ok((projects, sessions)) => {
                         shell.sidebar.load(projects, sessions);
-                        // After a reconnect, kept unsaved files of a workspace the daemon no
-                        // longer lists cannot be saved anywhere.
+                        // After a reconnect, kept drafts and unsaved files of a workspace the
+                        // daemon no longer lists cannot be saved anywhere.
                         if kept.is_some() {
                             let listed = shell.sidebar.projects();
-                            shell
-                                .files
-                                .retain(|id, _| listed.iter().any(|project| project.id == *id));
+                            let known = |id: &Ulid| listed.iter().any(|project| project.id == *id);
+                            shell.files.retain(|id, _| known(id));
+                            shell.docs.retain(|id, _| known(id));
+                            shell.git.retain(|id, _| known(id));
                         }
                         shell.sync_attention(cx);
                         shell.load_usage(window, cx);
@@ -1282,8 +1329,8 @@ impl Shell {
         }
     }
 
-    /// "Reconnecting in 5 s…" while an automatic retry is pending (set once per attempt, so
-    /// the text is static and nothing repaints while waiting).
+    /// "Reconnecting automatically in 5 s…" while an automatic retry is pending (set once per
+    /// attempt, so the text is static and nothing repaints while waiting).
     fn retry_note(&self) -> Option<String> {
         let wait = self.reconnect_in?;
         Some(format!(

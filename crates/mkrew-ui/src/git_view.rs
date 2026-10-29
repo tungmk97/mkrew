@@ -706,6 +706,22 @@ impl GitView {
         }
     }
 
+    /// The view as it carries over a lost connection (spec §8): a fresh one holding only the
+    /// typed commit message (nothing in flight). `None` without one.
+    pub fn into_commit_draft(self) -> Option<GitView> {
+        if self.commit.text.text().is_empty() {
+            return None;
+        }
+        let commit = CommitBox {
+            text: self.commit.text,
+            ..CommitBox::default()
+        };
+        Some(GitView {
+            commit,
+            ..GitView::new(self.project_id, self.worktree_task_id)
+        })
+    }
+
     /// What the view shows: the task worktree and the repository (late answers for another
     /// are dropped).
     pub fn at(&self) -> (Option<Ulid>, Option<String>) {
