@@ -60,6 +60,7 @@ The §7 protocol does not change shape: the remote window speaks the same frames
 ### 4.1 `mk proxy` (CLI, new)
 
 - Connects to the daemon socket from `Paths::from_env()`; if nothing listens, starts the daemon the way `mk daemon start` does and waits until it answers (10 s, as today).
+  A daemon that refuses the proxy's own probe `hello` for its version counts as listening (nothing is started over it): the window's own `hello` through the proxy reports the mismatch.
 - Then copies bytes both ways: stdin → socket and socket → stdout, flushing stdout after every chunk.
 - Writes nothing else to stdout.
   Errors go to stderr (the window shows them).
@@ -82,7 +83,9 @@ host = "home-pc"        # ssh destination: MagicDNS name, user@host, or a ~/.ssh
 
 - Only the UI reads and writes it.
   The daemon never sees it.
-- Validation (on Add and on load): `name` non-empty after trimming, at most 40 characters, unique (case-insensitive), not `This computer`; `host` non-empty, no whitespace, does not start with `-`; `mk` (when set) non-empty, does not start with `-`.
+- Validation (on Add and on load): `name` non-empty after trimming, at most 40 characters, unique (compared in Unicode lower case, like the window's instance key), not `This computer`; `host` non-empty, no whitespace, does not start with `-`; `mk` (when set) non-empty, does not start with `-`, no whitespace.
+  ssh joins the remote command into one line for the remote shell, so a path with a space cannot work: the error is "Use a path without spaces, or put mk on the PATH there."
+  A broken line in `machines.toml` is reported with the machine's name (not the line number), then the file and line from the parser when it is not valid TOML.
 - A file that fails to parse or validate is never overwritten: the Machines page shows the error with the file and line, no machine window opens, and Add/Remove are disabled until the file is fixed.
 - A missing file means no machines.
 
@@ -131,7 +134,11 @@ Hints, chosen from stderr text (case-insensitive), first match wins:
   - At startup, after its own window opens, it spawns one child per machine (skipping a machine whose window already runs, which the raise check detects on Windows).
   - It keeps each child's handle and reads the child's stdout, where a machine window writes one line per connection state change: `connected`, `connecting`, `reconnecting`, `unreachable <reason>`, `version <message>`. The launcher shows these on the Machines page and in the tray menu.
   - "Open" (Machines page, tray menu, palette) raises the machine window if its child runs, else spawns it.
-  - Quitting this computer's window (tray Quit, or update install) kills every child first.
+  - Quitting this computer's window (tray Quit, closing it where there is no tray, or update install) sends each child a `quit` line on its stdin.
+    The child runs its own quit path, which asks about unsaved Files changes like any window close, and exits by itself; this computer's window does not wait for it (an update install waits until the children are gone and says "Close the machine windows to install the update." after 10 s).
+    Remove sends the same line to that machine's child.
+    End of stdin is ignored (the launcher crashed: the window keeps working).
+    Only a child that cannot be asked (its stdin is broken) is killed, when the launcher is dropped.
   - A child that exits (the user closed that window) is shown as "Window closed"; it is not restarted until the next "Open" or the next start of Mkrew.
 - A machine window started by hand (not by the launcher) has no launcher; its stdout lines go nowhere and it works the same.
 
@@ -176,9 +183,9 @@ Tray menu (Windows, this computer's process): one item per machine, opening or r
 | State | Window shows |
 | --- | --- |
 | First connect | Today's "Connecting…" screen, naming the machine in a machine window. |
-| Not reachable (before the first `hello`) | The machine name, the reason, the hint (§4.4), a countdown to the next try, and **Try now**. Backoff as today: 1, 2, 5, 10 s, then every 30 s. |
+| Not reachable (before the first `hello`) | The machine name, the reason, the hint (§4.4), the seconds to the next try, and **Try now**. Backoff as today: 1, 2, 5, 10 s, then every 30 s. The launcher keeps the last "Not reachable" between attempts; "Reconnecting…" is reported only for a machine that was connected before. |
 | Version differs | The message of §4.4, no retry, **Try now** to check again after updating. |
-| Lost after working | The last screen stays: workspace, tabs, panes and their last frames. A banner over the top of the main area: "Connection to Home PC lost. Reconnecting in N s…" with **Try now**; all panes and the sidebar ignore keyboard and mouse input; dialogs that were open stay open but their send/save buttons show the error if pressed. On reconnect the window keeps the same workspace and re-attaches every visible pane (snapshot first, as on any attach). |
+| Lost after working | The last screen stays: workspace, tabs, panes and their last frames. A banner over the top of the main area: "Connection to Home PC lost. Next try in N s." with **Try now**; all panes and the sidebar ignore keyboard and mouse input; dialogs that were open stay open and their send/save buttons show the toast "Not connected to Home PC. Reconnecting…" if pressed. On reconnect the window keeps the same workspace and re-attaches every visible pane (snapshot first, as on any attach). Typed drafts survive the reconnect: unsaved Files text, a Docs comment draft, a commit message and a card's follow-up text. |
 
 This keep-the-screen behavior also applies to this computer's window when its local daemon restarts.
 Today's disconnect clears the state at once; the change moves that clearing to the moment the new connection is up, then rebuilds from the daemon, choosing the workspace that was shown.
@@ -197,7 +204,7 @@ Today's disconnect clears the state at once; the change moves that clearing to t
 | Pasted images | Unchanged: `attachment.save` stores them on the other computer and types that path. |
 | Phone access, in-app update | Hidden (they belong to this computer's window). |
 | Close to tray | Off: closing a machine window ends its process; the agents keep running on the other computer. |
-| Settings dialog | Edits this computer's `settings.toml` and keymap, as today; a line at the top says "Daemon settings (notifications, retention, features) are Home PC's own; change them on Home PC." |
+| Settings dialog | Edits this computer's `settings.toml` and keymap, as today; a line at the top says "Retention, features and other daemon settings are Home PC's own; change them on Home PC. Notifications from this window follow this computer's settings." |
 
 ### 6.5 Notifications
 
@@ -223,6 +230,8 @@ Today's disconnect clears the state at once; the change moves that clearing to t
 - A daemon started by `mk proxy` inherits the SSH session's environment, which may lack the agents' `PATH`.
   The ADR and README say: keep the home daemon started by the home computer's own login (Mkrew window or Task Scheduler); `mk proxy` starting it is a fallback.
 - Unsaved Files editor changes when the connection drops: the editor keeps the text; Save after reconnect uses `fs.write` with the old hash, so a file changed meanwhile is refused as today.
+  A Docs comment draft, a Git commit message and a card's follow-up text are kept the same way; the rest of those views is read again.
+- The Inbox "viewed" state of a machine window is its own file `ui_viewed-<key>.json` (key = hash of the machine's instance id): this computer's file `ui_viewed.json` is never pruned by a window that does not know its sessions.
 - The Linux `~/.bashrc` usually returns early for non-interactive shells, so `mk` may be missing from `PATH` over ssh; the `mk` field and the hint cover it.
 - A machine whose window is closed by the user is not reopened until asked.
 - The launcher dies (crash) while machine windows run: they keep working; the next start of Mkrew raises them instead of spawning duplicates (Windows) [ponytail: other OSes may get a duplicate window; add a lock file when that is reported].

@@ -132,7 +132,7 @@ CLI are clients.
                                           └─────────────────────────────┘
 ```
 
-**Another computer (ADR 0089):** a machine window (`mkrew-ui --machine <name>`) runs `ssh <host> mk proxy` and speaks §7 over its pipes; the other computer's daemon keeps its local owner-only socket. This computer's window spawns one machine window per entry of `<config>/mkrew/machines.toml` at startup.
+**Another computer (ADR 0089):** a machine window (`mkrew-ui --machine <name>`) runs `ssh <host> mk proxy` and speaks §7 over its pipes; the other computer's daemon keeps its local owner-only socket. This computer's window spawns one machine window per entry of `<config>/mkrew/machines.toml` at startup. Quit, closing this computer's window (without a tray), the update install and Remove send the machine window a `quit` line on its stdin: it runs its own quit path (asking about unsaved Files changes) and exits by itself. A machine window keeps its Inbox "viewed" state in its own file `ui_viewed-<key>.json` in the data dir.
 
 **Lifecycle**
 
@@ -880,7 +880,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
     It is not clickable; its tooltip says `<name>: <state>` in words (§11), and it stays while the window is disconnected.
     Dot: `status-done` connected, `status-needs-input` connecting or reconnecting, `status-exited` not reachable or another version.
   - **First connect:** the "Connecting…" screen names the machine.
-    **Unreachable** (before the first `hello`, from ssh): the machine name, the reason, one hint (spec 2026-10-29 §4.4), a countdown to the next try (1, 2, 5, 10 s, then every 30 s) and **Try now**.
+    **Unreachable** (before the first `hello`, from ssh): the machine name, the reason, one hint (spec 2026-10-29 §4.4), the seconds to the next try (1, 2, 5, 10 s, then every 30 s) and **Try now**.
     **Version differs:** both protocol numbers, no retry, **Try now** to check again after updating.
     `ssh` runs with `ConnectTimeout=10`, so an unreachable host fails within about 10 s.
   - **Connection lost after it worked** (a machine window, and this computer's window when its daemon restarts): the window keeps its workspace, tabs, panes and last frames, and shows a banner under the title bar: "Connection to <name> lost. Next try in N s." (N is fixed per attempt; "Reconnecting…" while one runs; "the daemon" stands for the name in this computer's window).
@@ -888,8 +888,8 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
     **Try now** is always there except while an attempt runs; only one attempt runs at a time.
     The panes, sidebar and title bar ignore keyboard and mouse; a dialog that was open stays open, and its confirm toasts "Not connected to <name>. Reconnecting…".
     On reconnect the window rebuilds from the daemon, shows the same workspace and re-attaches every visible pane (snapshot first).
-    Files tabs and Docs drafts with unsaved changes are kept; Save uses the old hash, so a file changed meanwhile is refused as always.
-  - **Typed paths:** where this computer's window opens a picker (Add workspace, Clone into, Link plan), a machine window asks for a path on the other computer in a text field ("Folder on <name>", "Plan file on <name>"); the daemon checks it and its refusal shows under the field.
+    Files tabs with unsaved changes, a Docs comment draft, a Git commit message and a card's follow-up text are kept; Save uses the old hash, so a file changed meanwhile is refused as always.
+  - **Typed paths:** where this computer's window opens a picker (Add workspace, Clone into, Link plan), a machine window asks for a path on the other computer in a text field ("Folder on <name>", "Clone into (folder on <name>)", "Plan file on <name>"); the daemon checks it and its refusal shows under the field.
   - **This computer only:** Zed, Follow, Open transcript, Explorer / Finder and Reveal stay in the menus and toast "Opens files on this computer only; <name> is another computer."
     Files dropped on a pane, or a file list pasted, toast "These files are on this computer; <name> cannot read them." and type nothing.
     Phone access and the in-app update are hidden; close-to-tray is off.
@@ -1620,7 +1620,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   A line under the list: "The other computer needs Mkrew, an SSH server and this computer's SSH key."
   Palette: "Machine: Add…" and "Machine: Open <name>".
   The tray (Windows) has one item per machine, `<name> - <state>` (Connected, Connecting…, Reconnecting…, Not reachable, Version differs, Window closed), that opens or raises its window.
-  In a machine window every Settings page starts with "Daemon settings (notifications, retention, features) are <name>'s own; change them on <name>."
+  In a machine window every Settings page starts with "Retention, features and other daemon settings are <name>'s own; change them on <name>. Notifications from this window follow this computer's settings."
 - Machine chip and reconnect banner (ADR 0089) add no tokens; they reuse these.
   Chip: `well` fill, `text-muted` icon and name, `radius::PILL`, `PILL_HEIGHT` (22), `ICON_SIZE_SMALL` (14), `META` text, `space::XS` between parts, `TITLE_CHIP_MAX_WIDTH` (160).
   Dot (`status_dot`, also on the Machines rows): `status-done` #57C78A / #23854F, `status-needs-input` #E4A452 / #A4660F, `status-exited` #EF7B6C / #C2412F, `text-muted` for a closed window.

@@ -47,7 +47,9 @@ Option 4, as in the design spec §2:
   A link that needs more than 10 s to connect fails and retries.
 - The keep-screen banner reads "Connection to <name> lost. Next try in N s." (N fixed per attempt), has **Try now** unless an attempt runs, and a second line with the status detail; one connection attempt runs at a time.
   A version mismatch or unreachable host after a loss stays in the banner, so the kept screen and its unsaved text survive an update of the other computer.
-- Files tabs and Docs drafts with unsaved changes survive a reconnect (spec §8 wins over the plan's "clear at once").
+- Files tabs with unsaved changes, a Docs comment draft, a Git commit message and a card's follow-up text survive a reconnect (spec §8 wins over the plan's "clear at once").
+- Quit, closing this computer's window without a tray, the update install and Remove send each machine window a `quit` line on its stdin; it runs its own quit path (unsaved Files changes are asked first) and exits by itself, so no machine window is killed over unsaved text.
+- A machine window keeps its Inbox "viewed" state in its own `ui_viewed-<key>.json`, so it never prunes this computer's.
 - A dialog confirm while disconnected toasts "Not connected to <name>. Reconnecting…"; other input is blocked by the banner state.
 - The machine chip and banner add no theme tokens; they reuse `well`, `warning-bg`, `divider`, the status colors and `TITLE_CHIP_MAX_WIDTH`.
 - Settings → Machines lists, opens, removes and adds machines; a broken `machines.toml` shows its error and is never written, and is re-read while the tab is open.
