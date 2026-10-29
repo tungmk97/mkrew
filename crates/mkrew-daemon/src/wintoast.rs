@@ -29,7 +29,7 @@ pub(crate) fn toast_xml(notice: &Notice) -> String {
     };
     format!(
         r#"<toast activationType="protocol" launch="{}"><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual>{audio}</toast>"#,
-        escape(&session_link(notice.session_id, notice.project_id)),
+        escape(&session_link(notice.session_id, notice.project_id, None)),
         escape(&notice.title),
         escape(&notice.body),
     )
@@ -163,7 +163,7 @@ mod tests {
         let xml = toast_xml(&notice);
         let launch = format!(
             r#"activationType="protocol" launch="{}""#,
-            session_link(notice.session_id, notice.project_id)
+            session_link(notice.session_id, notice.project_id, None)
         );
         assert!(xml.contains(&launch), "{xml}");
         assert!(

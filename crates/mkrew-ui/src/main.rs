@@ -177,7 +177,9 @@ fn main() {
     // Started by a toast click (`mkrew://` link, ADR 0079): show that session's pane.
     let jump = std::env::args()
         .nth(1)
-        .and_then(|arg| mkrew_core::link::parse_session_link(&arg));
+        .and_then(|arg| mkrew_core::link::parse_session_link(&arg))
+        // Task 6 passes `link.machine` on.
+        .map(|link| (link.session, link.project));
     // A second launch of the same exe on the same daemon shows the running window (it may be
     // hidden in the tray) instead of opening another one; a dev build at another path, or on
     // another `MKREW_SOCKET`, starts on its own.
