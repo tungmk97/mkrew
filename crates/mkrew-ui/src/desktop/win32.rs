@@ -328,7 +328,8 @@ impl State {
         }
     }
 
-    /// The right-click menu: sessions that need you, `● N working`, Open, Quit UI.
+    /// The right-click menu: sessions that need you, `● N working`, one line per machine, Open,
+    /// Quit UI.
     fn show_menu(&self, hwnd: HWND) {
         let menu = (self.shared.menu.lock())
             .unwrap_or_else(PoisonError::into_inner)

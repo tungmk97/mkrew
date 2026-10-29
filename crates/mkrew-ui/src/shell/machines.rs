@@ -10,8 +10,11 @@ use mkrew_ui::settings_dialog::{Effect, Focus, Tab};
 /// written).
 const PAGE_ERROR: &str = "machines";
 
-/// Longest state text on a tray menu line, in characters.
-const TRAY_LABEL_CHARS: usize = 60;
+/// One left edge for the page: the text of a machine row sits `space::S` in (the row's padding),
+/// so every other block gets the same inset.
+fn inset(block: impl IntoElement) -> gpui::AnyElement {
+    div().px(px(space::S)).child(block).into_any_element()
+}
 
 /// The dot before a state: green connected, amber connecting, red not reachable or another
 /// version, muted for a closed window. The word always comes with it (§11).
@@ -44,6 +47,21 @@ impl Shell {
 
     /// Takes the state lines the children wrote since the last tick.
     pub(crate) fn poll_machines(&mut self, cx: &mut Context<'_, Self>) {
+        if self.launcher.is_none() {
+            return;
+        }
+        // A broken file fixed by hand: read again while the Machines page shows it (one small
+        // file per tick, only then), so the error goes without a restart.
+        let viewing = (self.settings_dialog.as_ref()).is_some_and(|d| d.tab == Tab::Machines);
+        if viewing
+            && self.machines.is_err()
+            && let Ok(machines) = Machines::load(&self.config_dir)
+        {
+            self.machines = Ok(machines);
+            self.start_machines();
+            self.sync_tray(true, cx);
+            cx.notify();
+        }
         let Some((_, states)) = &self.launcher else {
             return;
         };
@@ -63,20 +81,16 @@ impl Shell {
         (self.machine_states.get(name)).map_or_else(|| MachineState::Closed.label(), |s| s.label())
     }
 
-    /// The tray menu's machine lines: name and state label (a long reason cut: a menu line is
-    /// one line), in list order.
+    /// The tray menu's machine lines: name and the short state (the reason stays on the page).
     pub(crate) fn tray_machines(&self) -> Vec<(String, String)> {
         let Ok(machines) = &self.machines else {
             return Vec::new();
         };
         (machines.list.iter())
             .map(|machine| {
-                let label = self.machine_state_label(&machine.name);
-                let label = match label.char_indices().nth(TRAY_LABEL_CHARS) {
-                    Some((end, _)) => format!("{}…", &label[..end]),
-                    None => label,
-                };
-                (machine.name.clone(), label)
+                let state = self.machine_states.get(&machine.name);
+                let label = state.map_or("Window closed", MachineState::short_label);
+                (machine.name.clone(), label.to_owned())
             })
             .collect()
     }
@@ -249,53 +263,48 @@ impl Shell {
         }
         let machines = match &self.machines {
             Ok(machines) => machines,
-            Err(text) => return vec![self.machines_error(text.clone(), theme)],
+            Err(text) => return vec![inset(self.machines_error(text.clone(), theme))],
         };
         let mut page: Vec<gpui::AnyElement> = Vec::new();
         if let Some(error) = dialog.errors.get(PAGE_ERROR) {
-            page.push(self.machines_error(error.clone(), theme));
+            page.push(inset(self.machines_error(error.clone(), theme)));
         }
         if machines.list.is_empty() && dialog.add.is_none() {
-            page.push(
-                meta_line(
-                    theme,
-                    "No machines yet. Add one to work on its agents from this computer.".into(),
-                )
-                .into_any_element(),
-            );
+            page.push(inset(meta_line(
+                theme,
+                "No machines yet. Add one to work on its agents from this computer.".into(),
+            )));
         }
         page.extend((machines.list.iter()).map(|machine| self.machine_row(machine, theme, cx)));
         page.push(match &dialog.add {
-            Some(form) => self.add_machine_form(dialog, form, typing, theme, cx),
-            None => div()
-                .child(
-                    button(
-                        "machine-add",
-                        "Add machine…",
-                        theme,
-                        machines.list.is_empty(),
-                    )
-                    .focus_stop(theme)
-                    .on_click(cx.listener(|shell, _, window, cx| {
-                        shell.settings_do(
-                            |dialog, _| {
-                                dialog.open_add();
-                                Effect::None
-                            },
-                            window,
-                            cx,
-                        );
-                    })),
+            Some(form) => inset(self.add_machine_form(dialog, form, typing, theme, cx)),
+            None => {
+                let first = machines.list.is_empty();
+                let add = if first {
+                    button("machine-add", "Add machine…", theme, true).focus_stop(theme)
+                } else {
+                    secondary_button("machine-add", "Add machine…", theme).focusable_bordered(theme)
+                };
+                inset(
+                    div()
+                        .flex()
+                        .child(add.on_click(cx.listener(|shell, _, window, cx| {
+                            shell.settings_do(
+                                |dialog, _| {
+                                    dialog.open_add();
+                                    Effect::None
+                                },
+                                window,
+                                cx,
+                            );
+                        }))),
                 )
-                .into_any_element(),
+            }
         });
-        page.push(
-            meta_line(
-                theme,
-                "The other computer needs Mkrew, an SSH server and this computer's SSH key.".into(),
-            )
-            .into_any_element(),
-        );
+        page.push(inset(meta_line(
+            theme,
+            "The other computer needs Mkrew, an SSH server and this computer's SSH key.".into(),
+        )));
         page
     }
 

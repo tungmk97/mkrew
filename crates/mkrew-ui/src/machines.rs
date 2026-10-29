@@ -234,6 +234,18 @@ impl MachineState {
             Self::Closed => "Window closed".into(),
         }
     }
+
+    /// [`Self::label`] without the reason: one short line for the tray menu.
+    pub fn short_label(&self) -> &'static str {
+        match self {
+            Self::Connecting => "Connecting…",
+            Self::Connected => "Connected",
+            Self::Reconnecting => "Reconnecting…",
+            Self::Unreachable(_) => "Not reachable",
+            Self::Version(_) => "Version differs",
+            Self::Closed => "Window closed",
+        }
+    }
 }
 
 #[cfg(test)]
