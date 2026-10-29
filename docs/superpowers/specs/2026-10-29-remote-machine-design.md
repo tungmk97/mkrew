@@ -111,7 +111,14 @@ Failure classes the window distinguishes:
 | `hello` refused with `version_mismatch` | error code | "Home PC speaks protocol N, this computer M. Update Mkrew on the older computer." No automatic retry. |
 | Connection drops after `hello` | stream closed | reconnect banner (§6.3) |
 
-Hints, chosen from stderr text (case-insensitive): `Permission denied` → "Add this computer's SSH key to Home PC (ssh-copy-id, or authorized_keys)."; `Host key verification failed` or `REMOTE HOST IDENTIFICATION HAS CHANGED` → "Home PC's host key changed. If that is expected, remove the old key with `ssh-keygen -R <host>`."; `not found`, `not recognized` or `No such file` together with `mk` → "Mkrew's `mk` is not on Home PC's PATH for SSH. Set `mk` for this machine in Settings → Machines."; `Could not resolve hostname`, `Connection timed out`, `Connection refused`, `No route to host` → "Home PC is offline or not reachable from here (Tailscale up? SSH server running?)."; otherwise no hint.
+Hints, chosen from stderr text (case-insensitive), first match wins:
+
+- `Permission denied` → "Add this computer's SSH key to Home PC (ssh-copy-id, or its authorized_keys)."
+- `Host key verification failed` or `REMOTE HOST IDENTIFICATION HAS CHANGED` → "Home PC's host key changed. If that is expected, remove the old key with `ssh-keygen -R <host>`."
+- `not found`, `not recognized` or `No such file` together with `mk` → "Mkrew's `mk` is not on Home PC's PATH for SSH. Set the mk path for this machine in Settings → Machines."
+- `Connection refused` → "Home PC answers but runs no SSH server. Start it there (OpenSSH Server, Remote Login, openssh-server)."
+- `Could not resolve hostname`, `timed out`, `No route to host` → "Home PC is offline or not reachable from here (Tailscale up? Same network?)."
+- Otherwise no hint.
 
 ### 4.5 Process model
 
@@ -134,12 +141,12 @@ All new requests work for every client; this computer's window uses them too, so
 | Request | Params | Result | Replaces in the UI |
 | --- | --- | --- | --- |
 | `session.log_tail` | `session_id`, `max_bytes` (≤ 4 MiB) | `data` (base64 bytes), `cut` (bool: older bytes were left out) | `history.rs` reading log files from the paths of `session.history` |
-| `session.transcript` | `session_id`, `offset` (u64) | `data` (base64, the bytes from `offset`, at most 4 MiB, the last 4 MiB on a first read that is longer), `offset` (where `data` starts), `len` (file length), `found` (bool) | `thread_panel.rs` and `thread_view.rs` finding and opening transcript files; the daemon locates the file with its own `transcript_path` and the profile it ran |
-| `fs.create` | `project_id`, `worktree_task_id?`, `path` (relative), `folder` (bool) | `ok` | `file_ops.rs` New file / New folder |
-| `fs.ignore` | `project_id`, `worktree_task_id?`, `path` (relative) | `ok` | `file_ops.rs` Add to `.gitignore` |
+| `session.transcript` | `session_id`, `offset` (u64, where the reader stands) | `found` (bool), `format` (the profile's `[usage] format` name), `start` (where `data` starts), `len` (file length), `data` (base64, at most 4 MiB: from `offset` when the file still reaches it, else from 0; a read from 0 of a longer file returns its last 4 MiB) | `thread_panel.rs` and `thread_view.rs` finding and opening transcript files and reading agent profiles from this computer; the daemon locates the file with its own `transcript_path` and the profile the session ran |
+| `fs.create` | `project_id`, `worktree_task_id?`, `dir` (relative, `""` = root), `name` (may hold `/`), `folder` (bool) | `path` (the new entry, relative) | `file_ops.rs` New file / New folder |
+| `fs.ignore` | `project_id`, `worktree_task_id?`, `path` (relative), `is_dir` (bool) | `null` | `file_ops.rs` Add to `.gitignore` |
 
 - `session.history` stays: `mk web` and the CLI read the files on the daemon's computer.
-- `fs.create` refuses an existing path (`already_exists`) and a path outside the project (`invalid_request`), like `fs.write`.
+- `fs.create` refuses an existing path (`already_exists`) and a path outside the project or inside `.git` (`invalid_request`), like `fs.write`.
 - `fs.ignore` appends the same line `file_ops.rs` appends today (leading `/`, escaped glob characters, `/` suffix for folders, keeps the file's line endings), creating `.gitignore` when missing.
 - The 16 MiB frame cap holds: 4 MiB of base64 is about 5.4 MiB.
 
