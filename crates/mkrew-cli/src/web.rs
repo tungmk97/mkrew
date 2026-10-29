@@ -31,9 +31,7 @@ const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn run(paths: &Paths, args: Args) -> anyhow::Result<ExitCode> {
     // After a reboot the phone may be the only way in: make sure there is a daemon.
-    if crate::daemon::try_connect(paths)?.is_none() {
-        crate::daemon::start(paths)?;
-    }
+    crate::daemon::ensure_running(paths)?;
     let host = args.host.or_else(mkrew_core::tailscale::dns_name);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

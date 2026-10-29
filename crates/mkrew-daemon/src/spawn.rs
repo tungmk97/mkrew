@@ -35,24 +35,50 @@ pub fn mk_exe() -> PathBuf {
     }
 }
 
+#[cfg(windows)]
+const DETACHED_PROCESS: u32 = 0x0000_0008;
+#[cfg(windows)]
+const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+/// No console, own process group: Ctrl+C in the shell that ran the client does not reach the
+/// daemon.
+#[cfg(windows)]
+const DETACH_FLAGS: u32 = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
+
 /// No console window and no controlling terminal: the daemon outlives the shell (SPEC §8).
 /// The UI also uses it for the short-lived `zed` CLI.
+#[allow(unsafe_code)]
 pub fn detach(command: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         disinherit_stdio();
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        // New process group: Ctrl+C in the shell that ran the client does not reach the daemon.
-        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        command.creation_flags(DETACH_FLAGS);
     }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        // Own process group: terminal job-control signals (Ctrl+C, hangup) skip the daemon.
-        command.process_group(0);
+        // A new session (and so its own process group, no controlling terminal): the hangup
+        // of an SSH session or a closed terminal never reaches it (ADR 0089).
+        // SAFETY: `setsid` is async-signal-safe and touches no memory of the parent.
+        unsafe {
+            command.pre_exec(|| rustix::process::setsid().map(drop).map_err(Into::into));
+        }
+    }
+}
+
+/// [`detach`], and on Windows also out of the caller's job object: Windows OpenSSH runs a
+/// session in a job that ends with the session, which would stop a daemon `mk proxy` started
+/// there (ADR 0089). Spawning fails with `PermissionDenied` when the job forbids breaking
+/// away; callers then fall back to [`detach`].
+pub fn detach_from_job(command: &mut Command) {
+    detach(command);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        command.creation_flags(DETACH_FLAGS | CREATE_BREAKAWAY_FROM_JOB);
     }
 }
 

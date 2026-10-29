@@ -2,12 +2,12 @@
 
 use std::io::ErrorKind;
 use std::path::Path;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Child, Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use mkrew_core::Paths;
-use mkrew_daemon::spawn::{daemon_exe, detach};
+use mkrew_daemon::spawn::{daemon_exe, detach, detach_from_job};
 use mkrew_daemon::{EXIT_ALREADY_RUNNING, InstanceLock, LockError};
 use mkrew_protocol::{DaemonStatusResult, Request};
 
@@ -28,38 +28,34 @@ pub fn try_connect(paths: &Paths) -> anyhow::Result<Option<Client>> {
     }
 }
 
-pub fn start(paths: &Paths) -> anyhow::Result<ExitCode> {
+/// What [`ensure_running`] found: the daemon's pid.
+pub enum Running {
+    Already(u32),
+    Started(u32),
+}
+
+/// Starts the daemon unless one answers `hello`, and waits until it does. Prints nothing:
+/// `mk proxy` uses it, and its stdout carries protocol frames only.
+pub fn ensure_running(paths: &Paths) -> anyhow::Result<Running> {
     if let Some(mut client) = try_connect(paths)? {
         let status: DaemonStatusResult = client.call(Request::DaemonStatus)?;
-        println!("daemon already running (pid {})", status.pid);
-        return Ok(ExitCode::SUCCESS);
+        return Ok(Running::Already(status.pid));
     }
-
     let exe = daemon_exe()?;
-    let mut command = Command::new(&exe);
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    detach(&mut command);
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("start {}", exe.display()))?;
-
+    let mut child = spawn_daemon(&exe)?;
     let deadline = Instant::now() + TIMEOUT;
     let mut lost_race = false;
     loop {
         if let Some(mut client) = try_connect(paths)? {
             let status: DaemonStatusResult = client.call(Request::DaemonStatus)?;
-            if lost_race {
-                println!("daemon already running (pid {})", status.pid);
+            return Ok(if lost_race {
+                Running::Already(status.pid)
             } else {
-                println!("daemon started (pid {})", status.pid);
-            }
-            return Ok(ExitCode::SUCCESS);
+                Running::Started(status.pid)
+            });
         }
         if !lost_race && let Some(exit) = child.try_wait().context("check the daemon process")? {
-            // Another `mk daemon start` won the lock: keep waiting for that daemon instead.
+            // Another client won the lock: keep waiting for that daemon instead.
             if exit.code() == Some(i32::from(EXIT_ALREADY_RUNNING)) {
                 lost_race = true;
             } else {
@@ -78,6 +74,38 @@ pub fn start(paths: &Paths) -> anyhow::Result<ExitCode> {
         }
         std::thread::sleep(POLL);
     }
+}
+
+/// The daemon, detached, and on Windows outside the caller's job object when the job allows it.
+fn spawn_daemon(exe: &Path) -> anyhow::Result<Child> {
+    let command = || {
+        let mut command = Command::new(exe);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    };
+    let mut free = command();
+    detach_from_job(&mut free);
+    let spawned = match free.spawn() {
+        // A job without JOB_OBJECT_LIMIT_BREAKAWAY_OK refuses with ERROR_ACCESS_DENIED.
+        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+            let mut plain = command();
+            detach(&mut plain);
+            plain.spawn()
+        }
+        spawned => spawned,
+    };
+    spawned.with_context(|| format!("start {}", exe.display()))
+}
+
+pub fn start(paths: &Paths) -> anyhow::Result<ExitCode> {
+    match ensure_running(paths)? {
+        Running::Already(pid) => println!("daemon already running (pid {pid})"),
+        Running::Started(pid) => println!("daemon started (pid {pid})"),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Stops the daemon. With `only_from`, only a daemon whose exe lives in that folder (the

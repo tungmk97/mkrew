@@ -9,7 +9,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -1507,4 +1507,117 @@ fn web_push_sends_an_encrypted_message_when_a_session_needs_you() {
     );
     env.ok(&["send", &id, "y"]);
     env.ok(&["wait", &id, "--until", "exited", "--timeout", "30000"]);
+}
+
+/// Sends `request` as frame `id` through a running `mk proxy` and returns its response.
+/// Every byte the proxy writes must decode as a frame: anything else on stdout fails here.
+fn proxy_call(
+    stdin: &mut ChildStdin,
+    stdout: &mut ChildStdout,
+    decoder: &mut mkrew_protocol::FrameDecoder,
+    id: u64,
+    request: mkrew_protocol::Request,
+) -> mkrew_protocol::Outcome {
+    use mkrew_protocol::{Frame, Message, encode};
+    let frame = encode(&Frame::Message(Message::Request { id, request })).unwrap();
+    stdin.write_all(&frame).unwrap();
+    stdin.flush().unwrap();
+    let mut buf = [0u8; 4096];
+    loop {
+        while let Some(frame) = decoder.next_frame().unwrap() {
+            if let Frame::Message(Message::Response { id: got, outcome }) = frame
+                && got == id
+            {
+                return outcome;
+            }
+        }
+        let n = stdout.read(&mut buf).unwrap();
+        assert!(n > 0, "mk proxy closed its stdout");
+        decoder.push(&buf[..n]);
+    }
+}
+
+#[test]
+fn proxy_starts_the_daemon_and_carries_frames_until_stdin_closes() {
+    use mkrew_protocol::{
+        ClientKind, DaemonStatusResult, FrameDecoder, HelloParams, HelloResult, PROTOCOL_VERSION,
+        Request,
+    };
+    let env = Env::new();
+    // No daemon runs yet: the proxy starts it.
+    let mut proxy = env
+        .command(&["proxy"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = proxy.stdin.take().unwrap();
+    let mut stdout = proxy.stdout.take().unwrap();
+    let mut decoder = FrameDecoder::new();
+    let hello = Request::Hello(HelloParams {
+        client: ClientKind::Ui,
+        protocol_version: PROTOCOL_VERSION,
+    });
+    let hello: HelloResult = proxy_call(&mut stdin, &mut stdout, &mut decoder, 1, hello)
+        .into_result()
+        .unwrap();
+    assert_eq!(hello.protocol_version, PROTOCOL_VERSION);
+    let status: DaemonStatusResult = proxy_call(
+        &mut stdin,
+        &mut stdout,
+        &mut decoder,
+        2,
+        Request::DaemonStatus,
+    )
+    .into_result()
+    .unwrap();
+
+    // The window went away (ssh closes stdin): the proxy ends, the daemon stays.
+    drop(stdin);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let exit = loop {
+        if let Some(exit) = proxy.try_wait().unwrap() {
+            break exit;
+        }
+        assert!(Instant::now() < deadline, "mk proxy did not exit");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(exit.success(), "{exit}");
+    // Nothing but frames was written: the decoder holds no partial garbage.
+    let mut rest = Vec::new();
+    stdout.read_to_end(&mut rest).unwrap();
+    decoder.push(&rest);
+    while decoder.next_frame().unwrap().is_some() {}
+    assert_eq!(decoder.buffered(), 0, "stray bytes on stdout");
+    let after = env.ok(&["daemon", "status"]);
+    assert!(after.contains(&status.pid.to_string()), "{after}");
+}
+
+#[test]
+fn proxy_uses_a_running_daemon() {
+    use mkrew_protocol::{
+        ClientKind, FrameDecoder, HelloParams, HelloResult, PROTOCOL_VERSION, Request,
+    };
+    let env = Env::new();
+    env.ok(&["daemon", "start"]);
+    let mut proxy = env
+        .command(&["proxy"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = proxy.stdin.take().unwrap();
+    let mut stdout = proxy.stdout.take().unwrap();
+    let mut decoder = FrameDecoder::new();
+    let hello = Request::Hello(HelloParams {
+        client: ClientKind::Ui,
+        protocol_version: PROTOCOL_VERSION,
+    });
+    let _: HelloResult = proxy_call(&mut stdin, &mut stdout, &mut decoder, 1, hello)
+        .into_result()
+        .unwrap();
+    drop(stdin);
+    assert!(proxy.wait().unwrap().success());
 }

@@ -91,6 +91,16 @@ The Release workflow builds the Windows setup, the macOS app and the Linux tar.g
 the release; running copies of Mkrew offer it within 6 hours.
 Agents do all of this with the `mkrew-release` skill (`.claude/skills/mkrew-release`).
 
+### Work on another computer
+
+The other computer needs Mkrew installed, an SSH server and this computer's public key in its `authorized_keys`.
+SSH server: Windows: Settings → System → Optional features → OpenSSH Server; macOS: Remote Login; Ubuntu: `sudo apt install openssh-server`.
+Add the key with `ssh-copy-id`, or append it by hand; Tailscale SSH also works.
+`ssh <host> mk --version` must work from this computer without a password prompt.
+Linux: `~/.bashrc` often skips non-interactive shells, so set the machine's *mk path* (for example `~/.local/opt/mkrew/bin/mk`) in Settings → Machines.
+Keep Mkrew (or `mk daemon start`) running at login on the other computer, so its daemon has your full `PATH` for agents.
+Then Settings → Machines → Add machine.
+
 ## Configure agents
 
 ### Agent profiles

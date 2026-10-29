@@ -132,6 +132,8 @@ CLI are clients.
                                           └─────────────────────────────┘
 ```
 
+**Another computer (ADR 0089):** a machine window (`mkrew-ui --machine <name>`) runs `ssh <host> mk proxy` and speaks §7 over its pipes; the other computer's daemon keeps its local owner-only socket. This computer's window spawns one machine window per entry of `<config>/mkrew/machines.toml` at startup.
+
 **Lifecycle**
 
 - UI starts → connects to the daemon; if none is running it spawns `mkrew-daemon` detached,
@@ -741,6 +743,7 @@ mk hook <agent> <event>                # called by agent hooks, not by users
 mk open <project> [file[:line]]        # opens in Zed
 mk comment list [--file <path>] [--project P]  # default project: MKREW_SESSION_ID's, else cwd's
 mk comment reply <comment-id> "<text>" # used by agents to answer review comments
+mk proxy                               # stdin/stdout ↔ daemon socket, for machine windows over ssh (ADR 0089)
 ```
 
 `mk` resolves the current session from `MKREW_SESSION_ID` when relevant (e.g. `comment reply`
@@ -1640,7 +1643,7 @@ exist; body text contrast ≥ 4.5:1; status never conveyed by color alone; run a
 | Input latency | key press → glyph on screen < 16 ms (local) |
 | Idle CPU | UI + daemon < 1% of the machine with no output (GPUI's Windows vsync floor alone is 1–2% of one core) |
 | Memory | UI < 150 MB, daemon < 50 MB with 6 sessions (agents excluded) |
-| Security | IPC endpoint accessible by the current user only; the daemon has no network listener (`mk web` — started by the user, or by the daemon as a child while the user turned phone access on, ADR 0053 — listens on 127.0.0.1 by default and requires its token on every WebSocket, ADR 0052); with `[web] push = true` `mk web` also POSTs encrypted Web Push messages to the push service host (Apple, Google, Mozilla, Microsoft only) of each subscribed phone, ADR 0067; `hook.report` rejected unless the session id belongs to a live session |
+| Security | IPC endpoint accessible by the current user only; the daemon has no network listener (`mk web` — started by the user, or by the daemon as a child while the user turned phone access on, ADR 0053 — listens on 127.0.0.1 by default and requires its token on every WebSocket, ADR 0052); with `[web] push = true` `mk web` also POSTs encrypted Web Push messages to the push service host (Apple, Google, Mozilla, Microsoft only) of each subscribed phone, ADR 0067; `hook.report` rejected unless the session id belongs to a live session; other computers reach it only through SSH and `mk proxy` (ADR 0089) |
 | Data | SQLite WAL; daily DB backup, keep 7 |
 | Errors | panics logged with backtrace; UI shows an error instead of dying silently |
 | History | per-session output log, rotated at 5 MB; the History dialog replays its newest 1 MiB, built off the UI thread (ADR 0088) |
@@ -1881,8 +1884,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 - [ ] Comments on unchanged code files (diff-line comments exist since M7)?
 - [ ] License if the repo goes public.
 
-**Backlog after v2:** remote workspaces
-over SSH; compact density; `gix` git backend; pull/rebase/branch switching and
+**Backlog after v2:** compact density; `gix` git backend; pull/rebase/branch switching and
 conflict resolution in-app; GitHub (PR/issue → task); money
 estimates from token usage.
 

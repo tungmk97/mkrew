@@ -21,6 +21,11 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-29 Work on another computer (ADR 0089)
+
+- [ ] **mk proxy over real ssh:** from this computer run `ssh <host> mk proxy` with no daemon running there; the terminal shows binary noise, no "daemon started" text; Ctrl+C ends it; on the other computer `mk daemon status` still shows the daemon running (Windows host and Ubuntu host).
+- [ ] **Daemon outlives the SSH session:** after the step above, log out of every SSH session to the other computer; `mk daemon status` there still runs (Windows: the daemon left the sshd job; Ubuntu/macOS: `setsid`).
+
 ### To verify - 2026-10-28 Session tab behind `[features] session`
 
 - [ ] **Right panel (dark + light):** with no `[features] session`, the tabs read `Files │ Git` and split the width evenly.

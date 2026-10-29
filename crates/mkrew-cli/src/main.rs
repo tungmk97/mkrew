@@ -7,6 +7,7 @@ mod daemon;
 mod hook;
 mod integration;
 mod project;
+mod proxy;
 mod session;
 mod task;
 mod web;
@@ -86,6 +87,10 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Join stdin/stdout to the daemon (starting it if needed); a machine window runs it
+    /// through ssh (ADR 0089). Not for interactive use.
+    #[command(hide = true)]
+    Proxy,
     /// Serve the phone page and relay it to the daemon; publish it with `tailscale serve`.
     Web {
         /// Address to listen on; keep 127.0.0.1 and let `tailscale serve` publish it.
@@ -370,6 +375,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             }
             .map(|()| ExitCode::SUCCESS)
         }
+        Command::Proxy => proxy::run(&paths),
         Command::Web {
             listen,
             host,
