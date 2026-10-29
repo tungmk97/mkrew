@@ -59,12 +59,22 @@ pub enum UsageFormat {
 }
 
 impl UsageFormat {
-    fn parse(name: &str) -> Self {
+    pub fn parse(name: &str) -> Self {
         match name {
             "claude_jsonl" => Self::ClaudeJsonl,
             "codex_jsonl" => Self::CodexJsonl,
             "omp_jsonl" => Self::OmpJsonl,
             other => Self::Unknown(other.to_owned()),
+        }
+    }
+
+    /// The name as written in a profile's `[usage] format`; the inverse of [`Self::parse`].
+    pub fn name(&self) -> &str {
+        match self {
+            Self::ClaudeJsonl => "claude_jsonl",
+            Self::CodexJsonl => "codex_jsonl",
+            Self::OmpJsonl => "omp_jsonl",
+            Self::Unknown(name) => name,
         }
     }
 }
@@ -720,5 +730,12 @@ oneshot = '"C:\Program Files\x.exe" -p --model fast'"#,
         assert_eq!(format("claude"), Some(UsageFormat::ClaudeJsonl));
         assert_eq!(format("codex"), Some(UsageFormat::CodexJsonl));
         assert_eq!(format("omp"), Some(UsageFormat::OmpJsonl));
+    }
+
+    #[test]
+    fn usage_format_name_is_the_inverse_of_parse() {
+        for name in ["claude_jsonl", "codex_jsonl", "omp_jsonl", "other_format"] {
+            assert_eq!(UsageFormat::parse(name).name(), name);
+        }
     }
 }

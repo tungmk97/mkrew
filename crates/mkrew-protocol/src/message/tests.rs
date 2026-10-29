@@ -238,6 +238,27 @@ fn every_m1_request_round_trips() {
         Request::SessionAttach(SessionRef { session_id: sid() }),
         Request::SessionDetach(SessionRef { session_id: sid() }),
         Request::SessionHistory(SessionRef { session_id: sid() }),
+        Request::SessionLogTail(SessionLogTailParams {
+            session_id: sid(),
+            max_bytes: 1024,
+        }),
+        Request::SessionTranscript(SessionTranscriptParams {
+            session_id: sid(),
+            offset: 7,
+        }),
+        Request::FsCreate(FsCreateParams {
+            project_id: sid(),
+            worktree_task_id: None,
+            dir: "src".into(),
+            name: "a.rs".into(),
+            folder: false,
+        }),
+        Request::FsIgnore(FsIgnoreParams {
+            project_id: sid(),
+            worktree_task_id: None,
+            path: "target".into(),
+            is_dir: true,
+        }),
         Request::SessionRead(SessionReadParams {
             session_id: sid(),
             lines: 8,
@@ -1090,4 +1111,38 @@ fn daemon_status_carries_the_phone_access_state() {
     });
     let decoded: DaemonStatusResult = serde_json::from_value(old).unwrap();
     assert_eq!(decoded.web, WebStatus::default());
+}
+
+#[test]
+fn log_tail_and_transcript_bytes_are_base64() {
+    let tail = serde_json::to_value(SessionLogTail {
+        data: b"hi".to_vec(),
+        cut: true,
+    })
+    .unwrap();
+    assert_eq!(tail, json!({"data": "aGk=", "cut": true}));
+    let read = SessionTranscript {
+        found: true,
+        format: "claude_jsonl".into(),
+        start: 3,
+        len: 5,
+        data: b"hi".to_vec(),
+    };
+    let value = serde_json::to_value(&read).unwrap();
+    assert_eq!(
+        value,
+        json!({"found": true, "format": "claude_jsonl", "start": 3, "len": 5, "data": "aGk="})
+    );
+    assert_eq!(
+        serde_json::from_value::<SessionTranscript>(value).unwrap(),
+        read
+    );
+    let wire = round_trip(&Message::Request {
+        id: 3,
+        request: Request::SessionLogTail(SessionLogTailParams {
+            session_id: sid(),
+            max_bytes: 10,
+        }),
+    });
+    assert_eq!(wire["method"], "session.log_tail");
 }

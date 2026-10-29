@@ -513,6 +513,39 @@ pub struct FsWritten {
     pub hash: String,
 }
 
+/// `fs.create` (spec 2026-10-29 §5): a new empty file or folder in the project (or task
+/// worktree).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsCreateParams {
+    pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
+    /// `/`-separated, relative to the root; `""` = the root.
+    #[serde(default)]
+    pub dir: String,
+    /// May hold `/` (or `\`): missing folders on the way are created.
+    pub name: String,
+    pub folder: bool,
+}
+
+/// `fs.create` result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsCreated {
+    /// The new entry, `/`-separated, relative to the root.
+    pub path: String,
+}
+
+/// `fs.ignore` (spec 2026-10-29 §5): adds one path to the root's `.gitignore`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsIgnoreParams {
+    pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
+    /// `/`-separated, relative to the root.
+    pub path: String,
+    pub is_dir: bool,
+}
+
 /// `fs.find`: quick open over the project's files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FsFindParams {

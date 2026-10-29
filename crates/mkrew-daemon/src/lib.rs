@@ -9,6 +9,7 @@ mod awake;
 mod backup;
 mod docs;
 mod emulator;
+mod file_ops;
 mod files;
 mod git;
 mod git_view;

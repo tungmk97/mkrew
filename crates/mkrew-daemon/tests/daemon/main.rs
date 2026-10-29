@@ -17,25 +17,27 @@ use mkrew_protocol::{
     CommentListParams, CommentRef, CommentReplyParams, CommentSendParams, CommentStatus, Commit,
     CommitDetail, DaemonStatusResult, DocChangedEvent, DocComment, DocContent, DocFile,
     DocListParams, DocReadParams, ErrorCode, Event, FileDiff, Frame, FrameDecoder, FsContent,
-    FsEntry, FsFindParams, FsListParams, FsMatch, FsReadParams, FsWriteParams, FsWritten,
-    GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams,
-    GitLogParams, GitMarker, GitMode, GitRemoteParams, GitSetBaseParams, GitSetViewedParams,
-    GitShowParams, GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult,
-    HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION, PlanItem, Project,
-    ProjectAddParams, ProjectCloneParams, ProjectClonedEvent, ProjectRef, ProjectUpdateParams,
-    QueuedSend, RemoveWorktreeResult, Request, ResponseError, RunCommand, RunStartParams,
-    RunStarted, RunStopParams, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent,
-    SessionFiles, SessionFilesParams, SessionHistory, SessionInputParams, SessionKillParams,
-    SessionKind, SessionLinkPlanParams, SessionListParams, SessionMoveParams, SessionPinParams,
-    SessionPlanEvent, SessionPortsEvent, SessionQueueEvent, SessionReadParams, SessionReadResult,
-    SessionRef, SessionRenameParams, SessionResizeParams, SessionResumeParams, SessionSendParams,
+    FsCreateParams, FsCreated, FsEntry, FsFindParams, FsIgnoreParams, FsListParams, FsMatch,
+    FsReadParams, FsWriteParams, FsWritten, GitChangedEvent, GitCommitParams, GitCommitResult,
+    GitDiffParams, GitDiscardParams, GitLogParams, GitMarker, GitMode, GitRemoteParams,
+    GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams, GitStatus,
+    GitStatusParams, HelloParams, HelloResult, HookReportParams, HunkTarget, Message, Outcome,
+    PROTOCOL_VERSION, PlanItem, Project, ProjectAddParams, ProjectCloneParams, ProjectClonedEvent,
+    ProjectRef, ProjectUpdateParams, QueuedSend, RemoveWorktreeResult, Request, ResponseError,
+    RunCommand, RunStartParams, RunStarted, RunStopParams, ScreenSnapshot, Session,
+    SessionAttachResult, SessionExitedEvent, SessionFiles, SessionFilesParams, SessionHistory,
+    SessionInputParams, SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams,
+    SessionLogTail, SessionLogTailParams, SessionMoveParams, SessionPinParams, SessionPlanEvent,
+    SessionPortsEvent, SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef,
+    SessionRenameParams, SessionResizeParams, SessionResumeParams, SessionSendParams,
     SessionSendResult, SessionSetColorParams, SessionSpawnParams, SessionSpawnResult, SessionState,
-    SessionUnqueueParams, SessionUsageEvent, SessionWaitParams, SessionWaitResult, StateSource,
-    TabCreateParams, TabListParams, TabMoveParams, TabPinParams, TabRef, TabRenameParams,
-    TabSetLayoutParams, Task, TaskConfirmParams, TaskCreateParams, TaskDeletedEvent,
-    TaskFanoutParams, TaskListParams, TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams,
-    TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams,
-    UndoPreview, ViewedFile, WORKSPACE_COLORS, encode,
+    SessionTranscript, SessionTranscriptParams, SessionUnqueueParams, SessionUsageEvent,
+    SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams, TabListParams,
+    TabMoveParams, TabPinParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
+    TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
+    TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams,
+    TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, ViewedFile,
+    WORKSPACE_COLORS, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -47,6 +49,7 @@ mod docs;
 mod fs_ai;
 mod git;
 mod io;
+mod remote_reads;
 mod runs;
 mod states;
 mod tabs_tasks;

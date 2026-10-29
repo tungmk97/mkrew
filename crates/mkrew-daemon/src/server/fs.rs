@@ -3,17 +3,21 @@
 //! invalidated by the watcher.
 
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mkrew_protocol::{ErrorCode, FsFindParams, FsListParams, FsReadParams, FsWriteParams, Outcome};
+use mkrew_protocol::{
+    ErrorCode, FsCreateParams, FsCreated, FsFindParams, FsIgnoreParams, FsListParams, FsReadParams,
+    FsWriteParams, Outcome,
+};
 use ulid::Ulid;
 
 use super::doc::read_error;
 use super::target::Target;
 use super::{Daemon, ok};
 use crate::docs::ReadError;
-use crate::{docs, files};
+use crate::{docs, file_ops, files};
 
 impl Daemon {
     pub(super) async fn fs_list(&self, params: FsListParams) -> Outcome {
@@ -141,6 +145,72 @@ impl Daemon {
             ),
             Ok(Err(e)) => read_error(target.project.id, &path, e),
             Err(e) => Outcome::error(ErrorCode::Internal, format!("fs.write failed: {e}")),
+        }
+    }
+
+    /// `fs.create`: New file / New folder of the Files tree, inside the watched target.
+    /// Nothing is created if the new entry would sit inside `.git`.
+    pub(super) async fn fs_create(&self, params: FsCreateParams) -> Outcome {
+        let dir = if params.dir.trim().is_empty() {
+            String::new()
+        } else {
+            match docs::relative_path(&params.dir) {
+                Some((dir, _)) if !in_git_dir(&dir) => dir.trim_end_matches('/').to_owned(),
+                _ => return outside("dir", &params.dir),
+            }
+        };
+        // Split like `file_ops::create` does, so " .git " cannot slip past the check.
+        let name = params
+            .name
+            .split(['/', '\\'])
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join("/");
+        if in_git_dir(&format!("{dir}/{name}")) {
+            return outside("name", &params.name);
+        }
+        let target = match self
+            .watched_target(params.project_id, params.worktree_task_id, None)
+            .await
+        {
+            Ok(target) => target,
+            Err(outcome) => return outcome,
+        };
+        let made = tokio::task::spawn_blocking(move || {
+            file_ops::create(&target.dir, &dir, &params.name, params.folder)
+        })
+        .await;
+        match made {
+            Ok(Ok(path)) => ok(&FsCreated { path }),
+            Ok(Err((ErrorKind::AlreadyExists, message))) => {
+                Outcome::error(ErrorCode::AlreadyExists, message)
+            }
+            Ok(Err((_, message))) => Outcome::error(ErrorCode::InvalidRequest, message),
+            Err(e) => Outcome::error(ErrorCode::Internal, format!("fs.create failed: {e}")),
+        }
+    }
+
+    /// `fs.ignore`: adds one path to the target's root `.gitignore`.
+    pub(super) async fn fs_ignore(&self, params: FsIgnoreParams) -> Outcome {
+        let path = match docs::relative_path(&params.path) {
+            Some((path, _)) if !in_git_dir(&path) => path.trim_end_matches('/').to_owned(),
+            _ => return outside("path", &params.path),
+        };
+        let target = match self
+            .watched_target(params.project_id, params.worktree_task_id, None)
+            .await
+        {
+            Ok(target) => target,
+            Err(outcome) => return outcome,
+        };
+        let ignored = tokio::task::spawn_blocking(move || {
+            file_ops::ignore(&target.dir, &path, params.is_dir)
+        })
+        .await;
+        match ignored {
+            Ok(Ok(())) => ok(&()),
+            Ok(Err(message)) => Outcome::error(ErrorCode::Internal, message),
+            Err(e) => Outcome::error(ErrorCode::Internal, format!("fs.ignore failed: {e}")),
         }
     }
 

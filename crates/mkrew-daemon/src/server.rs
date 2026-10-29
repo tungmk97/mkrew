@@ -45,6 +45,7 @@ mod git;
 mod resume;
 pub(crate) use resume::replace_session;
 mod run;
+mod session_read;
 mod target;
 mod task_worktree;
 mod turn;
@@ -357,6 +358,12 @@ impl Daemon {
                 });
                 (store_outcome(history), After::Continue)
             }
+            Request::SessionLogTail(params) => {
+                (self.session_log_tail(params).await, After::Continue)
+            }
+            Request::SessionTranscript(params) => {
+                (self.session_transcript(params).await, After::Continue)
+            }
             Request::SessionResume(params) => (self.session_resume(params).await, After::Continue),
             Request::SessionRead(params) if !(1..=200).contains(&params.lines) => (
                 Outcome::error(ErrorCode::InvalidRequest, "lines must be 1–200"),
@@ -429,6 +436,8 @@ impl Daemon {
             Request::FsList(params) => (self.fs_list(params).await, After::Continue),
             Request::FsRead(params) => (self.fs_read(params).await, After::Continue),
             Request::FsWrite(params) => (self.fs_write(params).await, After::Continue),
+            Request::FsCreate(params) => (self.fs_create(params).await, After::Continue),
+            Request::FsIgnore(params) => (self.fs_ignore(params).await, After::Continue),
             Request::FsFind(params) => (self.fs_find(params).await, After::Continue),
             Request::AttachmentSave(params) => {
                 (self.attachment_save(params).await, After::Continue)

@@ -17,10 +17,10 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::files::{
-    AiGenerateParams, AiGeneratedEvent, FsFindParams, FsListParams, FsReadParams, FsWriteParams,
-    GitChangedEvent, GitCommitParams, GitDiffParams, GitDiscardParams, GitLogParams,
-    GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams,
-    GitStatusParams, ProjectRef, WatchReleaseParams,
+    AiGenerateParams, AiGeneratedEvent, FsCreateParams, FsFindParams, FsIgnoreParams, FsListParams,
+    FsReadParams, FsWriteParams, GitChangedEvent, GitCommitParams, GitDiffParams, GitDiscardParams,
+    GitLogParams, GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams,
+    GitStageParams, GitStatusParams, ProjectRef, WatchReleaseParams,
 };
 
 /// One JSON frame.
@@ -160,6 +160,12 @@ pub enum Request {
     /// Returns [`SessionHistory`]; works for exited sessions too.
     #[serde(rename = "session.history")]
     SessionHistory(SessionRef),
+    /// Returns [`SessionLogTail`]: the newest log bytes, read by the daemon (spec 2026-10-29 §5).
+    #[serde(rename = "session.log_tail")]
+    SessionLogTail(SessionLogTailParams),
+    /// Returns [`SessionTranscript`]: a window of the agent's transcript (spec 2026-10-29 §5).
+    #[serde(rename = "session.transcript")]
+    SessionTranscript(SessionTranscriptParams),
     /// Returns [`SessionSpawnResult`]: relaunches an exited agent session into its conversation
     /// with the profile's `resume` command, as a new session (ADR 0055).
     #[serde(rename = "session.resume")]
@@ -249,6 +255,12 @@ pub enum Request {
     /// Returns [`FsWritten`] (ADR 0028).
     #[serde(rename = "fs.write")]
     FsWrite(FsWriteParams),
+    /// Returns [`FsCreated`]: a new empty file or folder (spec 2026-10-29 §5).
+    #[serde(rename = "fs.create")]
+    FsCreate(FsCreateParams),
+    /// Adds a path to the target's `.gitignore`; returns `null` (spec 2026-10-29 §5).
+    #[serde(rename = "fs.ignore")]
+    FsIgnore(FsIgnoreParams),
     /// Returns `FsMatch[]`, best first.
     #[serde(rename = "fs.find")]
     FsFind(FsFindParams),
@@ -1187,6 +1199,51 @@ pub struct SessionSetColorParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionHistory {
     pub files: Vec<PathBuf>,
+}
+
+/// Most bytes `session.log_tail` and `session.transcript` return in one reply: 4 MiB is
+/// about 5.4 MiB of base64, well under the 16 MiB frame cap.
+pub const READ_WINDOW: u64 = 4 * 1024 * 1024;
+
+/// `session.log_tail`: the newest output bytes of a session's log (spec 2026-10-29 §5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionLogTailParams {
+    pub session_id: Ulid,
+    /// Capped at [`READ_WINDOW`].
+    pub max_bytes: u64,
+}
+
+/// `session.log_tail` result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionLogTail {
+    /// The newest log bytes (`<id>.log.1` then `<id>.log`), base64 on the wire.
+    #[serde(with = "base64_bytes")]
+    pub data: Vec<u8>,
+    /// Older output was left out.
+    pub cut: bool,
+}
+
+/// `session.transcript`: a window of the agent's transcript file (spec 2026-10-29 §5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionTranscriptParams {
+    pub session_id: Ulid,
+    /// Where the reader stands (0 on the first read).
+    pub offset: u64,
+}
+
+/// `session.transcript` result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionTranscript {
+    /// A transcript file was found (profile with `[usage]`, native id known, file exists).
+    pub found: bool,
+    /// The profile's `[usage] format` as written in its TOML (`claude_jsonl`, ...).
+    pub format: String,
+    /// Where `data` starts in the file.
+    pub start: u64,
+    /// The file's length now.
+    pub len: u64,
+    #[serde(with = "base64_bytes")]
+    pub data: Vec<u8>,
 }
 
 /// `session.read`: the last `lines` non-blank rows of a live session's screen (SPEC §20A).
