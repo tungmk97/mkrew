@@ -813,7 +813,7 @@ impl Shell {
             view,
             panes: on_screen(window.is_visible(), tabs),
             focused: self.focused_session(),
-            panel: self.panel_shown().then_some(self.right_panel.tab),
+            panel: self.panel_shown().then(|| self.panel_tab()),
             panel_session: self.panel_session(),
             sidebar: self.sidebar_layout.mode(),
             modal: self.modal_open(),
