@@ -252,6 +252,30 @@ impl MachineState {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_short_label_drops_the_reason_and_the_long_one_keeps_it() {
+        let cases = [
+            (MachineState::Connecting, "Connecting…", "Connecting…"),
+            (MachineState::Connected, "Connected", "Connected"),
+            (MachineState::Reconnecting, "Reconnecting…", "Reconnecting…"),
+            (
+                MachineState::Unreachable("Permission denied".into()),
+                "Not reachable",
+                "Not reachable: Permission denied",
+            ),
+            (
+                MachineState::Version("protocol 49".into()),
+                "Version differs",
+                "Version differs: protocol 49",
+            ),
+            (MachineState::Closed, "Window closed", "Window closed"),
+        ];
+        for (state, short, long) in cases {
+            assert_eq!(state.short_label(), short);
+            assert_eq!(state.label(), long);
+        }
+    }
+
     fn machine(name: &str, host: &str) -> Machine {
         Machine {
             name: name.into(),
