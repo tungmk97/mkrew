@@ -12,7 +12,7 @@ use mkrew_core::Paths;
 const CHUNK: usize = 64 * 1024;
 
 pub fn run(paths: &Paths) -> anyhow::Result<ExitCode> {
-    crate::daemon::ensure_running(paths)?;
+    crate::daemon::ensure_listening(paths)?;
     let stream = Stream::connect(mkrew_daemon::ipc::name(&paths.socket)?)
         .with_context(|| format!("connect to {}", paths.socket))?;
     let (mut from_daemon, mut to_daemon) = stream.split();

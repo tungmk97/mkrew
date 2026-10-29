@@ -5,10 +5,33 @@ use std::io::{self, Read, Write};
 use anyhow::{Context, bail};
 use interprocess::local_socket::{Stream, prelude::*};
 use mkrew_protocol::{
-    ClientKind, Frame, FrameDecoder, HelloParams, HelloResult, Message, Outcome, PROTOCOL_VERSION,
-    Request, ResponseError, encode,
+    ClientKind, ErrorCode, Frame, FrameDecoder, HelloParams, HelloResult, Message, Outcome,
+    PROTOCOL_VERSION, Request, ResponseError, encode,
 };
 use serde::de::DeserializeOwned;
+
+/// The daemon answered a request with an error. It reads as the daemon's message; the code
+/// stays in the `anyhow` chain for callers that act on it (`downcast_ref`).
+#[derive(Debug)]
+pub struct Refused {
+    pub code: ErrorCode,
+    pub message: String,
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// Whether `error` is a daemon's `version_mismatch` answer to `hello`.
+pub fn is_version_mismatch(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<Refused>()
+        .is_some_and(|refused| refused.code == ErrorCode::VersionMismatch)
+}
 
 pub struct Client {
     stream: Stream,
@@ -37,7 +60,10 @@ impl Client {
     pub fn call<T: DeserializeOwned>(&mut self, request: Request) -> anyhow::Result<T> {
         let outcome = self.round_trip(request).context("talk to the daemon")?;
         outcome.into_result().map_err(|e| match e {
-            ResponseError::Daemon(body) => anyhow::anyhow!("{}", body.message),
+            ResponseError::Daemon(body) => anyhow::Error::new(Refused {
+                code: body.code,
+                message: body.message,
+            }),
             ResponseError::Decode(e) => anyhow::anyhow!("invalid response from the daemon: {e}"),
         })
     }

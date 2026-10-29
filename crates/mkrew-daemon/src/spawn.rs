@@ -85,11 +85,11 @@ pub fn detach_from_job(command: &mut Command) {
 /// `CreateProcess` passes EVERY inheritable handle to the child, not just its stdio. The
 /// client's own stdio are inheritable when it runs with redirected output (`mk daemon start |
 /// cat`, a test capturing output), and a daemon holding the write end of that pipe keeps the
-/// reader waiting until the daemon exits. Clients only spawn detached children (the daemon,
-/// `zed`) with explicit stdio, so clear the flag on all three.
+/// reader waiting until the daemon exits. Clients only spawn children (the daemon, `zed`, the
+/// UI's `ssh`) with explicit stdio, so clear the flag on all three.
 #[cfg(windows)]
 #[allow(unsafe_code)]
-fn disinherit_stdio() {
+pub fn disinherit_stdio() {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
 

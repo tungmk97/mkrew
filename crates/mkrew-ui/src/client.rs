@@ -274,7 +274,13 @@ fn run(endpoint: Endpoint, ready: std::sync::mpsc::Sender<Opened>) {
                     .stderr(Stdio::piped())
                     .kill_on_drop(true);
                 #[cfg(windows)]
-                command.creation_flags(CREATE_NO_WINDOW);
+                // The state pipe to the launcher (this window's stdout) and its command pipe
+                // (stdin) must not reach ssh: it would keep them open after this window ends.
+                #[cfg(windows)]
+                {
+                    mkrew_daemon::spawn::disinherit_stdio();
+                    command.creation_flags(CREATE_NO_WINDOW);
+                }
                 let mut child = match command.spawn() {
                     Ok(child) => child,
                     Err(source) => {
@@ -360,6 +366,17 @@ impl StderrTail {
     }
 }
 
+/// What "Cannot reach" shows when the program ended before `hello`: its stderr, else why the
+/// greeting failed (a login script printing to stdout breaks the frame decode and ssh then
+/// says nothing).
+fn ended_reason(stderr: String, greet_error: &anyhow::Error) -> String {
+    if stderr.is_empty() {
+        format!("{greet_error:#}")
+    } else {
+        stderr
+    }
+}
+
 /// Greets, reports to [`Connection::open`], then serves until either end closes. A program
 /// lives in here, so dropping the `Connection` ends `write_loop` and kills it.
 async fn serve<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
@@ -382,7 +399,7 @@ async fn serve<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                 })
                 .await;
                 error = OpenError::Ended {
-                    stderr: tail.text(),
+                    stderr: ended_reason(tail.text(), &error),
                 }
                 .into();
             }
@@ -512,6 +529,15 @@ mod tests {
     use futures_lite::future::{block_on, poll_once};
     use mkrew_protocol::SessionExitedEvent;
 
+    #[test]
+    fn an_ended_program_without_stderr_keeps_the_greeting_error_as_the_reason() {
+        let error = anyhow!("invalid frame");
+        assert_eq!(
+            ended_reason("ssh: no route".into(), &error),
+            "ssh: no route"
+        );
+        assert_eq!(ended_reason(String::new(), &error), "invalid frame");
+    }
     #[test]
     fn stderr_lines_survive_invalid_utf8_and_floods() {
         let kept = Mutex::new(VecDeque::new());

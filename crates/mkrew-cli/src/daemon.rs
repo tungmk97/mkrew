@@ -76,6 +76,18 @@ pub fn ensure_running(paths: &Paths) -> anyhow::Result<Running> {
     }
 }
 
+/// [`ensure_running`] for `mk proxy`: a daemon only has to listen. One that refuses `hello`
+/// for its version is left alone (no second daemon is started over it): the window's own
+/// `hello` through the proxy reports the mismatch, instead of the proxy failing to connect
+/// and the window showing "Cannot reach" with a retry.
+pub fn ensure_listening(paths: &Paths) -> anyhow::Result<()> {
+    match ensure_running(paths) {
+        Ok(_) => Ok(()),
+        Err(error) if crate::client::is_version_mismatch(&error) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 /// The daemon, detached, and on Windows outside the caller's job object when the job allows it.
 fn spawn_daemon(exe: &Path) -> anyhow::Result<Child> {
     let command = || {
@@ -228,7 +240,37 @@ mod win {
 
 #[cfg(test)]
 mod tests {
-    use super::runs_from;
+    use super::*;
+    use crate::client::Refused;
+    use anyhow::Context;
+    use mkrew_protocol::ErrorCode;
+
+    fn refusal(code: ErrorCode) -> anyhow::Error {
+        anyhow::Error::new(Refused {
+            code,
+            message: "daemon speaks 49, client 50".into(),
+        })
+    }
+
+    #[test]
+    fn only_a_version_mismatch_answer_counts_as_listening_for_the_proxy() {
+        let mismatch = refusal(ErrorCode::VersionMismatch);
+        assert_eq!(format!("{mismatch:#}"), "daemon speaks 49, client 50");
+        assert!(crate::client::is_version_mismatch(&mismatch));
+        let wrapped = Err::<(), _>(refusal(ErrorCode::VersionMismatch))
+            .context("connect")
+            .unwrap_err();
+        assert!(
+            crate::client::is_version_mismatch(&wrapped),
+            "through context"
+        );
+        assert!(!crate::client::is_version_mismatch(&refusal(
+            ErrorCode::NotFound
+        )));
+        assert!(!crate::client::is_version_mismatch(&anyhow::anyhow!(
+            "boom"
+        )));
+    }
 
     fn exe_in(dir: &std::path::Path) -> std::path::PathBuf {
         let exe = dir.join("mkrew-daemon.exe");
