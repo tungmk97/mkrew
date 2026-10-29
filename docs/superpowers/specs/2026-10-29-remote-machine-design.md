@@ -88,11 +88,12 @@ host = "home-pc"        # ssh destination: MagicDNS name, user@host, or a ~/.ssh
 
 ### 4.3 The ssh command
 
-`ssh -T -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -- <host> <mk> proxy`
+`ssh -T -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -- <host> <mk> proxy`
 
 - `ssh` is found on `PATH` (`ssh.exe` on Windows 10+ ships with the OS; `PATHEXT` lookup as for agents).
 - `<mk>` defaults to `mk`.
 - `BatchMode=yes`: never prompts for a password or passphrase; the user needs a key (or an agent, or Tailscale SSH).
+- `ConnectTimeout=10`: an unreachable host fails within 10 s instead of the OS TCP timeout.
 - `StrictHostKeyChecking=accept-new`: the first host key is trusted; a changed key is refused with ssh's own message.
 - `ServerAlive*`: a dead network is noticed within about 45 s and ends ssh, which ends the connection and starts the reconnect.
 - On Windows the child gets `CREATE_NO_WINDOW`; its stderr is captured (last 20 lines kept) for error messages.

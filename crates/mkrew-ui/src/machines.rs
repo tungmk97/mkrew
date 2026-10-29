@@ -131,6 +131,8 @@ pub fn ssh_command(machine: &Machine) -> (String, Vec<String>) {
     let mut args: Vec<String> = [
         "-T",
         "-o",
+        "ConnectTimeout=10",
+        "-o",
         "BatchMode=yes",
         "-o",
         "StrictHostKeyChecking=accept-new",
@@ -311,6 +313,8 @@ mod tests {
             args,
             [
                 "-T",
+                "-o",
+                "ConnectTimeout=10",
                 "-o",
                 "BatchMode=yes",
                 "-o",

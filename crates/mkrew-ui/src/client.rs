@@ -21,7 +21,9 @@ use mkrew_protocol::{
     PROTOCOL_VERSION, Request, ResponseError, encode,
 };
 use serde::de::DeserializeOwned;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{
+    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+};
 use tokio::sync::{Semaphore, mpsc, oneshot};
 use ulid::Ulid;
 
@@ -294,6 +296,43 @@ fn run(endpoint: Endpoint, ready: std::sync::mpsc::Sender<Opened>) {
     });
 }
 
+/// Longest stderr line kept, in bytes; the rest of a longer line is read and dropped.
+const STDERR_LINE_MAX: usize = 4096;
+
+/// Reads `reader` to EOF (or an I/O error) keeping the last [`STDERR_LINES`] lines. Bytes that
+/// are not UTF-8 (localized or OEM-codepage ssh messages) are replaced, never fatal, and a line
+/// without a newline cannot grow past [`STDERR_LINE_MAX`] in memory.
+async fn keep_lines<R: AsyncBufRead + Unpin>(
+    mut reader: R,
+    kept: &Mutex<VecDeque<String>>,
+) -> io::Result<()> {
+    let mut line: Vec<u8> = Vec::new();
+    loop {
+        let chunk = reader.fill_buf().await?;
+        let eof = chunk.is_empty();
+        let end = chunk.iter().position(|&b| b == b'\n');
+        let take = end.unwrap_or(chunk.len());
+        let room = STDERR_LINE_MAX.saturating_sub(line.len());
+        line.extend_from_slice(&chunk[..take.min(room)]);
+        reader.consume(end.map_or(take, |i| i + 1));
+        if end.is_some() || eof {
+            let text = String::from_utf8_lossy(&line);
+            let text = text.trim();
+            if !text.is_empty() {
+                let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
+                if kept.len() == STDERR_LINES {
+                    kept.pop_front();
+                }
+                kept.push_back(text.to_owned());
+            }
+            line.clear();
+        }
+        if eof {
+            return Ok(());
+        }
+    }
+}
+
 /// The last lines a program wrote to stderr. Drained continuously: a full pipe would block
 /// `ssh`.
 struct StderrTail {
@@ -306,14 +345,7 @@ impl StderrTail {
         let lines = Arc::new(Mutex::new(VecDeque::new()));
         let kept = Arc::clone(&lines);
         let task = tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
-                if kept.len() == STDERR_LINES {
-                    kept.pop_front();
-                }
-                kept.push_back(line.trim().to_owned());
-            }
+            let _ = keep_lines(BufReader::new(stderr), &kept).await;
         });
         Self { lines, task }
     }
@@ -479,6 +511,29 @@ mod tests {
     use super::*;
     use futures_lite::future::{block_on, poll_once};
     use mkrew_protocol::SessionExitedEvent;
+
+    #[test]
+    fn stderr_lines_survive_invalid_utf8_and_floods() {
+        let kept = Mutex::new(VecDeque::new());
+        let mut bytes = b"first\n".to_vec();
+        bytes.extend_from_slice(&[0xff, 0xfe, b'x', b'\n']);
+        bytes.extend_from_slice(b"  last words  ");
+        block_on(keep_lines(&bytes[..], &kept)).unwrap();
+        let lines: Vec<String> = kept.lock().unwrap().iter().cloned().collect();
+        assert_eq!(lines, ["first", "\u{fffd}\u{fffd}x", "last words"]);
+
+        let flood = vec![b'a'; STDERR_LINE_MAX * 10];
+        block_on(keep_lines(&flood[..], &kept)).unwrap();
+        assert_eq!(kept.lock().unwrap().back().unwrap().len(), STDERR_LINE_MAX);
+
+        let many: Vec<u8> = (0..30)
+            .flat_map(|n| format!("{n}\n").into_bytes())
+            .collect();
+        let kept = Mutex::new(VecDeque::new());
+        block_on(keep_lines(&many[..], &kept)).unwrap();
+        assert_eq!(kept.lock().unwrap().len(), STDERR_LINES);
+        assert_eq!(kept.lock().unwrap().front().unwrap(), "10");
+    }
 
     fn output(len: usize) -> Incoming {
         Incoming::Output {
