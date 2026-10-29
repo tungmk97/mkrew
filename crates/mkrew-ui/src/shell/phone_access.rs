@@ -167,6 +167,10 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> Option<gpui::Stateful<gpui::Div>> {
+        // Phone access belongs to this computer's window.
+        if self.target.is_machine() {
+            return None;
+        }
         self.connection.as_ref()?;
         let on = self.phone.running();
         let text = if on {

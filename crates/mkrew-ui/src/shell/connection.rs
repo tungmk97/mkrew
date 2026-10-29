@@ -1,5 +1,9 @@
 //! Startup and the daemon link: `Shell::new`, refresh, loads, incoming-frame dispatch.
 
+use std::io::Write;
+
+use mkrew_ui::connect::MachineError;
+
 use crate::*;
 
 impl Shell {
@@ -8,10 +12,14 @@ impl Shell {
         paths: Paths,
         keymap: Keymap,
         keymap_errors: &[KeymapError],
-        jump: Option<(Ulid, Ulid)>,
+        opening: Opening,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
+        let Opening { target, id, jump } = opening;
+        // A machine window never hides to a tray: it has none, and closing it ends it (the
+        // agents keep running on the other computer).
+        let local = !target.is_machine();
         let keymap_file = paths.keymap_file();
         let settings_file = paths.settings_file();
         // A broken settings file keeps the defaults, like the other reads here.
@@ -24,7 +32,7 @@ impl Shell {
         let ui = settings.ui;
         let diff_mode = ui.diff_mode;
         let diff_wrap = ui.diff_wrap;
-        let close_to_tray = ui.close_to_tray;
+        let close_to_tray = ui.close_to_tray && local;
         let reading_default = ui.reading_width;
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
@@ -54,8 +62,9 @@ impl Shell {
             cx.notify();
         })
         .detach();
-        // The tray icon (Windows): its clicks arrive here from the tray thread.
-        let (desktop, tray_events) = Desktop::new(window, &paths.socket);
+        // The tray icon (Windows): its clicks arrive here from the tray thread. A machine
+        // window keeps the hidden tray window (the single-instance target) but shows no icon.
+        let (desktop, tray_events) = Desktop::new(window, &id, local);
         cx.spawn_in(window, async move |this, cx| {
             while let Ok(event) = tray_events.recv().await {
                 let handled =
@@ -114,43 +123,46 @@ impl Shell {
             }
         })
         .detach();
-        // The title bar's phone icon follows `daemon.status.web`: read every `PHONE_POLL_IDLE`,
-        // and on every tick while the Phone access dialog is open (ADR 0053).
-        cx.spawn_in(window, async move |this, cx| {
-            loop {
-                cx.background_executor().timer(theme::PHONE_TICK).await;
-                let ticked = this.update_in(cx, |shell, window, cx| {
-                    if shell.phone.due(Instant::now(), shell.phone_open) {
-                        shell.poll_phone(window, cx);
+        // Phone access and the in-app update belong to this computer's window.
+        if local {
+            // The title bar's phone icon follows `daemon.status.web`: read every `PHONE_POLL_IDLE`,
+            // and on every tick while the Phone access dialog is open (ADR 0053).
+            cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(theme::PHONE_TICK).await;
+                    let ticked = this.update_in(cx, |shell, window, cx| {
+                        if shell.phone.due(Instant::now(), shell.phone_open) {
+                            shell.poll_phone(window, cx);
+                        }
+                    });
+                    if ticked.is_err() {
+                        return;
                     }
-                });
-                if ticked.is_err() {
-                    return;
                 }
-            }
-        })
-        .detach();
-        // In-app update (SPEC §20K): ask GitHub now and every `CHECK_EVERY`; clear what a
-        // previous macOS update left beside the app.
-        cx.background_executor()
-            .spawn(async {
-                mkrew_ui::update::clean_leftovers(&mkrew_ui::update::current_install());
             })
             .detach();
-        cx.spawn_in(window, async move |this, cx| {
-            loop {
-                let checked = this.update_in(cx, |shell, window, cx| {
-                    shell.check_updates(false, window, cx)
-                });
-                if checked.is_err() {
-                    return;
+            // In-app update (SPEC §20K): ask GitHub now and every `CHECK_EVERY`; clear what a
+            // previous macOS update left beside the app.
+            cx.background_executor()
+                .spawn(async {
+                    mkrew_ui::update::clean_leftovers(&mkrew_ui::update::current_install());
+                })
+                .detach();
+            cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    let checked = this.update_in(cx, |shell, window, cx| {
+                        shell.check_updates(false, window, cx)
+                    });
+                    if checked.is_err() {
+                        return;
+                    }
+                    cx.background_executor()
+                        .timer(mkrew_ui::update::CHECK_EVERY)
+                        .await;
                 }
-                cx.background_executor()
-                    .timer(mkrew_ui::update::CHECK_EVERY)
-                    .await;
-            }
-        })
-        .detach();
+            })
+            .detach();
+        }
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let rename_focus = cx.focus_handle();
@@ -178,7 +190,10 @@ impl Shell {
         // What the user saw before this start (A2): a corrupt or missing file is empty.
         let viewed = Viewed::load(&paths.data_dir);
         let mut shell = Self {
-            status: Status::Connecting,
+            status: match &target {
+                Target::Missing(text) => Status::NoMachine(text.clone()),
+                _ => Status::Connecting,
+            },
             connection: None,
             update: None,
             updating: false,
@@ -199,6 +214,8 @@ impl Shell {
             painted,
             painted_rx,
             paths,
+            target,
+            machine_state: None,
             connect_gen: 0,
             reconnect_attempts: 0,
             reconnect_in: None,
@@ -373,7 +390,9 @@ impl Shell {
             toasts: Toasts::default(),
             pending_jump: jump,
         };
-        shell.connect(window, cx);
+        if !matches!(shell.status, Status::NoMachine(_)) {
+            shell.connect(window, cx);
+        }
         shell
     }
 
@@ -382,6 +401,20 @@ impl Shell {
     pub(crate) fn connect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.reconnect_attempts = 0;
         self.start_connect(window, cx);
+    }
+
+    /// A machine window's state changed: kept for the title bar chip and written to stdout, one
+    /// line, for the window that started this one (spec §4.5). Only changes are written; nobody
+    /// may be reading (a window started by hand), so write errors are ignored.
+    fn report_machine_state(&mut self, state: MachineState) {
+        if !matches!(self.target, Target::Machine(_)) || self.machine_state.as_ref() == Some(&state)
+        {
+            return;
+        }
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "{}", state.line());
+        let _ = out.flush();
+        self.machine_state = Some(state);
     }
 
     /// Waits [`mkrew_ui::connect::backoff`] after a failed or lost connect, then connects
@@ -396,7 +429,10 @@ impl Shell {
             cx.background_executor().timer(delay).await;
             let _ = this.update_in(cx, |shell, window, cx| {
                 if shell.connect_gen == generation
-                    && matches!(shell.status, Status::Failed(_) | Status::Disconnected)
+                    && matches!(
+                        shell.status,
+                        Status::Failed(_) | Status::Unreachable { .. } | Status::Disconnected
+                    )
                 {
                     shell.start_connect(window, cx);
                 }
@@ -405,27 +441,70 @@ impl Shell {
         .detach();
     }
 
-    /// Connects to the daemon (starting it if needed) off the UI thread, then feeds its frames
-    /// until the connection closes, then schedules an automatic retry.
+    /// Connects to the daemon (starting it if needed) or, in a machine window, to the machine's
+    /// daemon over ssh, off the UI thread; then feeds its frames until the connection closes,
+    /// then schedules an automatic retry (never after a version mismatch: nothing changes
+    /// until the user updates).
     fn start_connect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let machine = match &self.target {
+            Target::Local => None,
+            Target::Machine(machine) => Some(machine.clone()),
+            // Nothing to connect to.
+            Target::Missing(_) => return,
+        };
         self.connect_gen += 1;
         self.reconnect_in = None;
         self.status = Status::Connecting;
+        self.report_machine_state(if self.reconnect_attempts > 0 {
+            MachineState::Reconnecting
+        } else {
+            MachineState::Connecting
+        });
         cx.notify();
         let paths = self.paths.clone();
         let painted_rx = self.painted_rx.clone();
         cx.spawn_in(window, async move |this, cx| {
-            // Blocking (polls a starting daemon for up to 10 s): off the UI thread.
+            // Blocking (polls a starting daemon for up to 10 s, or waits for ssh): off the UI
+            // thread.
             let connected = cx
                 .background_executor()
-                .spawn(async move { mkrew_ui::connect::connect(&paths) })
+                .spawn(async move {
+                    match machine {
+                        None => mkrew_ui::connect::connect(&paths)
+                            .map_err(|error| Status::Failed(format!("{error:#}"))),
+                        Some(machine) => {
+                            mkrew_ui::connect::connect_machine(&machine).map_err(|error| {
+                                match error {
+                                    MachineError::Unreachable { reason, hint } => {
+                                        Status::Unreachable { reason, hint }
+                                    }
+                                    MachineError::Version(message) => Status::Version(message),
+                                }
+                            })
+                        }
+                    }
+                })
                 .await;
             let connection = match connected {
                 Ok(connection) => Rc::new(connection),
-                Err(error) => {
+                Err(status) => {
                     let _ = this.update_in(cx, |shell, window, cx| {
-                        shell.status = Status::Failed(format!("{error:#}"));
-                        shell.schedule_reconnect(window, cx);
+                        match &status {
+                            Status::Unreachable { reason, .. } => {
+                                shell.report_machine_state(MachineState::Unreachable(
+                                    reason.clone(),
+                                ));
+                            }
+                            Status::Version(message) => {
+                                shell.report_machine_state(MachineState::Version(message.clone()));
+                            }
+                            _ => {}
+                        }
+                        let retry = !matches!(status, Status::Version(_));
+                        shell.status = status;
+                        if retry {
+                            shell.schedule_reconnect(window, cx);
+                        }
                         cx.notify();
                     });
                     return;
@@ -439,8 +518,11 @@ impl Shell {
             let loaded = this.update_in(cx, |shell, window, cx| {
                 shell.reconnect_attempts = 0;
                 shell.connection = Some(connection);
+                shell.report_machine_state(MachineState::Connected);
                 shell.refresh(window, cx);
-                shell.poll_phone(window, cx);
+                if !shell.target.is_machine() {
+                    shell.poll_phone(window, cx);
+                }
             });
             if loaded.is_err() {
                 return;
@@ -475,6 +557,7 @@ impl Shell {
             }
             let _ = this.update_in(cx, |shell, window, cx| {
                 shell.status = Status::Disconnected;
+                shell.report_machine_state(MachineState::Reconnecting);
                 shell.connection = None;
                 shell.workspace = None;
                 shell.tabs.clear();
@@ -982,22 +1065,51 @@ impl Shell {
         !fed.is_empty()
     }
 
+    /// The machine this window shows; `None` in this computer's window.
+    pub(crate) fn machine_name(&self) -> Option<&str> {
+        match &self.target {
+            Target::Machine(machine) => Some(&machine.name),
+            Target::Local | Target::Missing(_) => None,
+        }
+    }
+
     /// One short sentence, plus optional detail shown smaller below it.
     pub(crate) fn status_line(&self) -> (SharedString, Option<SharedString>) {
+        let what = self.machine_name().unwrap_or("the daemon");
         match &self.status {
             Status::Connecting if self.reconnect_attempts > 0 => {
-                ("Reconnecting to the daemon…".into(), None)
+                (format!("Reconnecting to {what}…").into(), None)
             }
-            Status::Connecting => ("Connecting to the daemon…".into(), None),
+            Status::Connecting => (format!("Connecting to {what}…").into(), None),
             Status::Connected if self.sidebar.is_empty() => (
                 "No workspaces yet.".into(),
                 Some("Add a project folder or clone a repository to get started.".into()),
             ),
             Status::Connected => ("Opening the workspace…".into(), None),
             Status::Disconnected => (
-                "The daemon connection closed.".into(),
+                match self.machine_name() {
+                    Some(name) => format!("The connection to {name} closed."),
+                    None => "The daemon connection closed.".to_owned(),
+                }
+                .into(),
                 self.retry_note().map(Into::into),
             ),
+            Status::Unreachable { reason, hint } => (
+                format!("Cannot reach {what}.").into(),
+                Some(
+                    std::iter::once(reason.clone())
+                        .chain(hint.clone())
+                        .chain(self.retry_note())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                        .into(),
+                ),
+            ),
+            Status::Version(message) => (
+                format!("{what} runs another version of Mkrew.").into(),
+                Some(format!("{message} Update Mkrew on the older computer.").into()),
+            ),
+            Status::NoMachine(text) => (text.clone().into(), None),
             Status::Failed(error) => (
                 "Cannot reach the daemon.".into(),
                 Some(
@@ -1026,13 +1138,16 @@ impl Shell {
     }
 
     /// The one action under the status line: Add workspace when there is none, Reconnect /
-    /// Retry after a failure; `None` while connecting or opening.
+    /// Retry (**Try now** in a machine window) after a failure; `None` while connecting or
+    /// opening.
     pub(crate) fn status_action(
         &self,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> Option<gpui::AnyElement> {
+        let machine = self.target.is_machine();
         let retry = |id: &'static str, label: &'static str| {
+            let label = if machine { "Try now" } else { label };
             button(id, label, theme, true).on_click(cx.listener(|shell, _, window, cx| {
                 match shell.status {
                     Status::ListFailed(_) => shell.refresh(window, cx),
@@ -1047,8 +1162,11 @@ impl Shell {
                     .on_click(cx.listener(|shell, _, window, cx| shell.add_workspace(window, cx)))
             }
             Status::Disconnected => retry("status-reconnect", "Reconnect"),
-            Status::Failed(_) | Status::ListFailed(_) => retry("status-retry", "Retry"),
-            Status::Connecting | Status::Connected => return None,
+            Status::Failed(_)
+            | Status::Unreachable { .. }
+            | Status::Version(_)
+            | Status::ListFailed(_) => retry("status-retry", "Retry"),
+            Status::Connecting | Status::Connected | Status::NoMachine(_) => return None,
         };
         Some(action.into_any_element())
     }

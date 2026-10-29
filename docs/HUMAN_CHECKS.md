@@ -25,6 +25,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 - [ ] **mk proxy over real ssh:** from this computer run `ssh <host> mk proxy` with no daemon running there; the terminal shows binary noise, no "daemon started" text; Ctrl+C ends it; on the other computer `mk daemon status` still shows the daemon running (Windows host and Ubuntu host).
 - [ ] **Daemon outlives the SSH session:** after the step above, log out of every SSH session to the other computer; `mk daemon status` there still runs (Windows: the daemon left the sshd job; Ubuntu/macOS: `setsid`).
+- [ ] **Machine window:** `mkrew --machine "<name>"` opens "Mkrew - <name>" with the server chip (dot + tooltip state); with the other computer reachable it shows its workspaces and agents run there; with it offline: "Cannot reach <name>." + ssh's reason + hint + countdown + Try now; with an older Mkrew there: the version message and no retry; no tray icon for it; closing it ends it (no close to tray) and the agents keep running there; Phone access and update are absent.
+  Check the chip and the status screen in dark and light.
 
 ### To verify - 2026-10-28 Session tab behind `[features] session`
 

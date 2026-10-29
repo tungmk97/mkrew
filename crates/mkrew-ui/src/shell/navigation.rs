@@ -458,6 +458,7 @@ impl Shell {
             last_error: self.toasts.last_error().is_some(),
             toast: !self.toasts.items().is_empty(),
             update_ready: self.update.is_some() && !self.updating,
+            machine: self.target.is_machine(),
             features: self.features,
         };
         let mut entries = palette::settings_error(&self.keymap, self.settings_error.as_deref());

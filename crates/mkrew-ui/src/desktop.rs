@@ -33,35 +33,34 @@ pub enum TrayEvent {
     TaskbarRestarted,
 }
 
-/// FNV-1a of the lower-cased exe path and the daemon socket. Two launches of the same exe on
-/// the same daemon share it; a dev build at another path, or the same exe on another
+/// FNV-1a of the lower-cased exe path and the instance id (`launch::instance_id`: the daemon
+/// socket for this computer's window, `machine:<name>` for a machine's). Two launches of the
+/// same exe with the same id share it; a dev build at another path, or the same exe on another
 /// `MKREW_SOCKET`, does not (the second launch only forwards to its own kind).
-pub fn instance_key(exe: &str, socket: &str) -> String {
+pub fn instance_key(exe: &str, id: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     // NUL cannot occur in a path: "a" + "bc" never collides with "ab" + "c".
-    let (exe, socket) = (exe.to_lowercase(), socket.to_lowercase());
-    for byte in exe.bytes().chain([0]).chain(socket.bytes()) {
+    let (exe, id) = (exe.to_lowercase(), id.to_lowercase());
+    for byte in exe.bytes().chain([0]).chain(id.bytes()) {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{hash:016x}")
 }
 
-/// [`instance_key`] of the running exe and `socket`.
-pub(crate) fn current_key(socket: &str) -> String {
+/// [`instance_key`] of the running exe and the instance `id`.
+pub(crate) fn current_key(id: &str) -> String {
     std::env::current_exe()
-        .map(|exe| instance_key(&exe.to_string_lossy(), socket))
+        .map(|exe| instance_key(&exe.to_string_lossy(), id))
         .unwrap_or_default()
 }
 
-/// Asks another running Mkrew of the same exe and daemon to show its window, on `jump`'s
+/// Asks another running Mkrew of the same exe and instance `id` to show its window, on `jump`'s
 /// session when a toast link started this launch. `true`: it was asked, this launch should end.
-pub fn raise_running_instance(socket: &str, jump: Option<(Ulid, Ulid)>) -> bool {
-    let raised = os::raise(&current_key(socket), jump);
+pub fn raise_running_instance(id: &str, jump: Option<(Ulid, Ulid)>) -> bool {
+    let raised = os::raise(&current_key(id), jump);
     if raised {
-        tracing::info!(
-            "Mkrew is already running on {socket}: asked it to show its window, exiting"
-        );
+        tracing::info!("Mkrew is already running as {id}: asked it to show its window, exiting");
     }
     raised
 }

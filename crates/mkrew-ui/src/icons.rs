@@ -93,6 +93,7 @@ icons! {
         Search => "search",
         Send => "send",
         Share2 => "share-2",
+        Server => "server",
         Settings => "settings",
         Smartphone => "smartphone",
         Sparkles => "sparkles",

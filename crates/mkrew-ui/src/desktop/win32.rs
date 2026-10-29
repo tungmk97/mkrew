@@ -546,10 +546,17 @@ pub struct Os {
     flashing: bool,
     badge: Option<Badge>,
     tray: Option<Tray>,
+    /// Off in a machine window: the hidden tray window stays (it is the single-instance
+    /// target) but no icon shows.
+    tray_icon: bool,
 }
 
 impl Os {
-    pub fn new(window: &gpui::Window, socket: &str) -> (Self, async_channel::Receiver<TrayEvent>) {
+    pub fn new(
+        window: &gpui::Window,
+        id: &str,
+        tray_icon: bool,
+    ) -> (Self, async_channel::Receiver<TrayEvent>) {
         let hwnd = match HasWindowHandle::window_handle(window).map(|handle| handle.as_raw()) {
             Ok(RawWindowHandle::Win32(handle)) => Some(HWND(handle.hwnd.get() as *mut c_void)),
             _ => None,
@@ -564,7 +571,7 @@ impl Os {
                 .inspect_err(|error| tracing::warn!("taskbar badge unavailable: {error}"))
                 .ok()
         });
-        let (tray, events) = match Tray::start(&super::current_key(socket)) {
+        let (tray, events) = match Tray::start(&super::current_key(id)) {
             Some((tray, events)) => (Some(tray), events),
             None => (None, async_channel::unbounded::<TrayEvent>().1),
         };
@@ -574,6 +581,7 @@ impl Os {
             flashing: false,
             badge: None,
             tray,
+            tray_icon,
         };
         (this, events)
     }
@@ -631,11 +639,11 @@ impl Os {
     }
 
     pub fn has_tray(&self) -> bool {
-        self.tray.as_ref().is_some_and(Tray::shown)
+        self.tray_icon && self.tray.as_ref().is_some_and(Tray::shown)
     }
 
     pub fn set_tray(&self, icon: Icon, rgb: u32, menu: TrayMenu) {
-        if let Some(tray) = &self.tray {
+        if let Some(tray) = self.tray.as_ref().filter(|_| self.tray_icon) {
             tray.set(icon, rgb, menu);
         }
     }

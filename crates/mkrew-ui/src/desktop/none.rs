@@ -12,7 +12,8 @@ impl Os {
     /// The receiver is closed at once: there is no tray to listen to.
     pub fn new(
         _window: &gpui::Window,
-        _socket: &str,
+        _id: &str,
+        _tray_icon: bool,
     ) -> (Self, async_channel::Receiver<TrayEvent>) {
         (Self, async_channel::unbounded::<TrayEvent>().1)
     }

@@ -56,6 +56,7 @@ pub mod inspector;
 pub mod jira;
 pub mod jira_board;
 pub mod keymap;
+pub mod launch;
 pub mod lifecycle;
 pub mod machines;
 pub mod markdown;

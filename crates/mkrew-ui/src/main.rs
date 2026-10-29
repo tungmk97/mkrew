@@ -81,7 +81,9 @@ use mkrew_ui::keymap::{
     self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, EDITOR_CONTEXT,
     FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Run,
 };
+use mkrew_ui::launch::Launch;
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
+use mkrew_ui::machines::{Machine, MachineState, Machines};
 use mkrew_ui::menu::{self as menu_model, Dot, Lead, MenuItem, MenuKey, MenuRow, Tone};
 use mkrew_ui::palette::{self, Extra, Palette};
 use mkrew_ui::pane_text;
@@ -174,18 +176,36 @@ fn main() {
     for error in &keymap_errors {
         tracing::warn!("{error}; using the default for it");
     }
-    // Started by a toast click (`mkrew://` link, ADR 0079): show that session's pane.
-    let jump = std::env::args()
-        .nth(1)
-        .and_then(|arg| mkrew_core::link::parse_session_link(&arg))
-        // Task 6 passes `link.machine` on.
-        .map(|link| (link.session, link.project));
-    // A second launch of the same exe on the same daemon shows the running window (it may be
-    // hidden in the tray) instead of opening another one; a dev build at another path, or on
-    // another `MKREW_SOCKET`, starts on its own.
-    if mkrew_ui::desktop::raise_running_instance(&paths.socket, jump) {
+    // `mkrew`, `mkrew <mkrew:// link>` (a toast click, ADR 0079) or `mkrew --machine <name>`.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let launch = mkrew_ui::launch::parse(&args);
+    let id = mkrew_ui::launch::instance_id(&launch, &paths.socket);
+    let (Launch::Local { jump } | Launch::Machine { jump, .. }) = &launch;
+    let jump = *jump;
+    // A second launch of the same exe on the same daemon (or of the same machine) shows the
+    // running window (it may be hidden in the tray) instead of opening another one; a dev
+    // build at another path, or on another `MKREW_SOCKET`, starts on its own.
+    if mkrew_ui::desktop::raise_running_instance(&id, jump) {
         return;
     }
+    // The machine list is read once, here (spec §4.5).
+    let (target, title) = match &launch {
+        Launch::Local { .. } => (Target::Local, "Mkrew".to_owned()),
+        Launch::Machine { name, .. } => {
+            let found = Machines::load(&paths.config_dir).and_then(|machines| {
+                machines
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| format!("{name} is no longer in the machine list."))
+            });
+            let target = match found {
+                Ok(machine) => Target::Machine(machine),
+                Err(text) => Target::Missing(text),
+            };
+            (target, format!("Mkrew - {name}"))
+        }
+    };
+    let opening = Opening { target, id, jump };
     gpui_platform::application()
         .with_assets(icons::Assets)
         .run(move |cx: &mut App| {
@@ -220,7 +240,7 @@ fn main() {
                     cx,
                 ))),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Mkrew".into()),
+                    title: Some(title.into()),
                     appears_transparent: CUSTOM_TITLE_BAR,
                     traffic_light_position: cfg!(target_os = "macos").then(|| {
                         let (x, y) = theme::MAC_TRAFFIC_LIGHT_POS;
@@ -238,7 +258,9 @@ fn main() {
             let mode = settings.ui.theme;
             let opened = cx.open_window(options, |window, cx| {
                 theme::refresh(mode, window, cx);
-                cx.new(|cx| Shell::new(launched, paths, keymap, &keymap_errors, jump, window, cx))
+                cx.new(|cx| {
+                    Shell::new(launched, paths, keymap, &keymap_errors, opening, window, cx)
+                })
             });
             if let Err(error) = opened {
                 eprintln!("mkrew: cannot open window: {error:#}");
@@ -256,12 +278,47 @@ fn main() {
         });
 }
 
+/// What the window connects to.
+pub(crate) enum Target {
+    /// This computer's daemon.
+    Local,
+    /// A machine of `machines.toml`, over ssh.
+    Machine(Machine),
+    /// `--machine` named a machine that is not in the list (or the list is broken): the text,
+    /// nothing else.
+    Missing(String),
+}
+
+impl Target {
+    /// A machine window (also one without its machine): no tray, no Phone access, no update.
+    pub(crate) fn is_machine(&self) -> bool {
+        !matches!(self, Self::Local)
+    }
+}
+
+/// What `main` hands the first window: where it connects, its single-instance id and the
+/// session a toast link points at.
+pub(crate) struct Opening {
+    target: Target,
+    id: String,
+    jump: Option<(Ulid, Ulid)>,
+}
+
 enum Status {
     Connecting,
     Connected,
     Disconnected,
     /// The daemon cannot be reached.
     Failed(String),
+    /// A machine cannot be reached over ssh: why, and what to try.
+    Unreachable {
+        reason: String,
+        hint: Option<String>,
+    },
+    /// A machine runs another version of Mkrew: ssh's answer, no automatic retry.
+    Version(String),
+    /// `Target::Missing`: the text, no retry.
+    NoMachine(String),
     /// Listing workspaces or a workspace's tabs failed.
     ListFailed(String),
 }
@@ -398,6 +455,11 @@ struct Shell {
     painted_rx: async_channel::Receiver<()>,
     /// Where the daemon is, for connecting again after a failure or a lost connection.
     paths: Paths,
+    /// What this window connects to.
+    target: Target,
+    /// The last state a machine window reported (stdout, title bar chip); `None` before the
+    /// first.
+    machine_state: Option<MachineState>,
     /// Bumped by every connect attempt; a pending auto-retry timer from an older one is dropped.
     connect_gen: u64,
     /// Failed or lost connects since the last good one (0 = none), indexing the backoff.

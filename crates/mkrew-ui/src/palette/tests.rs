@@ -38,12 +38,24 @@ fn context(view: View) -> Context {
         last_error: false,
         toast: false,
         update_ready: false,
+        machine: false,
         features: FeatureSettings {
             docs: true,
             turns: true,
             session: true,
         },
     }
+}
+
+#[test]
+fn phone_access_and_updates_are_not_offered_in_a_machine_window() {
+    let machine = Context {
+        machine: true,
+        ..context(View::Terminals)
+    };
+    assert!(!Extra::PhoneAccess.available(&machine));
+    assert!(!Extra::CheckUpdates.available(&machine));
+    assert!(Extra::PhoneAccess.available(&context(View::Terminals)));
 }
 
 #[test]

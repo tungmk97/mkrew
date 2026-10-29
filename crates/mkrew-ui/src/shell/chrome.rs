@@ -223,6 +223,7 @@ impl Shell {
             .items_center()
             .gap(px(space::S))
             .child(app_logo(theme))
+            .children(self.machine_chip(theme))
             .child(self.sidebar_toggle(theme, cx));
         if let Some(project_id) = workspace {
             left = left.child(self.render_workspace_switcher(project_id, theme, cx));
@@ -368,6 +369,51 @@ impl Shell {
             );
         }
         bar
+    }
+
+    /// In a machine window, right after the logo: the server icon, the machine's name and a
+    /// status dot (green connected, amber connecting, red not reachable or another version).
+    /// Not clickable; the tooltip says the state in words, so the dot is never the only cue
+    /// (§11). It stays while disconnected.
+    fn machine_chip(&self, theme: &Theme) -> Option<gpui::Stateful<gpui::Div>> {
+        let name = self.machine_name()?;
+        let state = self.machine_state.as_ref();
+        let dot = match state {
+            Some(MachineState::Connected) => theme.status_done,
+            Some(MachineState::Unreachable(_) | MachineState::Version(_)) => theme.status_exited,
+            _ => theme.status_needs_input,
+        };
+        let label = state.map_or_else(|| MachineState::Connecting.label(), MachineState::label);
+        Some(
+            div()
+                .id("machine-chip")
+                .min_w_0()
+                .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .h(theme::rems_px(theme::PILL_HEIGHT))
+                .px(px(space::S))
+                .rounded(px(radius::PILL))
+                .bg(rgb(theme.well))
+                .whitespace_nowrap()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .tooltip(tooltip(theme, &format!("{name}: {label}"), ""))
+                .child(icon_svg(
+                    Icon::Server,
+                    theme::ICON_SIZE_SMALL,
+                    theme.text_muted,
+                ))
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(name.to_owned()),
+                )
+                .child(status_dot(dot, false)),
+        )
     }
 
     /// The views as a segmented control; Editor and Diff only while open.

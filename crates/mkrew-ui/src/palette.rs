@@ -86,6 +86,8 @@ pub struct Context {
     pub toast: bool,
     /// An update is ready to install.
     pub update_ready: bool,
+    /// A machine's window: Phone access and the in-app update belong to this computer's.
+    pub machine: bool,
     /// `[features]` (ADR 0046): Docs and Turns entries are listed only when on.
     pub features: FeatureSettings,
 }
@@ -267,7 +269,7 @@ impl Extra {
                 in_view(View::Terminals) && context.agent_pane && context.plan_linked
             }
             Self::AgentImprove => in_view(View::Terminals) && context.composer_open,
-            Self::PhoneAccess | Self::CheckUpdates => true,
+            Self::PhoneAccess | Self::CheckUpdates => !context.machine,
             Self::GitChangeBase => context.workspace && context.git && context.git_base,
             Self::GitSwitchRepo => context.workspace && context.git && context.git_repos,
             Self::JiraMine | Self::JiraLayout | Self::JiraRefresh => {
