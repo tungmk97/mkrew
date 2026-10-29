@@ -12,6 +12,8 @@ use anyhow::{Context, bail};
 use mkrew_core::Paths;
 use mkrew_core::paths::{ENV_CONFIG_DIR, ENV_DATA_DIR, ENV_SOCKET};
 use mkrew_daemon::EXIT_ALREADY_RUNNING;
+use mkrew_protocol::Project;
+use ulid::Ulid;
 
 use crate::client::{Connection, Endpoint, OpenError};
 use crate::machines::Machine;
@@ -215,6 +217,12 @@ pub fn backoff(attempt: u32) -> Duration {
     Duration::from_secs(STEPS.get(attempt as usize).copied().unwrap_or(30))
 }
 
+/// The workspace to show after a lost connection came back: the one that was shown, if the
+/// daemon still lists it. `None` = no choice made here (use the usual first choice).
+pub fn reconnect_workspace(shown: Option<Ulid>, listed: &[Project]) -> Option<Ulid> {
+    shown.filter(|id| listed.iter().any(|project| project.id == *id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,6 +238,41 @@ mod tests {
         let secs: Vec<u64> = (0..7).map(|n| backoff(n).as_secs()).collect();
         assert_eq!(secs, [1, 2, 5, 10, 30, 30, 30]);
         assert_eq!(backoff(u32::MAX).as_secs(), 30);
+    }
+
+    fn project(name: &str) -> Project {
+        Project {
+            id: Ulid::new(),
+            name: name.to_owned(),
+            path: format!("C:\\src\\{name}"),
+            run_commands: Vec::new(),
+            run_autostart: false,
+            default_agent: None,
+            default_shell: None,
+            review_globs: None,
+            created_at: 0,
+            archived: false,
+            base_ref: None,
+            color: None,
+            pinned: false,
+            jira_keys: Vec::new(),
+            position: 0,
+        }
+    }
+
+    #[test]
+    fn reconnect_keeps_the_shown_workspace() {
+        let (a, b) = (project("a"), project("b"));
+        assert_eq!(
+            reconnect_workspace(Some(b.id), &[a.clone(), b.clone()]),
+            Some(b.id)
+        );
+        // Removed meanwhile (on the other computer): fall back to the usual first choice.
+        assert_eq!(
+            reconnect_workspace(Some(Ulid::new()), std::slice::from_ref(&a)),
+            None
+        );
+        assert_eq!(reconnect_workspace(None, &[a]), None);
     }
 
     /// Scripted outside world: `connect` fails until `up_after` polls after the spawn.

@@ -229,6 +229,11 @@ impl Shell {
             window.focus(&self.dialog_focus, cx);
             return;
         }
+        // The panes' connection is dead: the keyboard stays with the window until it is back.
+        if self.reconnecting() {
+            window.focus(&self.focus_handle, cx);
+            return;
+        }
         match self
             .focused_session()
             .and_then(|session| self.panes.get(&session))

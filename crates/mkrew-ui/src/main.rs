@@ -466,6 +466,10 @@ struct Shell {
     reconnect_attempts: u32,
     /// The wait before the next automatic retry, shown in the status line.
     reconnect_in: Option<Duration>,
+    /// Set while a lost connection is down: the workspace that was shown. The screen stays
+    /// (input off, banner on) until the new connection's lists arrive, then the connection-bound
+    /// state is cleared and this workspace is shown again.
+    kept_workspace: Option<Ulid>,
     /// Focused while no pane is, so window-level actions (Add workspace) still dispatch.
     focus_handle: FocusHandle,
     /// The tab or pane title being edited inline.
@@ -889,6 +893,9 @@ impl Render for Shell {
             // `/` focuses the sidebar filter while nothing else has the keyboard (a terminal or
             // a field keeps its `/`).
             .on_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
+                if shell.reconnecting() && !shell.modal_open() {
+                    return;
+                }
                 shell.docs_key_down(event, window, cx);
                 let filter_shown = !shell.sidebar_layout.hidden()
                     && !shell.sidebar_layout.compact()
@@ -906,6 +913,7 @@ impl Render for Shell {
                 }
             }))
             .child(self.render_title_bar(self.view(), now, &theme, window, cx))
+            .children(self.render_reconnect_banner(&theme, cx))
             .child(
                 div()
                     .flex_1()
@@ -930,6 +938,9 @@ impl Render for Shell {
                             .cached(style)
                     }))
                     .child(self.render_main(now, &theme, window, cx))
+                    // Over the sidebar and the main area, under the dialogs: no mouse input
+                    // reaches them while the connection is down.
+                    .children(self.reconnecting().then(inert_layer))
                     .children(
                         self.task_dialog
                             .as_ref()

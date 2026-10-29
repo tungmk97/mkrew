@@ -131,6 +131,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        // Shortcuts act on the daemon: off while its connection is down (dialogs keep their keys).
+        if self.reconnecting() && !self.modal_open() {
+            return;
+        }
         // Voice input types into the field that has the keyboard, so it acts before the
         // focused-field checks below hand the key to that field, and before anything moves
         // the focus (§20G).

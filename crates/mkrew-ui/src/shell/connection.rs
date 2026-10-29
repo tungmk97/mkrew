@@ -219,6 +219,7 @@ impl Shell {
             connect_gen: 0,
             reconnect_attempts: 0,
             reconnect_in: None,
+            kept_workspace: None,
             focus_handle,
             renaming: None,
             rename_focus,
@@ -559,36 +560,11 @@ impl Shell {
                 shell.status = Status::Disconnected;
                 shell.report_machine_state(MachineState::Reconnecting);
                 shell.connection = None;
-                shell.workspace = None;
-                shell.tabs.clear();
-                shell.loading_tabs.clear();
-                shell.early_tab_events.clear();
-                shell.reveal = None;
-                shell.tab_error = None;
-                shell.router.clear();
-                shell.panes.clear();
-                shell.attach_errors.clear();
-                shell.renaming = None;
-                shell.close_menus();
-                shell.run_setup = None;
-                shell.run_reveal = None;
-                shell.ports = Ports::default();
-                shell.plans = Plans::default();
-                shell.plan_error = None;
-                shell.broadcast = None;
-                shell.ask = None;
                 // Kept with its draft: `save_task` / `delete_task` do nothing without a
                 // connection, and an in-flight save is not waited for.
                 if let Some(dialog) = shell.task_dialog.as_mut() {
                     dialog.busy = false;
                 }
-                shell.undo_dialog = None;
-                shell.worktree_dialog = None;
-                shell.compare = None;
-                shell.turns_dialog = None;
-                shell.turns_return = None;
-                shell.git_discard = None;
-                shell.git_base = None;
                 // Kept with its typed text (it cannot send without a connection); a clone in
                 // flight will never report back, so it stops waiting.
                 if let Some(dialog) = shell.add_workspace.as_mut()
@@ -599,37 +575,86 @@ impl Shell {
                             .into(),
                     );
                 }
-                shell.phone_open = false;
-                shell.phone = Phone::default();
-                shell.history = None;
-                shell.history_pane = None;
-                shell.doc_dialog = None;
-                shell.diagram_dialog = None;
-                shell.quick_open = None;
-                shell.restore_theme_pick(window, cx);
-                shell.palette = None;
-                shell.prompt_picker = None;
-                shell.palette_return = None;
-                shell.peek = None;
-                shell.peek_return = None;
-                shell.follow_up = None;
-                shell.docs.clear();
-                shell.files.clear();
-                shell.git.clear();
-                shell.git_summary = None;
-                // An open confirmation keeps the keyboard; it hands focus back when answered.
-                // A kept dialog (typed text survives) keeps it too.
-                if !window.has_active_prompt()
-                    && shell.task_dialog.is_none()
-                    && shell.add_workspace.is_none()
-                {
-                    window.focus(&shell.focus_handle, cx);
+                match shell.workspace {
+                    // The last screen stays, input off, until the new connection's lists
+                    // arrive (`refresh`); only what acts on the daemon closes now.
+                    Some(shown) => {
+                        shell.kept_workspace = Some(shown);
+                        shell.close_popups(window, cx);
+                    }
+                    None => shell.reset_connection_state(window, cx),
                 }
                 shell.schedule_reconnect(window, cx);
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// The window keeps its last screen while a lost connection is down (spec §6.3): a banner
+    /// shows, panes, sidebar and title bar ignore the keyboard and the mouse.
+    pub(crate) fn reconnecting(&self) -> bool {
+        self.kept_workspace.is_some()
+    }
+
+    /// Closes what is open over the window and acts on the daemon: menus, palette, quick open,
+    /// the peek and the prompt picker; the keyboard goes back to the window.
+    fn close_popups(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.close_menus();
+        self.quick_open = None;
+        self.restore_theme_pick(window, cx);
+        self.palette = None;
+        self.prompt_picker = None;
+        self.palette_return = None;
+        self.peek = None;
+        self.peek_return = None;
+        // An open confirmation keeps the keyboard; it hands focus back when answered.
+        // A kept dialog (typed text survives) keeps it too.
+        if !window.has_active_prompt() && self.task_dialog.is_none() && self.add_workspace.is_none()
+        {
+            window.focus(&self.focus_handle, cx);
+        }
+    }
+
+    /// Clears everything bound to the lost connection: the new connection's lists are about to
+    /// replace it (or, with nothing shown, at once).
+    fn reset_connection_state(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.workspace = None;
+        self.tabs.clear();
+        self.loading_tabs.clear();
+        self.early_tab_events.clear();
+        self.reveal = None;
+        self.tab_error = None;
+        self.router.clear();
+        self.panes.clear();
+        self.attach_errors.clear();
+        self.renaming = None;
+        self.run_setup = None;
+        self.run_reveal = None;
+        self.ports = Ports::default();
+        self.plans = Plans::default();
+        self.plan_error = None;
+        self.broadcast = None;
+        self.ask = None;
+        self.undo_dialog = None;
+        self.worktree_dialog = None;
+        self.compare = None;
+        self.turns_dialog = None;
+        self.turns_return = None;
+        self.git_discard = None;
+        self.git_base = None;
+        self.phone_open = false;
+        self.phone = Phone::default();
+        self.history = None;
+        self.history_pane = None;
+        self.doc_dialog = None;
+        self.diagram_dialog = None;
+        self.follow_up = None;
+        self.docs.clear();
+        self.files.clear();
+        self.git.clear();
+        self.git_summary = None;
+        self.close_popups(window, cx);
     }
 
     /// Re-reads workspaces and sessions. The first time, shows the workspace of the most
@@ -683,6 +708,16 @@ impl Shell {
                         shell.board_error = Some(format!("{error:#}"));
                     }
                 }
+                // The first answer of a new connection after a lost one: the kept screen made
+                // way for what the daemon says now, showing the workspace that was shown.
+                let kept = if shell.connection.is_some() {
+                    shell.kept_workspace.take()
+                } else {
+                    None
+                };
+                if kept.is_some() {
+                    shell.reset_connection_state(window, cx);
+                }
                 match listed {
                     Ok((projects, sessions)) => {
                         shell.sidebar.load(projects, sessions);
@@ -694,7 +729,9 @@ impl Shell {
                         let current = shell
                             .workspace
                             .filter(|id| shell.sidebar.projects().iter().any(|p| p.id == *id));
-                        match current.or_else(|| shell.initial_workspace()) {
+                        let kept =
+                            mkrew_ui::connect::reconnect_workspace(kept, shell.sidebar.projects());
+                        match current.or(kept).or_else(|| shell.initial_workspace()) {
                             Some(project_id) => {
                                 // A new session (e.g. spawned by `mk`) fills an empty tab.
                                 shell.fill_empty_tab(project_id, window, cx);

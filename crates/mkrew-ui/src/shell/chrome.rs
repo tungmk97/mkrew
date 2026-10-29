@@ -107,6 +107,49 @@ impl Shell {
         rows
     }
 
+    /// While a lost connection is down (spec §6.3): "Connection to <name> lost. Reconnecting in
+    /// N s…" and **Try now**, under the title bar. `N` is the wait of the pending retry (static,
+    /// like the status screen's); none while an attempt runs.
+    pub(crate) fn render_reconnect_banner(
+        &self,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::AnyElement> {
+        if !self.reconnecting() {
+            return None;
+        }
+        let what = self.machine_name().unwrap_or("the daemon");
+        let text = match self.reconnect_in {
+            Some(wait) => format!(
+                "Connection to {what} lost. Reconnecting in {} s…",
+                wait.as_secs()
+            ),
+            None => format!("Connection to {what} lost. Reconnecting…"),
+        };
+        Some(
+            div()
+                .id("reconnect-banner")
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(space::M))
+                .px(px(space::M))
+                .py(px(space::S))
+                .bg(rgb(theme.warning_bg))
+                .border_b(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.divider))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text))
+                .child(div().min_w_0().flex_1().child(text))
+                // Not while an attempt runs (the status screen offers none then either).
+                .children(self.reconnect_in.map(|_| {
+                    button("reconnect-now", "Try now", theme, true)
+                        .on_click(cx.listener(|shell, _, window, cx| shell.connect(window, cx)))
+                }))
+                .into_any_element(),
+        )
+    }
+
     pub(crate) fn render_main(
         &self,
         now: i64,
@@ -114,7 +157,11 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let Some(project_id) = self.workspace.filter(|_| self.connection.is_some()) else {
+        // The last screen stays while a lost connection is down (`reconnecting`).
+        let Some(project_id) = self
+            .workspace
+            .filter(|_| self.connection.is_some() || self.reconnecting())
+        else {
             let (sentence, detail) = self.status_line();
             return message(theme, Some("Mkrew"), sentence, detail)
                 .children(self.status_action(theme, cx))
@@ -204,7 +251,9 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let workspace = self.workspace.filter(|_| self.connection.is_some());
+        let workspace = self
+            .workspace
+            .filter(|_| self.connection.is_some() || self.reconnecting());
         let mode = format!(
             "Theme: {} · {}",
             match theme.mode {
@@ -216,7 +265,7 @@ impl Shell {
         );
         // An open dialog keeps the mouse too: the bar's controls are inert, only the drag area
         // and the window controls stay live (they never touch the app's state).
-        let modal = self.modal_open();
+        let modal = self.modal_open() || self.reconnecting();
         let mut left = div()
             .min_w_0()
             .flex()
