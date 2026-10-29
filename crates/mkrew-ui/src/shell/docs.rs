@@ -176,6 +176,9 @@ impl Shell {
 
     /// Opens the shown doc of `project_id` in Zed; a failure shows in the Docs header.
     pub(crate) fn open_doc_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
+        if self.local_only(cx) {
+            return;
+        }
         let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) else {
             return;
         };

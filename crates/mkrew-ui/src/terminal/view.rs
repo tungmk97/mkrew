@@ -77,6 +77,8 @@ pub struct TerminalPane {
     hover_link: Option<HoverLink>,
     probed: Option<(usize, usize)>,
     hints: Option<Hints>,
+    /// A file list on the clipboard is refused, not typed (the session is on another computer).
+    files_refused: bool,
 }
 
 /// Ctrl+Click (Cmd+Click on macOS) on a link of the terminal: the shell opens it.
@@ -110,6 +112,12 @@ impl EventEmitter<CopyModeChanged> for TerminalPane {}
 pub struct NoLinks;
 
 impl EventEmitter<NoLinks> for TerminalPane {}
+
+/// A pasted file list was refused (the session runs on another computer): the shell toasts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalFiles;
+
+impl EventEmitter<LocalFiles> for TerminalPane {}
 
 /// The link under the pointer while Ctrl / Cmd is held: its row and cells, for the underline.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -207,6 +215,7 @@ impl TerminalPane {
             hover_link: None,
             probed: None,
             hints: None,
+            files_refused: false,
         }
     }
 
@@ -217,6 +226,12 @@ impl TerminalPane {
     /// Turns on Ctrl+Click links; `base` is where typed relative paths start (`None` = URLs only).
     pub fn set_links(&mut self, base: Option<PathBuf>) {
         self.links = Some(base);
+    }
+
+    /// A machine window: a file list on the clipboard is refused ([`LocalFiles`]) instead of
+    /// typed as paths of this computer.
+    pub fn refuse_pasted_files(&mut self) {
+        self.files_refused = true;
     }
 
     /// Sends keyboard input to this pane; keeps it where it is if the pane (terminal or its
@@ -367,6 +382,11 @@ impl TerminalPane {
                     }
                 }
                 ClipboardEntry::ExternalPaths(paths) => {
+                    // A machine window: this computer's files are not on the session's computer.
+                    if self.files_refused {
+                        cx.emit(LocalFiles);
+                        return true;
+                    }
                     let paths: Vec<String> = paths
                         .paths()
                         .iter()

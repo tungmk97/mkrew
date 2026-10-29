@@ -814,6 +814,9 @@ impl Shell {
     /// Opens the active tab's file in Zed, at the selected line if any; a failure shows in
     /// the viewer header.
     pub(crate) fn open_file_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
+        if self.local_only(cx) {
+            return;
+        }
         let Some(view) = self.files.get(&project_id) else {
             return;
         };

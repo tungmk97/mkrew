@@ -25,7 +25,7 @@ use gpui::{
 use mkrew_core::Paths;
 use mkrew_core::UsageFormat;
 use mkrew_core::prompt::PromptVars;
-use mkrew_core::settings::DiffMode;
+use mkrew_core::settings::{DiffMode, NotifySettings};
 use mkrew_protocol::{
     AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, ChangeKind, CommentContext,
     CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
@@ -49,7 +49,7 @@ use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::broadcast::{self, Broadcast, Delivery as BroadcastDelivery};
 use mkrew_ui::client::{Connection, Incoming};
-use mkrew_ui::clone_dialog::CloneDialog;
+use mkrew_ui::clone_dialog::{CloneDialog, Field as CloneField};
 use mkrew_ui::comments::{self, Comments, Selection, Thread};
 use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
@@ -84,6 +84,7 @@ use mkrew_ui::keymap::{
 use mkrew_ui::launch::Launch;
 use mkrew_ui::launcher::Launcher;
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
+use mkrew_ui::machine_notify::MachineNotices;
 use mkrew_ui::machines::{Machine, MachineState, Machines};
 use mkrew_ui::menu::{self as menu_model, Dot, Lead, MenuItem, MenuKey, MenuRow, Tone};
 use mkrew_ui::palette::{self, Extra, Palette};
@@ -91,6 +92,7 @@ use mkrew_ui::pane_text;
 use mkrew_ui::peek::{self, Peek};
 use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, PushSwitch, SetUp, Switch};
 use mkrew_ui::plan::{self, Plans};
+use mkrew_ui::plan_dialog::PlanDialog;
 use mkrew_ui::preview;
 use mkrew_ui::prompt_picker::{self, PromptPicker};
 use mkrew_ui::quick_open::{self, QuickOpen, Results};
@@ -110,7 +112,9 @@ use mkrew_ui::tabs::{
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
-use mkrew_ui::terminal::view::{AttachFailed, CopyModeChanged, NoLinks, OpenLink, TerminalPane};
+use mkrew_ui::terminal::view::{
+    AttachFailed, CopyModeChanged, LocalFiles, NoLinks, OpenLink, TerminalPane,
+};
 use mkrew_ui::text_box::{self, Input};
 use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
@@ -590,8 +594,12 @@ struct Shell {
     attention: Tracker,
     /// `[ui] close_to_tray`: the window's ✕ hides it while the tray icon is there.
     close_to_tray: bool,
-    /// `[notify] flash_taskbar`.
-    flash_taskbar: bool,
+    /// This computer's `[notify]` settings: the taskbar flash, and a machine window decides its
+    /// OS notifications with them.
+    notify: NotifySettings,
+    /// A machine window's OS notifications of the other computer's sessions; `None` in this
+    /// computer's window (its daemon notifies).
+    machine_notices: Option<MachineNotices>,
     /// Each session's last turn, summarized while it is done.
     turns: Turns,
     /// Each session's newest token usage (SPEC §20E.3).
@@ -762,6 +770,9 @@ struct Shell {
     git_base: Option<BaseDialog>,
     /// The open "Add workspace" dialog: a local folder or a clone (modal, ADR 0076).
     add_workspace: Option<CloneDialog>,
+    /// The open "Link plan" dialog of a machine window: a typed path on the other computer
+    /// (modal).
+    plan_dialog: Option<PlanDialog>,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
     /// The open "Undo task" / "Restore before turn" confirmation (modal; never open together
@@ -990,6 +1001,11 @@ impl Render for Shell {
                         self.add_workspace
                             .as_ref()
                             .map(|dialog| self.render_add_workspace(dialog, window, &theme, cx)),
+                    )
+                    .children(
+                        self.plan_dialog
+                            .as_ref()
+                            .map(|dialog| self.render_plan_path(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.phone_open

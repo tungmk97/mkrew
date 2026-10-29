@@ -36,6 +36,10 @@ pub struct Notice {
     pub body: String,
     /// Play the OS default sound.
     pub sound: bool,
+    /// The machine the session runs on, when a machine window shows this notice on this
+    /// computer (the link then names it); `None` = this computer's own daemon.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
 }
 
 /// Where a click on a shown notice is reported.
@@ -105,8 +109,8 @@ pub fn start(
 /// What to show for one state change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Alert {
-    body: &'static str,
-    sound: bool,
+    pub body: &'static str,
+    pub sound: bool,
 }
 
 /// The notification for `session_id` entering `state`, if any: only needs_input and done,
@@ -152,6 +156,7 @@ fn notice(hub: &Hub, session_id: Ulid, alert: Alert) -> Option<Notice> {
         title: format!("{} · {name}", project.name),
         body: alert.body.to_owned(),
         sound: alert.sound,
+        machine: None,
     })
 }
 
@@ -540,6 +545,7 @@ mod tests {
                 title: "repo · claude".into(),
                 body: "Needs input".into(),
                 sound: false,
+                machine: None,
             }]
         );
 
@@ -563,6 +569,7 @@ mod tests {
                 title: "repo · claude".into(),
                 body: "Done".into(),
                 sound: true,
+                machine: None,
             }]
         );
         task.abort();
@@ -594,6 +601,7 @@ mod tests {
                     title: "repo · claude".into(),
                     body: "Needs input".into(),
                     sound: true,
+                    machine: None,
                 },
                 Notice {
                     session_id: second,
@@ -601,6 +609,7 @@ mod tests {
                     title: "repo · fix tests".into(),
                     body: "Done".into(),
                     sound: true,
+                    machine: None,
                 },
             ]
         );
@@ -650,11 +659,12 @@ mod tests {
             title: "repo · claude".into(),
             body: "Done".into(),
             sound: true,
+            machine: None,
         };
         let (clicked, _) = mpsc::unbounded_channel();
         notifier.show(notice.clone(), clicked.clone());
         notifier.show(notice.clone(), clicked);
-        let text = std::fs::read_to_string(path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
         let lines: Vec<serde_json::Value> = text
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
@@ -662,5 +672,18 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0]["session_id"], notice.session_id.to_string());
         assert_eq!(lines[0]["body"], "Done");
+        assert!(
+            lines[0].get("machine").is_none(),
+            "a daemon's own notice has no machine key"
+        );
+        let (clicked, _) = mpsc::unbounded_channel();
+        let remote = Notice {
+            machine: Some("Home PC".into()),
+            ..notice
+        };
+        notifier.show(remote, clicked);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+        assert_eq!(last["machine"], "Home PC");
     }
 }

@@ -598,6 +598,9 @@ impl Shell {
     /// "Open transcript": the agent's `.jsonl` in Zed. A failure (Zed missing, file gone) toasts
     /// like the other Zed actions.
     pub(crate) fn open_transcript(&mut self, session: Ulid, cx: &mut Context<'_, Self>) {
+        if self.local_only(cx) {
+            return;
+        }
         let Some(path) = self
             .usages
             .get(session)

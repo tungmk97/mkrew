@@ -29,7 +29,11 @@ pub(crate) fn toast_xml(notice: &Notice) -> String {
     };
     format!(
         r#"<toast activationType="protocol" launch="{}"><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual>{audio}</toast>"#,
-        escape(&session_link(notice.session_id, notice.project_id, None)),
+        escape(&session_link(
+            notice.session_id,
+            notice.project_id,
+            notice.machine.as_deref()
+        )),
         escape(&notice.title),
         escape(&notice.body),
     )
@@ -154,6 +158,7 @@ mod tests {
             title: title.into(),
             body: "Needs input".into(),
             sound,
+            machine: None,
         }
     }
 
@@ -169,6 +174,21 @@ mod tests {
         assert!(
             xml.contains("<text>repo · claude</text><text>Needs input</text>"),
             "{xml}"
+        );
+    }
+
+    /// A machine window's toast names its machine, so the click opens that machine's window.
+    #[test]
+    fn a_machine_toast_links_to_its_machine() {
+        let mut remote = notice("repo · claude", true);
+        remote.machine = Some("Home PC".into());
+        let xml = toast_xml(&remote);
+        assert!(xml.contains("&amp;machine=Home%20PC"), "{xml}");
+        let launch = session_link(remote.session_id, remote.project_id, Some("Home PC"));
+        assert!(xml.contains(&escape(&launch)), "{xml}");
+        assert!(
+            !toast_xml(&notice("a", true)).contains("machine="),
+            "a notice without a machine keeps today's link"
         );
     }
 

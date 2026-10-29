@@ -31,6 +31,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Check the banner in dark and light.
 - [ ] **Launcher and Machines page:** with two machines in Settings → Machines, starting Mkrew opens this computer's window and both machine windows; the page shows each state (Connected / Reconnecting… / Not reachable: … / Window closed); Add machine refuses a host starting with "-" or holding a space and an existing name, with the message under the field; Save opens the new window; Remove asks, closes that window and deletes the line; a broken machines.toml shows its error and line and the file is not rewritten; one tray icon only, listing the machines; tray Quit closes every window.
   Check the page and the Add form in dark and light.
+- [ ] **Machine window, local-only actions:** Add workspace and Link plan ask for a path on the other computer (a wrong path shows the daemon's error); Open in Zed / Explorer / Follow / Open transcript toast "Opens files on this computer only; <name> is another computer."; Ctrl+Click on a URL opens the browser, file paths are not links; dropping files toasts and types nothing; a pasted screenshot is typed as a path on the other computer; Settings shows the "daemon settings are <name>'s own" line.
+  In Add workspace Tab walks Folder, Repository URL and Clone into, then the buttons; Enter in the folder field adds, in the others it clones.
+  Check the Add workspace dialog, the Link plan dialog and the Settings line in dark and light.
+- [ ] **Machine window notifications:** an agent on the other computer that needs input shows a notification on this computer (once per 30 s per session, per this computer's [notify] settings); clicking it brings that machine's window to the session; the other computer still shows its own notification.
 
 ### To verify - 2026-10-28 Session tab behind `[features] session`
 

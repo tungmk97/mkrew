@@ -13,6 +13,7 @@ impl Shell {
             || self.git_discard.is_some()
             || self.git_base.is_some()
             || self.add_workspace.is_some()
+            || self.plan_dialog.is_some()
             || self.phone_open
             || self.broadcast.is_some()
             || self.ask.is_some()
@@ -283,11 +284,20 @@ impl Shell {
                 };
                 let snapshot = buffered.snapshot.unwrap_or(attached.snapshot);
                 let painted = shell.painted.clone();
-                let base = shell.link_scope(session).map(|(_, _, dir)| dir);
+                // A machine window opens URLs only: the paths a session prints are on the other
+                // computer, not in this computer's folders.
+                let machine = shell.target.is_machine();
+                let base = shell
+                    .link_scope(session)
+                    .map(|(_, _, dir)| dir)
+                    .filter(|_| !machine);
                 let pane = cx.new(|cx| {
                     let mut pane =
                         TerminalPane::new(session, &snapshot, connection, painted, window, cx);
                     pane.set_links(base);
+                    if machine {
+                        pane.refuse_pasted_files();
+                    }
                     pane.feed(&buffered.output);
                     if let Some(exit_code) = buffered.exited {
                         pane.set_exited(exit_code);
@@ -304,6 +314,12 @@ impl Shell {
                 .detach();
                 cx.subscribe(&pane, |shell, _, failed: &AttachFailed, cx| {
                     shell.toast_error(failed.0.clone(), cx);
+                })
+                .detach();
+                cx.subscribe(&pane, |shell, _, _: &LocalFiles, cx| {
+                    if let Some(name) = shell.machine_name().map(str::to_owned) {
+                        shell.toast_info(mkrew_ui::machines::local_files_refused(&name), cx);
+                    }
                 })
                 .detach();
                 cx.subscribe(&pane, |_, _, _: &CopyModeChanged, cx| cx.notify())

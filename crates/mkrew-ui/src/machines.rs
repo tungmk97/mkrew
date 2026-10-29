@@ -248,6 +248,25 @@ impl MachineState {
     }
 }
 
+/// The toast of an entry that opens files on this computer (Zed, Explorer, Reveal, Follow,
+/// Open transcript) in the window of `machine` (spec §6.4).
+pub fn opens_local_files_only(machine: &str) -> String {
+    format!("Opens files on this computer only; {machine} is another computer.")
+}
+
+/// The toast of files dropped on a pane, or pasted as a file list, in the window of `machine`.
+pub fn local_files_refused(machine: &str) -> String {
+    format!("These files are on this computer; {machine} cannot read them.")
+}
+
+/// The line at the top of the Settings pages in the window of `machine`: the dialog edits this
+/// computer's `settings.toml`, but the daemon behind the window reads its own.
+pub fn daemon_settings_note(machine: &str) -> String {
+    format!(
+        "Daemon settings (notifications, retention, features) are {machine}'s own; change them on {machine}."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,5 +437,21 @@ mod tests {
             "newlines folded"
         );
         assert_eq!(MachineState::parse("garbage"), None);
+    }
+
+    #[test]
+    fn refusals_and_the_settings_note_name_the_machine() {
+        assert_eq!(
+            opens_local_files_only("Home PC"),
+            "Opens files on this computer only; Home PC is another computer."
+        );
+        assert_eq!(
+            local_files_refused("Home PC"),
+            "These files are on this computer; Home PC cannot read them."
+        );
+        assert_eq!(
+            daemon_settings_note("Home PC"),
+            "Daemon settings (notifications, retention, features) are Home PC's own; change them on Home PC."
+        );
     }
 }

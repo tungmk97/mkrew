@@ -6,6 +6,9 @@ impl Shell {
     /// "Follow in Zed" of an agent pane (SPEC §20C.5): turns following its edits on or off.
     /// The wait is read from `settings.toml` when it turns on.
     pub(crate) fn toggle_follow(&mut self, session_id: Ulid, cx: &mut Context<'_, Self>) {
+        if self.local_only(cx) {
+            return;
+        }
         // A missing or broken settings file waits the default (the daemon reports it).
         let debounce_ms = mkrew_core::settings::load(&self.settings_file)
             .unwrap_or_default()

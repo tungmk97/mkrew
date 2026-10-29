@@ -24,7 +24,16 @@ impl Shell {
         let settings_file = paths.settings_file();
         // A broken settings file keeps the defaults, like the other reads here.
         let settings = mkrew_core::settings::load(&settings_file).unwrap_or_default();
-        let flash_taskbar = settings.notify.flash_taskbar;
+        let notify = settings.notify;
+        // A machine window shows the OS notifications of the other computer's sessions here
+        // (its daemon shows them there); this computer's daemon notifies for the local window.
+        let machine_notices = match &target {
+            Target::Machine(machine) => Some(MachineNotices::new(
+                machine.name.clone(),
+                mkrew_daemon::from_env(),
+            )),
+            Target::Local | Target::Missing(_) => None,
+        };
         let features = settings.features;
         let jira_on = !settings.jira.site.trim().is_empty();
         let jira_mine = settings.jira.mine;
@@ -103,6 +112,14 @@ impl Shell {
                     }
                     shell.sync_thread(cx);
                     shell.poll_machines(cx);
+                    // Clicks of this window's own notifications where they come back on a
+                    // channel (not Windows: there the toast's link starts `mkrew`).
+                    let clicked = (shell.machine_notices.as_mut())
+                        .map(MachineNotices::take_clicks)
+                        .unwrap_or_default();
+                    for (session, project) in clicked {
+                        shell.notification_clicked(session, project, window, cx);
+                    }
                     let sessions = shell.sidebar.sessions();
                     let board_due = shell.workspace.is_some_and(|project_id| {
                         shell.view() == View::Board
@@ -293,7 +310,8 @@ impl Shell {
             desktop,
             attention: Tracker::default(),
             close_to_tray,
-            flash_taskbar,
+            notify,
+            machine_notices,
             turns: Turns::default(),
             usages: Usages::default(),
             plans: Plans::default(),
@@ -376,6 +394,7 @@ impl Shell {
             features,
             git_discard: None,
             git_base: None,
+            plan_dialog: None,
             add_workspace: None,
             task_dialog: None,
             undo_dialog: None,
@@ -720,6 +739,7 @@ impl Shell {
         self.turns_return = None;
         self.git_discard = None;
         self.git_base = None;
+        self.plan_dialog = None;
         self.phone_open = false;
         self.phone = Phone::default();
         self.history = None;
@@ -880,8 +900,8 @@ impl Shell {
                 // just parsed, so this second read only happens when it changed).
                 if let Ok(settings) = mkrew_core::settings::load(&self.settings_file) {
                     self.close_to_tray = settings.ui.close_to_tray;
-                    self.flash_taskbar = settings.notify.flash_taskbar;
-                    if !self.flash_taskbar {
+                    self.notify = settings.notify;
+                    if !self.notify.flash_taskbar {
                         self.desktop.flash(false);
                     }
                     self.apply_diff_mode(settings.ui.diff_mode);
@@ -1082,11 +1102,20 @@ impl Shell {
                         .is_some_and(|peek| peek.session_id == state.session_id);
                 }
                 // Before the sidebar applies it: `viewed` and the flash read the previous state.
-                if self.flash_taskbar
+                if self.notify.flash_taskbar
                     && !window.is_window_active()
                     && attention::entered_needs_input(event, self.sidebar.sessions())
                 {
                     self.desktop.flash(true);
+                }
+                if let Some(notices) = self.machine_notices.as_mut() {
+                    notices.on_event(
+                        event,
+                        &self.notify,
+                        self.sidebar.sessions(),
+                        self.sidebar.projects(),
+                        Instant::now(),
+                    );
                 }
                 self.viewed.apply(event, self.sidebar.sessions());
                 match self.sidebar.apply(event) {

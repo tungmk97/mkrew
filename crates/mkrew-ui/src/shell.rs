@@ -44,6 +44,7 @@ mod history;
 mod jira;
 mod machines;
 mod navigation;
+mod path_field;
 mod peek;
 mod phone_access;
 mod run;

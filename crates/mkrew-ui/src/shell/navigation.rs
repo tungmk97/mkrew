@@ -85,6 +85,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        // A machine window: these files are on this computer, the session is not.
+        if let Some(name) = self.machine_name().map(str::to_owned) {
+            self.toast_info(mkrew_ui::machines::local_files_refused(&name), cx);
+            return;
+        }
         let paths: Vec<String> = paths
             .paths()
             .iter()

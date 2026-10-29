@@ -16,6 +16,17 @@ impl Shell {
         cx.notify();
     }
 
+    /// In a machine window an entry that opens files on this computer (Zed, Explorer, Reveal,
+    /// Follow, Open transcript) cannot work: the files are on the other computer. Shows the
+    /// toast and returns `true`; the entry then returns without doing anything.
+    pub(crate) fn local_only(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        let Some(name) = self.machine_name().map(str::to_owned) else {
+            return false;
+        };
+        self.toast_info(mkrew_ui::machines::opens_local_files_only(&name), cx);
+        true
+    }
+
     /// "Global: Copy last error": the newest error toast's full text, even after it hid.
     pub(crate) fn copy_last_error(&mut self, cx: &mut Context<'_, Self>) {
         if let Some(text) = self.toasts.last_error().map(str::to_owned) {

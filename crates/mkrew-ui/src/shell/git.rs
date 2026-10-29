@@ -702,6 +702,9 @@ impl Shell {
     /// Opens the selected changed file of the Git view in Zed; a failure shows in the diff
     /// header.
     pub(crate) fn open_git_file_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
+        if self.local_only(cx) {
+            return;
+        }
         let Some((target, path)) = self.git.get(&project_id).and_then(|view| {
             let selected = view.selected.as_ref()?;
             Some((view.worktree_task_id, selected.path.clone()))

@@ -8,7 +8,8 @@ impl Shell {
         if self.connection.is_none() {
             return;
         }
-        self.add_workspace = Some(CloneDialog::new(self.clone_parent()));
+        let machine = self.machine_name().map(str::to_owned);
+        self.add_workspace = Some(CloneDialog::new(self.clone_parent(), machine));
         window.focus(&self.dialog_focus, cx);
         cx.notify();
     }
@@ -18,8 +19,13 @@ impl Shell {
         let active = self
             .workspace
             .and_then(|id| self.sidebar.projects().iter().find(|p| p.id == id));
-        active
-            .and_then(|p| Path::new(&p.path).parent().map(|d| d.display().to_string()))
+        let beside =
+            active.and_then(|p| Path::new(&p.path).parent().map(|d| d.display().to_string()));
+        // This computer's home folder says nothing about the other computer's.
+        if self.target.is_machine() {
+            return beside.unwrap_or_default();
+        }
+        beside
             .or_else(|| std::env::home_dir().map(|d| d.display().to_string()))
             .unwrap_or_default()
     }
@@ -38,14 +44,31 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+        let edge = (self.add_workspace.as_ref())
+            .is_none_or(|dialog| dialog.at_edge(!event.keystroke.modifiers.shift));
+        if self.dialog_nav(event, edge, window, cx, |shell, forward| {
+            if let Some(dialog) = shell.add_workspace.as_mut() {
+                dialog.enter(forward);
+            }
+        }) {
             return;
         }
         cx.stop_propagation();
         let Some(key) = base_dialog::key(&event.keystroke) else {
+            // Tab between the typed fields (`dialog_nav` handed it back: another field is left
+            // in that direction).
+            let m = event.keystroke.modifiers;
+            if event.keystroke.key == "tab"
+                && !(m.control || m.alt || m.platform)
+                && !self.dialog_control_focused(window)
+                && let Some(dialog) = self.add_workspace.as_mut()
+            {
+                dialog.step(!m.shift);
+                cx.notify();
+            }
             return;
         };
-        // A control has the keyboard: the URL takes nothing but Esc / Enter.
+        // A control has the keyboard: the fields take nothing but Esc / Enter.
         if self.dialog_control_focused(window)
             && !matches!(key, base_dialog::Key::Close | base_dialog::Key::Save)
         {
@@ -59,6 +82,10 @@ impl Shell {
         };
         match key {
             base_dialog::Key::Close => return self.close_add_workspace(window, cx),
+            // Enter in the folder field adds it; in the others it clones.
+            base_dialog::Key::Save if dialog.field == CloneField::Folder => {
+                return self.add_typed_workspace(window, cx);
+            }
             base_dialog::Key::Save => return self.clone_workspace(window, cx),
             base_dialog::Key::Paste => {
                 if let Some(text) = paste {
@@ -67,7 +94,7 @@ impl Shell {
             }
             base_dialog::Key::Edit(_) | base_dialog::Key::Insert(_) => {
                 if let base_dialog::Key::Edit(edit) = &key {
-                    copy_selection(edit, &dialog.url, cx);
+                    copy_selection(edit, dialog.input(dialog.field), cx);
                 }
                 dialog.key(&key);
             }
@@ -118,10 +145,11 @@ impl Shell {
                 let path = path.to_string_lossy().into_owned();
                 if clone_into {
                     if let Some(dialog) = shell.add_workspace.as_mut() {
-                        dialog.parent = path;
+                        dialog.parent = path.into();
                     }
                     cx.notify();
                 } else {
+                    shell.close_add_workspace(window, cx);
                     shell.add_folder_workspace(path, window, cx);
                 }
             });
@@ -129,7 +157,9 @@ impl Shell {
         .detach();
     }
 
-    /// Adds `path` as a workspace (`project.add`) and shows it.
+    /// Adds `path` as a workspace (`project.add`) and shows it. The dialog, when still open (a
+    /// machine window's typed folder), shows the daemon's refusal under the field and closes
+    /// on success; the picker's closes before.
     fn add_folder_workspace(
         &mut self,
         path: String,
@@ -139,7 +169,6 @@ impl Shell {
         let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
-        self.close_add_workspace(window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let added = connection
                 .call::<Project>(Request::ProjectAdd(ProjectAddParams { path, name: None }))
@@ -148,17 +177,35 @@ impl Shell {
                 match added {
                     Ok(project) => {
                         let project_id = project.id;
+                        if shell.add_workspace.is_some() {
+                            shell.close_add_workspace(window, cx);
+                        }
                         shell.sidebar.add_project(project);
                         shell.activate_workspace(project_id, window, cx);
                     }
-                    Err(error) => {
-                        shell.toast_error(format!("Cannot add the workspace: {error:#}"), cx);
-                    }
+                    Err(error) => match shell.add_workspace.as_mut() {
+                        Some(dialog) => dialog.error = Some(format!("{error:#}")),
+                        None => {
+                            shell.toast_error(format!("Cannot add the workspace: {error:#}"), cx);
+                        }
+                    },
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// "Add" in a machine window: `project.add` with the typed folder of the other computer.
+    pub(crate) fn add_typed_workspace(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Some(path) = self
+            .add_workspace
+            .as_mut()
+            .and_then(CloneDialog::folder_path)
+        {
+            self.add_folder_workspace(path, window, cx);
+        }
+        cx.notify();
     }
 
     /// `project.clone` with the typed URL; the dialog shows "Cloning…" until `project.cloned`.
@@ -220,13 +267,17 @@ impl Shell {
         cx.notify();
     }
 
-    /// Picks a Markdown file and links it as `session_id`'s plan (`session.link_plan`).
+    /// Picks a Markdown file and links it as `session_id`'s plan (`session.link_plan`). A
+    /// machine window types the other computer's path instead ([`Self::open_plan_path`]).
     pub(crate) fn pick_plan(
         &mut self,
         session_id: Ulid,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.target.is_machine() {
+            return self.open_plan_path(session_id, window, cx);
+        }
         self.plan_error = None;
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -343,6 +394,9 @@ impl Shell {
     /// Opens the folder of `project_id` in Zed; a failure (e.g. `zed` missing) shows a toast.
     pub(crate) fn open_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
         self.workspace_menu = None;
+        if self.local_only(cx) {
+            return;
+        }
         let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) else {
             return;
         };
@@ -360,6 +414,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.workspace_menu = None;
+        if self.local_only(cx) {
+            return;
+        }
         if let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) {
             cx.open_with_system(Path::new(&project.path));
         }
@@ -400,6 +457,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.file_menu = None;
+        if self.local_only(cx) {
+            return;
+        }
         if let Some(full) = self.target_file(project_id, target, path) {
             if is_dir {
                 cx.open_with_system(&full);
@@ -420,6 +480,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.file_menu = None;
+        if self.local_only(cx) {
+            return;
+        }
         if let Some(full) = self.target_file(project_id, target, path)
             && let Err(error) = zed::open(&full, None)
         {
@@ -849,9 +912,90 @@ impl Shell {
                 .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                 .child(div().text_color(rgb(theme.text)).child(error))
         };
-        let target = match dialog.target() {
-            Some(target) => format!("Clones into {target}"),
-            None => format!("Clones into a new folder in {}", dialog.parent),
+        let machine = dialog.machine.as_deref();
+        let target = match (dialog.target(), machine) {
+            (Some(target), _) => format!("Clones into {target}"),
+            (None, None) => format!("Clones into a new folder in {}", dialog.parent.as_str()),
+            (None, Some(_)) => "Clones into a new folder in the folder you type".to_owned(),
+        };
+        let typing = self.dialog_focus.is_focused(window);
+        let field_focused = |field: CloneField| typing && dialog.field == field;
+        let caret_in = |field: CloneField| {
+            move |shell: &mut Shell, caret: Caret| {
+                if let Some(dialog) = shell.add_workspace.as_mut() {
+                    dialog.click(field, caret.at, caret.extend, caret.clicks);
+                }
+            }
+        };
+        // A machine window: the folder to add, typed, with its own "Add".
+        let folder_block = machine.map(|name| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(space::XS))
+                .child(meta_line(theme, format!("Folder on {name}").into()))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::S))
+                        .child(
+                            caret_field(
+                                "add-workspace-folder-path",
+                                &dialog.folder,
+                                "Path of the folder",
+                                field_focused(CloneField::Folder),
+                                theme,
+                                cx,
+                                caret_in(CloneField::Folder),
+                            )
+                            .flex_1()
+                            .min_w_0(),
+                        )
+                        .child(
+                            button("add-workspace-add", "Add", theme, false)
+                                .focus_stop(theme)
+                                .tooltip(tooltip(theme, "Add the folder as a workspace", "Enter"))
+                                .on_click(cx.listener(|shell, _, window, cx| {
+                                    shell.add_typed_workspace(window, cx);
+                                })),
+                        ),
+                )
+        });
+        // Where the clone goes: the OS picker here, a typed folder of the other computer there.
+        let parent_block = match machine {
+            Some(name) => div()
+                .flex()
+                .flex_col()
+                .gap(px(space::XS))
+                .child(meta_line(
+                    theme,
+                    format!("Clone into (folder on {name})").into(),
+                ))
+                .child(caret_field(
+                    "add-workspace-parent",
+                    &dialog.parent,
+                    "Path of the folder",
+                    field_focused(CloneField::Parent),
+                    theme,
+                    cx,
+                    caret_in(CloneField::Parent),
+                ))
+                .child(meta_line(theme, target.into()).min_w_0().truncate()),
+            None => div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(space::S))
+                .child(meta_line(theme, target.into()).min_w_0().truncate())
+                .child(
+                    quiet_button("add-workspace-browse", "Browse…", theme, theme.hover)
+                        .focus_stop(theme)
+                        .tooltip(tooltip(theme, "Choose where the clone goes", ""))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.pick_workspace_folder(true, window, cx);
+                        })),
+                ),
         };
         let panel = div()
             .id("add-workspace-dialog")
@@ -886,7 +1030,8 @@ impl Shell {
                             .text_color(rgb(theme.text))
                             .child("Add workspace"),
                     )
-                    .child(
+                    // A machine window types the folder (below) instead.
+                    .children(machine.is_none().then(|| {
                         secondary_button(
                             "add-workspace-folder",
                             icon_text(Icon::FolderPlus, "Open a folder…", theme.text_dim),
@@ -896,9 +1041,10 @@ impl Shell {
                         .tooltip(tooltip(theme, "Add a folder on this computer", ""))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.pick_workspace_folder(false, window, cx);
-                        })),
-                    ),
+                        }))
+                    })),
             )
+            .children(folder_block)
             .child(
                 div()
                     .text_size(font_size::BODY)
@@ -909,31 +1055,16 @@ impl Shell {
                 "add-workspace-url",
                 &dialog.url,
                 "https://github.com/owner/repo.git or git@host:owner/repo.git",
-                self.dialog_focus.is_focused(window),
+                field_focused(CloneField::Url),
                 theme,
                 cx,
                 |shell, caret| {
                     if let Some(dialog) = shell.add_workspace.as_mut() {
-                        dialog.url.click(caret.at, caret.extend, caret.clicks);
+                        dialog.click(CloneField::Url, caret.at, caret.extend, caret.clicks);
                     }
                 },
             ))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(space::S))
-                    .child(meta_line(theme, target.into()).min_w_0().truncate())
-                    .child(
-                        quiet_button("add-workspace-browse", "Browse…", theme, theme.hover)
-                            .focus_stop(theme)
-                            .tooltip(tooltip(theme, "Choose where the clone goes", ""))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.pick_workspace_folder(true, window, cx);
-                            })),
-                    ),
-            )
+            .child(parent_block)
             .children(dialog.error.clone().map(error_row))
             .child(
                 div()

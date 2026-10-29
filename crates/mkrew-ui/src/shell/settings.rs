@@ -231,6 +231,12 @@ impl Shell {
             }))
         });
         let rows = dialog.rows(&self.keymap);
+        // The pages edit this computer's `settings.toml`; the daemon behind a machine window
+        // reads its own.
+        let daemon_note = (matches!(dialog.tab, Tab::Settings(_)))
+            .then(|| self.machine_name())
+            .flatten()
+            .map(|name| meta_line(theme, mkrew_ui::machines::daemon_settings_note(name).into()));
         let body = div()
             .id("settings-rows")
             .flex_1()
@@ -242,6 +248,7 @@ impl Shell {
             .gap(px(space::XS))
             .p(px(space::M))
             .children(banner)
+            .children(daemon_note)
             .children(
                 (dialog.tab == Tab::Machines)
                     .then(|| self.render_machines_page(dialog, typing, theme, cx))
