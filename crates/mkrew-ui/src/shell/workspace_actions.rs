@@ -463,17 +463,42 @@ impl Shell {
         if name.trim().is_empty() {
             return;
         }
-        let Some(root) = self.target_file(project_id, target, "") else {
+        let Some(connection) = self.connection.clone() else {
             return;
         };
-        let path = match file_ops::create(&root, &dir, name, folder) {
-            Ok(path) => path,
-            Err(error) => {
-                tracing::warn!(%project_id, "new file / folder failed: {error}");
-                self.toast_error(error, cx);
-                return;
-            }
-        };
+        let made = connection.call::<FsCreated>(Request::FsCreate(FsCreateParams {
+            project_id,
+            worktree_task_id: target,
+            dir,
+            name: name.to_owned(),
+            folder,
+        }));
+        cx.spawn_in(window, async move |this, cx| {
+            let made = made.await;
+            let _ = this.update_in(cx, |shell, window, cx| match made {
+                Ok(FsCreated { path }) => {
+                    shell.show_created_entry(project_id, target, path, folder, window, cx);
+                }
+                Err(error) => {
+                    tracing::warn!(%project_id, "new file / folder failed: {error:#}");
+                    shell.toast_error(format!("{error:#}"), cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Shows the entry `create_entry` made: the tree lists again, a folder opens, a new file
+    /// opens in the editor.
+    fn show_created_entry(
+        &mut self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        path: String,
+        folder: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         if self.files_at(project_id, target).is_none() {
             return;
         }
@@ -517,20 +542,31 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.file_menu = None;
-        let Some(root) = self.target_file(project_id, target, "") else {
+        let Some(connection) = self.connection.clone() else {
             return;
         };
-        match file_ops::ignore(&root, path, is_dir) {
-            Ok(()) => {
-                if self.files_at(project_id, target).is_some() {
-                    self.refresh_files(project_id, window, cx);
+        let ignored = connection.call::<()>(Request::FsIgnore(FsIgnoreParams {
+            project_id,
+            worktree_task_id: target,
+            path: path.to_owned(),
+            is_dir,
+        }));
+        let path = path.to_owned();
+        cx.spawn_in(window, async move |this, cx| {
+            let ignored = ignored.await;
+            let _ = this.update_in(cx, |shell, window, cx| match ignored {
+                Ok(()) => {
+                    if shell.files_at(project_id, target).is_some() {
+                        shell.refresh_files(project_id, window, cx);
+                    }
                 }
-            }
-            Err(error) => {
-                tracing::warn!(%project_id, path, "add to .gitignore failed: {error}");
-                self.toast_error(error, cx);
-            }
-        }
+                Err(error) => {
+                    tracing::warn!(%project_id, path, "add to .gitignore failed: {error:#}");
+                    shell.toast_error(format!("{error:#}"), cx);
+                }
+            });
+        })
+        .detach();
         cx.notify();
     }
 

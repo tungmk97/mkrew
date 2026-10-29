@@ -1,19 +1,13 @@
-//! The session panel's Thread section (ADR 0057): reads the shown session's transcript file
-//! (the last [`WINDOW`] bytes first, then what was appended) through
-//! [`mkrew_core::thread::ThreadReader`], and builds the [`Page`] the panel renders.
-//! Runs off the UI thread; the caller polls [`ThreadFile::read`] about once a second.
-
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+//! The session panel's Thread section (ADR 0057): turns built by
+//! [`mkrew_core::thread::ThreadReader`] from the transcript bytes the daemon returns for
+//! `session.transcript`, as the [`Page`] the panel renders. Feeding runs off the UI thread; the
+//! caller polls about once a second.
 
 use mkrew_core::UsageFormat;
 use mkrew_core::thread::{Item, ThreadReader, ToolCall};
 
 use crate::docs::Shown;
 
-/// Bytes read on the first look at a transcript (its end).
-pub const WINDOW: u64 = 4 * 1024 * 1024;
 const CHUNK: usize = 1024 * 1024;
 
 /// What the panel shows: the kept turns, with text parsed as Markdown.
@@ -35,11 +29,9 @@ pub enum PageItem {
     Tools(Vec<ToolCall>),
 }
 
-/// The reader of one shown session's transcript.
+/// The reader of one shown session's transcript, fed with what `session.transcript` returns.
 pub struct ThreadFile {
     format: UsageFormat,
-    locate: Box<dyn Fn() -> Option<PathBuf> + Send>,
-    path: Option<PathBuf>,
     reader: ThreadReader,
 }
 
@@ -51,61 +43,37 @@ const _: fn() = || {
 };
 
 impl ThreadFile {
-    pub fn new(
-        format: &UsageFormat,
-        locate: Box<dyn Fn() -> Option<PathBuf> + Send>,
-    ) -> Result<Self, String> {
+    pub fn new(format: &UsageFormat) -> Result<Self, String> {
         Ok(Self {
             format: format.clone(),
-            locate,
-            path: None,
             reader: ThreadReader::new(format)?,
         })
     }
 
-    /// Reads what was appended since the last read; true if the turns changed. A missing or
-    /// unreadable file keeps the turns and is located again at the next read.
-    pub fn read(&mut self) -> bool {
-        if self.path.is_none() {
-            self.path = (self.locate)();
-        }
-        let Some(path) = self.path.clone() else {
-            return false;
-        };
-        match self.read_appended(&path) {
-            Ok(changed) => changed,
-            Err(error) => {
-                tracing::debug!(path = %path.display(), "reading the transcript failed: {error}");
-                self.path = None;
-                false
-            }
-        }
+    /// Where the next `session.transcript` read starts.
+    pub fn offset(&self) -> u64 {
+        self.reader.offset()
     }
 
-    fn read_appended(&mut self, path: &Path) -> std::io::Result<bool> {
-        let mut file = File::open(path)?;
-        let len = file.metadata()?.len();
+    /// Feeds `data`, which starts at `start` in the file; true if the turns changed. A chunk
+    /// that does not continue where the reader stands (the file was rewritten, or the first
+    /// look starts mid-file) starts the reader over at `start`.
+    pub fn apply(&mut self, start: u64, data: &[u8]) -> bool {
         let mut changed = false;
-        if len < self.reader.offset() {
-            // Rewritten from scratch: start over (the format was accepted in `new`).
+        if start != self.reader.offset() {
+            // The format was accepted in `new`.
             if let Ok(reader) = ThreadReader::new(&self.format) {
                 self.reader = reader;
                 changed = true;
             }
-        }
-        if self.reader.offset() == 0 && len > WINDOW {
-            self.reader.start_mid_file(len - WINDOW);
-        }
-        file.seek(SeekFrom::Start(self.reader.offset()))?;
-        let mut chunk = vec![0; CHUNK];
-        loop {
-            match file.read(&mut chunk) {
-                Ok(0) => return Ok(changed),
-                Ok(n) => changed |= self.reader.feed(&chunk[..n]),
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
+            if start > 0 {
+                self.reader.start_mid_file(start);
             }
         }
+        for chunk in data.chunks(CHUNK) {
+            changed |= self.reader.feed(chunk);
+        }
+        changed
     }
 
     /// The turns as the panel shows them.
@@ -156,9 +124,8 @@ mod tests {
         )
     }
 
-    fn reader_at(path: &std::path::Path) -> ThreadFile {
-        let path = path.to_owned();
-        ThreadFile::new(&UsageFormat::OmpJsonl, Box::new(move || Some(path.clone()))).unwrap()
+    fn file() -> ThreadFile {
+        ThreadFile::new(&UsageFormat::OmpJsonl).unwrap()
     }
 
     fn prompts(file: &ThreadFile) -> Vec<String> {
@@ -166,67 +133,35 @@ mod tests {
     }
 
     #[test]
-    fn reads_only_what_was_appended_and_restarts_when_rewritten() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.jsonl");
-        let mut file = reader_at(&path);
-        assert!(!file.read(), "no file yet");
-
-        std::fs::write(&path, prompt("one")).unwrap();
-        assert!(file.read());
-        assert!(!file.read(), "nothing new");
-        std::fs::write(&path, prompt("one") + &prompt("two")).unwrap();
-        assert!(file.read());
+    fn apply_feeds_contiguous_chunks_and_restarts_on_a_gap() {
+        let mut file = file();
+        assert!(file.apply(0, prompt("one").as_bytes()));
+        assert!(!file.apply(file.offset(), b""), "nothing new");
+        assert!(file.apply(file.offset(), prompt("two").as_bytes()));
         assert_eq!(prompts(&file), ["one", "two"]);
-
-        // Rewritten shorter (e.g. a new conversation in the same file): read again.
-        std::fs::write(&path, prompt("fresh")).unwrap();
-        assert!(file.read());
+        // The daemon restarted from 0 (the file was rewritten shorter): start over.
+        assert!(file.apply(0, prompt("fresh").as_bytes()));
         assert_eq!(prompts(&file), ["fresh"]);
     }
 
-    /// A deleted file keeps what is shown; it is located again at the next read.
     #[test]
-    fn a_missing_file_keeps_the_turns() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.jsonl");
-        let mut file = reader_at(&path);
-        std::fs::write(&path, prompt("one")).unwrap();
-        assert!(file.read());
-        std::fs::remove_file(&path).unwrap();
-        assert!(!file.read());
-        assert_eq!(prompts(&file), ["one"]);
-        std::fs::write(&path, prompt("one") + &prompt("two")).unwrap();
-        assert!(file.read());
-        assert_eq!(prompts(&file), ["one", "two"]);
-    }
-
-    /// A long file is read from its last WINDOW bytes only, and says turns are missing.
-    #[test]
-    fn a_long_file_starts_at_the_window() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.jsonl");
-        let filler = "x".repeat(1024);
-        let mut text = prompt("old");
-        while (text.len() as u64) < WINDOW + 64 * 1024 {
-            text.push_str(&format!("{{\"type\":\"pad\",\"p\":\"{filler}\"}}\n"));
-        }
-        text.push_str(&prompt("new"));
-        std::fs::write(&path, &text).unwrap();
-        let mut file = reader_at(&path);
-        assert!(file.read());
+    fn a_first_chunk_from_the_middle_shows_the_tail_as_truncated() {
+        let mut file = file();
+        // The first line of a mid-file chunk is the end of a cut line: skipped.
+        let cut = format!("end of a cut line\n{}", prompt("new"));
+        assert!(file.apply(1234, cut.as_bytes()));
         assert!(file.page().truncated);
-        assert_eq!(prompts(&file), ["new"]);
+        // The next read continues from the end of that chunk: no restart.
+        let two = prompt("two");
+        assert!(file.apply(file.offset(), two.as_bytes()));
+        assert_eq!(prompts(&file), ["new", "two"]);
     }
 
     #[test]
     fn page_parses_text_as_markdown() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.jsonl");
         let answer = "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"# Done\"}]}}\n";
-        std::fs::write(&path, prompt("go") + answer).unwrap();
-        let mut file = reader_at(&path);
-        file.read();
+        let mut file = file();
+        file.apply(0, (prompt("go") + answer).as_bytes());
         let page = file.page();
         let PageItem::Text(shown) = &page.turns[0].items[0] else {
             panic!("text expected");

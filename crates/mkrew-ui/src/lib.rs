@@ -36,7 +36,6 @@ pub mod docs;
 pub mod editor;
 pub mod fanout;
 pub mod field;
-pub mod file_ops;
 pub mod files_view;
 pub mod follow;
 pub mod follow_up;

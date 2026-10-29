@@ -10,7 +10,7 @@ pub(crate) struct ThreadWatch {
     /// The session and native id being read; another pair starts a new watch.
     pub(crate) key: (Ulid, String),
     /// The 1 s poll; dropping it stops reading. It ends by itself after the session exited (one
-    /// last read) or when the profile has no `[usage]`.
+    /// last read).
     _poll: gpui::Task<()>,
     /// Built off the UI thread on each change; `None` until a read found turns.
     pub(crate) page: Option<Rc<thread_view::Page>>,
@@ -34,7 +34,6 @@ impl Shell {
         let session = self
             .panel_session()
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
-        let profile = session.map(|s| s.agent_profile.clone());
         let wanted = self.panel_shown() && self.panel_tab() == PanelTab::Session;
         match inspector::wanted_thread(wanted, session) {
             None => {
@@ -44,7 +43,7 @@ impl Shell {
             }
             Some(key) if self.thread.as_ref().is_some_and(|w| w.key == key) => {}
             Some(key) => {
-                let poll = self.poll_thread(key.clone(), profile.unwrap_or_default(), cx);
+                let poll = self.poll_thread(key.clone(), cx);
                 self.thread = Some(ThreadWatch {
                     key,
                     _poll: poll,
@@ -57,42 +56,55 @@ impl Shell {
         }
     }
 
-    fn poll_thread(
-        &self,
-        key: (Ulid, String),
-        profile: String,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::Task<()> {
-        let agents_dir = self.config_dir.join("agents");
+    fn poll_thread(&self, key: (Ulid, String), cx: &mut Context<'_, Self>) -> gpui::Task<()> {
+        let Some(connection) = self.connection.clone() else {
+            return gpui::Task::ready(());
+        };
         cx.spawn(async move |this, cx| {
-            let native = key.1.clone();
-            let opened = cx
-                .background_executor()
-                .spawn(async move {
-                    let format = mkrew_core::load_dir(&agents_dir)
-                        .get(&profile)?
-                        .usage
-                        .as_ref()?
-                        .format
-                        .clone();
-                    let locate = format.clone();
-                    let locate = Box::new(move || mkrew_daemon::transcript_path(&locate, &native));
-                    ThreadFile::new(&format, locate).ok()
-                })
-                .await;
-            // No profile, no `[usage]` or an unusable format: the watch shows no section.
-            let Some(mut file) = opened else { return };
-            // ponytail: locating a transcript that does not exist yet walks the agent's
-            // sessions folder once a second while shown; cache the miss if it shows in a profile.
+            // One `session.transcript` read a second while shown; the daemon finds and reads the
+            // file, so this works the same for a window on another computer (spec 2026-10-29 §5).
+            let mut file: Option<ThreadFile> = None;
             loop {
-                let (back, page) = cx
-                    .background_executor()
-                    .spawn(async move {
-                        let page = file.read().then(|| file.page());
-                        (file, page)
-                    })
+                let offset = file.as_ref().map_or(0, ThreadFile::offset);
+                let read = connection
+                    .call::<SessionTranscript>(Request::SessionTranscript(
+                        SessionTranscriptParams {
+                            session_id: key.0,
+                            offset,
+                        },
+                    ))
                     .await;
-                file = back;
+                let mut more = false;
+                let page = match read {
+                    Ok(read) if read.found => {
+                        more = !read.data.is_empty()
+                            && read.start + (read.data.len() as u64) < read.len;
+                        if file.is_none() {
+                            file = ThreadFile::new(&UsageFormat::parse(&read.format)).ok();
+                        }
+                        match file.take() {
+                            Some(mut f) => {
+                                let (back, page) = cx
+                                    .background_executor()
+                                    .spawn(async move {
+                                        let changed = f.apply(read.start, &read.data);
+                                        let page = changed.then(|| f.page());
+                                        (f, page)
+                                    })
+                                    .await;
+                                file = Some(back);
+                                page
+                            }
+                            None => None,
+                        }
+                    }
+                    // Not found yet (no usage profile, or the file is not written): keep polling.
+                    Ok(_) => None,
+                    Err(error) => {
+                        tracing::debug!("session.transcript failed: {error:#}");
+                        None
+                    }
+                };
                 let keep_going = this.update(cx, |shell, cx| {
                     if let Some(watch) = shell.thread.as_mut().filter(|w| w.key == key)
                         && let Some(page) = page
@@ -110,7 +122,10 @@ impl Shell {
                 if !keep_going.unwrap_or(false) {
                     return;
                 }
-                cx.background_executor().timer(Duration::from_secs(1)).await;
+                // A reply that did not reach the end of the file: read on at once.
+                if !more {
+                    cx.background_executor().timer(Duration::from_secs(1)).await;
+                }
             }
         })
     }

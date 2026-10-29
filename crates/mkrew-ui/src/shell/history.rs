@@ -335,31 +335,30 @@ impl Shell {
         // The dialog keeps the keyboard while no pane shows.
         window.focus(&self.dialog_focus, cx);
         cx.notify();
-        let files = connection.call::<SessionHistory>(Request::SessionHistory(SessionRef {
-            session_id: session,
-        }));
+        let tail =
+            connection.call::<SessionLogTail>(Request::SessionLogTail(SessionLogTailParams {
+                session_id: session,
+                max_bytes: history::TAIL_BYTES,
+            }));
         let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
-            // Read the log and replay it into the emulator on the background executor: the
-            // advance over up to 1 MiB of output is what used to freeze the window.
-            let replayed = match files.await {
-                Ok(history) => background
+            // Replay the log into the emulator on the background executor: the advance over up
+            // to 1 MiB of output is what used to freeze the window.
+            let replayed = match tail.await {
+                Ok(tail) => Ok(background
                     .spawn(async move {
-                        let tail =
-                            mkrew_core::log_tail::read_tail(&history.files, history::TAIL_BYTES)?;
-                        let emulator = (!tail.bytes.is_empty()).then(|| {
+                        let emulator = (!tail.data.is_empty()).then(|| {
                             let mut emulator = mkrew_ui::terminal::emulator::Emulator::for_replay(
                                 cols.into(),
                                 rows.into(),
                             );
-                            emulator.advance(&tail.bytes);
+                            emulator.advance(&tail.data);
                             emulator
                         });
-                        Ok::<_, std::io::Error>((tail.cut, emulator))
+                        (tail.cut, emulator)
                     })
-                    .await
-                    .map_err(|error| format!("Cannot read the log: {error}")),
-                Err(error) => Err(format!("{error:#}")),
+                    .await),
+                Err(error) => Err(format!("Cannot read the log: {error:#}")),
             };
             let _ = this.update_in(cx, |shell, window, cx| {
                 let Some(dialog) = shell.open_history(serial) else {

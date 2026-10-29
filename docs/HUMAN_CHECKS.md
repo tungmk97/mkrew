@@ -2433,6 +2433,10 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
     checkbox, a card with `⎇ mkrew/…` and `tok`, the worktree target chips, the Merge back and
     Remove worktree dialogs (incl. conflict and discard steps), the fan-out picker, a group card,
     the Compare modal, and a pane header with `ctx` normal and amber.
+- [ ] **History, Thread, New file through the daemon (this computer's window):** History of an ended
+  session replays as before (cut notice on a long one); the session panel's Thread follows a running
+  Claude Code session; Files → New file, New folder and Add to .gitignore work in a project and in
+  a worktree task.
 
 ## Questions with assumed defaults
 
