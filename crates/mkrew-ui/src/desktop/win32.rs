@@ -127,6 +127,9 @@ const CMD_MACHINE: i32 = 200;
 /// What the UI thread shares with the tray thread.
 struct Shared {
     menu: Mutex<TrayMenu>,
+    /// Add an icon at all; `false` for a machine window (its hidden window is only the
+    /// single-instance target, this computer's window owns the one icon).
+    icon: bool,
     /// The icon is in the notification area.
     shown: AtomicBool,
     /// The tray window, 0 until it exists.
@@ -181,9 +184,10 @@ fn icon_of(index: usize) -> Icon {
 
 impl Tray {
     /// Starts the tray thread; `None` if its window could not be made.
-    pub fn start(key: &str) -> Option<(Tray, async_channel::Receiver<TrayEvent>)> {
+    pub fn start(key: &str, icon: bool) -> Option<(Tray, async_channel::Receiver<TrayEvent>)> {
         let (events, receiver) = async_channel::unbounded();
         let shared = Arc::new(Shared {
+            icon,
             menu: Mutex::new(TrayMenu::default()),
             shown: AtomicBool::new(false),
             hwnd: AtomicIsize::new(0),
@@ -443,7 +447,9 @@ unsafe extern "system" fn window_proc(
         }
         other if other == state.taskbar_created => {
             let (icon, rgb) = state.kind.get();
-            state.apply(hwnd, NIM_ADD, icon, rgb);
+            if state.shared.icon {
+                state.apply(hwnd, NIM_ADD, icon, rgb);
+            }
             // The new taskbar button has no overlay either.
             state.send(TrayEvent::TaskbarRestarted);
         }
@@ -501,7 +507,9 @@ fn run(class: &[u16], shared: &Arc<Shared>, ready: &SyncSender<()>) {
             kind: Cell::new((Icon::Idle, 0)),
         });
         STATE.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&state)));
-        state.apply(hwnd, NIM_ADD, Icon::Idle, 0);
+        if shared.icon {
+            state.apply(hwnd, NIM_ADD, Icon::Idle, 0);
+        }
         shared.hwnd.store(hwnd.0 as isize, Ordering::Release);
         let _ = ready.send(());
         let mut message = MSG::default();
@@ -595,7 +603,7 @@ impl Os {
                 .inspect_err(|error| tracing::warn!("taskbar badge unavailable: {error}"))
                 .ok()
         });
-        let (tray, events) = match Tray::start(&super::current_key(id)) {
+        let (tray, events) = match Tray::start(&super::current_key(id), tray_icon) {
             Some((tray, events)) => (Some(tray), events),
             None => (None, async_channel::unbounded::<TrayEvent>().1),
         };
@@ -715,7 +723,7 @@ mod tests {
     fn a_second_launch_reaches_the_tray_window() {
         let key = format!("test-{}", std::process::id());
         assert!(!raise(&key, None), "nobody listens yet");
-        let (tray, events) = Tray::start(&key).expect("the tray window");
+        let (tray, events) = Tray::start(&key, true).expect("the tray window");
         assert!(raise(&key, None));
         let started = std::time::Instant::now();
         let event = loop {
@@ -744,7 +752,7 @@ mod tests {
         let key = format!("test-jump-{}", std::process::id());
         let jump = (Ulid::new(), Ulid::new());
         assert!(!raise(&key, Some(jump)), "nobody listens yet");
-        let (tray, events) = Tray::start(&key).expect("the tray window");
+        let (tray, events) = Tray::start(&key, true).expect("the tray window");
         // `SendMessageTimeoutW` returns once the tray thread handled it: no polling needed.
         assert!(raise(&key, Some(jump)));
         assert_eq!(
@@ -754,6 +762,16 @@ mod tests {
                 project: jump.1
             })
         );
+        tray.remove();
+    }
+
+    #[test]
+    fn a_machine_window_adds_no_icon_but_still_answers_a_second_launch() {
+        let key = format!("test-noicon-{}", std::process::id());
+        let (tray, _events) = Tray::start(&key, false).expect("the tray window");
+        assert!(!tray.shown());
+        assert!(raise(&key, None));
+        assert!(!tray.shown());
         tray.remove();
     }
 
