@@ -57,26 +57,32 @@ impl Shell {
     }
 
     fn poll_thread(&self, key: (Ulid, String), cx: &mut Context<'_, Self>) -> gpui::Task<()> {
-        let Some(connection) = self.connection.clone() else {
-            return gpui::Task::ready(());
-        };
         cx.spawn(async move |this, cx| {
             // One `session.transcript` read a second while shown; the daemon finds and reads the
             // file, so this works the same for a window on another computer (spec 2026-10-29 §5).
+            // The connection is read each round: after a reconnect the watch carries on from
+            // its offset, and while there is none it just waits.
             let mut file: Option<ThreadFile> = None;
             loop {
                 let offset = file.as_ref().map_or(0, ThreadFile::offset);
-                let read = connection
-                    .call::<SessionTranscript>(Request::SessionTranscript(
-                        SessionTranscriptParams {
-                            session_id: key.0,
-                            offset,
-                        },
-                    ))
-                    .await;
+                let connection = this.update(cx, |shell, _| shell.connection.clone());
+                let Ok(connection) = connection else { return };
+                let read = match connection {
+                    Some(connection) => Some(
+                        connection
+                            .call::<SessionTranscript>(Request::SessionTranscript(
+                                SessionTranscriptParams {
+                                    session_id: key.0,
+                                    offset,
+                                },
+                            ))
+                            .await,
+                    ),
+                    None => None,
+                };
                 let mut more = false;
                 let page = match read {
-                    Ok(read) if read.found => {
+                    Some(Ok(read)) if read.found => {
                         more = !read.data.is_empty()
                             && read.start + (read.data.len() as u64) < read.len;
                         if file.is_none() {
@@ -98,9 +104,10 @@ impl Shell {
                             None => None,
                         }
                     }
-                    // Not found yet (no usage profile, or the file is not written): keep polling.
-                    Ok(_) => None,
-                    Err(error) => {
+                    // Not found yet (no usage profile, or the file is not written), or not
+                    // connected: keep polling.
+                    Some(Ok(_)) | None => None,
+                    Some(Err(error)) => {
                         tracing::debug!("session.transcript failed: {error:#}");
                         None
                     }
