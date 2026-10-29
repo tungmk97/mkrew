@@ -277,7 +277,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let Some(comments) = self.comments_mut(project_id, context) else {

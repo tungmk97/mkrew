@@ -171,7 +171,10 @@ impl Shell {
         if self.target.is_machine() {
             return None;
         }
-        self.connection.as_ref()?;
+        // Kept (inert) while the last screen is kept, so the title bar does not jump.
+        if !self.shows_workspaces() {
+            return None;
+        }
         let on = self.phone.running();
         let text = if on {
             "Phone access: on. Open Mkrew from your phone's browser to watch and answer sessions"

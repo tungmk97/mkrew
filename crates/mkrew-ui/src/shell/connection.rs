@@ -392,7 +392,8 @@ impl Shell {
             pending_jump: jump,
         };
         if !matches!(shell.status, Status::NoMachine(_)) {
-            shell.connect(window, cx);
+            // Not `connect`: the status starts as Connecting and that one refuses then.
+            shell.start_connect(window, cx);
         }
         shell
     }
@@ -400,6 +401,10 @@ impl Shell {
     /// The user's Connect / Retry / Reconnect (and startup): connects now and restarts the
     /// automatic retry backoff.
     pub(crate) fn connect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        // One attempt at a time: a second one would install a second connection.
+        if matches!(self.status, Status::Connecting) {
+            return;
+        }
         self.reconnect_attempts = 0;
         self.start_connect(window, cx);
     }
@@ -454,6 +459,8 @@ impl Shell {
             Target::Missing(_) => return,
         };
         self.connect_gen += 1;
+        // Every completion below acts only while no newer attempt has started.
+        let generation = self.connect_gen;
         self.reconnect_in = None;
         self.status = Status::Connecting;
         self.report_machine_state(if self.reconnect_attempts > 0 {
@@ -490,6 +497,9 @@ impl Shell {
                 Ok(connection) => Rc::new(connection),
                 Err(status) => {
                     let _ = this.update_in(cx, |shell, window, cx| {
+                        if shell.connect_gen != generation {
+                            return;
+                        }
                         match &status {
                             Status::Unreachable { reason, .. } => {
                                 shell.report_machine_state(MachineState::Unreachable(
@@ -517,6 +527,10 @@ impl Shell {
                 "connected to the daemon"
             );
             let loaded = this.update_in(cx, |shell, window, cx| {
+                // A newer attempt started meanwhile: this connection is dropped, not installed.
+                if shell.connect_gen != generation {
+                    return false;
+                }
                 shell.reconnect_attempts = 0;
                 shell.connection = Some(connection);
                 shell.report_machine_state(MachineState::Connected);
@@ -524,8 +538,9 @@ impl Shell {
                 if !shell.target.is_machine() {
                     shell.poll_phone(window, cx);
                 }
+                true
             });
-            if loaded.is_err() {
+            if !matches!(loaded, Ok(true)) {
                 return;
             }
             // Drain at once when frames arrive (low key latency); after feeding output, wait
@@ -541,8 +556,11 @@ impl Shell {
                     batch.push(next);
                 }
                 let started = Instant::now();
-                match this.update_in(cx, |shell, window, cx| shell.dispatch(batch, window, cx)) {
-                    Ok(true) => {
+                let fed = this.update_in(cx, |shell, window, cx| {
+                    (shell.connect_gen == generation).then(|| shell.dispatch(batch, window, cx))
+                });
+                match fed {
+                    Ok(Some(true)) => {
                         let painted = async {
                             let _ = painted_rx.recv().await;
                         };
@@ -552,11 +570,14 @@ impl Shell {
                             cx.background_executor().timer(rest).await;
                         }
                     }
-                    Ok(false) => {}
-                    Err(_) => return,
+                    Ok(Some(false)) => {}
+                    Ok(None) | Err(_) => return,
                 }
             }
             let _ = this.update_in(cx, |shell, window, cx| {
+                if shell.connect_gen != generation {
+                    return;
+                }
                 shell.status = Status::Disconnected;
                 shell.report_machine_state(MachineState::Reconnecting);
                 shell.connection = None;
@@ -761,6 +782,14 @@ impl Shell {
                 match listed {
                     Ok((projects, sessions)) => {
                         shell.sidebar.load(projects, sessions);
+                        // After a reconnect, kept unsaved files of a workspace the daemon no
+                        // longer lists cannot be saved anywhere.
+                        if kept.is_some() {
+                            let listed = shell.sidebar.projects();
+                            shell
+                                .files
+                                .retain(|id, _| listed.iter().any(|project| project.id == *id));
+                        }
                         shell.sync_attention(cx);
                         shell.load_usage(window, cx);
                         shell.load_ports(window, cx);

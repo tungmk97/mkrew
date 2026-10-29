@@ -147,11 +147,12 @@ impl Shell {
                             .map(|detail| div().text_color(rgb(theme.text_muted)).child(detail)),
                     ),
                 )
-                // Always: after a version mismatch nothing else retries.
-                .child(
+                // Not while an attempt runs (a second one would not help); after a version
+                // mismatch it is the only way to try again.
+                .children((!matches!(self.status, Status::Connecting)).then(|| {
                     button("reconnect-now", "Try now", theme, true)
-                        .on_click(cx.listener(|shell, _, window, cx| shell.connect(window, cx))),
-                )
+                        .on_click(cx.listener(|shell, _, window, cx| shell.connect(window, cx)))
+                }))
                 .into_any_element(),
         )
     }
