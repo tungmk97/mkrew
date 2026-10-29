@@ -21,6 +21,12 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-28 Session tab behind `[features] session`
+
+- [ ] **Right panel (dark + light):** with no `[features] session`, the tabs read `Files │ Git` and split the width evenly.
+  A `settings.toml` with `[ui] right_panel = "session"` opens on Files.
+  Set `[features] session = true`: the Session tab is back, live, without a restart.
+
 ### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0085)
 
 - Every check in this entry is done in both dark and light.

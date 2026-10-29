@@ -242,34 +242,36 @@ impl Shell {
                 MouseButton::Left,
                 cx.listener(|shell, _, _, cx| shell.end_inspector_drag(cx)),
             );
-        let tab = self.right_panel.tab;
+        let tab = self.panel_tab();
         let changed = self.git_summary().map_or(0, GitSummary::changed);
-        let tabs = div()
-            .flex_none()
-            .p(px(space::S))
-            .child(segmented(theme).children(
-                [PanelTab::Files, PanelTab::Session, PanelTab::Git].map(|each| {
-                    let title = match each {
-                        PanelTab::Files => "Files",
-                        PanelTab::Session => "Session",
-                        PanelTab::Git => "Git",
-                    };
-                    segment(
-                        SharedString::from(format!("panel-{title}")),
-                        each == tab,
-                        theme,
-                    )
-                    .flex_1()
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.show_panel_tab(each, window, cx);
-                    }))
-                    .child(title)
-                    // The workspace's changed files over all repositories, hidden at 0.
-                    .when(each == PanelTab::Git && changed > 0, |el| {
-                        el.child(tinted_chip(changed.to_string(), theme.accent_text, theme))
-                    })
-                }),
-            ));
+        let tabs = div().flex_none().p(px(space::S)).child(
+            segmented(theme).children(
+                [PanelTab::Files, PanelTab::Session, PanelTab::Git]
+                    .into_iter()
+                    .filter(|&each| each != PanelTab::Session || self.features.session)
+                    .map(|each| {
+                        let title = match each {
+                            PanelTab::Files => "Files",
+                            PanelTab::Session => "Session",
+                            PanelTab::Git => "Git",
+                        };
+                        segment(
+                            SharedString::from(format!("panel-{title}")),
+                            each == tab,
+                            theme,
+                        )
+                        .flex_1()
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.show_panel_tab(each, window, cx);
+                        }))
+                        .child(title)
+                        // The workspace's changed files over all repositories, hidden at 0.
+                        .when(each == PanelTab::Git && changed > 0, |el| {
+                            el.child(tinted_chip(changed.to_string(), theme.accent_text, theme))
+                        })
+                    }),
+            ),
+        );
         let body = match tab {
             PanelTab::Files => self.render_file_tree(project_id, theme, window, cx),
             PanelTab::Session => {

@@ -35,7 +35,7 @@ impl Shell {
             .panel_session()
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let profile = session.map(|s| s.agent_profile.clone());
-        let wanted = self.panel_shown() && self.right_panel.tab == PanelTab::Session;
+        let wanted = self.panel_shown() && self.panel_tab() == PanelTab::Session;
         match inspector::wanted_thread(wanted, session) {
             None => {
                 if self.thread.take().is_some() {

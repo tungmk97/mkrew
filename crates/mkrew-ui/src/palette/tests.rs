@@ -41,6 +41,7 @@ fn context(view: View) -> Context {
         features: FeatureSettings {
             docs: true,
             turns: true,
+            session: true,
         },
     }
 }

@@ -365,6 +365,14 @@ pub const SETTINGS: &[Setting] = &[
         "Turn snapshots",
         "The agent's Turns… dialog; applies to sessions started after the change.",
     ),
+    row(
+        Features,
+        "features",
+        "session",
+        Bool,
+        "Session tab",
+        "The right panel's Session tab (session cards and thread).",
+    ),
 ];
 
 impl Setting {

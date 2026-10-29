@@ -130,9 +130,18 @@ impl Shell {
         self.right_panel.open && self.panel_view()
     }
 
+    /// The right panel's tab on screen: a kept Session tab shows Files while
+    /// `[features] session` is off.
+    pub(crate) fn panel_tab(&self) -> PanelTab {
+        match self.right_panel.tab {
+            PanelTab::Session if !self.features.session => PanelTab::Files,
+            tab => tab,
+        }
+    }
+
     /// The right panel shows the file tree.
     pub(crate) fn file_tree_shown(&self) -> bool {
-        self.panel_shown() && self.right_panel.tab == PanelTab::Files
+        self.panel_shown() && self.panel_tab() == PanelTab::Files
     }
 
     /// Some of the active workspace's Editor view is drawn (the editor or the tree), so it

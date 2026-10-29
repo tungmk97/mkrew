@@ -40,6 +40,9 @@ pub struct FeatureSettings {
     pub docs: bool,
     /// Turn snapshots and the agent pane's "Turns…" dialog (SPEC §20C.1–§20C.2).
     pub turns: bool,
+    /// The right panel's Session tab (session cards and thread). Off for now: the panel
+    /// shows `Files │ Git` and a saved `right_panel = "session"` opens on Files.
+    pub session: bool,
 }
 
 /// `[web]` (ADR 0053, ADR 0067): the daemon runs `mk web` while `enabled` is true; `mk web`
@@ -599,9 +602,11 @@ pub fn template() -> &'static str {
      \n\
      # Optional modules, off by default. docs: the Docs view. turns: the agent's turn\n\
      # snapshots and its Turns… dialog (applies to sessions started after the change).\n\
+     # session: the right panel's Session tab.\n\
      [features]\n\
      # docs = false\n\
      # turns = false\n\
+     # session = false\n\
      \n\
      # Phone access (ADR 0053): while enabled is true the daemon runs `mk web`, so a phone on your\n\
      # tailnet can reach Mkrew. The phone icon in the title bar writes it; the port is fixed (8787).\n\
@@ -838,6 +843,7 @@ push = true
                 features: FeatureSettings {
                     docs: true,
                     turns: false,
+                    session: false,
                 },
                 web: WebSettings {
                     enabled: true,

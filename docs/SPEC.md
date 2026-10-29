@@ -922,7 +922,9 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   it across restarts. Drag its left edge to resize (240–560 px, one width for all three tabs, saved as
   `[ui] inspector_width` when the button is released); the terminals lose that width, so an agent
   redraws once. **Files tab:** the file tree of §12A. **Session tab:** the session of the active
-  tab's focused pane, also while the Editor is shown. **Git tab:** the Git list (header, Working / Vs. base / History, filter, Changed by, changes, commit box); a file's diff shows in the Diff view (§12B).
+  tab's focused pane, also while the Editor is shown; shown only while `[features] session` is
+  true (default false: the tabs are `Files │ Git` and a saved `"session"` opens on Files).
+  **Git tab:** the Git list (header, Working / Vs. base / History, filter, Changed by, changes, commit box); a file's diff shows in the Diff view (§12B).
   **Session card:** agent, title, state + time, the usage of §20E.3 (context
   share, tokens, cache, model; rows without data are left out), **Open transcript** (the agent's
   `.jsonl` in Zed; disabled until the daemon located it) and **Stop** (`session.kill`; a running
