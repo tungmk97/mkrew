@@ -267,7 +267,7 @@ impl Shell {
     /// `project.update` with the dialog's commands; on success it closes and, when opened from
     /// ▶ Run, runs everything.
     pub(crate) fn save_run_setup(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let serial = self.dialog_serial;

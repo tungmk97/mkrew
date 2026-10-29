@@ -379,7 +379,8 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let shown = self.focused_session();
-        let connected = self.connection.is_some();
+        // Also while the last screen is kept: the layout must not jump (it is inert then).
+        let connected = self.shows_workspaces();
         let add_workspace_keys = self.keymap.label(Command::AddWorkspace);
         let view = self.sidebar.view(&self.viewed);
         let shown_in = view.shown_in(shown);
@@ -882,7 +883,7 @@ impl Shell {
             .flex()
             .items_center()
             .justify_center()
-            .when(self.connection.is_some(), |header| {
+            .when(self.shows_workspaces(), |header| {
                 header.child(
                     icon_button("add-workspace", Icon::Plus, theme)
                         .tooltip(tooltip(

@@ -454,6 +454,32 @@ impl FilesView {
             .collect()
     }
 
+    /// The view as it carries over a lost connection (spec §8): the tabs with unsaved text, kept
+    /// with their hash so Save still works, and nothing in flight; the tree and every clean
+    /// tab are read again. `None` when no tab is unsaved.
+    pub fn into_unsaved(mut self) -> Option<FilesView> {
+        let shown = self.file().map(str::to_owned);
+        self.tabs.retain(FileTab::is_dirty);
+        if self.tabs.is_empty() {
+            return None;
+        }
+        for tab in &mut self.tabs {
+            tab.saving = false;
+            tab.reading = false;
+            tab.read_again = false;
+        }
+        self.active = shown
+            .and_then(|path| self.tabs.iter().position(|tab| tab.path == path))
+            .or(Some(0));
+        self.dirs.clear();
+        self.listing.clear();
+        self.list_again.clear();
+        self.sent_in.clear();
+        self.generation += 1;
+        self.relayout();
+        Some(self)
+    }
+
     /// The first of `paths` whose tab is still unsaved (asked again after a save that text
     /// typed meanwhile made unsaved again).
     pub fn first_unsaved(&self, paths: &[String]) -> Option<String> {

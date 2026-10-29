@@ -66,7 +66,7 @@ impl Shell {
     /// One `session.send` per checked session; each row shows its own result. A session that
     /// is working gets the text queued by the daemon (SPEC §8), shown as "queued".
     pub(crate) fn send_broadcast(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let serial = self.dialog_serial;
@@ -183,7 +183,7 @@ impl Shell {
     /// On failure the dialog shows why and the preview is read again (the daemon refuses a
     /// stale one).
     pub(crate) fn confirm_undo(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let serial = self.dialog_serial;

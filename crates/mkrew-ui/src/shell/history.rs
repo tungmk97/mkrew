@@ -406,7 +406,7 @@ impl Shell {
     /// "Resume" in History (ADR 0055): relaunches the selected agent session into its
     /// conversation, then closes the dialog and gives the new pane the keyboard.
     pub(crate) fn resume_history(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let Some(dialog) = self.history.as_mut() else {

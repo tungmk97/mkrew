@@ -93,7 +93,7 @@ impl Shell {
 
     /// `ai.generate` `ask` for the typed question; the answer arrives as `ai.generated`.
     pub(crate) fn send_ask(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let Some(params) = self.ask.as_mut().and_then(Ask::begin) else {

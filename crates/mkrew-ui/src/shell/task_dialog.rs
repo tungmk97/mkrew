@@ -110,7 +110,7 @@ impl Shell {
     /// `task.create` / `task.update` for the dialog's draft; the dialog closes once it is
     /// saved and shows the error otherwise.
     pub(crate) fn save_task(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let serial = self.dialog_serial;
@@ -162,7 +162,7 @@ impl Shell {
     /// Asks, then `task.delete`s the task being edited. The daemon refuses while its session
     /// still runs; the dialog shows why.
     pub(crate) fn delete_task(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let Some(task_id) = self

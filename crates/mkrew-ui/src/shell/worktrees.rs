@@ -146,7 +146,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let serial = self.dialog_serial;
@@ -274,7 +274,7 @@ impl Shell {
     /// The confirmed step: `task.merge`, `task.remove_worktree`, or the discard before a
     /// removal (then the worktree is read again). A failure shows why and reads it again.
     pub(crate) fn confirm_worktree(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let serial = self.dialog_serial;

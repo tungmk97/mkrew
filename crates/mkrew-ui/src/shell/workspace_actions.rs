@@ -136,7 +136,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         self.close_add_workspace(window, cx);
@@ -163,7 +163,7 @@ impl Shell {
 
     /// `project.clone` with the typed URL; the dialog shows "Cloning…" until `project.cloned`.
     pub(crate) fn clone_workspace(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let Some(params) = self.add_workspace.as_mut().and_then(CloneDialog::begin) else {

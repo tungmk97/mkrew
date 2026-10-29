@@ -1414,6 +1414,27 @@ fn unsaved_paths_lists_every_dirty_tab() {
     assert_eq!(view.unsaved_paths(), ["README.md", "src/main.rs"]);
 }
 
+/// After a lost connection only the tabs with unsaved text carry over (their hash stays for the
+/// save); the tree and clean tabs are read again from the daemon.
+#[test]
+fn into_unsaved_keeps_only_the_dirty_tabs_and_forgets_the_listing() {
+    let mut view = three();
+    for path in ["README.md", "src/main.rs"] {
+        view.open(path, Open::Kept);
+        read_ok(&mut view, path, "a\n");
+    }
+    // The last opened tab is active: only it gets the typed text.
+    view.editor_mut().unwrap().insert("x");
+    let kept = view.into_unsaved().expect("one tab is unsaved");
+    assert_eq!(kept.unsaved_paths(), ["src/main.rs"]);
+    assert_eq!(kept.file(), Some("src/main.rs"));
+    assert!(!kept.started(), "the tree is listed again");
+    let mut clean = three();
+    clean.open("README.md", Open::Kept);
+    read_ok(&mut clean, "README.md", "a\n");
+    assert!(clean.into_unsaved().is_none());
+}
+
 /// Leaving several tabs asks about the first one still unsaved, so text typed while its save
 /// was in flight is asked about again.
 #[test]

@@ -107,9 +107,9 @@ impl Shell {
         rows
     }
 
-    /// While a lost connection is down (spec §6.3): "Connection to <name> lost. Reconnecting in
-    /// N s…" and **Try now**, under the title bar. `N` is the wait of the pending retry (static,
-    /// like the status screen's); none while an attempt runs.
+    /// While a lost connection is down (spec §6.3): "Connection to <name> lost. Next try in N s."
+    /// (static, set once per attempt; "Reconnecting…" while one runs, nothing after a version
+    /// mismatch), the last attempt's reason below it, and **Try now**, under the title bar.
     pub(crate) fn render_reconnect_banner(
         &self,
         theme: &Theme,
@@ -119,12 +119,13 @@ impl Shell {
             return None;
         }
         let what = self.machine_name().unwrap_or("the daemon");
-        let text = match self.reconnect_in {
-            Some(wait) => format!(
-                "Connection to {what} lost. Reconnecting in {} s…",
+        let text = match (self.reconnect_in, &self.status) {
+            (Some(wait), _) => format!(
+                "Connection to {what} lost. Next try in {} s.",
                 wait.as_secs()
             ),
-            None => format!("Connection to {what} lost. Reconnecting…"),
+            (None, Status::Connecting) => format!("Connection to {what} lost. Reconnecting…"),
+            (None, _) => format!("Connection to {what} lost."),
         };
         Some(
             div()
@@ -140,12 +141,17 @@ impl Shell {
                 .border_color(rgb(theme.divider))
                 .text_size(font_size::META)
                 .text_color(rgb(theme.text))
-                .child(div().min_w_0().flex_1().child(text))
-                // Not while an attempt runs (the status screen offers none then either).
-                .children(self.reconnect_in.map(|_| {
+                .child(
+                    div().min_w_0().flex_1().child(text).children(
+                        self.attempt_detail()
+                            .map(|detail| div().text_color(rgb(theme.text_muted)).child(detail)),
+                    ),
+                )
+                // Always: after a version mismatch nothing else retries.
+                .child(
                     button("reconnect-now", "Try now", theme, true)
-                        .on_click(cx.listener(|shell, _, window, cx| shell.connect(window, cx)))
-                }))
+                        .on_click(cx.listener(|shell, _, window, cx| shell.connect(window, cx))),
+                )
                 .into_any_element(),
         )
     }
@@ -158,10 +164,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         // The last screen stays while a lost connection is down (`reconnecting`).
-        let Some(project_id) = self
-            .workspace
-            .filter(|_| self.connection.is_some() || self.reconnecting())
-        else {
+        let Some(project_id) = self.workspace.filter(|_| self.shows_workspaces()) else {
             let (sentence, detail) = self.status_line();
             return message(theme, Some("Mkrew"), sentence, detail)
                 .children(self.status_action(theme, cx))
@@ -251,9 +254,7 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let workspace = self
-            .workspace
-            .filter(|_| self.connection.is_some() || self.reconnecting());
+        let workspace = self.workspace.filter(|_| self.shows_workspaces());
         let mode = format!(
             "Theme: {} · {}",
             match theme.mode {

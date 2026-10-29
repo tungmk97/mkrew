@@ -118,7 +118,7 @@ impl Shell {
     /// `comment.send_to_agent`: sent → the dialog closes (the threads show `sent`); failed →
     /// it stays with the reason.
     pub(crate) fn send_comments(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let serial = self.dialog_serial;

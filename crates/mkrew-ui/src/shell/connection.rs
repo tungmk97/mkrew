@@ -597,6 +597,42 @@ impl Shell {
         self.kept_workspace.is_some()
     }
 
+    /// Whether the window shows its panes: connected, or keeping the last screen.
+    pub(crate) fn shows_workspaces(&self) -> bool {
+        self.connection.is_some() || self.reconnecting()
+    }
+
+    /// The connection for a dialog's send / save. Without one (the daemon is away) the pressed
+    /// button shows why as a toast and the dialog stays as it is.
+    pub(crate) fn connected_or_toast(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<Rc<Connection>> {
+        if self.connection.is_none() {
+            let what = self.machine_name().unwrap_or("the daemon");
+            self.toast_error(format!("Not connected to {what}. Reconnecting…"), cx);
+        }
+        self.connection.clone()
+    }
+
+    /// What the last connect attempt said (shown under the banner): the reason and hint, the
+    /// error, or the version message.
+    pub(crate) fn attempt_detail(&self) -> Option<String> {
+        match &self.status {
+            Status::Unreachable { reason, hint } => Some(
+                std::iter::once(reason.as_str())
+                    .chain(hint.as_deref())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+            Status::Failed(error) => Some(error.clone()),
+            Status::Version(message) => {
+                Some(format!("{message} Update Mkrew on the older computer."))
+            }
+            _ => None,
+        }
+    }
+
     /// Closes what is open over the window and acts on the daemon: menus, palette, quick open,
     /// the peek and the prompt picker; the keyboard goes back to the window.
     fn close_popups(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -651,7 +687,11 @@ impl Shell {
         self.diagram_dialog = None;
         self.follow_up = None;
         self.docs.clear();
-        self.files.clear();
+        // Unsaved Files text outlives the connection: Save writes it with the old hash (§8).
+        self.files = std::mem::take(&mut self.files)
+            .into_iter()
+            .filter_map(|(id, view)| Some((id, view.into_unsaved()?)))
+            .collect();
         self.git.clear();
         self.git_summary = None;
         self.close_popups(window, cx);
