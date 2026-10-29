@@ -51,7 +51,7 @@ similar = "3.2"
 syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "regex-fancy"] }
 thiserror = "2"
 # The IPC thread runs a single-threaded runtime (SPEC §7 client side).
-tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros"] }
+tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros", "process", "time"] }
 # `<config>/mkrew/keymap.toml` (SPEC §13); same major as mkrew-core.
 toml = "1.1"
 tracing = "0.1"

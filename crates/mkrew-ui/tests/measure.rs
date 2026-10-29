@@ -85,7 +85,8 @@ impl Drop for StopOnDrop {
             let _ = window.kill();
             let _ = window.wait();
         }
-        if let Ok(Ok(connection)) = Connection::open(&self.0.socket) {
+        let endpoint = mkrew_ui::client::Endpoint::Socket(self.0.socket.clone());
+        if let Ok(Ok(connection)) = Connection::open(&endpoint) {
             let _ = block_on(connection.request(Request::DaemonStop));
         }
     }

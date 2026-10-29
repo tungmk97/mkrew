@@ -13,7 +13,8 @@ use mkrew_core::Paths;
 use mkrew_core::paths::{ENV_CONFIG_DIR, ENV_DATA_DIR, ENV_SOCKET};
 use mkrew_daemon::EXIT_ALREADY_RUNNING;
 
-use crate::client::Connection;
+use crate::client::{Connection, Endpoint, OpenError};
+use crate::machines::Machine;
 
 /// How long to wait for a freshly started daemon to answer `hello`.
 pub const TIMEOUT: Duration = Duration::from_secs(10);
@@ -94,7 +95,7 @@ impl Launcher for DaemonLauncher {
     type Conn = Connection;
 
     fn connect(&mut self) -> anyhow::Result<Option<Connection>> {
-        match Connection::open(&self.paths.socket) {
+        match Connection::open(&Endpoint::Socket(self.paths.socket.clone())) {
             Ok(handshake) => Ok(Some(handshake?)),
             Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::ConnectionRefused) => {
                 Ok(None)
@@ -151,6 +152,62 @@ pub fn connect(paths: &Paths) -> anyhow::Result<Connection> {
     connected
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MachineError {
+    /// Show the reason (ssh's last stderr lines or the spawn error) and the hint; retry later.
+    Unreachable {
+        reason: String,
+        hint: Option<String>,
+    },
+    /// Show the message; do not retry by itself.
+    Version(String),
+}
+
+/// Connects to `machine`'s daemon through `ssh … mk proxy`; never spawns anything else.
+pub fn connect_machine(machine: &Machine) -> Result<Connection, MachineError> {
+    let (program, args) = crate::machines::ssh_command(machine);
+    let endpoint = Endpoint::Program {
+        program,
+        args,
+        env: Vec::new(),
+    };
+    let error = match Connection::open(&endpoint) {
+        Ok(Ok(connection)) => return Ok(connection),
+        Ok(Err(error)) => error,
+        Err(error) => anyhow::Error::new(error),
+    };
+    Err(match error.downcast_ref::<OpenError>() {
+        Some(OpenError::Version { message }) => MachineError::Version(message.clone()),
+        Some(OpenError::Ended { stderr }) => MachineError::Unreachable {
+            reason: last_lines(stderr, 3)
+                .unwrap_or_else(|| "The connection ended before it was ready.".into()),
+            hint: crate::machines::hint(stderr, machine),
+        },
+        Some(OpenError::Spawn { source, .. }) => MachineError::Unreachable {
+            reason: format!("Cannot run ssh: {source}."),
+            hint: Some(
+                "Install the OpenSSH client (Windows: Settings → System → Optional features)."
+                    .into(),
+            ),
+        },
+        None => MachineError::Unreachable {
+            reason: format!("{error:#}"),
+            hint: None,
+        },
+    })
+}
+
+/// The last `count` non-empty lines joined with a space; `None` when there are none.
+fn last_lines(text: &str, count: usize) -> Option<String> {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let from = lines.len().saturating_sub(count);
+    (!lines.is_empty()).then(|| lines[from..].join(" "))
+}
+
 /// How long to wait before automatic retry number `attempt` (0-based) after a failed or lost
 /// connection: 1 s, 2 s, 5 s, 10 s, then every 30 s.
 pub fn backoff(attempt: u32) -> Duration {
@@ -161,6 +218,12 @@ pub fn backoff(attempt: u32) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn last_lines_keeps_the_last_non_empty_lines() {
+        assert_eq!(last_lines("a\n\n b \nc\nd\n", 3).as_deref(), Some("b c d"));
+        assert_eq!(last_lines(" \n", 3), None);
+    }
 
     #[test]
     fn backoff_grows_then_holds_at_30_seconds() {

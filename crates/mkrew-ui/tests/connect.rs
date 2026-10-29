@@ -51,7 +51,8 @@ struct StopOnDrop(Paths);
 
 impl Drop for StopOnDrop {
     fn drop(&mut self) {
-        if let Ok(Ok(connection)) = Connection::open(&self.0.socket) {
+        let endpoint = mkrew_ui::client::Endpoint::Socket(self.0.socket.clone());
+        if let Ok(Ok(connection)) = Connection::open(&endpoint) {
             let _ = block_on(connection.request(Request::DaemonStop));
         }
     }
@@ -63,7 +64,7 @@ fn spawns_the_daemon_once_then_reuses_it() {
     let paths = paths(dir.path());
     let _stop = StopOnDrop(paths.clone());
     assert!(
-        Connection::open(&paths.socket).is_err(),
+        Connection::open(&mkrew_ui::client::Endpoint::Socket(paths.socket.clone())).is_err(),
         "nothing listens yet"
     );
 

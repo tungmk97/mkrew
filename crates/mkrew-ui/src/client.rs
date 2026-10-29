@@ -6,20 +6,22 @@
 //! them on its own executor.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::io;
-use std::sync::Arc;
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
-use interprocess::local_socket::tokio::{RecvHalf, SendHalf, Stream, prelude::*};
+use interprocess::local_socket::tokio::{Stream, prelude::*};
 use mkrew_protocol::{
-    ClientKind, Event, Frame, FrameDecoder, HelloParams, HelloResult, Message, Outcome,
+    ClientKind, ErrorCode, Event, Frame, FrameDecoder, HelloParams, HelloResult, Message, Outcome,
     PROTOCOL_VERSION, Request, ResponseError, encode,
 };
 use serde::de::DeserializeOwned;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{Semaphore, mpsc, oneshot};
 use ulid::Ulid;
 
@@ -31,6 +33,13 @@ const INCOMING_FRAMES: usize = 256;
 const INCOMING_BYTES: usize = 16 * 1024 * 1024;
 const READ_BUFFER: usize = 64 * 1024;
 const HELLO_ID: u64 = 1;
+/// Last stderr lines of a program kept for the error report.
+const STDERR_LINES: usize = 20;
+/// How long a program that failed `hello` gets to exit and flush its stderr.
+const PROGRAM_EXIT_WAIT: Duration = Duration::from_secs(2);
+/// No console window for `ssh` (`CREATE_NO_WINDOW`).
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// A push message from the daemon.
 #[derive(Debug, Clone, PartialEq)]
@@ -137,16 +146,42 @@ struct Pending {
 
 type Opened = io::Result<anyhow::Result<Connection>>;
 
+/// Where the daemon is reached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Endpoint {
+    Socket(String),
+    /// A program whose stdin/stdout carry the frames (`ssh … mk proxy`).
+    Program {
+        program: String,
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+    },
+}
+
+/// Why opening a program endpoint failed before `hello` was answered.
+#[derive(Debug, thiserror::Error)]
+pub enum OpenError {
+    /// The program could not be started.
+    #[error("cannot run {program}: {source}")]
+    Spawn { program: String, source: io::Error },
+    /// It ended (or closed its stdout) before answering `hello`; `stderr` = its last lines.
+    #[error("the connection ended before it was ready")]
+    Ended { stderr: String },
+    /// The daemon answered `hello` with `version_mismatch`.
+    #[error("{message}")]
+    Version { message: String },
+}
+
 impl Connection {
     /// Connects and performs `hello` (blocking). `Err` from the outer `io::Result` means the
     /// endpoint could not be reached (e.g. no daemon is listening); the inner error is a
-    /// failed handshake (e.g. version mismatch).
-    pub fn open(socket: &str) -> Opened {
-        let socket = socket.to_owned();
+    /// failed handshake (e.g. version mismatch, or an [`OpenError`] for a program).
+    pub fn open(endpoint: &Endpoint) -> Opened {
+        let endpoint = endpoint.clone();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name("mkrew-ipc".into())
-            .spawn(move || run(&socket, ready_tx))?;
+            .spawn(move || run(endpoint, ready_tx))?;
         ready_rx
             .recv()
             .map_err(|_| io::Error::other("the IPC thread stopped during connect"))?
@@ -203,9 +238,9 @@ fn into_result<T: DeserializeOwned>(outcome: Outcome) -> anyhow::Result<T> {
 }
 
 /// Body of the IPC thread: connect, greet, report to [`Connection::open`], then serve.
-fn run(socket: &str, ready: std::sync::mpsc::Sender<Opened>) {
+fn run(endpoint: Endpoint, ready: std::sync::mpsc::Sender<Opened>) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_io()
+        .enable_all()
         .build()
     {
         Ok(runtime) => runtime,
@@ -215,53 +250,143 @@ fn run(socket: &str, ready: std::sync::mpsc::Sender<Opened>) {
         }
     };
     runtime.block_on(async move {
-        let stream = match connect(socket).await {
-            Ok(stream) => stream,
-            Err(e) => {
-                let _ = ready.send(Err(e));
-                return;
+        match endpoint {
+            Endpoint::Socket(socket) => {
+                let stream = match connect(&socket).await {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        let _ = ready.send(Err(e));
+                        return;
+                    }
+                };
+                let (rx, tx) = stream.split();
+                serve(rx, tx, None, ready).await;
             }
-        };
-        let (mut rx, mut tx) = stream.split();
-        let mut decoder = FrameDecoder::new();
-        let hello = greet(&mut rx, &mut tx, &mut decoder).await;
-        let hello = match hello {
-            Ok(hello) => hello,
-            Err(e) => {
-                let _ = ready.send(Ok(Err(e)));
-                return;
+            Endpoint::Program { program, args, env } => {
+                let mut command = tokio::process::Command::new(&program);
+                command
+                    .args(&args)
+                    .envs(env)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true);
+                #[cfg(windows)]
+                command.creation_flags(CREATE_NO_WINDOW);
+                let mut child = match command.spawn() {
+                    Ok(child) => child,
+                    Err(source) => {
+                        let _ = ready.send(Ok(Err(OpenError::Spawn { program, source }.into())));
+                        return;
+                    }
+                };
+                // All three are `Some`: they were piped above.
+                let (Some(rx), Some(tx), Some(stderr)) =
+                    (child.stdout.take(), child.stdin.take(), child.stderr.take())
+                else {
+                    let _ = ready.send(Err(io::Error::other("the program has no pipes")));
+                    return;
+                };
+                let tail = StderrTail::spawn(stderr);
+                serve(rx, tx, Some((child, tail)), ready).await;
             }
-        };
-        let (requests, mut outbox) = mpsc::unbounded_channel();
-        let (incoming_tx, incoming) = inbox(INCOMING_FRAMES, INCOMING_BYTES);
-        let connection = Connection {
-            requests,
-            incoming,
-            next_id: AtomicU64::new(HELLO_ID + 1),
-            hello,
-        };
-        if ready.send(Ok(Ok(connection))).is_err() {
+        }
+    });
+}
+
+/// The last lines a program wrote to stderr. Drained continuously: a full pipe would block
+/// `ssh`.
+struct StderrTail {
+    lines: Arc<Mutex<VecDeque<String>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl StderrTail {
+    fn spawn(stderr: tokio::process::ChildStderr) -> Self {
+        let lines = Arc::new(Mutex::new(VecDeque::new()));
+        let kept = Arc::clone(&lines);
+        let task = tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
+                if kept.len() == STDERR_LINES {
+                    kept.pop_front();
+                }
+                kept.push_back(line.trim().to_owned());
+            }
+        });
+        Self { lines, task }
+    }
+
+    fn text(&self) -> String {
+        let lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner);
+        lines
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Greets, reports to [`Connection::open`], then serves until either end closes. A program
+/// lives in here, so dropping the `Connection` ends `write_loop` and kills it.
+async fn serve<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    mut rx: R,
+    mut tx: W,
+    mut program: Option<(tokio::process::Child, StderrTail)>,
+    ready: std::sync::mpsc::Sender<Opened>,
+) {
+    let mut decoder = FrameDecoder::new();
+    let hello = match greet(&mut rx, &mut tx, &mut decoder).await {
+        Ok(hello) => hello,
+        Err(mut error) => {
+            if let Some((child, tail)) = program.as_mut()
+                && !error.is::<OpenError>()
+            {
+                // Let it finish its last words (ssh's reason) before reporting.
+                let _ = tokio::time::timeout(PROGRAM_EXIT_WAIT, async {
+                    let _ = child.wait().await;
+                    let _ = (&mut tail.task).await;
+                })
+                .await;
+                error = OpenError::Ended {
+                    stderr: tail.text(),
+                }
+                .into();
+            }
+            let _ = ready.send(Ok(Err(error)));
             return;
         }
-        let pending = RefCell::new(HashMap::new());
-        // Each loop runs until its end closes; neither is cancelled and then resumed (racing
-        // single pipe reads in `select!` loses data on Windows). Whichever ends first ends the
-        // connection: the daemon went away, or the UI dropped the `Connection`.
-        tokio::select! {
-            _ = read_loop(rx, decoder, &pending, incoming_tx) => {}
-            _ = write_loop(tx, &mut outbox, &pending) => {}
-        }
-        // Dropping `pending` fails every request still waiting for a reply.
-    });
+    };
+    let (requests, mut outbox) = mpsc::unbounded_channel();
+    let (incoming_tx, incoming) = inbox(INCOMING_FRAMES, INCOMING_BYTES);
+    let connection = Connection {
+        requests,
+        incoming,
+        next_id: AtomicU64::new(HELLO_ID + 1),
+        hello,
+    };
+    if ready.send(Ok(Ok(connection))).is_err() {
+        return;
+    }
+    let pending = RefCell::new(HashMap::new());
+    // Each loop runs until its end closes; neither is cancelled and then resumed (racing
+    // single pipe reads in `select!` loses data on Windows). Whichever ends first ends the
+    // connection: the daemon went away, or the UI dropped the `Connection`.
+    tokio::select! {
+        _ = read_loop(rx, decoder, &pending, incoming_tx) => {}
+        _ = write_loop(tx, &mut outbox, &pending) => {}
+    }
+    // Dropping `pending` fails every request still waiting for a reply.
 }
 
 async fn connect(socket: &str) -> io::Result<Stream> {
     Stream::connect(mkrew_daemon::ipc::name(socket)?).await
 }
 
-async fn greet(
-    rx: &mut RecvHalf,
-    tx: &mut SendHalf,
+async fn greet<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    rx: &mut R,
+    tx: &mut W,
     decoder: &mut FrameDecoder,
 ) -> anyhow::Result<HelloResult> {
     let hello = Request::Hello(HelloParams {
@@ -282,6 +407,14 @@ async fn greet(
                     id: HELLO_ID,
                     outcome,
                 }) => {
+                    if let Outcome::Error(body) = &outcome
+                        && body.code == ErrorCode::VersionMismatch
+                    {
+                        return Err(OpenError::Version {
+                            message: body.message.clone(),
+                        }
+                        .into());
+                    }
                     return into_result(outcome);
                 }
                 _ => bail!("the daemon sent {frame:?} before greeting"),
@@ -295,8 +428,8 @@ async fn greet(
     }
 }
 
-async fn read_loop(
-    mut rx: RecvHalf,
+async fn read_loop<R: AsyncRead + Unpin>(
+    mut rx: R,
     mut decoder: FrameDecoder,
     pending: &RefCell<HashMap<u64, oneshot::Sender<Outcome>>>,
     incoming: Outbox,
@@ -328,8 +461,8 @@ async fn read_loop(
     }
 }
 
-async fn write_loop(
-    mut tx: SendHalf,
+async fn write_loop<W: AsyncWrite + Unpin>(
+    mut tx: W,
     outbox: &mut mpsc::UnboundedReceiver<Pending>,
     pending: &RefCell<HashMap<u64, oneshot::Sender<Outcome>>>,
 ) -> io::Result<()> {
