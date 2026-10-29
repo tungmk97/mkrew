@@ -43,3 +43,13 @@ Option 4, as in the design spec §2:
 - The notifications of a machine window come from that window.
 - A daemon started by `mk proxy` inherits the SSH session's environment, which may lack the agents' `PATH`; keep the home daemon started by the home login.
 - SPEC §3, §9, §15 and §19, README "Work on another computer" and HUMAN_CHECKS follow.
+- ssh runs with `-o ConnectTimeout=10`: without it an unreachable host would hold "Connecting…" for the OS TCP timeout (minutes).
+  A link that needs more than 10 s to connect fails and retries.
+- The keep-screen banner reads "Connection to <name> lost. Next try in N s." (N fixed per attempt), has **Try now** unless an attempt runs, and a second line with the status detail; one connection attempt runs at a time.
+  A version mismatch or unreachable host after a loss stays in the banner, so the kept screen and its unsaved text survive an update of the other computer.
+- Files tabs and Docs drafts with unsaved changes survive a reconnect (spec §8 wins over the plan's "clear at once").
+- A dialog confirm while disconnected toasts "Not connected to <name>. Reconnecting…"; other input is blocked by the banner state.
+- The machine chip and banner add no theme tokens; they reuse `well`, `warning-bg`, `divider`, the status colors and `TITLE_CHIP_MAX_WIDTH`.
+- Settings → Machines lists, opens, removes and adds machines; a broken `machines.toml` shows its error and is never written, and is re-read while the tab is open.
+  The tray shows `<name> - <short state>`.
+- Machine windows type paths for Add workspace, Clone into and Link plan, refuse local-only actions with a toast, and show notifications on this computer with a link that names the machine.
