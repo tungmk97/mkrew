@@ -29,6 +29,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Check the chip and the status screen in dark and light.
 - [ ] **Keep the screen while reconnecting:** with panes open, stop the daemon (this computer) or pull the network (machine window): the layout, sidebar and last frames stay, a banner reads "Connection to … lost. Next try in N s." (N is set per attempt, it does not tick) with the last reason under it and Try now (also after a version mismatch); typing and clicks do nothing; pressing Send/Save in an open dialog shows the toast "Not connected to …"; when the connection is back the same workspace shows and panes re-attach with their history; an open task dialog keeps its text and a Files tab with unsaved text is still there and saves.
   Check the banner in dark and light.
+- [ ] **Launcher and Machines page:** with two machines in Settings → Machines, starting Mkrew opens this computer's window and both machine windows; the page shows each state (Connected / Reconnecting… / Not reachable: … / Window closed); Add machine refuses a host starting with "-" or holding a space and an existing name, with the message under the field; Save opens the new window; Remove asks, closes that window and deletes the line; a broken machines.toml shows its error and line and the file is not rewritten; one tray icon only, listing the machines; tray Quit closes every window.
+  Check the page and the Add form in dark and light.
 
 ### To verify - 2026-10-28 Session tab behind `[features] session`
 

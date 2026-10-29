@@ -11,10 +11,16 @@ impl Shell {
     pub(crate) fn sync_attention(&mut self, cx: &mut Context<'_, Self>) {
         self.viewed
             .save(self.sidebar.sessions(), &self.paths.data_dir);
+        self.sync_tray(false, cx);
+    }
+
+    /// [`Self::sync_attention`] without saving; `force` updates the tray although the counts did
+    /// not move (a machine's state or the machine list did).
+    pub(crate) fn sync_tray(&mut self, force: bool, cx: &mut Context<'_, Self>) {
         let (projects, sessions) = (self.sidebar.projects(), self.sidebar.sessions());
         let counts = attention::counts(projects, sessions, &self.viewed);
         let change = self.attention.update(counts);
-        if !change.tray {
+        if !change.tray && !force {
             return;
         }
         let theme = cx.theme();
@@ -27,7 +33,13 @@ impl Shell {
             attention::Icon::NeedsYou => theme.status_needs_input,
             _ => theme.status_working,
         };
-        let menu = attention::menu(projects, sessions, &self.viewed, counts);
+        let menu = attention::menu(
+            projects,
+            sessions,
+            &self.viewed,
+            counts,
+            self.tray_machines(),
+        );
         self.desktop.set_tray(counts.icon(), color, menu);
         if counts.needs_you == 0 {
             self.desktop.flash(false);
@@ -61,6 +73,7 @@ impl Shell {
                 self.restore_window(window, cx);
                 self.open_session(session, window, cx);
             }
+            TrayEvent::Machine(index) => self.open_machine_at(usize::from(index)),
             TrayEvent::Notification { session, project } => {
                 self.notification_clicked(session, project, window, cx);
             }
@@ -78,6 +91,9 @@ impl Shell {
             self.restore_window(window, cx);
             return;
         }
+        // The machine windows end with this one (closing the window without a tray does the
+        // same when the launcher is dropped).
+        self.close_machines();
         self.desktop.remove_tray();
         cx.quit();
     }

@@ -99,6 +99,9 @@ pub struct TrayMenu {
     pub working: usize,
     /// Newest first, at most [`TRAY_SESSIONS`].
     pub items: Vec<Item>,
+    /// One line per machine of `machines.toml`: its name and state label (this computer's
+    /// window only, Windows tray).
+    pub machines: Vec<(String, String)>,
 }
 
 impl TrayMenu {
@@ -118,6 +121,7 @@ pub fn menu(
     sessions: &[Session],
     viewed: &Viewed,
     counts: Counts,
+    machines: Vec<(String, String)>,
 ) -> TrayMenu {
     let items = inbox::entries(projects, sessions, viewed)
         .into_iter()
@@ -134,6 +138,7 @@ pub fn menu(
         needs_you: counts.needs_you,
         working: counts.working,
         items,
+        machines,
     }
 }
 
@@ -364,7 +369,9 @@ mod tests {
         let viewed = Viewed::default();
         let projects = [api];
         let counts = counts(&projects, &sessions, &viewed);
-        let menu = menu(&projects, &sessions, &viewed, counts);
+        let machines = vec![("Home PC".to_owned(), "Connected".to_owned())];
+        let menu = menu(&projects, &sessions, &viewed, counts, machines.clone());
+        assert_eq!(menu.machines, machines);
         assert_eq!(menu.needs_you, 12);
         assert_eq!(menu.items.len(), TRAY_SESSIONS);
         assert_eq!(menu.items[0].since, 12, "newest first");
@@ -394,6 +401,7 @@ mod tests {
             needs_you,
             working,
             items: Vec::new(),
+            machines: Vec::new(),
         };
         assert_eq!(menu(2, 1).tip(), "Mkrew · 2 need you · 1 working");
         assert_eq!(menu(0, 0).tip(), "Mkrew · Inbox clear · 0 working");

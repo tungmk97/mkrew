@@ -121,6 +121,8 @@ const ICON_ID: u32 = 1;
 const CMD_OPEN: i32 = 1;
 const CMD_QUIT: i32 = 2;
 const CMD_SESSION: i32 = 100;
+/// First command id of the machine items (one per machine, `CMD_MACHINE + index`).
+const CMD_MACHINE: i32 = 200;
 
 /// What the UI thread shares with the tray thread.
 struct Shared {
@@ -347,6 +349,13 @@ impl State {
             let working = HSTRING::from(format!("● {} working", menu.working));
             let _ = AppendMenuW(popup, MF_STRING | MF_GRAYED, 0, &working);
             let _ = AppendMenuW(popup, MF_SEPARATOR, 0, PCWSTR::null());
+            for (index, (name, state)) in menu.machines.iter().enumerate().take(256) {
+                let text = HSTRING::from(escape_menu(&format!("{name} - {state}")));
+                let _ = AppendMenuW(popup, MF_STRING, CMD_MACHINE as usize + index, &text);
+            }
+            if !menu.machines.is_empty() {
+                let _ = AppendMenuW(popup, MF_SEPARATOR, 0, PCWSTR::null());
+            }
             let _ = AppendMenuW(popup, MF_STRING, CMD_OPEN as usize, w!("Open Mkrew"));
             let _ = AppendMenuW(
                 popup,
@@ -376,6 +385,13 @@ impl State {
             0 => {}
             CMD_OPEN => self.send(TrayEvent::Open),
             CMD_QUIT => self.send(TrayEvent::Quit),
+            id if id >= CMD_MACHINE => {
+                if let Ok(index) = u8::try_from(id - CMD_MACHINE)
+                    && usize::from(index) < menu.machines.len()
+                {
+                    self.send(TrayEvent::Machine(index));
+                }
+            }
             id if id >= CMD_SESSION => {
                 let index = usize::try_from(id - CMD_SESSION).unwrap_or(usize::MAX);
                 if let Some(item) = menu.items.get(index) {
@@ -537,6 +553,13 @@ pub fn raise(key: &str, jump: Option<(Ulid, Ulid)>) -> bool {
         tracing::warn!("the running Mkrew did not take the session; showing its window only");
         open()
     }
+}
+
+/// Whether a tray window of this `key` exists: a Mkrew of the same exe and instance runs.
+pub fn running(key: &str) -> bool {
+    let class = class_name(key);
+    // SAFETY: `class` is NUL-terminated and outlives `FindWindowW`.
+    unsafe { FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()) }.is_ok()
 }
 
 /// The main window's Windows-only extras.

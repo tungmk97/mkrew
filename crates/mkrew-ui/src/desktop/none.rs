@@ -40,3 +40,7 @@ impl Os {
 pub fn raise(_key: &str, _jump: Option<(Ulid, Ulid)>) -> bool {
     false
 }
+
+pub fn running(_key: &str) -> bool {
+    false
+}

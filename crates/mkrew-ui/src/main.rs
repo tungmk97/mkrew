@@ -82,6 +82,7 @@ use mkrew_ui::keymap::{
     FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Run,
 };
 use mkrew_ui::launch::Launch;
+use mkrew_ui::launcher::Launcher;
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
 use mkrew_ui::machines::{Machine, MachineState, Machines};
 use mkrew_ui::menu::{self as menu_model, Dot, Lead, MenuItem, MenuKey, MenuRow, Tone};
@@ -460,6 +461,15 @@ struct Shell {
     /// The last state a machine window reported (stdout, title bar chip); `None` before the
     /// first.
     machine_state: Option<MachineState>,
+    /// This computer's window: `machines.toml` as read at start and after each change here. An
+    /// `Err` (the text, with file and line) is shown on the Machines page and the file is never
+    /// written while it holds. Empty in a machine window.
+    machines: Result<Machines, String>,
+    /// This computer's window: starts and ends the machine windows (spec §4.5), and the state
+    /// lines they write, read on the status tick.
+    launcher: Option<(Launcher, async_channel::Receiver<(String, MachineState)>)>,
+    /// What each machine window this launcher started last reported.
+    machine_states: HashMap<String, MachineState>,
     /// Bumped by every connect attempt; a pending auto-retry timer from an older one is dropped.
     connect_gen: u64,
     /// Failed or lost connects since the last good one (0 = none), indexing the backoff.

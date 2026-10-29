@@ -429,11 +429,7 @@ impl Shell {
     fn machine_chip(&self, theme: &Theme) -> Option<gpui::Stateful<gpui::Div>> {
         let name = self.machine_name()?;
         let state = self.machine_state.as_ref();
-        let dot = match state {
-            Some(MachineState::Connected) => theme.status_done,
-            Some(MachineState::Unreachable(_) | MachineState::Version(_)) => theme.status_exited,
-            _ => theme.status_needs_input,
-        };
+        let dot = super::machines::state_color(theme, state);
         let label = state.map_or_else(|| MachineState::Connecting.label(), MachineState::label);
         Some(
             div()

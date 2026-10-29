@@ -42,6 +42,7 @@ mod dialogs;
 mod focus;
 mod history;
 mod jira;
+mod machines;
 mod navigation;
 mod peek;
 mod phone_access;

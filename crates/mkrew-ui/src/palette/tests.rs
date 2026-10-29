@@ -59,6 +59,29 @@ fn phone_access_and_updates_are_not_offered_in_a_machine_window() {
 }
 
 #[test]
+fn machines_are_added_and_opened_from_this_computers_window_only() {
+    let machine = Context {
+        machine: true,
+        ..context(View::Terminals)
+    };
+    assert!(Extra::AddMachine.available(&context(View::Terminals)));
+    assert!(!Extra::AddMachine.available(&machine));
+    let names = ["Home PC".to_owned(), "Work".to_owned()];
+    let listed = machine_entries(&context(View::Terminals), &names);
+    assert_eq!(
+        listed
+            .iter()
+            .map(|entry| (entry.action, entry.title.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (Action::OpenMachine(0), "Machine: Open Home PC"),
+            (Action::OpenMachine(1), "Machine: Open Work"),
+        ]
+    );
+    assert!(machine_entries(&machine, &names).is_empty());
+}
+
+#[test]
 fn features_off_hide_docs_and_turns() {
     let off = Context {
         agent_pane: true,
@@ -80,7 +103,8 @@ fn commands(context: &Context) -> Vec<Command> {
             | Action::GoTo(_)
             | Action::Theme(_)
             | Action::NewAgentPane(_)
-            | Action::RunCommand(..) => None,
+            | Action::RunCommand(..)
+            | Action::OpenMachine(_) => None,
         })
         .collect()
 }
@@ -436,10 +460,11 @@ fn workspace_extras_need_an_active_workspace() {
 
 fn extras(context: &Context) -> Vec<Extra> {
     // Listed by the "workspace extras" test and the single-action test below.
-    const SEPARATE: [Extra; 8] = [
+    const SEPARATE: [Extra; 9] = [
         Extra::RunSetup,
         Extra::PhoneAccess,
         Extra::CheckUpdates,
+        Extra::AddMachine,
         Extra::WorkspacePin,
         Extra::WorkspaceExplorer,
         Extra::WorkspaceDefaultAgent,
@@ -688,6 +713,7 @@ fn palette_only_actions_follow_the_view_and_state() {
             Action::Theme(_) => 3,
             Action::NewAgentPane(_) => 4,
             Action::RunCommand(..) => 5,
+            Action::OpenMachine(_) => 6,
         })
         .collect();
     assert!(kinds.is_sorted(), "{kinds:?}");

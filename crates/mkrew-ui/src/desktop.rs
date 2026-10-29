@@ -27,6 +27,8 @@ pub enum TrayEvent {
     /// Show the window on this session's pane, else its workspace: a toast's `mkrew://` link
     /// (ADR 0079).
     Notification { session: Ulid, project: Ulid },
+    /// Open or raise the window of the machine at this place of the tray menu's machine list.
+    Machine(u8),
     /// Quit the UI (the daemon and the agents keep running).
     Quit,
     /// Explorer restarted and made the taskbar buttons again: set the badge again.
@@ -63,6 +65,12 @@ pub fn raise_running_instance(id: &str, jump: Option<(Ulid, Ulid)>) -> bool {
         tracing::info!("Mkrew is already running as {id}: asked it to show its window, exiting");
     }
     raised
+}
+
+/// Whether a Mkrew of the same exe runs instance `id` (Windows; `false` elsewhere): the check of
+/// [`raise_running_instance`] without asking that window for anything.
+pub fn instance_running(id: &str) -> bool {
+    os::running(&current_key(id))
 }
 
 /// A menu line with `&` doubled: Win32 menus read a lone `&` as an accelerator mark.

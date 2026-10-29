@@ -178,6 +178,9 @@ impl Shell {
             return;
         }
         self.updating = true;
+        // The installer replaces the exe the machine windows run: they end first (they start
+        // again if the update fails).
+        self.close_machines();
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
@@ -194,6 +197,7 @@ impl Shell {
 
     fn update_failed(&mut self, error: &anyhow::Error, cx: &mut Context<'_, Self>) {
         self.updating = false;
+        self.start_machines();
         self.toast_error(format!("Update failed: {error:#}"), cx);
     }
 }

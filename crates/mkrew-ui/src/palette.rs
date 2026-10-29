@@ -135,10 +135,11 @@ pub enum Extra {
     DismissToasts,
     History,
     InstallUpdate,
+    AddMachine,
 }
 
 impl Extra {
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 41] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -179,6 +180,7 @@ impl Extra {
         Self::DismissToasts,
         Self::History,
         Self::InstallUpdate,
+        Self::AddMachine,
     ];
 
     pub fn title(self) -> &'static str {
@@ -223,6 +225,7 @@ impl Extra {
             Self::DismissToasts => "Global: Dismiss notifications",
             Self::History => "Global: History…",
             Self::InstallUpdate => "Global: Install update",
+            Self::AddMachine => "Machine: Add…",
         }
     }
 
@@ -269,7 +272,7 @@ impl Extra {
                 in_view(View::Terminals) && context.agent_pane && context.plan_linked
             }
             Self::AgentImprove => in_view(View::Terminals) && context.composer_open,
-            Self::PhoneAccess | Self::CheckUpdates => !context.machine,
+            Self::PhoneAccess | Self::CheckUpdates | Self::AddMachine => !context.machine,
             Self::GitChangeBase => context.workspace && context.git && context.git_base,
             Self::GitSwitchRepo => context.workspace && context.git && context.git_repos,
             Self::JiraMine | Self::JiraLayout | Self::JiraRefresh => {
@@ -305,6 +308,9 @@ pub enum Action {
     /// Run: Start / Restart / Stop `<command>`: the `usize`-th command of the active workspace's
     /// Run summary (like `NewAgentPane`).
     RunCommand(crate::run::RunAction, usize),
+    /// "Machine: Open <name>": the `usize`-th machine of the shell's list (see
+    /// [`machine_entries`]).
+    OpenMachine(usize),
 }
 
 /// One palette line.
@@ -639,6 +645,22 @@ pub fn run_entries(summary: &crate::run::Summary) -> Vec<Entry> {
         }
     }
     entries
+}
+
+/// "Machine: Open <name>", one entry per machine of `machines.toml` (this computer's window only).
+pub fn machine_entries(context: &Context, names: &[String]) -> Vec<Entry> {
+    if context.machine {
+        return Vec::new();
+    }
+    names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| Entry {
+            action: Action::OpenMachine(index),
+            title: format!("Machine: Open {name}"),
+            shortcut: String::new(),
+        })
+        .collect()
 }
 
 /// The palette's entries: "Go to" every session that needs input first, then the available

@@ -24,7 +24,7 @@ pub struct Machines {
     pub list: Vec<Machine>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     Name,
     Host,

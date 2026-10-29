@@ -102,6 +102,7 @@ impl Shell {
                         cx.notify();
                     }
                     shell.sync_thread(cx);
+                    shell.poll_machines(cx);
                     let sessions = shell.sidebar.sessions();
                     let board_due = shell.workspace.is_some_and(|project_id| {
                         shell.view() == View::Board
@@ -189,6 +190,21 @@ impl Shell {
         let (painted, painted_rx) = async_channel::bounded(1);
         // What the user saw before this start (A2): a corrupt or missing file is empty.
         let viewed = Viewed::load(&paths.data_dir);
+        // This computer's window is the launcher of the machine windows (spec §4.5); the list
+        // is read here, once, and again before each change made on the Machines page.
+        let machines = if local {
+            Machines::load(&config_dir)
+        } else {
+            Ok(Machines::default())
+        };
+        let launcher = local
+            .then(|| {
+                std::env::current_exe()
+                    .inspect_err(|error| tracing::warn!("cannot start machine windows: {error}"))
+                    .ok()
+            })
+            .flatten()
+            .map(Launcher::new);
         let mut shell = Self {
             status: match &target {
                 Target::Missing(text) => Status::NoMachine(text.clone()),
@@ -216,6 +232,9 @@ impl Shell {
             paths,
             target,
             machine_state: None,
+            machines,
+            launcher,
+            machine_states: HashMap::new(),
             connect_gen: 0,
             reconnect_attempts: 0,
             reconnect_in: None,
@@ -395,6 +414,7 @@ impl Shell {
             // Not `connect`: the status starts as Connecting and that one refuses then.
             shell.start_connect(window, cx);
         }
+        shell.start_machines();
         shell
     }
 

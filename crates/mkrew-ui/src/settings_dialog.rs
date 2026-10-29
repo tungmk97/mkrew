@@ -10,6 +10,7 @@ use mkrew_core::settings_fields::{Kind, Page, SETTINGS, Setting};
 
 use crate::editor::Motion;
 use crate::keymap::{Command, Keymap, KeymapError, keys_label};
+use crate::machines::{Field, Invalid, Machine};
 use crate::palette;
 use crate::task_dialog::{DialogKey, dialog_key};
 use crate::text_box::Input;
@@ -18,12 +19,14 @@ use crate::text_box::Input;
 pub enum Tab {
     Settings(Page),
     Keyboard,
+    Machines,
 }
 
 impl Tab {
     pub fn all() -> Vec<Tab> {
         let mut all: Vec<Tab> = Page::ALL.into_iter().map(Tab::Settings).collect();
         all.push(Tab::Keyboard);
+        all.push(Tab::Machines);
         all
     }
 
@@ -31,6 +34,7 @@ impl Tab {
         match self {
             Tab::Settings(page) => page.title(),
             Tab::Keyboard => "Keyboard",
+            Tab::Machines => "Machines",
         }
     }
 }
@@ -87,6 +91,8 @@ pub enum Focus {
     /// The Keyboard page's search box.
     Search,
     Row(usize),
+    /// A field of the Machines page's Add form.
+    Add(Field),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,6 +116,45 @@ pub enum Effect {
         command: Command,
         keys: Option<String>,
     },
+    /// Save in the Add form: the shell adds it to the machine list and answers with
+    /// [`SettingsDialog::close_add`] or [`SettingsDialog::add_refused`].
+    AddMachine(Machine),
+}
+
+/// The Machines page's "Add machine…" fields (spec §6.2).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AddForm {
+    pub name: Input,
+    pub host: Input,
+    pub mk: Input,
+    /// Why the last Save was refused, shown under that field.
+    pub invalid: Option<Invalid>,
+}
+
+impl AddForm {
+    pub fn input(&self, field: Field) -> &Input {
+        match field {
+            Field::Name => &self.name,
+            Field::Host => &self.host,
+            Field::Mk => &self.mk,
+        }
+    }
+
+    pub fn input_mut(&mut self, field: Field) -> &mut Input {
+        match field {
+            Field::Name => &mut self.name,
+            Field::Host => &mut self.host,
+            Field::Mk => &mut self.mk,
+        }
+    }
+
+    fn machine(&self) -> Machine {
+        Machine {
+            name: self.name.to_string(),
+            host: self.host.to_string(),
+            mk: Some(self.mk.to_string()).filter(|mk| !mk.trim().is_empty()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -128,6 +173,8 @@ pub struct SettingsDialog {
     /// The command waiting for its new keystroke.
     pub capture: Option<Command>,
     pub list_pick: Option<ListPick>,
+    /// The open Add form of the Machines page.
+    pub add: Option<AddForm>,
 }
 
 impl SettingsDialog {
@@ -142,6 +189,7 @@ impl SettingsDialog {
             search: Input::default(),
             capture: None,
             list_pick: None,
+            add: None,
         }
     }
 
@@ -156,6 +204,7 @@ impl SettingsDialog {
                 .filter(|s| s.page == page && !s.hidden)
                 .map(Row::Setting)
                 .collect(),
+            Tab::Machines => Vec::new(),
             Tab::Keyboard => {
                 let query = self.search.trim().to_lowercase();
                 Command::all()
@@ -224,12 +273,16 @@ impl SettingsDialog {
         self.tab = tab;
         self.focus = Focus::Tabs;
         self.capture = None;
+        self.add = None;
         self.list_pick = None;
         effect
     }
 
     /// Enter / Space / a click on the focused row.
     fn activate(&mut self, keymap: &Keymap) -> Effect {
+        if let Focus::Add(_) = self.focus {
+            return self.submit_add();
+        }
         let Focus::Row(i) = self.focus else {
             return Effect::None;
         };
@@ -333,6 +386,9 @@ impl SettingsDialog {
         if self.tab == Tab::Keyboard {
             order.push(Focus::Search);
         }
+        if self.add.is_some() {
+            order.extend([Field::Name, Field::Host, Field::Mk].map(Focus::Add));
+        }
         order.extend((0..self.rows(keymap).len()).map(Focus::Row));
         let at = order.iter().position(|f| *f == self.focus).unwrap_or(0);
         let next = if back {
@@ -357,7 +413,8 @@ impl SettingsDialog {
         match self.focus {
             Focus::Row(i) => i + 1 >= rows,
             Focus::Search => rows == 0,
-            Focus::Tabs => self.tab != Tab::Keyboard && rows == 0,
+            Focus::Add(field) => field == Field::Mk,
+            Focus::Tabs => self.tab != Tab::Keyboard && rows == 0 && self.add.is_none(),
         }
     }
 
@@ -371,6 +428,7 @@ impl SettingsDialog {
     pub fn enter(&mut self, forward: bool, keymap: &Keymap) {
         let last = match self.rows(keymap).len() {
             0 if self.tab == Tab::Keyboard => Focus::Search,
+            0 if self.add.is_some() => Focus::Add(Field::Mk),
             0 => Focus::Tabs,
             count => Focus::Row(count - 1),
         };
@@ -444,6 +502,10 @@ impl SettingsDialog {
                     self.draft = Some((setting, Input::from(self.current(setting))));
                     return Effect::None;
                 }
+                if self.add.is_some() {
+                    self.close_add();
+                    return Effect::None;
+                }
                 if self.focus == Focus::Search && !self.search.is_empty() {
                     self.search = Input::default();
                     return Effect::None;
@@ -476,12 +538,14 @@ impl SettingsDialog {
                         };
                         self.move_focus(Focus::Row(next), keymap)
                     }
-                    Focus::Search => Effect::None,
+                    Focus::Search | Focus::Add(_) => Effect::None,
                 }
             }
             DialogKey::Enter | DialogKey::Save => self.activate(keymap),
             DialogKey::Insert(text)
-                if text == " " && self.draft.is_none() && self.focus != Focus::Search =>
+                if text == " "
+                    && self.draft.is_none()
+                    && !matches!(self.focus, Focus::Search | Focus::Add(_)) =>
             {
                 self.activate(keymap)
             }
@@ -512,6 +576,12 @@ impl SettingsDialog {
     fn edit_text(&mut self, edit: impl FnOnce(&mut Input)) {
         if self.focus == Focus::Search {
             edit(&mut self.search);
+        } else if let Focus::Add(field) = self.focus
+            && let Some(form) = &mut self.add
+        {
+            // What was refused is being fixed.
+            form.invalid = None;
+            edit(form.input_mut(field));
         } else if let Some((_, input)) = &mut self.draft {
             edit(input);
         }
@@ -526,9 +596,40 @@ impl SettingsDialog {
             Some(&pick.query)
         } else if self.focus == Focus::Search {
             Some(&self.search)
+        } else if let Focus::Add(field) = self.focus {
+            self.add.as_ref().map(|form| form.input(field))
         } else {
             self.draft.as_ref().map(|(_, input)| input)
         }
+    }
+
+    /// "Add machine…": the empty form on the Machines page, the keyboard on its first field.
+    pub fn open_add(&mut self) {
+        self.tab = Tab::Machines;
+        self.capture = None;
+        self.list_pick = None;
+        self.add = Some(AddForm::default());
+        self.focus = Focus::Add(Field::Name);
+    }
+
+    /// `Machines::add` refused the machine: its message shows under the field, which takes the
+    /// keyboard.
+    pub fn add_refused(&mut self, invalid: Invalid) {
+        self.focus = Focus::Add(invalid.field);
+        if let Some(form) = &mut self.add {
+            form.invalid = Some(invalid);
+        }
+    }
+
+    /// Save in the form (its button, or Enter in a field).
+    pub fn submit_add(&self) -> Effect {
+        (self.add.as_ref()).map_or(Effect::None, |form| Effect::AddMachine(form.machine()))
+    }
+
+    /// The machine was saved, or Cancel: the form closes.
+    pub fn close_add(&mut self) {
+        self.add = None;
+        self.focus = Focus::Tabs;
     }
 
     /// The file changed (a write, a hand edit): new values; the open draft stays.
@@ -878,5 +979,101 @@ mod tests {
         d.click(Focus::Row(0), &keymap);
         assert!(d.capture.is_some());
         assert!(!d.chain_edge(false, &keymap) && !d.chain_edge(true, &keymap));
+    }
+
+    fn type_text(d: &mut SettingsDialog, text: &str, keymap: &Keymap) {
+        for ch in text.chars() {
+            d.key(&typed(&ch.to_string()), None, keymap);
+        }
+    }
+
+    #[test]
+    fn the_machines_page_has_no_rows_and_its_add_form_takes_typing_including_spaces() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Machines);
+        assert!(d.rows(&keymap).is_empty());
+        d.open_add();
+        assert_eq!(d.focus, Focus::Add(Field::Name));
+        type_text(&mut d, "Home PC", &keymap);
+        d.key(&key("tab"), None, &keymap);
+        assert_eq!(d.focus, Focus::Add(Field::Host));
+        type_text(&mut d, "me@home", &keymap);
+        // Enter in a field saves; the path is optional.
+        assert_eq!(
+            d.key(&key("enter"), None, &keymap),
+            Effect::AddMachine(Machine {
+                name: "Home PC".into(),
+                host: "me@home".into(),
+                mk: None,
+            })
+        );
+        d.key(&key("tab"), None, &keymap);
+        type_text(&mut d, "~/bin/mk", &keymap);
+        let Effect::AddMachine(machine) = d.key(&key("enter"), None, &keymap) else {
+            panic!("Enter saves");
+        };
+        assert_eq!(machine.mk.as_deref(), Some("~/bin/mk"));
+    }
+
+    #[test]
+    fn a_refused_machine_keeps_the_form_with_its_message_and_clears_it_when_edited() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.open_add();
+        d.add_refused(Invalid {
+            field: Field::Host,
+            message: "A host has no spaces.".into(),
+        });
+        assert_eq!(d.focus, Focus::Add(Field::Host));
+        assert_eq!(
+            d.add.as_ref().and_then(|form| form.invalid.as_ref()),
+            Some(&Invalid {
+                field: Field::Host,
+                message: "A host has no spaces.".into()
+            })
+        );
+        type_text(&mut d, "x", &keymap);
+        assert_eq!(d.add.as_ref().unwrap().invalid, None);
+        d.close_add();
+        assert!(d.add.is_none());
+        assert_eq!(d.focus, Focus::Tabs);
+    }
+
+    #[test]
+    fn esc_closes_the_add_form_before_the_dialog_and_a_tab_change_drops_it() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.open_add();
+        assert_eq!(d.key(&key("escape"), None, &keymap), Effect::None);
+        assert!(d.add.is_none());
+        assert_eq!(d.key(&key("escape"), None, &keymap), Effect::Close);
+        d.open_add();
+        d.set_tab(Tab::Keyboard);
+        assert!(d.add.is_none());
+    }
+
+    #[test]
+    fn tab_walks_the_add_fields_and_leaves_after_the_last() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Machines);
+        assert!(
+            d.chain_edge(false, &keymap),
+            "no rows and no form: Tab leaves at once"
+        );
+        d.open_add();
+        assert!(!d.chain_edge(false, &keymap));
+        d.key(&key("tab"), None, &keymap);
+        d.key(&key("tab"), None, &keymap);
+        assert_eq!(d.focus, Focus::Add(Field::Mk));
+        assert!(
+            d.chain_edge(false, &keymap),
+            "Tab from the last field leaves"
+        );
+        d.enter(false, &keymap);
+        assert_eq!(d.focus, Focus::Add(Field::Mk), "Shift+Tab from the buttons");
+        d.enter(true, &keymap);
+        assert_eq!(d.focus, Focus::Tabs);
     }
 }

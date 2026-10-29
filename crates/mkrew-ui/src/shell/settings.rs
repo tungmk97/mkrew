@@ -140,11 +140,12 @@ impl Shell {
                     dialog.bound(command, reply);
                 }
             }
+            Effect::AddMachine(machine) => self.add_machine(machine, cx),
         }
         cx.notify();
     }
 
-    fn settings_do(
+    pub(crate) fn settings_do(
         &mut self,
         act: impl FnOnce(&mut SettingsDialog, &Keymap) -> Effect,
         window: &mut Window,
@@ -241,6 +242,12 @@ impl Shell {
             .gap(px(space::XS))
             .p(px(space::M))
             .children(banner)
+            .children(
+                (dialog.tab == Tab::Machines)
+                    .then(|| self.render_machines_page(dialog, typing, theme, cx))
+                    .into_iter()
+                    .flatten(),
+            )
             .children(search)
             .children(
                 rows.iter()
