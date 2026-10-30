@@ -34,9 +34,9 @@ image = { version = "0.25", default-features = false, features = ["png", "bmp"] 
 interprocess = { version = "2.4.4", features = ["tokio"] }
 # Mermaid diagrams of the Docs preview (ADR 0021): pure Rust, SVG only (no CLI, no PNG).
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }
-mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
-mkrew-daemon = { version = "0.1.0", path = "../mkrew-daemon" }
-mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
+mkrew-core = { version = "0.2.0", path = "../mkrew-core" }
+mkrew-daemon = { version = "0.2.0", path = "../mkrew-daemon" }
+mkrew-protocol = { version = "0.2.0", path = "../mkrew-protocol" }
 # Docs preview render model (SPEC §12); no html renderer / CLI needed.
 pulldown-cmark = { version = "0.13.4", default-features = false }
 # QR code of the phone link (spec 2026-10-12-phone-access-ui-design.md): pure Rust, no

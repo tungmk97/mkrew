@@ -28,9 +28,9 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 getrandom = "0.3"
 # `tokio`: `mk web` relays each browser to its own async daemon connection (ADR 0052).
 interprocess = { version = "2.4.4", features = ["tokio"] }
-mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
-mkrew-daemon = { version = "0.1.0", path = "../mkrew-daemon" }
-mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
+mkrew-core = { version = "0.2.0", path = "../mkrew-core" }
+mkrew-daemon = { version = "0.2.0", path = "../mkrew-daemon" }
+mkrew-protocol = { version = "0.2.0", path = "../mkrew-protocol" }
 # `mk web` push (ADR 0067): P-256 ECDH + ECDSA, HKDF, AES-GCM; already in the tree through rustls.
 ring = "0.17"
 # `derive`: the push subscription file (ADR 0067); mkrew-core already turns it on workspace-wide.

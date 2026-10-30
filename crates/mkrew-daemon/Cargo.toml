@@ -18,9 +18,9 @@ dunce = "1.0.5"
 # `.gitignore` matching for the project file watcher (SPEC §4).
 ignore = "0.4.33"
 interprocess = { version = "2.4.4", features = ["tokio"] }
-mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
-mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
-mkrew-store = { version = "0.1.0", path = "../mkrew-store" }
+mkrew-core = { version = "0.2.0", path = "../mkrew-core" }
+mkrew-protocol = { version = "0.2.0", path = "../mkrew-protocol" }
+mkrew-store = { version = "0.2.0", path = "../mkrew-store" }
 # Project file watcher (SPEC §4, §8); the crate's own `notify` module means `::notify` in code.
 notify = "8.2.0"
 # Quick open ranking for `fs.find` (SPEC §12A).
