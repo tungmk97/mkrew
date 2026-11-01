@@ -199,6 +199,8 @@ struct ProjectWatch {
 /// The channels of one live session.
 struct Live {
     project_id: Ulid,
+    /// The PTY child's pid (the shell or agent itself), for `port.list`'s parent walk.
+    pid: Option<u32>,
     commands: mpsc::Sender<Command>,
     /// To the PTY writer thread; chunks of at most [`INPUT_CHUNK_BYTES`]. Held locked while
     /// one request is sent so two clients' input never interleaves.
@@ -363,6 +365,14 @@ impl Hub {
         lock(&self.live).len()
     }
 
+    /// `(session id, root pid)` of every live session whose PTY reported a pid (`port.list`).
+    pub fn live_pids(&self) -> Vec<(Ulid, u32)> {
+        lock(&self.live)
+            .iter()
+            .filter_map(|(id, live)| Some((*id, live.pid?)))
+            .collect()
+    }
+
     /// Starts the PTY and its session task. Must run inside the tokio runtime.
     /// The project is watched before the child starts, so files it writes at once are seen
     /// (a recursive inotify watch takes a while on a big tree); a failed spawn drops the watch
@@ -520,6 +530,7 @@ impl Hub {
                 project_id: session.project_id,
                 commands: commands_tx.clone(),
                 input: Arc::clone(&shared_input),
+                pid,
             };
             live.insert(session.id, channels);
             // Before the session task runs, so its own task updates come after this one.
@@ -1852,6 +1863,7 @@ mod tests {
                 project_id,
                 commands,
                 input: Arc::new(tokio::sync::Mutex::new(input)),
+                pid: None,
             },
         );
         id

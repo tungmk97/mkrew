@@ -1,9 +1,10 @@
-//! `mkrew-fakeagent [--scenario <file|name>] [--resume <id>] [<prompt>]` — runs a scenario
-//! (SPEC §16).
+//! `mkrew-fakeagent [--scenario <file|name>] [--resume <id>] [--listen] [<prompt>]` — runs a
+//! scenario (SPEC §16).
 //!
 //! The scenario comes from `--scenario`, else `MKREW_FAKE_SCENARIO`, else the built-in `ask`.
 //! `--resume <id>` (a profile's `resume` command) is printed first as `Resumed: <id>`, then a
 //! `<prompt>` (a task prompt passed with `prompt_mode = "arg"`) as `Task: <prompt>`.
+//! `--listen` binds `127.0.0.1:0`, prints `Listening on http://127.0.0.1:<port>/` and waits until killed (a dev server for the port tests).
 
 use std::io::{self, BufWriter, Write};
 use std::process;
@@ -11,7 +12,8 @@ use std::process;
 use anyhow::{Result, bail};
 use mkrew_fakeagent::{DEFAULT_SCENARIO, SCENARIO_ENV, load, run};
 
-const USAGE: &str = "usage: mkrew-fakeagent [--scenario <file|name>] [--resume <id>] [<prompt>]";
+const USAGE: &str =
+    "usage: mkrew-fakeagent [--scenario <file|name>] [--resume <id>] [--listen] [<prompt>]";
 
 fn main() {
     // VT processing for colors when attached to a Windows console; no-op elsewhere.
@@ -27,6 +29,9 @@ fn main() {
 
 fn real_main() -> Result<i32> {
     let args = parse_args(std::env::args().skip(1))?;
+    if args.listen {
+        return listen();
+    }
     let spec = match args.scenario {
         Some(spec) => spec,
         None => std::env::var(SCENARIO_ENV).unwrap_or_else(|_| DEFAULT_SCENARIO.to_owned()),
@@ -42,11 +47,28 @@ fn real_main() -> Result<i32> {
     Ok(run(&scenario, &mut io::stdin().lock(), &mut out)?)
 }
 
+/// `--listen`: a stand-in dev server for the daemon's port tests; never returns.
+fn listen() -> Result<i32> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let mut out = io::stdout().lock();
+    writeln!(
+        out,
+        "Listening on http://127.0.0.1:{}/",
+        listener.local_addr()?.port()
+    )?;
+    out.flush()?;
+    loop {
+        // Connections are dropped at once: only the open port matters.
+        let _ = listener.accept();
+    }
+}
+
 #[derive(Debug, Default, PartialEq)]
 struct Args {
     scenario: Option<String>,
     resume: Option<String>,
     prompt: Option<String>,
+    listen: bool,
 }
 
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args> {
@@ -64,6 +86,8 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args> {
                 Some(value) => parsed.resume = Some(value),
                 None => bail!("--resume needs a value\n{USAGE}"),
             }
+        } else if arg == "--listen" {
+            parsed.listen = true;
         } else if arg.starts_with("--") || parsed.prompt.is_some() {
             bail!("unexpected argument `{arg}`\n{USAGE}");
         } else {
@@ -117,5 +141,11 @@ mod tests {
         assert_eq!(parsed.resume.as_deref(), Some("native-1"));
         assert_eq!(parsed.prompt.as_deref(), Some("go"));
         assert!(parse_args(args(&["--resume"])).is_err());
+    }
+
+    #[test]
+    fn listen_is_a_flag() {
+        assert!(parse_args(args(&["--listen"])).unwrap().listen);
+        assert!(!parse_args(args(&[])).unwrap().listen);
     }
 }

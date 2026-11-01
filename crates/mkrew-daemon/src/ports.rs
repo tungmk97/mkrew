@@ -209,6 +209,93 @@ fn sort_key(row: &PortRow, known: &Known) -> (usize, bool, Option<String>, u16, 
     )
 }
 
+/// Reads the OS and labels its listening TCP ports. Blocking: call from `spawn_blocking`.
+pub(crate) fn scan(mut known: Known) -> anyhow::Result<Vec<PortRow>> {
+    let found =
+        listeners::get_all().map_err(|e| anyhow::anyhow!("read the listening sockets: {e}"))?;
+    let sockets: Vec<Socket> = found
+        .into_iter()
+        .filter(|l| {
+            l.protocol == listeners::Protocol::TCP && l.state == listeners::SocketState::Listen
+        })
+        .map(|l| Socket {
+            port: l.socket.port(),
+            addr: l.socket.ip(),
+            pid: l.process.pid,
+        })
+        .collect();
+    let listening: HashSet<u32> = sockets.iter().map(|s| s.pid).collect();
+    // Canonical on both sides: the real case and no `\\?\` (dunce), like the process cwd.
+    for folder in &mut known.folders {
+        if let Ok(path) = dunce::canonicalize(&folder.path) {
+            folder.path = path;
+        }
+    }
+    let table = Table {
+        processes: read_processes(&listening),
+        sockets,
+    };
+    Ok(attribute(&table, &known))
+}
+
+/// Kills `pid` and its descendants (children first), never its parents. Blocking.
+pub(crate) fn kill_tree(pid: u32) -> Result<(), String> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate};
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::All, ProcessRefreshKind::new());
+    let processes: HashMap<u32, Proc> = system
+        .processes()
+        .iter()
+        .map(|(id, p)| (id.as_u32(), proc_of(p, None)))
+        .collect();
+    for child in descendants(&processes, pid) {
+        if let Some(process) = system.process(Pid::from_u32(child)) {
+            process.kill();
+        }
+    }
+    match system.process(Pid::from_u32(pid)) {
+        Some(process) if !process.kill() => Err(format!(
+            "the OS refused to stop pid {pid} (access denied or a system process)"
+        )),
+        // Killed, or gone meanwhile: the port is free either way.
+        _ => Ok(()),
+    }
+}
+
+/// The process table; `cwd` read (and made canonical) only for `cwd_for`.
+fn read_processes(cwd_for: &HashSet<u32>) -> HashMap<u32, Proc> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
+    let mut system = sysinfo::System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::All, ProcessRefreshKind::new());
+    let wanted: Vec<Pid> = cwd_for.iter().map(|&pid| Pid::from_u32(pid)).collect();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&wanted),
+        ProcessRefreshKind::new().with_cwd(UpdateKind::Always),
+    );
+    system
+        .processes()
+        .iter()
+        .map(|(id, p)| {
+            let cwd = cwd_for
+                .contains(&id.as_u32())
+                .then(|| p.cwd())
+                .flatten()
+                .filter(|cwd| !cwd.as_os_str().is_empty())
+                .and_then(|cwd| dunce::canonicalize(cwd).ok());
+            (id.as_u32(), proc_of(p, cwd))
+        })
+        .collect()
+}
+
+fn proc_of(process: &sysinfo::Process, cwd: Option<PathBuf>) -> Proc {
+    Proc {
+        name: process.name().to_string_lossy().into_owned(),
+        parent: process.parent().map(|pid| pid.as_u32()),
+        start: process.start_time(),
+        cwd,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

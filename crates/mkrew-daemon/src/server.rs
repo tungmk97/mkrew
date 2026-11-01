@@ -42,6 +42,7 @@ mod doc;
 mod fanout;
 mod fs;
 mod git;
+mod ports;
 mod resume;
 pub(crate) use resume::replace_session;
 mod run;
@@ -454,6 +455,8 @@ impl Daemon {
             Request::SessionPorts(params) => {
                 (self.session_ports(params.project_id), After::Continue)
             }
+            Request::PortList => (self.port_list().await, After::Continue),
+            Request::PortStop(params) => (self.port_stop(params).await, After::Continue),
             Request::WatchRelease(params) => (self.watch_release(params), After::Continue),
             Request::SessionLinkPlan(params) => {
                 (self.session_link_plan(params).await, After::Continue)
