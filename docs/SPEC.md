@@ -736,6 +736,8 @@ mk project update <project> [--base develop | --auto-base] [--run-autostart on|o
 mk project run <project> [name]      # runs the run commands in the "run" tab (prints `<name> <session id>`)
 mk project restart <project> [name]  # stops, then runs them again
 mk project stop <project> [name]     # stops them
+mk ports [--json]                      # listening TCP ports of the daemon's machine: port, workspace, main or worktree branch, source, pid
+mk ports stop <port> [--pid <pid>]     # stops the process on that port (a run command's session ends); --pid when several listen
 mk task add <project> "<title>" [--prompt "..."] [--agent claude]
 mk task list [--project P] [--status S]
 mk task run <task-id>

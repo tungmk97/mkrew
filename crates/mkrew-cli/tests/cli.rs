@@ -217,6 +217,51 @@ fn pid(stdout: &str) -> u32 {
     stdout[start..end].parse().unwrap()
 }
 
+#[test]
+fn ports_lists_and_stops_a_listening_process() {
+    let env = Env::new();
+    env.ok(&["daemon", "start"]);
+    let fake = Path::new(env!("CARGO_BIN_EXE_mk"))
+        .with_file_name(format!("mkrew-fakeagent{}", std::env::consts::EXE_SUFFIX));
+    let mut server = std::process::Command::new(fake)
+        .arg("--listen")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    std::io::BufReader::new(server.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let port: u16 = line
+        .trim()
+        .trim_start_matches("Listening on http://127.0.0.1:")
+        .trim_end_matches('/')
+        .parse()
+        .unwrap();
+
+    let listed: Vec<serde_json::Value> =
+        serde_json::from_str(&env.ok(&["ports", "--json"])).unwrap();
+    let mine = listed
+        .iter()
+        .find(|r| r["port"] == port)
+        .expect("the fake server is listed");
+    assert_eq!(mine["pid"], server.id());
+    assert!(mine.get("project_id").is_none(), "outside Mkrew");
+
+    let stopped = env.ok(&["ports", "stop", &port.to_string()]);
+    assert_eq!(
+        stopped.trim(),
+        format!("stopped pid {} on :{port}", server.id())
+    );
+    server.wait().unwrap();
+    assert!(
+        !env.mk(&["ports", "stop", &port.to_string()])
+            .status
+            .success()
+    );
+    env.ok(&["daemon", "stop"]);
+}
+
 /// The installer's stop (`--only-from {app}\bin`) leaves a daemon of another folder alone and
 /// stops one that runs from the folder (any spelling of it).
 #[test]

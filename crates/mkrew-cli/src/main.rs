@@ -6,6 +6,7 @@ mod comment;
 mod daemon;
 mod hook;
 mod integration;
+mod ports;
 mod project;
 mod proxy;
 mod session;
@@ -48,6 +49,14 @@ enum Command {
     Session {
         #[command(subcommand)]
         command: SessionCommand,
+    },
+    /// Listening TCP ports of the daemon's machine with their workspace; `stop` ends one.
+    Ports {
+        #[command(subcommand)]
+        command: Option<PortsCommand>,
+        /// Print the rows as JSON (`port.list`).
+        #[arg(long)]
+        json: bool,
     },
     /// Attach this terminal to a session; detach with Ctrl+] (the agent keeps running).
     Attach { session_id: Ulid },
@@ -102,6 +111,17 @@ enum Command {
         /// Replace the access token; every link printed before stops working.
         #[arg(long)]
         new_token: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PortsCommand {
+    /// Stops the process listening on a port (a run command's session ends).
+    Stop {
+        port: u16,
+        /// The pid to stop when several processes listen on the port.
+        #[arg(long)]
+        pid: Option<u32>,
     },
 }
 
@@ -333,6 +353,14 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                 TaskCommand::List { project, status } => task::list(&mut client, project, status),
                 TaskCommand::Run { task_id } => task::run(&mut client, task_id),
                 TaskCommand::Undo { task_id, yes } => task::undo(&mut client, task_id, yes),
+            }
+            .map(|()| ExitCode::SUCCESS)
+        }
+        Command::Ports { command, json } => {
+            let mut client = project::connect(&paths)?;
+            match command {
+                None => ports::list(&mut client, json),
+                Some(PortsCommand::Stop { port, pid }) => ports::stop(&mut client, port, pid),
             }
             .map(|()| ExitCode::SUCCESS)
         }
