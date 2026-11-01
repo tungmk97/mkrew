@@ -58,7 +58,7 @@ Pure function `attribute(sockets, processes, sessions, folders, daemon_pid) -> V
 2. For each row, walk the parent chain from the pid (the pid itself included).
    The first live session root pid met decides `session_id`, `session_title`, `project_id`, `worktree_task_id`, `branch` and `run_command` (the session's run command name, when it is a run session).
    Meeting `daemon_pid` before any session root drops the row: it is the daemon or one of its own helpers, such as the `mk web` server.
-   The walk stops after 64 steps or at a pid already visited (pid reuse can make a cycle).
+   The walk stops after 64 steps, at a pid already visited, or at a parent that started after its child (a reused pid, not the real parent; Windows keeps a dead parent's pid in the table).
 3. A row whose walk met neither: compare the process cwd with the folders of every workspace and every task worktree.
    The longest matching folder wins, so a worktree beats its project.
    A match sets `project_id` and, for a worktree, `worktree_task_id` and `branch`; `session_id` stays empty.
@@ -100,14 +100,15 @@ Files: `crates/mkrew-ui/src/ports.rs` (pure: grouping, row labels, which Stop ne
 - Stop:
   - a run command stops at once, like `■` in the Run menu;
   - any other row asks first: "Stop `<process>` (pid 1234) on :3000?", adding "The pane stays open." for a Mkrew pane.
-  - The confirm's Stop button is never the first focus (SPEC §10 rule for destructive buttons).
+  - The question, Cancel and a red Stop show in the dialog's footer, not in a separate prompt: the keyboard stays on the dialog, so Stop is never the first focus (SPEC §10 rule for destructive buttons) and runs only after Tab moved onto it.
+    `Esc` cancels the question; a second `Esc` closes the dialog.
 - Refresh: `port.list` when the dialog opens, every 2 seconds while it is open, and right after each Stop.
   Nothing runs while the dialog is closed.
 - Empty state: "No ports are listening."
-  Disconnected: the dialog says "Disconnected" and keeps the last rows.
+  Disconnected: the dialog closes, like every other dialog (Phone access, Turns).
   A `port.list` error shows as one error line above the rows, which stay.
 - Keyboard: `↑` / `↓` select a row, `Enter` goes to its pane, `Delete` stops it (with the same confirmation), `Esc` closes.
-- Every color, spacing, radius and font size comes from `theme.rs`; the only new token is `PORTS_DIALOG_WIDTH`.
+- Every color, spacing, radius and font size comes from `theme.rs`; the new tokens are `PORTS_DIALOG_WIDTH`, `PORTS_LIST_HEIGHT` and `PORTS_TICK` (2 s).
 
 ### 4.5 CLI
 
