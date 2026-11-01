@@ -347,15 +347,16 @@ impl Shell {
     }
 
     /// "Open in Git" of the worktree dialog: the Git tab and Diff view on the task's
-    /// worktree, to commit or unstage there.
+    /// worktree, to commit or unstage there (in the task's own workspace: a card of the All
+    /// workspaces board may be another workspace's).
     pub(crate) fn worktree_dialog_git(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(dialog) = self
-            .worktree_dialog
-            .take_if(|dialog| self.workspace == Some(dialog.project_id))
-        else {
+        let Some(dialog) = self.worktree_dialog.take() else {
             return;
         };
         let project_id = dialog.project_id;
+        if self.workspace != Some(project_id) {
+            self.activate_workspace(project_id, window, cx);
+        }
         self.retarget_git(project_id, Some(dialog.task_id), None);
         self.open_git(project_id, window, cx);
     }

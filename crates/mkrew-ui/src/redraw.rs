@@ -49,6 +49,13 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
             .find(|s| s.id == session_id)
             .is_none_or(|s| in_workspace(s.project_id))
     };
+    // Board cards show their task's tokens: a session without a task is on no card.
+    let on_a_card = |session_id: Ulid| {
+        sessions
+            .iter()
+            .find(|s| s.id == session_id)
+            .is_none_or(|s| s.task_id.is_some())
+    };
     let on_pane = |id: Ulid| shown.panes.contains(&id);
     let in_session_tab =
         |id: Ulid| shown.panel == Some(PanelTab::Session) && shown.panel_session == Some(id);
@@ -57,7 +64,7 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
         Event::SessionUsage(e) => {
             on_pane(e.session_id)
                 || in_session_tab(e.session_id)
-                || shown.all_board
+                || (shown.all_board && on_a_card(e.session_id))
                 || (shown.view == View::Board && in_shown_workspace(e.session_id))
         }
         // Pane status pill, `⧗ N queued` and the composer's queue.
@@ -290,7 +297,7 @@ mod tests {
     /// shows nothing. The Session tab and the Board are the other two readers.
     #[test]
     fn usage_redraws_for_a_visible_pane_the_session_tab_or_the_board() {
-        let w = world();
+        let mut w = world();
         let mut s = terminals(&w);
         assert!(redraws(&w, &s, &usage(w.a())), "visible pane");
         assert!(!redraws(&w, &s, &usage(w.b())), "hidden tab");
@@ -324,8 +331,13 @@ mod tests {
         );
         s.all_board = true;
         assert!(
+            !redraws(&w, &s, &usage(w.c())),
+            "a session without a task is on no card"
+        );
+        w.sessions[2].task_id = Some(Ulid::new());
+        assert!(
             redraws(&w, &s, &usage(w.c())),
-            "the All workspaces board draws it"
+            "the All workspaces board draws another workspace's card"
         );
     }
 
