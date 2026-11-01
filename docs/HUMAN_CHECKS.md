@@ -21,6 +21,12 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-31 Wider Run setup dialog
+
+- [ ] **Look (dark + light):** Run setup is 760 px wide (was 520), the command list grows to 560 px before it scrolls, and a folded card shows up to 240 px of its name and folder.
+  The folder / env file picker has the same width.
+  In a short window the dialog shrinks to fit (footer with Save stays visible) and the card list scrolls.
+
 ### To verify - 2026-10-29 Work on another computer (ADR 0089)
 
 - [ ] **mk proxy over real ssh:** from this computer run `ssh <host> mk proxy` with no daemon running there; the terminal shows binary noise, no "daemon started" text; Ctrl+C ends it; on the other computer `mk daemon status` still shows the daemon running (Windows host and Ubuntu host).

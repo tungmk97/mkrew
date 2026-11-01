@@ -956,9 +956,11 @@ impl Shell {
             }
             cx.notify();
         }));
+        let max_height = (window.viewport_size().height - px(space::XXL * 2.0)).max(px(0.0));
         let panel = div()
             .id("run-setup")
-            .w(px(theme::DIALOG_WIDTH))
+            .w(px(theme::RUN_SETUP_WIDTH))
+            .max_h(max_height)
             .flex()
             .flex_col()
             .gap(px(space::L))
@@ -1014,11 +1016,19 @@ impl Shell {
                             ),
                     ),
             )
-            .child(div().relative().child(cards).child(scrollbar::bar(
-                scrollbar::Source::Handle(self.run_setup_scroll.clone()),
-                Rc::clone(&self.run_setup_drag),
-                theme,
-            )))
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .min_h_0()
+                    .child(cards)
+                    .child(scrollbar::bar(
+                        scrollbar::Source::Handle(self.run_setup_scroll.clone()),
+                        Rc::clone(&self.run_setup_drag),
+                        theme,
+                    )),
+            )
             .children(setup.error.clone().map(error_row))
             .child(
                 div()
@@ -1173,7 +1183,7 @@ impl Shell {
         };
         let panel = div()
             .id("run-picker")
-            .w(px(theme::DIALOG_WIDTH))
+            .w(px(theme::RUN_SETUP_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))

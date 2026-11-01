@@ -304,10 +304,14 @@ pub const PHONE_QR_SIZE: f32 = 216.0;
 /// Width of a confirmation dialog (every `window.prompt`, drawn in the window).
 pub const CONFIRM_DIALOG_WIDTH: f32 = 420.0;
 
-/// Height of the Run setup dialog's command list before it scrolls.
-pub const RUN_SETUP_MAX_HEIGHT: f32 = 420.0;
+/// Width of the Run setup dialog and its folder / env file picker (wide: commands and paths are
+/// long).
+pub const RUN_SETUP_WIDTH: f32 = 760.0;
+/// Height of the Run setup dialog's command list before it scrolls (it also shrinks to fit
+/// the window).
+pub const RUN_SETUP_MAX_HEIGHT: f32 = 560.0;
 /// Widest a folded Run setup card's name or folder gets before it is cut with `…`.
-pub const RUN_NAME_MAX_WIDTH: f32 = 140.0;
+pub const RUN_NAME_MAX_WIDTH: f32 = 240.0;
 
 /// Height of the prompt field in the task dialog (it scrolls past that).
 pub const PROMPT_FIELD_HEIGHT: f32 = 140.0;
