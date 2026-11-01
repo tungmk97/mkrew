@@ -43,6 +43,7 @@ impl Shell {
         let diff_wrap = ui.diff_wrap;
         let close_to_tray = ui.close_to_tray && local;
         let reading_default = ui.reading_width;
+        let board_all = ui.board_all_workspaces;
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
         let sidebar_mode = ui.sidebar;
@@ -150,7 +151,12 @@ impl Shell {
                     let sessions = shell.sidebar.sessions();
                     let board_due = shell.workspace.is_some_and(|project_id| {
                         shell.view() == View::Board
-                            && shell.board.redraw_due(project_id, sessions, last, now)
+                            && (shell.board).redraw_due(
+                                shell.board_scope(project_id),
+                                sessions,
+                                last,
+                                now,
+                            )
                     });
                     // The recording meter has its own faster redraw (`toggle_voice`).
                     let transcribing = matches!(shell.voice, voice::State::Transcribing);
@@ -368,6 +374,7 @@ impl Shell {
             jira_keys_focus: cx.focus_handle(),
             jira_filter_focus: cx.focus_handle(),
             jira_scroll: ScrollHandle::new(),
+            board_all,
             selected_card: None,
             starting: HashSet::new(),
             run_with: None,
@@ -963,6 +970,7 @@ impl Shell {
                         self.load_jira(project_id, window, cx);
                     }
                     self.reading_default = settings.ui.reading_width;
+                    self.board_all = settings.ui.board_all_workspaces;
                     if self.features != settings.features {
                         // `view()` may now map Docs to Terminals.
                         self.features = settings.features;
@@ -1093,6 +1101,7 @@ impl Shell {
             panel_session: self.panel_session(),
             sidebar: self.sidebar_layout.mode(),
             modal: self.modal_open(),
+            all_board: self.all_board_shown(),
         }
     }
 

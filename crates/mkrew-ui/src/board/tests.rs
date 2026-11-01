@@ -94,6 +94,31 @@ fn titles(column: &Column) -> Vec<&str> {
         .collect()
 }
 
+/// `project_id`'s board (its workspace is not listed, so cards have no default agent).
+fn one(project_id: Ulid) -> Scope<'static> {
+    Scope::workspace(&[], project_id)
+}
+
+fn project(id: Ulid, name: &str, default_agent: Option<&str>) -> Project {
+    Project {
+        id,
+        name: name.to_owned(),
+        path: format!("/{name}"),
+        run_commands: Vec::new(),
+        run_autostart: false,
+        default_agent: default_agent.map(str::to_owned),
+        default_shell: None,
+        review_globs: None,
+        created_at: 0,
+        archived: false,
+        base_ref: None,
+        color: None,
+        pinned: false,
+        jira_keys: Vec::new(),
+        position: 0,
+    }
+}
+
 #[test]
 fn columns_group_by_status_in_position_order_per_workspace() {
     let (api, web) = (Ulid::new(), Ulid::new());
@@ -106,9 +131,9 @@ fn columns_group_by_status_in_position_order_per_workspace() {
         task(web, "elsewhere", TaskStatus::Todo, 0.5),
     ]);
     assert!(board.is_loaded());
-    assert!(board.has_tasks(api) && !board.has_tasks(Ulid::new()));
+    assert!(board.has_tasks(one(api)) && !board.has_tasks(one(Ulid::new())));
 
-    let columns = board.columns(api, None, &[]);
+    let columns = board.columns(one(api), &[]);
     let statuses: Vec<TaskStatus> = columns.iter().map(|c| c.status).collect();
     assert_eq!(statuses, COLUMNS);
     assert_eq!(titles(&columns[0]), ["first", "second"]);
@@ -130,7 +155,8 @@ fn cards_name_their_agent_and_show_the_newest_session() {
     let old = session(&own, 1_000, Some(5_000));
     let new = session(&own, 10_000, None);
     let sessions = [new.clone(), old];
-    let columns = board.columns(api, Some("claude"), &sessions);
+    let projects = [project(api, "api", Some("claude"))];
+    let columns = board.columns(Scope::workspace(&projects, api), &sessions);
     let card = &columns[1].cards[0];
     assert_eq!(card.agent, "codex");
     assert!(card.error_flag);
@@ -141,7 +167,7 @@ fn cards_name_their_agent_and_show_the_newest_session() {
     assert_eq!(todo.agent, "claude");
     assert_eq!((todo.session.as_ref(), todo.run_time(0)), (None, None));
     assert_eq!(
-        board.columns(api, None, &sessions)[0].cards[0].agent,
+        board.columns(one(api), &sessions)[0].cards[0].agent,
         DEFAULT_AGENT_LABEL
     );
 }
@@ -153,10 +179,10 @@ fn a_finished_run_shows_its_length() {
     let mut board = Board::default();
     board.load(vec![done.clone()]);
     let sessions = [session(&done, 1_000, Some(46_000))];
-    let card = &board.columns(api, None, &sessions)[3].cards[0];
+    let card = &board.columns(one(api), &sessions)[3].cards[0];
     assert_eq!(card.run_time(999_999).as_deref(), Some("45s"));
     // Nothing still runs, so nothing ticks.
-    assert!(!board.redraw_due(api, &sessions, 0, 999_999));
+    assert!(!board.redraw_due(one(api), &sessions, 0, 999_999));
 }
 
 #[test]
@@ -171,17 +197,17 @@ fn a_done_turn_stops_the_clock_and_an_exit_shows_the_failure_once() {
     let mut done = session(&failed, 1_000, None);
     done.state = SessionState::Done;
     done.state_changed_at = 21_000;
-    let card = &board.columns(api, None, std::slice::from_ref(&done))[3].cards[0];
+    let card = &board.columns(one(api), std::slice::from_ref(&done))[3].cards[0];
     assert_eq!(card.run_time(999_999).as_deref(), Some("20s"));
-    assert!(!board.redraw_due(api, std::slice::from_ref(&done), 30_000, 99_000));
+    assert!(!board.redraw_due(one(api), std::slice::from_ref(&done), 30_000, 99_000));
     assert!(card.shows_error_row());
 
     let mut exited = done;
     exited.state = SessionState::Exited;
     exited.ended_at = Some(31_000);
-    let card = &board.columns(api, None, &[exited])[3].cards[0];
+    let card = &board.columns(one(api), &[exited])[3].cards[0];
     assert!(!card.shows_error_row(), "the exited status already says it");
-    let no_session = &board.columns(api, None, &[])[3].cards[0];
+    let no_session = &board.columns(one(api), &[])[3].cards[0];
     assert!(no_session.shows_error_row());
 }
 
@@ -195,11 +221,11 @@ fn events_move_add_and_remove_cards() {
     card.status = TaskStatus::Running;
     card.updated_at = 1;
     assert!(board.apply(&Event::TaskUpdated(card.clone())));
-    assert_eq!(titles(&board.columns(api, None, &[])[1]), ["card"]);
+    assert_eq!(titles(&board.columns(one(api), &[])[1]), ["card"]);
 
     let added = task(api, "added", TaskStatus::Todo, 1.0);
     assert!(board.apply(&Event::TaskUpdated(added.clone())));
-    assert_eq!(titles(&board.columns(api, None, &[])[0]), ["added"]);
+    assert_eq!(titles(&board.columns(one(api), &[])[0]), ["added"]);
 
     let deleted = Event::TaskDeleted(TaskDeletedEvent {
         task_id: added.id,
@@ -207,7 +233,7 @@ fn events_move_add_and_remove_cards() {
     });
     assert!(board.apply(&deleted));
     assert!(!board.apply(&deleted), "already gone");
-    assert!(board.columns(api, None, &[])[0].cards.is_empty());
+    assert!(board.columns(one(api), &[])[0].cards.is_empty());
 }
 
 #[test]
@@ -232,7 +258,7 @@ fn events_newer_than_the_list_survive_a_load_and_older_ones_do_not_undo_it() {
     listed.updated_at = 9;
     board.load(vec![listed, gone]);
 
-    let columns = board.columns(api, None, &[]);
+    let columns = board.columns(one(api), &[]);
     assert!(columns[0].cards.is_empty(), "the deleted card stays gone");
     assert_eq!(titles(&columns[1]), ["renamed later"]);
     assert!(!board.apply(&stale), "an older update is ignored");
@@ -275,7 +301,7 @@ fn dropping_moves_a_card_between_and_within_columns() {
         }]
     );
     apply_moves(&mut board, &moves);
-    let columns = board.columns(api, None, &[]);
+    let columns = board.columns(one(api), &[]);
     assert_eq!(ids(&columns[0]), [b.id]);
     assert_eq!(ids(&columns[3]), [a.id, c.id]);
 
@@ -284,10 +310,10 @@ fn dropping_moves_a_card_between_and_within_columns() {
     assert_eq!(moves.len(), 1);
     assert_eq!(moves[0].position, 2.0);
     apply_moves(&mut board, &moves);
-    assert_eq!(ids(&board.columns(api, None, &[])[3]), [c.id, a.id]);
+    assert_eq!(ids(&board.columns(one(api), &[])[3]), [c.id, a.id]);
     let moves = board.drop_moves(b.id, TaskStatus::Done, None);
     apply_moves(&mut board, &moves);
-    let columns = board.columns(api, None, &[]);
+    let columns = board.columns(one(api), &[]);
     assert!(columns[0].cards.is_empty());
     assert_eq!(ids(&columns[4]), [b.id]);
 }
@@ -338,7 +364,7 @@ fn a_collapsed_gap_renumbers_the_column_and_the_order_holds() {
     assert_eq!(moved, [(a.id, 0.0), (c.id, 1.0), (b.id, 2.0)]);
     assert!(moves.iter().all(|m| m.status == TaskStatus::Todo));
     apply_moves(&mut board, &moves);
-    assert_eq!(ids(&board.columns(api, None, &[])[0]), [a.id, c.id, b.id]);
+    assert_eq!(ids(&board.columns(one(api), &[])[0]), [a.id, c.id, b.id]);
 }
 
 #[test]
@@ -348,12 +374,12 @@ fn a_running_card_ticks_when_its_run_time_changes() {
     let mut board = Board::default();
     board.load(vec![running.clone()]);
     let sessions = [session(&running, 0, None)];
-    assert!(board.redraw_due(api, &sessions, 1_000, 2_000));
+    assert!(board.redraw_due(one(api), &sessions, 1_000, 2_000));
     assert!(
-        !board.redraw_due(api, &sessions, 61_000, 62_000),
+        !board.redraw_due(one(api), &sessions, 61_000, 62_000),
         "still 1m"
     );
-    assert!(!board.redraw_due(Ulid::new(), &sessions, 1_000, 2_000));
+    assert!(!board.redraw_due(one(Ulid::new()), &sessions, 1_000, 2_000));
 }
 
 #[test]
@@ -366,7 +392,7 @@ fn cards_offer_the_action_of_their_column() {
     let mut board = Board::default();
     board.load(tasks.clone());
     let actions: Vec<Option<CardAction>> = board
-        .columns(api, None, &[])
+        .columns(one(api), &[])
         .iter()
         .map(|column| column.cards[0].action())
         .collect();
@@ -386,10 +412,10 @@ fn cards_offer_the_action_of_their_column() {
 
     // Ctrl+Enter: only a selected Todo card of the shown board.
     let todo = tasks[0].id;
-    assert_eq!(board.run_target(Some(todo), api), Some(todo));
-    assert_eq!(board.run_target(Some(todo), Ulid::new()), None);
-    assert_eq!(board.run_target(Some(tasks[1].id), api), None);
-    assert_eq!(board.run_target(None, api), None);
+    assert_eq!(board.run_target(Some(todo), one(api)), Some(todo));
+    assert_eq!(board.run_target(Some(todo), one(Ulid::new())), None);
+    assert_eq!(board.run_target(Some(tasks[1].id), one(api)), None);
+    assert_eq!(board.run_target(None, one(api)), None);
 }
 
 #[test]
@@ -409,7 +435,7 @@ fn finished_cards_with_a_checkpoint_offer_undo_and_review_ones_their_changes() {
     board.load(tasks);
     let offered = |offers: fn(&Card) -> bool| -> Vec<Vec<bool>> {
         board
-            .columns(api, None, &[])
+            .columns(one(api), &[])
             .iter()
             .map(|column| column.cards.iter().map(offers).collect())
             .collect()
@@ -455,7 +481,7 @@ fn finished_cards_with_a_worktree_offer_merge_back_and_removal() {
     let mut board = Board::default();
     board.load(tasks);
     let offered: Vec<Vec<bool>> = board
-        .columns(api, None, &[])
+        .columns(one(api), &[])
         .iter()
         .map(|column| column.cards.iter().map(Card::manages_worktree).collect())
         .collect();
@@ -470,7 +496,7 @@ fn finished_cards_with_a_worktree_offer_merge_back_and_removal() {
         ]
     );
     // The palette's "Merge back…" / "Remove worktree…" gate agrees with the card buttons.
-    for card in board.columns(api, None, &[]).iter().flat_map(|c| &c.cards) {
+    for card in board.columns(one(api), &[]).iter().flat_map(|c| &c.cards) {
         assert_eq!(
             board.manages_worktree(card.task_id),
             card.manages_worktree()
@@ -491,14 +517,15 @@ fn run_with_is_offered_on_todo_and_review_cards_without_a_live_session() {
     board.load(tasks);
     let offered = |sessions: &[Session]| -> Vec<bool> {
         board
-            .columns(api, None, sessions)
+            .columns(one(api), sessions)
             .iter()
             .map(|column| column.cards[0].can_run_with())
             .collect()
     };
     assert_eq!(offered(&[]), [true, false, false, true, false]);
-    let first = |default_agent| {
-        board.columns(api, default_agent, &[])[0].cards[0]
+    let first = |default_agent: Option<&str>| {
+        let projects = [project(api, "api", default_agent)];
+        board.columns(Scope::workspace(&projects, api), &[])[0].cards[0]
             .agent_profile()
             .map(str::to_owned)
     };
@@ -525,7 +552,9 @@ fn a_fanned_out_task_becomes_a_group_card_that_cannot_run_itself() {
     let original = task(api, "Fix", TaskStatus::Todo, 1.0);
     let mut board = Board::default();
     board.load(vec![original.clone()]);
-    let card = |board: &Board| board.columns(api, Some("claude"), &[])[0].cards[0].clone();
+    let projects = [project(api, "api", Some("claude"))];
+    let card =
+        |board: &Board| board.columns(Scope::workspace(&projects, api), &[])[0].cards[0].clone();
     assert!(card(&board).can_fan_out() && card(&board).can_run_with());
     assert!(board.can_fan_out(original.id, &[]) && board.can_run(original.id));
 
@@ -539,7 +568,7 @@ fn a_fanned_out_task_becomes_a_group_card_that_cannot_run_itself() {
     // A run from before the fan-out is not the group's state.
     let mut earlier = session(&original, 1, Some(2));
     earlier.state = SessionState::Exited;
-    let with_earlier = &board.columns(api, None, &[earlier])[0].cards[0];
+    let with_earlier = &board.columns(one(api), &[earlier])[0].cards[0];
     assert!(with_earlier.session.is_none() && with_earlier.opens_session().is_none());
     assert_eq!(group.children.len(), 1);
     assert_eq!(group.children[0].agent, "Codex");
@@ -549,7 +578,7 @@ fn a_fanned_out_task_becomes_a_group_card_that_cannot_run_itself() {
     assert!(!board.can_run_with(original.id, &[]) && !board.can_fan_out(original.id, &[]));
 
     // A child runs with "Run with…" but does not fan out again.
-    let child_card = board.columns(api, None, &[])[0].cards[1].clone();
+    let child_card = board.columns(one(api), &[])[0].cards[1].clone();
     assert_eq!(child_card.fanout_of, Some(original.id));
     assert!(child_card.can_run_with() && !child_card.can_fan_out());
     assert!(!board.can_fan_out(child.id, &[]) && board.can_run_with(child.id, &[]));
@@ -567,7 +596,7 @@ fn compare_shows_on_a_running_group_card_once_every_child_is_in_review() {
     board.load(vec![original.clone(), first, second.clone()]);
     let original_id = original.id;
     let group = |board: &Board, column: usize| {
-        board.columns(api, None, &[])[column]
+        board.columns(one(api), &[])[column]
             .cards
             .iter()
             .find(|card| card.task_id == original_id)
@@ -622,7 +651,7 @@ fn clicks_open_the_newest_session_and_follow_ups_need_a_live_one() {
     board.load(tasks.clone());
     let cards = |sessions: &[Session]| -> Vec<Card> {
         board
-            .columns(api, None, sessions)
+            .columns(one(api), sessions)
             .into_iter()
             .map(|mut column| column.cards.remove(0))
             .collect()
@@ -673,7 +702,7 @@ fn approving_moves_a_review_card_to_the_end_of_done() {
         }]
     );
     apply_moves(&mut board, &moves);
-    assert_eq!(ids(&board.columns(api, None, &[])[4]), [done.id, review.id]);
+    assert_eq!(ids(&board.columns(one(api), &[])[4]), [done.id, review.id]);
     // Only Review cards are approved.
     assert!(board.approve_moves(todo.id).is_empty());
     assert!(board.approve_moves(review.id).is_empty());
@@ -701,7 +730,7 @@ fn keyed() -> (Board, Ulid, [Task; 5]) {
 #[test]
 fn arrows_move_the_selection_inside_a_column_and_across_columns_by_row() {
     let (board, api, [a, b, c, d, e]) = keyed();
-    let step = |from: &Task, key| board.select_step(api, Some(from.id), key);
+    let step = |from: &Task, key| board.select_step(one(api), Some(from.id), key);
     // Within the column; nothing past its ends.
     assert_eq!(step(&a, CardKey::Down), Some(b.id));
     assert_eq!(step(&b, CardKey::Up), Some(a.id));
@@ -733,9 +762,119 @@ fn an_arrow_without_a_selection_on_this_board_picks_the_first_card() {
     let (board, api, [a, ..]) = keyed();
     let other = board.tasks().iter().find(|t| t.title == "other").unwrap();
     for selected in [None, Some(Ulid::new()), Some(other.id)] {
-        assert_eq!(board.select_step(api, selected, CardKey::Down), Some(a.id));
+        assert_eq!(
+            board.select_step(one(api), selected, CardKey::Down),
+            Some(a.id)
+        );
     }
-    assert_eq!(Board::default().select_step(api, None, CardKey::Up), None);
+    assert_eq!(
+        Board::default().select_step(one(api), None, CardKey::Up),
+        None
+    );
+}
+
+/// The All workspaces board over `web` then `api` (sidebar order), with a card of a workspace
+/// that is not listed (archived).
+fn all_board() -> (Board, [Project; 2], [Task; 4]) {
+    let projects = [
+        project(Ulid::new(), "web", Some("codex")),
+        project(Ulid::new(), "api", None),
+    ];
+    let (web, api) = (projects[0].id, projects[1].id);
+    let tasks = [
+        task(api, "api first", TaskStatus::Todo, 1.0),
+        task(web, "web second", TaskStatus::Todo, 2.0),
+        task(web, "web first", TaskStatus::Todo, 0.5),
+        task(api, "api review", TaskStatus::Review, 1.0),
+    ];
+    let mut board = Board::default();
+    let mut listed = tasks.to_vec();
+    listed.push(task(Ulid::new(), "archived", TaskStatus::Todo, 0.0));
+    board.load(listed);
+    (board, projects, tasks)
+}
+
+#[test]
+fn the_all_workspaces_board_groups_cards_by_sidebar_order_and_skips_unlisted_ones() {
+    let (board, projects, [api_first, web_second, web_first, api_review]) = all_board();
+    let all = Scope::all(&projects);
+    assert!(all.is_all() && !Scope::workspace(&projects, projects[0].id).is_all());
+    let columns = board.columns(all, &[]);
+    assert_eq!(
+        titles(&columns[0]),
+        ["web first", "web second", "api first"],
+        "by workspace in sidebar order, then position; the archived one is left out"
+    );
+    assert_eq!(ids(&columns[3]), [api_review.id]);
+    // Each card names its workspace and takes that workspace's default agent.
+    let todo = &columns[0].cards;
+    assert_eq!(
+        (todo[0].project_id, todo[0].agent.as_str()),
+        (web_first.project_id, "codex")
+    );
+    assert_eq!(
+        (todo[2].project_id, todo[2].agent.as_str()),
+        (api_first.project_id, DEFAULT_AGENT_LABEL)
+    );
+    assert!(board.has_tasks(all));
+    assert!(!board.has_tasks(Scope::all(&[])), "no workspace listed");
+    assert!(all.contains(web_second.project_id) && !all.contains(Ulid::new()));
+}
+
+#[test]
+fn keys_and_targets_on_the_all_workspaces_board_reach_every_workspace() {
+    let (board, projects, [api_first, web_second, web_first, api_review]) = all_board();
+    let all = Scope::all(&projects);
+    let api = Scope::workspace(&projects, api_first.project_id);
+    // ↓ walks the column across workspaces; → finds the nearest row of the next column.
+    assert_eq!(
+        board.select_step(all, Some(web_second.id), CardKey::Down),
+        Some(api_first.id)
+    );
+    assert_eq!(
+        board.select_step(all, None, CardKey::Down),
+        Some(web_first.id)
+    );
+    assert_eq!(
+        board.select_step(all, Some(web_first.id), CardKey::Right),
+        Some(api_review.id)
+    );
+    // Ctrl+Enter and `a` act on a selected card of any listed workspace.
+    assert_eq!(
+        board.run_target(Some(web_first.id), all),
+        Some(web_first.id)
+    );
+    assert_eq!(board.run_target(Some(web_first.id), api), None);
+    assert_eq!(
+        board.approve_target(Some(api_review.id), all),
+        Some(api_review.id)
+    );
+    let archived = board
+        .tasks()
+        .iter()
+        .find(|t| t.title == "archived")
+        .unwrap();
+    assert_eq!(board.run_target(Some(archived.id), all), None);
+    // A running card of another workspace ticks the All board only.
+    let sessions = [session(&web_second, 0, None)];
+    assert!(board.redraw_due(all, &sessions, 1_000, 2_000));
+    assert!(!board.redraw_due(api, &sessions, 1_000, 2_000));
+}
+
+#[test]
+fn a_drop_on_the_all_workspaces_board_moves_only_its_own_workspace_cards() {
+    let (mut board, projects, [api_first, web_second, web_first, _]) = all_board();
+    // Dropped right before another workspace's card: the end of its own workspace's cards.
+    let moves = board.drop_moves(api_first.id, TaskStatus::Todo, Some(web_first.id));
+    assert!(moves.is_empty(), "already the last of its workspace");
+    let moves = board.drop_moves(web_first.id, TaskStatus::Todo, Some(api_first.id));
+    assert!(moves.iter().all(|m| m.task_id != api_first.id));
+    apply_moves(&mut board, &moves);
+    assert_eq!(
+        titles(&board.columns(Scope::all(&projects), &[])[0]),
+        ["web second", "web first", "api first"]
+    );
+    assert_eq!(board.task(web_second.id).unwrap().position, 2.0);
 }
 
 #[test]
@@ -767,14 +906,14 @@ fn shift_arrows_drop_the_card_one_column_over_like_a_drag() {
     assert_eq!(to_end, board.drop_moves(b.id, TaskStatus::Running, None));
     assert_eq!(to_end[0].position, 2.0);
     apply_moves(&mut board, &to_row);
-    let columns = board.columns(api, None, &[]);
+    let columns = board.columns(one(api), &[]);
     assert_eq!(ids(&columns[0]), [b.id]);
     assert_eq!(ids(&columns[1]), [a.id, running.id]);
 
     // Back left: before the card of its row in Todo.
     let back = board.shift_moves(a.id, CardKey::MoveLeft);
     apply_moves(&mut board, &back);
-    assert_eq!(ids(&board.columns(api, None, &[])[0]), [a.id, b.id]);
+    assert_eq!(ids(&board.columns(one(api), &[])[0]), [a.id, b.id]);
 
     // Only one column at a time, nothing past the first / last column, nothing for other keys
     // or an unknown card.
@@ -834,20 +973,23 @@ fn approve_targets_only_a_selected_review_card_of_the_board() {
     let foreign = task(other, "f", TaskStatus::Review, 1.0);
     let mut board = Board::default();
     board.load(vec![review.clone(), todo.clone(), foreign.clone()]);
-    assert_eq!(board.approve_target(Some(review.id), mine), Some(review.id));
     assert_eq!(
-        board.approve_target(Some(todo.id), mine),
+        board.approve_target(Some(review.id), one(mine)),
+        Some(review.id)
+    );
+    assert_eq!(
+        board.approve_target(Some(todo.id), one(mine)),
         None,
         "not in Review"
     );
     assert_eq!(
-        board.approve_target(Some(foreign.id), mine),
+        board.approve_target(Some(foreign.id), one(mine)),
         None,
         "another workspace"
     );
-    assert_eq!(board.approve_target(None, mine), None);
+    assert_eq!(board.approve_target(None, one(mine)), None);
     assert_eq!(
-        board.approve_target(Some(Ulid::new()), mine),
+        board.approve_target(Some(Ulid::new()), one(mine)),
         None,
         "unknown card"
     );

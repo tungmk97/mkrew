@@ -29,6 +29,8 @@ pub struct Shown {
     pub sidebar: SidebarMode,
     /// Some dialog is open.
     pub modal: bool,
+    /// The Board draws every workspace's cards (the All workspaces board).
+    pub all_board: bool,
 }
 
 /// Whether an event whose model reported "my data changed" must re-render the root. Events
@@ -55,6 +57,7 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
         Event::SessionUsage(e) => {
             on_pane(e.session_id)
                 || in_session_tab(e.session_id)
+                || shown.all_board
                 || (shown.view == View::Board && in_shown_workspace(e.session_id))
         }
         // Pane status pill, `⧗ N queued` and the composer's queue.
@@ -106,12 +109,13 @@ pub fn conflicts_need_redraw(shown: &Shown) -> bool {
     shown.modal || matches!(shown.view, View::Board | View::Terminals)
 }
 
-/// Tasks are read by the Board, the pane status folder and the worktree chooser of the
-/// Files and Git tabs of the shown workspace.
+/// Tasks are read by the Board (every workspace's on the All workspaces board), the pane
+/// status folder and the worktree chooser of the Files and Git tabs of the shown workspace.
 fn tasks_drawn(shown: &Shown, project_id: Ulid) -> bool {
-    shown.workspace == Some(project_id)
-        && (matches!(shown.view, View::Board | View::Terminals)
-            || matches!(shown.panel, Some(PanelTab::Files | PanelTab::Git)))
+    shown.all_board
+        || (shown.workspace == Some(project_id)
+            && (matches!(shown.view, View::Board | View::Terminals)
+                || matches!(shown.panel, Some(PanelTab::Files | PanelTab::Git))))
 }
 
 #[cfg(test)]
@@ -190,6 +194,7 @@ mod tests {
             panel_session: Some(w.a()),
             sidebar: SidebarMode::Compact,
             modal: false,
+            all_board: false,
         }
     }
 
@@ -204,6 +209,7 @@ mod tests {
             panel_session: Some(w.a()),
             sidebar: SidebarMode::Hidden,
             modal: false,
+            all_board: false,
         }
     }
 
@@ -316,6 +322,11 @@ mod tests {
             !redraws(&w, &s, &usage(w.c())),
             "another workspace's board is not drawn"
         );
+        s.all_board = true;
+        assert!(
+            redraws(&w, &s, &usage(w.c())),
+            "the All workspaces board draws it"
+        );
     }
 
     #[test]
@@ -425,6 +436,13 @@ mod tests {
                 "{view:?}: another workspace"
             );
         }
+        s.view = View::Board;
+        s.all_board = true;
+        assert!(
+            redraws(&w, &s, &event(w.other)),
+            "the All workspaces board draws it"
+        );
+        s.all_board = false;
         s.view = View::Editor;
         assert!(!redraws(&w, &s, &event(w.ws)), "Editor, no panel");
         s.panel = Some(PanelTab::Session);

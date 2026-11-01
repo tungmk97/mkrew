@@ -375,24 +375,17 @@ impl Shell {
                     .as_ref()
                     .is_some_and(|target| view.discard(target).is_some())
             });
-        let worktree_task = self.selected_card.is_some_and(|id| {
-            self.board
-                .task(id)
-                .is_some_and(|task| Some(task.project_id) == workspace)
-                && self.board.manages_worktree(id)
-        });
-        let task_changes = self
+        let worktree_task = self
             .selected_card
-            .and_then(|id| self.board.task(id))
-            .is_some_and(|task| {
-                Some(task.project_id) == workspace
-                    && task.status == TaskStatus::Review
-                    && task.checkpoint.is_some()
-            });
+            .is_some_and(|id| self.on_board(id) && self.board.manages_worktree(id));
+        let task_changes = self.selected_card.is_some_and(|id| {
+            self.on_board(id)
+                && self.board.task(id).is_some_and(|task| {
+                    task.status == TaskStatus::Review && task.checkpoint.is_some()
+                })
+        });
         let fan_out = self.selected_card.is_some_and(|id| {
-            self.board
-                .task(id)
-                .is_some_and(|task| Some(task.project_id) == workspace)
+            self.on_board(id)
                 && self.board.can_fan_out(id, self.sidebar.sessions())
                 && !self.starting.contains(&id)
         });
@@ -453,7 +446,9 @@ impl Shell {
             composer_open: focused.is_some_and(|id| self.composers.shown(id).is_some()),
             approve_card: workspace.is_some_and(|id| {
                 !self.jira_side_shown()
-                    && self.board.approve_target(self.selected_card, id).is_some()
+                    && (self.board)
+                        .approve_target(self.selected_card, self.board_scope(id))
+                        .is_some()
             }),
             git_base: workspace
                 .and_then(|id| self.git.get(&id))
@@ -699,13 +694,10 @@ impl Shell {
                             Extra::MergeBack => worktree_dialog::Kind::Merge,
                             _ => worktree_dialog::Kind::Remove,
                         };
-                        if let Some(task_id) = self.selected_card.filter(|&id| {
-                            self.board.manages_worktree(id)
-                                && self
-                                    .board
-                                    .task(id)
-                                    .is_some_and(|t| t.project_id == project_id)
-                        }) {
+                        if let Some(task_id) = self
+                            .selected_card
+                            .filter(|&id| self.board.manages_worktree(id) && self.on_board(id))
+                        {
                             self.open_worktree_dialog(kind, task_id, window, cx);
                         }
                     }
@@ -827,6 +819,7 @@ impl Shell {
                         self.show_git_panel(window, cx);
                         self.open_git_menu(GitMenu::Repos, window, cx);
                     }
+                    Extra::BoardScope => self.set_board_all(!self.board_all, cx),
                     Extra::JiraMine => {
                         self.set_jira_mine(project_id, !self.jira_mine, window, cx);
                     }

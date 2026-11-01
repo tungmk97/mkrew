@@ -31,6 +31,8 @@ pub(crate) struct CardContext<'a> {
     pub(crate) sessions: &'a [Session],
     /// Profile icons by id, for the agent chip (see [`Shell::agent_badge`]).
     pub(crate) agent_icons: &'a HashMap<String, String>,
+    /// The listed workspaces while the All workspaces board is shown: each card names its own.
+    pub(crate) workspaces: Option<&'a [Project]>,
 }
 
 /// A board column: its title and card count over the cards, or a quiet "No tasks". Every
@@ -188,6 +190,30 @@ pub(crate) fn task_card(
     let group = SharedString::from(format!("card-{task_id}"));
     let edit_hover = theme.border;
     let preview_style = PopupStyle::of(theme);
+    let workspace = (cards.workspaces)
+        .and_then(|projects| projects.iter().find(|p| p.id == card.project_id))
+        .map(|project| {
+            let color = (project.color.as_deref()).and_then(|name| theme.workspace_color(name));
+            div()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .child(
+                    workspace_avatar(&project.name, color, theme)
+                        .size(theme::rems_px(theme::WORKSPACE_AVATAR_TINY)),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .child(project.name.clone()),
+                )
+        });
     div()
         .id(group.clone())
         .on_click(cx.listener(move |shell, _, window, cx| {
@@ -227,6 +253,8 @@ pub(crate) fn task_card(
             el.relative()
                 .child(record_bounds(Anchor::Card(task_id), cx))
         })
+        // On the All workspaces board: the card's workspace above its title.
+        .children(workspace)
         .child(
             div()
                 .flex()

@@ -459,8 +459,8 @@ fn workspace_extras_need_an_active_workspace() {
 }
 
 fn extras(context: &Context) -> Vec<Extra> {
-    // Listed by the "workspace extras" test and the single-action test below.
-    const SEPARATE: [Extra; 9] = [
+    // Listed by the "workspace extras" test and the single-action tests below.
+    const SEPARATE: [Extra; 10] = [
         Extra::RunSetup,
         Extra::PhoneAccess,
         Extra::CheckUpdates,
@@ -470,6 +470,7 @@ fn extras(context: &Context) -> Vec<Extra> {
         Extra::WorkspaceDefaultAgent,
         Extra::WorkspaceRemove,
         Extra::WorkspaceMenu,
+        Extra::BoardScope,
     ];
     const ALWAYS: [Extra; 5] = [
         Extra::TabPin,
@@ -837,6 +838,14 @@ fn git_jira_and_global_extras_follow_their_state() {
         assert!(extra.available(&on), "{extra:?} when its state holds");
         assert!(!extra.available(&context(on.view)), "{extra:?} without it");
     }
+    // The `This workspace | All workspaces` switch heads the Tasks side of the Board only.
+    assert!(Extra::BoardScope.available(&context(View::Board)));
+    let jira = Context {
+        jira: true,
+        ..context(View::Board)
+    };
+    assert!(!Extra::BoardScope.available(&jira));
+    assert!(!Extra::BoardScope.available(&context(View::Terminals)));
     // The Git entries need the Git list on screen, the Jira ones the Board.
     let wrong_view = Context {
         git_base: true,

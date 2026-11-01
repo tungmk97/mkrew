@@ -21,6 +21,18 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-02 All workspaces board (ADR 0090)
+
+Built overnight without your answers; the agent's defaults are below.
+Say so if one is wrong.
+
+- [ ] **Defaults chosen:** one switch `This workspace | All workspaces` on the Board header (not a separate global view); one set of five columns with cards grouped by workspace in sidebar order (not one row per workspace); each card names its workspace; New task adds to the active workspace (tooltip names it); the choice is saved as `[ui] board_all_workspaces` (also on Settings → General).
+- [ ] **Look (dark + light):** the agent's screenshots are `docs/screenshots/2026-11-02-all-workspaces-board-{dark,light}.png` (three workspaces, five Todo cards; the switch click, the saved setting and ↓ across workspaces were checked in that run).
+  Still to check: the header row and its switch next to the Tasks / Jira switch when Jira is set up, and cards in the other columns.
+- [ ] **Card actions on another workspace's card:** click a running card of another workspace: Mkrew switches to that workspace and shows its pane; Show Board (Ctrl+Shift+2) comes back to the All workspaces board. Changes on a Review card of another workspace opens that workspace's Git tab.
+- [ ] **Drag:** drag a card to another column and within its own workspace's cards; drop it right before a card of another workspace: it lands after its own workspace's last card in that column.
+- [ ] **Keys:** arrows walk the cards across workspaces, Ctrl+Enter runs a selected Todo card of another workspace, `a` approves a Review card, Shift+F10 opens its menu; the palette's "Board: Toggle This workspace / All workspaces" flips the switch; the choice survives a restart.
+
 ### To verify - 2026-10-31 Wider Run setup dialog
 
 - [ ] **Look (dark + light):** Run setup is 760 px wide (was 520), the command list grows to 560 px before it scrolls, and a folded card shows up to 240 px of its name and folder.

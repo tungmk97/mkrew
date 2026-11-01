@@ -471,31 +471,20 @@ impl Shell {
         ))
     }
 
-    /// The toolbar: the `Tasks | Jira` switch (only when `[jira] site` is set); in Jira mode
-    /// with keys also the project button, Edit, the `All | Mine` filter, the `List | Kanban`
-    /// layout, the "Filter issues" field and Refresh.
+    /// The toolbar: the `Tasks | Jira` switch (only when `[jira] site` is set); on the Tasks
+    /// side the `This workspace | All workspaces` switch (SPEC §10); in Jira mode with keys the
+    /// project button, Edit, the `All | Mine` filter, the `List | Kanban` layout, the "Filter
+    /// issues" field and Refresh.
     pub(crate) fn render_board_header(
         &self,
         project_id: Ulid,
         theme: &Theme,
         window: &Window,
         cx: &mut Context<'_, Self>,
-    ) -> Option<gpui::Div> {
-        if !self.jira_on {
-            return None;
-        }
+    ) -> gpui::Div {
         let view = self.jira.get(&project_id);
-        let source = view.map_or(Source::Tasks, |v| v.source);
+        let source = (view.filter(|_| self.jira_on)).map_or(Source::Tasks, |v| v.source);
         let keys = self.jira_keys_of(project_id);
-        let toggle = Self::board_toggle(
-            "board-source",
-            source,
-            [(Source::Tasks, "Tasks"), (Source::Jira, "Jira")],
-            "Tasks / Jira",
-            move |shell, source, window, cx| shell.set_board_source(project_id, source, window, cx),
-            theme,
-            cx,
-        );
         let header = div()
             .flex()
             .items_center()
@@ -504,9 +493,32 @@ impl Shell {
             .py(px(space::S))
             .border_b(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))
-            .child(toggle);
-        if source != Source::Jira || keys.is_empty() {
-            return Some(header);
+            .when(self.jira_on, |el| {
+                el.child(Self::board_toggle(
+                    "board-source",
+                    source,
+                    [(Source::Tasks, "Tasks"), (Source::Jira, "Jira")],
+                    "Tasks / Jira",
+                    move |shell, source, window, cx| {
+                        shell.set_board_source(project_id, source, window, cx);
+                    },
+                    theme,
+                    cx,
+                ))
+            });
+        if source == Source::Tasks {
+            return header.child(Self::board_toggle(
+                "board-scope",
+                self.board_all,
+                [(false, "This workspace"), (true, "All workspaces")],
+                "This workspace's tasks / every workspace's tasks",
+                |shell, all, _, cx| shell.set_board_all(all, cx),
+                theme,
+                cx,
+            ));
+        }
+        if keys.is_empty() {
+            return header;
         }
         let focused = self.jira_filter_focus.is_focused(window);
         let empty = Input::default();
@@ -542,56 +554,54 @@ impl Shell {
                 theme::ICON_SIZE_SMALL,
                 theme.text_subtle,
             ));
-        Some(
-            header
-                .child(
-                    secondary_button("jira-project", project, theme).on_click(cx.listener(
-                        move |shell, _, window, cx| shell.edit_jira_keys(project_id, window, cx),
-                    )),
-                )
-                .child(
-                    button("jira-edit", "Edit", theme, false).on_click(cx.listener(
-                        move |shell, _, window, cx| shell.edit_jira_keys(project_id, window, cx),
-                    )),
-                )
-                .child(Self::board_toggle(
-                    "jira-assignee",
-                    self.jira_mine,
-                    [(false, "All"), (true, "Mine")],
-                    "All issues / assigned to me",
-                    move |shell, mine, window, cx| {
-                        shell.set_jira_mine(project_id, mine, window, cx);
-                    },
+        header
+            .child(
+                secondary_button("jira-project", project, theme).on_click(cx.listener(
+                    move |shell, _, window, cx| shell.edit_jira_keys(project_id, window, cx),
+                )),
+            )
+            .child(
+                button("jira-edit", "Edit", theme, false).on_click(cx.listener(
+                    move |shell, _, window, cx| shell.edit_jira_keys(project_id, window, cx),
+                )),
+            )
+            .child(Self::board_toggle(
+                "jira-assignee",
+                self.jira_mine,
+                [(false, "All"), (true, "Mine")],
+                "All issues / assigned to me",
+                move |shell, mine, window, cx| {
+                    shell.set_jira_mine(project_id, mine, window, cx);
+                },
+                theme,
+                cx,
+            ))
+            .child(Self::board_toggle(
+                "jira-layout",
+                self.jira_layout,
+                [(JiraLayout::List, "List"), (JiraLayout::Kanban, "Kanban")],
+                "Under their parent / one column per status",
+                |shell, layout, _, cx| shell.set_jira_layout(layout, cx),
+                theme,
+                cx,
+            ))
+            .child(div().flex_1())
+            .child(
+                search_box(field, None, focused, theme)
+                    .flex_none()
+                    .w(theme::rems_px(theme::BOARD_FILTER_WIDTH)),
+            )
+            .child(
+                button(
+                    "jira-refresh",
+                    icon_text(Icon::RotateCw, "Refresh", button_fg(theme, false)),
                     theme,
-                    cx,
-                ))
-                .child(Self::board_toggle(
-                    "jira-layout",
-                    self.jira_layout,
-                    [(JiraLayout::List, "List"), (JiraLayout::Kanban, "Kanban")],
-                    "Under their parent / one column per status",
-                    |shell, layout, _, cx| shell.set_jira_layout(layout, cx),
-                    theme,
-                    cx,
-                ))
-                .child(div().flex_1())
-                .child(
-                    search_box(field, None, focused, theme)
-                        .flex_none()
-                        .w(theme::rems_px(theme::BOARD_FILTER_WIDTH)),
+                    false,
                 )
-                .child(
-                    button(
-                        "jira-refresh",
-                        icon_text(Icon::RotateCw, "Refresh", button_fg(theme, false)),
-                        theme,
-                        false,
-                    )
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.load_jira(project_id, window, cx);
-                    })),
-                ),
-        )
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    shell.load_jira(project_id, window, cx);
+                })),
+            )
     }
 
     /// The Jira side of the Board: the keys field, the loading / failed / empty states, or the

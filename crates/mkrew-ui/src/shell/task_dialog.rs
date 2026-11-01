@@ -222,7 +222,8 @@ impl Shell {
     }
 
     /// "New task": the primary action of the empty board (with its shortcut beside it), else
-    /// quiet with the shortcut in its tooltip only (it fits the Todo column header).
+    /// quiet with the shortcut in its tooltip only (it fits the Todo column header). On the All
+    /// workspaces board the tooltip names the workspace the task goes to (the active one).
     pub(crate) fn new_task_button(
         &self,
         project_id: Ulid,
@@ -231,6 +232,12 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let keys = self.keymap.label(Command::NewTask);
+        let tip = (self.sidebar.projects().iter())
+            .find(|project| self.board_all && project.id == project_id)
+            .map_or_else(
+                || "New task".to_owned(),
+                |project| format!("New task in {}", project.name),
+            );
         button(
             "new-task",
             icon_text(Icon::Plus, "New task", button_fg(theme, primary)),
@@ -238,7 +245,7 @@ impl Shell {
             primary,
         )
         .flex_none()
-        .tooltip(tooltip(theme, "New task", keys.clone()))
+        .tooltip(tooltip(theme, &tip, keys.clone()))
         .when(primary, |el| {
             el.child(
                 div()

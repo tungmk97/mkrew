@@ -390,6 +390,9 @@ pub struct UiSettings {
     /// `[ui] close_to_tray` (SPEC §20J): the window's ✕ hides it to the tray icon instead of
     /// quitting the UI (Windows, while the tray icon exists). The agents run in the daemon either way.
     pub close_to_tray: bool,
+    /// `[ui] board_all_workspaces` (SPEC §10): the Board shows every workspace's tasks, not only
+    /// the active workspace's. The Board's `This workspace | All workspaces` switch writes it.
+    pub board_all_workspaces: bool,
 }
 
 impl Default for UiSettings {
@@ -409,6 +412,7 @@ impl Default for UiSettings {
             right_panel: RightPanelMode::Hidden,
             reading_width: true,
             close_to_tray: true,
+            board_all_workspaces: false,
         }
     }
 }
@@ -579,6 +583,7 @@ pub fn template() -> &'static str {
      # right_panel = \"hidden\"\n\
      # reading_width = true\n\
      # close_to_tray = true\n\
+     # board_all_workspaces = false\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
@@ -834,6 +839,7 @@ push = true
                     right_panel: RightPanelMode::Hidden,
                     reading_width: true,
                     close_to_tray: false,
+                    board_all_workspaces: false,
                 },
                 terminal: FontSettings {
                     font_family: "JetBrains Mono".into(),

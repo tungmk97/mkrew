@@ -597,18 +597,18 @@ impl Shell {
             Command::Card(key) => self.card_key(key, window, cx),
             Command::ApproveCard => {
                 // Only bound while a board is shown; the selection may be another workspace's.
-                let target = self
-                    .workspace
-                    .and_then(|id| self.board.approve_target(self.selected_card, id));
+                let target = (self.workspace).and_then(|id| {
+                    (self.board).approve_target(self.selected_card, self.board_scope(id))
+                });
                 if let Some(task_id) = target {
                     self.approve_task(task_id, window, cx);
                 }
             }
             Command::RunTask => {
                 // Only bound while a board is shown; the selection may be another workspace's.
-                let target = self
-                    .workspace
-                    .and_then(|project_id| self.board.run_target(self.selected_card, project_id));
+                let target = (self.workspace).and_then(|id| {
+                    (self.board).run_target(self.selected_card, self.board_scope(id))
+                });
                 if let Some(task_id) = target {
                     self.run_task(task_id, window, cx);
                 }

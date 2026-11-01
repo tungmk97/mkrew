@@ -607,11 +607,7 @@ impl Shell {
             card: (self.view() == View::Board && !self.jira_side_shown())
                 .then_some(self.selected_card)
                 .flatten()
-                .filter(|&id| {
-                    self.board
-                        .task(id)
-                        .is_some_and(|task| task.project_id == project_id)
-                }),
+                .filter(|&id| self.on_board(id)),
         }
     }
 

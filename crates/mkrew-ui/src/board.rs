@@ -1,11 +1,12 @@
-//! Task board view-model (SPEC §10): a workspace's tasks in one column per status, ordered by
-//! position, kept live by `task.updated` / `task.deleted`. Each card shows its newest session's
-//! status (§11) and run time. Pure and tested headlessly; `main.rs` renders it.
+//! Task board view-model (SPEC §10): a workspace's tasks, or every workspace's (the All
+//! workspaces board), in one column per status, ordered by position, kept live by
+//! `task.updated` / `task.deleted`. Each card shows its newest session's status (§11) and run
+//! time. Pure and tested headlessly; `main.rs` renders it.
 
 use std::collections::HashSet;
 
 use mkrew_core::task::{self, Placement};
-use mkrew_protocol::{Event, Session, SessionState, Task, TaskMoveParams, TaskStatus};
+use mkrew_protocol::{Event, Project, Session, SessionState, Task, TaskMoveParams, TaskStatus};
 use ulid::Ulid;
 
 use crate::fanout::{self, ChildLine};
@@ -99,6 +100,60 @@ pub fn column_title(status: TaskStatus) -> &'static str {
 /// Shown for a task without its own agent in a workspace without a default agent.
 pub const DEFAULT_AGENT_LABEL: &str = "default agent";
 
+/// Which tasks a board shows (SPEC §10): one workspace's, or every listed workspace's (the
+/// All workspaces board).
+#[derive(Debug, Clone, Copy)]
+pub struct Scope<'a> {
+    /// The listed workspaces in sidebar order (archived ones are not listed): cards take their
+    /// workspace's default agent, and the All workspaces board groups its cards in this order
+    /// inside each column.
+    projects: &'a [Project],
+    /// Only this workspace's tasks; `None`: every listed workspace's.
+    only: Option<Ulid>,
+}
+
+impl<'a> Scope<'a> {
+    /// `project_id`'s board.
+    pub fn workspace(projects: &'a [Project], project_id: Ulid) -> Self {
+        Self {
+            projects,
+            only: Some(project_id),
+        }
+    }
+
+    /// The All workspaces board.
+    pub fn all(projects: &'a [Project]) -> Self {
+        Self {
+            projects,
+            only: None,
+        }
+    }
+
+    /// Whether this is the All workspaces board (its cards name their workspace).
+    pub fn is_all(&self) -> bool {
+        self.only.is_none()
+    }
+
+    /// Whether the board shows `project_id`'s cards.
+    pub fn contains(&self, project_id: Ulid) -> bool {
+        self.rank(project_id).is_some()
+    }
+
+    /// Where `project_id`'s cards go inside a column (`None`: not on this board).
+    fn rank(&self, project_id: Ulid) -> Option<usize> {
+        match self.only {
+            Some(only) => (only == project_id).then_some(0),
+            None => self.projects.iter().position(|p| p.id == project_id),
+        }
+    }
+
+    fn default_agent(&self, project_id: Ulid) -> Option<&'a str> {
+        (self.projects.iter())
+            .find(|p| p.id == project_id)
+            .and_then(|p| p.default_agent.as_deref())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Column {
     pub status: TaskStatus,
@@ -167,6 +222,8 @@ pub enum CardOpen {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Card {
     pub task_id: Ulid,
+    /// The task's workspace (the All workspaces board names it on the card).
+    pub project_id: Ulid,
     pub title: String,
     pub status: TaskStatus,
     /// The task's agent, else the workspace default, else [`DEFAULT_AGENT_LABEL`].
@@ -369,20 +426,17 @@ impl Board {
         self.tasks.iter().find(|task| task.id == task_id)
     }
 
-    /// Whether `project_id` has any task.
-    pub fn has_tasks(&self, project_id: Ulid) -> bool {
-        self.tasks.iter().any(|task| task.project_id == project_id)
+    /// Whether the board of `scope` has any card.
+    pub fn has_tasks(&self, scope: Scope<'_>) -> bool {
+        self.tasks
+            .iter()
+            .any(|task| scope.contains(task.project_id))
     }
 
-    /// The columns of `project_id`'s board: every status in [`COLUMNS`] order, cards by
-    /// ascending position. `default_agent` is the workspace's.
-    pub fn columns(
-        &self,
-        project_id: Ulid,
-        default_agent: Option<&str>,
-        sessions: &[Session],
-    ) -> Vec<Column> {
-        let tasks = self.ordered(project_id);
+    /// The columns of `scope`'s board: every status in [`COLUMNS`] order, cards by workspace
+    /// (sidebar order, see [`Scope`]) then ascending position.
+    pub fn columns(&self, scope: Scope<'_>, sessions: &[Session]) -> Vec<Column> {
+        let tasks = self.ordered(scope);
         // Built once per call: `fanout::children` scans every task and formats a prefix, which
         // only fan-out originals need (this runs on every board render).
         let originals: HashSet<Ulid> = self.tasks.iter().filter_map(|t| t.fanout_of).collect();
@@ -404,7 +458,7 @@ impl Board {
                             0 => task
                                 .agent_profile
                                 .as_deref()
-                                .or(default_agent)
+                                .or(scope.default_agent(task.project_id))
                                 .unwrap_or(DEFAULT_AGENT_LABEL)
                                 .to_owned(),
                             1 => "1 agent".to_owned(),
@@ -412,6 +466,7 @@ impl Board {
                         };
                         Card {
                             task_id: task.id,
+                            project_id: task.project_id,
                             title: task.title.clone(),
                             status: task.status,
                             agent,
@@ -432,15 +487,17 @@ impl Board {
             .collect()
     }
 
-    /// `project_id`'s tasks in board order: by position, ties by id.
-    fn ordered(&self, project_id: Ulid) -> Vec<&Task> {
-        let mut tasks: Vec<&Task> = self
-            .tasks
-            .iter()
-            .filter(|task| task.project_id == project_id)
+    /// `scope`'s tasks in board order: by workspace (see [`Scope`]), then position, ties by id.
+    fn ordered(&self, scope: Scope<'_>) -> Vec<&Task> {
+        let mut tasks: Vec<(usize, &Task)> = (self.tasks.iter())
+            .filter_map(|task| Some((scope.rank(task.project_id)?, task)))
             .collect();
-        tasks.sort_by(|a, b| a.position.total_cmp(&b.position).then(a.id.cmp(&b.id)));
-        tasks
+        tasks.sort_by(|(rank_a, a), (rank_b, b)| {
+            (rank_a.cmp(rank_b))
+                .then(a.position.total_cmp(&b.position))
+                .then(a.id.cmp(&b.id))
+        });
+        tasks.into_iter().map(|(_, task)| task).collect()
     }
 
     /// The `task.move`s that drop `task_id` into the `status` column right before the card
@@ -459,7 +516,8 @@ impl Board {
         if before == Some(task_id) {
             return Vec::new();
         }
-        let column = self.ordered(dropped.project_id);
+        // Positions are per workspace: the All workspaces board drops among its own cards.
+        let column = self.ordered(Scope::workspace(&[], dropped.project_id));
         let others: Vec<&Task> = column
             .iter()
             .copied()
@@ -534,23 +592,23 @@ impl Board {
             })
     }
 
-    /// The card Ctrl+Enter runs on `project_id`'s board: the selected one, if it is that
-    /// board's and can run.
-    pub fn run_target(&self, selected: Option<Ulid>, project_id: Ulid) -> Option<Ulid> {
+    /// The card Ctrl+Enter runs on `scope`'s board: the selected one, if it is on that board
+    /// and can run.
+    pub fn run_target(&self, selected: Option<Ulid>, scope: Scope<'_>) -> Option<Ulid> {
         selected.filter(|&id| {
             self.can_run(id)
                 && self
                     .task(id)
-                    .is_some_and(|task| task.project_id == project_id)
+                    .is_some_and(|task| scope.contains(task.project_id))
         })
     }
 
-    /// The card `a` approves on `project_id`'s board: the selected one, if it is that board's
-    /// and sits in Review (what its Approve button needs).
-    pub fn approve_target(&self, selected: Option<Ulid>, project_id: Ulid) -> Option<Ulid> {
+    /// The card `a` approves on `scope`'s board: the selected one, if it is on that board and
+    /// sits in Review (what its Approve button needs).
+    pub fn approve_target(&self, selected: Option<Ulid>, scope: Scope<'_>) -> Option<Ulid> {
         selected.filter(|&id| {
             self.task(id).is_some_and(|task| {
-                task.project_id == project_id && task::approve(task.status).is_some()
+                scope.contains(task.project_id) && task::approve(task.status).is_some()
             })
         })
     }
@@ -578,9 +636,9 @@ impl Board {
         }
     }
 
-    /// `project_id`'s cards, one list of ids per column of [`COLUMNS`] (board order).
-    fn grid(&self, project_id: Ulid) -> Vec<Vec<Ulid>> {
-        let tasks = self.ordered(project_id);
+    /// `scope`'s cards, one list of ids per column of [`COLUMNS`] (board order).
+    fn grid(&self, scope: Scope<'_>) -> Vec<Vec<Ulid>> {
+        let tasks = self.ordered(scope);
         COLUMNS
             .iter()
             .map(|&status| {
@@ -593,12 +651,12 @@ impl Board {
             .collect()
     }
 
-    /// The card an arrow key selects on `project_id`'s board: ↑ / ↓ the neighbour in the column,
+    /// The card an arrow key selects on `scope`'s board: ↑ / ↓ the neighbour in the column,
     /// ← / → the card at the nearest row of the next column that has cards. Nothing at an edge.
     /// Without a (valid) selection any arrow selects the first card. Other keys: `None`.
     pub fn select_step(
         &self,
-        project_id: Ulid,
+        scope: Scope<'_>,
         selected: Option<Ulid>,
         key: CardKey,
     ) -> Option<Ulid> {
@@ -607,7 +665,7 @@ impl Board {
             CardKey::Down | CardKey::Right => 1,
             _ => return None,
         };
-        let grid = self.grid(project_id);
+        let grid = self.grid(scope);
         let Some((col, row)) = selected.and_then(|id| locate(&grid, id)) else {
             return grid.iter().find_map(|ids| ids.first().copied());
         };
@@ -626,7 +684,8 @@ impl Board {
 
     /// The `task.move`s of Shift+← / Shift+→ on `task_id`: a drop into the neighbouring column
     /// right before the card at the same row (the end when that column is shorter), so it goes
-    /// through [`Board::drop_moves`] like a drag. Empty at the first / last column.
+    /// through [`Board::drop_moves`] like a drag. Rows count the card's own workspace's cards
+    /// (positions are per workspace). Empty at the first / last column.
     pub fn shift_moves(&self, task_id: Ulid, key: CardKey) -> Vec<TaskMoveParams> {
         let step: isize = match key {
             CardKey::MoveLeft => -1,
@@ -636,7 +695,7 @@ impl Board {
         let Some(task) = self.task(task_id) else {
             return Vec::new();
         };
-        let grid = self.grid(task.project_id);
+        let grid = self.grid(Scope::workspace(&[], task.project_id));
         let Some((col, row)) = locate(&grid, task_id) else {
             return Vec::new();
         };
@@ -660,18 +719,18 @@ impl Board {
         Some(live.map_or(CardOpen::Edit, |session| CardOpen::Session(session.id)))
     }
 
-    /// Whether a run time on `project_id`'s board reads differently at `now_ms` than at
-    /// `last_ms` (session times are covered by [`status::redraw_due`]).
+    /// Whether a run time on `scope`'s board reads differently at `now_ms` than at `last_ms`
+    /// (session times are covered by [`status::redraw_due`]).
     pub fn redraw_due(
         &self,
-        project_id: Ulid,
+        scope: Scope<'_>,
         sessions: &[Session],
         last_ms: i64,
         now_ms: i64,
     ) -> bool {
         self.tasks
             .iter()
-            .filter(|task| task.project_id == project_id)
+            .filter(|task| scope.contains(task.project_id))
             .filter_map(|task| newest_session(sessions, task.id))
             .any(|session| {
                 status::format_duration(run_end(session, last_ms) - session.started_at)

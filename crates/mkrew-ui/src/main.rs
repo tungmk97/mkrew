@@ -637,6 +637,8 @@ struct Shell {
     jira_filter_focus: FocusHandle,
     /// Keeps the selected Jira List row in view.
     jira_scroll: ScrollHandle,
+    /// The Board shows every workspace's tasks (`[ui] board_all_workspaces`, SPEC §10).
+    board_all: bool,
     /// The card Ctrl+Enter runs (clicked last).
     selected_card: Option<Ulid>,
     /// Tasks whose `task.run` is in flight (Run is disabled meanwhile).

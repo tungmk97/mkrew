@@ -145,6 +145,14 @@ pub const SETTINGS: &[Setting] = &[
         "Windows: the window's ✕ hides Mkrew to the tray icon.",
     ),
     row(
+        General,
+        "ui",
+        "board_all_workspaces",
+        Bool,
+        "Board shows all workspaces",
+        "The Board lists every workspace's tasks (its This workspace | All workspaces switch writes it).",
+    ),
+    row(
         Appearance,
         "ui",
         "theme",

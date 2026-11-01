@@ -128,6 +128,7 @@ pub enum Extra {
     AgentImprove,
     GitChangeBase,
     GitSwitchRepo,
+    BoardScope,
     JiraMine,
     JiraLayout,
     JiraRefresh,
@@ -139,7 +140,7 @@ pub enum Extra {
 }
 
 impl Extra {
-    pub const ALL: [Self; 41] = [
+    pub const ALL: [Self; 42] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -173,6 +174,7 @@ impl Extra {
         Self::AgentImprove,
         Self::GitChangeBase,
         Self::GitSwitchRepo,
+        Self::BoardScope,
         Self::JiraMine,
         Self::JiraLayout,
         Self::JiraRefresh,
@@ -218,6 +220,7 @@ impl Extra {
             Self::AgentImprove => "Agent: Improve prompt",
             Self::GitChangeBase => "Git: Change base…",
             Self::GitSwitchRepo => "Git: Switch repository…",
+            Self::BoardScope => "Board: Toggle This workspace / All workspaces",
             Self::JiraMine => "Jira: Toggle All / Mine",
             Self::JiraLayout => "Jira: Toggle List / Kanban",
             Self::JiraRefresh => "Jira: Refresh",
@@ -275,6 +278,8 @@ impl Extra {
             Self::PhoneAccess | Self::CheckUpdates | Self::AddMachine => !context.machine,
             Self::GitChangeBase => context.workspace && context.git && context.git_base,
             Self::GitSwitchRepo => context.workspace && context.git && context.git_repos,
+            // The switch heads the Tasks side of the Board.
+            Self::BoardScope => in_view(View::Board) && !context.jira,
             Self::JiraMine | Self::JiraLayout | Self::JiraRefresh => {
                 in_view(View::Board) && context.jira
             }

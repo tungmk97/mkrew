@@ -43,14 +43,53 @@ impl Shell {
         }
     }
 
+    /// What the Board shows next to `project_id` (the active workspace): its tasks, or every
+    /// listed workspace's while "All workspaces" is on (SPEC §10).
+    pub(crate) fn board_scope(&self, project_id: Ulid) -> board::Scope<'_> {
+        let projects = self.sidebar.projects();
+        if self.board_all {
+            board::Scope::all(projects)
+        } else {
+            board::Scope::workspace(projects, project_id)
+        }
+    }
+
+    /// The All workspaces board is on screen (not its Jira side).
+    pub(crate) fn all_board_shown(&self) -> bool {
+        self.board_all && self.view() == View::Board && !self.jira_side_shown()
+    }
+
+    /// Whether `task_id`'s card is on the shown workspace's Board (the selection may be
+    /// another workspace's).
+    pub(crate) fn on_board(&self, task_id: Ulid) -> bool {
+        self.workspace
+            .zip(self.board.task(task_id))
+            .is_some_and(|(id, task)| self.board_scope(id).contains(task.project_id))
+    }
+
+    /// The Board's `This workspace | All workspaces` switch: saves `[ui] board_all_workspaces`
+    /// (a settings file that does not parse keeps the choice for this run, toast §20.0).
+    pub(crate) fn set_board_all(&mut self, all: bool, cx: &mut Context<'_, Self>) {
+        if self.board_all == all {
+            return;
+        }
+        self.board_all = all;
+        if let Err(error) = mkrew_core::settings::write_ui_value(
+            &self.settings_file,
+            "board_all_workspaces",
+            &all.to_string(),
+        ) {
+            self.settings_write_failed("the Board's workspaces", error, cx);
+        }
+        cx.notify();
+    }
+
     /// The card as the board draws it (its flags decide which actions show).
     fn card_of(&self, task_id: Ulid) -> Option<Card> {
         let project_id = self.board.task(task_id)?.project_id;
-        let default_agent = (self.sidebar.projects().iter())
-            .find(|project| project.id == project_id)
-            .and_then(|project| project.default_agent.as_deref());
+        let scope = board::Scope::workspace(self.sidebar.projects(), project_id);
         self.board
-            .columns(project_id, default_agent, self.sidebar.sessions())
+            .columns(scope, self.sidebar.sessions())
             .into_iter()
             .flat_map(|column| column.cards)
             .find(|card| card.task_id == task_id)
@@ -170,13 +209,13 @@ impl Shell {
             return;
         };
         let project_id = task.project_id;
-        // The board only shows the active workspace's cards.
-        if self.workspace != Some(project_id) {
-            return;
-        }
         let since = Since::task(task_id, &task.title, checkpoint);
         // A worktree task's checkpoint is its worktree's HEAD: compared there.
         let target = task.worktree_path.is_some().then_some(task_id);
+        // A card of the All workspaces board: its own workspace shows the changes.
+        if self.workspace != Some(project_id) {
+            self.activate_workspace(project_id, window, cx);
+        }
         self.retarget_git(project_id, target, None);
         self.show_git_since(project_id, since, window, cx);
     }
@@ -514,18 +553,14 @@ impl Shell {
         let Some(project_id) = self.workspace.filter(|_| self.view() == View::Board) else {
             return;
         };
-        // The selection may be another workspace's.
-        let selected = self.selected_card.filter(|&id| {
-            self.board
-                .task(id)
-                .is_some_and(|t| t.project_id == project_id)
-        });
+        let selected = self.selected_card.filter(|&id| self.on_board(id));
         match key {
             board::CardKey::Up
             | board::CardKey::Down
             | board::CardKey::Left
             | board::CardKey::Right => {
-                if let Some(next) = self.board.select_step(project_id, selected, key)
+                let scope = self.board_scope(project_id);
+                if let Some(next) = self.board.select_step(scope, selected, key)
                     && Some(next) != self.selected_card
                 {
                     self.selected_card = Some(next);
@@ -678,8 +713,8 @@ impl Shell {
         .detach();
     }
 
-    /// The workspace's task board: one column per status (SPEC §10); cards drag between and
-    /// within columns.
+    /// The workspace's task board, or every workspace's (SPEC §10): one column per status;
+    /// cards drag between and within columns.
     pub(crate) fn render_board(
         &self,
         project_id: Ulid,
@@ -688,7 +723,7 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let project = self.sidebar.projects().iter().find(|p| p.id == project_id);
+        let scope = self.board_scope(project_id);
         let empty = |sentence: &str, detail: Option<String>| {
             message(
                 theme,
@@ -704,14 +739,14 @@ impl Shell {
             .jira
             .get(&project_id)
             .map_or(Source::Tasks, |view| view.source);
-        let framed = |header: Option<gpui::Div>, child: gpui::AnyElement| {
+        let framed = |header: gpui::Div, child: gpui::AnyElement| {
             div()
                 .flex_1()
                 .min_h_0()
                 .flex()
                 .flex_col()
                 .font_family(theme.ui_font_family.clone())
-                .children(header)
+                .child(header)
                 .child(child)
                 .into_any_element()
         };
@@ -726,17 +761,19 @@ impl Shell {
             };
             return framed(header, shown);
         }
-        if !self.board.has_tasks(project_id) {
-            let shown = message(theme, None, "No tasks yet.".into(), None)
+        if !self.board.has_tasks(scope) {
+            let sentence = if scope.is_all() {
+                "No tasks in any workspace yet."
+            } else {
+                "No tasks yet."
+            };
+            let shown = message(theme, None, sentence.into(), None)
                 .flex_1()
                 .child(self.new_task_button(project_id, true, theme, cx))
                 .into_any_element();
             return framed(header, shown);
         }
-        let default_agent = project.and_then(|p| p.default_agent.as_deref());
-        let columns = self
-            .board
-            .columns(project_id, default_agent, self.sidebar.sessions());
+        let columns = self.board.columns(scope, self.sidebar.sessions());
         let cards = CardContext {
             selected: self.selected_card,
             starting: &self.starting,
@@ -756,6 +793,7 @@ impl Shell {
             usages: &self.usages,
             sessions: self.sidebar.sessions(),
             agent_icons: &self.agent_icons,
+            workspaces: scope.is_all().then(|| self.sidebar.projects()),
         };
         div()
             .flex_1()
@@ -763,7 +801,7 @@ impl Shell {
             .flex()
             .flex_col()
             .font_family(theme.ui_font_family.clone())
-            .children(header)
+            .child(header)
             // A later `task.list` failed: the cards may be stale.
             .children(self.board_error.clone().map(|error| {
                 notice(theme.text, format!("✕ Cannot reload the tasks: {error}"))
@@ -771,7 +809,7 @@ impl Shell {
                     .pt(px(space::S))
             }))
             .children(self.card_error.as_ref().and_then(|(project, error)| {
-                (*project == project_id).then(|| {
+                scope.contains(*project).then(|| {
                     notice(theme.text, format!("✕ {error}"))
                         .px(px(space::L))
                         .pt(px(space::S))

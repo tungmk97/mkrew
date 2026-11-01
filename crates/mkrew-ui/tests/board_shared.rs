@@ -18,7 +18,7 @@ use mkrew_protocol::{
     Project, ProjectAddParams, Request, Session, SessionListParams, SessionState, Task,
     TaskCreateParams, TaskListParams, TaskStatus,
 };
-use mkrew_ui::board::{Board, Card};
+use mkrew_ui::board::{Board, Card, Scope};
 use mkrew_ui::client::{Connection, Inbox, Incoming};
 use mkrew_ui::connect::{DaemonLauncher, POLL, TIMEOUT, connect_or_spawn};
 use ulid::Ulid;
@@ -146,7 +146,7 @@ impl Ui {
             let sessions = self.sessions();
             let matches = |board: &Board| {
                 board
-                    .columns(project_id, None, &sessions)
+                    .columns(Scope::workspace(&[], project_id), &sessions)
                     .into_iter()
                     .find_map(|column| {
                         let card = column.cards.into_iter().find(|c| c.task_id == task_id)?;
@@ -186,7 +186,7 @@ fn mk_task_changes_reach_the_board_and_ui_tasks_reach_mk() {
     })))
     .unwrap();
     let mut ui = Ui::new(connection);
-    assert!(!ui.board.has_tasks(project.id));
+    assert!(!ui.board.has_tasks(Scope::workspace(&[], project.id)));
 
     // `mk task add` → a Todo card, with its agent, from the `task.updated` event alone.
     let id = mk(

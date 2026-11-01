@@ -904,6 +904,12 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   the keyboard back and keeps a typed draft on the card, like the composer).
   New task: the empty board's button, or `New task` in the Todo column header.
   With `[jira] site` set, a `Tasks | Jira` switch heads the Board (§20I).
+  On the Tasks side a `This workspace | All workspaces` switch heads the Board (ADR 0090; `[ui] board_all_workspaces` keeps it across restarts and is also a switch on Settings → General; the palette has "Board: Toggle This workspace / All workspaces").
+  All workspaces shows the tasks of every listed workspace (archived ones are not listed) in the same five columns.
+  Inside a column the cards go by workspace in sidebar order, then by position; each card names its workspace (avatar and name) above its title.
+  A drag or Shift+←/→ moves a card among its own workspace's cards (positions are per workspace); dropped before another workspace's card, it lands after its own workspace's last card in that column.
+  Clicking a card, its Changes and Enter open it in its own workspace; New task (and Ctrl+Shift+N) adds the task to the active workspace, and the button's tooltip names it.
+  The arrows, Ctrl+Enter, `a`, `e` and Shift+F10 act on every card of the All workspaces board.
   Show Board (Ctrl+Shift+2) again switches Tasks / Jira, and the card keys walk the Jira rows.
   Shift+F10 on the selected card opens its menu: Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents… (each as its hover button; the buttons stay and call the same functions).
 - **Terminals:** tab bar on top; each tab is a split tree of panes; each pane is a session.
@@ -1982,6 +1988,7 @@ inspector_width = 300       # §10; px, the right panel's width (dragging its ed
 right_panel = "hidden"      # §10; "files" | "session" | "git" | "hidden"; the right panel's toggle and tabs write it
 sidebar_width = 280         # §10; px, the workspace sidebar's width (dragging its edge writes it; kept 200–480)
 close_to_tray = true        # §20J; Windows: ✕ hides the window to the tray icon (false: ✕ quits the UI)
+board_all_workspaces = false # §10; the Board shows every workspace's tasks; its `This workspace | All workspaces` switch writes it
 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
