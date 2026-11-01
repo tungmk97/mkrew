@@ -15,6 +15,7 @@ impl Shell {
             || self.add_workspace.is_some()
             || self.plan_dialog.is_some()
             || self.phone_open
+            || self.ports_dialog.is_some()
             || self.broadcast.is_some()
             || self.ask.is_some()
             || self.history.is_some()

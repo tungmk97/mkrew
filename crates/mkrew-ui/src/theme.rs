@@ -88,6 +88,8 @@ pub const STATUS_TICK: Duration = Duration::from_millis(500);
 /// Tailscale are read on every tick; closed, `daemon.status` alone every [`PHONE_POLL_IDLE`]
 /// (it keeps the title bar icon true).
 pub const PHONE_TICK: Duration = Duration::from_secs(1);
+/// While the Ports dialog is open, `port.list` is asked on every tick (spec 2026-11-01).
+pub const PORTS_TICK: Duration = Duration::from_secs(2);
 pub const PHONE_POLL_IDLE: Duration = Duration::from_secs(5);
 
 /// Diameter of one dot of the loading mark (SPEC §11).
@@ -335,6 +337,10 @@ pub const COMPARE_DIALOG_WIDTH: f32 = 880.0;
 /// Width of the "Turns" dialog, and the height its list scrolls past (~8 turns).
 pub const TURNS_DIALOG_WIDTH: f32 = 560.0;
 pub const TURNS_LIST_HEIGHT: f32 = 400.0;
+
+/// The Ports dialog (spec 2026-11-01): its width and the height its rows scroll past.
+pub const PORTS_DIALOG_WIDTH: f32 = 640.0;
+pub const PORTS_LIST_HEIGHT: f32 = 400.0;
 
 /// Width of the "Ask AI" dialog, and the height its answer scrolls past (ADR 0061).
 pub const ASK_DIALOG_WIDTH: f32 = 640.0;

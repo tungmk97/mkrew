@@ -440,6 +440,23 @@ fn check_updates_is_listed_without_a_workspace() {
 }
 
 #[test]
+fn ports_is_listed_without_a_workspace_and_in_a_machine_window() {
+    let none = Context {
+        workspace: false,
+        workspaces: 0,
+        tabs: 0,
+        machine: true,
+        ..context(View::Terminals)
+    };
+    let listed = entries(&Keymap::defaults(), &none, &[], &[], &[]);
+    let entry = listed
+        .iter()
+        .find(|e| e.action == Action::Extra(Extra::Ports))
+        .expect("listed without a workspace");
+    assert_eq!(entry.title, "Ports: Show…");
+}
+
+#[test]
 fn workspace_extras_need_an_active_workspace() {
     let workspace = [
         Extra::WorkspacePin,
@@ -460,8 +477,9 @@ fn workspace_extras_need_an_active_workspace() {
 
 fn extras(context: &Context) -> Vec<Extra> {
     // Listed by the "workspace extras" test and the single-action tests below.
-    const SEPARATE: [Extra; 10] = [
+    const SEPARATE: [Extra; 11] = [
         Extra::RunSetup,
+        Extra::Ports,
         Extra::PhoneAccess,
         Extra::CheckUpdates,
         Extra::AddMachine,

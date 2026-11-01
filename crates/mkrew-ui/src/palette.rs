@@ -105,6 +105,7 @@ pub enum Extra {
     FollowInZed,
     RunSetup,
     RunShowTab,
+    Ports,
     PhoneAccess,
     CheckUpdates,
     MarkUnread,
@@ -140,7 +141,7 @@ pub enum Extra {
 }
 
 impl Extra {
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 43] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -151,6 +152,7 @@ impl Extra {
         Self::FollowInZed,
         Self::RunSetup,
         Self::RunShowTab,
+        Self::Ports,
         Self::PhoneAccess,
         Self::CheckUpdates,
         Self::MarkUnread,
@@ -197,6 +199,7 @@ impl Extra {
             Self::FollowInZed => "Agent: Follow in Zed (on/off)",
             Self::RunSetup => "Run: Setup…",
             Self::RunShowTab => "Run: Show Run tab",
+            Self::Ports => "Ports: Show…",
             Self::PhoneAccess => "Global: Phone access…",
             Self::CheckUpdates => "Global: Check for updates",
             Self::MarkUnread => "Agent: Mark unread",
@@ -276,6 +279,7 @@ impl Extra {
             }
             Self::AgentImprove => in_view(View::Terminals) && context.composer_open,
             Self::PhoneAccess | Self::CheckUpdates | Self::AddMachine => !context.machine,
+            Self::Ports => true,
             Self::GitChangeBase => context.workspace && context.git && context.git_base,
             Self::GitSwitchRepo => context.workspace && context.git && context.git_repos,
             // The switch heads the Tasks side of the Board.

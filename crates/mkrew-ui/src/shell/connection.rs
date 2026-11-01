@@ -310,6 +310,7 @@ impl Shell {
             config_dir,
             phone: Phone::default(),
             phone_open: false,
+            ports_dialog: None,
             settings_dialog: None,
             settings_scroll: ScrollHandle::new(),
             comments_scroll: ScrollHandle::new(),
@@ -787,6 +788,7 @@ impl Shell {
         self.git_base = None;
         self.plan_dialog = None;
         self.phone_open = false;
+        self.ports_dialog = None;
         self.phone = Phone::default();
         self.history = None;
         self.history_pane = None;

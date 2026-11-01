@@ -648,6 +648,7 @@ impl Shell {
             palette::Action::OpenMachine(index) => self.open_machine_at(index),
             palette::Action::Extra(Extra::AddMachine) => self.open_machine_add(window, cx),
             palette::Action::Extra(Extra::PhoneAccess) => self.open_phone_access(window, cx),
+            palette::Action::Extra(Extra::Ports) => self.open_ports(window, cx),
             palette::Action::Extra(Extra::CheckUpdates) => self.check_updates(true, window, cx),
             palette::Action::Extra(Extra::CopyLastError) => self.copy_last_error(cx),
             palette::Action::Extra(Extra::DismissToasts) => {
@@ -827,6 +828,8 @@ impl Shell {
                     Extra::CopyLastError | Extra::DismissToasts | Extra::InstallUpdate => {}
                     // Handled above: it needs no workspace.
                     Extra::PhoneAccess => self.open_phone_access(window, cx),
+                    // Handled above: it needs no workspace.
+                    Extra::Ports => self.open_ports(window, cx),
                     // Handled above: it needs no workspace.
                     Extra::AddMachine => self.open_machine_add(window, cx),
                     Extra::CheckUpdates => self.check_updates(true, window, cx),

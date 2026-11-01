@@ -93,6 +93,7 @@ use mkrew_ui::peek::{self, Peek};
 use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, PushSwitch, SetUp, Switch};
 use mkrew_ui::plan::{self, Plans};
 use mkrew_ui::plan_dialog::PlanDialog;
+use mkrew_ui::ports::PortsDialog;
 use mkrew_ui::preview;
 use mkrew_ui::prompt_picker::{self, PromptPicker};
 use mkrew_ui::quick_open::{self, QuickOpen, Results};
@@ -518,6 +519,8 @@ struct Shell {
     phone: Phone,
     /// The "Phone access" dialog is open (modal).
     phone_open: bool,
+    /// The Ports dialog (spec 2026-11-01), while open.
+    ports_dialog: Option<PortsDialog>,
     /// The open Settings dialog (modal, ADR 0073).
     settings_dialog: Option<SettingsDialog>,
     /// Scrolls its rows.
@@ -1015,6 +1018,11 @@ impl Render for Shell {
                     .children(
                         self.phone_open
                             .then(|| self.render_phone_access(&theme, cx)),
+                    )
+                    .children(
+                        self.ports_dialog
+                            .is_some()
+                            .then(|| self.render_ports(&theme, cx)),
                     )
                     .children(
                         self.settings_dialog

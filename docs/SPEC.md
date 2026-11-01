@@ -1072,6 +1072,12 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   the workspace root, and a click on a file takes it relative to the workspace (ADR 0049). Esc closes only the picker. Palette: `Run: Start all`
   (Ctrl+F5), `Run: Restart all` (Ctrl+Shift+F5), `Run: Stop all` (Ctrl+Alt+F5), `Run: Setup…`, `Run: Show Run tab`; the Run menu
   shows the three keys. Restart / Stop act only while a run session lives; Start with nothing set up opens Run setup.
+- **Ports dialog** (spec 2026-11-01, ADR 0090): every listening TCP port of the daemon's machine, opened by `Ports: Show…` in the palette and `All ports…` at the end of the Run menu.
+  One group per workspace with ports (sidebar order), then `OUTSIDE MKREW`; a row shows `:port`, `main` or `⎇ <branch>`, the run command (else the pane title, else the process name), `pid N` and a red ■.
+  A click on a row with a pane opens that pane and closes the dialog.
+  ■ (or Delete on the selected row) stops a run command at once; any other row asks in the footer ("Stop node.exe (pid 1234) on :3000? The pane stays open.") with Cancel and a red Stop that runs only after Tab moved onto it; Esc cancels the question, then closes the dialog.
+  `port.list` is asked when it opens, every 2 s while it is open and after each Stop; nothing runs while it is closed; it closes on disconnect.
+  `↑` / `↓` select, Enter opens the pane.
 - **Empty states** everywhere (see §14).
 
 ---

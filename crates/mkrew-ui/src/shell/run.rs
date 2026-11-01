@@ -535,6 +535,14 @@ impl Shell {
             .lead(Lead::Icon(Icon::Settings))
             .row(),
         );
+        rows.push(
+            MenuItem::new(
+                "All ports…",
+                act(move |shell, window, cx| shell.open_ports(window, cx)),
+            )
+            .lead(Lead::Icon(Icon::Server))
+            .row(),
+        );
         rows
     }
 

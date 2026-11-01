@@ -40,6 +40,17 @@ Say so if one is wrong.
 - [ ] **Drag:** drag a card to another column and within its own workspace's cards; drop it right before a card of another workspace: it lands after its own workspace's last card in that column.
 - [ ] **Keys:** arrows walk the cards across workspaces, Ctrl+Enter runs a selected Todo card of another workspace, `a` approves a Review card, Shift+F10 opens its menu; the palette's "Board: Toggle This workspace / All workspaces" flips the switch; the choice survives a restart.
 
+### To verify - 2026-11-01 Ports dialog
+
+- [ ] **Restart the daemon first** (protocol 51).
+- [ ] **Look (dark + light):** `Ports: Show…` opens a 640 px dialog; groups by workspace in sidebar order, `OUTSIDE MKREW` last; each row `:port`, `main` / `⎇ branch`, source, muted `pid N`, a red ■ on the right; a long source truncates.
+- [ ] **Run menu:** `All ports…` is the last row, under `Run setup…`, with the server icon.
+- [ ] **Stop a run command:** ■ stops it at once; the Run pill updates and the row goes within 2 s.
+- [ ] **Stop a shell pane server:** start a dev server in a shell pane, open Ports, ■ asks in the footer; Enter does nothing, Tab to Stop then Enter stops it; the pane stays at its prompt.
+- [ ] **Outside Mkrew:** a server started in a plain terminal outside every workspace shows under `OUTSIDE MKREW`; started inside a workspace folder it shows under that workspace with no pane (a click does nothing).
+- [ ] **Worktree:** a task worktree's dev server shows `⎇ <branch>` and a click opens its pane.
+- [ ] **Keyboard:** `↑` / `↓` select, Enter opens the pane, Delete asks, Esc cancels the question, then closes.
+
 ### To verify - 2026-10-31 Wider Run setup dialog
 
 - [ ] **Look (dark + light):** Run setup is 760 px wide (was 520), the command list grows to 560 px before it scrolls, and a folded card shows up to 240 px of its name and folder.
