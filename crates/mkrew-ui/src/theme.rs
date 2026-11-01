@@ -1762,7 +1762,7 @@ pub fn rems_px(px: f32) -> Rems {
 
 /// Layout heights from the redesign (ADR 0027), in px at the default font size.
 /// The custom title bar (ADR 0034; was the 44 px toolbar of ADR 0027).
-pub const TITLE_BAR_HEIGHT: f32 = 48.0;
+pub const TITLE_BAR_HEIGHT: f32 = 42.0;
 pub const TAB_STRIP_HEIGHT: f32 = 44.0;
 /// The Git view's repository tabs (multi-repo workspaces): a tab strip.
 pub const GIT_REPO_STRIP_HEIGHT: f32 = 42.0;
@@ -2144,7 +2144,10 @@ mod tests {
     fn layout_heights_scale_with_the_ui_font() {
         // 44 px at the default 13 px body; at 20 px the title bar is 44 × 20 / 13.
         assert_eq!(rems_px(44.0), gpui::rems(44.0 / 13.0));
-        assert_eq!(rems_px(TITLE_BAR_HEIGHT).0 * 20.0, 48.0 * 20.0 / 13.0);
+        assert_eq!(
+            rems_px(TITLE_BAR_HEIGHT).0 * 20.0,
+            TITLE_BAR_HEIGHT * 20.0 / 13.0
+        );
     }
 
     /// ✕ on the red hover of the Close button must stay readable in both themes.

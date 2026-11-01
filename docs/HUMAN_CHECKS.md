@@ -45,6 +45,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Quit, update and Remove ask about unsaved text:** edit a file in a machine window and leave it unsaved; tray Quit (or closing this computer's window on macOS/Ubuntu) leaves the machine window open on "Save changes to …?" and it exits by itself after you answer; Remove of that machine does the same; with the update button (an update is available) the installer waits until you answer, and after 10 s a toast says "Close the machine windows to install the update."
 - [ ] **Drafts survive a reconnect:** in a machine window (or this computer's window with its daemon stopped and started) type a Docs comment, a commit message in Git and a card's follow-up text without sending; stop the daemon or pull the network, wait for "Next try in N s.", reconnect; the Docs comment and the commit message are still there in their view (the comment on its file) and the follow-up text is still on its card.
 
+### To verify - 2026-10-30 Title bar 42 px, right panel tab row as a strip
+
+- [ ] **Look (dark + light):** the title bar is a little lower (42 px at the default font, was 48); its controls still sit centered and the menus open just under it.
+  The right panel's `Files │ Git` row has the same height, surface and bottom divider as the terminal tab strip and the sidebar filter row, so the three lines meet in one straight line.
+
 ### To verify - 2026-10-28 Session tab behind `[features] session`
 
 - [ ] **Right panel (dark + light):** with no `[features] session`, the tabs read `Files │ Git` and split the width evenly.

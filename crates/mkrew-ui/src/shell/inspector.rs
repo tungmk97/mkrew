@@ -245,34 +245,52 @@ impl Shell {
             );
         let tab = self.panel_tab();
         let changed = self.git_summary().map_or(0, GitSummary::changed);
-        let tabs = div().flex_none().p(px(space::S)).child(
-            segmented(theme).children(
-                [PanelTab::Files, PanelTab::Session, PanelTab::Git]
-                    .into_iter()
-                    .filter(|&each| each != PanelTab::Session || self.features.session)
-                    .map(|each| {
-                        let title = match each {
-                            PanelTab::Files => "Files",
-                            PanelTab::Session => "Session",
-                            PanelTab::Git => "Git",
-                        };
-                        segment(
-                            SharedString::from(format!("panel-{title}")),
-                            each == tab,
-                            theme,
-                        )
-                        .flex_1()
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.show_panel_tab(each, window, cx);
-                        }))
-                        .child(title)
-                        // The workspace's changed files over all repositories, hidden at 0.
-                        .when(each == PanelTab::Git && changed > 0, |el| {
-                            el.child(tinted_chip(changed.to_string(), theme.accent_text, theme))
-                        })
-                    }),
-            ),
-        );
+        // The tab row lines up with the terminal tab strip and the sidebar's filter row on
+        // its left: same height, same bottom divider.
+        let tabs = div()
+            .flex_none()
+            .h(theme::rems_px(theme::TAB_STRIP_HEIGHT))
+            .flex()
+            .items_center()
+            .px(px(space::S))
+            .bg(rgb(theme.surface))
+            .border_b(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .child(
+                segmented(theme).flex_1().children(
+                    [PanelTab::Files, PanelTab::Session, PanelTab::Git]
+                        .into_iter()
+                        .filter(|&each| each != PanelTab::Session || self.features.session)
+                        .map(|each| {
+                            let title = match each {
+                                PanelTab::Files => "Files",
+                                PanelTab::Session => "Session",
+                                PanelTab::Git => "Git",
+                            };
+                            segment(
+                                SharedString::from(format!("panel-{title}")),
+                                each == tab,
+                                theme,
+                            )
+                            .flex_1()
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                shell.show_panel_tab(each, window, cx);
+                            }))
+                            .child(title)
+                            // The workspace's changed files over all repositories, hidden at 0.
+                            .when(
+                                each == PanelTab::Git && changed > 0,
+                                |el| {
+                                    el.child(tinted_chip(
+                                        changed.to_string(),
+                                        theme.accent_text,
+                                        theme,
+                                    ))
+                                },
+                            )
+                        }),
+                ),
+            );
         let body = match tab {
             PanelTab::Files => self.render_file_tree(project_id, theme, window, cx),
             PanelTab::Session => {
