@@ -18,6 +18,7 @@ mod launch;
 pub mod lock;
 mod notify;
 mod plan;
+mod ports;
 mod retention;
 mod scan;
 mod server;
