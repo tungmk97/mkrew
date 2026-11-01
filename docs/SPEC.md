@@ -547,6 +547,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `project.run_restart` | `project_id`, `name?`, `cols`/`rows` | `RunStarted` — stops the targets like `run_stop` (5 s grace, then forced kill), waits until they exited (max 10 s, else `timeout`, nothing started), then starts them like `run_start`; the new session (a new id: a run is one session with its own log and History entry) takes the old pane's place in the `run` tab and keeps its color and pin |
 | `project.run_stop` | `project_id`, `name?` | ok — asks the run sessions to terminate (without `name`: every live run session of the project, also one whose name left the config); ok when nothing runs. Each one leaves the `run` tab when it exits (§10) |
 | `session.ports` | `project_id` | `[{session_id, ports}]` of the project's live sessions with ports (kept in daemon memory only) |
+| `port.list` | – | `PortRow[]`: every listening TCP port of the daemon's machine (`port`, `addr`, `pid`, `process`, `project_id?`, `worktree_task_id?`, `branch?` without `mkrew/`, `session_id?`, `session_title?`, `run_command?`); a pid under a live session takes that session's workspace, worktree and run command; else a cwd inside a workspace or task worktree folder (the longest wins) takes it; the daemon and its own children (`mk web`) are left out (spec 2026-11-01, ADR 0090) |
+| `port.stop` | `port`, `pid` | ok - lists again first; `not_found` when `pid` no longer holds `port`; a run command's session is killed like `project.run_stop`; any other process is killed with its descendants, never its parents, so a shell pane or an agent stays; `invalid_state` when the OS refuses |
 | `watch.release` | `project_id`, `worktree_task_id?` | ok (`null`) - the UI no longer shows that workspace (or task worktree): it gives back the file watcher that `doc.*`, `fs.*` and `git.status` keep running. The watcher stops unless a session of the project is live; a later request of those kinds keeps it again (ADR 0087) |
 | `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task (`list`: Task[], filters `project_id?`/`status?`; `create` = Todo card, `title`, `prompt`, `agent_profile?` (none = project `default_agent` at run time, stored as `''`), `position?` (after the last Todo card); `update`: `title`/`prompt`/`agent_profile`, absent = unchanged, `null` agent = default; `move`: `status` + `position`; `delete` returns ok, `invalid_state` while a session of the task is not exited, its exited sessions stay as history with `task_id` = NULL — ADR 0004) |
 | `task.run` | `task_id`, `cols`, `rows` | `session_id` |
@@ -659,6 +661,8 @@ Protocol 40 (ADR 0053): `daemon.status` gains `web`.
 Protocol 49 (ADR 0087): request `watch.release`.
 
 Protocol 50 (remote machine, spec 2026-10-29 §5): requests `session.log_tail`, `session.transcript`, `fs.create` and `fs.ignore`.
+
+Protocol 51 (port manager, spec 2026-11-01): requests `port.list` and `port.stop`.
 
 Protocol 41: `session.move` and `Session.position`.
 

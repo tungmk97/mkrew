@@ -287,6 +287,15 @@ pub enum Request {
     /// Returns `SessionPortsEvent[]`: the ports of the project's live run sessions (SPEC §10).
     #[serde(rename = "session.ports")]
     SessionPorts(ProjectRef),
+    /// Returns `PortRow[]`: every listening TCP port of the daemon's machine, with the
+    /// workspace, task worktree and session that own it when Mkrew knows them (spec 2026-11-01).
+    #[serde(rename = "port.list")]
+    PortList,
+    /// Stops the process holding `port` if that is still `pid`: a run command's session ends,
+    /// any other process is killed with its descendants. Returns `null`; `not_found` when `pid`
+    /// no longer holds `port`, `invalid_state` when the OS refuses (spec 2026-11-01).
+    #[serde(rename = "port.stop")]
+    PortStop(PortStopParams),
     /// Returns nothing (`null`): the client no longer shows what kept the project's file
     /// watcher (or, with `worktree_task_id`, that task worktree's) running. The watcher
     /// stops unless a session of the project is live (SPEC §7, ADR 0087).
@@ -1645,6 +1654,39 @@ pub struct SessionUsageEvent {
 pub struct SessionPortsEvent {
     pub session_id: Ulid,
     pub ports: Vec<u16>,
+}
+
+/// One listening TCP port (`port.list`, spec 2026-11-01). `project_id` is empty for a process
+/// outside every workspace; `session_id` is set when the process runs under a live session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortRow {
+    pub port: u16,
+    /// The listening address, `0.0.0.0` first when the process listens on several.
+    pub addr: String,
+    pub pid: u32,
+    /// The process name as the OS reports it (`node.exe`).
+    pub process: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<Ulid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_task_id: Option<Ulid>,
+    /// The task worktree's branch without `mkrew/`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<Ulid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_title: Option<String>,
+    /// The run command's name when the session is a run command (`web`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_command: Option<String>,
+}
+
+/// `port.stop` (spec 2026-11-01): both, so a pid the OS reused is never killed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortStopParams {
+    pub port: u16,
+    pub pid: u32,
 }
 
 /// One `- [ ]` / `- [x]` line of a plan.

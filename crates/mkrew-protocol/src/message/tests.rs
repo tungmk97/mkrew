@@ -75,6 +75,37 @@ fn param_less_requests_omit_params() {
     );
 }
 
+/// Spec 2026-11-01: a row outside Mkrew carries no workspace keys on the wire.
+#[test]
+fn port_rows_leave_out_missing_owners() {
+    let outside = PortRow {
+        port: 5432,
+        addr: "0.0.0.0".into(),
+        pid: 40,
+        process: "postgres".into(),
+        project_id: None,
+        worktree_task_id: None,
+        branch: None,
+        session_id: None,
+        session_title: None,
+        run_command: None,
+    };
+    let wire = serde_json::to_value(&outside).unwrap();
+    assert_eq!(
+        wire,
+        json!({"port": 5432, "addr": "0.0.0.0", "pid": 40, "process": "postgres"})
+    );
+    assert_eq!(serde_json::from_value::<PortRow>(wire).unwrap(), outside);
+    let message = Message::Request {
+        id: 2,
+        request: Request::PortList,
+    };
+    assert_eq!(
+        round_trip(&message),
+        json!({"type": "request", "id": 2, "method": "port.list"})
+    );
+}
+
 /// `worktree_task_id` may be left out: it names the project's own watcher.
 #[test]
 fn watch_release_without_a_worktree_means_the_project_folder() {
@@ -288,6 +319,11 @@ fn every_m1_request_round_trips() {
         }),
         Request::SessionUsage(ProjectRef { project_id: sid() }),
         Request::SessionPorts(ProjectRef { project_id: sid() }),
+        Request::PortList,
+        Request::PortStop(PortStopParams {
+            port: 3000,
+            pid: 1234,
+        }),
         Request::WatchRelease(WatchReleaseParams {
             project_id: sid(),
             worktree_task_id: Some(sid()),
