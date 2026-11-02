@@ -11,7 +11,7 @@ macOS app zip and the Linux tar.gz with `--locked`, and publishes the GitHub Rel
 of Mkrew offer it within 6 hours (ADR 0071). So a release is: bump → commit → tag → push.
 
 This skill is the user's explicit request to push; still confirm the version and the push (steps 2
-and 6). Commit with `git -c user.email=tungnv975@gmail.com`. Stage only `Cargo.toml` and
+and 6). Commit with `git -c user.email=tungnv975@gmail.com`. Stage only the Cargo manifests and
 `Cargo.lock`: other agents may have dirty files in the tree; leave them alone.
 
 ## 1. Preflight (stop and report on any failure)
@@ -48,19 +48,21 @@ alone (`mkrew-verify` skill).
 
 ## 4. Bump
 
-Edit only `version = "…"` under `[workspace.package]` in `Cargo.toml` (every crate inherits it).
+Edit `version = "…"` under `[workspace.package]` in `Cargo.toml` (every crate inherits it).
+A minor or major bump also changes every internal path dependency in `crates/*/Cargo.toml`
+(`mkrew-core = { version = "X.Y.Z", path = … }`): `^0.2.0` does not match `0.3.0`.
 Then refresh the workspace entries in the lock file without touching dependencies:
 
 ```sh
 cargo update --workspace --offline
-git diff --stat -- Cargo.toml Cargo.lock           # Cargo.toml 1 line, Cargo.lock only mkrew-*/spike-term
+git diff --stat                                    # only Cargo manifests; Cargo.lock only mkrew-*/spike-term
 cargo metadata --locked --format-version 1 --no-deps >/dev/null   # exit 0 = CI's --locked will pass
 ```
 
 ## 5. Commit and tag
 
 ```sh
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock crates/*/Cargo.toml
 git -c user.email=tungnv975@gmail.com commit -m "chore(release): vX.Y.Z"
 git -c user.email=tungnv975@gmail.com tag -a vX.Y.Z -m "Mkrew vX.Y.Z"
 ```
