@@ -1,4 +1,4 @@
-# 0090 - Port manager: OS socket table, parent walk, subtree kill
+# 0091 - Port manager: OS socket table, parent walk, subtree kill
 
 - Date: 2026-11-01
 - Status: accepted

@@ -1,4 +1,4 @@
-//! `port.list` / `port.stop` (spec 2026-11-01, ADR 0090): the listening TCP ports of the
+//! `port.list` / `port.stop` (spec 2026-11-01, ADR 0091): the listening TCP ports of the
 //! machine and the workspace, task worktree and session each one belongs to. The decision
 //! ([`attribute`]) is pure; the OS reads are [`scan`] and [`kill_tree`].
 

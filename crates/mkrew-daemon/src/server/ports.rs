@@ -1,4 +1,4 @@
-//! `port.list` / `port.stop` (spec 2026-11-01, ADR 0090).
+//! `port.list` / `port.stop` (spec 2026-11-01, ADR 0091).
 
 use std::collections::HashMap;
 use std::path::PathBuf;

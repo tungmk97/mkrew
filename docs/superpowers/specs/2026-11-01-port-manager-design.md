@@ -2,7 +2,7 @@
 
 - Date: 2026-11-01
 - Status: approved by the user in brainstorming (2026-11-01); this file is the written spec.
-- ADR: `docs/decisions/0090-port-manager.md` (written by the first implementation task).
+- ADR: `docs/decisions/0091-port-manager.md` (written by the first implementation task).
 
 ## 1. Goal
 
@@ -151,7 +151,7 @@ No test calls the network or a real agent; tests listen on `127.0.0.1:0` like th
 
 ## 7. Documentation
 
-- ADR `docs/decisions/0090-port-manager.md`: the `listeners` dependency and the kill-the-subtree rule.
+- ADR `docs/decisions/0091-port-manager.md`: the `listeners` dependency and the kill-the-subtree rule.
 - SPEC §9: `port.list`, `port.stop`, `PortRow`, the protocol version.
 - SPEC §10: the Ports dialog, the `All ports…` Run menu row, the palette command.
 - SPEC CLI section: `mk ports`.

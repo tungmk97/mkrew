@@ -19,7 +19,7 @@ dunce = "1.0.5"
 ignore = "0.4.33"
 interprocess = { version = "2.4.4", features = ["tokio"] }
 # `port.list` (spec 2026-11-01): listening sockets with their pid on Windows, Linux and macOS
-# (ADR 0090).
+# (ADR 0091).
 listeners = "0.6"
 mkrew-core = { version = "0.2.0", path = "../mkrew-core" }
 mkrew-protocol = { version = "0.2.0", path = "../mkrew-protocol" }
