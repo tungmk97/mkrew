@@ -63,6 +63,16 @@ mod tests {
         let err = InstanceLock::acquire(&path).unwrap_err();
         assert!(matches!(err, LockError::AlreadyRunning(_)), "{err}");
         drop(first);
-        InstanceLock::acquire(&path).unwrap();
+        // Linux `flock`: a child another test forks right now holds a copy of the fd (and so
+        // the lock) until it execs; wait for that copy to close.
+        let mut again = InstanceLock::acquire(&path);
+        for _ in 0..100 {
+            if !matches!(again, Err(LockError::AlreadyRunning(_))) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            again = InstanceLock::acquire(&path);
+        }
+        again.unwrap();
     }
 }
