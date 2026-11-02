@@ -50,6 +50,7 @@ Say so if one is wrong.
 - [ ] **Outside Mkrew:** a server started in a plain terminal outside every workspace shows under `OUTSIDE MKREW`; started inside a workspace folder it shows under that workspace with no pane (a click does nothing).
 - [ ] **Worktree:** a task worktree's dev server shows `⎇ <branch>` and a click opens its pane.
 - [ ] **Keyboard:** `↑` / `↓` select, Enter opens the pane, Delete asks, Esc cancels the question, then closes.
+- [ ] **Focus after a button:** after Tab to Stop / Cancel then Enter, Esc and ↑ / ↓ still work.
 
 ### To verify - 2026-10-31 Wider Run setup dialog
 

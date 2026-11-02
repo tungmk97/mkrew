@@ -73,6 +73,7 @@ impl Shell {
             if let Some(dialog) = self.ports_dialog.as_mut() {
                 dialog.confirm = Some(row);
             }
+            window.focus(&self.dialog_focus, cx);
             cx.notify();
         } else {
             self.stop_port(row.port, row.pid, window, cx);
@@ -86,6 +87,7 @@ impl Shell {
         if let Some(dialog) = self.ports_dialog.as_mut() {
             dialog.confirm = None;
         }
+        window.focus(&self.dialog_focus, cx);
         cx.notify();
         let stopped = connection.request(Request::PortStop(PortStopParams { port, pid }));
         cx.spawn_in(window, async move |this, cx| {
@@ -131,6 +133,7 @@ impl Shell {
         match ports::key(&event.keystroke) {
             Some(ports::Key::Close) if asking => {
                 dialog.confirm = None;
+                window.focus(&self.dialog_focus, cx);
                 cx.notify();
             }
             Some(ports::Key::Close) => self.close_ports(window, cx),
@@ -280,10 +283,11 @@ impl Shell {
                         button("port-cancel", "Cancel", theme, false)
                             .focus_stop(theme)
                             .tooltip(tooltip(theme, "Keep it running", "Esc"))
-                            .on_click(cx.listener(|shell, _, _, cx| {
+                            .on_click(cx.listener(|shell, _, window, cx| {
                                 if let Some(dialog) = shell.ports_dialog.as_mut() {
                                     dialog.confirm = None;
                                 }
+                                window.focus(&shell.dialog_focus, cx);
                                 cx.notify();
                             })),
                     )
