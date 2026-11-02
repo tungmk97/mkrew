@@ -516,7 +516,11 @@ fn project_clone_adds_the_clone_and_reports_failures() {
     let ProjectClonedEvent { project, error, .. } = cloned(&mut client, clone_id);
     assert_eq!(error, None);
     let project = project.unwrap();
-    assert_eq!(Path::new(&project.path), parent.join("repo"));
+    // The daemon stores the canonical path; a temp dir may be an 8.3 short path (`RUNNER~1`).
+    assert_eq!(
+        dunce::canonicalize(&project.path).unwrap(),
+        dunce::canonicalize(parent.join("repo")).unwrap()
+    );
     assert_eq!(project.name, "repo");
     assert!(parent.join("repo").join("a.txt").is_file());
 
