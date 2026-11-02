@@ -86,6 +86,7 @@ impl Shell {
         };
         if let Some(dialog) = self.ports_dialog.as_mut() {
             dialog.confirm = None;
+            dialog.stop_error = None;
         }
         window.focus(&self.dialog_focus, cx);
         cx.notify();
@@ -98,7 +99,7 @@ impl Shell {
             };
             let _ = this.update_in(cx, |shell, window, cx| {
                 if let Some(dialog) = shell.ports_dialog.as_mut() {
-                    dialog.error = failure;
+                    dialog.stop_error = failure;
                 }
                 shell.poll_ports(window, cx);
             });
@@ -111,7 +112,7 @@ impl Shell {
         let Some(session) = row.session_id else {
             return;
         };
-        self.ports_dialog = None;
+        self.close_ports(window, cx);
         self.open_session(session, window, cx);
         cx.notify();
     }
@@ -258,14 +259,18 @@ impl Shell {
         } else {
             list.into_any_element()
         };
-        let error = dialog.error.clone().map(|text| {
-            div()
-                .flex()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                .child(div().text_color(rgb(theme.text)).child(text))
-        });
+        let errors: Vec<_> = [&dialog.list_error, &dialog.stop_error]
+            .into_iter()
+            .flatten()
+            .map(|text| {
+                div()
+                    .flex()
+                    .gap(px(space::XS))
+                    .text_size(font_size::META)
+                    .child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                    .child(div().text_color(rgb(theme.text)).child(text.clone()))
+            })
+            .collect();
         let footer = match &dialog.confirm {
             Some(row) => {
                 let (port, pid) = (row.port, row.pid);
@@ -332,7 +337,7 @@ impl Shell {
                     .text_color(rgb(theme.text))
                     .child("Ports"),
             )
-            .children(error)
+            .children(errors)
             .child(body)
             .child(footer);
         Self::modal_shade("ports-shade", panel, cx)

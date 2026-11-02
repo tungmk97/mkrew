@@ -88,9 +88,9 @@ pub const STATUS_TICK: Duration = Duration::from_millis(500);
 /// Tailscale are read on every tick; closed, `daemon.status` alone every [`PHONE_POLL_IDLE`]
 /// (it keeps the title bar icon true).
 pub const PHONE_TICK: Duration = Duration::from_secs(1);
+pub const PHONE_POLL_IDLE: Duration = Duration::from_secs(5);
 /// While the Ports dialog is open, `port.list` is asked on every tick (spec 2026-11-01).
 pub const PORTS_TICK: Duration = Duration::from_secs(2);
-pub const PHONE_POLL_IDLE: Duration = Duration::from_secs(5);
 
 /// Diameter of one dot of the loading mark (SPEC §11).
 pub const STATUS_DOT: f32 = 4.0;

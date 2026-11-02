@@ -117,7 +117,10 @@ pub struct PortsDialog {
     pub rows: Vec<PortRow>,
     /// A first answer came (until then the dialog says "Loading…").
     pub loaded: bool,
-    pub error: Option<String>,
+    /// The last `port.list` failed; cleared by the next good list.
+    pub list_error: Option<String>,
+    /// The last Stop was refused; cleared by the next Stop, not by a refresh.
+    pub stop_error: Option<String>,
     pub selected: Option<(u16, u32)>,
     /// The row whose Stop question shows in the footer.
     pub confirm: Option<PortRow>,
@@ -136,9 +139,9 @@ impl PortsDialog {
         match listed {
             Ok(rows) => {
                 self.rows = rows;
-                self.error = None;
+                self.list_error = None;
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.list_error = Some(error),
         }
         let alive = |rows: &[PortRow], port: u16, pid: u32| {
             rows.iter().any(|r| r.port == port && r.pid == pid)
@@ -320,6 +323,13 @@ mod tests {
         assert_eq!(dialog.confirm, None);
         dialog.listed(Err("daemon busy".into()));
         assert_eq!(dialog.rows.len(), 1, "rows stay on an error");
-        assert_eq!(dialog.error.as_deref(), Some("daemon busy"));
+        assert_eq!(dialog.list_error.as_deref(), Some("daemon busy"));
+        dialog.stop_error = Some("Can't stop pid 4: access denied".into());
+        dialog.listed(Ok(vec![row(3000, 2, Some(1))]));
+        assert_eq!(dialog.list_error, None);
+        assert!(
+            dialog.stop_error.is_some(),
+            "a refresh keeps the stop error"
+        );
     }
 }

@@ -18,6 +18,7 @@ The user wants every listening port of the machine, with its workspace, worktree
   Without a session, the process cwd inside a workspace or task worktree folder (the longest wins) gives the workspace.
 - `port.stop` lists again and acts only when the same pid still holds the port.
   A run command stops through its session kill; any other process is killed with its descendants, never its parents.
+  A process that started the Mkrew daemon (the daemon is among its descendants) is refused with `invalid_state`, and so is a session's own root process (close the pane instead).
 - No background scan and no event: clients ask (`port.list`) while they show the ports.
 
 ## Consequences

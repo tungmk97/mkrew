@@ -1,4 +1,4 @@
-//! `mkrew-fakeagent [--scenario <file|name>] [--resume <id>] [--listen] [<prompt>]` — runs a
+//! `mkrew-fakeagent [--scenario <file|name>] [--resume <id>] [--listen] [<prompt>]`: runs a
 //! scenario (SPEC §16).
 //!
 //! The scenario comes from `--scenario`, else `MKREW_FAKE_SCENARIO`, else the built-in `ask`.

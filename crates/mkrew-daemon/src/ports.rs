@@ -238,8 +238,25 @@ pub(crate) fn scan(mut known: Known) -> anyhow::Result<Vec<PortRow>> {
     Ok(attribute(&table, &known))
 }
 
-/// Kills `pid` and its descendants (children first), never its parents. Blocking.
-pub(crate) fn kill_tree(pid: u32) -> Result<(), String> {
+/// `pid`'s descendants (children first), then `pid`; an error when that would take the
+/// daemon down with it, since `pid` is the daemon or one of its ancestors.
+pub(crate) fn kill_order(
+    processes: &HashMap<u32, Proc>,
+    pid: u32,
+    daemon_pid: u32,
+) -> Result<Vec<u32>, String> {
+    let mut order = descendants(processes, pid);
+    if pid == daemon_pid || order.contains(&daemon_pid) {
+        return Err(format!(
+            "pid {pid} started the Mkrew daemon; stop it outside Mkrew"
+        ));
+    }
+    order.push(pid);
+    Ok(order)
+}
+
+/// Kills `pid` and its descendants (children first), never its parents or the daemon. Blocking.
+pub(crate) fn kill_tree(pid: u32, daemon_pid: u32) -> Result<(), String> {
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate};
     let mut system = sysinfo::System::new();
     system.refresh_processes_specifics(ProcessesToUpdate::All, ProcessRefreshKind::new());
@@ -248,8 +265,9 @@ pub(crate) fn kill_tree(pid: u32) -> Result<(), String> {
         .iter()
         .map(|(id, p)| (id.as_u32(), proc_of(p, None)))
         .collect();
-    for child in descendants(&processes, pid) {
-        if let Some(process) = system.process(Pid::from_u32(child)) {
+    let order = kill_order(&processes, pid, daemon_pid)?;
+    for child in &order[..order.len() - 1] {
+        if let Some(process) = system.process(Pid::from_u32(*child)) {
             process.kill();
         }
     }
@@ -509,6 +527,16 @@ mod tests {
         processes.insert(33, process("older", Some(NODE), 290));
         assert_eq!(descendants(&processes, NODE), [32, 31]);
         assert!(descendants(&processes, POSTGRES).is_empty());
+    }
+
+    #[test]
+    fn kill_order_never_reaches_the_daemon() {
+        let mut processes = table(vec![]).processes;
+        processes.insert(1, process("ide", None, 10));
+        processes.insert(32, process("grandchild", Some(NODE), 320));
+        assert!(kill_order(&processes, 1, DAEMON).is_err());
+        assert!(kill_order(&processes, DAEMON, DAEMON).is_err());
+        assert_eq!(kill_order(&processes, NODE, DAEMON), Ok(vec![32, NODE]));
     }
 
     #[test]

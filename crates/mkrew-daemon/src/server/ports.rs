@@ -39,13 +39,20 @@ impl Daemon {
             self.hub.command(session_id, Command::Kill { force: false });
             return ok(&());
         }
+        if self.hub.live_pids().iter().any(|(_, pid)| *pid == row.pid) {
+            return Outcome::error(
+                ErrorCode::InvalidState,
+                "that is the pane's own process; close the pane instead",
+            );
+        }
         tracing::info!(
             pid = row.pid,
             port = row.port,
             process = row.process,
             "stopping a port's process"
         );
-        match tokio::task::spawn_blocking(move || ports::kill_tree(params.pid)).await {
+        let (pid, daemon_pid) = (params.pid, std::process::id());
+        match tokio::task::spawn_blocking(move || ports::kill_tree(pid, daemon_pid)).await {
             Ok(Ok(())) => ok(&()),
             Ok(Err(reason)) => Outcome::error(ErrorCode::InvalidState, reason),
             Err(e) => Outcome::error(ErrorCode::Internal, format!("port stop: {e}")),
