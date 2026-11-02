@@ -1,5 +1,6 @@
 //! The new / edit task dialog of the board (SPEC §10, §13): title, prompt and agent, and the
-//! request saving them. Pure and tested headlessly; `main.rs` renders it.
+//! request saving them. The prompt is edited like the composer's ([`Prompt`]: `@` files,
+//! library prompts, ✦). Pure and tested headlessly; `main.rs` renders it.
 
 use gpui::Keystroke;
 use mkrew_protocol::{
@@ -7,8 +8,9 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
+use crate::composer::Prompt;
 use crate::editor::Motion;
-use crate::text_box::{Input, TextBox};
+use crate::text_box::Input;
 use crate::workspace_menu::{AgentChoice, Agents, agent_choices};
 
 /// Creating a task in a workspace, or editing one.
@@ -121,7 +123,7 @@ pub struct TaskDialog {
     pub mode: Mode,
     pub title: Input,
     /// The multi-line prompt (§20B.1).
-    pub prompt: TextBox,
+    pub prompt: Prompt,
     /// `None` = the workspace's default agent at run time.
     pub agent: Option<String>,
     /// "Run in a worktree" (§20E.1, default off).
@@ -159,12 +161,10 @@ impl TaskDialog {
     }
 
     fn open(mode: Mode, title: String, text: String, agent: Option<String>) -> Self {
-        let mut prompt = TextBox::default();
-        prompt.insert(&text);
         Self {
             mode,
             title: title.into(),
-            prompt,
+            prompt: Prompt::new(&text),
             agent,
             worktree: false,
             field: Field::Title,
@@ -196,8 +196,9 @@ impl TaskDialog {
             DialogKey::Save => return Outcome::Save,
             DialogKey::Enter => match self.field {
                 Field::Title => return Outcome::Save,
+                Field::Prompt if self.prompt.rewriting() => {}
                 Field::Prompt => {
-                    self.prompt.key(DialogKey::Enter);
+                    self.prompt.text.key(DialogKey::Enter);
                 }
             },
             DialogKey::SwitchField => {
@@ -206,6 +207,8 @@ impl TaskDialog {
                     Field::Prompt => Field::Title,
                 };
             }
+            // Typing waits for the ✦ answer like the composer's (picks and pastes are held).
+            DialogKey::Insert(_) if self.field == Field::Prompt && self.prompt.rewriting() => {}
             DialogKey::Insert(text) => self.insert(&text),
             // The caller puts the selection on the clipboard first (see `selected_text`).
             DialogKey::Paste | DialogKey::Copy => {}
@@ -213,8 +216,10 @@ impl TaskDialog {
                 Field::Title => {
                     self.title.edit(&key);
                 }
+                // Keys wait for the ✦ answer, like the composer's.
+                Field::Prompt if self.prompt.rewriting() => {}
                 Field::Prompt => {
-                    self.prompt.edit(&key);
+                    self.prompt.text.edit(&key);
                 }
             },
         }
@@ -225,7 +230,7 @@ impl TaskDialog {
     pub fn selected_text(&self) -> Option<&str> {
         match self.field {
             Field::Title => self.title.selected_text(),
-            Field::Prompt => self.prompt.input().selected_text(),
+            Field::Prompt => self.prompt.text.input().selected_text(),
         }
     }
 
@@ -252,7 +257,7 @@ impl TaskDialog {
         let extend = extend && self.field == field;
         match field {
             Field::Title => self.title.click(at, extend, clicks),
-            Field::Prompt => self.prompt.click(at, extend, clicks),
+            Field::Prompt => self.prompt.text.click(at, extend, clicks),
         }
         self.field = field;
     }
@@ -272,10 +277,37 @@ impl TaskDialog {
         }
     }
 
-    /// Types a picked library prompt (§20B.3) at the prompt's caret; the prompt gets the keys.
+    /// Types a pick (library prompt §20B.3, `@` file) at the prompt's caret; the prompt gets
+    /// the keys.
     pub fn insert_prompt(&mut self, text: &str) {
         self.field = Field::Prompt;
         self.prompt.insert(text);
+    }
+
+    /// `@` typed in the prompt opens the file picker, as in the composer (§20B.1).
+    pub fn opens_file_picker(&self, key: &DialogKey) -> bool {
+        self.field == Field::Prompt && !self.busy && *key == DialogKey::Insert("@".into())
+    }
+
+    /// Starts the ✦ rewrite of the prompt as generation `generation_id`; returns the text to
+    /// improve, or `None` while saving or rewriting or when only blanks were typed.
+    pub fn begin_enhance(&mut self, generation_id: Ulid) -> Option<String> {
+        if self.busy {
+            return None;
+        }
+        let input = self.prompt.begin_enhance(generation_id)?;
+        self.error = None;
+        Some(input)
+    }
+
+    /// The answer of generation `generation_id`, if it rewrites this prompt; a failure is
+    /// shown as the dialog's error. `false` if the prompt did not ask for it.
+    pub fn enhanced(&mut self, generation_id: Ulid, result: Result<String, String>) -> bool {
+        if self.prompt.enhancing != Some(generation_id) {
+            return false;
+        }
+        self.error = self.prompt.enhanced(result);
+        true
     }
 
     /// The agent rows: the workspace default first (named after `default_agent` when set),
@@ -326,7 +358,10 @@ impl TaskDialog {
         if title.is_empty() {
             return Err("Give the task a title.");
         }
-        let prompt = self.prompt.text().trim();
+        if self.prompt.rewriting() {
+            return Err("Wait for the improved prompt.");
+        }
+        let prompt = self.prompt.text.text().trim();
         Ok(match &self.mode {
             Mode::New { project_id } => Some(Request::TaskCreate(TaskCreateParams {
                 project_id: *project_id,
@@ -381,7 +416,7 @@ mod tests {
         assert_eq!(dialog.mode, Mode::New { project_id });
         assert_eq!(dialog.title.as_str(), "PROJ-7 Fix login");
         assert_eq!(
-            dialog.prompt.text(),
+            dialog.prompt.text.text(),
             "PROJ-7: Fix login\nhttps://x/browse/PROJ-7"
         );
         assert_eq!(dialog.agent, None);
@@ -500,7 +535,7 @@ mod tests {
         type_text(&mut dialog, "and yy");
         dialog.key(DialogKey::Backspace);
         assert_eq!(dialog.title, "Add tests");
-        assert_eq!(dialog.prompt.text(), "Cover x\nand y");
+        assert_eq!(dialog.prompt.text.text(), "Cover x\nand y");
         dialog.key(DialogKey::SwitchField);
         assert_eq!(dialog.key(DialogKey::Enter), Outcome::Save);
         assert_eq!(dialog.key(DialogKey::Save), Outcome::Save);
@@ -514,7 +549,7 @@ mod tests {
         dialog.key(DialogKey::SwitchField);
         dialog.insert("one\r\ntwo");
         assert_eq!(dialog.title, "a b");
-        assert_eq!(dialog.prompt.text(), "one\ntwo");
+        assert_eq!(dialog.prompt.text.text(), "one\ntwo");
     }
 
     #[test]
@@ -523,7 +558,7 @@ mod tests {
         dialog.click(Field::Prompt, 3, false, 1);
         assert_eq!(dialog.field, Field::Prompt);
         dialog.insert("X");
-        assert_eq!(dialog.prompt.text(), "FixX the login bug");
+        assert_eq!(dialog.prompt.text.text(), "FixX the login bug");
         // Shift+click in the other field starts there, not from its old anchor.
         dialog.click(Field::Title, 3, true, 1);
         assert_eq!(dialog.title.selection(), None);
@@ -543,11 +578,11 @@ mod tests {
         dialog.key(DialogKey::SelectAll);
         dialog.key(DialogKey::Backspace);
         assert_eq!(dialog.title, "");
-        assert_eq!(dialog.prompt.text(), "Fix the login bug", "untouched");
+        assert_eq!(dialog.prompt.text.text(), "Fix the login bug", "untouched");
 
         dialog.key(DialogKey::SwitchField);
         dialog.key(DialogKey::DeleteWord);
-        assert_eq!(dialog.prompt.text(), "Fix the login ");
+        assert_eq!(dialog.prompt.text.text(), "Fix the login ");
     }
 
     #[test]
@@ -564,12 +599,12 @@ mod tests {
         dialog.key(moved(Motion::Left, false));
         dialog.key(DialogKey::Backspace);
         type_text(&mut dialog, "s");
-        assert_eq!(dialog.prompt.text(), "Fix the logis bug");
+        assert_eq!(dialog.prompt.text.text(), "Fix the logis bug");
         dialog.key(moved(Motion::End, true));
         assert_eq!(dialog.selected_text(), Some(" bug"));
         dialog.key(DialogKey::Cut);
         assert_eq!(
-            dialog.prompt.text(),
+            dialog.prompt.text.text(),
             "Fix the logis",
             "the caller copied it first"
         );
@@ -582,8 +617,52 @@ mod tests {
         dialog.insert_prompt("\nReview it.\r\n");
         assert_eq!(dialog.field, Field::Prompt);
         assert_eq!(dialog.title, "Fix login");
-        assert_eq!(dialog.prompt.text(), "Fix the login bug\nReview it.\n");
+        assert_eq!(dialog.prompt.text.text(), "Fix the login bug\nReview it.\n");
         assert_eq!(dialog.save_request().map(|r| r.is_some()), Ok(true));
+    }
+
+    /// The prompt takes `@` and ✦ like the composer: keys wait for the rewrite, picks made
+    /// meanwhile follow it, and the task is not saved with the old text.
+    #[test]
+    fn the_prompt_is_improved_like_the_composer() {
+        let at = DialogKey::Insert("@".into());
+        let mut dialog = TaskDialog::edit(task());
+        assert!(!dialog.opens_file_picker(&at), "the title types an @");
+        dialog.key(DialogKey::SwitchField);
+        assert!(dialog.opens_file_picker(&at));
+        assert!(!dialog.opens_file_picker(&DialogKey::Insert("a".into())));
+
+        let id = Ulid::new();
+        assert_eq!(
+            dialog.begin_enhance(id).as_deref(),
+            Some("Fix the login bug")
+        );
+        assert_eq!(dialog.begin_enhance(Ulid::new()), None, "one at a time");
+        dialog.key(DialogKey::Insert("x".into()));
+        dialog.insert_prompt(" @src/a.rs");
+        assert_eq!(dialog.prompt.text.text(), "Fix the login bug");
+        assert_eq!(dialog.save_request(), Err("Wait for the improved prompt."));
+        dialog.key(DialogKey::SwitchField);
+        type_text(&mut dialog, "!");
+        assert_eq!(dialog.title, "Fix login!", "the title still takes keys");
+
+        assert!(!dialog.enhanced(Ulid::new(), Ok("other".into())));
+        assert!(dialog.enhanced(id, Ok("Fix the login crash.".into())));
+        assert_eq!(dialog.prompt.text.text(), "Fix the login crash. @src/a.rs");
+        assert_eq!(dialog.save_request().map(|r| r.is_some()), Ok(true));
+
+        let failed = Ulid::new();
+        assert!(dialog.begin_enhance(failed).is_some());
+        assert!(dialog.enhanced(failed, Err("no answer".into())));
+        assert_eq!(dialog.prompt.text.text(), "Fix the login crash. @src/a.rs");
+        assert_eq!(
+            dialog.error.as_deref(),
+            Some("Cannot improve the prompt: no answer")
+        );
+
+        dialog.busy = true;
+        assert!(!dialog.opens_file_picker(&at), "not while saving");
+        assert_eq!(dialog.begin_enhance(Ulid::new()), None);
     }
 
     #[test]

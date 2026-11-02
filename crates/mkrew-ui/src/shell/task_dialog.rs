@@ -52,7 +52,7 @@ impl Shell {
 
     /// Keys typed in the task dialog edit the focused field; Tab / Shift+Tab move between the
     /// title and the prompt, then through the buttons; Enter (title) or Ctrl+Enter saves, Esc
-    /// cancels.
+    /// cancels; `@` in the prompt picks a file, as in the composer.
     pub(crate) fn task_dialog_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -78,6 +78,9 @@ impl Shell {
         {
             return;
         }
+        if (self.task_dialog.as_ref()).is_some_and(|dialog| dialog.opens_file_picker(&key)) {
+            return self.open_file_ref_picker(composer::Target::TaskDialog, window, cx);
+        }
         let paste = (key == DialogKey::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
@@ -96,7 +99,7 @@ impl Shell {
             task_dialog::Outcome::Edited => {
                 // ponytail: follows the caret only at the end; a caret moved above the
                 // visible lines is not scrolled into view (needs line-height maths).
-                let prompt = dialog.prompt.input();
+                let prompt = dialog.prompt.text.input();
                 if dialog.field == Field::Prompt && prompt.cursor() == prompt.len() {
                     self.prompt_scroll.scroll_to_bottom();
                 }
@@ -284,17 +287,21 @@ impl Shell {
         };
         // A button holding the keyboard means no field is: only one focus indicator at a time.
         let text_focused = self.dialog_focus.is_focused(window);
+        let rewriting = dialog.prompt.rewriting();
         let field = |id: &'static str, which: Field, placeholder: &'static str| {
             let input = match which {
                 Field::Title => &dialog.title,
-                Field::Prompt => dialog.prompt.input(),
+                Field::Prompt => dialog.prompt.text.input(),
             };
+            // The prompt shows no caret while ✦ rewrites it (keys wait, like the composer's).
+            let caret = dialog.field == which && text_focused;
+            let caret = caret && !(which == Field::Prompt && rewriting);
             // A click focuses it and puts the caret under the pointer (drag / Shift+click select).
             caret_field(
                 id,
                 input,
                 placeholder,
-                dialog.field == which && text_focused,
+                caret,
                 theme,
                 cx,
                 move |shell, caret| {
@@ -418,21 +425,24 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            // The prompt picker over it has the keyboard meanwhile.
-            .when(self.prompt_picker.is_none(), |el| {
-                el.dialog_root(
-                    &self.dialog_focus,
-                    true,
-                    cx.listener(Self::dialog_guard),
-                    cx.listener(Self::task_dialog_key_down),
-                )
-                .relative()
-                .child(self.typing(
-                    &self.dialog_focus,
-                    Self::task_dialog_key_down,
-                    cx,
-                ))
-            })
+            // A picker over it (library prompt, `@` file) has the keyboard meanwhile.
+            .when(
+                self.prompt_picker.is_none() && self.quick_open.is_none(),
+                |el| {
+                    el.dialog_root(
+                        &self.dialog_focus,
+                        true,
+                        cx.listener(Self::dialog_guard),
+                        cx.listener(Self::task_dialog_key_down),
+                    )
+                    .relative()
+                    .child(self.typing(
+                        &self.dialog_focus,
+                        Self::task_dialog_key_down,
+                        cx,
+                    ))
+                },
+            )
             .child(
                 div()
                     .text_size(font_size::CARD_TITLE)
@@ -457,8 +467,32 @@ impl Shell {
                         div()
                             .flex()
                             .items_center()
-                            .justify_between()
-                            .child(label("Prompt"))
+                            .gap(px(space::XS))
+                            .child(div().flex_1().child(label("Prompt")))
+                            // ✦ (§20B.1): the task's agent rewrites the prompt, as in the
+                            // composer.
+                            .when(!dialog.busy, |el| {
+                                let sparkles =
+                                    icon_text(Icon::Sparkles, "Improve", button_fg(theme, false));
+                                let improve = if rewriting || dialog.prompt.text.is_blank() {
+                                    disabled_button("task-enhance", sparkles, theme, false)
+                                } else {
+                                    button("task-enhance", sparkles, theme, false)
+                                        .focus_stop(theme)
+                                        .on_click(cx.listener(|shell, _, window, cx| {
+                                            shell.enhance_prompt(
+                                                composer::Target::TaskDialog,
+                                                window,
+                                                cx,
+                                            );
+                                        }))
+                                };
+                                el.child(improve.tooltip(tooltip(
+                                    theme,
+                                    "Improve this prompt with the agent (it may read the code)",
+                                    "",
+                                )))
+                            })
                             .when(!dialog.busy, |el| {
                                 el.child(
                                     button("task-from-prompt", "From prompt…", theme, false)
@@ -470,7 +504,7 @@ impl Shell {
                                         ))
                                         .on_click(cx.listener(|shell, _, window, cx| {
                                             shell.open_prompt_picker(
-                                                prompt_picker::Target::TaskDialog,
+                                                composer::Target::TaskDialog,
                                                 window,
                                                 cx,
                                             );
@@ -486,7 +520,23 @@ impl Shell {
                         )
                         .h(px(theme::PROMPT_FIELD_HEIGHT))
                         .overflow_y_scroll()
-                        .track_scroll(&self.prompt_scroll),
+                        .track_scroll(&self.prompt_scroll)
+                        .when(rewriting, |el| el.opacity(opacity::DISABLED)),
+                    )
+                    // The composer's keys hold here too; the line stays so the dialog
+                    // never jumps.
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(space::XS))
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .when(rewriting, |el| el.child("✦"))
+                            .child(if rewriting {
+                                "Improving the prompt…"
+                            } else {
+                                "@ for a file · Ctrl+Enter to save"
+                            }),
                     ),
             )
             .child(

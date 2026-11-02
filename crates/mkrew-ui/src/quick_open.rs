@@ -4,11 +4,13 @@
 //! picked file in the Files view. Pure and tested headlessly; `main.rs` renders it.
 
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::Keystroke;
 use mkrew_protocol::{FsFindParams, FsMatch};
 use ulid::Ulid;
 
+use crate::composer::Target;
 use crate::task_dialog::{DialogKey, dialog_key};
 use crate::text_box::Input;
 
@@ -67,9 +69,11 @@ pub struct QuickOpen {
     pub results: Results,
     /// Index of the picked match.
     pub selected: usize,
-    /// Opened by `@` in this session's composer: the pick is typed there instead of opened.
-    pub composer: Option<Ulid>,
-    /// Number of the last `fs.find` sent; older answers are dropped.
+    /// Opened by `@` in a prompt (a composer, the task dialog): the pick is typed there
+    /// instead of opened.
+    pub insert_into: Option<Target>,
+    /// Number of the last `fs.find` sent; older answers are dropped. Unique across finders,
+    /// so an answer meant for a closed one never lands in the next.
     sent: u64,
 }
 
@@ -81,14 +85,15 @@ impl QuickOpen {
             query: Input::default(),
             results: Results::Loading,
             selected: 0,
-            composer: None,
+            insert_into: None,
             sent: 0,
         }
     }
 
     /// The `fs.find` for the query as it is now, with its number for [`Self::found`].
     pub fn search(&mut self) -> (u64, FsFindParams) {
-        self.sent += 1;
+        static SENT: AtomicU64 = AtomicU64::new(0);
+        self.sent = SENT.fetch_add(1, Ordering::Relaxed) + 1;
         let params = FsFindParams {
             project_id: self.project_id,
             worktree_task_id: self.worktree_task_id,
@@ -225,6 +230,22 @@ mod tests {
         open.found(third, Err("no such workspace".into()));
         assert_eq!(open.results, Results::Failed("no such workspace".into()));
         assert_eq!(open.picked(), None);
+    }
+
+    /// An `@` picker closed and opened again: the old finder's late answer has another
+    /// number, so it never shows in the new one.
+    #[test]
+    fn a_closed_finders_answer_never_lands_in_the_next() {
+        let project = Ulid::new();
+        let mut closed = QuickOpen::new(project, None);
+        closed.search();
+        let (late, _) = closed.search();
+        let mut open = QuickOpen::new(project, None);
+        open.search();
+        let (current, _) = open.search();
+        assert_ne!(late, current);
+        assert!(!open.found(late, Ok(found(&["stale.rs"]))));
+        assert_eq!(open.results, Results::Loading);
     }
 
     #[test]

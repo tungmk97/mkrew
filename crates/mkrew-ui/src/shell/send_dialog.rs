@@ -244,7 +244,10 @@ impl Shell {
         };
         self.doc_dialog = None;
         self.composers.open(session);
-        let before = self.composers.shown(session).map_or("", |d| d.text.text());
+        let before = self
+            .composers
+            .shown(session)
+            .map_or("", |d| d.prompt.text.text());
         let text = prompt_picker::on_new_line(before, &prefill);
         self.composers.insert(session, &text);
         self.composer_scroll.scroll_to_bottom();

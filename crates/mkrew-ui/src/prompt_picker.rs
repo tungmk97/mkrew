@@ -5,20 +5,13 @@
 //! headlessly; `main.rs` renders it and reads keys with [`crate::quick_open::key`].
 
 use mkrew_core::prompt::{self, PromptLibrary, PromptVars, Rendered};
-use ulid::Ulid;
 
-/// Where the picked prompt is typed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Target {
-    /// The session's composer draft.
-    Composer(Ulid),
-    /// The open task dialog's prompt.
-    TaskDialog,
-}
+use crate::composer::Target;
 
 /// The open picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptPicker {
+    /// Where the picked prompt is typed.
     pub target: Target,
     pub library: PromptLibrary,
     pub vars: PromptVars,
@@ -86,6 +79,7 @@ pub fn missing_note(missing: &[String]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use mkrew_core::prompt::Prompt;
+    use ulid::Ulid;
 
     use super::*;
 

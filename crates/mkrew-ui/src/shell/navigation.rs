@@ -23,58 +23,45 @@ impl Shell {
     pub(crate) fn close_quick_open(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let open = self.quick_open.take();
         // Esc on an `@` picker types the `@` it replaced (an e-mail, a handle).
-        match open.and_then(|open| open.composer) {
-            Some(session) => self.composer_typed(session, "@", window, cx),
+        match open.and_then(|open| open.insert_into) {
+            Some(target) => self.prompt_typed(target, "@", window, cx),
             None => self.focus_pane(window, cx),
         }
         cx.notify();
     }
 
-    /// `@` in `session`'s composer: quick open over its workspace's files; the pick is typed
-    /// as `composer.file_ref` (§20B.1). Without a daemon the `@` is typed as is.
+    /// `@` in a prompt (a composer, the task dialog): quick open over its workspace's files;
+    /// the pick is typed as `composer.file_ref` (§20B.1). Without a daemon the `@` is typed
+    /// as is.
     pub(crate) fn open_file_ref_picker(
         &mut self,
-        session: Ulid,
+        target: composer::Target,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self
-            .sidebar
-            .sessions()
-            .iter()
-            .find(|s| s.id == session)
-            .map(|s| s.project_id)
-            .filter(|_| self.connection.is_some())
-        else {
-            self.composers.insert(session, "@");
+        let project_id = match target {
+            composer::Target::Composer(session) => (self.sidebar.sessions().iter())
+                .find(|s| s.id == session)
+                .map(|s| s.project_id),
+            composer::Target::TaskDialog => self.task_dialog.as_ref().map(TaskDialog::project_id),
+        };
+        let Some(project_id) = project_id.filter(|_| self.connection.is_some()) else {
+            self.prompt_typed(target, "@", window, cx);
             cx.notify();
             return;
         };
-        // Project-relative paths for the composer, whatever the tree shows.
+        // Project-relative paths for the prompt, whatever the tree shows.
         let mut open = QuickOpen::new(project_id, None);
-        open.composer = Some(session);
+        open.insert_into = Some(target);
         self.quick_open = Some(open);
-        self.dialog_serial += 1;
+        // The task dialog under it stays the open dialog: its late replies (the agent list)
+        // still land.
+        if target != composer::Target::TaskDialog {
+            self.dialog_serial += 1;
+        }
         window.focus(&self.dialog_focus, cx);
         self.find_files(window, cx);
         cx.notify();
-    }
-
-    /// Types `text` into `session`'s draft and gives its composer the keyboard back.
-    pub(crate) fn composer_typed(
-        &mut self,
-        session: Ulid,
-        text: &str,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        self.composers.insert(session, text);
-        self.composer_scroll.scroll_to_bottom();
-        if self.composer_session() == Some(session) {
-            window.focus(&self.composer_focus, cx);
-        } else {
-            self.focus_pane(window, cx);
-        }
     }
 
     /// Files dropped from the OS on `session`'s pane (§20B.5): their absolute paths.
@@ -136,7 +123,7 @@ impl Shell {
             tabs.focus(session);
         }
         if self.composers.shown(session).is_some() {
-            self.composer_typed(session, text, window, cx);
+            self.prompt_typed(composer::Target::Composer(session), text, window, cx);
         } else if let Some(pane) = self.panes.get(&session).cloned() {
             pane.update(cx, |pane, cx| pane.type_text(text, cx));
             self.focus_pane(window, cx);
@@ -226,14 +213,14 @@ impl Shell {
             self.quick_open = Some(open);
             return;
         };
-        if let Some(session) = open.composer {
+        if let Some(target) = open.insert_into {
             // A missing or broken settings file types the default form (the daemon reports it).
             let template = mkrew_core::settings::load(&self.settings_file)
                 .unwrap_or_default()
                 .composer
                 .file_ref;
             let text = composer::file_ref(&template, &path);
-            self.composer_typed(session, &text, window, cx);
+            self.prompt_typed(target, &text, window, cx);
             cx.notify();
             return;
         }
@@ -713,7 +700,7 @@ impl Shell {
                             if self.composers.shown(session).is_none() {
                                 self.open_composer(window, cx);
                             }
-                            let target = prompt_picker::Target::Composer(session);
+                            let target = composer::Target::Composer(session);
                             self.open_prompt_picker(target, window, cx);
                         }
                     }
@@ -805,7 +792,7 @@ impl Shell {
                     }
                     Extra::AgentImprove => {
                         if let Some(session) = self.composer_session() {
-                            self.enhance_composer(session, window, cx);
+                            self.enhance_prompt(composer::Target::Composer(session), window, cx);
                         }
                     }
                     Extra::MarkUnread => {
@@ -965,7 +952,7 @@ impl Shell {
                     .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
-                    .child(if open.composer.is_some() {
+                    .child(if open.insert_into.is_some() {
                         format!("Insert file{workspace}")
                     } else {
                         format!("Open file{workspace}")
@@ -1016,10 +1003,14 @@ impl Shell {
                 div()
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
-                    .child(if open.composer.is_some() {
-                        "↑ ↓ to pick · Enter types its path in the composer · Esc types @"
-                    } else {
-                        "↑ ↓ to pick · Enter opens it in Files · Esc closes"
+                    .child(match open.insert_into {
+                        Some(composer::Target::Composer(_)) => {
+                            "↑ ↓ to pick · Enter types its path in the composer · Esc types @"
+                        }
+                        Some(composer::Target::TaskDialog) => {
+                            "↑ ↓ to pick · Enter types its path in the task prompt · Esc types @"
+                        }
+                        None => "↑ ↓ to pick · Enter opens it in Files · Esc closes",
                     }),
             );
         Self::modal_shade("quick-open-shade", panel, cx)

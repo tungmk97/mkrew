@@ -670,6 +670,7 @@ impl Shell {
                 if let Some(dialog) = shell.task_dialog.as_mut() {
                     dialog.busy = false;
                 }
+                shell.abandon_rewrites();
                 // Kept with its typed text (it cannot send without a connection); a clone in
                 // flight will never report back, so it stops waiting.
                 if let Some(dialog) = shell.add_workspace.as_mut()
@@ -1238,7 +1239,7 @@ impl Shell {
                     if let Some(dialog) = self.ask.as_mut() {
                         dialog.answered(done.generation_id, result.clone());
                     }
-                    self.composers.enhanced(done.generation_id, result);
+                    self.prompt_enhanced(done.generation_id, result);
                     let shown = self.batch_shown(&mut shown_now, window);
                     if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
                         cx.notify();

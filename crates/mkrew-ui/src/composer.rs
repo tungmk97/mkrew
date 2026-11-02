@@ -1,7 +1,8 @@
 //! The prompt composer docked at an agent pane's bottom (SPEC §20B.1): one draft per session,
 //! kept in UI memory while the composer is hidden or another pane has the keyboard, sent with
-//! `session.send` + Enter, with the session's send queue (§20B.2). Pure and tested headlessly;
-//! `main.rs` renders it.
+//! `session.send` + Enter, with the session's send queue (§20B.2). Its prompt editing (`@`
+//! files, library prompts, ✦) is shared with the task dialog's prompt ([`Prompt`],
+//! [`Target`]). Pure and tested headlessly; `main.rs` renders it.
 
 use std::collections::HashMap;
 
@@ -12,20 +13,85 @@ use ulid::Ulid;
 use crate::task_dialog::DialogKey;
 use crate::text_box::{self, TextBox};
 
+/// A prompt field the pickers type into: a session's composer draft or the task dialog's
+/// prompt. Both take `@` files, library prompts and ✦ the same way (§20B.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    /// The session's composer draft.
+    Composer(Ulid),
+    /// The open task dialog's prompt.
+    TaskDialog,
+}
+
+/// A prompt being written and its ✦ rewrite (SPEC §20B.1): the composer's draft and the task
+/// dialog's prompt.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Prompt {
+    pub text: TextBox,
+    /// The `ai.generate` rewriting the text, by id; typing waits for it.
+    pub enhancing: Option<Ulid>,
+    /// Text inserted (picked prompt or file, selection, paste) while rewriting; added after
+    /// the answer so nothing is lost.
+    held: String,
+}
+
+impl Prompt {
+    pub fn new(text: &str) -> Self {
+        let mut prompt = Self::default();
+        prompt.text.insert(text);
+        prompt
+    }
+
+    /// The agent rewrites it now: keys wait for the answer.
+    pub fn rewriting(&self) -> bool {
+        self.enhancing.is_some()
+    }
+
+    /// Types `text` at the caret; held until the answer while rewriting.
+    pub fn insert(&mut self, text: &str) {
+        if self.rewriting() {
+            self.held.push_str(text);
+        } else {
+            self.text.insert(text);
+        }
+    }
+
+    /// Starts rewriting as generation `generation_id`; returns the text to improve, or `None`
+    /// while rewriting or when only blanks were typed.
+    pub fn begin_enhance(&mut self, generation_id: Ulid) -> Option<String> {
+        if self.rewriting() || self.text.is_blank() {
+            return None;
+        }
+        self.enhancing = Some(generation_id);
+        Some(without_blank_edges(self.text.text()).to_owned())
+    }
+
+    /// The rewrite's answer: the new text replaces the old, a failure keeps it; text inserted
+    /// meanwhile follows either way. Returns why it failed, to show.
+    pub fn enhanced(&mut self, result: Result<String, String>) -> Option<String> {
+        self.enhancing = None;
+        let failure = match result {
+            Ok(text) => {
+                self.text.clear();
+                self.text.insert(&text);
+                None
+            }
+            Err(error) => Some(format!("Cannot improve the prompt: {error}")),
+        };
+        self.text.insert(&std::mem::take(&mut self.held));
+        failure
+    }
+}
+
 /// One session's composer.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Draft {
-    pub text: TextBox,
+    pub prompt: Prompt,
     /// Docked under the pane (Esc hides it, the draft stays).
     pub shown: bool,
     /// A `session.send` is in flight.
     pub busy: bool,
-    /// The `ai.generate` rewriting this draft (SPEC §20B.1 ✦), by id; typing waits for it.
-    pub enhancing: Option<Ulid>,
-    /// Text inserted (picked prompt or file, selection, paste) while rewriting; added after
-    /// the answer so nothing is lost.
-    pub held: String,
-    /// Why the last send failed.
+    /// Why the last send or rewrite failed.
     pub error: Option<String>,
 }
 
@@ -63,9 +129,9 @@ impl Composers {
         };
         match key {
             DialogKey::Cancel => text_box::Outcome::Cancel,
-            _ if draft.busy || draft.enhancing.is_some() => text_box::Outcome::Edited,
+            _ if draft.busy || draft.prompt.rewriting() => text_box::Outcome::Edited,
             key => {
-                let outcome = draft.text.key(key);
+                let outcome = draft.prompt.text.key(key);
                 if outcome == text_box::Outcome::Edited {
                     draft.error = None;
                 }
@@ -80,33 +146,28 @@ impl Composers {
         let Some(draft) = self.drafts.get_mut(&session).filter(|d| !d.busy) else {
             return;
         };
-        if draft.enhancing.is_some() {
-            draft.held.push_str(text);
-        } else {
-            draft.text.insert(text);
-            draft.error = None;
-        }
+        draft.prompt.insert(text);
+        draft.error = None;
     }
 
     /// A click or drag in `session`'s draft: the caret (or selection) goes under the pointer.
     pub fn click(&mut self, session: Ulid, at: usize, extend: bool, clicks: usize) {
         if let Some(draft) = self.drafts.get_mut(&session) {
-            draft.text.click(at, extend, clicks);
+            draft.prompt.text.click(at, extend, clicks);
         }
     }
 
     /// Marks `session`'s draft as sending and returns its `session.send` (text + Enter);
     /// `None` while one is in flight or when nothing but blanks was typed.
     pub fn begin_send(&mut self, session: Ulid) -> Option<SessionSendParams> {
-        let draft = self
-            .drafts
-            .get_mut(&session)
-            .filter(|draft| !draft.busy && draft.enhancing.is_none() && !draft.text.is_blank())?;
+        let draft = self.drafts.get_mut(&session).filter(|draft| {
+            !draft.busy && !draft.prompt.rewriting() && !draft.prompt.text.is_blank()
+        })?;
         draft.busy = true;
         draft.error = None;
         Some(SessionSendParams {
             session_id: session,
-            text: without_blank_edges(draft.text.text()).to_owned(),
+            text: without_blank_edges(draft.prompt.text.text()).to_owned(),
             submit: true,
         })
     }
@@ -114,13 +175,10 @@ impl Composers {
     /// Starts rewriting `session`'s draft as generation `generation_id`; returns the text to
     /// improve, or `None` while sending or rewriting or when only blanks were typed.
     pub fn begin_enhance(&mut self, session: Ulid, generation_id: Ulid) -> Option<String> {
-        let draft = self
-            .drafts
-            .get_mut(&session)
-            .filter(|draft| !draft.busy && draft.enhancing.is_none() && !draft.text.is_blank())?;
-        draft.enhancing = Some(generation_id);
+        let draft = self.drafts.get_mut(&session).filter(|draft| !draft.busy)?;
+        let input = draft.prompt.begin_enhance(generation_id)?;
         draft.error = None;
-        Some(without_blank_edges(draft.text.text()).to_owned())
+        Some(input)
     }
 
     /// The answer of generation `generation_id`: the rewrite replaces its draft, a failure
@@ -129,20 +187,22 @@ impl Composers {
         let Some(draft) = self
             .drafts
             .values_mut()
-            .find(|draft| draft.enhancing == Some(generation_id))
+            .find(|draft| draft.prompt.enhancing == Some(generation_id))
         else {
             return false;
         };
-        draft.enhancing = None;
-        match result {
-            Ok(text) => {
-                draft.text.clear();
-                draft.text.insert(&text);
-            }
-            Err(error) => draft.error = Some(format!("Cannot improve the prompt: {error}")),
-        }
-        draft.text.insert(&std::mem::take(&mut draft.held));
+        draft.error = draft.prompt.enhanced(result);
         true
+    }
+
+    /// The connection closed: no ✦ answer can come any more, so every rewrite in flight fails
+    /// with `error`; the drafts and the text inserted meanwhile stay.
+    pub fn abandon_rewrites(&mut self, error: &str) {
+        for draft in self.drafts.values_mut() {
+            if draft.prompt.rewriting() {
+                draft.error = draft.prompt.enhanced(Err(error.to_owned()));
+            }
+        }
     }
 
     /// Keeps the queue of a `session.queue` event. Returns `true` when it changed.
@@ -172,7 +232,7 @@ impl Composers {
         };
         draft.busy = false;
         match result {
-            Ok(()) => draft.text.clear(),
+            Ok(()) => draft.prompt.text.clear(),
             Err(error) => draft.error = Some(format!("Cannot send: {error}")),
         }
     }
@@ -341,10 +401,13 @@ mod tests {
         let id = Ulid::new();
         composers.begin_enhance(session, id);
         composers.insert(session, " `src/a.rs`");
-        assert_eq!(composers.shown(session).unwrap().text.text(), "fix bug");
+        assert_eq!(
+            composers.shown(session).unwrap().prompt.text.text(),
+            "fix bug"
+        );
         assert!(composers.enhanced(id, Ok("Fix the crash".into())));
         assert_eq!(
-            composers.shown(session).unwrap().text.text(),
+            composers.shown(session).unwrap().prompt.text.text(),
             "Fix the crash `src/a.rs`"
         );
 
@@ -353,7 +416,7 @@ mod tests {
         composers.insert(session, "!");
         composers.enhanced(failed, Err("no".into()));
         assert_eq!(
-            composers.shown(session).unwrap().text.text(),
+            composers.shown(session).unwrap().prompt.text.text(),
             "Fix the crash `src/a.rs`!"
         );
     }
@@ -381,10 +444,10 @@ mod tests {
         );
         assert!(composers.enhanced(id, Ok("Fix the crash in parse()".into())));
         assert_eq!(
-            composers.shown(a).unwrap().text.text(),
+            composers.shown(a).unwrap().prompt.text.text(),
             "Fix the crash in parse()"
         );
-        assert_eq!(composers.shown(b).unwrap().text.text(), "fix bug");
+        assert_eq!(composers.shown(b).unwrap().prompt.text.text(), "fix bug");
         assert!(!composers.enhanced(id, Ok("again".into())), "answered once");
     }
 
@@ -403,12 +466,39 @@ mod tests {
         assert!(composers.begin_enhance(session, id).is_some());
         assert!(composers.enhanced(id, Err("the agent did not answer within 120 s".into())));
         let draft = composers.shown(session).unwrap();
-        assert_eq!(draft.text.text(), "add tests");
+        assert_eq!(draft.prompt.text.text(), "add tests");
         assert_eq!(
             draft.error.as_deref(),
             Some("Cannot improve the prompt: the agent did not answer within 120 s")
         );
-        assert_eq!(draft.enhancing, None);
+        assert_eq!(draft.prompt.enhancing, None);
+    }
+
+    /// A lost connection never delivers the ✦ answer: the waiting draft takes keys again,
+    /// keeps its text and what was inserted meanwhile, and says why.
+    #[test]
+    fn a_lost_connection_ends_the_rewrites_in_flight() {
+        let (a, b) = (Ulid::new(), Ulid::new());
+        let mut composers = Composers::default();
+        for session in [a, b] {
+            composers.open(session);
+            composers.insert(session, "fix bug");
+        }
+        composers.begin_enhance(a, Ulid::new());
+        composers.insert(a, " `src/a.rs`");
+        composers.abandon_rewrites("the connection closed");
+        let draft = composers.shown(a).unwrap();
+        assert_eq!(draft.prompt.text.text(), "fix bug `src/a.rs`");
+        assert_eq!(
+            draft.error.as_deref(),
+            Some("Cannot improve the prompt: the connection closed")
+        );
+        composers.key(a, DialogKey::Insert("!".into()));
+        assert_eq!(
+            composers.shown(a).unwrap().prompt.text.text(),
+            "fix bug `src/a.rs`!"
+        );
+        assert_eq!(composers.shown(b).unwrap().error, None, "not rewriting");
     }
 
     #[test]
@@ -423,11 +513,14 @@ mod tests {
         assert_eq!(composers.key(a, DialogKey::Cancel), Outcome::Cancel);
         composers.hide(a);
         assert_eq!(composers.shown(a), None);
-        assert_eq!(composers.shown(b).map(|d| d.text.text()), Some("other"));
+        assert_eq!(
+            composers.shown(b).map(|d| d.prompt.text.text()),
+            Some("other")
+        );
 
         composers.open(a);
         assert_eq!(
-            composers.shown(a).map(|d| d.text.text()),
+            composers.shown(a).map(|d| d.prompt.text.text()),
             Some("first\nsecond")
         );
     }
@@ -452,14 +545,14 @@ mod tests {
         composers.key(session, DialogKey::Insert("x".into()));
         composers.insert(session, "y");
         assert_eq!(
-            composers.shown(session).map(|d| d.text.text()),
+            composers.shown(session).map(|d| d.prompt.text.text()),
             Some(" \n\n  explain\nthis\n"),
             "no edits while sending"
         );
 
         composers.sent(session, Ok(()));
         let draft = composers.shown(session).unwrap();
-        assert_eq!((draft.text.text(), draft.busy), ("", false));
+        assert_eq!((draft.prompt.text.text(), draft.busy), ("", false));
     }
 
     #[test]
@@ -471,7 +564,7 @@ mod tests {
         composers.begin_send(session);
         composers.sent(session, Err("session exited".into()));
         let draft = composers.shown(session).unwrap();
-        assert_eq!(draft.text.text(), "hi");
+        assert_eq!(draft.prompt.text.text(), "hi");
         assert_eq!(draft.error.as_deref(), Some("Cannot send: session exited"));
 
         composers.key(session, DialogKey::Insert("!".into()));

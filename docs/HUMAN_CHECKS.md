@@ -21,6 +21,13 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-02 Task dialog prompt works like the composer
+
+- [ ] **@ file (dark + light):** Board → New task → click the Prompt field, type `@`. The "Insert file" picker opens over the dialog; Enter types `@path` into the prompt and the caret is back in the prompt; Esc types a plain `@`. `@` in the Title types an `@`.
+- [ ] **✦ Improve (dark + light):** with a prompt typed, "Improve" (next to "From prompt…") greys the prompt, the line under it says "✦ Improving the prompt…", typing waits; the answer replaces the prompt. A failure keeps the text and shows "Cannot improve the prompt: …". Ctrl+Enter while it waits says "Wait for the improved prompt." Empty prompt: "Improve" is disabled.
+- [ ] **Keyboard:** Improve and From prompt… are reached with Tab / Shift+Tab and show the focus ring; Enter on Improve starts it. The agent list still loads when `@` is typed right after the dialog opens.
+- [ ] **Decision (default taken):** pasting an image into the task prompt does nothing (attachments are stored per session, and a task has no session until it runs). Want image paste there? It needs a daemon change (attachments per task, kept until the task is deleted).
+
 ### To verify - 2026-11-02 All workspaces board (ADR 0090)
 
 Built overnight without your answers; the agent's defaults are below.

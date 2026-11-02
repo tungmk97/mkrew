@@ -2100,7 +2100,12 @@ context_window = 200000        # tokens, for the % shown
    the project folder for context. The rewrite replaces the draft, and the user still sends it.
    Typing waits until the answer arrives; picked prompts or files, selections and pastes made
    meanwhile are added after it. A failure keeps the draft and shows why.
-   Task create/edit and the Board follow-up input reuse the same multi-line text box.
+   The task dialog's prompt (Board "New task", edit task) is edited the same way: `@` picks a
+   file, "From prompt…" inserts a library prompt, and ✦ "Improve" rewrites it with the task's
+   agent (the workspace default when none is picked), with the same waiting and failure rules;
+   saving waits for the answer. Pasted images are not attached there: attachments belong to a
+   session (§20B.5), and a task has none until it runs.
+   The Board follow-up input reuses the same multi-line text box.
 2. **Send queue visible.** While a send waits (session working), the composer lists queued texts
    (first line each) with ✕ to remove. Daemon: each queued text gets a `send_id`; `session.send`
    returns `{send_id, queued: bool}`; `session.unqueue` removes a not-yet-written text (`not_found`

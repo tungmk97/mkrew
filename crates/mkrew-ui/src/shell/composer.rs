@@ -47,7 +47,7 @@ impl Shell {
         if key == DialogKey::Insert("@".into())
             && self.composers.shown(session).is_some_and(|d| !d.busy)
         {
-            return self.open_file_ref_picker(session, window, cx);
+            return self.open_file_ref_picker(composer::Target::Composer(session), window, cx);
         }
         if key == DialogKey::Paste
             && let Some(item) = cx.read_from_clipboard()
@@ -58,16 +58,16 @@ impl Shell {
             }
         }
         if let Some(draft) = self.composers.shown(session) {
-            copy_selection(&key, draft.text.input(), cx);
+            copy_selection(&key, draft.prompt.text.input(), cx);
         }
         match self.composers.key(session, key) {
             text_box::Outcome::Edited => {
                 // ponytail: follows the caret only at the end; a caret moved above the
                 // visible lines is not scrolled into view (needs line-height maths).
-                let at_end = self
-                    .composers
-                    .shown(session)
-                    .is_none_or(|d| d.text.input().cursor() == d.text.input().len());
+                let at_end = self.composers.shown(session).is_none_or(|d| {
+                    let input = d.prompt.text.input();
+                    input.cursor() == input.len()
+                });
                 if at_end {
                     self.composer_scroll.scroll_to_bottom();
                 }
@@ -130,25 +130,83 @@ impl Shell {
         .detach();
     }
 
-    /// ✦ in the composer (SPEC §20B.1): the session's own agent rewrites the draft, reading
-    /// the code in the project folder if it needs to; the answer arrives as `ai.generated`.
-    pub(crate) fn enhance_composer(
+    /// The prompt `target` while it is on screen: the shown composer's draft or the open task
+    /// dialog's prompt.
+    pub(crate) fn prompt(&self, target: composer::Target) -> Option<&composer::Prompt> {
+        match target {
+            composer::Target::Composer(session) => {
+                self.composers.shown(session).map(|draft| &draft.prompt)
+            }
+            composer::Target::TaskDialog => self.task_dialog.as_ref().map(|dialog| &dialog.prompt),
+        }
+    }
+
+    /// Types `text` (a pick, a drop, an `@`) into the prompt `target` and gives it the
+    /// keyboard back.
+    pub(crate) fn prompt_typed(
         &mut self,
-        session: Ulid,
+        target: composer::Target,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match target {
+            composer::Target::Composer(session) => {
+                self.composers.insert(session, text);
+                self.composer_scroll.scroll_to_bottom();
+                if self.composer_session() == Some(session) {
+                    window.focus(&self.composer_focus, cx);
+                } else {
+                    self.focus_pane(window, cx);
+                }
+            }
+            composer::Target::TaskDialog => {
+                if let Some(dialog) = self.task_dialog.as_mut() {
+                    dialog.insert_prompt(text);
+                    self.prompt_scroll.scroll_to_bottom();
+                }
+                // The open dialog takes the keyboard.
+                self.focus_pane(window, cx);
+            }
+        }
+    }
+
+    /// ✦ (SPEC §20B.1) in a composer or the task dialog: the agent rewrites the prompt,
+    /// reading the code in the project folder if it needs to; the answer arrives as
+    /// `ai.generated`. A composer uses its session's agent, the task dialog the task's agent
+    /// (the workspace default when none is picked).
+    pub(crate) fn enhance_prompt(
+        &mut self,
+        target: composer::Target,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        let Some(info) = self.sidebar.sessions().iter().find(|s| s.id == session) else {
-            return;
-        };
-        // ponytail: the project folder even for a worktree session; same code, other branch.
-        let (project_id, agent_profile) = (info.project_id, info.agent_profile.clone());
         let generation_id = Ulid::new();
-        let Some(input) = self.composers.begin_enhance(session, generation_id) else {
-            return;
+        // ponytail: the project folder even for a worktree session or task; same code, other
+        // branch.
+        let (project_id, agent_profile, input) = match target {
+            composer::Target::Composer(session) => {
+                let Some(info) = self.sidebar.sessions().iter().find(|s| s.id == session) else {
+                    return;
+                };
+                let (project_id, agent_profile) = (info.project_id, info.agent_profile.clone());
+                let Some(input) = self.composers.begin_enhance(session, generation_id) else {
+                    return;
+                };
+                (project_id, Some(agent_profile), input)
+            }
+            composer::Target::TaskDialog => {
+                let Some(dialog) = self.task_dialog.as_mut() else {
+                    return;
+                };
+                let Some(input) = dialog.begin_enhance(generation_id) else {
+                    return;
+                };
+                (dialog.project_id(), dialog.agent.clone(), input)
+            }
         };
         cx.notify();
         let started = connection.call::<()>(Request::AiGenerate(AiGenerateParams {
@@ -156,7 +214,7 @@ impl Shell {
             project_id: Some(project_id),
             worktree_task_id: None,
             repo: None,
-            agent_profile: Some(agent_profile),
+            agent_profile,
             kind: AiKind::EnhancePrompt,
             input,
             web: false,
@@ -166,13 +224,39 @@ impl Shell {
                 return;
             };
             let _ = this.update_in(cx, |shell, _, cx| {
-                shell
-                    .composers
-                    .enhanced(generation_id, Err(format!("{error:#}")));
+                shell.prompt_enhanced(generation_id, Err(format!("{error:#}")));
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// The ✦ answer of generation `generation_id` goes to the prompt that asked for it (a
+    /// composer or the task dialog). `false` if none did.
+    pub(crate) fn prompt_enhanced(
+        &mut self,
+        generation_id: Ulid,
+        result: Result<String, String>,
+    ) -> bool {
+        if let Some(dialog) = self.task_dialog.as_mut()
+            && dialog.prompt.enhancing == Some(generation_id)
+        {
+            return dialog.enhanced(generation_id, result);
+        }
+        self.composers.enhanced(generation_id, result)
+    }
+
+    /// The connection closed: the `ai.generated` of a ✦ in flight will never arrive, so the
+    /// prompts waiting for one (composers, the kept task dialog) take keys again and can be
+    /// saved; their text stays.
+    pub(crate) fn abandon_rewrites(&mut self) {
+        const LOST: &str = "the connection to the daemon closed";
+        self.composers.abandon_rewrites(LOST);
+        if let Some(dialog) = self.task_dialog.as_mut()
+            && let Some(generation_id) = dialog.prompt.enhancing
+        {
+            dialog.enhanced(generation_id, Err(LOST.to_owned()));
+        }
     }
 
     /// `session.send` of `session`'s draft with Enter (one bracketed paste when multi-line,
@@ -288,12 +372,12 @@ impl Shell {
     /// time) now, so edited prompt files show without a restart.
     pub(crate) fn open_prompt_picker(
         &mut self,
-        target: prompt_picker::Target,
+        target: composer::Target,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let vars = match target {
-            prompt_picker::Target::Composer(session) => {
+            composer::Target::Composer(session) => {
                 let Some(session) = self.sidebar.sessions().iter().find(|s| s.id == session) else {
                     return;
                 };
@@ -303,7 +387,7 @@ impl Shell {
                     .map(|task| task.title.clone());
                 self.prompt_vars(session.project_id, task)
             }
-            prompt_picker::Target::TaskDialog => {
+            composer::Target::TaskDialog => {
                 let Some(dialog) = &self.task_dialog else {
                     return;
                 };
@@ -335,23 +419,15 @@ impl Shell {
             return;
         };
         match (picker.target, text) {
-            (prompt_picker::Target::Composer(session), Some(text)) => {
-                let before = self.composers.shown(session).map_or("", |d| d.text.text());
+            (target, Some(text)) => {
+                let before = self.prompt(target).map_or("", |prompt| prompt.text.text());
                 let text = prompt_picker::on_new_line(before, &text);
-                self.composer_typed(session, &text, window, cx);
+                self.prompt_typed(target, &text, window, cx);
             }
-            (prompt_picker::Target::Composer(session), None)
+            (composer::Target::Composer(session), None)
                 if self.composer_session() == Some(session) =>
             {
                 window.focus(&self.composer_focus, cx);
-            }
-            (prompt_picker::Target::TaskDialog, Some(text)) => {
-                if let Some(dialog) = self.task_dialog.as_mut() {
-                    let text = prompt_picker::on_new_line(dialog.prompt.text(), &text);
-                    dialog.insert_prompt(&text);
-                    self.prompt_scroll.scroll_to_bottom();
-                }
-                self.focus_pane(window, cx);
             }
             _ => self.focus_pane(window, cx),
         }
@@ -497,10 +573,10 @@ impl Shell {
         };
         let unreadable = picker.library.errors.len();
         let into = match picker.target {
-            prompt_picker::Target::Composer(_) => {
+            composer::Target::Composer(_) => {
                 "↑ ↓ to pick · Enter types it in the composer · Esc closes"
             }
-            prompt_picker::Target::TaskDialog => {
+            composer::Target::TaskDialog => {
                 "↑ ↓ to pick · Enter adds it to the task prompt · Esc closes"
             }
         };
@@ -616,11 +692,12 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
+        let rewriting = draft.prompt.rewriting();
         let field = caret_field(
             "composer",
-            draft.text.input(),
+            draft.prompt.text.input(),
             "Message the agent…",
-            focused && !draft.busy && draft.enhancing.is_none(),
+            focused && !draft.busy && !rewriting,
             theme,
             cx,
             move |shell, caret| {
@@ -631,9 +708,7 @@ impl Shell {
         )
         .max_h(px(theme::COMPOSER_MAX_HEIGHT))
         .overflow_y_scroll()
-        .when(draft.busy || draft.enhancing.is_some(), |el| {
-            el.opacity(opacity::DISABLED)
-        })
+        .when(draft.busy || rewriting, |el| el.opacity(opacity::DISABLED))
         .when(is_focused, |el| {
             el.track_focus(&self.composer_focus)
                 .track_scroll(&self.composer_scroll)
@@ -644,7 +719,7 @@ impl Shell {
         // The keys only while it has the keyboard (they do nothing on other panes).
         let status = if draft.busy {
             Some(("↑", theme.text_muted, "Sending…".to_owned()))
-        } else if draft.enhancing.is_some() {
+        } else if rewriting {
             Some(("✦", theme.text_muted, "Improving the prompt…".to_owned()))
         } else if let Some(error) = &draft.error {
             Some(("✕", theme.status_exited, error.clone()))
@@ -769,23 +844,37 @@ impl Shell {
                             })),
                     )
                     // ✦ (§20B.1): the agent rewrites the draft.
-                    .when(is_focused && !draft.busy && !draft.text.is_blank(), |el| {
-                        let sparkles =
-                            icon_svg(Icon::Sparkles, theme::ICON_SIZE_SMALL, theme.text_muted);
-                        let improve = if draft.enhancing.is_some() {
-                            disabled_button("composer-enhance", sparkles, theme, false)
-                        } else {
-                            quiet_button("composer-enhance", sparkles, theme, theme.surface_raised)
-                                .on_click(cx.listener(move |shell, _, window, cx| {
-                                    shell.enhance_composer(session, window, cx)
-                                }))
-                        };
-                        el.child(improve.flex_none().tooltip(tooltip(
-                            theme,
-                            "Improve this prompt with the agent (it may read the code)",
-                            "",
-                        )))
-                    })
+                    .when(
+                        is_focused && !draft.busy && !draft.prompt.text.is_blank(),
+                        |el| {
+                            let sparkles =
+                                icon_svg(Icon::Sparkles, theme::ICON_SIZE_SMALL, theme.text_muted);
+                            let improve = if rewriting {
+                                disabled_button("composer-enhance", sparkles, theme, false)
+                            } else {
+                                quiet_button(
+                                    "composer-enhance",
+                                    sparkles,
+                                    theme,
+                                    theme.surface_raised,
+                                )
+                                .on_click(cx.listener(
+                                    move |shell, _, window, cx| {
+                                        shell.enhance_prompt(
+                                            composer::Target::Composer(session),
+                                            window,
+                                            cx,
+                                        )
+                                    },
+                                ))
+                            };
+                            el.child(improve.flex_none().tooltip(tooltip(
+                                theme,
+                                "Improve this prompt with the agent (it may read the code)",
+                                "",
+                            )))
+                        },
+                    )
                     // The prompt library (§20B.3), typed into this draft.
                     .when(is_focused && !draft.busy, |el| {
                         el.child(
@@ -800,7 +889,7 @@ impl Shell {
                             .on_click(cx.listener(
                                 move |shell, _, window, cx| {
                                     shell.open_prompt_picker(
-                                        prompt_picker::Target::Composer(session),
+                                        composer::Target::Composer(session),
                                         window,
                                         cx,
                                     );
