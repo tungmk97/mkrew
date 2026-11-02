@@ -912,6 +912,42 @@ fn worktree_and_fanout_fields_persist() {
     assert_eq!(store.get_task(other.id).unwrap().fanout_of, None);
 }
 
+/// Fan-out children created within one millisecond still list in the order they were made:
+/// a ULID's random part does not follow it (here the first one drew the larger id).
+#[test]
+fn fanout_children_list_in_creation_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let parent = store
+        .create_task(p.id, "fix", "", None, None, false)
+        .unwrap();
+    let child = |title: &str| {
+        let task = store
+            .create_task(p.id, title, "", None, None, true)
+            .unwrap();
+        store.set_task_fanout_of(task.id, parent.id).unwrap().id
+    };
+    let (first, second) = (child("fix · a"), child("fix · b"));
+    let first_bigger = Ulid::from_parts(second.timestamp_ms(), u128::MAX);
+    store
+        .conn
+        .execute(
+            "UPDATE task SET created_at = 7, id = iif(id = ?1, ?2, id) WHERE fanout_of = ?3",
+            params![
+                first.to_string(),
+                first_bigger.to_string(),
+                parent.id.to_string()
+            ],
+        )
+        .unwrap();
+    let listed: Vec<Ulid> = (store.list_fanout_children(parent.id).unwrap())
+        .iter()
+        .map(|task| task.id)
+        .collect();
+    assert_eq!(listed, [first_bigger, second]);
+}
+
 #[test]
 fn delete_task_refuses_live_sessions_and_detaches_exited_ones() {
     let dir = tempfile::tempdir().unwrap();

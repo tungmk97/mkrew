@@ -677,10 +677,11 @@ impl Store {
         self.get_task(id)
     }
 
-    /// The fan-out children of `parent`, oldest first.
+    /// The fan-out children of `parent`, oldest first (insertion order breaks a same-ms tie;
+    /// a ULID's random part would not).
     pub fn list_fanout_children(&self, parent: Ulid) -> Result<Vec<Task>> {
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {TASK_COLUMNS} FROM task WHERE fanout_of = ?1 ORDER BY created_at, id"
+            "SELECT {TASK_COLUMNS} FROM task WHERE fanout_of = ?1 ORDER BY created_at, rowid"
         ))?;
         let rows = stmt.query_map([parent.to_string()], RawTask::from_row)?;
         rows.map(|r| r?.into_task()).collect()
