@@ -21,9 +21,9 @@ interprocess = { version = "2.4.4", features = ["tokio"] }
 # `port.list` (spec 2026-11-01): listening sockets with their pid on Windows, Linux and macOS
 # (ADR 0091).
 listeners = "0.6"
-mkrew-core = { version = "0.3.0", path = "../mkrew-core" }
-mkrew-protocol = { version = "0.3.0", path = "../mkrew-protocol" }
-mkrew-store = { version = "0.3.0", path = "../mkrew-store" }
+mkrew-core = { version = "0.4.0", path = "../mkrew-core" }
+mkrew-protocol = { version = "0.4.0", path = "../mkrew-protocol" }
+mkrew-store = { version = "0.4.0", path = "../mkrew-store" }
 # Project file watcher (SPEC §4, §8); the crate's own `notify` module means `::notify` in code.
 notify = "8.2.0"
 # Quick open ranking for `fs.find` (SPEC §12A).
