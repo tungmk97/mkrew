@@ -61,6 +61,18 @@ pub enum Lead {
     Dot(Dot),
 }
 
+/// A small icon button at the right of a row with its own action (a click only: the keyboard
+/// runs the row's action). The menu stays open after it.
+#[derive(Clone)]
+pub struct Trail<A> {
+    pub icon: Icon,
+    pub tone: Tone,
+    pub tip: SharedString,
+    /// Shown only while the row is hovered or selected (a secondary action, SPEC §14).
+    pub on_hover: bool,
+    pub action: A,
+}
+
 /// One selectable row.
 #[derive(Clone)]
 pub struct MenuItem<A> {
@@ -79,6 +91,7 @@ pub struct MenuItem<A> {
     pub tone: Tone,
     pub lead: Lead,
     pub tip: Option<SharedString>,
+    pub trail: Vec<Trail<A>>,
     pub action: A,
 }
 
@@ -95,6 +108,7 @@ impl<A> MenuItem<A> {
             tone: Tone::Normal,
             lead: Lead::None,
             tip: None,
+            trail: Vec::new(),
             action,
         }
     }
@@ -145,6 +159,11 @@ impl<A> MenuItem<A> {
 
     pub fn tip(mut self, text: impl Into<SharedString>) -> Self {
         self.tip = Some(text.into());
+        self
+    }
+
+    pub fn trail(mut self, trail: Trail<A>) -> Self {
+        self.trail.push(trail);
         self
     }
 

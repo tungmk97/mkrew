@@ -1047,8 +1047,9 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   exited; a steady dot: a pulse would redraw the window for as long as a server runs, §15);
   otherwise a muted `Run ▾`. Ports: every distinct port of the live run sessions, config order,
   up to 4 then `+N`; tooltip `name — :port …` per command. A click opens the Run menu
-  (mouse-driven): `RUNNING IN <WORKSPACE>` (`RUN IN` while idle), one row per command (state
-  dot, name, ports or state in words, ↻ and a red ■ while it runs, ▶ otherwise), then
+  (mouse-driven, 280 px wide): `RUNNING IN <WORKSPACE>` (`RUN IN` while idle), one row per command (state
+  dot, name, ports or state in words, ↻ on hover and a red ■ while it runs, ▶ otherwise; a click on the row
+  or Enter stops or starts it, the buttons keep the menu open), then
   `Restart all` / `Stop all` while anything runs or `Start all` while nothing does, `Show Run
   tab`, `Run setup…` (with no command, saving there also runs). Only Stop is red. Run from
   all-stopped switches to Terminals and the `run` tab; Restart and per-command Run keep the

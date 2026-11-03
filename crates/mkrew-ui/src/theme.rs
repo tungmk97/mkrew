@@ -247,8 +247,11 @@ pub const INSPECTOR_LABEL_WIDTH: f32 = 56.0;
 /// default UI font size, so every column's cards start at the same height (ADR 0023).
 pub const BOARD_COLUMN_HEADER_HEIGHT: f32 = 28.0;
 
-/// Width of a popover menu (every `menu_panel` popover).
+/// Width of a popover menu (`render_menu`'s default).
 pub const MENU_WIDTH: f32 = 240.0;
+
+/// Width of the Run menu: a command row also holds its ports and ↻ / ■ / ▶ buttons.
+pub const RUN_MENU_WIDTH: f32 = 280.0;
 
 /// The drawing of a layout in the split button's menu (SPEC §10).
 pub const LAYOUT_THUMB_WIDTH: f32 = 24.0;

@@ -393,7 +393,10 @@ impl Shell {
             .child(pill)
             .when(open, |el| {
                 el.child(render_menu(
-                    self.menu_state(),
+                    MenuState {
+                        width: theme::RUN_MENU_WIDTH,
+                        ..self.menu_state()
+                    },
                     "run-menu-panel",
                     self.run_menu_rows(project_id),
                     None,
@@ -416,11 +419,10 @@ impl Shell {
         self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
-    /// `RUNNING IN <WORKSPACE>`: one row per command (state dot, name, ports or state; Enter
-    /// starts it, or restarts it while it runs, and a running command has a "Stop" row under
-    /// it); then Restart all / Stop all while anything runs, Start all while nothing does,
-    /// Show Run tab, and Run setup… (which runs the commands after saving when none were set up
-    /// yet).
+    /// `RUNNING IN <WORKSPACE>`: one row per command (state dot, name, ports or state, then ↻ on
+    /// hover and ■ while it runs, ▶ otherwise; a click on the row or Enter stops or starts it);
+    /// then Restart all / Stop all while anything runs, Start all while nothing does, Show Run
+    /// tab, and Run setup… (which runs the commands after saving when none were set up yet).
     pub(crate) fn run_menu_rows(&self, project_id: Ulid) -> Rows {
         let summary = self.run_summary(project_id);
         let live = summary.any_live();
@@ -442,49 +444,44 @@ impl Shell {
             .into(),
         )];
         for row in &summary.rows {
+            let running = matches!(row.state, RowState::Running(_));
             let dot = match row.state {
                 RowState::Running(_) => Dot::Running,
                 RowState::Exited => Dot::Exited,
                 RowState::Stopped => Dot::Stopped,
             };
-            if matches!(row.state, RowState::Running(_)) {
+            let detail = if running {
                 let ports: Vec<String> = row.ports.iter().map(|p| format!(":{p}")).collect();
-                rows.push(
-                    MenuItem::new(
-                        row.name.clone(),
-                        run(RunAction::Restart, Some(row.name.clone())),
-                    )
-                    .lead(Lead::Dot(dot))
-                    .detail(ports.join(" "))
-                    .tip("Restart this command")
-                    .row(),
-                );
-                rows.push(
-                    MenuItem::new(
-                        format!("Stop {}", row.name),
-                        run(RunAction::Stop, Some(row.name.clone())),
-                    )
-                    .lead(Lead::Icon(Icon::CircleStop))
-                    .tone(Tone::Danger)
-                    .tip("Stop this command")
-                    .row(),
-                );
+                ports.join(" ")
             } else {
                 // Its state in words (never color alone).
-                let state = run::state_text(&row.state)
+                run::state_text(&row.state)
                     .trim_start_matches(['○', '✕', ' '])
-                    .to_owned();
-                rows.push(
-                    MenuItem::new(
-                        row.name.clone(),
-                        run(RunAction::Start, Some(row.name.clone())),
-                    )
-                    .lead(Lead::Dot(dot))
-                    .detail(state)
-                    .tip("Run this command")
-                    .row(),
-                );
+                    .to_owned()
+            };
+            let controls = run::controls(running, true);
+            // The last control is the row's own action (■ or ▶).
+            let Some(&(_, tip, main)) = controls.last() else {
+                continue;
+            };
+            let mut item = MenuItem::new(row.name.clone(), run(main, Some(row.name.clone())))
+                .lead(Lead::Dot(dot))
+                .detail(detail)
+                .tip(tip);
+            for &(icon, tip, action) in controls {
+                item = item.trail(Trail {
+                    icon,
+                    tone: if action == RunAction::Stop {
+                        Tone::Danger
+                    } else {
+                        Tone::Normal
+                    },
+                    tip: tip.into(),
+                    on_hover: action == RunAction::Restart,
+                    action: run(action, Some(row.name.clone())),
+                });
             }
+            rows.push(item.row());
         }
         if !summary.rows.is_empty() {
             rows.push(MenuRow::Separator);

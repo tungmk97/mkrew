@@ -43,9 +43,12 @@ pub(crate) struct MenuState<'a> {
     pub(crate) focus: &'a FocusHandle,
     pub(crate) selected: Option<usize>,
     pub(crate) swatch: usize,
+    /// The panel's width (`theme::MENU_WIDTH` unless a menu needs more).
+    pub(crate) width: f32,
 }
 
-/// The ✓ column, the lead, the label (and its second line), the detail and the shortcut.
+/// The ✓ column, the lead, the label (and its second line), the detail, the shortcut and the
+/// trailing buttons.
 fn item_row(
     state: MenuState<'_>,
     id: &'static str,
@@ -67,9 +70,43 @@ fn item_row(
     let checked = item.check == Some(true);
     let lead = lead_element(&item.lead, color, theme);
     let (action, toggle) = (item.action.clone(), item.toggle);
+    // A disabled row has no buttons.
+    let trails = item.trail.into_iter().filter(|_| enabled).enumerate();
+    let trails = trails.map(|(at, trail)| {
+        // The hover fill differs from the hovered row's own (`border`).
+        let (fg, tint) = match trail.tone {
+            Tone::Normal => (theme.text_muted, theme.selected),
+            Tone::Danger => (theme.status_exited, theme.danger_bg),
+            Tone::Accent => (theme.accent_text, theme.selected),
+        };
+        let (group, action) = (row_id.clone(), trail.action);
+        div()
+            .id(SharedString::from(format!("{row_id}-trail-{at}")))
+            .flex_none()
+            .flex()
+            .items_center()
+            // No vertical padding: the row keeps its height.
+            .px(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .cursor_pointer()
+            .hover(move |style| style.bg(rgb(tint)))
+            .active(|style| style.opacity(opacity::ACTIVE))
+            .when(trail.on_hover && !selected, |el| {
+                el.opacity(opacity::HIDDEN)
+                    .group_hover(group, |style| style.opacity(opacity::FULL))
+            })
+            .tooltip(tooltip(theme, &trail.tip, ""))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                // Not the row's own action.
+                cx.stop_propagation();
+                shell.run_menu_item(&action, 0, true, window, cx);
+            }))
+            .child(icon_svg(trail.icon, theme::ICON_SIZE_SMALL, fg))
+    });
+    let trails: Vec<_> = trails.collect();
     // A row that cannot act: the same box without the hover, faded, no click.
     let frame = if enabled {
-        menu_item(row_id, theme)
+        menu_item(row_id.clone(), theme).group(row_id)
     } else {
         div()
             .id(row_id)
@@ -118,6 +155,7 @@ fn item_row(
             item.keys
                 .map(|keys| div().flex_none().text_size(font_size::META).child(keys)),
         )
+        .children(trails)
         .when_some(item.tip, |el, tip| el.tooltip(tooltip(theme, &tip, "")))
         .when(enabled, |el| {
             el.on_click(cx.listener(move |shell, _, window, cx| {
@@ -242,6 +280,7 @@ pub(crate) fn render_menu(
         })
         .collect();
     let panel = menu_panel(id, theme)
+        .w(px(state.width))
         .track_focus(state.focus)
         .key_context(MENU_CONTEXT)
         .on_key_down(cx.listener(Shell::menu_key_down))
@@ -271,6 +310,7 @@ impl Shell {
             focus: &self.menu_focus,
             selected: self.menu_selected,
             swatch: self.menu_swatch,
+            width: theme::MENU_WIDTH,
         }
     }
 

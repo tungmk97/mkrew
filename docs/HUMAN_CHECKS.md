@@ -21,6 +21,14 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-03 Run menu: one row per command with its own buttons
+
+- [ ] **Look (dark + light):** the Run ▾ menu is 280 px wide (was 240).
+  Each command is one row: dot, name, ports (or `exited` / `stopped`), then a red ■ while it runs or a gray ▶ otherwise; hovering a running row also shows ↻ before ■.
+  There is no separate `Stop <name>` row any more.
+- [ ] **Buttons:** ■ stops that command, ▶ starts it, ↻ restarts it; the menu stays open and the row updates.
+  A click on the row itself (or ↓ then Enter) stops a running command or starts a stopped one, and closes the menu.
+
 ### To verify - 2026-11-02 Task dialog prompt works like the composer
 
 - [ ] **@ file (dark + light):** Board → New task → click the Prompt field, type `@`. The "Insert file" picker opens over the dialog; Enter types `@path` into the prompt and the caret is back in the prompt; Esc types a plain `@`. `@` in the Title types an `@`.

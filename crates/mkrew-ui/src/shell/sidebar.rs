@@ -141,14 +141,7 @@ impl Shell {
             let selected = live.is_some() && live == shown;
             let name = row.name.clone();
             let ports: Vec<String> = row.ports.iter().map(|p| format!(":{p}")).collect();
-            let controls: &[(Icon, &'static str, RunAction)] = match live {
-                Some(_) if index < configured => &[
-                    (Icon::RotateCw, "Restart this command", RunAction::Restart),
-                    (Icon::CircleStop, "Stop this command", RunAction::Stop),
-                ],
-                Some(_) => &[(Icon::CircleStop, "Stop this command", RunAction::Stop)],
-                None => &[(Icon::Play, "Run this command", RunAction::Start)],
-            };
+            let controls = run::controls(live.is_some(), index < configured);
             let actions = controls.iter().map(|&(glyph, tip, action)| {
                 let name = name.clone();
                 let colors = run::action_colors(action, theme);

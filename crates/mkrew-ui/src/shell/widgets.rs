@@ -744,7 +744,6 @@ pub(crate) fn menu_panel(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
-        .w(px(theme::MENU_WIDTH))
         .flex()
         .flex_col()
         .p(px(space::XS))

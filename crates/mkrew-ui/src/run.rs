@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::icons::Icon;
 use crate::theme::Theme;
 use mkrew_core::run::{MAX_PORTS, command_name};
 use mkrew_protocol::{Event, Project, Session, SessionPortsEvent, SessionState};
@@ -260,6 +261,23 @@ pub fn state_text(state: &RowState) -> String {
     }
 }
 
+/// A per-command Run control: its glyph, tooltip and action.
+pub type Control = (Icon, &'static str, RunAction);
+
+/// The controls of one command row in the sidebar and the Run menu (SPEC §10): ↻ and ■ while it
+/// runs (only ■ for a command that left the config: nothing to restart it from), ▶ otherwise.
+/// The last one is the row's main action.
+pub fn controls(live: bool, configured: bool) -> &'static [Control] {
+    const RESTART: Control = (Icon::RotateCw, "Restart this command", RunAction::Restart);
+    const STOP: Control = (Icon::CircleStop, "Stop this command", RunAction::Stop);
+    const START: Control = (Icon::Play, "Run this command", RunAction::Start);
+    match (live, configured) {
+        (true, true) => &[RESTART, STOP],
+        (true, false) => &[STOP],
+        (false, _) => &[START],
+    }
+}
+
 /// The pane header title: a live run session shows `name · :port …`, an exited one its name,
 /// any other session its own title.
 pub fn pane_title(session: &Session, ports: &[u16]) -> Option<String> {
@@ -446,6 +464,20 @@ mod tests {
             ..be
         };
         assert_eq!(pane_title(&shell, &[8080]).as_deref(), Some("notes"));
+    }
+
+    #[test]
+    fn a_running_command_stops_and_a_stopped_one_starts() {
+        let actions = |live, configured| {
+            controls(live, configured)
+                .iter()
+                .map(|c| c.2)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(actions(true, true), [RunAction::Restart, RunAction::Stop]);
+        assert_eq!(actions(true, false), [RunAction::Stop]);
+        assert_eq!(actions(false, true), [RunAction::Start]);
+        assert_eq!(actions(false, false), [RunAction::Start]);
     }
 
     /// The glyph stays visible on every surface it sits on (title bar, menu panel, its own
