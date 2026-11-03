@@ -354,6 +354,33 @@ impl RightPanelMode {
     }
 }
 
+/// `[ui] md_mode` (SPEC §12A): how a Markdown file opens in the Editor. Switching a file's mode
+/// writes it, so the next file opens the way the last one was read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MdMode {
+    /// The rendered page.
+    #[default]
+    Preview,
+    /// The source editor and the live page side by side.
+    Split,
+    /// The source editor.
+    Source,
+}
+
+impl MdMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            MdMode::Preview => "preview",
+            MdMode::Split => "split",
+            MdMode::Source => "source",
+        }
+    }
+}
+
+/// `[ui] md_split` default: the source's share of the Split view, in percent.
+pub const MD_SPLIT_DEFAULT: u8 = 50;
+
 /// `[ui] inspector_width` default, px (the UI clamps what it reads to its own limits).
 pub const INSPECTOR_WIDTH_DEFAULT: u16 = 300;
 
@@ -393,6 +420,11 @@ pub struct UiSettings {
     /// `[ui] board_all_workspaces` (SPEC §10): the Board shows every workspace's tasks, not only
     /// the active workspace's. The Board's `This workspace | All workspaces` switch writes it.
     pub board_all_workspaces: bool,
+    /// `[ui] md_mode`: Preview, Split or Source for the next Markdown file opened.
+    pub md_mode: MdMode,
+    /// `[ui] md_split`: the source's share of the Markdown Split view, percent (the UI keeps it
+    /// 20–80); dragging the divider saves it.
+    pub md_split: u8,
 }
 
 impl Default for UiSettings {
@@ -413,6 +445,8 @@ impl Default for UiSettings {
             reading_width: true,
             close_to_tray: true,
             board_all_workspaces: false,
+            md_mode: MdMode::Preview,
+            md_split: MD_SPLIT_DEFAULT,
         }
     }
 }
@@ -569,6 +603,8 @@ pub fn template() -> &'static str {
      # Diff wrap: long lines wrap (true) or are cut at the pane edge (false); the Wrap toggle writes it.\n\
      # Reading width: agent panes start narrow (about 120-140 columns, centered) or full width.\n\
      # Close to tray (Windows): the window's ✕ hides it to the tray icon; false quits the UI.\n\
+     # Markdown files open in preview, split (source | preview) or source; switching writes it.\n\
+     # Markdown split: the source's share in percent (20-80); dragging the divider writes it.\n\
      [ui]\n\
      # font_family = \"\"\n\
      # font_size = 13\n\
@@ -584,6 +620,8 @@ pub fn template() -> &'static str {
      # reading_width = true\n\
      # close_to_tray = true\n\
      # board_all_workspaces = false\n\
+     # md_mode = \"preview\"\n\
+     # md_split = 50\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
@@ -840,6 +878,8 @@ push = true
                     reading_width: true,
                     close_to_tray: false,
                     board_all_workspaces: false,
+                    md_mode: MdMode::Preview,
+                    md_split: MD_SPLIT_DEFAULT,
                 },
                 terminal: FontSettings {
                     font_family: "JetBrains Mono".into(),
@@ -998,6 +1038,16 @@ push = true
         assert!(parse_err("[ui]\ntheme = \"blue\"").contains("unknown variant `blue`"));
         // [terminal] has no theme.
         assert!(parse_err("[terminal]\ntheme = \"dark\"").contains("unknown field `theme`"));
+    }
+
+    #[test]
+    fn ui_md_mode_and_split_parse_and_default() {
+        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
+        assert_eq!((ui("").md_mode, ui("").md_split), (MdMode::Preview, 50));
+        let set = ui("[ui]\nmd_mode = \"split\"\nmd_split = 35");
+        assert_eq!((set.md_mode, set.md_split), (MdMode::Split, 35));
+        assert!(parse_err("[ui]\nmd_mode = \"side\"").contains("unknown variant `side`"));
+        assert!(parse_err("[ui]\nmd_split = 300").contains("invalid value"));
     }
 
     #[test]
