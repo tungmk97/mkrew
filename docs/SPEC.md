@@ -703,10 +703,14 @@ Protocol 47 (ADR 0069): `Project.position`, `project.update` `position?`.
   crash/reboot) that has no task, is an agent, and is still a leaf of a tab layout: spawn the
   resume command in the same pane. One that cannot resume stays exited. The mark is cleared at
   startup, so each session is resumed at most once. A resumed session keeps its linked plan
-  (`plan_path`). A session that exits while the daemon runs
+  (`plan_path`). Then every interrupted session that did not come back (a shell, a run command,
+  an agent that cannot resume) leaves its tabs; a tab left without panes closes unless pinned,
+  and interrupted shells and run commands are hidden like `session.remove`, while agents stay in
+  History (archived workspaces are skipped; ADR 0093). A session that exits while the daemon runs
   (a shell or agent that quits, a killed one, a run command) leaves its tab layout; one cut off by
-  the daemon stop keeps its pane (ADR 0017, ADR 0033). Any exited agent session can also be
-  resumed on request: `session.resume`, History's **Resume**, `mk session resume` (ADR 0055).
+  the daemon stop keeps its pane until that startup step (ADR 0017, ADR 0033). Any exited agent
+  session can also be resumed on request: `session.resume`, History's **Resume**,
+  `mk session resume` (ADR 0055).
 - **Run commands:** after resume, `project.run_start` (all) for every non-archived project with
   `run_autostart` and at least one command (ADR 0018).
 - **Notifications:** OS notification when a session enters needs_input or done; at most one per

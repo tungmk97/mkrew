@@ -96,6 +96,31 @@ impl Hub {
             tracing::warn!(%session_id, "pane not removed from its tab: {e}");
         }
     }
+
+    /// Takes the panes of `sessions` out of every tab of the project in one store lock; a tab
+    /// they leave without panes closes unless pinned (it held only what a restart could not
+    /// bring back). A tab that was empty already stays.
+    pub fn drop_panes(&self, project_id: Ulid, sessions: &[Ulid]) -> Result<(), StoreError> {
+        let updated = {
+            let store = self.store();
+            let mut updated = Vec::new();
+            for tab in store.list_tabs(project_id)? {
+                let cut = sessions.iter().fold(None, |cut: Option<Value>, &session| {
+                    without_session(cut.as_ref().unwrap_or(&tab.layout), session).or(cut)
+                });
+                match cut {
+                    None => {}
+                    Some(Value::Null) if !tab.pinned => store.close_tab(tab.id)?,
+                    Some(layout) => updated.push(store.set_tab_layout(tab.id, &layout)?),
+                }
+            }
+            updated
+        };
+        for tab in updated {
+            let _ = self.events.send(Event::TabUpdated(tab));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -839,12 +839,12 @@ fn an_exited_agent_session_resumes_on_request() {
 }
 
 /// ADR 0033: a session that exits while the daemon runs leaves its tab (shell or agent
-/// alike, the sibling takes its place); a daemon stop does not, so the pane is still there
-/// for the resume (ADR 0017) after the restart.
+/// alike, the sibling takes its place). What a daemon stop cuts off is cleared at the next
+/// start instead (ADR 0093, `restart_clears_the_panes_it_cannot_bring_back`).
 #[test]
-fn an_exited_session_leaves_its_tab_but_a_daemon_stop_keeps_the_pane() {
+fn an_exited_session_leaves_its_tab() {
     let env = Env::new();
-    let (mut daemon, mut client) = env.start();
+    let (_daemon, mut client) = env.start();
     let project = client.add_project(&env.repo());
     client
         .call(set_default_shell(&project, Some("shell")))
@@ -883,11 +883,5 @@ fn an_exited_session_leaves_its_tab_but_a_daemon_stop_keeps_the_pane() {
     wait_layout(&mut client, &project, &alone);
     // The session itself is still listed: History keeps its exit code and output.
     assert_eq!(client.session(a).state, SessionState::Exited);
-
-    // The daemon stop ends `b` too, but its pane stays for the next start.
-    client.stop();
-    assert!(daemon.wait_exit().success());
-    let (_daemon, mut client) = env.start();
-    assert_eq!(list_tabs(&mut client, &project)[0].layout, alone);
     client.stop();
 }

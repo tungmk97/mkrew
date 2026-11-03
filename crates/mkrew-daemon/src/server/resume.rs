@@ -21,7 +21,9 @@ impl Daemon {
     /// `resume` command when the agent reported its own id, else move the card to needs_input
     /// with `error_flag` ("session stopped — run again?"). Then the same for every interrupted
     /// agent session without a task that is still in a tab; one that cannot resume stays
-    /// exited, as before.
+    /// exited. Last, what the stop interrupted and nothing brought back leaves the screen: its
+    /// panes go (a tab left empty closes unless pinned), and its shells and run commands leave
+    /// the session list (an agent stays in History, to resume by hand).
     pub(super) async fn resume_sessions(&self) {
         let found = {
             let store = self.store();
@@ -76,6 +78,29 @@ impl Daemon {
                 && let Err(outcome) = self.resume(last, None).await
             {
                 tracing::info!(session_id = %last.id, "pane not resumed: {outcome:?}");
+            }
+        }
+        // Resumed panes already name their new session, so only the leftovers are cut.
+        for project in projects.iter().filter(|p| !p.archived) {
+            let left: Vec<Ulid> = sessions
+                .iter()
+                .filter(|s| s.project_id == project.id && interrupted.contains(&s.id))
+                .map(|s| s.id)
+                .collect();
+            if !left.is_empty()
+                && let Err(e) = self.hub.drop_panes(project.id, &left)
+            {
+                tracing::warn!(project_id = %project.id, "stopped panes not removed: {e}");
+            }
+        }
+        let dead_shells = sessions.iter().filter(|s| {
+            s.kind == SessionKind::Shell
+                && interrupted.contains(&s.id)
+                && !archived.contains(&s.project_id)
+        });
+        for shell in dead_shells {
+            if let Err(e) = self.store().hide_session(shell.id) {
+                tracing::warn!(session_id = %shell.id, "stopped shell not hidden: {e}");
             }
         }
     }

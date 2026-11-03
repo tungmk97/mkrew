@@ -21,6 +21,14 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-03 A restart drops the panes it cannot bring back (ADR 0093)
+
+- [ ] **Install the new build and restart the daemon** (no protocol change).
+- [ ] **Reboot (dark + light):** with a workspace showing a shell tab, a Run command, a pinned tab with a shell and a resumable Claude pane, reboot the PC (or `mk daemon stop` and reopen Mkrew).
+  The shell tab is gone, the pinned tab stays and is empty, the Claude pane is back in place; no tab shows a red dot over "✕ Session exited."; the RUN row shows the command as stopped (gray), not red; the TERMINAL group has no old shell.
+  A workspace whose only tab held shells opens on a fresh empty "Terminal" tab.
+- [ ] **History:** the old shells and run commands are no longer listed; an agent that could not resume still is, with Resume.
+
 ### To verify - 2026-11-03 Markdown Split view and interactive preview (ADR 0092)
 
 - [ ] **Look (dark + light):** open a `.md` file in the Editor; the header switch shows three icons (eye, columns, code) with tooltips `Preview` / `Split` / `Source` and their keys.

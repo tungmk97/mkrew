@@ -82,6 +82,87 @@ fn tabs_and_layout_persist_across_daemon_restart() {
     client.stop();
 }
 
+/// A restart brings back only resumable agents: the shell and run panes it cannot bring back
+/// leave their tabs and the session list, and a tab they emptied closes unless pinned. A tab
+/// that was empty already stays.
+#[test]
+fn restart_clears_the_panes_it_cannot_bring_back() {
+    let env = Env::new();
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    client
+        .call(set_default_shell(&project, Some("shell")))
+        .into_result::<Project>()
+        .unwrap();
+    let shell_in = |client: &mut Client, title: &str| {
+        let tab: TerminalTab = client
+            .call(create_tab(&project, title))
+            .into_result()
+            .unwrap();
+        let spawned: SessionSpawnResult = client
+            .call(spawn_params(&project, SessionKind::Shell, Some(tab.id)))
+            .into_result()
+            .unwrap();
+        (tab, spawned.session_id)
+    };
+    let (_, loose) = shell_in(&mut client, "shells");
+    let (kept, pinned) = shell_in(&mut client, "kept");
+    client
+        .call(Request::TabPin(TabPinParams {
+            tab_id: kept.id,
+            pinned: true,
+        }))
+        .into_result::<TerminalTab>()
+        .unwrap();
+    client
+        .call(create_tab(&project, "empty"))
+        .into_result::<TerminalTab>()
+        .unwrap();
+    client
+        .call(set_runs(
+            &project,
+            vec![run_command("dev", ".", &long("echo dev", "echo dev"))],
+            Some(false),
+        ))
+        .into_result::<Project>()
+        .unwrap();
+    client
+        .call(run_start(&project, None))
+        .into_result::<RunStarted>()
+        .unwrap();
+    assert_eq!(list_tabs(&mut client, &project).len(), 4);
+    assert_eq!(run_sessions(&mut client, &project).len(), 1);
+    client.stop();
+    assert!(daemon.wait_exit().success());
+
+    let (_daemon, mut client) = env.start();
+    let tabs = list_tabs(&mut client, &project);
+    let left: Vec<(&str, &serde_json::Value)> =
+        tabs.iter().map(|t| (t.title.as_str(), &t.layout)).collect();
+    assert_eq!(
+        left,
+        [
+            ("kept", &serde_json::Value::Null),
+            ("empty", &serde_json::Value::Null)
+        ]
+    );
+    let listed: Vec<Ulid> = client
+        .call(Request::SessionList(SessionListParams {
+            project_id: Some(project.id),
+        }))
+        .into_result::<Vec<Session>>()
+        .unwrap()
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    assert!(
+        !listed.contains(&loose) && !listed.contains(&pinned),
+        "{listed:?}"
+    );
+    assert!(run_sessions(&mut client, &project).is_empty());
+    client.stop();
+}
+
 #[test]
 fn tasks_crud_and_order_persist_across_daemon_restart() {
     let env = Env::new();
