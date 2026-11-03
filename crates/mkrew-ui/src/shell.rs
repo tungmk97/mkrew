@@ -23,6 +23,7 @@ mod file_tabs_render;
 mod files;
 mod files_preview;
 pub(crate) mod files_render;
+pub(crate) mod files_split;
 pub(crate) mod git;
 mod git_dialogs;
 pub(crate) mod git_diff;

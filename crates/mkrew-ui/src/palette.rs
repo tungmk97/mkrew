@@ -408,6 +408,7 @@ pub fn title(command: Command) -> String {
         Command::ReplaceInFile => "Editor: Replace in file".into(),
         Command::CloseFileTab => "Editor: Close tab".into(),
         Command::ToggleFilePreview => "Editor: Toggle preview / source".into(),
+        Command::ToggleFileSplit => "Editor: Toggle split source | preview".into(),
         Command::QuickOpen => "Files: Quick open file".into(),
         Command::GitToggleMode => "Git: Toggle Working changes / Against base".into(),
         Command::GitToggleHistory => "Git: Toggle History".into(),
@@ -541,7 +542,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::FindInFile
         | Command::ReplaceInFile
         | Command::CloseFileTab
-        | Command::ToggleFilePreview => in_view(View::Editor),
+        | Command::ToggleFilePreview
+        | Command::ToggleFileSplit => in_view(View::Editor),
         Command::GitToggleMode
         | Command::GitToggleHistory
         | Command::GitNextHunk

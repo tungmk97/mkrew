@@ -111,7 +111,7 @@ fn push_block(flat: &mut Flat, block: &Block, shown: &Shown) {
                 push_blocks(flat, &item.blocks, shown);
             }
         }
-        BlockKind::Quote(inner) => push_blocks(flat, inner, shown),
+        BlockKind::Quote { blocks, .. } => push_blocks(flat, blocks, shown),
         BlockKind::Code { .. } => {
             let first = block.lines.start;
             if matches!(shown.diagrams.get(&first), Some(Ok(_))) {
@@ -140,7 +140,7 @@ fn push_block(flat: &mut Flat, block: &Block, shown: &Shown) {
                 }
             }
         }
-        BlockKind::Rule | BlockKind::Html(_) => {}
+        BlockKind::Rule | BlockKind::Html(_) | BlockKind::FrontMatter(_) => {}
     }
 }
 
@@ -413,12 +413,12 @@ mod tests {
 
     #[test]
     fn select_all_spans_the_first_to_the_last_text() {
-        let page = shown("---\n\nonly\n\n---\n");
+        let page = shown("***\n\nonly\n\n***\n");
         let selection = select_all(&page).unwrap();
         assert_eq!(
             (selection.anchor, selection.head),
             (at(1, 0, 0), at(1, 0, 4))
         );
-        assert_eq!(select_all(&shown("---\n")), None);
+        assert_eq!(select_all(&shown("***\n")), None);
     }
 }

@@ -1230,8 +1230,10 @@ Only edit this file. When done, for EACH comment run:
   Cancel" (once per unsaved tab). Switching workspace or view keeps them.
 - **Markdown preview:** a `.md` file opens as a rendered preview, by the Docs renderer (§12,
   §14: the same typography tokens for light and dark, highlighted code blocks, ```` ```mermaid ````
-  blocks drawn as diagrams, built off the UI thread). The header has a `Preview | Source`
-  toggle (Ctrl+Shift+V, ADR 0083); Source is the editor above. In Preview (ADR 0072) the text can be selected with the
+  blocks drawn as diagrams, built off the UI thread). The header has a `Preview | Split | Source`
+  switch (ADR 0083, ADR 0092); Source is the editor above. Ctrl+Shift+V toggles Preview ↔ Source
+  (Split goes to Preview), Ctrl+Alt+V toggles Split ↔ Source. The mode a file is switched to is
+  the mode the next `.md` file opens in (`[ui] md_mode`, default `preview`). In Preview (ADR 0072) the text can be selected with the
   mouse across blocks (Shift+click extends, double-click takes a word, Ctrl+A selects the page,
   Esc clears) and Ctrl+C copies it as shown (blocks and lines on their own lines, table cells
   tab-separated, list markers `- ` / `N. ` / `[x] `, drawn diagrams copy nothing; a drag or
@@ -1240,14 +1242,29 @@ Only edit this file. When done, for EACH comment run:
   field in its place; Ctrl+Enter puts it back over the block's source lines (one undo step,
   unsaved like any edit), Esc or a click outside cancels; refused with a toast when the text
   changed since the field opened. The preview is built from
-  the editor's text, so unsaved changes show in it and toggling never loses them; it is parsed
-  when the file is read and when switching to Preview after an edit, never per keystroke. Find
-  and "Open at a line" switch to Source. A new tab starts in Preview. Links in the preview
-  are not clickable (ADR 0021). `.md` files also offer "Review in Docs". The page is a virtual
+  the editor's text, so unsaved changes show in it and switching never loses them; it is parsed
+  when the file is read, when switching to Preview or Split after an edit, and in Split after
+  every edit (one build at a time per file; an edit made meanwhile is built once it lands). Find
+  and "Open at a line" switch Preview to Source and keep Split. A click on a task box ticks or
+  unticks it in the source (one undo step, unsaved; refused with a toast while the page is of an
+  older text). The preview's links are clickable (Editor and Docs, ADR 0092): `http`, `https`
+  and `mailto` open in the browser, `#heading` scrolls to that heading (GitHub anchors), a
+  relative path opens that file of the folder in the Editor (`/path` from the folder root,
+  `#L12` at a line); other schemes and paths leaving the folder open nothing (a toast says so).
+  GitHub alerts (`> [!NOTE]` / `TIP` / `IMPORTANT` / `WARNING` / `CAUTION`) show a colored bar
+  with an icon and title; YAML front matter at the top shows as a bordered card of `key value`
+  rows; code blocks show "Copy" on hover. `.md` files also offer "Review in Docs". The page is a virtual
   list (only the blocks on screen are laid out; every block's height is measured once per page)
   with the editor's scroll bar, so long files scroll smoothly; Docs shows its preview the same
   way. A re-read or edited page keeps the scroll position; another tab (or the same file
   opened again) starts at the top, and a live font change measures the page again.
+- **Markdown Split view** (ADR 0092): the editor on the left, the live page on the right, a
+  divider between them. Dragging the divider resizes both sides (each keeps 20–80 %); a
+  double-click puts it back at half and half; the source's share is saved as `[ui] md_split`
+  (percent, default 50) when the drag ends. The page follows the editor's scroll (the block at
+  the editor's top line goes to the page's top); scrolling the page moves nothing else. A press
+  on the page puts the editor's caret on that block's first line (scrolled into view only when
+  it is off screen). The page has its own keyboard focus (selection, Ctrl+C, Ctrl+A); ✎ works as in Preview.
 - **Quick open** (`Ctrl+Shift+O`, or the "Search files…" entry at the top of the tree)
   fuzzy-finds files of the current workspace, in the folder the tree shows (project or
   task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
@@ -1437,6 +1454,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Docs / Git | Select the next / previous comment thread (scrolled into view) | F8 / Shift+F8 |
 | Docs / Git | Reply to / resolve or reopen the selected thread | Ctrl+Alt+R / Ctrl+Alt+Enter |
 | Editor | Toggle preview / source of a Markdown file (no terminal has focus there, so Paste keeps the keys in terminals) | Ctrl+Shift+V |
+| Editor | Toggle the Markdown Split view (source and live preview side by side) / back to source | Ctrl+Alt+V |
 | Zed | Open workspace or current file in Zed | Ctrl+Shift+Z |
 | File tree | Expand/collapse, move | ← → ↑ ↓ |
 | File tree | Toggle ignored files (while the tree has the keyboard; the palette entry works anywhere in a workspace) | Ctrl+Shift+H |
@@ -2002,6 +2020,8 @@ right_panel = "hidden"      # §10; "files" | "session" | "git" | "hidden"; the 
 sidebar_width = 280         # §10; px, the workspace sidebar's width (dragging its edge writes it; kept 200–480)
 close_to_tray = true        # §20J; Windows: ✕ hides the window to the tray icon (false: ✕ quits the UI)
 board_all_workspaces = false # §10; the Board shows every workspace's tasks; its `This workspace | All workspaces` switch writes it
+md_mode = "preview"         # §12A; preview | split | source: how the next .md file opens; switching a file's mode writes it
+md_split = 50               # §12A; the source's share of the Markdown Split view, percent (kept 20-80); dragging the divider writes it
 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family

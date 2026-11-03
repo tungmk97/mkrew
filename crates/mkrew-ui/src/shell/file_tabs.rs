@@ -11,7 +11,8 @@ impl Shell {
 
     /// After the active tab changed: a link's line asked before it showed lands, the editor
     /// shows its caret, the strip shows the tab, a stale or failed tab is read and a `.md`
-    /// page is built. A find or block-edit field the new tab hides gives the keyboard back.
+    /// page is built. A find, block-edit or Split page field the new tab hides gives the
+    /// keyboard back.
     pub(crate) fn file_tab_shown(
         &mut self,
         project_id: Ulid,
@@ -21,14 +22,15 @@ impl Shell {
     ) {
         if let Some(view) = self.files.get_mut(&project_id) {
             let tab = view.tab_mut();
-            let (previewing, block_edit) = tab.map_or((false, false), |tab| {
+            let (previewing, splitting, block_edit) = tab.map_or((false, false, false), |tab| {
                 tab.apply_pending_line();
-                (tab.previewing(), tab.block_edit.is_some())
+                (tab.previewing(), tab.splitting(), tab.block_edit.is_some())
             });
             let find = self.file_find_focus.is_focused(window)
                 || self.file_replace_focus.is_focused(window);
             let block = self.file_block_focus.is_focused(window);
-            if (find && previewing) || (block && !block_edit) {
+            let page = self.file_preview_focus.is_focused(window);
+            if (find && previewing) || (block && !block_edit) || (page && !splitting) {
                 window.focus(&self.file_editor_focus, cx);
             }
             if let Some(shown) = view.shown() {

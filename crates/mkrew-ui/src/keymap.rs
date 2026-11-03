@@ -109,6 +109,8 @@ pub enum Command {
     CloseFileTab,
     /// Editor only: switch a Markdown file between its rendered preview and its source.
     ToggleFilePreview,
+    /// Editor only: show a Markdown file's source and live preview side by side, or not.
+    ToggleFileSplit,
     /// Open the right panel on the Git tab and give its list the keyboard.
     ShowGitPanel,
     /// Show the Diff view while a diff is open.
@@ -306,6 +308,7 @@ impl Command {
             Command::ReplaceInFile,
             Command::CloseFileTab,
             Command::ToggleFilePreview,
+            Command::ToggleFileSplit,
             Command::ShowGitPanel,
             Command::ShowDiff,
             Command::GitToggleMode,
@@ -414,6 +417,7 @@ impl Command {
             Command::ReplaceInFile => "replace_in_file".into(),
             Command::CloseFileTab => "close_file_tab".into(),
             Command::ToggleFilePreview => "toggle_file_preview".into(),
+            Command::ToggleFileSplit => "toggle_file_split".into(),
             Command::ShowGitPanel => "show_git_panel".into(),
             Command::ShowDiff => "show_diff".into(),
             Command::GitToggleMode => "git_toggle_mode".into(),
@@ -535,6 +539,7 @@ impl Command {
             Command::CloseFileTab => "ctrl-w".into(),
             // Shares Ctrl+Shift+V with the terminal's Paste: no terminal has focus in the Editor.
             Command::ToggleFilePreview => "ctrl-shift-v".into(),
+            Command::ToggleFileSplit => "ctrl-alt-v".into(),
             Command::ShowGitPanel => "ctrl-shift-4".into(),
             Command::ShowDiff => "ctrl-shift-7".into(),
             Command::GitToggleMode => "b".into(),
@@ -618,7 +623,8 @@ impl Command {
             | Command::FindInFile
             | Command::ReplaceInFile
             | Command::CloseFileTab
-            | Command::ToggleFilePreview => Some(EDITOR_CONTEXT),
+            | Command::ToggleFilePreview
+            | Command::ToggleFileSplit => Some(EDITOR_CONTEXT),
             Command::GitToggleMode
             | Command::GitToggleHistory
             | Command::GitNextHunk
@@ -1098,6 +1104,8 @@ mod tests {
         assert_eq!(keymap.label(Command::Paste), "Ctrl+Shift+V");
         assert_eq!(keymap.label(Command::ToggleFilePreview), "Ctrl+Shift+V");
         assert_eq!(Command::ToggleFilePreview.context(), Some(EDITOR_CONTEXT));
+        assert_eq!(keymap.label(Command::ToggleFileSplit), "Ctrl+Alt+V");
+        assert_eq!(Command::ToggleFileSplit.context(), Some(EDITOR_CONTEXT));
         // The terminal keys stay one-of-a-kind everywhere else.
         let (keymap, errors) = Keymap::parse("close_pane = \"ctrl-shift-v\"\n");
         assert_eq!(keymap.label(Command::ClosePane), "Ctrl+Shift+X");

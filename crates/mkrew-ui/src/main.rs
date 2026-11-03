@@ -62,7 +62,7 @@ use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
 use mkrew_ui::editor::{self, EditKey, Pos};
 use mkrew_ui::fanout::{self, Compare, FanOutPicker};
 use mkrew_ui::field::{Caret, caret_mouse, caret_text, copy_selection};
-use mkrew_ui::files_view::{self, Close, Content, FileTab, FilesView, Open, Requests};
+use mkrew_ui::files_view::{self, Close, Content, FileTab, FilesView, MdMode, Open, Requests};
 use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::git_actions::{self, Remote};
@@ -137,6 +137,7 @@ mod shell;
 use shell::board::*;
 use shell::cards::*;
 use shell::files_render::*;
+use shell::files_split;
 use shell::git_diff::*;
 use shell::git_menus::*;
 use shell::git_rows::*;
@@ -723,6 +724,18 @@ struct Shell {
     file_block_focus: FocusHandle,
     /// Where the editor's text starts on screen (set while painting), for clicks.
     file_text_left: Rc<Cell<Pixels>>,
+    /// The Markdown Split view's preview (the editor beside it keeps `file_editor_focus`).
+    file_preview_focus: FocusHandle,
+    /// The mode the next Markdown file opens in (`[ui] md_mode`, the last one switched to).
+    md_mode: files_view::MdMode,
+    /// The source's share of the Markdown Split view (`[ui] md_split`, 0.2–0.8).
+    md_split: f32,
+    /// Its divider was dragged since the last mouse-up: the share is saved when it ends.
+    md_split_dragging: bool,
+    /// Where the Split view's two halves were painted, for the divider drag.
+    md_split_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The Split view's scroll sync (source → preview, SPEC §12A).
+    md_split_sync: files_split::Sync,
     /// The Docs list filter field.
     docs_filter_focus: FocusHandle,
     /// The rendered Markdown page of Docs and of the Files view (virtual lists, kept across
@@ -919,6 +932,9 @@ impl Render for Shell {
             })
             .on_action(cx.listener(Self::run))
             .on_action(cx.listener(Self::expand_diagram))
+            .on_action(cx.listener(Self::open_preview_link))
+            .on_action(cx.listener(Self::toggle_preview_task))
+            .on_action(cx.listener(Self::copy_preview_code))
             // `/` focuses the sidebar filter while nothing else has the keyboard (a terminal or
             // a field keeps its `/`).
             .on_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {

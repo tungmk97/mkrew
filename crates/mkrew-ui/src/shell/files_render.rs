@@ -341,13 +341,43 @@ impl Shell {
             None => "Open this file in Zed".to_owned(),
         };
         let mode_toggle = (tab.is_markdown() && editable).then(|| {
+            let preview_keys: SharedString = self.keymap.label(Command::ToggleFilePreview).into();
+            let split_keys: SharedString = self.keymap.label(Command::ToggleFileSplit).into();
+            // Icons: three text segments would squeeze the file name out of a narrow header.
+            let segment = |mode, label, icon, tip, keys| crate::shell::docs::Segment {
+                mode,
+                label,
+                icon: Some(icon),
+                tip,
+                keys,
+            };
             self.mode_toggle(
                 "file-mode",
                 tab.mode,
-                [(Mode::Preview, "Preview"), (Mode::Source, "Source")],
-                "Toggle preview / source",
-                self.keymap.label(Command::ToggleFilePreview).into(),
-                move |shell, _, window, cx| shell.toggle_file_preview(project_id, window, cx),
+                [
+                    segment(
+                        MdMode::Preview,
+                        "Preview",
+                        Icon::Eye,
+                        "Preview: the rendered page",
+                        preview_keys.clone(),
+                    ),
+                    segment(
+                        MdMode::Split,
+                        "Split",
+                        Icon::Columns2,
+                        "Split: source and live preview side by side",
+                        split_keys,
+                    ),
+                    segment(
+                        MdMode::Source,
+                        "Source",
+                        Icon::Code,
+                        "Source: the Markdown text",
+                        preview_keys,
+                    ),
+                ],
+                move |shell, mode, window, cx| shell.set_file_mode(project_id, mode, window, cx),
                 theme,
                 cx,
             )
@@ -663,7 +693,10 @@ impl Shell {
                 .into_any_element()
             }
             Content::Shown(_) if tab.previewing() => {
-                self.render_md_preview(project_id, tab, window, theme, cx)
+                self.render_md_preview(project_id, tab, false, window, theme, cx)
+            }
+            Content::Shown(shown) if tab.splitting() => {
+                self.render_md_split(project_id, tab, shown, window, theme, cx)
             }
             Content::Shown(shown) => self.render_shown_file(project_id, shown, window, theme, cx),
         };

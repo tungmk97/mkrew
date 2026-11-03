@@ -226,7 +226,7 @@ fn page(text: &str) -> docs::Shown {
 fn markdown_opens_as_a_preview_that_is_parsed_once_per_text() {
     let mut view = opened("# T\n");
     assert!(tab(&view).is_markdown());
-    assert_eq!(tab(&view).mode, Mode::Preview);
+    assert_eq!(tab(&view).mode, MdMode::Preview);
     assert!(tab(&view).previewing());
     let (stamp, text) = tab_mut(&mut view)
         .preview_request()
@@ -247,14 +247,20 @@ fn markdown_opens_as_a_preview_that_is_parsed_once_per_text() {
 }
 
 #[test]
-fn a_late_preview_never_replaces_a_newer_one() {
+fn an_edit_made_while_a_page_builds_is_built_once_it_lands() {
     let mut view = opened("a\n");
     let (old, _) = tab_mut(&mut view).preview_request().unwrap();
-    tab_mut(&mut view).toggle_mode();
     view.editor_mut().unwrap().insert("b");
-    tab_mut(&mut view).toggle_mode();
-    let (new, _) = tab_mut(&mut view).preview_request().unwrap();
+    assert_eq!(
+        tab_mut(&mut view).preview_request(),
+        None,
+        "one build at a time"
+    );
+    view.preview_ready(old, page("a\n"));
+    let (new, typed) = tab_mut(&mut view).preview_request().expect("the edit");
+    assert_eq!(typed, "ba\n");
     view.preview_ready(new, page("ba\n"));
+    // A late page of an older version never replaces a newer one.
     view.preview_ready(old, page("a\n"));
     assert_eq!(
         tab(&view).preview().map(|shown| shown.lines.clone()),
@@ -293,12 +299,12 @@ fn a_new_tab_starts_in_preview_and_the_old_tab_keeps_its_page() {
     let mut view = opened("a\n");
     let (stamp, _) = tab_mut(&mut view).preview_request().unwrap();
     view.preview_ready(stamp, page("a\n"));
-    tab_mut(&mut view).toggle_mode();
+    tab_mut(&mut view).set_mode(MdMode::Source);
     view.open("src/main.rs", Open::Kept);
-    assert_eq!(tab(&view).mode, Mode::Preview);
+    assert_eq!(tab(&view).mode, MdMode::Preview);
     assert!(tab(&view).preview().is_none());
     let readme = view.tab_for("README.md").unwrap();
-    assert_eq!(readme.mode, Mode::Source);
+    assert_eq!(readme.mode, MdMode::Source);
     assert!(readme.preview().is_some());
 }
 
@@ -334,14 +340,14 @@ fn only_markdown_has_a_preview() {
 fn find_and_a_link_line_switch_to_source() {
     let mut view = opened("a\nb\n");
     assert!(view.open_find(false));
-    assert_eq!(tab(&view).mode, Mode::Source);
+    assert_eq!(tab(&view).mode, MdMode::Source);
     let mut view = opened("a\nb\n");
     view.reveal("README.md", Some(2), Open::Transient);
-    assert_eq!(tab(&view).mode, Mode::Source);
+    assert_eq!(tab(&view).mode, MdMode::Source);
     // A plain reveal (quick open) of the same file keeps the mode.
     let mut view = opened("a\n");
     view.reveal("README.md", None, Open::Transient);
-    assert_eq!(tab(&view).mode, Mode::Preview);
+    assert_eq!(tab(&view).mode, MdMode::Preview);
 }
 
 #[test]
@@ -349,15 +355,15 @@ fn unsaved_edits_survive_the_toggle_and_the_preview_shows_them() {
     let mut view = opened("a\n");
     let (stamp, _) = tab_mut(&mut view).preview_request().unwrap();
     view.preview_ready(stamp, page("a\n"));
-    tab_mut(&mut view).toggle_mode();
-    assert_eq!(tab(&view).mode, Mode::Source);
+    tab_mut(&mut view).set_mode(MdMode::Source);
+    assert_eq!(tab(&view).mode, MdMode::Source);
     assert_eq!(
         tab_mut(&mut view).preview_request(),
         None,
         "nothing to build in Source"
     );
     view.editor_mut().unwrap().insert("x");
-    tab_mut(&mut view).toggle_mode();
+    tab_mut(&mut view).set_mode(MdMode::Preview);
     let (_, typed) = tab_mut(&mut view)
         .preview_request()
         .expect("the edited text is parsed");
@@ -1063,9 +1069,9 @@ fn esc_cancels_and_leaving_the_preview_drops_edit_and_selection() {
     );
     tab.preview_click(point(0, 0), false, 1);
     tab.preview_drag(point(0, 1));
-    tab.toggle_mode();
+    tab.set_mode(MdMode::Source);
     assert!(tab.block_edit.is_none() && tab.preview_selection.is_none());
-    tab.toggle_mode();
+    tab.set_mode(MdMode::Preview);
     assert!(tab.open_block_edit(0));
     tab.preview_select_all();
     // Another tab starts clean; README.md's tab keeps its edit.
@@ -1489,4 +1495,70 @@ fn a_file_tabs_place_is_counted_inside_its_pin_group() {
     view.activate(0);
     assert_eq!(view.active_place(), Some((true, 0, 1)));
     assert_eq!(three().active_place(), None, "no tab");
+}
+
+#[test]
+fn split_tabs_open_in_the_last_mode_and_keep_split_for_find_and_links() {
+    let mut view = listed();
+    view.md_mode = MdMode::Split;
+    view.open("README.md", Open::Transient);
+    view.begin_read("README.md");
+    view.read("README.md", file_text("a\nb\n"));
+    assert!(tab(&view).splitting() && !tab(&view).previewing());
+    // The editor is on screen next to the page: find and a link's line keep the split.
+    assert!(view.open_find(false));
+    view.reveal("README.md", Some(2), Open::Transient);
+    assert_eq!(tab(&view).mode, MdMode::Split);
+}
+
+#[test]
+fn split_rebuilds_the_page_after_each_edit() {
+    let mut view = opened("a\n");
+    tab_mut(&mut view).set_mode(MdMode::Split);
+    let (stamp, _) = tab_mut(&mut view)
+        .preview_request()
+        .expect("split shows a page");
+    view.preview_ready(stamp, page("a\n"));
+    assert_eq!(tab_mut(&mut view).preview_request(), None, "current");
+    view.editor_mut().unwrap().insert("x");
+    let (_, typed) = (tab_mut(&mut view).preview_request()).expect("the edit is parsed");
+    assert_eq!(typed, "xa\n");
+}
+
+#[test]
+fn a_task_box_click_ticks_the_source_once_the_page_is_current() {
+    let mut view = previewed("intro\n\n- [ ] one\n- [x] two\n");
+    view.editor_mut().unwrap().set_cursor(Pos::new(0, 2), false);
+    assert_eq!(tab_mut(&mut view).toggle_task(3), Ok(true));
+    assert_eq!(text(&view), "intro\n\n- [x] one\n- [x] two\n");
+    assert_eq!(
+        view.editor_mut().unwrap().cursor(),
+        Pos::new(0, 2),
+        "the caret stays"
+    );
+    // The page is of the text before the tick until it is built again.
+    assert_eq!(tab_mut(&mut view).toggle_task(4), Err(StaleEdit));
+    let (stamp, source) = tab_mut(&mut view).preview_request().unwrap();
+    view.preview_ready(stamp, page(&source));
+    assert_eq!(tab_mut(&mut view).toggle_task(4), Ok(true));
+    assert_eq!(text(&view), "intro\n\n- [x] one\n- [ ] two\n");
+    let (stamp, source) = tab_mut(&mut view).preview_request().unwrap();
+    view.preview_ready(stamp, page(&source));
+    assert_eq!(
+        tab_mut(&mut view).toggle_task(1),
+        Ok(false),
+        "no task on that line"
+    );
+}
+
+#[test]
+fn the_split_share_follows_the_pointer_within_its_limits() {
+    assert_eq!(md_split_share(50), 0.5);
+    assert_eq!(md_split_share(5), 0.2);
+    assert_eq!(md_split_share(255), 0.8);
+    // Halves 1000 px wide from x = 200.
+    assert_eq!(md_split_share_at(200.0, 1000.0, 500.0), 0.3);
+    assert_eq!(md_split_share_at(200.0, 1000.0, 100.0), 0.2);
+    assert_eq!(md_split_share_at(200.0, 1000.0, 1300.0), 0.8);
+    assert_eq!(md_split_share_at(0.0, 0.0, 10.0), 0.5, "not painted yet");
 }

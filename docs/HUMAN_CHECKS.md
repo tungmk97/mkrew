@@ -21,6 +21,24 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-03 Markdown Split view and interactive preview (ADR 0092)
+
+- [ ] **Look (dark + light):** open a `.md` file in the Editor; the header switch shows three icons (eye, columns, code) with tooltips `Preview` / `Split` / `Source` and their keys.
+  Split shows the editor left and the page right with a faint 1 px divider; hovering the divider tints a 6 px strip and shows the resize cursor.
+  The agent ran Split in dark and light on Windows (screenshots checked: resize to 27 % saved `md_split = 27`, scroll sync, link click, task tick, Copy); the look of the icons next to a long file name and the other themes is yours to check.
+- [ ] **Resize:** drag the divider; both sides follow the pointer and stop at 20 % / 80 %.
+  Double-click it: back to half and half. Restart the app: the share stays (`[ui] md_split`).
+- [ ] **Live:** type in the editor; the page updates within a moment and keeps its place; typing fast in a long file (e.g. `docs/SPEC.md`) stays smooth.
+- [ ] **Scroll sync:** scroll the editor; the page follows (the block at the editor's top goes to the page's top).
+  Scroll the page alone: the editor stays. Click a block in the page: the editor's caret moves to that block's first line, scrolling only when it was off screen, and the page does not jump.
+- [ ] **Keys:** Ctrl+Alt+V toggles Split ↔ Source; Ctrl+Shift+V toggles Preview ↔ Source (Split → Preview). In the page, drag-select then Ctrl+C copies; Ctrl+S still saves. The palette lists "Editor: Toggle split source | preview".
+  Check Ctrl+Alt+V types nothing on your keyboard layout (AltGr); rebind `toggle_file_split` in `keymap.toml` if it does.
+- [ ] **Last mode:** switch a file to Split, open another `.md`: it opens in Split. Restart: still Split (`[ui] md_mode`, also on Settings → Appearance).
+- [ ] **Links:** in Preview, Split and Docs: a `https://` link opens the browser; `[x](#some-heading)` scrolls to it (try a Vietnamese heading); `[spec](../SPEC.md)` and `[main](/crates/mkrew-ui/src/main.rs#L10)` open in the Editor; `[x](javascript:alert(1))` only shows a toast. The pointer is a hand over links.
+- [ ] **Task boxes:** click `[ ]` in Preview or Split: it ticks, the tab shows ● unsaved, Ctrl+Z unticks; the caret does not move. Docs' task boxes are not clickable.
+- [ ] **Alerts and front matter:** `> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]` each show a colored bar plus icon and title (blue, green, purple, amber, red) and read well in both themes; a `---` YAML block at the top shows as a bordered `key value` card.
+- [ ] **Copy code:** hover a code block: "Copy" appears at its top-right (in the Files preview left of ✎, never overlapping it, also on a one-line block); a click copies the code and toasts "Copied".
+
 ### To verify - 2026-11-03 Run menu: one row per command with its own buttons
 
 - [ ] **Look (dark + light):** the Run ▾ menu is 280 px wide (was 240).

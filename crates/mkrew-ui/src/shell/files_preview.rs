@@ -5,43 +5,14 @@ use crate::*;
 use mkrew_ui::files_view::{BlockEditOutcome, StaleEdit};
 
 impl Shell {
-    /// Preview ↔ Source of the active Markdown tab (the Preview / Source switch, Ctrl+Shift+V).
-    /// Nothing for other files.
-    pub(crate) fn toggle_file_preview(
-        &mut self,
-        project_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(tab) = self.active_file_tab(project_id) else {
-            return;
-        };
-        let editable = tab
-            .shown()
-            .is_some_and(|shown| !shown.code.binary && !shown.code.too_large);
-        if !(tab.is_markdown() && editable) {
-            return;
-        }
-        tab.toggle_mode();
-        self.build_preview(project_id, window, cx);
-        // The find fields are not drawn in Preview: give the keyboard back.
-        if (self.files.get(&project_id))
-            .and_then(FilesView::tab)
-            .is_some_and(FileTab::previewing)
-            && (self.file_find_focus.is_focused(window)
-                || self.file_replace_focus.is_focused(window))
-        {
-            window.focus(&self.focus_handle, cx);
-        }
-        cx.notify();
-    }
-
     /// A `.md` file of the Files view as the Docs preview: the page of the editor's text
-    /// (unsaved edits included), selectable.
+    /// (unsaved edits included), selectable. `split`: beside the editor (Split view), with its
+    /// own keyboard focus.
     pub(crate) fn render_md_preview(
         &self,
         project_id: Ulid,
         tab: &FileTab,
+        split: bool,
         window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -61,21 +32,27 @@ impl Shell {
         };
         let fonts = cx.global::<theme::Fonts>().clone();
         let select = Some(preview::Selecting(tab.preview_selection));
+        let wrap = Some(self.file_block_wrap(project_id, tab, window, theme, cx));
+        let focus = if split {
+            &self.file_preview_focus
+        } else {
+            &self.file_editor_focus
+        };
         preview::page(
             &self.file_page,
             tab.opening,
             shown,
-            Some(self.file_block_wrap(project_id, tab, window, theme, cx)),
+            wrap,
             select,
             &fonts,
             theme,
         )
-        .track_focus(&self.file_editor_focus)
+        .track_focus(focus)
         .on_key_down(cx.listener(Self::file_preview_key_down))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                shell.preview_press(project_id, event, window, cx);
+                shell.preview_press(project_id, split, event, window, cx);
             }),
         )
         .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
@@ -87,16 +64,26 @@ impl Shell {
     }
 
     /// A press on the page: the keyboard comes here (Ctrl+C, Ctrl+A, Esc), the caret goes to
-    /// the text under the pointer (Shift extends, a double click takes the word).
+    /// the text under the pointer (Shift extends, a double click takes the word). In the Split
+    /// view the editor's caret also goes to the pressed block's first line.
     fn preview_press(
         &mut self,
         project_id: Ulid,
+        split: bool,
         event: &MouseDownEvent,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        window.focus(&self.file_editor_focus, cx);
+        let focus = if split {
+            &self.file_preview_focus
+        } else {
+            &self.file_editor_focus
+        };
+        window.focus(focus, cx);
         let at = self.file_page.hit(event.position);
+        if split && let Some(at) = at {
+            self.split_caret_to_block(project_id, at.block, cx);
+        }
         let Some(tab) = self.active_file_tab(project_id) else {
             return;
         };
@@ -259,7 +246,6 @@ impl Shell {
                 self.file_page.remeasure();
                 window.focus(&self.file_editor_focus, cx);
                 self.file_edited(project_id, window, cx);
-                self.build_preview(project_id, window, cx);
             }
             Err(StaleEdit) => self.toast_error("The file changed; edit again", cx),
         }

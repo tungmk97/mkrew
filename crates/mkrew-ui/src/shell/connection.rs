@@ -44,6 +44,7 @@ impl Shell {
         let close_to_tray = ui.close_to_tray && local;
         let reading_default = ui.reading_width;
         let board_all = ui.board_all_workspaces;
+        let (md_mode, md_split) = (ui.md_mode, files_view::md_split_share(ui.md_split));
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
         let sidebar_mode = ui.sidebar;
@@ -412,6 +413,12 @@ impl Shell {
             file_editor_focus: cx.focus_handle(),
             file_block_focus: cx.focus_handle(),
             file_text_left: Rc::default(),
+            file_preview_focus: cx.focus_handle(),
+            md_mode,
+            md_split,
+            md_split_dragging: false,
+            md_split_bounds: Rc::default(),
+            md_split_sync: files_split::Sync::default(),
             git: HashMap::new(),
             git_repos: HashMap::new(),
             git_summary: None,
@@ -974,6 +981,10 @@ impl Shell {
                     }
                     self.reading_default = settings.ui.reading_width;
                     self.board_all = settings.ui.board_all_workspaces;
+                    self.follow_md_mode(settings.ui.md_mode);
+                    if !self.md_split_dragging {
+                        self.md_split = files_view::md_split_share(settings.ui.md_split);
+                    }
                     if self.features != settings.features {
                         // `view()` may now map Docs to Terminals.
                         self.features = settings.features;

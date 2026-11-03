@@ -5,9 +5,10 @@ use crate::*;
 impl Shell {
     /// The Files view of `project_id`, created on first use.
     pub(crate) fn files_view(&mut self, project_id: Ulid) -> &mut FilesView {
+        let md_mode = self.md_mode;
         self.files
             .entry(project_id)
-            .or_insert_with(|| FilesView::new(project_id, None))
+            .or_insert_with(|| new_files_view(project_id, None, md_mode))
     }
 
     /// The Files view of `project_id` while it still shows `target` (an answer sent for
@@ -40,8 +41,8 @@ impl Shell {
             });
             return self.leave_files(project_id, unsaved, again, window, cx);
         }
-        self.files
-            .insert(project_id, FilesView::new(project_id, target));
+        let view = new_files_view(project_id, target, self.md_mode);
+        self.files.insert(project_id, view);
         self.files_scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.refresh_files(project_id, window, cx);
         self.follow_file_tabs(project_id, window, cx);
@@ -735,8 +736,9 @@ impl Shell {
         cx.notify();
     }
 
-    /// After an edit, the tab is kept (no longer transient), find follows the new text, and
-    /// the highlight follows once typing pauses (in that tab, whichever is shown by then).
+    /// After an edit, the tab is kept (no longer transient), find follows the new text, the
+    /// Split view's page is built again, and the highlight follows once typing pauses (in that
+    /// tab, whichever is shown by then).
     pub(crate) fn file_edited(
         &mut self,
         project_id: Ulid,
@@ -753,6 +755,8 @@ impl Shell {
             return;
         };
         let target = view.worktree_task_id;
+        // Only a page on screen is built; one build runs at a time and the last text wins.
+        self.build_preview(project_id, window, cx);
         let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             background.timer(theme::REHIGHLIGHT_DELAY).await;
@@ -879,8 +883,8 @@ impl Shell {
         // Hidden views read again when shown.
         let shown = self.workspace;
         for project_id in files {
-            self.files
-                .insert(project_id, FilesView::new(project_id, None));
+            let view = new_files_view(project_id, None, self.md_mode);
+            self.files.insert(project_id, view);
             self.follow_file_tabs(project_id, window, cx);
             if shown == Some(project_id) && self.files_on_screen() {
                 self.refresh_files(project_id, window, cx);
@@ -893,4 +897,11 @@ impl Shell {
             }
         }
     }
+}
+
+/// A Files view whose Markdown tabs open in `md_mode`.
+fn new_files_view(project_id: Ulid, target: Option<Ulid>, md_mode: MdMode) -> FilesView {
+    let mut view = FilesView::new(project_id, target);
+    view.md_mode = md_mode;
+    view
 }

@@ -378,21 +378,32 @@ impl Shell {
                     .text_color(rgb(theme.text))
                     .child(file_path.clone()),
             )
-            .child(self.mode_toggle(
-                "doc-mode",
-                docs.mode,
-                [(Mode::Preview, "Preview"), (Mode::Source, "Source")],
-                "Toggle preview / source",
-                self.keymap.label(Command::ToggleDocSource).into(),
-                move |shell, _, _, cx| {
-                    if let Some(docs) = shell.docs.get_mut(&project_id) {
-                        docs.toggle_mode();
-                        cx.notify();
-                    }
-                },
-                theme,
-                cx,
-            ))
+            .child({
+                let keys: SharedString = self.keymap.label(Command::ToggleDocSource).into();
+                let segment = |mode, label| Segment {
+                    mode,
+                    label,
+                    icon: None,
+                    tip: "Toggle preview / source",
+                    keys: keys.clone(),
+                };
+                self.mode_toggle(
+                    "doc-mode",
+                    docs.mode,
+                    [
+                        segment(Mode::Preview, "Preview"),
+                        segment(Mode::Source, "Source"),
+                    ],
+                    move |shell, _, _, cx| {
+                        if let Some(docs) = shell.docs.get_mut(&project_id) {
+                            docs.toggle_mode();
+                            cx.notify();
+                        }
+                    },
+                    theme,
+                    cx,
+                )
+            })
             .child(self.add_comment_button(
                 project_id,
                 CommentContext::Doc,
@@ -565,17 +576,14 @@ impl Shell {
             )
     }
 
-    /// A segmented control over two modes (Docs and Files Preview / Source, Git Unified /
-    /// Split); the inactive segment runs `switch` with its mode. `id` prefixes the segments'
-    /// element ids (`(id, index)`).
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn mode_toggle<M: Copy + PartialEq + 'static>(
+    /// A segmented control over modes (Docs Preview / Source, Files Preview / Split / Source);
+    /// the inactive segments run `switch` with their mode. `id` prefixes the segments' element
+    /// ids (`(id, index)`).
+    pub(crate) fn mode_toggle<M: Copy + PartialEq + 'static, const N: usize>(
         &self,
         id: &'static str,
         mode: M,
-        options: [(M, &'static str); 2],
-        tip: &'static str,
-        keys: SharedString,
+        segments: [Segment<M>; N],
         switch: impl Fn(&mut Self, M, &mut Window, &mut Context<'_, Self>) + Clone + 'static,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -585,38 +593,49 @@ impl Shell {
             .flex_none()
             .flex()
             .gap(px(space::XS))
-            .children(
-                options
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (target, label))| {
-                        let active = target == mode;
-                        let switch = switch.clone();
-                        div()
-                            .id((id, index))
-                            .px(px(space::S))
-                            .py(px(space::XS))
-                            .rounded(px(radius::SMALL))
-                            .text_size(font_size::BODY)
-                            .tooltip(tooltip(theme, tip, keys.clone()))
-                            .when(active, |el| {
-                                el.bg(rgb(theme.surface_raised))
-                                    .font_weight(FontWeight(weight::MEDIUM))
-                                    .text_color(rgb(theme.text))
-                            })
-                            .when(!active, |el| {
-                                el.cursor_pointer()
-                                    .text_color(rgb(theme.text_muted))
-                                    .hover(move |style| style.bg(rgb(hover)))
-                                    .active(|style| style.opacity(opacity::ACTIVE))
-                                    .on_click(cx.listener(move |shell, _, window, cx| {
-                                        switch(shell, target, window, cx);
-                                    }))
-                            })
-                            .child(label)
-                    }),
-            )
+            .children(segments.into_iter().enumerate().map(|(index, segment)| {
+                let target = segment.mode;
+                let active = target == mode;
+                let fg = if active { theme.text } else { theme.text_muted };
+                let switch = switch.clone();
+                div()
+                    .id((id, index))
+                    .flex()
+                    .items_center()
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .text_size(font_size::BODY)
+                    .tooltip(tooltip(theme, segment.tip, segment.keys))
+                    .text_color(rgb(fg))
+                    .when(active, |el| {
+                        el.bg(rgb(theme.surface_raised))
+                            .font_weight(FontWeight(weight::MEDIUM))
+                    })
+                    .when(!active, |el| {
+                        el.cursor_pointer()
+                            .hover(move |style| style.bg(rgb(hover)))
+                            .active(|style| style.opacity(opacity::ACTIVE))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                switch(shell, target, window, cx);
+                            }))
+                    })
+                    .map(|el| match segment.icon {
+                        Some(icon) => el.child(icon_svg(icon, theme::ICON_SIZE, fg)),
+                        None => el.child(segment.label),
+                    })
+            }))
     }
+}
+
+/// One segment of [`Shell::mode_toggle`]: an icon alone when `icon` is set (then `tip` names
+/// it), else `label`; its tooltip is `tip` with `keys`.
+pub(crate) struct Segment<M> {
+    pub mode: M,
+    pub label: &'static str,
+    pub icon: Option<Icon>,
+    pub tip: &'static str,
+    pub keys: SharedString,
 }
 
 pub(crate) fn doc_row(

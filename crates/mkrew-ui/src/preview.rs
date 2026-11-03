@@ -12,8 +12,8 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Bounds, CursorStyle, Div, FontStyle, FontWeight, HighlightStyle, Hsla,
-    ListAlignment, ListState, MouseButton, MouseDownEvent, Pixels, SharedString,
-    StrikethroughStyle, StyledText, TextLayout, UnderlineStyle, UniformList,
+    InteractiveText, ListAlignment, ListOffset, ListState, MouseButton, MouseDownEvent, Pixels,
+    SharedString, StrikethroughStyle, StyledText, TextLayout, UnderlineStyle, UniformList,
     UniformListScrollHandle, Window, canvas, div, img, list, point, px, relative, rgb,
     uniform_list,
 };
@@ -23,7 +23,7 @@ use crate::diagram::Diagram;
 use crate::docs::{Shown, gutter};
 use crate::highlight::{Code, Token};
 use crate::icons::{self, Icon};
-use crate::markdown::{Align, Block, BlockKind, Item, Row, Run, Style};
+use crate::markdown::{Alert, Align, Block, BlockKind, Item, Row, Run, Style};
 use crate::preview_select;
 use crate::scrollbar::{self, Source};
 use crate::theme::{self, ActiveTheme, Theme, font_size, radius, space, weight};
@@ -43,20 +43,23 @@ pub fn inline(runs: &[Run]) -> (String, Vec<(Range<usize>, Style, bool)>) {
     (text, styled)
 }
 
-/// The rendered preview of `blocks`, top to bottom.
+/// The rendered preview of `blocks`, top to bottom, outside a page (a thread message, an
+/// answer): their links open only from the folder root.
 pub fn blocks(blocks: &[Block], shown: &Shown, theme: &Theme) -> Vec<AnyElement> {
-    blocks_in(blocks, shown, None, theme)
+    blocks_in(blocks, shown, None, false, theme)
 }
 
+/// `page`: drawn on a file's page, whose links resolve against that file.
 fn blocks_in(
     blocks: &[Block],
     shown: &Shown,
     pick: Option<&Pick>,
+    page: bool,
     theme: &Theme,
 ) -> Vec<AnyElement> {
     blocks
         .iter()
-        .filter_map(|block| block_in(block, shown, pick, theme))
+        .filter_map(|block| block_in(block, shown, pick, page, theme))
         .collect()
 }
 
@@ -120,6 +123,21 @@ impl Page {
         self.state.scroll_to_reveal_item(ix);
     }
 
+    /// Puts block `ix` at the top, `fraction` (0–1) of its height scrolled past: a heading a
+    /// link names, the block the Split view's source shows at its top.
+    pub fn scroll_to_block(&self, ix: usize, fraction: f32) {
+        let top = |offset_in_item| ListOffset {
+            item_ix: ix,
+            offset_in_item,
+        };
+        self.state.scroll_to(top(Pixels::ZERO));
+        // Every block is measured (`measure_all`): its height is known once at the top.
+        if let Some(bounds) = self.state.bounds_for_item(ix) {
+            self.state
+                .scroll_to(top(bounds.size.height * fraction.clamp(0.0, 1.0)));
+        }
+    }
+
     /// Measures every block again (keeping the place) when `fonts` differ from the ones the
     /// page was measured with: a live `[ui] font_size` or terminal font change (ADR 0024).
     /// Returns whether it did.
@@ -157,9 +175,93 @@ impl Page {
 /// Wraps the element of top-level block `index` (the Docs view makes blocks pickable).
 pub type Wrap = Rc<dyn Fn(usize, &Block, AnyElement) -> AnyElement>;
 
-/// Makes `page`'s text selectable, with this selection drawn (Files preview).
+/// Makes `page`'s text selectable, with this selection drawn, and its task check boxes
+/// clickable ([`ToggleTask`]): the Files preview, whose text can be edited.
 #[derive(Debug, Clone, Copy)]
 pub struct Selecting(pub Option<preview_select::Selection>);
+
+/// Asks the window to open link `dest` (a click on link text): `on_page` when it is on a
+/// file's page (Files, Docs), so it resolves against that file; else against the folder root.
+#[derive(Debug, Clone, PartialEq, gpui::Action)]
+#[action(namespace = mkrew, no_json)]
+pub struct OpenLink {
+    pub dest: String,
+    pub on_page: bool,
+}
+
+/// Asks the window to tick or untick the task item whose first source line (1-based) is `0`
+/// (a click on its check box in the Files preview).
+#[derive(Debug, Clone, PartialEq, gpui::Action)]
+#[action(namespace = mkrew, no_json)]
+pub struct ToggleTask(pub u32);
+
+/// Asks the window to copy code block text `0` (its Copy button).
+#[derive(Debug, Clone, PartialEq, gpui::Action)]
+#[action(namespace = mkrew, no_json)]
+pub struct CopyCode(pub String);
+
+/// The links of a piece of text: their byte ranges and destinations, whether it is on a page,
+/// and an id for its clickable element (the address of its runs, stable while they live).
+struct Links {
+    id: usize,
+    ranges: Rc<[Range<usize>]>,
+    dests: Rc<[String]>,
+    on_page: bool,
+}
+
+fn links(runs: &[Run], on_page: bool) -> Option<Links> {
+    let mut at = 0;
+    let (mut ranges, mut dests) = (Vec::new(), Vec::new());
+    for run in runs {
+        let range = at..at + run.text.len();
+        at = range.end;
+        if let Some(dest) = &run.link {
+            ranges.push(range);
+            dests.push(dest.clone());
+        }
+    }
+    (!ranges.is_empty()).then(|| Links {
+        id: runs.as_ptr() as usize,
+        ranges: ranges.into(),
+        dests: dests.into(),
+        on_page,
+    })
+}
+
+/// `styled` with its links clickable: a pointing hand over them, a click asks for [`OpenLink`].
+/// A press on a link is the link's alone: it starts no text selection, block pick or caret
+/// move (gpui's `InteractiveText` lets it through).
+fn linked(styled: StyledText, links: Option<Links>) -> AnyElement {
+    let Some(Links {
+        id,
+        ranges,
+        dests,
+        on_page,
+    }) = links
+    else {
+        return styled.into_any_element();
+    };
+    let (layout, pressed) = (styled.layout().clone(), Rc::clone(&ranges));
+    // Registered by the parent, so it runs after the text noted where the press started.
+    div()
+        .on_mouse_down(MouseButton::Left, move |event, _, cx| {
+            let on_link = (layout.index_for_position(event.position))
+                .is_ok_and(|at| pressed.iter().any(|range| range.contains(&at)));
+            if on_link {
+                cx.stop_propagation();
+            }
+        })
+        .child(InteractiveText::new(("md-link", id), styled).on_click(
+            ranges.to_vec(),
+            move |index, window, cx| {
+                if let Some(dest) = dests.get(index) {
+                    let dest = dest.clone();
+                    window.dispatch_action(Box::new(OpenLink { dest, on_page }), cx);
+                }
+            },
+        ))
+        .into_any_element()
+}
 
 /// The layouts of the pieces painted last frame, by (top-level block, piece); filled from
 /// `canvas` paint callbacks, so every layout in it is prepainted (its methods panic before).
@@ -183,14 +285,15 @@ struct Pick {
 }
 
 /// A piece of text: `build` gets its selected bytes (end may be `usize::MAX`) and the selection
-/// color. On a selectable page it is numbered, shows an I-beam, and its layout is recorded once
-/// painted (a size-0 canvas after it, so it takes no room).
+/// color; `links` become clickable. On a selectable page it is numbered, shows an I-beam, and
+/// its layout is recorded once painted (a size-0 canvas after it, so it takes no room).
 fn selectable(
     pick: Option<&Pick>,
+    links: Option<Links>,
     build: impl FnOnce(Option<Range<usize>>, Hsla) -> StyledText,
 ) -> AnyElement {
     let Some(pick) = pick else {
-        return build(None, Hsla::default()).into_any_element();
+        return linked(build(None, Hsla::default()), links);
     };
     let piece = pick.next.get();
     pick.next.set(piece + 1);
@@ -200,7 +303,7 @@ fn selectable(
     let (hits, key) = (pick.hits.clone(), (pick.block, piece));
     div()
         .cursor(CursorStyle::IBeam)
-        .child(styled)
+        .child(linked(styled, links))
         .child(
             canvas(
                 |_, _, _| (),
@@ -357,7 +460,7 @@ pub fn page(
             hits: hits.clone(),
             bg,
         });
-        let element = block_in(block, &shown, pick.as_ref(), item_theme);
+        let element = block_in(block, &shown, pick.as_ref(), true, item_theme);
         if let Some(pick) = &pick {
             debug_assert_eq!(
                 pick.next.get(),
@@ -403,13 +506,14 @@ pub fn page(
 
 /// `None` for blocks without anything to show (a text-less task item's paragraph).
 pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> {
-    block_in(block, shown, None, theme)
+    block_in(block, shown, None, false, theme)
 }
 
 fn block_in(
     block: &Block,
     shown: &Shown,
     pick: Option<&Pick>,
+    page: bool,
     theme: &Theme,
 ) -> Option<AnyElement> {
     let element = match &block.kind {
@@ -429,13 +533,17 @@ fn block_in(
                         .border_b_1()
                         .border_color(rgb(theme.border))
                 })
-                .child(selectable(pick, |sel, bg| text(runs, theme, sel, bg)))
+                .child(selectable(pick, links(runs, page), |sel, bg| {
+                    text(runs, theme, sel, bg)
+                }))
                 .into_any_element()
         }
         BlockKind::Paragraph(runs) if runs.is_empty() => return None,
         BlockKind::Paragraph(runs) => div()
             .text_color(rgb(theme.text))
-            .child(selectable(pick, |sel, bg| text(runs, theme, sel, bg)))
+            .child(selectable(pick, links(runs, page), |sel, bg| {
+                text(runs, theme, sel, bg)
+            }))
             .into_any_element(),
         BlockKind::List { start, items } => div()
             .flex()
@@ -443,35 +551,54 @@ fn block_in(
             .gap(px(space::XS))
             .children(items.iter().enumerate().map(|(index, item)| {
                 let number = start.map(|first| first + index as u64);
-                list_item(item, number, shown, pick, theme)
+                list_item(item, number, shown, pick, page, theme)
             }))
             .into_any_element(),
-        BlockKind::Quote(inner) => div()
-            .flex()
-            .gap(px(space::M))
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(theme::DOC_QUOTE_BAR_WIDTH))
-                    .rounded(px(radius::SMALL))
-                    .bg(rgb(theme.pane_focus_border)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(space::S))
-                    .text_color(rgb(theme.text))
-                    .children(blocks_in(inner, shown, pick, theme)),
-            )
-            .into_any_element(),
+        BlockKind::Quote { alert, blocks } => {
+            let look = alert.map(|alert| alert_look(alert, theme));
+            div()
+                .flex()
+                .gap(px(space::M))
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(theme::DOC_QUOTE_BAR_WIDTH))
+                        .rounded(px(radius::SMALL))
+                        .bg(rgb(
+                            look.map_or(theme.pane_focus_border, |(_, _, color)| color)
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(space::S))
+                        .text_color(rgb(theme.text))
+                        .children(look.map(|(icon, title, color)| {
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(space::S))
+                                .font_weight(FontWeight(weight::SEMIBOLD))
+                                .text_color(rgb(color))
+                                .child(icons::icon_svg(icon, theme::ICON_SIZE_SMALL, color))
+                                .child(title)
+                        }))
+                        .children(blocks_in(blocks, shown, pick, page, theme)),
+                )
+                .into_any_element()
+        }
         BlockKind::Code { lang, text } => {
             let start = block.lines.start;
-            let source = || match shown.code.get(&start) {
-                Some(highlighted) => code_block(lang.as_deref(), highlighted, pick, theme),
-                None => code(text, theme.text, theme),
+            let source = || {
+                let element = match shown.code.get(&start) {
+                    Some(highlighted) => code_block(lang.as_deref(), highlighted, pick, theme),
+                    None => code(text, theme.text, theme),
+                };
+                // The Files preview (selectable) has ✎ at each block's top-right corner.
+                with_copy(element, text, pick.is_some(), theme)
             };
             match shown.diagrams.get(&start) {
                 Some(Ok(diagram)) => diagram_view(diagram, start, theme).into_any_element(),
@@ -491,6 +618,7 @@ fn block_in(
             }
         }
         BlockKind::Html(html) => code(html, theme.text_muted, theme).into_any_element(),
+        BlockKind::FrontMatter(text) => front_matter(text, theme).into_any_element(),
         BlockKind::Table { aligns, head, rows } => div()
             .flex()
             .flex_col()
@@ -499,12 +627,12 @@ fn block_in(
             .border_color(rgb(theme.border))
             .overflow_hidden()
             .child(
-                table_row(head, aligns, pick, theme)
+                table_row(head, aligns, pick, page, theme)
                     .bg(rgb(theme.surface_raised))
                     .font_weight(FontWeight(weight::SEMIBOLD)),
             )
             .children(rows.iter().map(|row| {
-                table_row(row, aligns, pick, theme)
+                table_row(row, aligns, pick, page, theme)
                     .border_t_1()
                     .border_color(rgb(theme.border))
             }))
@@ -524,30 +652,55 @@ fn list_item(
     number: Option<u64>,
     shown: &Shown,
     pick: Option<&Pick>,
+    page: bool,
     theme: &Theme,
 ) -> gpui::Div {
     let marker = match (item.checked, number) {
-        (Some(checked), _) => div()
-            .mt(px(space::XS))
-            .size(px(theme::DOC_TASK_BOX_SIZE))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(radius::SMALL))
-            .border_1()
-            .border_color(rgb(if checked {
-                theme.accent
-            } else {
-                theme.text_muted
-            }))
-            .when(checked, |el| el.bg(rgb(theme.accent)))
-            .text_size(font_size::META)
-            .text_color(rgb(theme.on_accent))
-            .when(checked, |el| el.child("✓")),
+        (Some(checked), _) => {
+            let check = div()
+                .mt(px(space::XS))
+                .size(px(theme::DOC_TASK_BOX_SIZE))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(radius::SMALL))
+                .border_1()
+                .border_color(rgb(if checked {
+                    theme.accent
+                } else {
+                    theme.text_muted
+                }))
+                .when(checked, |el| el.bg(rgb(theme.accent)))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.on_accent))
+                .when(checked, |el| el.child("✓"));
+            // The Files preview edits the file: a click ticks the box in the source.
+            match pick {
+                Some(_) => {
+                    let (line, accent) = (item.lines.start, theme.accent);
+                    check
+                        .id(("task-box", line as usize))
+                        .cursor_pointer()
+                        .hover(move |style| style.border_color(rgb(accent)))
+                        // Not a press on the page (text selection).
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            window.dispatch_action(Box::new(ToggleTask(line)), cx);
+                        })
+                        .into_any_element()
+                }
+                None => check.into_any_element(),
+            }
+        }
         (None, Some(number)) => div()
             .text_color(rgb(theme.text_muted))
-            .child(format!("{number}.")),
-        (None, None) => div().text_color(rgb(theme.text_muted)).child("•"),
+            .child(format!("{number}."))
+            .into_any_element(),
+        (None, None) => div()
+            .text_color(rgb(theme.text_muted))
+            .child("•")
+            .into_any_element(),
     };
     div()
         .flex()
@@ -570,11 +723,17 @@ fn list_item(
                 .when(item.checked == Some(true), |el| {
                     el.text_color(rgb(theme.text_muted))
                 })
-                .children(blocks_in(&item.blocks, shown, pick, theme)),
+                .children(blocks_in(&item.blocks, shown, pick, page, theme)),
         )
 }
 
-fn table_row(row: &Row, aligns: &[Align], pick: Option<&Pick>, theme: &Theme) -> gpui::Div {
+fn table_row(
+    row: &Row,
+    aligns: &[Align],
+    pick: Option<&Pick>,
+    page: bool,
+    theme: &Theme,
+) -> gpui::Div {
     div()
         .flex()
         .children(row.cells.iter().enumerate().map(|(column, cell)| {
@@ -590,7 +749,9 @@ fn table_row(row: &Row, aligns: &[Align], pick: Option<&Pick>, theme: &Theme) ->
                     Align::Right => el.text_right(),
                     Align::Default | Align::Left => el,
                 })
-                .child(selectable(pick, |sel, bg| text(cell, theme, sel, bg)))
+                .child(selectable(pick, links(cell, page), |sel, bg| {
+                    text(cell, theme, sel, bg)
+                }))
         }))
 }
 
@@ -604,6 +765,108 @@ fn code(text: &str, color: u32, theme: &Theme) -> gpui::Div {
         .text_size(font_size::META)
         .text_color(rgb(color))
         .child(SharedString::from(text.to_owned()))
+}
+
+/// The icon, title and color of a GitHub alert (SPEC §14 tokens: info, success, the syntax
+/// purple, the changed-line amber, danger).
+fn alert_look(alert: Alert, theme: &Theme) -> (Icon, &'static str, u32) {
+    match alert {
+        Alert::Note => (Icon::Info, "Note", theme.info_text),
+        Alert::Tip => (Icon::Lightbulb, "Tip", theme.success_text),
+        Alert::Important => (
+            Icon::MessageSquareWarning,
+            "Important",
+            theme.syntax_keyword,
+        ),
+        Alert::Warning => (Icon::TriangleAlert, "Warning", theme.diff_mod_text),
+        Alert::Caution => (Icon::OctagonAlert, "Caution", theme.danger_text),
+    }
+}
+
+/// The front matter on a bordered card: `key  value` rows, other lines in the monospaced font.
+fn front_matter(text: &str, theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(space::XS))
+        .px(px(space::M))
+        .py(px(space::S))
+        .rounded(px(radius::MEDIUM))
+        .border_1()
+        .border_color(rgb(theme.border))
+        .text_size(font_size::META)
+        .children(
+            (crate::markdown::front_matter_rows(text).into_iter()).map(|(key, value)| match key {
+                Some(key) => div()
+                    .flex()
+                    .gap(px(space::S))
+                    .child(
+                        div()
+                            .flex_none()
+                            .font_weight(FontWeight(weight::MEDIUM))
+                            .text_color(rgb(theme.text_muted))
+                            .child(key.to_owned()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_color(rgb(theme.text))
+                            .child(value.to_owned()),
+                    ),
+                None => div()
+                    .font_family(theme.terminal_font_family.clone())
+                    .text_color(rgb(theme.text_muted))
+                    .child(value.to_owned()),
+            }),
+        )
+}
+
+/// A code block with "Copy" on hover at its top-right, left of the Files preview's ✎ when
+/// `beside_edit` (that takes the corner); it asks for [`CopyCode`] with the block's text.
+fn with_copy(element: gpui::Div, text: &str, beside_edit: bool, theme: &Theme) -> gpui::Div {
+    let right = if beside_edit {
+        space::XS + theme::ICON_BUTTON_SIZE + space::XS
+    } else {
+        space::XS
+    };
+    // Unique per text: many thread messages can hold a code block on the same line.
+    let id = text.as_ptr() as usize;
+    let group = SharedString::from(format!("code-{id}"));
+    let copied = text.to_owned();
+    let (hover, fg) = (theme.hover, theme.text);
+    element.group(group.clone()).relative().child(
+        div()
+            .id(("code-copy", id))
+            .absolute()
+            .top(px(space::XS))
+            .right(px(right))
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .px(px(space::S))
+            .py(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .bg(rgb(theme.surface))
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .cursor_pointer()
+            .opacity(theme::opacity::HIDDEN)
+            .group_hover(group, |style| style.opacity(theme::opacity::FULL))
+            .hover(move |style| style.bg(rgb(hover)).text_color(rgb(fg)))
+            .child(icons::icon_svg(
+                Icon::Copy,
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ))
+            .child("Copy")
+            // Not a press on the page (text selection) or a pick of the block (Docs).
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, window, cx| {
+                cx.stop_propagation();
+                window.dispatch_action(Box::new(CopyCode(copied.clone())), cx);
+            }),
+    )
 }
 
 /// A fenced code block: its language muted above, then its lines with syntax colors in the
@@ -637,7 +900,7 @@ fn code_block(lang: Option<&str>, code: &Code, pick: Option<&Pick>, theme: &Them
                     } else {
                         line.clone()
                     };
-                    div().child(selectable(pick, |sel, bg| {
+                    div().child(selectable(pick, None, |sel, bg| {
                         let highlights =
                             with_selection(code_highlights(spans, &[], theme), sel, &line, bg);
                         StyledText::new(line).with_highlights(highlights)

@@ -229,6 +229,7 @@ impl Shell {
                     | Command::ReplaceInFile
                     | Command::CloseFileTab
                     | Command::ToggleFilePreview
+                    | Command::ToggleFileSplit
             );
             if open && !files_command {
                 cx.propagate();
@@ -557,6 +558,12 @@ impl Shell {
                 // Only bound while the Editor is shown.
                 if let Some(project_id) = self.workspace {
                     self.toggle_file_preview(project_id, window, cx);
+                }
+            }
+            Command::ToggleFileSplit => {
+                // Only bound while the Editor is shown.
+                if let Some(project_id) = self.workspace {
+                    self.toggle_file_split(project_id, window, cx);
                 }
             }
             Command::AddComment => {

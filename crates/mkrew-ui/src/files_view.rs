@@ -11,13 +11,14 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::Keystroke;
+pub use mkrew_core::settings::MdMode;
 use mkrew_protocol::{Event, FsContent, FsEntry, FsWritten};
 use ulid::Ulid;
 
-use crate::docs::{self, Mode};
+use crate::docs;
 use crate::editor::{Editor, Pos};
 use crate::highlight::Code;
-use crate::markdown::Lines;
+use crate::markdown::{self, Lines};
 use crate::preview_select::{self, Point, Selection};
 use crate::task_dialog::DialogKey;
 use crate::text_box::{Input, TextBox};
@@ -138,6 +139,28 @@ pub enum BlockEditOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StaleEdit;
 
+/// The source's share of the Markdown Split view that `[ui] md_split` (percent) stands for,
+/// kept between the limits.
+pub fn md_split_share(percent: u8) -> f32 {
+    split_share(f32::from(percent) / 100.0)
+}
+
+/// The share while the divider is dragged to window x `pointer_x` over halves `width` wide
+/// starting at `left`.
+pub fn md_split_share_at(left: f32, width: f32, pointer_x: f32) -> f32 {
+    if width <= 0.0 {
+        return md_split_share(mkrew_core::settings::MD_SPLIT_DEFAULT);
+    }
+    split_share((pointer_x - left) / width)
+}
+
+fn split_share(share: f32) -> f32 {
+    share.clamp(
+        crate::theme::MD_SPLIT_MIN_SHARE,
+        crate::theme::MD_SPLIT_MAX_SHARE,
+    )
+}
+
 /// How a file opens (SPEC §12A, ADR 0080).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Open {
@@ -163,8 +186,9 @@ pub struct FileTab {
     /// Relative to the shown folder, `/` separators.
     pub path: String,
     pub content: Content,
-    /// `.md` files: the rendered preview or the editor. A new tab starts in Preview.
-    pub mode: Mode,
+    /// `.md` files: the rendered preview, the editor, or both side by side. A new tab starts in
+    /// its view's [`FilesView::md_mode`].
+    pub mode: MdMode,
     /// VS Code's preview tab: italic, replaced by the next transient open while clean.
     pub transient: bool,
     /// Pinned tabs lead the strip and are skipped by bulk closes.
@@ -223,6 +247,8 @@ pub struct FilesView {
     generation: u64,
     /// The generation each in-flight `fs.list` was sent in.
     sent_in: HashMap<String, u64>,
+    /// The mode a newly opened Markdown tab starts in (`[ui] md_mode`, the last one switched to).
+    pub md_mode: MdMode,
 }
 
 /// A save's answer that has no file view to land in: only a failure or a refused save is news.
@@ -252,6 +278,7 @@ impl FilesView {
             list_again: HashSet::new(),
             generation: 0,
             sent_in: HashMap::new(),
+            md_mode: MdMode::default(),
         }
     }
 
@@ -521,7 +548,7 @@ impl FilesView {
             }
             return self.activate(at);
         }
-        let tab = FileTab::new(path, how == Open::Transient);
+        let tab = FileTab::new(path, how == Open::Transient, self.md_mode);
         // Only a transient open takes the transient tab's place.
         let replace = (how == Open::Transient)
             .then(|| (self.tabs.iter()).position(|tab| tab.transient && !tab.is_dirty()))
@@ -675,9 +702,9 @@ impl FilesView {
         let read = self.open(path, how);
         if let Some(tab) = self.tab_mut() {
             tab.pending_line = line;
-            // The caret of a link's line shows in the editor, not in the preview.
-            if line.is_some() {
-                tab.mode = Mode::Source;
+            // The caret of a link's line shows in the editor, not in the preview alone.
+            if line.is_some() && tab.mode == MdMode::Preview {
+                tab.mode = MdMode::Source;
             }
         }
         Requests { list, read }
@@ -766,8 +793,10 @@ impl FilesView {
         if !matches!(tab.content, Content::Shown(_)) {
             return false;
         }
-        // Matches and the replace row act on the editor's text.
-        tab.mode = Mode::Source;
+        // Matches and the replace row act on the editor's text: the preview alone hides it.
+        if tab.mode == MdMode::Preview {
+            tab.mode = MdMode::Source;
+        }
         tab.block_edit = None;
         tab.preview_selection = None;
         let Content::Shown(shown) = &tab.content else {
@@ -968,11 +997,11 @@ impl FilesView {
 }
 
 impl FileTab {
-    fn new(path: &str, transient: bool) -> FileTab {
+    fn new(path: &str, transient: bool, mode: MdMode) -> FileTab {
         FileTab {
             path: path.to_owned(),
             content: Content::Loading,
-            mode: Mode::Preview,
+            mode,
             transient,
             pinned: false,
             opening: docs::new_opening(),
@@ -1105,18 +1134,28 @@ impl FileTab {
         (self.path.rsplit_once('.')).is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("md"))
     }
 
-    /// The `.md` file is shown as its rendered page, not as the editor.
+    /// The `.md` file is shown as its rendered page alone, not as the editor.
     pub fn previewing(&self) -> bool {
-        self.mode == Mode::Preview && self.is_markdown() && self.stamp().is_some()
+        self.mode == MdMode::Preview && self.shows_md()
     }
 
-    pub fn toggle_mode(&mut self) {
-        self.mode = match self.mode {
-            Mode::Preview => Mode::Source,
-            Mode::Source => Mode::Preview,
-        };
-        self.preview_selection = None;
-        self.block_edit = None;
+    /// The `.md` file is shown as the editor and its rendered page side by side.
+    pub fn splitting(&self) -> bool {
+        self.mode == MdMode::Split && self.shows_md()
+    }
+
+    /// An editable `.md` file is shown.
+    fn shows_md(&self) -> bool {
+        self.is_markdown() && self.stamp().is_some()
+    }
+
+    /// Shows the file in `mode`; the preview's selection and block edit end with a change.
+    pub fn set_mode(&mut self, mode: MdMode) {
+        if self.mode != mode {
+            self.mode = mode;
+            self.preview_selection = None;
+            self.block_edit = None;
+        }
     }
 
     /// What a page of the editor's text now would be built from (`None`: nothing editable
@@ -1134,16 +1173,18 @@ impl FileTab {
             .map(|page| &page.shown)
     }
 
-    /// The text to parse for the preview, once per text: `None` when no preview is shown, the
-    /// page is current, or one is being built for this text. The shell parses it off the UI
-    /// thread and answers with [`FilesView::preview_ready`].
+    /// The text to parse for the preview: `None` when no preview is shown, the page is current,
+    /// or one is being built for this text (one at a time: the Split view rebuilds per edit,
+    /// and an edit made meanwhile is asked for once that build lands). The shell parses it off
+    /// the UI thread and answers with [`FilesView::preview_ready`].
     pub fn preview_request(&mut self) -> Option<(Stamp, String)> {
-        if !self.previewing() {
+        if !(self.previewing() || self.splitting()) {
             return None;
         }
         let stamp = self.stamp()?;
         let current = (self.page.as_ref()).is_some_and(|page| page.stamp == stamp);
-        if current || self.page_asked == Some(stamp) {
+        let building = self.page_asked.is_some_and(|asked| asked.0 == stamp.0);
+        if current || building {
             return None;
         }
         self.page_asked = Some(stamp);
@@ -1151,9 +1192,12 @@ impl FileTab {
     }
 
     /// The page built for `stamp`. Dropped when another text replaced the one it was built
-    /// from, or when a newer page is already here (builds can finish out of order). Returns
-    /// `true` when an open block edit was closed by the new page.
+    /// from, or when a newer page is already here. Returns `true` when an open block edit was
+    /// closed by the new page.
     fn preview_ready(&mut self, stamp: Stamp, shown: docs::Shown) -> bool {
+        if self.page_asked == Some(stamp) {
+            self.page_asked = None;
+        }
         let newer = (self.page.as_ref()).is_some_and(|page| page.stamp >= stamp);
         if stamp.0 != self.text_id || newer {
             return false;
@@ -1292,6 +1336,40 @@ impl FileTab {
         );
         self.preview_selection = None;
         Ok(())
+    }
+
+    /// A click on the check box of the task item whose first source line (1-based) is `line`:
+    /// ticks or unticks it in the text as one undo step; the caret stays. Refused while the page
+    /// is of an older text (its lines may have moved); `Ok(false)` when the line holds no task
+    /// marker.
+    pub fn toggle_task(&mut self, line: u32) -> Result<bool, StaleEdit> {
+        let stamp = self.stamp();
+        if stamp.is_none() || self.page.as_ref().map(|page| page.stamp) != stamp {
+            return Err(StaleEdit);
+        }
+        let Some(editor) = self.editor_mut() else {
+            return Ok(false);
+        };
+        let at = (line as usize).saturating_sub(1);
+        let Some((col, mark)) =
+            (editor.lines().get(at)).and_then(|text| markdown::task_toggle(text))
+        else {
+            return Ok(false);
+        };
+        let caret = editor.cursor();
+        let anchor = (editor.selection()).map(|s| if s.start == caret { s.end } else { s.start });
+        editor.replace(
+            Pos { line: at, col }..Pos {
+                line: at,
+                col: col + 1,
+            },
+            mark,
+        );
+        // One byte for one byte: the caret's and selection's places still exist.
+        editor.set_cursor(anchor.unwrap_or(caret), false);
+        editor.set_cursor(caret, anchor.is_some());
+        self.preview_selection = None;
+        Ok(true)
     }
 
     /// The editor of an editable file (not binary or too large).

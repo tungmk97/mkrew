@@ -236,8 +236,13 @@ pub const COMPACT_SIDEBAR_WIDTH: f32 = 56.0;
 pub const INSPECTOR_MIN_WIDTH: f32 = 240.0;
 pub const INSPECTOR_MAX_WIDTH: f32 = 560.0;
 
-/// Width of the grab area of a draggable edge: the sidebar's, the session panel's and the
-/// dividers between panes.
+/// Smallest and largest share of the Markdown Split view the source takes (SPEC §12A);
+/// `[ui] md_split` and the divider drag are clamped to them.
+pub const MD_SPLIT_MIN_SHARE: f32 = 0.2;
+pub const MD_SPLIT_MAX_SHARE: f32 = 0.8;
+
+/// Width of the grab area of a draggable edge: the sidebar's, the session panel's, the
+/// dividers between panes and the Markdown Split view's divider.
 pub const GRIP_WIDTH: f32 = 6.0;
 
 /// Width of the label column of the session card's usage rows (fits "Context" at META size).
