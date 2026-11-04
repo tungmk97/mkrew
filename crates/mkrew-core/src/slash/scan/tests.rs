@@ -146,3 +146,49 @@ fn an_unreadable_file_is_one_error_line_and_a_missing_folder_is_silent() {
     assert!(command_docs(&w.repo.join("missing"), true, &mut errors).is_empty());
     assert_eq!(errors.len(), 1);
 }
+
+#[test]
+fn crlf_line_endings_in_git_and_commondir_are_read() {
+    let w = world();
+    put(&w.repo, ".git/worktrees/wt/commondir", "../..\r\n");
+    let tree = w.repo.parent().unwrap().join("wt");
+    let link = format!("gitdir: {}\r\n", w.repo.join(".git/worktrees/wt").display());
+    put(&tree, ".git", &link);
+    assert_eq!(main_checkout_folder(&tree), Some(w.repo.clone()));
+}
+
+#[test]
+fn recursion_visits_depth_8_and_stops_before_depth_9() {
+    let w = world();
+    let eight = "d1/d2/d3/d4/d5/d6/d7/d8";
+    put(&w.repo, &format!("c/{eight}/in.md"), "x");
+    put(&w.repo, &format!("c/{eight}/d9/out.md"), "x");
+    let keys: Vec<_> = command_docs(&w.repo.join("c"), true, &mut Vec::new())
+        .into_iter()
+        .map(|d| d.key)
+        .collect();
+    assert_eq!(keys, ["d1:d2:d3:d4:d5:d6:d7:d8:in"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_stat_or_read_dir_is_an_error_line() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let w = world();
+    put(&w.repo, "c/ok.md", "fine\n");
+    symlink("loop.md", w.repo.join("c/loop.md")).unwrap();
+    let mut errors = Vec::new();
+    let docs = command_docs(&w.repo.join("c"), false, &mut errors);
+    assert_eq!(docs.len(), 1);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("loop.md"), "{errors:?}");
+
+    put(&w.repo, "locked/x.md", "x");
+    let locked = w.repo.join("locked");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let mut errors = Vec::new();
+    let denied = std::fs::read_dir(&locked).is_err(); // root ignores the mode
+    command_docs(&locked, false, &mut errors);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(errors.len(), usize::from(denied), "{errors:?}");
+}

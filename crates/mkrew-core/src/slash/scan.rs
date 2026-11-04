@@ -43,7 +43,8 @@ pub(super) fn main_checkout_folder(folder: &Path) -> Option<PathBuf> {
     Some(common.parent()?.join(relative))
 }
 
-/// `path` with `.` and `..` resolved by text only (no symlinks, no `\\?\` prefix on Windows).
+/// `path` with `.` and `..` resolved by text only: no symlinks are followed and nothing is read
+/// from disk, so `\\?\` or other prefixes are kept as they are. A `..` at the root is dropped.
 fn lexical(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for part in path.components() {
@@ -116,25 +117,41 @@ pub(super) fn doc_from_text(key: String, text: &str) -> Doc {
 pub(super) fn entries(dir: &Path, errors: &mut Vec<String>) -> Vec<(String, PathBuf)> {
     let read = match fs::read_dir(dir) {
         Ok(read) => read,
-        Err(e)
-            if matches!(
-                e.kind(),
-                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
-            ) =>
-        {
-            return Vec::new();
-        }
+        Err(e) if is_absent(&e) => return Vec::new(),
         Err(e) => {
             errors.push(format!("{}: {e}", dir.display()));
             return Vec::new();
         }
     };
-    let mut found: Vec<_> = read
-        .filter_map(Result::ok)
-        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
-        .collect();
+    let mut found = Vec::new();
+    for entry in read {
+        match entry {
+            Ok(e) => found.push((e.file_name().to_string_lossy().into_owned(), e.path())),
+            Err(e) => errors.push(format!("{}: {e}", dir.display())),
+        }
+    }
     found.sort();
     found
+}
+
+/// Metadata of `path` (following symlinks); a path that is gone is silent, any other failure is
+/// one line in `errors`.
+fn stat(path: &Path, errors: &mut Vec<String>) -> Option<fs::Metadata> {
+    match fs::metadata(path) {
+        Ok(meta) => Some(meta),
+        Err(e) if is_absent(&e) => None,
+        Err(e) => {
+            errors.push(format!("{}: {e}", path.display()));
+            None
+        }
+    }
+}
+
+fn is_absent(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    )
 }
 
 /// `dir/<folder>/SKILL.md` for every folder, in folder order.
@@ -142,7 +159,7 @@ pub(super) fn skill_docs(dir: &Path, errors: &mut Vec<String>) -> Vec<Doc> {
     let mut docs = Vec::new();
     for (name, path) in entries(dir, errors) {
         let file = path.join("SKILL.md");
-        if file.is_file() {
+        if stat(&file, errors).is_some_and(|m| m.is_file()) {
             docs.extend(read_doc(&file, name, errors));
         }
     }
@@ -164,13 +181,16 @@ fn walk(
     docs: &mut Vec<Doc>,
 ) {
     for (name, path) in entries(dir, errors) {
-        if path.is_dir() {
+        let Some(meta) = stat(&path, errors) else {
+            continue;
+        };
+        if meta.is_dir() {
             if recursive && parents.len() < MAX_DEPTH {
                 parents.push(name);
                 walk(&path, parents, recursive, errors, docs);
                 parents.pop();
             }
-        } else if let Some(stem) = markdown_stem(&name).filter(|_| path.is_file()) {
+        } else if let Some(stem) = markdown_stem(&name).filter(|_| meta.is_file()) {
             let key = parents
                 .iter()
                 .map(String::as_str)
