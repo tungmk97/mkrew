@@ -313,3 +313,49 @@ fn a_file_with_broken_front_matter_is_listed_with_no_fields_set() {
     assert_eq!(item.description, "First line wins");
     assert_eq!(item.argument_hint, None);
 }
+
+const HIDDEN: &str = "---\nuser-invocable: false\n---\nx\n";
+
+#[test]
+fn a_hidden_skill_still_owns_its_name_over_a_visible_lower_scope_skill() {
+    let w = world();
+    put(&w.home, ".claude/skills/ghost/SKILL.md", HIDDEN);
+    put(
+        &w.repo,
+        ".claude/skills/ghost/SKILL.md",
+        &skill("ghost", "visible project"),
+    );
+    put(&w.managed, ".claude/skills/spook/SKILL.md", HIDDEN);
+    put(
+        &w.home,
+        ".claude/skills/spook/SKILL.md",
+        &skill("spook", "u"),
+    );
+    let items = rows(&w, &w.repo);
+    assert!(items.iter().all(|i| i.name != "ghost"));
+    assert!(items.iter().all(|i| i.name != "spook"));
+}
+
+#[test]
+fn a_hidden_skill_named_like_a_built_in_removes_the_built_in_row_too() {
+    let w = world();
+    put(&w.home, ".claude/skills/compact/SKILL.md", HIDDEN);
+    assert!(rows(&w, &w.repo).iter().all(|i| i.name != "compact"));
+}
+
+#[test]
+fn worktree_folders_come_before_the_main_checkout_for_one_kind() {
+    let w = world();
+    let tree = worktree(&w);
+    put(&tree, ".claude/commands/same.md", &doc("worktree"));
+    put(&w.repo, ".claude/commands/same.md", &doc("main"));
+    put(
+        &w.repo,
+        ".claude/skills/x/SKILL.md",
+        &skill("x", "main skill"),
+    );
+    put(&tree, ".claude/commands/x.md", &doc("worktree command"));
+    let items = rows(&w, &tree);
+    assert_eq!(find(&items, "same").description, "worktree");
+    assert_eq!(find(&items, "x").description, "main skill");
+}
