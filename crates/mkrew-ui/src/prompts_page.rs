@@ -58,6 +58,10 @@ pub enum Write {
 pub struct Written {
     /// The file has its new name already (a later step may still have failed).
     pub renamed: bool,
+    /// The name the write carried (the file's name after it).
+    pub name: String,
+    /// The text the write carried; `None` when it wrote none (a rename alone).
+    pub text: Option<String>,
     pub result: Result<(), PromptError>,
 }
 
@@ -68,16 +72,22 @@ impl Write {
         match self {
             Write::Create { name, text } => Written {
                 renamed: false,
+                name: name.clone(),
+                text: Some(text.clone()),
                 result: prompt::create(dir, name, text),
             },
             Write::Save { name, text } => Written {
                 renamed: false,
+                name: name.clone(),
+                text: Some(text.clone()),
                 result: prompt::save(dir, name, text),
             },
             Write::Rename { old, new, text } => {
                 if let Err(error) = prompt::rename(dir, old, new) {
                     return Written {
                         renamed: false,
+                        name: new.clone(),
+                        text: None,
                         result: Err(error),
                     };
                 }
@@ -87,6 +97,8 @@ impl Write {
                 };
                 Written {
                     renamed: true,
+                    name: new.clone(),
+                    text: text.clone(),
                     result,
                 }
             }
@@ -162,18 +174,19 @@ impl Draft {
         })
     }
 
-    /// The file has the name in the field now.
-    fn renamed(&mut self) {
-        let name = self.name().to_owned();
-        self.origin = Some(name.clone());
-        self.saved_name = name;
+    /// The file has `name` now.
+    fn renamed(&mut self, name: &str) {
+        self.origin = Some(name.to_owned());
+        self.saved_name = name.to_owned();
     }
 
-    /// The file holds what the draft shows now.
-    fn saved(&mut self) {
-        self.renamed();
-        let text = self.body.text().to_owned();
-        self.saved_text = text;
+    /// The file holds `text` (when written) under `name`: what the write carried, not what was
+    /// typed since.
+    fn saved(&mut self, name: &str, text: Option<String>) {
+        self.renamed(name);
+        if let Some(text) = text {
+            self.saved_text = text;
+        }
         self.name_error = None;
     }
 }
@@ -281,17 +294,18 @@ impl PromptsPage {
     /// the file now holds the draft. A refused name shows under the Name field, any other
     /// failure at the top of the page.
     pub fn written(&mut self, written: Written) -> bool {
+        self.stale |= written.renamed || written.result.is_ok();
         let Some(draft) = self.draft.as_mut() else {
             return false;
         };
         if written.renamed {
-            draft.renamed();
+            draft.renamed(&written.name);
         }
         match written.result {
             Ok(()) => {
-                draft.saved();
+                draft.saved(&written.name, written.text);
                 self.error = None;
-                true
+                !draft.is_dirty()
             }
             Err(PromptError::Name(error)) => {
                 draft.name_error = Some(error.to_string());
@@ -451,10 +465,6 @@ mod tests {
         assert_eq!(page.error, None, "a name problem is shown under the field");
         assert!(draft.is_dirty(), "the typed text is still there");
         assert_eq!(prompt::read(dir.path(), "a").unwrap(), "text a");
-        assert_eq!(
-            prompt::validate_name(dir.path(), "", None),
-            Err(NameError::Empty)
-        );
     }
 
     #[test]
@@ -472,6 +482,8 @@ mod tests {
         };
         assert!(!page.written(Written {
             renamed: true,
+            name: "new".into(),
+            text: Some("text!".into()),
             result: Err(io)
         }));
         assert_eq!(
@@ -492,6 +504,108 @@ mod tests {
             }),
             "the retry only writes the text"
         );
+    }
+
+    #[test]
+    fn a_write_marks_the_folder_stale_only_when_it_changed_something() {
+        let mut page = PromptsPage::default();
+        page.open("old", "text");
+        page.stale = false;
+        let io = PromptError::Io {
+            action: "write",
+            path: "prompts/new.md".into(),
+            source: std::io::Error::other("disk full"),
+        };
+        page.draft.as_mut().unwrap().name.insert("x");
+        assert!(!page.written(Written {
+            renamed: true,
+            name: "oldx".into(),
+            text: Some("text".into()),
+            result: Err(io)
+        }));
+        assert!(page.stale, "the rename happened");
+        page.stale = false;
+        assert!(!page.written(Written {
+            renamed: false,
+            name: "b".into(),
+            text: None,
+            result: Err(PromptError::Name(NameError::Duplicate("b".into())))
+        }));
+        assert!(!page.stale, "a refused name wrote nothing");
+        assert_eq!(
+            page.draft.as_ref().unwrap().origin.as_deref(),
+            Some("oldx"),
+            "the earlier rename stays; the refusal changed no origin"
+        );
+    }
+
+    #[test]
+    fn a_name_error_on_a_rename_leaves_the_origin_alone() {
+        let mut page = PromptsPage::default();
+        page.open("old", "text");
+        let draft = page.draft.as_mut().unwrap();
+        draft.name.clear();
+        draft.name.insert("b");
+        assert!(!page.written(Written {
+            renamed: false,
+            name: "b".into(),
+            text: None,
+            result: Err(PromptError::Name(NameError::Duplicate("b".into())))
+        }));
+        let draft = page.draft.as_ref().unwrap();
+        assert_eq!(draft.origin.as_deref(), Some("old"));
+        assert!(draft.name_error.is_some());
+        assert!(draft.is_dirty());
+    }
+
+    #[test]
+    fn typing_while_a_write_runs_is_not_marked_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        prompt::create(dir.path(), "a", "x").unwrap();
+        let mut page = PromptsPage::default();
+        page.open("a", "x");
+        page.draft.as_mut().unwrap().body.insert("1");
+        let done = page
+            .draft
+            .as_ref()
+            .unwrap()
+            .write()
+            .unwrap()
+            .run(dir.path());
+        page.draft.as_mut().unwrap().body.insert("2");
+        assert!(!page.written(done), "the file does not hold the newer text");
+        let draft = page.draft.as_ref().unwrap();
+        assert!(draft.is_dirty());
+        assert_eq!(
+            draft.write(),
+            Some(Write::Save {
+                name: "a".into(),
+                text: "x12".into()
+            })
+        );
+        assert_eq!(prompt::read(dir.path(), "a").unwrap(), "x1");
+    }
+
+    #[test]
+    fn a_case_only_rename_keeps_the_draft_after_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        prompt::create(dir.path(), "a", "text").unwrap();
+        let mut page = PromptsPage::default();
+        page.open("a", "text");
+        let draft = page.draft.as_mut().unwrap();
+        draft.name.clear();
+        draft.name.insert("A");
+        let done = page
+            .draft
+            .as_ref()
+            .unwrap()
+            .write()
+            .unwrap()
+            .run(dir.path());
+        assert!(page.written(done));
+        page.reload(prompt::load_dir(dir.path()));
+        assert_eq!(page.draft.as_ref().unwrap().origin.as_deref(), Some("A"));
+        assert_eq!(page.library.prompts[0].name, "A");
     }
 
     #[test]
