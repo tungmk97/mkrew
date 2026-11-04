@@ -136,18 +136,27 @@ impl Shell {
     }
 
     /// Enter, Tab or a click: types the pick; a group row only expands (its skills are listed).
-    /// With no rows, Enter takes the note's action: Try again after an error, Open profile when
-    /// the CLI is unknown (the buttons' keyboard path).
-    pub(crate) fn accept_slash_pick(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    /// With no rows, `enter` (Enter only, not Tab or a click) takes the note's action
+    /// ([`SlashPicker::empty_action`]): the buttons' keyboard path.
+    pub(crate) fn accept_slash_pick(
+        &mut self,
+        enter: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let Some(picker) = self.slash_picker.as_mut() else {
             return;
         };
         if picker.rows().is_empty() {
-            if picker.error().is_some() {
-                self.request_slash(window, cx);
-                cx.notify();
-            } else if picker.empty() == Some(slash_picker::Empty::UnknownCli) {
-                self.open_slash_profile(window, cx);
+            match picker.empty_action().filter(|_| enter) {
+                Some(slash_picker::EmptyAction::Retry) => {
+                    self.request_slash(window, cx);
+                    cx.notify();
+                }
+                Some(slash_picker::EmptyAction::OpenProfile) => {
+                    self.open_slash_profile(window, cx);
+                }
+                None => {}
             }
             return;
         }
@@ -217,7 +226,7 @@ impl Shell {
                 let typed = picker.escaped();
                 return self.close_slash_picker(Some(typed), window, cx);
             }
-            quick_open::Key::Open => return self.accept_slash_pick(window, cx),
+            quick_open::Key::Open => return self.accept_slash_pick(!plain_tab, window, cx),
             quick_open::Key::Move(_) => {
                 picker.apply(key);
                 self.slash_picker_scroll.scroll_to_item(picker.selected);
@@ -306,7 +315,7 @@ impl Shell {
                             if let Some(picker) = shell.slash_picker.as_mut() {
                                 picker.pick(position);
                             }
-                            shell.accept_slash_pick(window, cx);
+                            shell.accept_slash_pick(false, window, cx);
                         }))
                         .child(
                             div()
@@ -356,9 +365,15 @@ impl Shell {
                 )
             })
             .collect();
-        let note =
-            picker.empty().map(|empty| {
-                match empty {
+        let open_label = match picker.empty_action() {
+            Some(slash_picker::EmptyAction::OpenProfile) => "Open profile (Enter)",
+            _ => "Open profile",
+        };
+        let retry_label = match picker.empty_action() {
+            Some(slash_picker::EmptyAction::Retry) => "Try again (Enter)",
+            _ => "Try again",
+        };
+        let note = picker.empty().map(|empty| match empty {
             slash_picker::Empty::Loading => {
                 muted("Loading commands…".to_owned()).into_any_element()
             }
@@ -375,7 +390,7 @@ impl Shell {
                 .child(
                     button(
                         "slash-open-profile",
-                        icon_text(Icon::FileText, "Open profile (Enter)", button_fg(theme, true)),
+                        icon_text(Icon::FileText, open_label, button_fg(theme, true)),
                         theme,
                         true,
                     )
@@ -393,8 +408,7 @@ impl Shell {
                 picker.query().as_str().trim()
             ))
             .into_any_element(),
-        }
-            });
+        });
         let failure = picker.error().map(|error| {
             div()
                 .flex()
@@ -413,7 +427,7 @@ impl Shell {
                 .child(
                     button(
                         "slash-retry",
-                        icon_text(Icon::RotateCw, "Try again (Enter)", button_fg(theme, true)),
+                        icon_text(Icon::RotateCw, retry_label, button_fg(theme, true)),
                         theme,
                         true,
                     )
@@ -424,11 +438,12 @@ impl Shell {
                     })),
                 )
         });
-        let keys = match picker.target {
-            composer::Target::Composer(_) => {
+        let keys = match (picker.rows().is_empty(), picker.target) {
+            (true, _) => "Esc types /",
+            (false, composer::Target::Composer(_)) => {
                 "↑ ↓ to pick · Enter or Tab types it in the composer · Esc types /"
             }
-            composer::Target::TaskDialog => {
+            (false, composer::Target::TaskDialog) => {
                 "↑ ↓ to pick · Enter or Tab types it in the task prompt · Esc types /"
             }
         };

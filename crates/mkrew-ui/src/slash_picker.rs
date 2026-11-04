@@ -41,6 +41,15 @@ pub enum Empty {
     NoMatch,
 }
 
+/// What Enter does with no row to type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmptyAction {
+    /// Ask the daemon again.
+    Retry,
+    /// Open the agent's profile to set `cli`.
+    OpenProfile,
+}
+
 /// The rows to show for `query`: with an empty one the CLI's own order; with one, the fuzzy
 /// score on the name, ties in the CLI's order. In omp's list (it has a group row) the skills
 /// stay behind their `skill:` row until the filter starts with `skill:`, except a skill whose
@@ -351,6 +360,18 @@ impl SlashPicker {
         }
         Some(Empty::NoMatch)
     }
+
+    /// What Enter does when there is no row to type: ask again after a failure, open the profile
+    /// when the CLI is unknown. `None` while rows are shown (Enter types the pick).
+    pub fn empty_action(&self) -> Option<EmptyAction> {
+        if !self.rows.is_empty() {
+            None
+        } else if self.error.is_some() {
+            Some(EmptyAction::Retry)
+        } else {
+            (self.empty() == Some(Empty::UnknownCli)).then_some(EmptyAction::OpenProfile)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -607,6 +628,35 @@ mod tests {
         );
         assert!(!picker.answered(old, answer(Some(Cli::Claude), items(&["review"]))));
         assert_eq!(shown(&picker), ["resume"]);
+    }
+
+    #[test]
+    fn enter_acts_only_when_no_row_is_shown() {
+        let mut picker = SlashPicker::new(Target::TaskDialog, scope(), None);
+        assert_eq!(picker.empty_action(), None, "loading");
+        let (number, _) = picker.request();
+        picker.answered(number, answer(None, Vec::new()));
+        assert_eq!(picker.empty_action(), Some(EmptyAction::OpenProfile));
+
+        let (number, _) = picker.request();
+        picker.answered(number, Err("boom".into()));
+        assert_eq!(picker.empty_action(), Some(EmptyAction::Retry));
+
+        let mut cached = SlashPicker::new(
+            Target::TaskDialog,
+            scope(),
+            cached(items(&["a"]), Cli::Claude),
+        );
+        let (number, _) = cached.request();
+        cached.answered(number, Err("boom".into()));
+        assert!(cached.error().is_some());
+        assert_eq!(cached.empty_action(), None, "rows are shown: Enter types");
+        cached.apply(Key::Insert("zz".into()));
+        assert_eq!(
+            cached.empty_action(),
+            Some(EmptyAction::Retry),
+            "no row left"
+        );
     }
 
     #[test]
