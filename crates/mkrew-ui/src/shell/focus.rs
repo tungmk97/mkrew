@@ -29,6 +29,16 @@ impl Shell {
             || self.settings_dialog.is_some()
     }
 
+    /// A picker or dialog is painted over the task dialog: its Prompt box takes no OS file
+    /// drop (the capture-phase drag listeners ignore the cover's occlusion).
+    pub(crate) fn prompt_box_covered(&self) -> bool {
+        self.quick_open.is_some()
+            || self.prompt_picker.is_some()
+            || self.slash_picker.is_some()
+            || self.palette.is_some()
+            || self.settings_dialog.is_some()
+    }
+
     /// A dialog control (a button, a chip) has the keyboard, not the dialog's own text: the
     /// dialog's text fields must neither show a caret nor take keys.
     pub(crate) fn dialog_control_focused(&self, window: &Window) -> bool {

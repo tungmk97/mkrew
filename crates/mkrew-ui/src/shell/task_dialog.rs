@@ -397,9 +397,11 @@ impl Shell {
             (false, false) => "Create task",
         };
         // The accent ring while an OS file drag is over the Prompt box: state-driven
-        // (`drop_hover`), as `drag_over` never fires for `ExternalPaths`. The tint keeps it
-        // visible on a focused field, whose own border is already the accent.
+        // (`drop_hover`), because `drag_over` is hover-gated and gpui-pre 0.3.7 keeps keyboard
+        // modality during OLE drags (see `Shell::drop_hover`). The tint keeps it visible on a
+        // focused field, whose own border is already the accent.
         let ring = !dialog.busy
+            && !self.prompt_box_covered()
             && matches!(self.drop_hover, Some((DropTarget::TaskPrompt, _)))
             && cx.has_active_drag();
         let ring_border: gpui::Hsla = if ring {
@@ -522,7 +524,8 @@ impl Shell {
                             .relative()
                             .on_drag_move::<ExternalPaths>(cx.listener(
                                 |shell, event: &DragMoveEvent<ExternalPaths>, _, cx| {
-                                    let inside = event.bounds.contains(&event.event.position);
+                                    let inside = !shell.prompt_box_covered()
+                                        && event.bounds.contains(&event.event.position);
                                     let hovered = matches!(
                                         shell.drop_hover,
                                         Some((DropTarget::TaskPrompt, _))
