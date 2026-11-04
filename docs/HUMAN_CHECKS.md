@@ -95,12 +95,23 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Buttons:** ■ stops that command, ▶ starts it, ↻ restarts it; the menu stays open and the row updates.
   A click on the row itself (or ↓ then Enter) stops a running command or starts a stopped one, and closes the menu.
 
+### To verify - 2026-11-04 Task dialog attachments (ADR 0095)
+
+- [ ] **Install the new build and restart the daemon** (protocol 53; a window from before it shows a version mismatch).
+- [ ] **Composer and pane paste still work:** Ctrl+V of an image in an agent pane and in its composer types a path under `attachments\<session id>\`.
+- [ ] **Backlog keeps the screenshot:** the file from the New task check above is still there after a daemon restart (the hourly check runs at start); it is deleted only once its task is done and the file is over 7 days old (covered by the daemon tests; no wait needed).
+
 ### To verify - 2026-11-02 Task dialog prompt works like the composer
 
 - [ ] **@ file (dark + light):** Board → New task → click the Prompt field, type `@`. The "Insert file" picker opens over the dialog; Enter types `@path` into the prompt and the caret is back in the prompt; Esc types a plain `@`. `@` in the Title types an `@`.
 - [ ] **✦ Improve (dark + light):** with a prompt typed, "Improve" (next to "From prompt…") greys the prompt, the line under it says "✦ Improving the prompt…", typing waits; the answer replaces the prompt. A failure keeps the text and shows "Cannot improve the prompt: …". Ctrl+Enter while it waits says "Wait for the improved prompt." Empty prompt: "Improve" is disabled.
 - [ ] **Keyboard:** Improve and From prompt… are reached with Tab / Shift+Tab and show the focus ring; Enter on Improve starts it. The agent list still loads when `@` is typed right after the dialog opens.
-- [ ] **Decision (default taken):** pasting an image into the task prompt does nothing (attachments are stored per session, and a task has no session until it runs). Want image paste there? It needs a daemon change (attachments per task, kept until the task is deleted).
+- [ ] **Image paste (dark + light):** copy a screenshot, Board → New task, click the Prompt field, Ctrl+V.
+  The path `...\attachments\projects\<workspace id>\<id>.png` is typed into the prompt and the caret stays in the prompt; the file exists.
+  Ctrl+V in the Title field does nothing for an image; Ctrl+V of text still pastes text in both fields.
+  Edit an existing task and paste: same result.
+  With the dialog's agent set to a real agent, create the task and run it: the agent can read the image.
+  (Replaces the earlier decision "image paste does nothing", ADR 0095.)
 
 ### To verify - 2026-11-02 All workspaces board (ADR 0090)
 

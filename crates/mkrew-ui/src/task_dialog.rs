@@ -4,7 +4,8 @@
 
 use gpui::Keystroke;
 use mkrew_protocol::{
-    AgentProfileInfo, Request, SessionKind, Task, TaskCreateParams, TaskUpdateParams,
+    AgentProfileInfo, AttachmentOwner, Request, SessionKind, Task, TaskCreateParams,
+    TaskUpdateParams,
 };
 use ulid::Ulid;
 
@@ -180,6 +181,14 @@ impl TaskDialog {
             Mode::New { project_id } => *project_id,
             Mode::Edit(task) => task.project_id,
         }
+    }
+
+    /// Who owns an image pasted now (§20B.5): the dialog's project, because a new task has no
+    /// id and no session before it is saved. `None` unless the Prompt box has the keys and
+    /// nothing is being saved.
+    pub fn attachment_owner(&self) -> Option<AttachmentOwner> {
+        (self.field == Field::Prompt && !self.busy)
+            .then(|| AttachmentOwner::Project(self.project_id()))
     }
 
     /// The edited task, if editing.
@@ -849,5 +858,37 @@ mod tests {
         assert!(confirms_delete(Some(0)));
         assert!(!confirms_delete(Some(1)));
         assert!(!confirms_delete(None));
+    }
+
+    /// Ctrl+V with an image: the project owns it (a new task has no id yet). The Title takes
+    /// no image and a saving dialog is about to close (SPEC §20B.5).
+    #[test]
+    fn an_image_pasted_in_the_prompt_belongs_to_the_project() {
+        let project_id = Ulid::new();
+        let mut dialog = TaskDialog::new(project_id);
+        assert_eq!(dialog.field, Field::Title);
+        assert_eq!(dialog.attachment_owner(), None, "the title takes no image");
+
+        dialog.key(DialogKey::SwitchField);
+        assert_eq!(
+            dialog.attachment_owner(),
+            Some(AttachmentOwner::Project(project_id))
+        );
+
+        dialog.busy = true;
+        assert_eq!(
+            dialog.attachment_owner(),
+            None,
+            "saving: nothing to attach to"
+        );
+
+        let task = task();
+        let mut edit = TaskDialog::edit(task.clone());
+        edit.key(DialogKey::SwitchField);
+        assert_eq!(
+            edit.attachment_owner(),
+            Some(AttachmentOwner::Project(task.project_id)),
+            "an edited task's image goes to its project too"
+        );
     }
 }

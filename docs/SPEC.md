@@ -2169,8 +2169,8 @@ context_window = 200000        # tokens, for the % shown
    The task dialog's prompt (Board "New task", edit task) is edited the same way: `@` picks a file, `/` an agent command,
    "From prompt…" inserts a library prompt, and ✦ "Improve" rewrites it with the task's
    agent (the workspace default when none is picked), with the same waiting and failure rules;
-   saving waits for the answer. Pasted images are not attached there: attachments belong to a
-   session (§20B.5), and a task has none until it runs.
+   saving waits for the answer.
+   Ctrl+V with an image saves it as a project attachment (§20B.5) and types its path, as in the composer.
    The Board follow-up input reuses the same multi-line text box.
 2. **Send queue visible.** While a send waits (session working), the composer lists queued texts
    (first line each) with ✕ to remove. Daemon: each queued text gets a `send_id`; `session.send`

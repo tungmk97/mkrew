@@ -56,16 +56,29 @@ impl Shell {
         }
     }
 
-    /// An image pasted into the composer (§20B.5): saved through `attachment.save` (a BMP as
-    /// PNG), then its path goes into the draft. A failure is a toast, like a pane's paste.
-    pub(crate) fn composer_paste_image(
+    /// An image pasted into a prompt box (§20B.5): saved through `attachment.save` (a BMP as
+    /// PNG), then its path is typed into the box. A composer's image belongs to its session,
+    /// the task dialog's to its project. A failure is a toast, like a pane's paste.
+    pub(crate) fn prompt_paste_image(
         &mut self,
-        session: Ulid,
+        target: composer::Target,
         item: gpui::ClipboardItem,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let owner = match target {
+            composer::Target::Composer(session) => {
+                Some(mkrew_protocol::AttachmentOwner::Session(session))
+            }
+            composer::Target::TaskDialog => self
+                .task_dialog
+                .as_ref()
+                .and_then(TaskDialog::attachment_owner),
+        };
+        let Some(owner) = owner else {
             return;
         };
         let Some((ext, data)) = item.into_entries().find_map(|entry| match entry {
@@ -78,24 +91,28 @@ impl Shell {
             self.toast_error(message, cx);
             return;
         }
+        let serial = self.dialog_serial;
         let saved = connection.call::<mkrew_protocol::AttachmentSaveResult>(
             Request::AttachmentSave(mkrew_protocol::AttachmentSaveParams {
-                owner: mkrew_protocol::AttachmentOwner::Session(session),
+                owner,
                 ext: ext.to_owned(),
                 data,
             }),
         );
         cx.spawn_in(window, async move |this, cx| match saved.await {
             Ok(saved) => {
-                let _ = this.update(cx, |shell, cx| {
+                let _ = this.update_in(cx, |shell, window, cx| {
+                    // The dialog it was pasted into may be gone, or another one open.
+                    if target == composer::Target::TaskDialog && shell.open_dialog(serial).is_none()
+                    {
+                        return;
+                    }
                     let text = composer::typed_paths([saved.path.as_str()]);
-                    shell.composers.insert(session, &text);
-                    shell.composer_scroll.scroll_to_bottom();
-                    cx.notify();
+                    shell.prompt_typed(target, &text, window, cx);
                 });
             }
             Err(error) => {
-                tracing::warn!(%session, "attachment.save failed: {error:#}");
+                tracing::warn!(?target, "attachment.save failed: {error:#}");
                 let _ = this.update(cx, |shell, cx| {
                     shell.toast_error(format!("Cannot attach the image: {error:#}"), cx);
                 });

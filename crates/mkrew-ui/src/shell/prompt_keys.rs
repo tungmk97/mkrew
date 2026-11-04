@@ -6,7 +6,7 @@ use crate::*;
 impl Shell {
     /// Applies `event` to the prompt `target`: `@` opens the file picker and `/` the agent's
     /// command picker (at a line start or after a space), a paste takes the clipboard's text
-    /// (an image too in the composer), Ctrl+C / Ctrl+X copy the selection, every other key
+    /// (an image is saved as an attachment and its path typed), Ctrl+C / Ctrl+X copy the selection, every other key
     /// edits. Returns `true` when the key was typed or opened a picker, `false` when it asks
     /// the box to leave (Esc, Ctrl+Enter, Enter in the dialog's title): nothing changed and
     /// the caller answers it.
@@ -30,13 +30,9 @@ impl Shell {
         if key == DialogKey::Paste
             && let Some(item) = cx.read_from_clipboard()
         {
-            match (item.text(), target) {
-                (Some(text), _) => self.prompt_insert(target, &text),
-                (None, composer::Target::Composer(session)) => {
-                    self.composer_paste_image(session, item, window, cx);
-                }
-                // The dialog takes text only: attachments belong to a session (§20B.5).
-                (None, composer::Target::TaskDialog) => {}
+            match item.text() {
+                Some(text) => self.prompt_insert(target, &text),
+                None => self.prompt_paste_image(target, item, window, cx),
             }
         }
         if let Some(input) = self.prompt_input(target) {
