@@ -108,7 +108,7 @@ fn plugin(
             kind,
             &name,
             &local,
-            doc.description(None),
+            doc.claude_description(),
             doc.fm.argument_hint.clone(),
             doc,
         ));
@@ -141,7 +141,7 @@ fn plugin(
                 let description = spec
                     .get("description")
                     .and_then(Value::as_str)
-                    .map_or_else(|| doc.description(None), str::to_owned);
+                    .map_or_else(|| doc.claude_description(), str::to_owned);
                 let hint = spec
                     .get("argumentHint")
                     .and_then(Value::as_str)

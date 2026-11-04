@@ -133,7 +133,7 @@ fn candidate(kind: Kind, scope: u8, name: String, doc: &Doc, source: SlashSource
         invocable: doc.fm.user_invocable != Some(false),
         item: SlashItem {
             name,
-            description: doc.description(None),
+            description: doc.claude_description(),
             argument_hint: doc.fm.argument_hint.clone(),
             source,
             group: None,

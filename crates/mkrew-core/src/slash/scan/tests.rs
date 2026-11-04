@@ -129,7 +129,12 @@ fn descriptions_fall_back_and_omp_cuts_the_first_line() {
         "A very long first line that goes on and on and on past sixty..."
     );
     assert!(docs[0].description(None).ends_with("sixty characters"));
-    assert_eq!(docs[1].description(None), "After a merge");
+    assert_eq!(docs[1].claude_description(), "After a merge");
+    assert_eq!(
+        docs[1].description(None),
+        "Body",
+        "omp and Copilot ignore when_to_use"
+    );
     assert_eq!(docs[2].description(None), "Two lines");
 }
 

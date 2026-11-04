@@ -80,15 +80,11 @@ pub(super) struct Doc {
 }
 
 impl Doc {
-    /// The one-line description: `description`, else `when_to_use`, else the first non-empty
-    /// body line, cut to `cut` characters plus `...` when given. Line breaks become spaces.
+    /// The one-line description: `description`, else the first non-empty body line, cut to `cut`
+    /// characters plus `...` when given. Line breaks become spaces. (omp and Copilot read no
+    /// other key; Claude's fallback is [`Self::claude_description`].)
     pub fn description(&self, cut: Option<usize>) -> String {
-        let declared = self
-            .fm
-            .description
-            .as_ref()
-            .or(self.fm.when_to_use.as_ref());
-        if let Some(text) = declared {
+        if let Some(text) = &self.fm.description {
             return text.split_whitespace().collect::<Vec<_>>().join(" ");
         }
         let line = self.first_line.as_deref().unwrap_or_default();
@@ -97,6 +93,14 @@ impl Doc {
                 format!("{}...", line.chars().take(n).collect::<String>())
             }
             _ => line.to_owned(),
+        }
+    }
+
+    /// Claude's description: `description`, else `when_to_use`, else the first body line.
+    pub fn claude_description(&self) -> String {
+        match (&self.fm.description, &self.fm.when_to_use) {
+            (None, Some(text)) => text.split_whitespace().collect::<Vec<_>>().join(" "),
+            _ => self.description(None),
         }
     }
 }
