@@ -5,6 +5,7 @@
 //! and keeps what it cannot read as one line in [`SlashList::errors`].
 
 mod claude;
+mod copilot;
 pub mod front_matter;
 mod omp;
 mod scan;
@@ -79,8 +80,9 @@ pub fn list(cli: Cli, roots: &ScanRoots, overrides: &SlashOverrides) -> SlashLis
     });
     let mut items = match cli {
         Cli::Claude => claude::scan(roots, builtins, &mut errors),
+        Cli::Codex => builtins.into_iter().map(|b| b.item).collect(),
         Cli::Omp => omp::scan(roots, builtins, &mut errors),
-        Cli::Codex | Cli::Copilot => builtins.into_iter().map(|b| b.item).collect(),
+        Cli::Copilot => copilot::scan(roots, builtins, &mut errors),
     };
     apply(&mut items, overrides);
     if cli == Cli::Claude {
