@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use mkrew_protocol::{SlashItem, SlashSource};
 use serde_json::Value;
@@ -135,7 +135,9 @@ fn plugin(
     match manifest.get("commands") {
         Some(Value::Object(map)) => {
             for (command, spec) in map {
-                let doc = command_spec(install, spec, errors);
+                let Some(doc) = command_spec(install, &manifest_file, spec, errors) else {
+                    continue;
+                };
                 let description = spec
                     .get("description")
                     .and_then(Value::as_str)
@@ -172,45 +174,62 @@ fn plugin(
 }
 
 /// A manifest `commands` entry `{source | content, ...}` as a document: the file at `source`
-/// below `install`, else the inline `content`, else an empty one.
-fn command_spec(install: &Path, spec: &Value, errors: &mut Vec<String>) -> Doc {
-    let from_file = spec
-        .get("source")
-        .and_then(Value::as_str)
-        .and_then(|source| scan::read_doc(&install.join(source), String::new(), errors));
-    from_file.unwrap_or_else(|| {
+/// below `install`, else the inline `content`, else an empty one. `None` when `source` escapes
+/// the plugin folder (named in `errors`).
+fn command_spec(
+    install: &Path,
+    manifest: &Path,
+    spec: &Value,
+    errors: &mut Vec<String>,
+) -> Option<Doc> {
+    let source = spec.get("source").and_then(Value::as_str);
+    if let Some(source) = source
+        && escapes(source, manifest, errors)
+    {
+        return None;
+    }
+    let from_file =
+        source.and_then(|source| scan::read_doc(&install.join(source), String::new(), errors));
+    Some(from_file.unwrap_or_else(|| {
         let content = spec
             .get("content")
             .and_then(Value::as_str)
             .unwrap_or_default();
         scan::doc_from_text(String::new(), content)
-    })
+    }))
 }
 
-/// A manifest path value: one string or an array of strings, `./` removed. An absolute path or
-/// one with a `..` part escapes the plugin folder (Claude Code rejects it): it is left out and
-/// named in `errors`.
+/// Whether a manifest path leaves the plugin folder (Claude Code rejects it): absolute, rooted,
+/// drive-prefixed (`C:foo`) or with a `..` part. Named in `errors` when it does.
+fn escapes(path: &str, manifest: &Path, errors: &mut Vec<String>) -> bool {
+    let bad = path.starts_with(['/', '\\'])
+        || path.as_bytes().get(1) == Some(&b':')
+        || path.split(['/', '\\']).any(|part| part == "..")
+        || Path::new(path)
+            .components()
+            .any(|c| matches!(c, Component::Prefix(_) | Component::RootDir));
+    if bad {
+        errors.push(format!(
+            "{}: path escapes plugin directory: {path}",
+            manifest.display()
+        ));
+    }
+    bad
+}
+
+/// A manifest path value: one string or an array of strings, `./` removed; paths that escape
+/// the plugin folder are left out.
 fn paths(value: Option<&Value>, manifest: &Path, errors: &mut Vec<String>) -> Vec<String> {
     let list: Vec<&Value> = match value {
         Some(Value::Array(list)) => list.iter().collect(),
         Some(single) => vec![single],
         None => Vec::new(),
     };
-    let mut out = Vec::new();
-    for path in list.into_iter().filter_map(Value::as_str) {
-        let escapes = Path::new(path).is_absolute()
-            || path.starts_with(['/', '\\'])
-            || path.split(['/', '\\']).any(|part| part == "..");
-        if escapes {
-            errors.push(format!(
-                "{}: path escapes plugin directory: {path}",
-                manifest.display()
-            ));
-        } else {
-            out.push(path.trim_start_matches("./").to_owned());
-        }
-    }
-    out
+    list.into_iter()
+        .filter_map(Value::as_str)
+        .filter(|path| !escapes(path, manifest, errors))
+        .map(|path| path.trim_start_matches("./").to_owned())
+        .collect()
 }
 
 fn row(

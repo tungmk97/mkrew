@@ -506,7 +506,30 @@ fn a_manifest_path_that_escapes_the_plugin_is_an_error_line_and_is_skipped() {
         &w,
         "kit@m",
         "kit",
-        r#"{"name": "kit", "commands": ["../escape.md", "ok.md"]}"#,
+        r#"{"name": "kit", "commands": ["../escape.md", "C:drive.md", "ok.md"]}"#,
+    );
+    put(&dir, "ok.md", "x\n");
+    put(&dir, "../escape.md", "x\n");
+    let out = list(Cli::Claude, &w.roots(&w.repo), &SlashOverrides::default());
+    assert_eq!(out.errors.len(), 2, "{:?}", out.errors);
+    assert!(out.errors[0].contains("../escape.md"));
+    assert!(out.errors[1].contains("C:drive.md"));
+    let names = names(&out.items);
+    assert!(names.contains(&"kit:ok".to_owned()));
+    assert!(!names.contains(&"kit:escape".to_owned()));
+}
+
+#[test]
+fn a_commands_map_source_that_escapes_the_plugin_is_an_error_line_and_is_skipped() {
+    let w = world();
+    let dir = install(
+        &w,
+        "kit@m",
+        "kit",
+        r#"{"name": "kit", "commands": {
+            "out": {"source": "../escape.md"},
+            "in": {"source": "./ok.md"}
+        }}"#,
     );
     put(&dir, "ok.md", "x\n");
     put(&dir, "../escape.md", "x\n");
@@ -514,8 +537,8 @@ fn a_manifest_path_that_escapes_the_plugin_is_an_error_line_and_is_skipped() {
     assert_eq!(out.errors.len(), 1, "{:?}", out.errors);
     assert!(out.errors[0].contains("../escape.md"));
     let names = names(&out.items);
-    assert!(names.contains(&"kit:ok".to_owned()));
-    assert!(!names.contains(&"kit:escape".to_owned()));
+    assert!(names.contains(&"kit:in".to_owned()));
+    assert!(!names.contains(&"kit:out".to_owned()));
 }
 
 #[test]
