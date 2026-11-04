@@ -4,6 +4,7 @@
 //! The CLI is never started. Every scan reads small files from `roots`, stops at the repo root
 //! and keeps what it cannot read as one line in [`SlashList::errors`].
 
+mod claude;
 pub mod front_matter;
 mod scan;
 mod tables;
@@ -75,7 +76,10 @@ pub fn list(cli: Cli, roots: &ScanRoots, overrides: &SlashOverrides) -> SlashLis
         errors.push(e);
         Vec::new()
     });
-    let mut items: Vec<SlashItem> = builtins.into_iter().map(|b| b.item).collect();
+    let mut items = match cli {
+        Cli::Claude => claude::scan(roots, builtins, &mut errors),
+        Cli::Codex | Cli::Omp | Cli::Copilot => builtins.into_iter().map(|b| b.item).collect(),
+    };
     apply(&mut items, overrides);
     if cli == Cli::Claude {
         items.sort_by_cached_key(|item| item.name.to_lowercase());
