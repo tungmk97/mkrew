@@ -6,7 +6,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use mkrew_protocol::AttachmentOwner;
+use mkrew_protocol::{AttachmentOwner, TaskStatus};
+use mkrew_store::Store;
 use ulid::Ulid;
 
 /// The folder under the attachments dir that holds project images; it is not a ULID, so the
@@ -86,9 +87,94 @@ pub fn cleanup(
     Ok(removed)
 }
 
+/// Prompts of `project`'s tasks that are not done (Todo, Running, NeedsInput, Review), the
+/// text that keeps a project image alive. `None` when the tasks cannot be read: the caller
+/// must then keep every file.
+pub fn open_task_prompts(store: &Store, project: Ulid) -> Option<Vec<String>> {
+    match store.list_tasks(Some(project), None) {
+        Ok(tasks) => Some(
+            tasks
+                .into_iter()
+                .filter(|task| task.status != TaskStatus::Done)
+                .map(|task| task.prompt)
+                .collect(),
+        ),
+        Err(e) => {
+            tracing::warn!(%project, "read tasks for attachment cleanup: {e}");
+            None
+        }
+    }
+}
+
+/// When a project image was made: the time in the ULID that [`save`] gave its name.
+fn created_ms(path: &Path) -> Option<i64> {
+    let stem = path.file_stem()?.to_str()?;
+    i64::try_from(Ulid::from_string(stem).ok()?.timestamp_ms()).ok()
+}
+
+/// Deletes the files of `<dir>/projects/<project_id>/` that are more than [`KEEP_MS`] old
+/// before `now_ms` and whose name no prompt of `open_prompts(project)` contains (SPEC §20B.5).
+/// `open_prompts` is asked once per project and only when it has an old file; `None` (the
+/// tasks could not be read) keeps the project's files. Entries whose names are not ULIDs are
+/// left alone. A file that cannot be deleted is logged and retried at the next check.
+/// Returns the deleted files.
+pub fn cleanup_projects(
+    dir: &Path,
+    now_ms: i64,
+    mut open_prompts: impl FnMut(Ulid) -> Option<Vec<String>>,
+) -> io::Result<Vec<PathBuf>> {
+    let projects = match std::fs::read_dir(dir.join(PROJECTS)) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut removed = Vec::new();
+    for entry in projects.flatten() {
+        let Some(project) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| Ulid::from_string(name).ok())
+        else {
+            continue;
+        };
+        let Ok(files) = std::fs::read_dir(entry.path()) else {
+            continue;
+        };
+        let mut prompts: Option<Option<Vec<String>>> = None;
+        for file in files.flatten() {
+            let path = file.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()).map(str::to_owned) else {
+                continue;
+            };
+            let Some(created) = created_ms(&path) else {
+                continue;
+            };
+            if now_ms - created <= KEEP_MS {
+                continue;
+            }
+            let open = prompts.get_or_insert_with(|| open_prompts(project));
+            let Some(open) = open.as_ref() else {
+                continue;
+            };
+            if open.iter().any(|prompt| prompt.contains(&name)) {
+                continue;
+            }
+            match std::fs::remove_file(&path) {
+                Ok(()) => removed.push(path),
+                Err(e) => tracing::warn!(path = %path.display(), "delete attachment: {e}"),
+            }
+        }
+    }
+    Ok(removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    use mkrew_protocol::TaskStatus;
+    use mkrew_store::Store;
 
     #[test]
     fn only_whitelisted_non_empty_files_up_to_10_mib_pass() {
@@ -184,5 +270,177 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("attachments");
         assert!(cleanup(&missing, 0, |_| Some(0)).unwrap().is_empty());
+    }
+
+    const NOW: i64 = 100 * KEEP_MS;
+
+    /// A project image created `age_ms` before [`NOW`]; the ULID in the name carries the age.
+    fn project_file(dir: &Path, project: Ulid, age_ms: i64) -> (PathBuf, String) {
+        let created = u64::try_from(NOW - age_ms).unwrap();
+        let name = format!("{}.png", Ulid::from_parts(created, 1));
+        let folder = dir.join(PROJECTS).join(project.to_string());
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join(&name);
+        std::fs::write(&path, b"x").unwrap();
+        (path, name)
+    }
+
+    #[test]
+    fn project_files_older_than_7_days_go_unless_a_prompt_names_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Ulid::new();
+        let (unused, _) = project_file(dir.path(), project, KEEP_MS + 1);
+        let (named, named_name) = project_file(dir.path(), project, KEEP_MS + 2);
+        let (boundary, _) = project_file(dir.path(), project, KEEP_MS);
+        let (fresh, _) = project_file(dir.path(), project, 1);
+
+        let removed = cleanup_projects(dir.path(), NOW, |id| {
+            assert_eq!(id, project);
+            Some(vec![
+                "Fix login".into(),
+                format!("see \"C:\\a b\\{named_name}\" too"),
+            ])
+        })
+        .unwrap();
+
+        assert_eq!(removed, std::slice::from_ref(&unused));
+        assert!(!unused.exists());
+        for kept in [named, boundary, fresh] {
+            assert!(kept.exists(), "{}", kept.display());
+        }
+    }
+
+    #[test]
+    fn an_unreadable_task_list_keeps_every_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Ulid::new();
+        let (old, _) = project_file(dir.path(), project, 3 * KEEP_MS);
+        let removed = cleanup_projects(dir.path(), NOW, |_| None).unwrap();
+        assert!(removed.is_empty());
+        assert!(old.exists());
+    }
+
+    #[test]
+    fn the_tasks_are_read_only_for_projects_with_old_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fresh, _) = project_file(dir.path(), Ulid::new(), 1);
+        let calls = Cell::new(0);
+        cleanup_projects(dir.path(), NOW, |_| {
+            calls.set(calls.get() + 1);
+            Some(Vec::new())
+        })
+        .unwrap();
+        assert_eq!(calls.get(), 0);
+        assert!(fresh.exists());
+    }
+
+    #[test]
+    fn stray_entries_under_projects_are_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Ulid::new();
+        let folder = dir.path().join(PROJECTS).join(project.to_string());
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("notes.txt"), "mine").unwrap();
+        std::fs::write(folder.join("not-a-ulid.png"), "mine").unwrap();
+        std::fs::create_dir_all(dir.path().join(PROJECTS).join("scratch")).unwrap();
+        std::fs::write(dir.path().join(PROJECTS).join("readme.txt"), "mine").unwrap();
+
+        let removed = cleanup_projects(dir.path(), NOW, |_| Some(Vec::new())).unwrap();
+
+        assert!(removed.is_empty());
+        assert!(folder.join("notes.txt").is_file());
+        assert!(folder.join("not-a-ulid.png").is_file());
+        assert!(dir.path().join(PROJECTS).join("scratch").is_dir());
+        assert!(dir.path().join(PROJECTS).join("readme.txt").is_file());
+    }
+
+    #[test]
+    fn cleaning_projects_without_the_dir_does_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let removed = cleanup_projects(&dir.path().join("attachments"), NOW, |_| None).unwrap();
+        assert!(removed.is_empty());
+    }
+
+    fn store_with_project(dir: &Path, name: &str) -> (Store, mkrew_protocol::Project) {
+        let store = Store::open(&dir.join("mkrew.db")).unwrap();
+        let repo = dir.join(name);
+        std::fs::create_dir_all(&repo).unwrap();
+        let project = store.add_project(&repo, None).unwrap();
+        (store, project)
+    }
+
+    #[test]
+    fn open_task_prompts_lists_every_prompt_but_done_tasks() {
+        let data = tempfile::tempdir().unwrap();
+        let (store, project) = store_with_project(data.path(), "repo");
+        for (title, status) in [
+            ("todo", TaskStatus::Todo),
+            ("run", TaskStatus::Running),
+            ("input", TaskStatus::NeedsInput),
+            ("review", TaskStatus::Review),
+            ("done", TaskStatus::Done),
+        ] {
+            let task = store
+                .create_task(
+                    project.id,
+                    title,
+                    &format!("prompt {title}"),
+                    None,
+                    None,
+                    false,
+                )
+                .unwrap();
+            store.set_task_status(task.id, status, false).unwrap();
+        }
+        let other = data.path().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        let other = store.add_project(&other, None).unwrap();
+        store
+            .create_task(other.id, "x", "prompt other", None, None, false)
+            .unwrap();
+
+        let mut prompts = open_task_prompts(&store, project.id).unwrap();
+        prompts.sort();
+        assert_eq!(
+            prompts,
+            ["prompt input", "prompt review", "prompt run", "prompt todo"]
+        );
+        assert_eq!(open_task_prompts(&store, Ulid::new()), Some(Vec::new()));
+    }
+
+    /// SPEC §20B.5: a task in the backlog keeps its screenshot; a done task's goes after 7 days.
+    #[test]
+    fn retention_keeps_the_screenshot_of_a_task_until_it_is_done() {
+        let data = tempfile::tempdir().unwrap();
+        let attachments = data.path().join("attachments");
+        let (store, project) = store_with_project(data.path(), "repo");
+        let (path, _) = project_file(&attachments, project.id, 3 * KEEP_MS);
+        let task = store
+            .create_task(
+                project.id,
+                "Fix",
+                &format!("Look at {}", path.display()),
+                None,
+                None,
+                false,
+            )
+            .unwrap();
+        let check = |store: &Store| {
+            cleanup_projects(&attachments, NOW, |id| open_task_prompts(store, id)).unwrap()
+        };
+
+        assert!(check(&store).is_empty(), "a Todo task keeps it");
+        assert!(path.exists());
+        store
+            .set_task_status(task.id, TaskStatus::Review, false)
+            .unwrap();
+        assert!(check(&store).is_empty(), "a Review task keeps it");
+        assert!(path.exists());
+
+        store
+            .set_task_status(task.id, TaskStatus::Done, false)
+            .unwrap();
+        assert_eq!(check(&store), std::slice::from_ref(&path));
+        assert!(!path.exists());
     }
 }

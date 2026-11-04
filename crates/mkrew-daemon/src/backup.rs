@@ -25,7 +25,8 @@ pub const EVERY: Duration = Duration::from_secs(60 * 60);
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// Checks for today's backup now and then every [`EVERY`]; each check also deletes old
-/// attachments in `attachments` ([`attachment::cleanup`], SPEC §20B.5) and runs retention
+/// attachments in `attachments` ([`attachment::cleanup`] for sessions,
+/// [`attachment::cleanup_projects`] for project images, SPEC §20B.5) and runs retention
 /// over the database and `sessions` (ADR 0060). Runs until aborted.
 pub fn start(
     hub: Arc<Hub>,
@@ -50,11 +51,14 @@ pub fn start(
                 let cleaned = attachment::cleanup(&attachments, now, |id| {
                     hub.store().get_session(id).ok().and_then(|s| s.ended_at)
                 });
+                let cleaned_projects = attachment::cleanup_projects(&attachments, now, |id| {
+                    attachment::open_task_prompts(&hub.store(), id)
+                });
                 let retained = crate::retention::run(&hub.store(), &sessions, now);
-                (backed_up, cleaned, retained)
+                (backed_up, cleaned, cleaned_projects, retained)
             })
             .await;
-            let (backed_up, cleaned, retained) = match done {
+            let (backed_up, cleaned, cleaned_projects, retained) = match done {
                 Ok(done) => done,
                 Err(e) => {
                     tracing::warn!("database backup task failed: {e}");
@@ -66,13 +70,15 @@ pub fn start(
                 Ok(None) => {}
                 Err(e) => tracing::warn!("database backup failed: {e:#}"),
             }
-            match cleaned {
-                Ok(removed) => {
-                    for path in removed {
-                        tracing::info!(path = %path.display(), "old attachments deleted");
+            for cleaned in [cleaned, cleaned_projects] {
+                match cleaned {
+                    Ok(removed) => {
+                        for path in removed {
+                            tracing::info!(path = %path.display(), "old attachments deleted");
+                        }
                     }
+                    Err(e) => tracing::warn!("attachment cleanup failed: {e}"),
                 }
-                Err(e) => tracing::warn!("attachment cleanup failed: {e}"),
             }
             match retained {
                 Ok(p) if p != Purged::default() => tracing::info!(?p, "retention"),
