@@ -135,6 +135,9 @@ pub struct TaskDialog {
     pub agents: Agents,
     /// A create/update/delete is in flight.
     pub busy: bool,
+    /// Pasted images still being saved (`attachment.save`); the dialog cannot be saved before
+    /// their paths are typed.
+    pub images_saving: usize,
     /// Why the last save or delete failed (or the draft is invalid).
     pub error: Option<String>,
 }
@@ -172,6 +175,7 @@ impl TaskDialog {
             field: Field::Title,
             agents: Agents::Loading,
             busy: false,
+            images_saving: 0,
             error: None,
         }
     }
@@ -386,6 +390,9 @@ impl TaskDialog {
         }
         if self.prompt.rewriting() {
             return Err("Wait for the improved prompt.");
+        }
+        if self.images_saving > 0 {
+            return Err("Wait for the image to be attached.");
         }
         let prompt = self.prompt.text.text().trim();
         Ok(match &self.mode {
@@ -890,5 +897,19 @@ mod tests {
             Some(AttachmentOwner::Project(task.project_id)),
             "an edited task's image goes to its project too"
         );
+    }
+
+    /// A path still being saved would be lost if the dialog closed first.
+    #[test]
+    fn saving_waits_for_a_pasted_image() {
+        let mut dialog = TaskDialog::new(Ulid::new());
+        type_text(&mut dialog, "Fix login");
+        dialog.images_saving = 1;
+        assert_eq!(
+            dialog.save_request(),
+            Err("Wait for the image to be attached.")
+        );
+        dialog.images_saving = 0;
+        assert!(dialog.save_request().is_ok());
     }
 }

@@ -99,7 +99,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 - [ ] **Install the new build and restart the daemon** (protocol 53; a window from before it shows a version mismatch).
 - [ ] **Composer and pane paste still work:** Ctrl+V of an image in an agent pane and in its composer types a path under `attachments\<session id>\`.
-- [ ] **Backlog keeps the screenshot:** the file from the New task check above is still there after a daemon restart (the hourly check runs at start); it is deleted only once its task is done and the file is over 7 days old (covered by the daemon tests; no wait needed).
+- [ ] **Backlog keeps the screenshot:** the file from the New task check in the 2026-11-02 section below is still there after a daemon restart (the hourly check runs at start); it is deleted only once its task is done and the file is over 7 days old (covered by the daemon tests; no wait needed).
 
 ### To verify - 2026-11-02 Task dialog prompt works like the composer
 

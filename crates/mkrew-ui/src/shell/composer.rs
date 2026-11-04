@@ -92,6 +92,11 @@ impl Shell {
             return;
         }
         let serial = self.dialog_serial;
+        if target == composer::Target::TaskDialog
+            && let Some(dialog) = self.task_dialog.as_mut()
+        {
+            dialog.images_saving += 1;
+        }
         let saved = connection.call::<mkrew_protocol::AttachmentSaveResult>(
             Request::AttachmentSave(mkrew_protocol::AttachmentSaveParams {
                 owner,
@@ -99,24 +104,42 @@ impl Shell {
                 data,
             }),
         );
-        cx.spawn_in(window, async move |this, cx| match saved.await {
-            Ok(saved) => {
-                let _ = this.update_in(cx, |shell, window, cx| {
-                    // The dialog it was pasted into may be gone, or another one open.
-                    if target == composer::Target::TaskDialog && shell.open_dialog(serial).is_none()
-                    {
+        cx.spawn_in(window, async move |this, cx| {
+            let saved = saved.await;
+            let _ = this.update(cx, |shell, cx| {
+                // The dialog it was pasted into may be gone, or another one open.
+                let dialog_open = target == composer::Target::TaskDialog;
+                if dialog_open {
+                    let Some(dialog) = shell.open_dialog(serial) else {
                         return;
+                    };
+                    dialog.images_saving = dialog.images_saving.saturating_sub(1);
+                }
+                match saved {
+                    Ok(saved) => {
+                        // Typed where the caret is, without taking the keyboard from wherever
+                        // the user went meanwhile.
+                        let text = composer::typed_paths([saved.path.as_str()]);
+                        match target {
+                            composer::Target::Composer(session) => {
+                                shell.composers.insert(session, &text);
+                                shell.composer_scroll.scroll_to_bottom();
+                            }
+                            composer::Target::TaskDialog => {
+                                if let Some(dialog) = shell.task_dialog.as_mut() {
+                                    dialog.insert_prompt(&text);
+                                }
+                                shell.prompt_scroll.scroll_to_bottom();
+                            }
+                        }
+                        cx.notify();
                     }
-                    let text = composer::typed_paths([saved.path.as_str()]);
-                    shell.prompt_typed(target, &text, window, cx);
-                });
-            }
-            Err(error) => {
-                tracing::warn!(?target, "attachment.save failed: {error:#}");
-                let _ = this.update(cx, |shell, cx| {
-                    shell.toast_error(format!("Cannot attach the image: {error:#}"), cx);
-                });
-            }
+                    Err(error) => {
+                        tracing::warn!(?target, "attachment.save failed: {error:#}");
+                        shell.toast_error(format!("Cannot attach the image: {error:#}"), cx);
+                    }
+                }
+            });
         })
         .detach();
     }
