@@ -222,7 +222,7 @@ Rules:
 | --- | --- | --- | --- |
 | Built-ins | `crates/mkrew-core/slash/copilot.toml`, from the CLI command reference | fixed | built-in |
 | Project skills | `.github/skills/*/SKILL.md`, `.agents/skills/*/SKILL.md`, `.claude/skills/*/SKILL.md` in the folder, then parent `.github/skills/` up to the repo root | `name` | project |
-| User skills | `~/.copilot/skills/*/SKILL.md`, `~/.agents/skills/*/SKILL.md`, folders in `COPILOT_SKILLS_DIRS` (profile `env`, else the daemon's environment) | `name` | user |
+| User skills | `~/.copilot/skills/*/SKILL.md`, `~/.agents/skills/*/SKILL.md`, folders in `COPILOT_SKILLS_DIRS` (a comma-separated list, as in the Copilot CLI reference; from the profile `env`, else the daemon's environment) | `name` | user |
 | Commands | `.claude/commands/*.md` | file stem | project |
 
 Rules: the first found wins in the order of the table rows above; a skill beats a command of the same name; `user-invocable: false` is left out.

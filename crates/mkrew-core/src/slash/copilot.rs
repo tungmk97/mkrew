@@ -3,7 +3,6 @@
 //! beats a command of the same name; `user-invocable: false` is left out.
 
 use std::collections::HashSet;
-use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use mkrew_protocol::{SlashItem, SlashSource};
@@ -29,9 +28,10 @@ pub(super) fn scan(
     }
     skill_dirs.push((roots.home.join(".copilot/skills"), SlashSource::User));
     skill_dirs.push((roots.home.join(".agents/skills"), SlashSource::User));
+    // Comma-separated, per the Copilot CLI reference (a `:` would break Windows drive paths).
     if let Some(list) = roots.env.get("COPILOT_SKILLS_DIRS") {
-        for dir in std::env::split_paths(OsStr::new(list)).filter(|d| !d.as_os_str().is_empty()) {
-            skill_dirs.push((dir, SlashSource::User));
+        for dir in list.split(',').map(str::trim).filter(|d| !d.is_empty()) {
+            skill_dirs.push((PathBuf::from(dir), SlashSource::User));
         }
     }
 

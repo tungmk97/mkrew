@@ -31,13 +31,16 @@ fn built_ins_come_first_then_skills_then_commands() {
 #[test]
 fn the_first_found_wins_in_the_documented_order() {
     let w = world();
+    let folder = w.repo.join("pkg");
+    std::fs::create_dir_all(&folder).unwrap();
+    // `.github` over `.agents` over `.claude`, then the home folders after the project ones.
     put(
-        &w.repo,
+        &folder,
         ".claude/skills/a/SKILL.md",
         &skill("dup", "claude"),
     );
     put(
-        &w.repo,
+        &folder,
         ".agents/skills/a/SKILL.md",
         &skill("dup", "agents"),
     );
@@ -47,25 +50,64 @@ fn the_first_found_wins_in_the_documented_order() {
         &skill("dup", "copilot home"),
     );
     put(
-        &w.repo,
+        &folder,
         ".github/skills/a/SKILL.md",
         &skill("dup", "github"),
     );
+    // `.agents` over `.claude` with no `.github` to hide it.
+    put(
+        &folder,
+        ".claude/skills/b/SKILL.md",
+        &skill("pair", "claude"),
+    );
+    put(
+        &folder,
+        ".agents/skills/b/SKILL.md",
+        &skill("pair", "agents"),
+    );
+    // The folder's `.agents` over a parent's `.github`.
+    put(
+        &w.repo,
+        ".github/skills/c/SKILL.md",
+        &skill("near", "parent github"),
+    );
+    put(
+        &folder,
+        ".agents/skills/c/SKILL.md",
+        &skill("near", "own agents"),
+    );
+    // `~/.copilot` over `~/.agents`, and `~/.agents` over a `COPILOT_SKILLS_DIRS` folder.
     put(
         &w.home,
-        ".agents/skills/b/SKILL.md",
+        ".agents/skills/d/SKILL.md",
         &skill("user-dup", "agents home"),
     );
     put(
         &w.home,
-        ".copilot/skills/b/SKILL.md",
+        ".copilot/skills/d/SKILL.md",
         &skill("user-dup", "copilot home"),
     );
-    let items = rows(&w, &w.repo);
+    put(
+        &w.home,
+        ".agents/skills/e/SKILL.md",
+        &skill("env-dup", "agents home"),
+    );
+    let extra = w.home.join("extra");
+    put(&extra, "e/SKILL.md", &skill("env-dup", "extra"));
+    let mut roots = w.roots(&folder);
+    roots
+        .env
+        .insert("COPILOT_SKILLS_DIRS".into(), extra.display().to_string());
+    let out = list(Cli::Copilot, &roots, &SlashOverrides::default());
+    assert!(out.errors.is_empty(), "{:?}", out.errors);
+    let items = out.items;
     assert_eq!(items.iter().filter(|i| i.name == "dup").count(), 1);
     assert_eq!(find(&items, "dup").description, "github");
+    assert_eq!(find(&items, "pair").description, "agents");
+    assert_eq!(find(&items, "near").description, "own agents");
     assert_eq!(find(&items, "user-dup").description, "copilot home");
     assert_eq!(find(&items, "user-dup").source, SlashSource::User);
+    assert_eq!(find(&items, "env-dup").description, "agents home");
 }
 
 #[test]
@@ -154,14 +196,23 @@ fn copilot_skills_dirs_come_from_the_given_environment() {
     put(&a, "x/SKILL.md", &skill("from-a", "A"));
     put(&b, "y/SKILL.md", &skill("from-b", "B"));
     let mut roots = w.roots(&w.repo);
-    let joined = std::env::join_paths([&a, &b]).unwrap();
-    roots.env.insert(
-        "COPILOT_SKILLS_DIRS".into(),
-        joined.to_str().unwrap().into(),
-    );
+    // Comma-separated whatever the platform separator is (`C:\a` has a `:`); blanks are ignored.
+    let joined = format!(" {} ,, {}", a.display(), b.display());
+    roots.env.insert("COPILOT_SKILLS_DIRS".into(), joined);
     let items = list(Cli::Copilot, &roots, &SlashOverrides::default()).items;
     assert_eq!(find(&items, "from-a").source, SlashSource::User);
     find(&items, "from-b");
     let none = list(Cli::Copilot, &w.roots(&w.repo), &SlashOverrides::default()).items;
     assert!(none.iter().all(|i| i.name != "from-a"));
+}
+
+#[test]
+fn a_skill_named_like_a_built_in_is_listed_next_to_it() {
+    let w = world();
+    put(&w.repo, ".github/skills/h/SKILL.md", &skill("help", "mine"));
+    let items = rows(&w, &w.repo);
+    let helps: Vec<_> = items.iter().filter(|i| i.name == "help").collect();
+    assert_eq!(helps.len(), 2);
+    assert_eq!(helps[0].source, SlashSource::BuiltIn);
+    assert_eq!(helps[1].description, "mine");
 }
