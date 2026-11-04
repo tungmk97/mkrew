@@ -73,6 +73,9 @@ impl Shell {
         let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
             return;
         };
+        if self.task_dialog.is_none() {
+            return;
+        }
         // A control has the keyboard: the hidden field takes nothing but Esc / Ctrl+Enter.
         if self.dialog_control_focused(window)
             && !matches!(key, DialogKey::Cancel | DialogKey::Save)
