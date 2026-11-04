@@ -284,10 +284,11 @@ pub fn rename(dir: &Path, old: &str, new: &str) -> Result<(), PromptError>;
 pub fn delete(dir: &Path, name: &str) -> Result<(), PromptError>;
 ```
 
-- A name is invalid when empty after trimming, longer than 64 characters, starting with `.`, containing `/ \ : * ? " < > |` or a control character, ending in a space or `.`, or a Windows reserved name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`).
+- A name is invalid when empty after trimming, longer than 64 characters, starting with `.`, containing `/ \ : * ? " < > |` or a control character, ending in a space or `.`, or a Windows reserved name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`), also when it is the part before the first dot (`aux.v2`).
 - A name equal to another prompt's name, case-insensitively, is a duplicate; renaming a prompt to a new case of its own name is allowed.
 - `save` writes a temp file in the same folder and renames it over the target, so a crash never leaves half a prompt.
 - `rename` refuses when the target exists.
+- `read(dir, name)` returns the whole file (title line included) for the editor; `create` and `save` create a missing folder.
 - Tests in a tempdir: create, save, rename, rename case-only, delete, duplicate, each invalid kind, missing folder.
 
 ### 7.2 Settings page "Prompts"
