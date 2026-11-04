@@ -648,7 +648,7 @@ impl Shell {
                 return true;
             }
             let then: AfterSave = Box::new(move |shell, window, cx| {
-                shell.settings_dialog = None;
+                shell.close_settings_dialog(window, cx);
                 then(shell, window, cx);
             });
             self.leave_prompt_draft(then, window, cx);
