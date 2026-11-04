@@ -85,6 +85,9 @@ pub fn list(cli: Cli, roots: &ScanRoots, overrides: &SlashOverrides) -> SlashLis
         Cli::Copilot => copilot::scan(roots, builtins, &mut errors),
     };
     apply(&mut items, overrides);
+    if cli == Cli::Omp {
+        omp::recount(&mut items);
+    }
     if cli == Cli::Claude {
         items.sort_by_cached_key(|item| item.name.to_lowercase());
     }

@@ -30,18 +30,7 @@ pub(super) fn scan(
 
     let skills = skills(roots, errors);
     if !skills.is_empty() {
-        let count = skills.len();
-        items.push(SlashItem {
-            name: "skill:".into(),
-            description: if count == 1 {
-                "1 skill".into()
-            } else {
-                format!("{count} skills")
-            },
-            argument_hint: None,
-            source: SlashSource::BuiltIn,
-            group: Some(u32::try_from(count).unwrap_or(u32::MAX)),
-        });
+        items.push(group_row(skills.len()));
         items.extend(skills);
     }
     items.extend(commands);
@@ -54,6 +43,36 @@ pub(super) fn scan(
             .filter(|t| !taken.contains(&t.name)),
     );
     items
+}
+
+/// The `skill:` group row standing for `count` skill rows after it.
+fn group_row(count: usize) -> SlashItem {
+    SlashItem {
+        name: "skill:".into(),
+        description: if count == 1 {
+            "1 skill".into()
+        } else {
+            format!("{count} skills")
+        },
+        argument_hint: None,
+        source: SlashSource::BuiltIn,
+        group: Some(u32::try_from(count).unwrap_or(u32::MAX)),
+    }
+}
+
+/// Counts the group row again after `[slash]` changes hid some skills; no skills left, no row.
+pub(super) fn recount(items: &mut Vec<SlashItem>) {
+    let Some(at) = items.iter().position(|i| i.group.is_some()) else {
+        return;
+    };
+    let count = (items.iter())
+        .filter(|i| i.group.is_none() && i.name.starts_with("skill:"))
+        .count();
+    if count == 0 {
+        items.remove(at);
+    } else {
+        items[at] = group_row(count);
+    }
 }
 
 fn item(name: String, doc: &Doc, source: &SlashSource) -> SlashItem {

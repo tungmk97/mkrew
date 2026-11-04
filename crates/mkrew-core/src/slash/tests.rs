@@ -144,3 +144,24 @@ fn desktop_shows_only_where_the_docs_say() {
     };
     assert!(on(Os::Windows) && on(Os::Macos) && !on(Os::Linux));
 }
+
+#[test]
+fn the_omp_group_row_counts_the_skills_left_after_hide() {
+    let w = world();
+    put(&w.repo, ".omp/skills/a/SKILL.md", &skill("alpha", "A"));
+    put(&w.repo, ".omp/skills/b/SKILL.md", &skill("beta", "B"));
+    let hide = |names: &[&str]| SlashOverrides {
+        hide: names.iter().map(|n| (*n).to_owned()).collect(),
+        add: vec![],
+    };
+    let group = |hidden: &[&str]| {
+        let out = list(Cli::Omp, &w.roots(&w.repo), &hide(hidden));
+        out.items
+            .into_iter()
+            .find(|i| i.name == "skill:")
+            .map(|i| (i.group, i.description))
+    };
+    assert_eq!(group(&[]), Some((Some(2), "2 skills".into())));
+    assert_eq!(group(&["skill:alpha"]), Some((Some(1), "1 skill".into())));
+    assert_eq!(group(&["skill:alpha", "skill:beta"]), None);
+}
