@@ -181,6 +181,8 @@ impl Shell {
         self.sync_prompts();
         if saved && let Some(then) = then {
             then(self, window, cx);
+            // `then` may have left the dialog on another tab or marked the list stale.
+            self.sync_prompts();
         }
         cx.notify();
     }
