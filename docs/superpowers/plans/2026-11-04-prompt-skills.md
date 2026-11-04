@@ -33,13 +33,13 @@ The prompt library gets core CRUD functions and a Settings page; every picker re
 
 ## Run order
 
-| Step | Tasks | Notes |
+| Step | Tasks (numbered for the SDD scripts) | Notes |
 | --- | --- | --- |
-| 1 | A11 | ADR 0094 and SPEC text first, as the spec asks |
-| 2 | A1-A10 | A1 adds an interim `slash.list` arm answering `invalid_request` so every commit builds; A12 replaces it |
-| 3 | A12-A17 | daemon handler, `trigger_at`, `prompt_key_down`, picker model, wiring and render, HUMAN_CHECKS and README; verify.sh |
-| 4 | B1-B4 | needs `PROTOCOL_VERSION == 52` and `Shell::prompt_key_down`; verify.sh |
-| 5 | C1-C5 | independent of A and B; verify.sh at the end of C5 |
+| 1 | Task 1 (A11) | ADR 0094 and SPEC text first, as the spec asks |
+| 2 | Tasks 2-11 (A1-A10) | A1 adds an interim `slash.list` arm answering `invalid_request` so every commit builds; A12 replaces it |
+| 3 | Tasks 12-17 (A12-A17) | daemon handler, `trigger_at`, `prompt_key_down`, picker model, wiring and render, HUMAN_CHECKS and README; verify.sh |
+| 4 | Tasks 18-21 (B1-B4) | needs `PROTOCOL_VERSION == 52` and `Shell::prompt_key_down`; verify.sh |
+| 5 | Tasks 22-26 (C1-C5) | independent of A and B; verify.sh at the end of C5 |
 
 README: A17 and C5 each add a bullet; when both land, merge them into one feature line.
 
@@ -126,7 +126,7 @@ No new dependency.
 - Task ids of this section are A1 to A10; the daemon and UI sections start at A11.
 
 ---
-### Task A1: Protocol 52: `slash.list`, `Cli`, `SlashItem`
+### Task 2 (A1): Protocol 52: `slash.list`, `Cli`, `SlashItem`
 
 **Files:**
 - Modify: `crates/mkrew-protocol/src/message.rs` (enum `Request`, after `AgentProfiles` at line 179; new types after `ProfileErrorInfo`, which ends at line 1605)
@@ -389,7 +389,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(protocol): slash.list requ
 ```
 
 ---
-### Task A2: Profile: `cli`, `[slash]`, `infer_cli`
+### Task 3 (A2): Profile: `cli`, `[slash]`, `infer_cli`
 
 **Files:**
 - Modify: `crates/mkrew-core/src/profile.rs` (`AgentProfile` at lines 16-41, `parse_profile` at 287-369, `RawProfile` at 371-392, tests from line 449)
@@ -742,7 +742,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(core): profile cli key, [s
 ```
 
 ---
-### Task A3: `slash::front_matter`
+### Task 4 (A3): `slash::front_matter`
 
 **Files:**
 - Create: `crates/mkrew-core/src/slash.rs`
@@ -1146,7 +1146,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(core): front matter parser
 ```
 
 ---
-### Task A4: Built-in tables and their loader
+### Task 5 (A4): Built-in tables and their loader
 
 **Files:**
 - Create: `crates/mkrew-core/slash/codex.toml`, `crates/mkrew-core/slash/omp.toml`, `crates/mkrew-core/slash/copilot.toml`, `crates/mkrew-core/slash/claude.toml`
@@ -2883,7 +2883,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(core): built-in slash comm
 ```
 
 ---
-### Task A5: `ScanRoots`, `list` and the profile overrides
+### Task 6 (A5): `ScanRoots`, `list` and the profile overrides
 
 **Files:**
 - Modify: `crates/mkrew-core/src/slash.rs` (the A4 state shown in A4)
@@ -3272,7 +3272,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(core): slash::list with Sc
 
 ---
 
-### Task A6: Scan helpers: repo root, linked worktrees, skill and command files
+### Task 7 (A6): Scan helpers: repo root, linked worktrees, skill and command files
 
 **Files:**
 - Create: `crates/mkrew-core/src/slash/scan.rs`
@@ -3682,7 +3682,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(core): slash scan helpers 
 ```
 
 ---
-### Task A7: Claude Code scanner: skills and commands of the managed, user and project scopes
+### Task 8 (A7): Claude Code scanner: skills and commands of the managed, user and project scopes
 
 **Files:**
 - Create: `crates/mkrew-core/src/slash/claude.rs`
@@ -4250,7 +4250,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(core): Claude Code slash s
 
 ---
 
-### Task A8: Claude Code plugins and settings
+### Task 9 (A8): Claude Code plugins and settings
 
 **Files:**
 - Create: `crates/mkrew-core/src/slash/claude/settings.rs`, `crates/mkrew-core/src/slash/claude/plugins.rs`
@@ -5045,7 +5045,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(core): Claude Code plugins
 ```
 
 ---
-### Task A9: omp scanner
+### Task 10 (A9): omp scanner
 
 **Files:**
 - Create: `crates/mkrew-core/src/slash/omp.rs`
@@ -5560,7 +5560,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(core): omp slash scanner w
 
 ---
 
-### Task A10: Copilot scanner
+### Task 11 (A10): Copilot scanner
 
 **Files:**
 - Create: `crates/mkrew-core/src/slash/copilot.rs`
@@ -5942,7 +5942,7 @@ Spec gaps found while planning, and the choice made (each is pinned by a test na
 
 ---
 
-### Task A11: ADR 0094 and the SPEC text (run first)
+### Task 1 (A11): ADR 0094 and the SPEC text (run first)
 
 **Files:**
 - Create: `docs/decisions/0094-slash-command-picker.md`
@@ -6119,7 +6119,7 @@ git -c user.email=tungnv975@gmail.com commit -m "docs: ADR 0094 and SPEC for the
 
 ---
 
-### Task A12: Daemon `slash.list` handler
+### Task 12 (A12): Daemon `slash.list` handler
 
 **Files:**
 - Create: `crates/mkrew-daemon/src/server/slash.rs`
@@ -6430,7 +6430,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(daemon): slash.list lists 
 
 ---
 
-### Task A13: `trigger_at` replaces `opens_file_picker`
+### Task 13 (A13): `trigger_at` replaces `opens_file_picker`
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/composer.rs` (import at line 14; `Composers::trigger` after `shown` at line 121; `Trigger`, `trigger_at`, `trigger` after the `impl Composers` block that ends at line 239; tests appended to `mod tests` that starts at line 364)
@@ -6711,7 +6711,7 @@ git -c user.email=tungnv975@gmail.com commit -m "refactor(ui): trigger_at gates 
 
 ---
 
-### Task A14: One `Shell::prompt_key_down` for the composer and the task dialog
+### Task 14 (A14): One `Shell::prompt_key_down` for the composer and the task dialog
 
 **Files:**
 - Create: `crates/mkrew-ui/src/shell/prompt_keys.rs`
@@ -6956,7 +6956,7 @@ git -c user.email=tungnv975@gmail.com commit -m "refactor(ui): one prompt_key_do
 
 ---
 
-### Task A15: `SlashPicker` model: state, filter, order
+### Task 15 (A15): `SlashPicker` model: state, filter, order
 
 **Files:**
 - Create: `crates/mkrew-ui/src/slash_picker.rs`
@@ -7702,7 +7702,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): SlashPicker model wit
 
 ---
 
-### Task A16: Shell wiring and render of the `/` picker
+### Task 16 (A16): Shell wiring and render of the `/` picker
 
 **Files:**
 - Create: `crates/mkrew-ui/src/shell/slash.rs`
@@ -8316,7 +8316,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): / opens the agent's c
 
 ---
 
-### Task A17: HUMAN_CHECKS and README
+### Task 17 (A17): HUMAN_CHECKS and README
 
 **Files:**
 - Modify: `docs/HUMAN_CHECKS.md` (new block above line 24, the first "### To verify" block)
@@ -8414,7 +8414,7 @@ Also pinned on the way: stray files and folders under `attachments/projects/` th
 
 ---
 
-### Task B1: Protocol 53: `AttachmentOwner`, daemon save, every caller, ADR 0095
+### Task 18 (B1): Protocol 53: `AttachmentOwner`, daemon save, every caller, ADR 0095
 
 **Files:**
 - Modify: `crates/mkrew-protocol/src/message.rs:1310-1319` (`AttachmentSaveParams`)
@@ -8847,7 +8847,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(protocol): attachment.save
 
 ---
 
-### Task B2: Retention of project images in the hourly check
+### Task 19 (B2): Retention of project images in the hourly check
 
 **Files:**
 - Modify: `crates/mkrew-daemon/src/attachment.rs` (add two functions after `cleanup`, line 78; imports at top; tests in `mod tests`)
@@ -9219,7 +9219,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(daemon): delete project im
 
 ---
 
-### Task B3: Ctrl+V image paste in the task dialog Prompt box
+### Task 20 (B3): Ctrl+V image paste in the task dialog Prompt box
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/task_dialog.rs:6-8` (imports), `:177-182` (add `attachment_owner` after `project_id`), tests (end of `mod tests`)
@@ -9473,7 +9473,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): paste an image into t
 
 ---
 
-### Task B4: OS file and file tree drops on the task dialog Prompt box
+### Task 21 (B4): OS file and file tree drops on the task dialog Prompt box
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/composer.rs:286-300` (add `dropped_files` after `typed_paths`) and its tests (`mod tests`, line 363+)
@@ -9928,7 +9928,7 @@ The prompt picker gets a last row "Manage prompts…"; the palette gets `Extra::
 
 ---
 
-### Task C1: Core: prompt CRUD in `mkrew_core::prompt`
+### Task 22 (C1): Core: prompt CRUD in `mkrew_core::prompt`
 
 **Files:**
 - Modify: `crates/mkrew-core/src/prompt.rs` (module doc lines 1-5; rename `PromptError` at lines 44-49, 57, 176 and 212-213; new code before `#[cfg(test)]` at line 219; tests appended to `mod tests`)
@@ -10461,7 +10461,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(core): prompt create, save
 
 ---
 
-### Task C2: UI model: `prompts_page` (list, draft, dirty state, which write)
+### Task 23 (C2): UI model: `prompts_page` (list, draft, dirty state, which write)
 
 **Files:**
 - Create: `crates/mkrew-ui/src/prompts_page.rs`
@@ -11079,7 +11079,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): prompts page model wi
 
 ---
 
-### Task C3: Settings dialog `Tab::Prompts` and the shell actions behind it
+### Task 24 (C3): Settings dialog `Tab::Prompts` and the shell actions behind it
 
 The tab exists and is driven end to end (keys, effects, files, questions), but is not listed in the page list until Task C4 draws it, so no commit shows a blank page.
 
@@ -11971,7 +11971,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Prompts settings tab 
 
 ---
 
-### Task C4: Settings → Prompts page: drawing, tab listing, tokens, SPEC §14 and §13
+### Task 25 (C4): Settings → Prompts page: drawing, tab listing, tokens, SPEC §14 and §13
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/theme.rs` (after `SETTINGS_FONT_LIST_HEIGHT`, line 304)
@@ -12436,7 +12436,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Settings Prompts page
 
 ---
 
-### Task C5: Entry points: palette "Manage prompts", picker last row; SPEC §20B.3, README, HUMAN_CHECKS
+### Task 26 (C5): Entry points: palette "Manage prompts", picker last row; SPEC §20B.3, README, HUMAN_CHECKS
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/palette.rs` (`enum Extra` after `InsertPrompt`; `ALL` length 43 and list; `title`; `available`)
