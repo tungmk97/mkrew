@@ -269,11 +269,11 @@ impl Shell {
         }
         let machines = match &self.machines {
             Ok(machines) => machines,
-            Err(text) => return vec![inset(self.machines_error(text.clone(), theme))],
+            Err(text) => return vec![inset(self.error_line(text.clone(), theme))],
         };
         let mut page: Vec<gpui::AnyElement> = Vec::new();
         if let Some(error) = dialog.errors.get(PAGE_ERROR) {
-            page.push(inset(self.machines_error(error.clone(), theme)));
+            page.push(inset(self.error_line(error.clone(), theme)));
         }
         if machines.list.is_empty() && dialog.add.is_none() {
             page.push(inset(meta_line(
@@ -314,8 +314,9 @@ impl Shell {
         page
     }
 
-    /// The broken-file line: its text names the file and the line; nothing can be changed.
-    fn machines_error(&self, text: String, theme: &Theme) -> gpui::AnyElement {
+    /// A page's error line (the Machines page's broken file, the Prompts page's failed write): a
+    /// red ✕ and the text on a raised row.
+    pub(crate) fn error_line(&self, text: String, theme: &Theme) -> gpui::AnyElement {
         div()
             .flex()
             .items_center()

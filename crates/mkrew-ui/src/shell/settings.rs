@@ -275,6 +275,12 @@ impl Shell {
                     .into_iter()
                     .flatten(),
             )
+            .children(
+                (dialog.tab == Tab::Prompts)
+                    .then(|| self.render_prompts_page(dialog, typing, theme, cx))
+                    .into_iter()
+                    .flatten(),
+            )
             .children(search)
             .children(
                 rows.iter()
@@ -282,39 +288,42 @@ impl Shell {
                     .map(|(i, row)| self.settings_row(dialog, i, *row, typing, theme, cx)),
             );
 
-        let footer = div()
-            .flex()
-            .items_center()
-            .gap(px(space::L))
-            .px(px(space::L))
-            .py(px(space::M))
-            .border_t(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
-            .text_size(font_size::META)
-            .child(self.settings_link(
-                "settings-edit-toml",
-                "Edit settings.toml in Zed",
-                theme,
-                cx,
-                |shell, cx| {
-                    shell.edit_settings_file(cx);
-                },
-            ))
-            .child(self.settings_link(
-                "settings-edit-keymap",
-                "Edit keymap.toml in Zed",
-                theme,
-                cx,
-                |shell, cx| {
-                    shell.edit_keymap_file(cx);
-                },
-            ))
-            .child(div().flex_1())
-            .child(
-                div()
-                    .text_color(rgb(theme.text_muted))
-                    .child("Changes apply at once · Esc closes"),
-            );
+        let footer =
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::L))
+                .px(px(space::L))
+                .py(px(space::M))
+                .border_t(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.divider))
+                .text_size(font_size::META)
+                .child(self.settings_link(
+                    "settings-edit-toml",
+                    "Edit settings.toml in Zed",
+                    theme,
+                    cx,
+                    |shell, cx| {
+                        shell.edit_settings_file(cx);
+                    },
+                ))
+                .child(self.settings_link(
+                    "settings-edit-keymap",
+                    "Edit keymap.toml in Zed",
+                    theme,
+                    cx,
+                    |shell, cx| {
+                        shell.edit_keymap_file(cx);
+                    },
+                ))
+                .child(div().flex_1())
+                .child(div().text_color(rgb(theme.text_muted)).child(
+                    if dialog.tab == Tab::Prompts {
+                        "Ctrl+N new · Ctrl+S saves · Esc closes"
+                    } else {
+                        "Changes apply at once · Esc closes"
+                    },
+                ));
 
         let max_height = (viewport_height - px(space::XXL * 2.0)).max(px(0.0));
         let panel = div()

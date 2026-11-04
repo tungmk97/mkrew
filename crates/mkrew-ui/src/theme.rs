@@ -302,6 +302,11 @@ pub const SETTINGS_NAV_WIDTH: f32 = 180.0;
 pub const SETTINGS_CONTROL_WIDTH: f32 = 240.0;
 /// Tallest the font pick's list grows (it scrolls past that).
 pub const SETTINGS_FONT_LIST_HEIGHT: f32 = 200.0;
+/// Settings → Prompts (spec 2026-11-04 section 7.2): the prompt list's width, how tall it grows
+/// before it scrolls, and the height of the prompt text field (it scrolls past that).
+pub const SETTINGS_PROMPTS_LIST_WIDTH: f32 = 200.0;
+pub const SETTINGS_PROMPTS_LIST_HEIGHT: f32 = 360.0;
+pub const SETTINGS_PROMPT_BODY_HEIGHT: f32 = 240.0;
 /// An on/off switch: track size and the knob's inset.
 pub const SWITCH_WIDTH: f32 = 32.0;
 pub const SWITCH_HEIGHT: f32 = 18.0;

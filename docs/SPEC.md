@@ -1443,6 +1443,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Ask AI: a question outside every project (§20H) | Ctrl+Shift+G |
 | Global | Focus the sidebar filter with the active row highlighted (shows the sidebar if hidden, widens the compact rail; again returns to the pane) | Alt+0 |
 | Global | Open the context menu of what has the keyboard (the menu a right-click opens: terminal pane, file tree cursor row, editor tab, sidebar row, Board card; else the workspace menu under the switcher); again closes it | Shift+F10 (the Menu key: bind `context_menu` in Settings) |
+| Settings | On the Prompts page (page keys of the dialog, not in `keymap.toml`): new prompt / save the open prompt | Ctrl+N / Ctrl+S |
 | View | Toggle the right panel (Files / Session / Git tabs; keeps the tab) | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9, counted top to bottom as the sidebar shows them (parked empty workspaces after the cards) | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace (same order) | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
@@ -1674,7 +1675,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   access token: it is never logged and never in a tooltip.
 - Settings (Ctrl+,, palette "Global: Open settings", ADR 0073): a modal dialog (`SETTINGS_DIALOG_WIDTH` ×
   `SETTINGS_DIALOG_HEIGHT`, never larger than the window minus a margin); page list on the left
-  (General, Appearance, Notifications, Voice, Jira, Phone, Features, Keyboard, Machines), rows on the right
+  (General, Appearance, Notifications, Voice, Jira, Phone, Features, Keyboard, Prompts, Machines), rows on the right
   (label, help, control: switch, segmented choice, text field, list pick (fonts, themes)); Number and Text rows are
   written on Enter or when the row loses the keyboard, Esc drops the draft. Keyboard rows show a
   chip, an accent dot when changed and Reset; a click or Enter captures the next keystroke, Esc
@@ -1689,6 +1690,17 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   Palette: "Machine: Add…" and "Machine: Open <name>".
   The tray (Windows) has one item per machine, `<name> - <state>` (Connected, Connecting…, Reconnecting…, Not reachable, Version differs, Window closed), that opens or raises its window.
   In a machine window every Settings page starts with "Retention, features and other daemon settings are <name>'s own; change them on <name>. Notifications from this window follow this computer's settings."
+- Settings → Prompts (spec 2026-11-04, SPEC §20B.3): the prompt library `<config>/mkrew/prompts` without a file manager.
+  The folder is read when the page opens and after every write; a prompt file that cannot be read shows its error in its own row.
+  A machine window edits this computer's folder and says so in a line at the top.
+  Left, `SETTINGS_PROMPTS_LIST_WIDTH` wide: a **New prompt** button (Ctrl+N) and one row per prompt, its `# Title` (else its name) and, when different, its name in `text-muted`; the open prompt has the raised fill and the one the keyboard is on the selected ring; ↑ / ↓ open the neighbour.
+  An empty library shows "No prompts yet." and a filled **New prompt** button.
+  Right: a Name field, the prompt text in a multi-line box (`SETTINGS_PROMPT_BODY_HEIGHT`, ADR 0075; the `# Title` line is part of the text), a hint naming `{file}`, `{selection}`, `{task}` and `{project}`, **Save** (Ctrl+S, or Ctrl+Enter in a field; disabled while nothing changed), **Delete** (asks first; disabled for a prompt not saved yet) and **Open folder** (in Zed).
+  Tab walks the page list, the prompt list, Name, the text and the buttons; Enter in Name moves to the text.
+  A refused name (empty, over 64 characters, a leading dot, one of `/ \ : * ? " < > |`, a control character, a trailing space or dot, a Windows reserved name such as `CON` or `aux.v2`, or another prompt's name in any case) shows its reason under the field; a failed write shows at the top of the page; neither closes the page.
+  Renaming to another case of the same name is allowed.
+  Switching prompt, New prompt and Esc ask "Save changes to …?" (Save, Don't save, Cancel) while the name or the text has unsaved changes; switching to another Settings page keeps the draft.
+  Palette: "Global: Manage prompts…" (also in a machine window); the prompt picker's last row "Manage prompts…" opens the page too.
 - Machine chip and reconnect banner (ADR 0089) add no tokens; they reuse these.
   Chip: `well` fill, `text-muted` icon and name, `radius::PILL`, `PILL_HEIGHT` (22), `ICON_SIZE_SMALL` (14), `META` text, `space::XS` between parts, `TITLE_CHIP_MAX_WIDTH` (160).
   Dot (`status_dot`, also on the Machines rows): `status-done` #57C78A / #23854F, `status-needs-input` #E4A452 / #A4660F, `status-exited` #EF7B6C / #C2412F, `text-muted` for a closed window.

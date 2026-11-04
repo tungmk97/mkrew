@@ -29,6 +29,7 @@ impl Tab {
     pub fn all() -> Vec<Tab> {
         let mut all: Vec<Tab> = Page::ALL.into_iter().map(Tab::Settings).collect();
         all.push(Tab::Keyboard);
+        all.push(Tab::Prompts);
         all.push(Tab::Machines);
         all
     }
@@ -1506,5 +1507,18 @@ mod tests {
         assert!(!d.prompts_written(written), "the file lacks the newer text");
         assert!(d.prompts.stale, "the folder changed all the same");
         assert!(d.prompts.is_dirty());
+    }
+
+    #[test]
+    fn the_page_list_has_prompts_before_machines_and_up_down_reaches_it() {
+        let keymap = Keymap::defaults();
+        let all = Tab::all();
+        let prompts = all.iter().position(|t| *t == Tab::Prompts).unwrap();
+        let machines = all.iter().position(|t| *t == Tab::Machines).unwrap();
+        assert_eq!(prompts + 1, machines);
+        let mut d = dialog();
+        d.set_tab(Tab::Keyboard);
+        d.key(&key("down"), None, &keymap);
+        assert_eq!(d.tab, Tab::Prompts, "Down from Keyboard");
     }
 }

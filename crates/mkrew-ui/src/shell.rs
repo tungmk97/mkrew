@@ -51,6 +51,7 @@ mod phone_access;
 mod ports;
 mod prompt_keys;
 mod prompts;
+mod prompts_render;
 mod run;
 mod sessions;
 mod settings;
