@@ -11,7 +11,7 @@ use mkrew_protocol::{ErrorBody, ErrorCode, Event, QueuedSend, SessionSendParams}
 use ulid::Ulid;
 
 use crate::task_dialog::DialogKey;
-use crate::text_box::{self, TextBox};
+use crate::text_box::{self, Input, TextBox};
 
 /// A prompt field the pickers type into: a session's composer draft or the task dialog's
 /// prompt. Both take `@` files, library prompts and ✦ the same way (§20B.1).
@@ -119,6 +119,13 @@ impl Composers {
     /// `session`'s draft while its composer is shown.
     pub fn shown(&self, session: Ulid) -> Option<&Draft> {
         self.drafts.get(&session).filter(|draft| draft.shown)
+    }
+
+    /// The picker typing `key` opens in `session`'s composer (§20B.1); none while it is hidden
+    /// or sending.
+    pub fn trigger(&self, session: Ulid, key: &DialogKey) -> Option<Trigger> {
+        let draft = self.shown(session).filter(|draft| !draft.busy)?;
+        trigger(key, draft.prompt.text.input())
     }
 
     /// Applies a key typed in `session`'s composer (ignored while sending or rewriting, except
@@ -236,6 +243,40 @@ impl Composers {
             Err(error) => draft.error = Some(format!("Cannot send: {error}")),
         }
     }
+}
+
+/// What a typed char opens in a prompt box (§20B.1, §20B.7): `@` the file picker, `/` the
+/// agent's command picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trigger {
+    File,
+    Slash,
+}
+
+/// Whether a char typed at byte `cursor` of `text` starts something: the cursor is at the start
+/// of the text or right after whitespace (a line break included). Anywhere else `@` and `/` are
+/// part of a word (`a@b.com`, `src/main.rs`). `text` and `cursor` are as they are before the
+/// char goes in; a `cursor` past the end or inside a char is not a start.
+pub fn trigger_at(text: &str, cursor: usize) -> bool {
+    text.get(..cursor)
+        .is_some_and(|before| before.chars().next_back().is_none_or(char::is_whitespace))
+}
+
+/// The picker typing `key` opens in a prompt whose text is `input`; `None` = it types as usual.
+/// A selection is replaced by the typed char, so the char goes where the selection starts.
+pub fn trigger(key: &DialogKey, input: &Input) -> Option<Trigger> {
+    let DialogKey::Insert(text) = key else {
+        return None;
+    };
+    let picker = match text.as_str() {
+        "@" => Trigger::File,
+        "/" => Trigger::Slash,
+        _ => return None,
+    };
+    let at = input
+        .selection()
+        .map_or(input.cursor(), |selection| selection.start);
+    trigger_at(input.as_str(), at).then_some(picker)
 }
 
 /// How a picked file is typed (§20B.1): `template` (`composer.file_ref`) with `{path}` replaced
@@ -363,6 +404,8 @@ fn without_blank_edges(text: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::Motion;
+    use crate::text_box::Input;
     use crate::text_box::Outcome;
     use mkrew_protocol::SessionQueueEvent;
 
@@ -717,5 +760,70 @@ mod tests {
             unqueue_failure(&body(ErrorCode::InvalidState, "session exited")).as_deref(),
             Some("Cannot remove the queued text: session exited")
         );
+    }
+
+    /// A `/` in a path, a URL or "and/or", and an `@` in an address, are typed as they are.
+    #[test]
+    fn a_trigger_needs_a_line_start_or_whitespace_before_it() {
+        for (text, cursor, opens) in [
+            ("", 0, true),
+            ("fix ", 4, true),
+            ("fix\n", 4, true),
+            ("fix\t", 4, true),
+            ("a b", 2, true),
+            ("héllo ", "héllo ".len(), true),
+            ("src", 3, false),
+            ("see http:", 9, false),
+            ("a@b", 3, false),
+            ("ab", 1, false),
+            ("héllo", "héllo".len(), false),
+            // Never a panic: past the end, or inside a multi-byte char.
+            ("ab", 5, false),
+            ("é", 1, false),
+        ] {
+            assert_eq!(trigger_at(text, cursor), opens, "{text:?} at {cursor}");
+        }
+    }
+
+    #[test]
+    fn a_trigger_is_picked_by_the_typed_char_and_a_selection_moves_the_spot() {
+        let (at, slash) = (DialogKey::Insert("@".into()), DialogKey::Insert("/".into()));
+        let mut input = Input::default();
+        assert_eq!(trigger(&at, &input), Some(Trigger::File));
+        assert_eq!(trigger(&slash, &input), Some(Trigger::Slash));
+        assert_eq!(trigger(&DialogKey::Insert("a".into()), &input), None);
+        assert_eq!(trigger(&DialogKey::Backspace, &input), None);
+
+        input.insert("src");
+        assert_eq!(trigger(&slash, &input), None, "`src/` is a path");
+        input.insert(" b");
+        assert_eq!(trigger(&slash, &input), None, "after `b`");
+        // `b` selected: the typed char replaces it, so the spot is after the space.
+        input.edit(&DialogKey::Move {
+            motion: Motion::Left,
+            extend: true,
+        });
+        assert_eq!(input.selected_text(), Some("b"));
+        assert_eq!(trigger(&slash, &input), Some(Trigger::Slash));
+    }
+
+    #[test]
+    fn a_composer_trigger_needs_a_shown_idle_draft() {
+        let session = Ulid::new();
+        let slash = DialogKey::Insert("/".into());
+        let mut composers = Composers::default();
+        assert_eq!(composers.trigger(session, &slash), None, "no draft");
+        composers.open(session);
+        assert_eq!(composers.trigger(session, &slash), Some(Trigger::Slash));
+        composers.insert(session, "fix");
+        assert_eq!(composers.trigger(session, &slash), None, "after a word");
+        composers.insert(session, " ");
+        assert_eq!(composers.trigger(session, &slash), Some(Trigger::Slash));
+
+        composers.begin_send(session);
+        assert_eq!(composers.trigger(session, &slash), None, "sending");
+        composers.sent(session, Err("session exited".into()));
+        composers.hide(session);
+        assert_eq!(composers.trigger(session, &slash), None, "hidden");
     }
 }

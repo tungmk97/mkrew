@@ -44,9 +44,7 @@ impl Shell {
         let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
             return;
         };
-        if key == DialogKey::Insert("@".into())
-            && self.composers.shown(session).is_some_and(|d| !d.busy)
-        {
+        if self.composers.trigger(session, &key) == Some(composer::Trigger::File) {
             return self.open_file_ref_picker(composer::Target::Composer(session), window, cx);
         }
         if key == DialogKey::Paste

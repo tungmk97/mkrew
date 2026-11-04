@@ -78,7 +78,8 @@ impl Shell {
         {
             return;
         }
-        if (self.task_dialog.as_ref()).is_some_and(|dialog| dialog.opens_file_picker(&key)) {
+        let trigger = (self.task_dialog.as_ref()).and_then(|dialog| dialog.trigger(&key));
+        if trigger == Some(composer::Trigger::File) {
             return self.open_file_ref_picker(composer::Target::TaskDialog, window, cx);
         }
         let paste = (key == DialogKey::Paste)

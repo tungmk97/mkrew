@@ -8,7 +8,7 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
-use crate::composer::Prompt;
+use crate::composer::{self, Prompt, Trigger};
 use crate::editor::Motion;
 use crate::text_box::Input;
 use crate::workspace_menu::{AgentChoice, Agents, agent_choices};
@@ -284,9 +284,13 @@ impl TaskDialog {
         self.prompt.insert(text);
     }
 
-    /// `@` typed in the prompt opens the file picker, as in the composer (§20B.1).
-    pub fn opens_file_picker(&self, key: &DialogKey) -> bool {
-        self.field == Field::Prompt && !self.busy && *key == DialogKey::Insert("@".into())
+    /// The picker typing `key` opens in the prompt (§20B.1, §20B.7): `@` files, `/` the agent's
+    /// commands. The title types them as they are, and so does a dialog that is saving.
+    pub fn trigger(&self, key: &DialogKey) -> Option<Trigger> {
+        if self.field != Field::Prompt || self.busy {
+            return None;
+        }
+        composer::trigger(key, self.prompt.text.input())
     }
 
     /// Starts the ✦ rewrite of the prompt as generation `generation_id`; returns the text to
@@ -625,12 +629,9 @@ mod tests {
     /// meanwhile follow it, and the task is not saved with the old text.
     #[test]
     fn the_prompt_is_improved_like_the_composer() {
-        let at = DialogKey::Insert("@".into());
         let mut dialog = TaskDialog::edit(task());
-        assert!(!dialog.opens_file_picker(&at), "the title types an @");
         dialog.key(DialogKey::SwitchField);
-        assert!(dialog.opens_file_picker(&at));
-        assert!(!dialog.opens_file_picker(&DialogKey::Insert("a".into())));
+        assert_eq!(dialog.trigger(&DialogKey::Insert("a".into())), None);
 
         let id = Ulid::new();
         assert_eq!(
@@ -661,8 +662,34 @@ mod tests {
         );
 
         dialog.busy = true;
-        assert!(!dialog.opens_file_picker(&at), "not while saving");
         assert_eq!(dialog.begin_enhance(Ulid::new()), None);
+    }
+
+    /// `@` and `/` open a picker in the prompt only where they start something, and only while
+    /// the dialog takes typing.
+    #[test]
+    fn the_dialog_trigger_needs_the_prompt_field_and_an_idle_dialog() {
+        let (at, slash) = (DialogKey::Insert("@".into()), DialogKey::Insert("/".into()));
+        let mut dialog = TaskDialog::edit(task());
+        assert_eq!(
+            (dialog.trigger(&at), dialog.trigger(&slash)),
+            (None, None),
+            "the title types them"
+        );
+        dialog.key(DialogKey::SwitchField);
+        assert_eq!(
+            dialog.trigger(&slash),
+            None,
+            "after `bug`: a path or an address"
+        );
+        type_text(&mut dialog, " ");
+        assert_eq!(
+            (dialog.trigger(&at), dialog.trigger(&slash)),
+            (Some(Trigger::File), Some(Trigger::Slash))
+        );
+        assert_eq!(dialog.trigger(&DialogKey::Insert("a".into())), None);
+        dialog.busy = true;
+        assert_eq!(dialog.trigger(&slash), None, "not while saving");
     }
 
     #[test]
