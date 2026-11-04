@@ -6,6 +6,7 @@
 
 mod claude;
 pub mod front_matter;
+mod omp;
 mod scan;
 mod tables;
 
@@ -78,7 +79,8 @@ pub fn list(cli: Cli, roots: &ScanRoots, overrides: &SlashOverrides) -> SlashLis
     });
     let mut items = match cli {
         Cli::Claude => claude::scan(roots, builtins, &mut errors),
-        Cli::Codex | Cli::Omp | Cli::Copilot => builtins.into_iter().map(|b| b.item).collect(),
+        Cli::Omp => omp::scan(roots, builtins, &mut errors),
+        Cli::Codex | Cli::Copilot => builtins.into_iter().map(|b| b.item).collect(),
     };
     apply(&mut items, overrides);
     if cli == Cli::Claude {
