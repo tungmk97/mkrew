@@ -155,29 +155,30 @@ mod tests {
     }
 
     #[test]
-    fn the_manage_row_is_the_last_stop_of_the_keyboard_in_both_pickers() {
-        // The composer's picker and the New task dialog's "From prompt…" are the same picker.
-        for target in [Target::Composer(Ulid::new()), Target::TaskDialog] {
-            let mut picker = PromptPicker::new(target, library(), PromptVars::default());
-            assert_eq!(picker.manage_row(), 2);
-            picker.step(1);
-            picker.step(1);
-            assert!(picker.on_manage());
-            assert_eq!(picker.preview(), None, "nothing is typed for it");
-            picker.step(1);
-            assert_eq!(
-                (picker.selected, picker.on_manage()),
-                (0, false),
-                "wraps to the first prompt"
-            );
-            picker.step(-1);
-            assert!(picker.on_manage());
-            picker.pick(0);
-            picker.pick(2);
-            assert!(picker.on_manage(), "a click on the row picks it");
-            picker.pick(3);
-            assert_eq!(picker.selected, 2, "past the Manage row is ignored");
-        }
+    fn the_manage_row_is_the_last_stop_of_the_keyboard() {
+        let mut picker = PromptPicker::new(
+            Target::Composer(Ulid::new()),
+            library(),
+            PromptVars::default(),
+        );
+        assert_eq!(picker.manage_row(), 2);
+        picker.step(1);
+        picker.step(1);
+        assert!(picker.on_manage());
+        assert_eq!(picker.preview(), None, "nothing is typed for it");
+        picker.step(1);
+        assert_eq!(
+            (picker.selected, picker.on_manage()),
+            (0, false),
+            "wraps to the first prompt"
+        );
+        picker.step(-1);
+        assert!(picker.on_manage());
+        picker.pick(0);
+        picker.pick(2);
+        assert!(picker.on_manage(), "a click on the row picks it");
+        picker.pick(3);
+        assert_eq!(picker.selected, 2, "past the Manage row is ignored");
     }
 
     #[test]

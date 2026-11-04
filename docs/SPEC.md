@@ -2196,7 +2196,7 @@ context_window = 200000        # tokens, for the % shown
    or unavailable variable renders as empty and is listed in a muted note under the preview. Pure
    `mkrew_core::prompt::render(template, vars)`. Entry points: palette "Insert prompt…" (into the
    open composer, else opens one on the focused agent pane), a "Prompts" menu in the composer,
-   and a "From prompt…" menu in the task dialog (the same modal picker, §20B.3 T10.5). Three
+   and a "From prompt…" menu in the task dialog (one modal picker). Three
    samples are seeded on first run if the dir is missing: `review.md`, `explain.md`,
    `fix-tests.md`. Read and written by the UI directly (config, not state); a machine window uses
    this computer's folder.

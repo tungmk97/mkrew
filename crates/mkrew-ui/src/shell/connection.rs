@@ -313,6 +313,7 @@ impl Shell {
             phone_open: false,
             ports_dialog: None,
             settings_dialog: None,
+            settings_from_composer: false,
             settings_scroll: ScrollHandle::new(),
             prompts_scroll: ScrollHandle::new(),
             prompts_body_scroll: ScrollHandle::new(),

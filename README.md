@@ -190,10 +190,9 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
   If an agent's CLI is not recognised, set `cli = "claude"` (or `codex`, `omp`, `copilot`) in its profile; `[slash] hide` and `[[slash.add]]` fix single rows.
   Prompts: Settings → Prompts (`Ctrl+,`, or the palette's "Global: Manage prompts…") adds, edits, renames and deletes your prompt library.
   Insert one from the composer's Prompts menu or the New task dialog's "From prompt…".
-- **Shortcuts**: `Ctrl+,` creates `keymap.toml` in the config directory (every command listed,
-  commented out, at its default) and opens it in Zed. Edits apply after restarting Mkrew;
-  duplicate or invalid entries are listed in the command palette. Defaults:
-  [SPEC §13](docs/SPEC.md#13-ui-keyboard-shortcuts).
+- **Shortcuts**: `Ctrl+,` opens Settings; its Keyboard page lists every command and rebinds it, applied at once.
+  Your choices are saved in `keymap.toml` in the config directory.
+  Defaults: [SPEC §13](docs/SPEC.md#13-ui-keyboard-shortcuts).
 - **Without the UI** (also over SSH):
 
   ```bash

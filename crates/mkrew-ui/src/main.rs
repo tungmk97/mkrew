@@ -525,6 +525,8 @@ struct Shell {
     ports_dialog: Option<PortsDialog>,
     /// The open Settings dialog (modal, ADR 0073).
     settings_dialog: Option<SettingsDialog>,
+    /// The composer had the keyboard when Settings opened: Esc gives it back there.
+    settings_from_composer: bool,
     /// Scrolls its rows.
     settings_scroll: ScrollHandle,
     /// Keeps the open prompt's row in view in Settings → Prompts.
