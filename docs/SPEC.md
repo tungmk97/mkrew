@@ -600,6 +600,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `tab.set_layout` | `tab_id`, `layout` | ok |
 | `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`omp`/`copilot`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
 | `agent.profiles` | – | AgentProfile[] (each with `installed`: its program, or the OS shell for a shell without `command`, is found on PATH) + parse errors |
+| `slash.list` | `profile_id`, `project_id`, `worktree_task_id?` | `cli?` (absent when the profile's CLI is unknown, then `items` is empty), `items[]` (`name` without `/`, `description`, `argument_hint?`, `source`: `built_in`, `project`, `user`, `managed`, `{"plugin": name}` or `profile`; `group?` on the omp `skill:` row), `errors[]` (files that could not be read); the `/` commands of the profile's agent CLI in the project folder, or the task's worktree, read on the daemon's machine |
 | `doc.list` | `project_id` | `DocFile[]` sorted by path: md files matching review globs + md files in `files_changed` session events of the last 24 h + files with unresolved comments (existing files only); each with `open_comments` (unresolved thread roots), `last_session_id?`/`last_changed_at?` (newest such event). Keeps the project watched for `doc.changed` until released (`watch.release`) or the daemon stops |
 | `doc.read` | `project_id`, `file_path` | `file_path`, `content`, `hash` (opaque); ≤ 2 MiB UTF-8; `invalid_request` for absolute/`..` paths. Also keeps the project watched (until released) |
 | `comment.list/create/reply/resolve/reopen` | `file_path`, `start_line`, `end_line`, `quote`, `body` | DocComment (every comment carries `context`: `doc` (default) or `diff`, replies = their root's; `list`: `project_id` + `file_path?` + `context?` → DocComment[], roots and replies oldest first; `create`: `project_id`, 1-based inclusive lines, `context?` (`diff` = new-side lines of a diff); `reply`: `comment_id`, `body`, `mkrew_session_id?` (set by `mk comment reply` = agent author); `resolve`/`reopen`: `comment_id`). Ids are `c_` + ULID; the prefix is optional when parsing |
@@ -684,6 +685,8 @@ Protocol 49 (ADR 0087): request `watch.release`.
 Protocol 50 (remote machine, spec 2026-10-29 §5): requests `session.log_tail`, `session.transcript`, `fs.create` and `fs.ignore`.
 
 Protocol 51 (port manager, spec 2026-11-01): requests `port.list` and `port.stop`.
+
+Protocol 52 (slash picker, spec 2026-11-04): request `slash.list`.
 
 Protocol 41: `session.move` and `Session.position`.
 

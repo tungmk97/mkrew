@@ -177,6 +177,10 @@ pub enum Request {
     HookReport(HookReportParams),
     #[serde(rename = "agent.profiles")]
     AgentProfiles,
+    /// Returns [`SlashListResult`]: the `/` commands of the profile's agent CLI in the project
+    /// folder, or in the task's worktree, read on the daemon's machine (spec 2026-11-04 §4.3).
+    #[serde(rename = "slash.list")]
+    SlashList(SlashListParams),
     /// Returns `DocFile[]`, sorted by path.
     #[serde(rename = "doc.list")]
     DocList(DocListParams),
@@ -1602,6 +1606,70 @@ pub struct ProfileErrorInfo {
     pub line: Option<usize>,
     pub column: Option<usize>,
     pub message: String,
+}
+
+/// The agent CLIs whose `/` list Mkrew knows (spec 2026-11-04 §4.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Cli {
+    Claude,
+    Codex,
+    Omp,
+    Copilot,
+}
+
+/// Where a `/` row comes from; the picker shows it as a chip.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlashSource {
+    /// The CLI's own table (also its bundled skills).
+    BuiltIn,
+    /// A file in the project folder or one of its parents up to the repo root.
+    Project,
+    /// A file under the user's home.
+    User,
+    /// A file in the organisation's managed folder (Claude Code).
+    Managed,
+    /// A plugin, by name.
+    Plugin(String),
+    /// A `[[slash.add]]` row of the agent profile.
+    Profile,
+}
+
+/// One row of the `/` picker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlashItem {
+    /// Without the leading `/`.
+    pub name: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argument_hint: Option<String>,
+    pub source: SlashSource,
+    /// omp only: the row stands for this many skills and expands to `skill:`; the skill rows
+    /// follow it (spec 2026-11-04 §5.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<u32>,
+}
+
+/// `slash.list` (spec 2026-11-04 §4.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlashListParams {
+    /// The agent profile id (its `cli` key, or the CLI inferred from `command`, picks the list).
+    pub profile_id: String,
+    pub project_id: Ulid,
+    /// The task worktree to scan instead of the project folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_task_id: Option<Ulid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlashListResult {
+    /// `None`: the profile's CLI is unknown; `items` is empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli: Option<Cli>,
+    pub items: Vec<SlashItem>,
+    /// Files that could not be read or parsed, one line each.
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -381,6 +381,11 @@ fn every_m1_request_round_trips() {
             payload: json!({"session_id": "abc"}),
         }),
         Request::AgentProfiles,
+        Request::SlashList(SlashListParams {
+            profile_id: "claude".into(),
+            project_id: sid(),
+            worktree_task_id: Some(sid()),
+        }),
         Request::DocList(DocListParams { project_id: sid() }),
         Request::DocRead(DocReadParams {
             project_id: sid(),
@@ -1181,4 +1186,110 @@ fn log_tail_and_transcript_bytes_are_base64() {
         }),
     });
     assert_eq!(wire["method"], "session.log_tail");
+}
+
+/// Spec 2026-11-04 §4.3: the request carries no worktree key when there is none.
+#[test]
+fn slash_list_request_wire_shape() {
+    let message = Message::Request {
+        id: 3,
+        request: Request::SlashList(SlashListParams {
+            profile_id: "claude".into(),
+            project_id: sid(),
+            worktree_task_id: None,
+        }),
+    };
+    assert_eq!(
+        round_trip(&message),
+        json!({
+            "type": "request", "id": 3, "method": "slash.list",
+            "params": {"profile_id": "claude", "project_id": sid().to_string()}
+        })
+    );
+    let in_worktree = SlashListParams {
+        profile_id: "omp".into(),
+        project_id: sid(),
+        worktree_task_id: Some(sid()),
+    };
+    let wire = serde_json::to_value(&in_worktree).unwrap();
+    assert_eq!(wire["worktree_task_id"], json!(sid().to_string()));
+    assert_eq!(
+        serde_json::from_value::<SlashListParams>(wire).unwrap(),
+        in_worktree
+    );
+}
+
+/// Spec 2026-11-04 §4.3: a row names its source and leaves out what it does not have.
+#[test]
+fn slash_rows_name_their_source_and_omit_what_is_missing() {
+    let plain = SlashItem {
+        name: "compact".into(),
+        description: "Summarize the context".into(),
+        argument_hint: None,
+        source: SlashSource::BuiltIn,
+        group: None,
+    };
+    assert_eq!(
+        serde_json::to_value(&plain).unwrap(),
+        json!({"name": "compact", "description": "Summarize the context", "source": "built_in"})
+    );
+    let grouped = SlashItem {
+        name: "kit:deploy".into(),
+        description: "Ship it".into(),
+        argument_hint: Some("<env>".into()),
+        source: SlashSource::Plugin("kit".into()),
+        group: Some(3),
+    };
+    let wire = serde_json::to_value(&grouped).unwrap();
+    assert_eq!(
+        wire,
+        json!({
+            "name": "kit:deploy", "description": "Ship it", "argument_hint": "<env>",
+            "source": {"plugin": "kit"}, "group": 3
+        })
+    );
+    assert_eq!(serde_json::from_value::<SlashItem>(wire).unwrap(), grouped);
+    for (source, name) in [
+        (SlashSource::BuiltIn, "built_in"),
+        (SlashSource::Project, "project"),
+        (SlashSource::User, "user"),
+        (SlashSource::Managed, "managed"),
+        (SlashSource::Profile, "profile"),
+    ] {
+        assert_eq!(serde_json::to_value(&source).unwrap(), json!(name));
+        assert_eq!(
+            serde_json::from_value::<SlashSource>(json!(name)).unwrap(),
+            source
+        );
+    }
+}
+
+/// Spec 2026-11-04 §4.3: `cli` is absent when the profile's CLI is unknown.
+#[test]
+fn slash_list_result_leaves_an_unknown_cli_out() {
+    let unknown = SlashListResult {
+        cli: None,
+        items: vec![],
+        errors: vec!["a.md: unreadable".into()],
+    };
+    let wire = serde_json::to_value(&unknown).unwrap();
+    assert_eq!(wire, json!({"items": [], "errors": ["a.md: unreadable"]}));
+    assert_eq!(
+        serde_json::from_value::<SlashListResult>(wire).unwrap(),
+        unknown
+    );
+    for (cli, name) in [
+        (Cli::Claude, "claude"),
+        (Cli::Codex, "codex"),
+        (Cli::Omp, "omp"),
+        (Cli::Copilot, "copilot"),
+    ] {
+        let known = SlashListResult {
+            cli: Some(cli),
+            items: vec![],
+            errors: vec![],
+        };
+        assert_eq!(serde_json::to_value(&known).unwrap()["cli"], json!(name));
+    }
+    assert!(serde_json::from_value::<Cli>(json!("gemini")).is_err());
 }
