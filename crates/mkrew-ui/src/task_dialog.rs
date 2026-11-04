@@ -10,6 +10,7 @@ use ulid::Ulid;
 
 use crate::composer::{self, Prompt, Trigger};
 use crate::editor::Motion;
+use crate::slash_picker::SlashKey;
 use crate::text_box::Input;
 use crate::workspace_menu::{AgentChoice, Agents, agent_choices};
 
@@ -291,6 +292,18 @@ impl TaskDialog {
             return None;
         }
         composer::trigger(key, self.prompt.text.input())
+    }
+
+    /// What the `/` picker lists for (§20B.7): the agent picked here, else the workspace's
+    /// `default_agent`, in the project folder; or in the task's worktree when an edited task
+    /// has one (a new task has none until it runs, §20E.1). `None`: no agent to ask about.
+    pub fn slash_key(&self, default_agent: Option<&str>) -> Option<SlashKey> {
+        let profile = self.agent.as_deref().or(default_agent)?;
+        let worktree = match &self.mode {
+            Mode::Edit(task) if task.worktree_path.is_some() => Some(task.id),
+            _ => None,
+        };
+        Some((profile.to_owned(), self.project_id(), worktree))
     }
 
     /// Starts the ✦ rewrite of the prompt as generation `generation_id`; returns the text to
@@ -690,6 +703,39 @@ mod tests {
         assert_eq!(dialog.trigger(&DialogKey::Insert("a".into())), None);
         dialog.busy = true;
         assert_eq!(dialog.trigger(&slash), None, "not while saving");
+    }
+
+    /// Which agent and folder the `/` list is for (§20B.7): the picked agent, else the workspace
+    /// default; the project folder, or an edited task's worktree.
+    #[test]
+    fn the_slash_list_is_for_the_picked_agent_in_the_project_or_the_tasks_worktree() {
+        let mut dialog = TaskDialog::new(Ulid::new());
+        let project = dialog.project_id();
+        assert_eq!(dialog.slash_key(None), None, "no agent to ask about");
+        assert_eq!(
+            dialog.slash_key(Some("claude")),
+            Some(("claude".into(), project, None))
+        );
+        dialog.choose_agent("codex");
+        assert_eq!(
+            dialog.slash_key(Some("claude")),
+            Some(("codex".into(), project, None)),
+            "the picked agent wins"
+        );
+
+        let mut saved = task();
+        let dialog = TaskDialog::edit(saved.clone());
+        assert_eq!(
+            dialog.slash_key(None),
+            Some(("codex".into(), saved.project_id, None)),
+            "no worktree yet"
+        );
+        saved.worktree_path = Some("C:/wt/app".into());
+        let dialog = TaskDialog::edit(saved.clone());
+        assert_eq!(
+            dialog.slash_key(None),
+            Some(("codex".into(), saved.project_id, Some(saved.id)))
+        );
     }
 
     #[test]

@@ -83,6 +83,7 @@ pub mod run_setup;
 pub mod scrollbar;
 pub mod settings_dialog;
 pub mod sidebar;
+pub mod slash_picker;
 pub mod split;
 pub mod status;
 pub mod stt;
