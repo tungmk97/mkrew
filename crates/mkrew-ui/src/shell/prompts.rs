@@ -126,6 +126,15 @@ impl Shell {
         let Some(label) = label else {
             return then(self, window, cx);
         };
+        // Shown first, so a refused save or name is visible (like Files shows its tab).
+        let other_tab =
+            (self.settings_dialog.as_ref()).is_some_and(|dialog| dialog.tab != Tab::Prompts);
+        if other_tab {
+            let effect = (self.settings_dialog.as_mut()).map(|dialog| dialog.set_tab(Tab::Prompts));
+            if let Some(effect) = effect {
+                self.apply_settings_effect(effect, window, cx);
+            }
+        }
         let answer = window.prompt(
             PromptLevel::Warning,
             &format!("Save changes to {label}?"),
@@ -138,7 +147,11 @@ impl Shell {
             let _ = this.update_in(cx, |shell, window, cx| {
                 match choice {
                     Some(files_view::Leave::Save) => shell.save_prompt(Some(then), window, cx),
-                    Some(files_view::Leave::DontSave) => then(shell, window, cx),
+                    Some(files_view::Leave::DontSave) => {
+                        then(shell, window, cx);
+                        // A prompt whose file cannot be read leaves the list at once.
+                        shell.sync_prompts();
+                    }
                     None => window.focus(&shell.dialog_focus, cx),
                 }
                 cx.notify();

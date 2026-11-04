@@ -641,6 +641,19 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> bool {
+        // An unsaved prompt draft of Settings → Prompts asks first (spec 7.2, like Files). The
+        // dialog is dropped before `then` runs, so "Don't save" does not ask again.
+        if (self.settings_dialog.as_ref()).is_some_and(|dialog| dialog.prompts.is_dirty()) {
+            if window.has_active_prompt() {
+                return true;
+            }
+            let then: AfterSave = Box::new(move |shell, window, cx| {
+                shell.settings_dialog = None;
+                then(shell, window, cx);
+            });
+            self.leave_prompt_draft(then, window, cx);
+            return true;
+        }
         let unsaved = (self.files.values()).find_map(|view| {
             let paths = view.unsaved_paths();
             (!paths.is_empty()).then_some((view.project_id, paths))
