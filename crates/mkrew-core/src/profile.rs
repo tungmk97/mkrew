@@ -381,7 +381,7 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
                 return Err(err(Some(span), "`cli` is only for agent profiles".into()));
             }
             let name = value.into_inner();
-            match parse_cli(name.trim()) {
+            match parse_cli(&name.trim().to_lowercase()) {
                 Some(cli) => Some(cli),
                 None => {
                     return Err(err(
@@ -864,6 +864,10 @@ oneshot = '"C:\Program Files\x.exe" -p --model fast'"#,
         assert_eq!(cli("command = \"claude\""), Some(Cli::Claude));
         assert_eq!(cli("command = \"npx\""), None);
         assert_eq!(cli("command = \"npx\"\ncli = \"omp\""), Some(Cli::Omp));
+        assert_eq!(
+            cli("command = \"npx\"\ncli = \" Claude \""),
+            Some(Cli::Claude)
+        );
         assert_eq!(
             cli("command = \"claude\"\ncli = \"codex\""),
             Some(Cli::Codex),
