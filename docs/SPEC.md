@@ -459,6 +459,27 @@ one is a parse error. Unknown keys and invalid `needs_input_patterns` regexes ar
 Profiles written before `oneshot` existed are not updated (seeding never overwrites); ✦ then
 answers `invalid_state` naming the key and the file.
 
+Two optional keys serve the `/` picker (§20B.7, ADR 0094):
+
+```toml
+cli = "claude"                  # "claude" | "codex" | "omp" | "copilot"
+[slash]
+hide = ["desktop", "upgrade"]   # names removed from the picker
+[[slash.add]]                   # a command the scan cannot see; wins over every other source
+name = "deploy"
+description = "Deploy to staging"
+argument_hint = "<env>"         # optional
+```
+
+`cli` names the CLI the agent runs.
+A missing `cli` is inferred from the file stem of `command`, lowercased, with `.exe`, `.cmd`, `.bat` and `.ps1` removed: `claude`, `codex`, `omp` or `copilot`.
+A wrapper (`npx`, a script) infers nothing, so the user sets `cli`.
+A shell profile (`kind = "shell"`) never has a CLI.
+An unknown `cli` value is a parse error, listed like the other profile errors.
+The shipped `agents/*.toml` state `cli` explicitly; `AgentProfileInfo` (§7) does not change.
+`[slash] hide` removes rows by name after every source is merged.
+`[[slash.add]]` rows get the source `profile`.
+
 Patterns above are starting points only. They must be refined by recording real agent output
 (add the recordings as test fixtures under `crates/mkrew-core/tests/fixtures/`).
 
@@ -1483,6 +1504,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Send comments to agent | Ctrl+Shift+S |
 | Agent (v2) | Peek the first session that needs you (↑/↓ cycle, Alt+Y / Alt+N answer, Ctrl+O open the pane, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
+| Agent (v2) | In a prompt box (the composer, the task dialog's Prompt), at the start of a line or after a space: pick the agent's command (§20B.7) / pick a file (§12A); Enter or Tab types the pick, Esc types the character | / / @ |
 | Agent (v2) | Send selection to an agent (Editor, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
 | Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10) |
@@ -2129,16 +2151,18 @@ context_window = 200000        # tokens, for the % shown
    pane's bottom: a multi-line text box (Enter = newline, Ctrl+Enter = send, Esc = hide and keep
    the draft; these keys are local to the composer like dialog keys, so they never reach the
    terminal or Run task). Send = `session.send` with submit; multi-line text already goes as one bracketed
-   paste (§7). Typing `@` opens the quick-open file picker (§12A); the pick inserts
+   paste (§7). Typing `@` or `/` at the start of a line or after whitespace opens a picker; in the
+   middle of a word (`a@b.com`, `src/main.rs`) they type as they are. `@` opens the quick-open file
+   picker (§12A); the pick inserts
    `composer.file_ref` with `{path}` = the project-relative path, `/` separators, quoted with `"`
-   if it contains spaces. Drafts are kept per session in UI memory (lost on UI restart — fine).
+   if it contains spaces. `/` opens the agent's command picker (§20B.7). Drafts are kept per session in UI memory (lost on UI restart, which is fine).
    ✦ (shown while the composer has the keyboard and the draft is not blank) sends the draft to
    the session's own agent profile via `ai.generate` (`enhance_prompt`, §7). The agent may read
    the project folder for context. The rewrite replaces the draft, and the user still sends it.
    Typing waits until the answer arrives; picked prompts or files, selections and pastes made
    meanwhile are added after it. A failure keeps the draft and shows why.
-   The task dialog's prompt (Board "New task", edit task) is edited the same way: `@` picks a
-   file, "From prompt…" inserts a library prompt, and ✦ "Improve" rewrites it with the task's
+   The task dialog's prompt (Board "New task", edit task) is edited the same way: `@` picks a file, `/` an agent command,
+   "From prompt…" inserts a library prompt, and ✦ "Improve" rewrites it with the task's
    agent (the workspace default when none is picked), with the same waiting and failure rules;
    saving waits for the answer. Pasted images are not attached there: attachments belong to a
    session (§20B.5), and a task has none until it runs.
@@ -2176,6 +2200,19 @@ context_window = 200000        # tokens, for the % shown
    composer draft while it is shown, and the pane shows an accent ring while the row hovers it.
 6. **Run with…** A task card's menu offers "Run with…" (pick a profile): updates the task's agent,
    then runs it. Only for Todo or Review cards without a live session.
+7. **Slash picker.** Typing `/` at the start of a line or after whitespace in the composer or the task dialog's Prompt opens a picker that lists what typing `/` lists in the agent's own terminal, with the same names, descriptions and order (ADR 0094).
+   The daemon builds the list on the machine that runs the agent (`slash.list`, §7): the CLI's built-in commands from a table pinned to a CLI version (`crates/mkrew-core/slash/<cli>.toml`), plus the skills, command files and plugin commands that CLI finds on disk by its documented rules.
+   The CLI is never started.
+   Which CLI an agent runs comes from the profile's `cli` (§6); a profile with no known CLI shows a note and a button that opens its file.
+   The folder scanned is the session's project (its task worktree when the task has one) for a composer, the project folder for a new task, and the task's worktree (else the project folder) for an edited task.
+   The agent is the session's profile in a composer, the dialog's Agent (else the workspace default) in the task dialog; with none, `/` types as it is.
+   The last answer per (agent, project, worktree) is cached for the connection: reopening shows it at once and refreshes it.
+   An empty filter lists the rows in the CLI's order; a filter ranks by fuzzy score on the name, ties in the CLI's order.
+   Each row shows `/name`, its argument hint, a one-line description and a source chip (`built-in`, `project`, `user`, `managed`, `plugin: <name>`, `profile`).
+   ↑ ↓ move, Enter or Tab types `/name ` into the box, Esc types `/` and what was typed after it.
+   In omp the `skill:` row stands for its skills and expands when the filter starts with `skill:`; a group row types nothing.
+   Not listed: MCP prompts (the footer says so for Claude), Codex skills (its `$` popup), omp extension and TypeScript commands (add them with `[[slash.add]]`), rows that depend on the user's plan or login (hide them with `[slash] hide`).
+   Files that cannot be read are counted in the footer, with the list in a tooltip.
 
 **Protocol (M10):**
 
