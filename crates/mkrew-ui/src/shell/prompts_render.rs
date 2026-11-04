@@ -57,6 +57,12 @@ impl Shell {
             .and_then(|draft| draft.origin.as_deref());
         let on_list = dialog.focus == Focus::Prompts(Spot::List);
         let empty = library.prompts.is_empty() && library.errors.is_empty();
+        // No row shows the keyboard (no draft, a new one, an empty library): the column does.
+        let ring_on_column = on_list
+            && !library
+                .prompts
+                .iter()
+                .any(|p| selected == Some(p.name.as_str()));
 
         // The filled button while the library is empty, like Machines' first "Add machine…".
         let new_button = if empty {
@@ -94,7 +100,12 @@ impl Shell {
                     shell.settings_do(
                         move |dialog, _| {
                             dialog.focus = Focus::Prompts(Spot::List);
-                            Effect::Prompts(PromptAction::Open(name))
+                            // The open prompt: Open again would ask to save and could drop edits.
+                            if active {
+                                Effect::None
+                            } else {
+                                Effect::Prompts(PromptAction::Open(name))
+                            }
                         },
                         window,
                         cx,
@@ -110,7 +121,12 @@ impl Shell {
                         .child(prompt.title.clone()),
                 )
                 .when(prompt.title != prompt.name, |el| {
-                    el.child(meta_line(theme, prompt.name.clone().into()))
+                    el.child(
+                        meta_line(theme, prompt.name.clone().into())
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis(),
+                    )
                 })
         });
 
@@ -139,6 +155,13 @@ impl Shell {
 
         div()
             .flex_none()
+            .rounded(px(radius::SMALL))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(if ring_on_column {
+                rgb(theme.selected_ring).into()
+            } else {
+                gpui::transparent_black()
+            })
             .w(px(theme::SETTINGS_PROMPTS_LIST_WIDTH))
             .flex()
             .flex_col()
