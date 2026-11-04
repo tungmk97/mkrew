@@ -152,9 +152,9 @@ pub struct SlashPicker {
 }
 
 impl SlashPicker {
-    /// A picker for `scope` showing the `cached` rows of an earlier answer at once (`None` =
+    /// A picker for `scope` showing the `cached` answer of an earlier request at once (`None` =
     /// loading). The caller sends [`Self::request`].
-    pub fn new(target: Target, scope: SlashKey, cached: Option<Vec<SlashItem>>) -> Self {
+    pub fn new(target: Target, scope: SlashKey, cached: Option<SlashListResult>) -> Self {
         let mut picker = Self {
             target,
             selected: 0,
@@ -172,12 +172,14 @@ impl SlashPicker {
         picker
     }
 
-    /// Takes `cached` as the rows (`None` = loading) and forgets what the last answer said.
-    fn show(&mut self, cached: Option<Vec<SlashItem>>) {
+    /// Takes `cached` (the CLI, rows and unreadable files of an earlier answer; `None` =
+    /// loading) and forgets what the last answer said.
+    fn show(&mut self, cached: Option<SlashListResult>) {
         self.ready = cached.is_some();
-        self.items = cached.unwrap_or_default();
-        self.cli = None;
-        self.errors.clear();
+        (self.cli, self.items, self.errors) = match cached {
+            Some(result) => (result.cli, result.items, result.errors),
+            None => (None, Vec::new(), Vec::new()),
+        };
         self.error = None;
         self.refilter();
     }
@@ -190,7 +192,7 @@ impl SlashPicker {
     /// The agent changed (the dialog's Agent chips): the rows of `scope` replace these, the
     /// filter text stays. The caller sends a new [`Self::request`]; answers to the old one are
     /// dropped.
-    pub fn retarget(&mut self, scope: SlashKey, cached: Option<Vec<SlashItem>>) {
+    pub fn retarget(&mut self, scope: SlashKey, cached: Option<SlashListResult>) {
         self.scope = scope;
         self.show(cached);
         // Request numbers start at 1: the old agent's answer is refused even before the next
@@ -396,6 +398,10 @@ mod tests {
         names(picker.items(), picker.rows())
     }
 
+    fn cached(items: Vec<SlashItem>, cli: Cli) -> Option<SlashListResult> {
+        answer(Some(cli), items).ok()
+    }
+
     fn answer(cli: Option<Cli>, items: Vec<SlashItem>) -> Result<SlashListResult, String> {
         Ok(SlashListResult {
             cli,
@@ -482,7 +488,7 @@ mod tests {
         let mut picker = SlashPicker::new(
             Target::TaskDialog,
             scope(),
-            Some(items(&["review", "init"])),
+            cached(items(&["review", "init"]), Cli::Claude),
         );
         assert_eq!(picker.accept().as_deref(), Some("/review "));
         picker.step(1);
@@ -508,7 +514,8 @@ mod tests {
 
     #[test]
     fn a_group_row_sets_the_filter_and_types_nothing() {
-        let mut picker = SlashPicker::new(Target::TaskDialog, scope(), Some(omp_items()));
+        let mut picker =
+            SlashPicker::new(Target::TaskDialog, scope(), cached(omp_items(), Cli::Omp));
         picker.step(1);
         assert_eq!(shown(&picker)[picker.selected], "skill:");
         assert_eq!(picker.accept(), None, "nothing is typed");
@@ -545,15 +552,18 @@ mod tests {
     fn an_agent_change_replaces_the_rows_and_keeps_the_filter() {
         let project = Ulid::new();
         let claude: SlashKey = ("claude".into(), project, None);
-        let mut picker =
-            SlashPicker::new(Target::TaskDialog, claude, Some(items(&["review", "init"])));
+        let mut picker = SlashPicker::new(
+            Target::TaskDialog,
+            claude,
+            cached(items(&["review", "init"]), Cli::Claude),
+        );
         type_in(&mut picker, "re");
         assert_eq!(shown(&picker), ["review"]);
         let (claude_request, _) = picker.request();
 
         picker.retarget(
             ("codex".into(), project, None),
-            Some(items(&["resume", "model"])),
+            cached(items(&["resume", "model"]), Cli::Codex),
         );
         assert_eq!(picker.query().as_str(), "re", "the filter stays");
         assert_eq!(shown(&picker), ["resume"]);
@@ -591,7 +601,10 @@ mod tests {
         let project = Ulid::new();
         let mut picker = SlashPicker::new(Target::TaskDialog, scope(), None);
         let (old, _) = picker.request();
-        picker.retarget(("codex".into(), project, None), Some(items(&["resume"])));
+        picker.retarget(
+            ("codex".into(), project, None),
+            cached(items(&["resume"]), Cli::Codex),
+        );
         assert!(!picker.answered(old, answer(Some(Cli::Claude), items(&["review"]))));
         assert_eq!(shown(&picker), ["resume"]);
     }
@@ -623,10 +636,18 @@ mod tests {
 
     #[test]
     fn cached_rows_show_at_once_and_a_failed_refresh_keeps_them() {
-        let mut picker =
-            SlashPicker::new(Target::TaskDialog, scope(), Some(items(&["a", "b", "c"])));
+        let mut picker = SlashPicker::new(
+            Target::TaskDialog,
+            scope(),
+            cached(items(&["a", "b", "c"]), Cli::Claude),
+        );
         assert_eq!(shown(&picker), ["a", "b", "c"], "no wait for the daemon");
         assert_eq!(picker.empty(), None);
+        assert_eq!(
+            picker.cli(),
+            Some(Cli::Claude),
+            "the footer knows the CLI at once"
+        );
         picker.step(2);
 
         let (number, _) = picker.request();

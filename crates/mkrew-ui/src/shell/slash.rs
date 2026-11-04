@@ -66,7 +66,7 @@ impl Shell {
             let _ = this.update(cx, |shell, cx| {
                 match &answer {
                     Ok(result) => {
-                        shell.slash_cache.insert(scope, result.items.clone());
+                        shell.slash_cache.insert(scope, result.clone());
                     }
                     Err(error) => {
                         tracing::warn!(profile = %scope.0, "slash.list failed: {error}");
@@ -84,7 +84,8 @@ impl Shell {
     }
 
     /// The dialog's Agent changed while the picker is open: the new agent's cached rows replace
-    /// the old ones (the filter stays) and its list is asked for.
+    /// the old ones (the filter stays) and its list is asked for. Not reachable by the user
+    /// today: the picker's modal shade covers the Agent chips; kept for when it stops doing so.
     pub(crate) fn retarget_slash_picker(
         &mut self,
         window: &mut Window,
@@ -135,10 +136,21 @@ impl Shell {
     }
 
     /// Enter, Tab or a click: types the pick; a group row only expands (its skills are listed).
+    /// With no rows, Enter takes the note's action: Try again after an error, Open profile when
+    /// the CLI is unknown (the buttons' keyboard path).
     pub(crate) fn accept_slash_pick(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(picker) = self.slash_picker.as_mut() else {
             return;
         };
+        if picker.rows().is_empty() {
+            if picker.error().is_some() {
+                self.request_slash(window, cx);
+                cx.notify();
+            } else if picker.empty() == Some(slash_picker::Empty::UnknownCli) {
+                self.open_slash_profile(window, cx);
+            }
+            return;
+        }
         match picker.accept() {
             Some(text) => self.close_slash_picker(Some(text), window, cx),
             None => {
@@ -181,8 +193,12 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        // Tab picks like Enter: it is the completion key of the agents' own `/` popups.
-        let key = if task_dialog::dialog_key(&event.keystroke) == Some(DialogKey::SwitchField) {
+        // A plain Tab picks like Enter: it is the completion key of the agents' own `/` popups.
+        // Shift+Tab and Ctrl+Tab are not picks.
+        let modifiers = event.keystroke.modifiers;
+        let plain_tab = event.keystroke.key == "tab"
+            && !(modifiers.shift || modifiers.control || modifiers.alt || modifiers.platform);
+        let key = if plain_tab {
             Some(quick_open::Key::Open)
         } else {
             quick_open::key(&event.keystroke)
@@ -272,6 +288,7 @@ impl Shell {
                         .px(px(space::S))
                         .py(px(space::XS))
                         .rounded(px(radius::SMALL))
+                        .overflow_hidden()
                         .text_size(font_size::BODY)
                         .text_color(rgb(theme.text))
                         // The pick has a focus-colored ring, so it stays visible under hover.
@@ -293,13 +310,21 @@ impl Shell {
                         }))
                         .child(
                             div()
-                                .flex_none()
+                                .min_w_0()
+                                .max_w(relative(theme::SLASH_NAME_MAX_FRACTION))
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
                                 .font_family(theme.terminal_font_family.clone())
                                 .child(gpui::StyledText::new(name).with_highlights(highlights)),
                         )
                         .children(item.argument_hint.clone().map(|hint| {
                             div()
-                                .flex_none()
+                                .min_w_0()
+                                .max_w(relative(theme::SLASH_HINT_MAX_FRACTION))
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
                                 .text_size(font_size::META)
                                 .text_color(rgb(theme.text_muted))
                                 .child(hint)
@@ -331,7 +356,9 @@ impl Shell {
                 )
             })
             .collect();
-        let note = picker.empty().map(|empty| match empty {
+        let note =
+            picker.empty().map(|empty| {
+                match empty {
             slash_picker::Empty::Loading => {
                 muted("Loading commands…".to_owned()).into_any_element()
             }
@@ -348,7 +375,7 @@ impl Shell {
                 .child(
                     button(
                         "slash-open-profile",
-                        icon_text(Icon::FileText, "Open profile", button_fg(theme, true)),
+                        icon_text(Icon::FileText, "Open profile (Enter)", button_fg(theme, true)),
                         theme,
                         true,
                     )
@@ -366,7 +393,8 @@ impl Shell {
                 picker.query().as_str().trim()
             ))
             .into_any_element(),
-        });
+        }
+            });
         let failure = picker.error().map(|error| {
             div()
                 .flex()
@@ -385,7 +413,7 @@ impl Shell {
                 .child(
                     button(
                         "slash-retry",
-                        icon_text(Icon::RotateCw, "Try again", button_fg(theme, true)),
+                        icon_text(Icon::RotateCw, "Try again (Enter)", button_fg(theme, true)),
                         theme,
                         true,
                     )

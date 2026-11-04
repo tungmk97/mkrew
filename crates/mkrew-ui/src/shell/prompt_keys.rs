@@ -6,10 +6,10 @@ use crate::*;
 impl Shell {
     /// Applies `event` to the prompt `target`: `@` opens the file picker and `/` the agent's
     /// command picker (at a line start or after a space), a paste takes the clipboard's text
-    /// (an image too in the composer), Ctrl+C
-    /// / Ctrl+X copy the selection, every other key edits. Returns `true` when the key was
-    /// typed or opened a picker, `false` when it asks the box to leave (Esc, Ctrl+Enter, Enter
-    /// in the dialog's title): nothing changed and the caller answers it.
+    /// (an image too in the composer), Ctrl+C / Ctrl+X copy the selection, every other key
+    /// edits. Returns `true` when the key was typed or opened a picker, `false` when it asks
+    /// the box to leave (Esc, Ctrl+Enter, Enter in the dialog's title): nothing changed and
+    /// the caller answers it.
     pub(crate) fn prompt_key_down(
         &mut self,
         target: composer::Target,

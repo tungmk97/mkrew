@@ -39,7 +39,7 @@ use mkrew_protocol::{
     SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionReadResult,
     SessionRef, SessionResumeParams, SessionSendParams, SessionSendResult, SessionSpawnResult,
     SessionState, SessionTranscript, SessionTranscriptParams, SessionUnqueueParams,
-    SessionUsageEvent, SlashItem, StateSource, TabCreateParams, TabListParams, TabPinParams,
+    SessionUsageEvent, SlashListResult, StateSource, TabCreateParams, TabListParams, TabPinParams,
     TabRef, TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef,
     TaskStatus, TerminalTab, Turn, UndoPreview, ViewedFile,
 };
@@ -841,7 +841,7 @@ struct Shell {
     slash_picker_scroll: ScrollHandle,
     /// The last `slash.list` answer per (agent profile, project, task worktree): shown at once
     /// when the picker opens again, then refreshed (§20B.7). Lives for the connection.
-    slash_cache: HashMap<SlashKey, Vec<SlashItem>>,
+    slash_cache: HashMap<SlashKey, SlashListResult>,
     /// The open peek popover (§20A.1).
     peek: Option<Peek>,
     /// The session row under the mouse, for the peek's hover delay.

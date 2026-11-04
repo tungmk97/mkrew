@@ -427,6 +427,11 @@ pub const WORKSPACE_SWATCH_BORDER: f32 = 2.0;
 /// Height of the quick open match list (it scrolls past that).
 pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;
 
+/// How much of a `/` picker row's width its command name and its argument hint may take before
+/// they are cut with `…` (the description takes what is left, the source chip never shrinks).
+pub const SLASH_NAME_MAX_FRACTION: f32 = 0.4;
+pub const SLASH_HINT_MAX_FRACTION: f32 = 0.25;
+
 /// Tallest the Git view's commit message box grows (it scrolls past that, ~8 lines).
 pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
 
