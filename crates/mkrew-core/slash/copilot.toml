@@ -182,7 +182,7 @@ argument_hint = "[config|list|show|add|edit|delete|disable|enable|auth|reload|se
 
 [[command]]
 name = "model"
-description = "Select the AI model you want to use, or choose **Auto**. Model IDs are case-insensitive, and the canonical ID is saved"
+description = "Select the AI model you want to use, or choose Auto"
 argument_hint = "[--session|--global|--repo|--local] [MODEL|auto TIER]"
 
 [[command]]
