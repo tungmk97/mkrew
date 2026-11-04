@@ -3,6 +3,7 @@ name    = "Claude Code"
 # Short badge before the agent name (≤ 3 characters). Missing = the id's first letter.
 icon    = "✻"
 command = "claude"
+cli     = "claude"
 args    = []
 # How the task prompt reaches the agent:
 #   "arg"  = append prompt as the last argument

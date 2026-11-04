@@ -31,8 +31,8 @@ pub mod viewed;
 pub use hook::HookAgent;
 pub use paths::Paths;
 pub use profile::{
-    AgentProfile, ProfileError, ProfileKind, ProfileSet, PromptMode, StateConfig, StateMode,
-    UsageConfig, UsageFormat, load_dir, parse_profile,
+    AgentProfile, ProfileError, ProfileKind, ProfileSet, PromptMode, SlashAdd, SlashOverrides,
+    StateConfig, StateMode, UsageConfig, UsageFormat, infer_cli, load_dir, parse_profile,
 };
 pub use settings::{Settings, SettingsError};
 pub use state::{HookEvent, SendQueue, StateMachine, can_deliver};

@@ -2,6 +2,7 @@
 name = "Oh My Pi"
 icon = "π"
 command = "omp"
+cli = "omp"
 prompt_mode = "type"
 # Resume command; {session_id} = the id omp reports through the Mkrew extension.
 resume = "omp --resume {session_id}"

@@ -8,6 +8,7 @@ use std::io;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use mkrew_protocol::Cli;
 use serde::Deserialize;
 use toml::Spanned;
 
@@ -23,6 +24,9 @@ pub struct AgentProfile {
     pub kind: ProfileKind,
     /// Program to run. Empty only for [`ProfileKind::Shell`], meaning the OS default shell.
     pub command: String,
+    /// The agent CLI this profile runs (ADR 0094): the `cli` key, else [`infer_cli`] of
+    /// `command`; always `None` for a shell. It picks the `/` commands the prompt boxes list.
+    pub cli: Option<Cli>,
     pub args: Vec<String>,
     pub prompt_mode: PromptMode,
     pub env: BTreeMap<String, String>,
@@ -38,6 +42,46 @@ pub struct AgentProfile {
     pub state: StateConfig,
     /// `[usage]` (SPEC §20E.3); `None` = no usage for this agent.
     pub usage: Option<UsageConfig>,
+    /// `[slash]`: fixes to the `/` command list.
+    pub slash: SlashOverrides,
+}
+
+/// `[slash]` of a profile (spec 2026-11-04 §4.2). Names have no leading `/`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SlashOverrides {
+    /// Rows removed by name after every source is merged.
+    pub hide: Vec<String>,
+    /// `[[slash.add]]` rows; they win over every other source of the same name.
+    pub add: Vec<SlashAdd>,
+}
+
+/// One `[[slash.add]]` row: a command the tables and scans do not know.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashAdd {
+    pub name: String,
+    pub description: String,
+    pub argument_hint: Option<String>,
+}
+
+/// The CLI `command` starts, from its program name: the file name, lowercased, without
+/// `.exe`, `.cmd`, `.bat` or `.ps1`. A wrapper (`npx`, a script) infers nothing; set `cli`.
+pub fn infer_cli(command: &str) -> Option<Cli> {
+    let program = command.trim().rsplit(['/', '\\']).next()?.to_lowercase();
+    let stem = [".exe", ".cmd", ".bat", ".ps1"]
+        .iter()
+        .find_map(|ext| program.strip_suffix(ext))
+        .unwrap_or(&program);
+    parse_cli(stem)
+}
+
+fn parse_cli(name: &str) -> Option<Cli> {
+    match name {
+        "claude" => Some(Cli::Claude),
+        "codex" => Some(Cli::Codex),
+        "omp" => Some(Cli::Omp),
+        "copilot" => Some(Cli::Copilot),
+        _ => None,
+    }
 }
 
 /// Where the daemon reads token usage from (SPEC §20E.3).
@@ -330,6 +374,54 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
         None => None,
     };
 
+    let cli = match raw.cli {
+        Some(value) => {
+            let span = value.span();
+            if raw.kind == ProfileKind::Shell {
+                return Err(err(Some(span), "`cli` is only for agent profiles".into()));
+            }
+            let name = value.into_inner();
+            match parse_cli(name.trim()) {
+                Some(cli) => Some(cli),
+                None => {
+                    return Err(err(
+                        Some(span),
+                        format!(
+                            "unknown `cli` `{name}`, expected one of `claude`, `codex`, `omp` or `copilot`"
+                        ),
+                    ));
+                }
+            }
+        }
+        None if raw.kind == ProfileKind::Agent => infer_cli(&command),
+        None => None,
+    };
+
+    let mut slash = SlashOverrides::default();
+    for name in raw.slash.hide {
+        let span = name.span();
+        let name = command_name(&name.into_inner());
+        if name.is_empty() {
+            return Err(err(Some(span), "`[slash] hide` has an empty name".into()));
+        }
+        slash.hide.push(name);
+    }
+    for add in raw.slash.add {
+        let span = add.name.span();
+        let name = command_name(&add.name.into_inner());
+        if name.is_empty() || name.contains(char::is_whitespace) {
+            return Err(err(
+                Some(span),
+                format!("`[[slash.add]]` name `{name}` must be one word without spaces"),
+            ));
+        }
+        slash.add.push(SlashAdd {
+            name,
+            description: add.description.trim().to_owned(),
+            argument_hint: add.argument_hint.filter(|h| !h.trim().is_empty()),
+        });
+    }
+
     let mut needs_input_patterns = Vec::with_capacity(raw.state.needs_input_patterns.len());
     for pattern in raw.state.needs_input_patterns {
         let span = pattern.span();
@@ -349,6 +441,7 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
         icon,
         kind: raw.kind,
         command,
+        cli,
         args: raw.args,
         prompt_mode: raw.prompt_mode,
         env: raw.env,
@@ -365,7 +458,13 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
             format: UsageFormat::parse(&u.format),
             context_window: u.context_window,
         }),
+        slash,
     })
+}
+
+/// A command name as written in `[slash]`: trimmed, without the `/` a user types.
+fn command_name(written: &str) -> String {
+    written.trim().trim_start_matches('/').to_owned()
 }
 
 #[derive(Deserialize)]
@@ -376,6 +475,7 @@ struct RawProfile {
     #[serde(default)]
     kind: ProfileKind,
     command: Option<Spanned<String>>,
+    cli: Option<Spanned<String>>,
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
@@ -389,6 +489,25 @@ struct RawProfile {
     #[serde(default)]
     state: RawState,
     usage: Option<RawUsage>,
+    #[serde(default)]
+    slash: RawSlash,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSlash {
+    #[serde(default)]
+    hide: Vec<Spanned<String>>,
+    #[serde(default)]
+    add: Vec<RawSlashAdd>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSlashAdd {
+    name: Spanned<String>,
+    description: String,
+    argument_hint: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -737,5 +856,120 @@ oneshot = '"C:\Program Files\x.exe" -p --model fast'"#,
         for name in ["claude_jsonl", "codex_jsonl", "omp_jsonl", "other_format"] {
             assert_eq!(UsageFormat::parse(name).name(), name);
         }
+    }
+
+    #[test]
+    fn cli_is_explicit_or_inferred_from_the_command() {
+        let cli = |src: &str| parse(src).unwrap().cli;
+        assert_eq!(cli("command = \"claude\""), Some(Cli::Claude));
+        assert_eq!(cli("command = \"npx\""), None);
+        assert_eq!(cli("command = \"npx\"\ncli = \"omp\""), Some(Cli::Omp));
+        assert_eq!(
+            cli("command = \"claude\"\ncli = \"codex\""),
+            Some(Cli::Codex),
+            "the key wins over the program name"
+        );
+        assert_eq!(cli("kind = \"shell\""), None);
+        assert_eq!(
+            cli("kind = \"shell\"\ncommand = \"copilot\""),
+            None,
+            "a shell never infers a CLI"
+        );
+    }
+
+    #[test]
+    fn infer_cli_reads_the_program_name() {
+        use Cli::{Claude, Codex, Copilot, Omp};
+        for (command, expected) in [
+            ("claude", Some(Claude)),
+            ("claude.cmd", Some(Claude)),
+            (r"C:\x\codex.exe", Some(Codex)),
+            (r"C:\Users\me\AppData\Roaming\npm\CODEX.CMD", Some(Codex)),
+            ("/usr/local/bin/copilot", Some(Copilot)),
+            ("omp.ps1", Some(Omp)),
+            ("  Omp.BAT ", Some(Omp)),
+            ("npx", None),
+            ("claude-code", None),
+            ("claude.exe.bak", None),
+            ("claude.sh", None),
+            ("", None),
+        ] {
+            assert_eq!(infer_cli(command), expected, "{command:?}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_cli_is_an_error_at_its_value() {
+        assert_eq!(
+            parse_err("command = \"x\"\ncli = \"gemini\"\n"),
+            "agents/broken.toml:2:7: unknown `cli` `gemini`, expected one of `claude`, `codex`, `omp` or `copilot`"
+        );
+        let shell = parse_err("kind = \"shell\"\ncli = \"claude\"\n");
+        assert!(
+            shell.ends_with("`cli` is only for agent profiles"),
+            "{shell}"
+        );
+    }
+
+    #[test]
+    fn slash_section_parses_hide_and_add() {
+        let p = parse(
+            r#"command = "claude"
+[slash]
+hide = ["desktop", "/upgrade"]
+
+[[slash.add]]
+name = "deploy"
+description = "Deploy to staging"
+argument_hint = "<env>"
+
+[[slash.add]]
+name = "/ship"
+description = " Ship it "
+argument_hint = " "
+"#,
+        )
+        .unwrap();
+        assert_eq!(p.slash.hide, ["desktop", "upgrade"]);
+        assert_eq!(
+            p.slash.add,
+            [
+                SlashAdd {
+                    name: "deploy".into(),
+                    description: "Deploy to staging".into(),
+                    argument_hint: Some("<env>".into()),
+                },
+                SlashAdd {
+                    name: "ship".into(),
+                    description: "Ship it".into(),
+                    argument_hint: None,
+                },
+            ]
+        );
+        assert_eq!(
+            parse("command = \"x\"").unwrap().slash,
+            SlashOverrides::default()
+        );
+    }
+
+    #[test]
+    fn slash_names_must_be_one_word_and_keys_must_be_known() {
+        let hide = parse_err("command = \"x\"\n[slash]\nhide = [\"/\"]\n");
+        assert!(hide.starts_with("agents/broken.toml:3:"), "{hide}");
+        assert!(hide.ends_with("`[slash] hide` has an empty name"), "{hide}");
+        let spaced = parse_err(
+            "command = \"x\"\n[[slash.add]]\nname = \"two words\"\ndescription = \"d\"\n",
+        );
+        assert!(
+            spaced.contains("must be one word without spaces"),
+            "{spaced}"
+        );
+        let no_description = parse_err("command = \"x\"\n[[slash.add]]\nname = \"a\"\n");
+        assert!(
+            no_description.contains("missing field `description`"),
+            "{no_description}"
+        );
+        let typo = parse_err("command = \"x\"\n[slash]\nhidden = [\"a\"]\n");
+        assert!(typo.contains("unknown field `hidden`"), "{typo}");
     }
 }

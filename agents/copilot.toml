@@ -2,6 +2,7 @@
 name = "GitHub Copilot"
 icon = "⊙"
 command = "copilot"
+cli = "copilot"
 # The prompt is typed once the TUI is ready (`copilot` takes no positional prompt).
 prompt_mode = "type"
 resume = "copilot --resume={session_id}"
