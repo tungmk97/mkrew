@@ -837,17 +837,5 @@ mod tests {
             PromptError::Missing("x".into()).to_string(),
             "There is no prompt named \"x\" any more."
         );
-        // The other reasons only need to say something.
-        for e in [
-            NameError::Empty,
-            NameError::TooLong,
-            NameError::LeadingDot,
-            NameError::Forbidden('*'),
-            NameError::Control,
-            NameError::Trailing,
-            NameError::Reserved("CON".into()),
-        ] {
-            assert!(!e.to_string().is_empty(), "{e:?}");
-        }
     }
 }

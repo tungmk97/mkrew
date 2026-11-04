@@ -103,6 +103,7 @@ fn attachments_are_saved_per_session_and_bad_ones_rejected() {
 #[test]
 fn attachments_are_saved_per_project_and_unknown_projects_rejected() {
     let env = Env::new();
+    env.write_fake_profile();
     let (_daemon, mut client) = env.start();
     let project = client.add_project(&env.repo());
 
@@ -128,6 +129,15 @@ fn attachments_are_saved_per_project_and_unknown_projects_rejected() {
     assert_eq!(
         error_code(client.call(save_attachment(
             AttachmentOwner::Project(Ulid::new()),
+            "png",
+            vec![1]
+        ))),
+        ErrorCode::NotFound
+    );
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    assert_eq!(
+        error_code(client.call(save_attachment(
+            AttachmentOwner::Project(spawned.session_id),
             "png",
             vec![1]
         ))),
