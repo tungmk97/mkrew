@@ -2196,8 +2196,18 @@ context_window = 200000        # tokens, for the % shown
    or unavailable variable renders as empty and is listed in a muted note under the preview. Pure
    `mkrew_core::prompt::render(template, vars)`. Entry points: palette "Insert prompt…" (into the
    open composer, else opens one on the focused agent pane), a "Prompts" menu in the composer,
-   and a "From prompt…" menu in the task dialog. Three samples are seeded on first run if the dir
-   is missing: `review.md`, `explain.md`, `fix-tests.md`. Read by the UI directly (config, not state).
+   and a "From prompt…" menu in the task dialog (the same modal picker, §20B.3 T10.5). Three
+   samples are seeded on first run if the dir is missing: `review.md`, `explain.md`,
+   `fix-tests.md`. Read and written by the UI directly (config, not state); a machine window uses
+   this computer's folder.
+   The picker's last row "Manage prompts…" and the palette's "Global: Manage prompts…" open
+   Settings → Prompts (§14), where prompts are added, edited, renamed and deleted with
+   `mkrew_core::prompt::{validate_name, create, save, rename, delete, read}`.
+   A name is at most 64 characters and cannot be empty, start with a dot, contain
+   `/ \ : * ? " < > |` or a control character, end in a space or a dot, or be a Windows reserved name
+   (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, also before a first dot); it is
+   unique ignoring case, except that a prompt may be renamed to a new case of its own name.
+   `save` writes a temp file in the folder and renames it over the target.
 4. **Send selection to agent.** `Ctrl+Shift+L` in the Editor (the editor's selected lines, else the caret's line), Git diff (picked new-side
    lines) and a terminal (selected text) opens a session picker (default: the task's session for
    Git task changes, else the workspace's most recently active agent session; same list as

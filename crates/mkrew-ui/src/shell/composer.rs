@@ -474,12 +474,19 @@ impl Shell {
         }
     }
 
-    /// Types the picked prompt, rendered, into the picker's target.
+    /// Enter or a click on the pick: types the picked prompt, rendered, into the picker's
+    /// target; on the last row it opens Settings → Prompts instead.
     pub(crate) fn insert_prompt_pick(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(rendered) = self.prompt_picker.as_ref().and_then(PromptPicker::preview) else {
+        let Some(picker) = self.prompt_picker.as_ref() else {
             return;
         };
-        self.close_prompt_picker(Some(rendered.text), window, cx);
+        let (manage, rendered) = (picker.on_manage(), picker.preview());
+        if manage {
+            self.close_prompt_picker(None, window, cx);
+            self.open_prompts_settings(window, cx);
+        } else if let Some(rendered) = rendered {
+            self.close_prompt_picker(Some(rendered.text), window, cx);
+        }
     }
 
     /// `session.unqueue`: the queued text is not typed; the `session.queue` event that follows
@@ -521,35 +528,39 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let hover = theme.surface_raised;
-        let rows: Vec<gpui::AnyElement> = picker
+        // One frame for every row: the pick has a focus-colored ring, so it stays visible under
+        // hover.
+        let frame = |id: gpui::ElementId, picked: bool| {
+            div()
+                .id(id)
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(space::M))
+                .px(px(space::S))
+                .py(px(space::XS))
+                .rounded(px(radius::SMALL))
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(if picked {
+                    theme.pane_focus_border
+                } else {
+                    theme.surface
+                }))
+                .when(picked, |el| el.bg(rgb(theme.surface_raised)))
+                .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
+                .cursor_pointer()
+                .active(|style| style.opacity(opacity::ACTIVE))
+        };
+        let mut rows: Vec<gpui::AnyElement> = picker
             .library
             .prompts
             .iter()
             .enumerate()
             .map(|(index, prompt)| {
                 let picked = index == picker.selected;
-                div()
-                    .id(("prompt-entry", index))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::M))
-                    .px(px(space::S))
-                    .py(px(space::XS))
-                    .rounded(px(radius::SMALL))
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    // The pick has a focus-colored ring, so it stays visible under hover.
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(if picked {
-                        theme.pane_focus_border
-                    } else {
-                        theme.surface
-                    }))
-                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
-                    .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-                    .cursor_pointer()
-                    .active(|style| style.opacity(opacity::ACTIVE))
+                frame(("prompt-entry", index).into(), picked)
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         if let Some(picker) = shell.prompt_picker.as_mut() {
                             picker.pick(index);
@@ -575,6 +586,32 @@ impl Shell {
                     .into_any_element()
             })
             .collect();
+        let empty = rows.is_empty();
+        rows.push(
+            frame("prompt-manage".into(), picker.on_manage())
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    if let Some(picker) = shell.prompt_picker.as_mut() {
+                        let manage = picker.manage_row();
+                        picker.pick(manage);
+                        shell.insert_prompt_pick(window, cx);
+                    }
+                }))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_color(rgb(theme.accent_text))
+                        .child("Manage prompts…"),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .child("Settings → Prompts"),
+                )
+                .into_any_element(),
+        );
         let preview = picker.preview();
         let note = preview
             .as_ref()
@@ -586,12 +623,16 @@ impl Shell {
                 .child(text)
         };
         let unreadable = picker.library.errors.len();
-        let into = match picker.target {
-            composer::Target::Composer(_) => {
-                "↑ ↓ to pick · Enter types it in the composer · Esc closes"
-            }
-            composer::Target::TaskDialog => {
-                "↑ ↓ to pick · Enter adds it to the task prompt · Esc closes"
+        let into = if picker.on_manage() {
+            "Enter opens Settings → Prompts · Esc closes"
+        } else {
+            match picker.target {
+                composer::Target::Composer(_) => {
+                    "↑ ↓ to pick · Enter types it in the composer · Esc closes"
+                }
+                composer::Target::TaskDialog => {
+                    "↑ ↓ to pick · Enter adds it to the task prompt · Esc closes"
+                }
             }
         };
         let panel = div()
@@ -616,14 +657,15 @@ impl Shell {
                     .text_color(rgb(theme.text))
                     .child("Insert prompt"),
             )
-            .when(rows.is_empty(), |el| {
+            .when(empty, |el| {
                 el.child(
                     div()
                         .flex()
                         .items_center()
                         .gap(px(space::M))
                         .child(div().flex_1().min_w_0().child(muted(
-                            "No prompts yet: add Markdown files to the prompts folder.".to_owned(),
+                            "No prompts yet: use Manage prompts… below, or add Markdown files to the prompts folder."
+                                .to_owned(),
                         )))
                         .child(
                             button(
@@ -645,19 +687,17 @@ impl Shell {
                         ),
                 )
             })
-            .when(!rows.is_empty(), |el| {
-                el.child(
-                    div()
-                        .id("prompt-entries")
-                        .max_h(px(theme::QUICK_OPEN_LIST_HEIGHT))
-                        .overflow_y_scroll()
-                        .track_scroll(&self.prompt_picker_scroll)
-                        .flex()
-                        .flex_col()
-                        .gap(px(space::XS))
-                        .children(rows),
-                )
-            })
+            .child(
+                div()
+                    .id("prompt-entries")
+                    .max_h(px(theme::QUICK_OPEN_LIST_HEIGHT))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.prompt_picker_scroll)
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .children(rows),
+            )
             .children(preview.map(|rendered| {
                 // No border: the raised surface sets the preview apart (§14).
                 div()

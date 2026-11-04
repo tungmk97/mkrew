@@ -12,10 +12,6 @@ use mkrew_ui::settings_dialog::Tab;
 impl Shell {
     /// The palette's "Global: Manage prompts…" and the prompt picker's last row: Settings on the
     /// Prompts page (an open Settings dialog keeps its state, an edited draft included).
-    #[expect(
-        dead_code,
-        reason = "the palette and the prompt picker call it from Task C5"
-    )]
     pub(crate) fn open_prompts_settings(
         &mut self,
         window: &mut Window,

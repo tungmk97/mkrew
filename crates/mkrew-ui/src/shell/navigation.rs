@@ -674,6 +674,7 @@ impl Shell {
             palette::Action::Extra(Extra::AddMachine) => self.open_machine_add(window, cx),
             palette::Action::Extra(Extra::PhoneAccess) => self.open_phone_access(window, cx),
             palette::Action::Extra(Extra::Ports) => self.open_ports(window, cx),
+            palette::Action::Extra(Extra::ManagePrompts) => self.open_prompts_settings(window, cx),
             palette::Action::Extra(Extra::CheckUpdates) => self.check_updates(true, window, cx),
             palette::Action::Extra(Extra::CopyLastError) => self.copy_last_error(cx),
             palette::Action::Extra(Extra::DismissToasts) => {
@@ -857,6 +858,8 @@ impl Shell {
                     Extra::Ports => self.open_ports(window, cx),
                     // Handled above: it needs no workspace.
                     Extra::AddMachine => self.open_machine_add(window, cx),
+                    // Handled above: it needs no workspace.
+                    Extra::ManagePrompts => self.open_prompts_settings(window, cx),
                     Extra::CheckUpdates => self.check_updates(true, window, cx),
                 }
             }

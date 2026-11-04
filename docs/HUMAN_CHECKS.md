@@ -21,6 +21,35 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-04 Prompts page in Settings (spec 2026-11-04 part C)
+
+- [ ] **Look (dark + light):** Ctrl+, then Prompts (between Keyboard and Machines).
+  The prompt list is 200 px wide on the left: a **New prompt** button, then one row per prompt with its title and, when different, its name in muted text.
+  The open prompt has the raised fill; with the keyboard on the list it also has a ring.
+  The editor on the right shows Name, a 240 px prompt box that scrolls, the variables hint, and Save, Delete, Open folder; Save is disabled until something changes; Delete is disabled for a new prompt.
+  Nothing is clipped at the dialog's 760 px width.
+- [ ] **Empty state (dark + light):** delete every prompt; the page says "No prompts yet." with a filled **New prompt** button and "Pick a prompt to edit it, or start a new one." on the right.
+- [ ] **Errors (dark + light):** type `con` or `a/b` or an existing name in another case, then Save: the reason shows in red under the Name field and the page stays open with your text.
+  Make the folder read-only or lock a file, then Save: the error shows at the top of the page.
+  Put a non-UTF-8 file in the folder: it shows with a red ✕ and its error in its own row.
+- [ ] **Keyboard only:** Tab goes tab list, prompt list, Name, text, then New prompt / Save / Delete / Open folder with the focus ring.
+  ↑ / ↓ on the list open the neighbour; Enter on the list goes to Name; Enter in Name goes to the text; Ctrl+N starts a new prompt; Ctrl+S and Ctrl+Enter save, also with a button focused.
+  With a file open in the Editor behind Settings, Ctrl+S saves the prompt and not the file.
+- [ ] **Unsaved changes:** edit the text, then click or press ↓ on another prompt, or Ctrl+N, or Esc: "Save changes to …?" appears with Save, Don't save and Cancel.
+  Save writes and continues, Don't save drops the edit and continues, Cancel (or Esc) stays.
+  Switching to another Settings page and back keeps the edit.
+  Closing the window, tray Quit or an update restart with an unsaved prompt draft asks the same question.
+  Starting that question from another Settings tab shows the Prompts tab first.
+- [ ] **Rename (Windows):** rename `review` to `Review`: it works, the list shows `Review`, no "exists already" message.
+  Rename to the name of another prompt in any case: refused under the field.
+  Rename and edit the text in one Save: both are kept.
+- [ ] **Delete:** Delete asks "Delete “name”?" with Delete and Cancel; Delete removes the file and the list drops it.
+- [ ] **Open folder and re-read:** Open folder opens the prompts folder in Zed; edit a prompt there, switch to another Settings page and back (or reopen Settings): the page shows the new text and the new file.
+- [ ] **Entry points:** the palette lists "Global: Manage prompts…" (also in a machine window, where the page says the prompts are on this computer).
+  The prompt picker (composer Prompts, or palette "Insert prompt…") ends with a "Manage prompts…" row: ↓ from the last prompt reaches it, Enter opens Settings → Prompts.
+  New task → "From prompt…" → Manage prompts… opens Settings over the dialog; Esc closes Settings and the dialog keeps its text and the keyboard.
+  While Settings is open over the dialog, typing and Tab go to Settings and not to the New task fields.
+
 ### To verify - 2026-11-04 `/` command picker in the prompt boxes (ADR 0094)
 
 - [ ] **Install the new build and restart the daemon** (protocol 52; the daemon reads the lists).

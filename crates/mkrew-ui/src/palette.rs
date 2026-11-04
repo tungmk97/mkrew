@@ -101,6 +101,7 @@ pub enum Extra {
     FanOut,
     Broadcast,
     InsertPrompt,
+    ManagePrompts,
     Turns,
     FollowInZed,
     RunSetup,
@@ -141,13 +142,14 @@ pub enum Extra {
 }
 
 impl Extra {
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 44] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
         Self::FanOut,
         Self::Broadcast,
         Self::InsertPrompt,
+        Self::ManagePrompts,
         Self::Turns,
         Self::FollowInZed,
         Self::RunSetup,
@@ -195,6 +197,7 @@ impl Extra {
             Self::FanOut => "Agent: Run selected task with several agents…",
             Self::Broadcast => "Agent: Broadcast to agents…",
             Self::InsertPrompt => "Agent: Insert prompt…",
+            Self::ManagePrompts => "Global: Manage prompts…",
             Self::Turns => "Agent: Turns…",
             Self::FollowInZed => "Agent: Follow in Zed (on/off)",
             Self::RunSetup => "Run: Setup…",
@@ -279,7 +282,7 @@ impl Extra {
             }
             Self::AgentImprove => in_view(View::Terminals) && context.composer_open,
             Self::PhoneAccess | Self::CheckUpdates | Self::AddMachine => !context.machine,
-            Self::Ports => true,
+            Self::Ports | Self::ManagePrompts => true,
             Self::GitChangeBase => context.workspace && context.git && context.git_base,
             Self::GitSwitchRepo => context.workspace && context.git && context.git_repos,
             // The switch heads the Tasks side of the Board.

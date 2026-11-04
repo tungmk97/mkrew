@@ -1,5 +1,6 @@
 //! The prompt picker (SPEC §20B.3): the library's prompts, the picked one rendered with the
-//! variables known where it was opened, and a muted note naming the ones left empty. Opened from
+//! variables known where it was opened, a muted note naming the ones left empty, and a last row
+//! that opens Settings → Prompts. Opened from
 //! the palette ("Insert prompt…"), the composer ("Prompts") and the task dialog ("From
 //! prompt…"); the pick is typed into the composer or the task prompt. Pure and tested
 //! headlessly; `main.rs` renders it and reads keys with [`crate::quick_open::key`].
@@ -15,7 +16,7 @@ pub struct PromptPicker {
     pub target: Target,
     pub library: PromptLibrary,
     pub vars: PromptVars,
-    /// Index into `library.prompts` of the picked one.
+    /// Index into `library.prompts` of the picked one (the Manage row when it equals their count).
     pub selected: usize,
 }
 
@@ -29,20 +30,27 @@ impl PromptPicker {
         }
     }
 
-    /// Moves the pick by `by`, wrapping around the list.
-    pub fn step(&mut self, by: i32) {
-        let count = self.library.prompts.len();
-        if count == 0 {
-            return;
-        }
-        let count = i64::try_from(count).unwrap_or(i64::MAX);
-        let at = i64::try_from(self.selected).unwrap_or(0);
-        self.selected = usize::try_from((at + i64::from(by)).rem_euclid(count)).unwrap_or(0);
+    /// The row after the prompts: "Manage prompts…", which opens Settings → Prompts instead of
+    /// typing anything.
+    pub fn manage_row(&self) -> usize {
+        self.library.prompts.len()
     }
 
-    /// Picks row `index` (a click).
+    /// Whether the pick is the Manage row.
+    pub fn on_manage(&self) -> bool {
+        self.selected == self.manage_row()
+    }
+
+    /// Moves the pick by `by`, wrapping around the prompts and the Manage row.
+    pub fn step(&mut self, by: i32) {
+        let rows = i64::try_from(self.manage_row() + 1).unwrap_or(i64::MAX);
+        let at = i64::try_from(self.selected).unwrap_or(0);
+        self.selected = usize::try_from((at + i64::from(by)).rem_euclid(rows)).unwrap_or(0);
+    }
+
+    /// Picks row `index` (a click); the Manage row counts.
     pub fn pick(&mut self, index: usize) {
-        if index < self.library.prompts.len() {
+        if index <= self.manage_row() {
             self.selected = index;
         }
     }
@@ -111,10 +119,17 @@ mod tests {
         assert_eq!(preview.missing, ["file"]);
 
         picker.step(-1);
+        assert!(
+            picker.on_manage(),
+            "Up from the first prompt wraps to the Manage row"
+        );
+        assert_eq!(picker.preview(), None);
+        picker.step(-1);
         assert_eq!(picker.selected, 1);
         let preview = picker.preview().unwrap();
         assert_eq!(preview.text, "Review Fix login: ");
         assert_eq!(preview.missing, ["selection", "nope"]);
+        picker.step(1);
         picker.step(1);
         assert_eq!(picker.selected, 0);
 
@@ -133,6 +148,36 @@ mod tests {
         );
         picker.step(1);
         assert_eq!((picker.selected, picker.preview()), (0, None));
+        assert!(
+            picker.on_manage(),
+            "the Manage row is all an empty library has"
+        );
+    }
+
+    #[test]
+    fn the_manage_row_is_the_last_stop_of_the_keyboard_in_both_pickers() {
+        // The composer's picker and the New task dialog's "From prompt…" are the same picker.
+        for target in [Target::Composer(Ulid::new()), Target::TaskDialog] {
+            let mut picker = PromptPicker::new(target, library(), PromptVars::default());
+            assert_eq!(picker.manage_row(), 2);
+            picker.step(1);
+            picker.step(1);
+            assert!(picker.on_manage());
+            assert_eq!(picker.preview(), None, "nothing is typed for it");
+            picker.step(1);
+            assert_eq!(
+                (picker.selected, picker.on_manage()),
+                (0, false),
+                "wraps to the first prompt"
+            );
+            picker.step(-1);
+            assert!(picker.on_manage());
+            picker.pick(0);
+            picker.pick(2);
+            assert!(picker.on_manage(), "a click on the row picks it");
+            picker.pick(3);
+            assert_eq!(picker.selected, 2, "past the Manage row is ignored");
+        }
     }
 
     #[test]

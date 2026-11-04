@@ -188,6 +188,8 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
   type `/` at the start of a line or after a space to pick one of the agent's own commands, skills and plugin commands (Claude Code, Codex, Oh My Pi, Copilot), as its terminal would list them.
   Type `@` to pick a file.
   If an agent's CLI is not recognised, set `cli = "claude"` (or `codex`, `omp`, `copilot`) in its profile; `[slash] hide` and `[[slash.add]]` fix single rows.
+  Prompts: Settings → Prompts (`Ctrl+,`, or the palette's "Global: Manage prompts…") adds, edits, renames and deletes your prompt library.
+  Insert one from the composer's Prompts menu or the New task dialog's "From prompt…".
 - **Shortcuts**: `Ctrl+,` creates `keymap.toml` in the config directory (every command listed,
   commented out, at its default) and opens it in Zed. Edits apply after restarting Mkrew;
   duplicate or invalid entries are listed in the command palette. Defaults:

@@ -430,11 +430,13 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            // A picker over it (library prompt, `@` file) has the keyboard meanwhile.
+            // A picker over it (library prompt, `@` file) or Settings (opened from the prompt
+            // picker's Manage row) has the keyboard meanwhile.
             .when(
                 self.prompt_picker.is_none()
                     && self.quick_open.is_none()
-                    && self.slash_picker.is_none(),
+                    && self.slash_picker.is_none()
+                    && self.settings_dialog.is_none(),
                 |el| {
                     el.dialog_root(
                         &self.dialog_focus,
