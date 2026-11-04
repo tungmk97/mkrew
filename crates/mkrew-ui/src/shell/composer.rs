@@ -30,7 +30,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// Keys typed in the composer: Enter is a new line, Ctrl+Enter sends, Esc hides it.
+    /// Keys typed in the composer ([`Shell::prompt_key_down`]): Enter is a new line, Ctrl+Enter
+    /// sends, Esc hides it.
     pub(crate) fn composer_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -41,42 +42,17 @@ impl Shell {
         let Some(session) = self.composer_session() else {
             return;
         };
-        let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
+        if self.prompt_key_down(composer::Target::Composer(session), event, window, cx) {
             return;
-        };
-        if self.composers.trigger(session, &key) == Some(composer::Trigger::File) {
-            return self.open_file_ref_picker(composer::Target::Composer(session), window, cx);
         }
-        if key == DialogKey::Paste
-            && let Some(item) = cx.read_from_clipboard()
-        {
-            match item.text() {
-                Some(text) => self.composers.insert(session, &text),
-                None => self.composer_paste_image(session, item, window, cx),
-            }
-        }
-        if let Some(draft) = self.composers.shown(session) {
-            copy_selection(&key, draft.prompt.text.input(), cx);
-        }
-        match self.composers.key(session, key) {
-            text_box::Outcome::Edited => {
-                // ponytail: follows the caret only at the end; a caret moved above the
-                // visible lines is not scrolled into view (needs line-height maths).
-                let at_end = self.composers.shown(session).is_none_or(|d| {
-                    let input = d.prompt.text.input();
-                    input.cursor() == input.len()
-                });
-                if at_end {
-                    self.composer_scroll.scroll_to_bottom();
-                }
-                cx.notify();
-            }
-            text_box::Outcome::Cancel => {
+        match task_dialog::dialog_key(&event.keystroke) {
+            Some(DialogKey::Cancel) => {
                 self.composers.hide(session);
                 self.focus_pane(window, cx);
                 cx.notify();
             }
-            text_box::Outcome::Submit => self.send_composer(session, window, cx),
+            // Ctrl+Enter; ignored while sending or rewriting (`begin_send`).
+            _ => self.send_composer(session, window, cx),
         }
     }
 

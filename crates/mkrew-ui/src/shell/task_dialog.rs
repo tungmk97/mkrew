@@ -50,9 +50,10 @@ impl Shell {
         cx.notify();
     }
 
-    /// Keys typed in the task dialog edit the focused field; Tab / Shift+Tab move between the
-    /// title and the prompt, then through the buttons; Enter (title) or Ctrl+Enter saves, Esc
-    /// cancels; `@` in the prompt picks a file, as in the composer.
+    /// Keys typed in the task dialog ([`Shell::prompt_key_down`]) edit the focused field;
+    /// Tab / Shift+Tab move between the title and the prompt, then through the buttons; Enter
+    /// (title) or Ctrl+Enter saves, Esc cancels; `@` in the prompt picks a file, as in the
+    /// composer.
     pub(crate) fn task_dialog_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -78,36 +79,13 @@ impl Shell {
         {
             return;
         }
-        let trigger = (self.task_dialog.as_ref()).and_then(|dialog| dialog.trigger(&key));
-        if trigger == Some(composer::Trigger::File) {
-            return self.open_file_ref_picker(composer::Target::TaskDialog, window, cx);
-        }
-        let paste = (key == DialogKey::Paste)
-            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
-            .flatten();
-        let Some(dialog) = self.task_dialog.as_mut() else {
+        if self.prompt_key_down(composer::Target::TaskDialog, event, window, cx) {
             return;
-        };
-        if let Some(text) = paste {
-            dialog.insert(&text);
         }
-        if matches!(key, DialogKey::Copy | DialogKey::Cut)
-            && let Some(text) = dialog.selected_text()
-        {
-            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_owned()));
-        }
-        match dialog.key(key) {
-            task_dialog::Outcome::Edited => {
-                // ponytail: follows the caret only at the end; a caret moved above the
-                // visible lines is not scrolled into view (needs line-height maths).
-                let prompt = dialog.prompt.text.input();
-                if dialog.field == Field::Prompt && prompt.cursor() == prompt.len() {
-                    self.prompt_scroll.scroll_to_bottom();
-                }
-                cx.notify();
-            }
-            task_dialog::Outcome::Cancel => self.close_task_dialog(window, cx),
-            task_dialog::Outcome::Save => self.save_task(window, cx),
+        match key {
+            DialogKey::Cancel => self.close_task_dialog(window, cx),
+            // Ctrl+Enter, or Enter in the title.
+            _ => self.save_task(window, cx),
         }
     }
 

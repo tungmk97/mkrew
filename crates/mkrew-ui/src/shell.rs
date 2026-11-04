@@ -49,6 +49,7 @@ mod path_field;
 mod peek;
 mod phone_access;
 mod ports;
+mod prompt_keys;
 mod run;
 mod sessions;
 mod settings;
