@@ -45,11 +45,14 @@ pub enum Write {
         name: String,
         text: String,
     },
-    /// Rename first, then write `text` under the new name when it was edited too.
+    /// Rename first, then write `text` under the new name when it was edited too. `body` is the
+    /// whole draft: when the old file is gone (deleted outside Mkrew) the new name is created
+    /// from it.
     Rename {
         old: String,
         new: String,
         text: Option<String>,
+        body: String,
     },
 }
 
@@ -82,14 +85,30 @@ impl Write {
                 text: Some(text.clone()),
                 result: prompt::save(dir, name, text),
             },
-            Write::Rename { old, new, text } => {
-                if let Err(error) = prompt::rename(dir, old, new) {
-                    return Written {
-                        renamed: false,
-                        name: new.clone(),
-                        text: None,
-                        result: Err(error),
-                    };
+            Write::Rename {
+                old,
+                new,
+                text,
+                body,
+            } => {
+                match prompt::rename(dir, old, new) {
+                    Ok(()) => {}
+                    Err(PromptError::Missing(_)) => {
+                        return Written {
+                            renamed: true,
+                            name: new.clone(),
+                            text: Some(body.clone()),
+                            result: prompt::create(dir, new, body),
+                        };
+                    }
+                    Err(error) => {
+                        return Written {
+                            renamed: false,
+                            name: new.clone(),
+                            text: None,
+                            result: Err(error),
+                        };
+                    }
                 }
                 let result = match text {
                     Some(text) => prompt::save(dir, new, text),
@@ -168,7 +187,8 @@ impl Draft {
             Some(old) if *old == name => Write::Save { name, text },
             Some(old) => Write::Rename {
                 old: old.clone(),
-                text: (text != self.saved_text).then_some(text),
+                text: (text != self.saved_text).then(|| text.clone()),
+                body: text,
                 new: name,
             },
         })
@@ -406,7 +426,8 @@ mod tests {
             Some(Write::Rename {
                 old: "old".into(),
                 new: "new".into(),
-                text: None
+                text: None,
+                body: "text".into()
             }),
             "only the name changed: the text is not written"
         );
@@ -416,7 +437,8 @@ mod tests {
             Some(Write::Rename {
                 old: "old".into(),
                 new: "new".into(),
-                text: Some("text!".into())
+                text: Some("text!".into()),
+                body: "text!".into()
             })
         );
     }
@@ -440,6 +462,18 @@ mod tests {
             prompt::read(dir.path(), "old"),
             Err(PromptError::Missing(_))
         ));
+    }
+
+    #[test]
+    fn a_rename_of_a_file_deleted_outside_creates_the_new_name_from_the_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut draft = Draft::open("gone", "# Gone\nbody\n");
+        draft.name.clear();
+        draft.name.insert("again");
+        let done = draft.write().unwrap().run(dir.path());
+        assert!(done.result.is_ok(), "{:?}", done.result);
+        assert_eq!(done.text.as_deref(), Some("# Gone\nbody\n"));
+        assert_eq!(prompt::read(dir.path(), "again").unwrap(), "# Gone\nbody\n");
     }
 
     #[test]
