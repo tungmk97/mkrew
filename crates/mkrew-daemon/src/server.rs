@@ -47,6 +47,7 @@ mod resume;
 pub(crate) use resume::replace_session;
 mod run;
 mod session_read;
+mod slash;
 mod target;
 mod task_worktree;
 mod turn;
@@ -440,6 +441,7 @@ impl Daemon {
             Request::FsCreate(params) => (self.fs_create(params).await, After::Continue),
             Request::FsIgnore(params) => (self.fs_ignore(params).await, After::Continue),
             Request::FsFind(params) => (self.fs_find(params).await, After::Continue),
+            Request::SlashList(params) => (self.slash_list(params).await, After::Continue),
             Request::AttachmentSave(params) => {
                 (self.attachment_save(params).await, After::Continue)
             }

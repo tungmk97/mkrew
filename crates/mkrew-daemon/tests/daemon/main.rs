@@ -52,6 +52,7 @@ mod io;
 mod ports;
 mod remote_reads;
 mod runs;
+mod slash;
 mod states;
 mod tabs_tasks;
 mod task_runs;
