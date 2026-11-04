@@ -1,0 +1,230 @@
+# Built-in `/` commands of the OpenAI Codex CLI, in the order of `enum SlashCommand` in
+# codex-rs/tui/src/slash_command.rs (its comment: "DO NOT ALPHA-SORT! Enum order is presentation
+# order in the popup"). Descriptions are the strings of `SlashCommand::description()`.
+# Left out as the Codex popup leaves them out: names starting with `debug`, `apps`, `rollout`,
+# `test-approval`, the aliases `quit` and `btw`, and `daybreak` and `setup-default-sandbox`
+# (their gates are internal). Service-tier commands (`/fast`) come from the model catalog at
+# run time and are not listed. Codex skills live in its `$` popup, not in `/`.
+source_commit = "ac558e2a3264e1025fd8025fdd71d03dfbe8c86e"
+source = "https://github.com/openai/codex/blob/main/codex-rs/tui/src/slash_command.rs"
+
+[[command]]
+name = "model"
+description = "choose what model and reasoning effort to use"
+
+[[command]]
+name = "presets"
+description = "run or save reusable prompts and slash commands"
+
+[[command]]
+name = "ide"
+description = "include current selection, open files, and other context from your IDE"
+
+[[command]]
+name = "permissions"
+description = "choose what Codex is allowed to do"
+
+[[command]]
+name = "keymap"
+description = "remap TUI shortcuts"
+
+[[command]]
+name = "vim"
+description = "toggle Vim mode for the composer"
+
+[[command]]
+name = "experimental"
+description = "toggle experimental features"
+
+[[command]]
+name = "approve"
+description = "approve one retry of a recent auto-review denial"
+
+[[command]]
+name = "memories"
+description = "configure memory use and generation"
+
+[[command]]
+name = "skills"
+description = "use skills to improve how Codex performs specific tasks"
+
+[[command]]
+name = "import"
+description = "import setup, this project, and recent chats from Claude Code"
+
+[[command]]
+name = "hooks"
+description = "view and manage lifecycle hooks"
+
+[[command]]
+name = "review"
+description = "review my current changes and find issues"
+
+[[command]]
+name = "rename"
+description = "rename the current thread"
+
+[[command]]
+name = "new"
+description = "start a new chat during a conversation"
+
+[[command]]
+name = "archive"
+description = "archive this session"
+
+[[command]]
+name = "delete"
+description = "permanently delete this session"
+
+[[command]]
+name = "resume"
+description = "resume a saved chat"
+
+[[command]]
+name = "fork"
+description = "fork the current chat"
+
+[[command]]
+name = "worktree"
+description = "start or continue a conversation in a new worktree"
+
+[[command]]
+name = "app"
+description = "continue this session in the Desktop app"
+os = ["macos", "windows"]
+
+[[command]]
+name = "init"
+description = "create an AGENTS.md file with instructions for Codex"
+
+[[command]]
+name = "compact"
+description = "summarize conversation to prevent hitting the context limit"
+
+[[command]]
+name = "config"
+description = "configure Codex preferences"
+
+[[command]]
+name = "recap"
+description = "summarize the current conversation now"
+
+[[command]]
+name = "plan"
+description = "switch to Plan mode"
+
+[[command]]
+name = "voice"
+description = "start or stop voice; use /voice settings to choose a voice"
+
+[[command]]
+name = "goal"
+description = "set or view the goal for a long-running task"
+
+[[command]]
+name = "agents"
+description = "open the agent command center"
+
+[[command]]
+name = "side"
+description = "start a side conversation in an ephemeral fork"
+
+[[command]]
+name = "copy"
+description = "copy the last response or part of it"
+
+[[command]]
+name = "export"
+description = "export the conversation as markdown"
+
+[[command]]
+name = "raw"
+description = "toggle raw scrollback mode for copy-friendly terminal selection"
+
+[[command]]
+name = "tui"
+description = "choose the TUI mode for the next launch"
+
+[[command]]
+name = "diff"
+description = "show git diff (including untracked files)"
+
+[[command]]
+name = "mention"
+description = "mention a file"
+
+[[command]]
+name = "status"
+description = "show current session configuration and token usage"
+
+[[command]]
+name = "daemon"
+description = "Manage the local background server"
+
+[[command]]
+name = "warnings"
+description = "view retained warnings and diagnostic details"
+
+[[command]]
+name = "cd"
+description = "change the current working directory"
+
+[[command]]
+name = "pwd"
+description = "show the current working directory"
+
+[[command]]
+name = "usage"
+description = "view account usage or use a usage limit reset"
+
+[[command]]
+name = "title"
+description = "configure which items appear in the terminal title"
+
+[[command]]
+name = "statusline"
+description = "configure which items appear in the status line"
+
+[[command]]
+name = "theme"
+description = "choose a syntax highlighting theme"
+
+[[command]]
+name = "pets"
+description = "choose or hide the terminal pet"
+
+[[command]]
+name = "mcp"
+description = "list MCP tools; use /mcp verbose or /mcp login <name>"
+
+[[command]]
+name = "plugins"
+description = "browse plugins"
+
+[[command]]
+name = "logout"
+description = "log out of Codex"
+
+[[command]]
+name = "exit"
+description = "exit Codex"
+
+[[command]]
+name = "feedback"
+description = "send logs to maintainers"
+
+[[command]]
+name = "ps"
+description = "list background terminals"
+
+[[command]]
+name = "stop"
+description = "stop all background terminals"
+
+[[command]]
+name = "clear"
+description = "clear the terminal and start a new chat"
+
+[[command]]
+name = "subagents"
+description = "switch between this session's subagents"

@@ -1,0 +1,526 @@
+# Built-in commands and bundled skills of Claude Code, from the "All commands" table of
+# https://code.claude.com/docs/en/commands.md (read 2026-11-03; changelog head 2.1.317).
+# The docs publish a "Purpose" column, not the exact strings the TUI shows, so each description
+# is a condensed purpose. Rows are sorted by name (the order the picker shows with an empty
+# filter). Left out: aliases that the TUI matches on the filter without a row of their own
+# (`/new`, `/reset`, `/review`, `/settings`, `/quit`, ...), the removed `/pr-comments`, `/vim`
+# and `/ultraplan`, and the commands the docs call hidden until fully typed (`/heapdump`,
+# `/setup-bedrock`, `/setup-vertex`). `bundled = true` marks bundled skills, which
+# `disableBundledSkills` hides and a user or project skill of the same name replaces.
+# `os` marks the platforms the docs restrict a row to; other conditions are not evaluated.
+cli_version = "2.1.312"
+source = "https://code.claude.com/docs/en/commands.md"
+
+[[command]]
+name = "add-dir"
+description = "Add a working directory"
+argument_hint = "<path>"
+
+[[command]]
+name = "advisor"
+description = "Turn the advisor tool on or off"
+argument_hint = "[model|off]"
+
+[[command]]
+name = "agents"
+description = "Show how to manage subagents"
+
+[[command]]
+name = "artifact-capabilities"
+description = "Artifact runtime reference"
+bundled = true
+
+[[command]]
+name = "artifact-diagramming"
+description = "Diagram guidance for artifacts"
+bundled = true
+
+[[command]]
+name = "artifacts"
+description = "List and attach artifacts"
+
+[[command]]
+name = "auto-mode-setup"
+description = "Draft autoMode.environment entries"
+
+[[command]]
+name = "autocompact"
+description = "Set the auto-compact window"
+argument_hint = "[auto|tokens]"
+
+[[command]]
+name = "autofix-pr"
+description = "Start a cloud session that fixes a pull request"
+argument_hint = "[prompt]"
+
+[[command]]
+name = "background"
+description = "Detach the session to the background"
+argument_hint = "[prompt]"
+
+[[command]]
+name = "batch"
+description = "Parallel large-scale change"
+argument_hint = "<instruction>"
+bundled = true
+
+[[command]]
+name = "branch"
+description = "Branch the conversation"
+argument_hint = "[name]"
+
+[[command]]
+name = "btw"
+description = "Ask a side question"
+argument_hint = "[question]"
+
+[[command]]
+name = "bug"
+description = "Report a bug"
+argument_hint = "[report]"
+
+[[command]]
+name = "cd"
+description = "Move the session's working directory"
+argument_hint = "<path>"
+
+[[command]]
+name = "chrome"
+description = "Claude in Chrome settings"
+
+[[command]]
+name = "claude-api"
+description = "Claude API reference and workflows"
+argument_hint = "[sub]"
+bundled = true
+
+[[command]]
+name = "claude-in-chrome"
+description = "Do a task in the browser"
+argument_hint = "[task]"
+bundled = true
+
+[[command]]
+name = "clear"
+description = "Start a new, empty conversation"
+argument_hint = "[name]"
+
+[[command]]
+name = "code-review"
+description = "Review the diff"
+argument_hint = "[...]"
+bundled = true
+
+[[command]]
+name = "color"
+description = "Set the prompt bar color"
+argument_hint = "[color]"
+
+[[command]]
+name = "compact"
+description = "Summarize the context"
+argument_hint = "[instructions]"
+
+[[command]]
+name = "config"
+description = "Open settings"
+argument_hint = "[key=value]"
+
+[[command]]
+name = "context"
+description = "Show the context usage grid"
+argument_hint = "[all]"
+
+[[command]]
+name = "copy"
+description = "Copy a response"
+argument_hint = "[N]"
+
+[[command]]
+name = "cost"
+description = "Alias of /usage"
+
+[[command]]
+name = "dataviz"
+description = "Chart guidance"
+bundled = true
+
+[[command]]
+name = "debug"
+description = "Debug logging and analysis"
+bundled = true
+
+[[command]]
+name = "deep-research"
+description = "Cited research report"
+bundled = true
+
+[[command]]
+name = "design"
+description = "Claude Design"
+argument_hint = "[brief]"
+bundled = true
+
+[[command]]
+name = "design-login"
+description = "Sign in to Claude Design"
+
+[[command]]
+name = "design-sync"
+description = "Sync Claude Design"
+bundled = true
+
+[[command]]
+name = "desktop"
+description = "Continue in the Desktop app"
+os = ["windows", "macos"]
+
+[[command]]
+name = "diff"
+description = "Show the working-tree diff"
+
+[[command]]
+name = "doctor"
+description = "Setup checkup"
+bundled = true
+
+[[command]]
+name = "effort"
+description = "Set the effort level"
+argument_hint = "[level]"
+
+[[command]]
+name = "exit"
+description = "Exit"
+
+[[command]]
+name = "export"
+description = "Export the conversation"
+argument_hint = "[file]"
+
+[[command]]
+name = "fast"
+description = "Fast mode"
+argument_hint = "[on|off]"
+
+[[command]]
+name = "feedback"
+description = "Send product feedback"
+argument_hint = "[report]"
+
+[[command]]
+name = "fewer-permission-prompts"
+description = "Build an allowlist from past prompts"
+bundled = true
+
+[[command]]
+name = "focus"
+description = "Focus view"
+
+[[command]]
+name = "fork"
+description = "Copy the session to the background"
+argument_hint = "[prompt]"
+
+[[command]]
+name = "goal"
+description = "Goal loop"
+argument_hint = "[condition|clear]"
+
+[[command]]
+name = "help"
+description = "Help"
+
+[[command]]
+name = "hooks"
+description = "Hook configuration"
+
+[[command]]
+name = "ide"
+description = "IDE integrations"
+
+[[command]]
+name = "import"
+description = "Import config from Codex, Gemini, or Cursor"
+argument_hint = "[...]"
+
+[[command]]
+name = "init"
+description = "Create CLAUDE.md"
+
+[[command]]
+name = "insights"
+description = "Usage report"
+
+[[command]]
+name = "install-github-app"
+description = "Install the GitHub app"
+
+[[command]]
+name = "install-slack-app"
+description = "Install the Slack app"
+
+[[command]]
+name = "keybindings"
+description = "Open the shortcuts file"
+
+[[command]]
+name = "list-agents"
+description = "List messageable agents"
+
+[[command]]
+name = "login"
+description = "Sign in"
+
+[[command]]
+name = "logout"
+description = "Sign out"
+
+[[command]]
+name = "loop"
+description = "Repeat a prompt"
+argument_hint = "[interval] [prompt]"
+bundled = true
+
+[[command]]
+name = "mcp"
+description = "Manage MCP servers"
+argument_hint = "[...]"
+
+[[command]]
+name = "memory"
+description = "Edit CLAUDE.md and auto memory"
+
+[[command]]
+name = "mobile"
+description = "Mobile app QR code"
+
+[[command]]
+name = "model"
+description = "Switch model"
+argument_hint = "[model]"
+
+[[command]]
+name = "output-style"
+description = "Set the output style"
+argument_hint = "[style]"
+
+[[command]]
+name = "passes"
+description = "Guest passes"
+
+[[command]]
+name = "permissions"
+description = "Permission rules"
+
+[[command]]
+name = "plan"
+description = "Plan mode"
+argument_hint = "[description]"
+
+[[command]]
+name = "plugin"
+description = "Manage plugins"
+argument_hint = "[sub]"
+
+[[command]]
+name = "plugin-authoring"
+description = "Plugin authoring reference"
+
+[[command]]
+name = "powerup"
+description = "Lessons"
+
+[[command]]
+name = "privacy-settings"
+description = "Privacy settings"
+
+[[command]]
+name = "radio"
+description = "Lo-fi radio"
+
+[[command]]
+name = "rate-limit-options"
+description = "Options when a limit is hit"
+
+[[command]]
+name = "recap"
+description = "One-line summary of the session"
+
+[[command]]
+name = "release-notes"
+description = "Show the changelog"
+
+[[command]]
+name = "reload-plugins"
+description = "Reload plugins"
+argument_hint = "[--force]"
+
+[[command]]
+name = "reload-skills"
+description = "Re-scan skills and commands"
+
+[[command]]
+name = "remote-control"
+description = "Remote Control"
+
+[[command]]
+name = "remote-env"
+description = "Cloud environment"
+
+[[command]]
+name = "rename"
+description = "Rename the session"
+argument_hint = "[name]"
+
+[[command]]
+name = "restart"
+description = "Restart to update"
+
+[[command]]
+name = "resume"
+description = "Resume a session"
+argument_hint = "[session]"
+
+[[command]]
+name = "rewind"
+description = "Checkpoints"
+
+[[command]]
+name = "run"
+description = "Run and verify the app"
+bundled = true
+
+[[command]]
+name = "run-skill-generator"
+description = "Generate a run skill"
+bundled = true
+
+[[command]]
+name = "sandbox"
+description = "Sandbox settings"
+
+[[command]]
+name = "schedule"
+description = "Cloud scheduled tasks"
+argument_hint = "[description]"
+
+[[command]]
+name = "scroll-speed"
+description = "Scroll speed"
+
+[[command]]
+name = "security-review"
+description = "Security review of the changes"
+
+[[command]]
+name = "simplify"
+description = "Cleanup review"
+argument_hint = "[target]"
+bundled = true
+
+[[command]]
+name = "skill-doctor"
+description = "Skill cost and usage"
+
+[[command]]
+name = "skills"
+description = "List skills"
+
+[[command]]
+name = "slides"
+description = "Slide artifact"
+bundled = true
+
+[[command]]
+name = "stats"
+description = "Alias of /usage"
+
+[[command]]
+name = "status"
+description = "Status tab"
+
+[[command]]
+name = "statusline"
+description = "Status line"
+
+[[command]]
+name = "stickers"
+description = "Stickers"
+
+[[command]]
+name = "stop"
+description = "Stop a background session"
+
+[[command]]
+name = "subtask"
+description = "Forked subagent"
+argument_hint = "<task>"
+
+[[command]]
+name = "tasks"
+description = "Background work"
+
+[[command]]
+name = "team-onboarding"
+description = "Onboarding guide"
+
+[[command]]
+name = "teleport"
+description = "Pull a cloud session"
+
+[[command]]
+name = "terminal-setup"
+description = "Newline keybinding"
+
+[[command]]
+name = "theme"
+description = "Theme"
+
+[[command]]
+name = "tui"
+description = "Choose the renderer"
+argument_hint = "[default|fullscreen]"
+
+[[command]]
+name = "ultrareview"
+description = "Alias of /code-review ultra"
+
+[[command]]
+name = "update-config"
+description = "Edit settings.json"
+bundled = true
+
+[[command]]
+name = "upgrade"
+description = "Upgrade the plan"
+
+[[command]]
+name = "usage"
+description = "Cost and limits"
+
+[[command]]
+name = "usage-credits"
+description = "Usage credits"
+
+[[command]]
+name = "verify"
+description = "Verify the app"
+bundled = true
+
+[[command]]
+name = "voice"
+description = "Dictation"
+
+[[command]]
+name = "web-setup"
+description = "GitHub for cloud sessions"
+
+[[command]]
+name = "workflow-authoring"
+description = "Workflow script reference"
+bundled = true
+
+[[command]]
+name = "workflows"
+description = "Workflow progress view"

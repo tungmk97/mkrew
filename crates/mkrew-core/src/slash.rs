@@ -5,3 +5,15 @@
 //! and keeps what it cannot read as one line in [`SlashList::errors`].
 
 pub mod front_matter;
+mod tables;
+
+use serde::Deserialize;
+
+/// The operating system a table row can be limited to (`os = [...]` in `slash/*.toml`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Os {
+    Windows,
+    Macos,
+    Linux,
+}

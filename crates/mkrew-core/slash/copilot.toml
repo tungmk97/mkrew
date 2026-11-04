@@ -1,0 +1,357 @@
+# Built-in `/` commands of the GitHub Copilot CLI, in the order of "Slash commands in the
+# interactive interface" of the CLI command reference. The docs say the list is not complete
+# ("For a complete list ... enter /help"); Copilot is closed source, so the real popup order is
+# not known. A row is the first sentence of the docs "Purpose" cell; aliases (`/yolo`, `/quit`,
+# ...) and subcommand rows (`/skills list`) are not rows; experimental commands end with
+# " (experimental)". Written by a script that reads the page named in `source`.
+cli_version = "1.0.99"
+source = "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference"
+
+[[command]]
+name = "add-dir"
+description = "Allow file access to a directory and load its skills (.github/, .agents/, .claude/) and agents (.github/, .claude/) as trusted configurations"
+argument_hint = "PATH"
+
+[[command]]
+name = "after"
+description = "Schedule a non-recurring prompt, skill, or schedulable slash command for the current session (for example, /after 30m remind me the time or /after 1h /chronicle standup) (experimental)"
+argument_hint = "[DELAY PROMPT]"
+
+[[command]]
+name = "agent"
+description = "Browse and select from available agents (if any)"
+
+[[command]]
+name = "app"
+description = "Open the current session in the GitHub Copilot app (requires version 1.1.3 or later), or show the download URL if the app is not installed"
+
+[[command]]
+name = "ask"
+description = "Ask a quick side question without adding to the conversation history"
+argument_hint = "[QUESTION]"
+
+[[command]]
+name = "allow-all"
+description = "Enable all permissions (tools, paths, and URLs)"
+argument_hint = "[on|off|show]"
+
+[[command]]
+name = "autopilot"
+description = "Start or refocus autopilot mode, optionally with an explicit objective (for example, /goal Refactor the auth module)"
+argument_hint = "[OBJECTIVE]"
+
+[[command]]
+name = "changelog"
+description = "Display the CLI changelog"
+argument_hint = "[summarize] [VERSION|last N|since VERSION]"
+
+[[command]]
+name = "chronicle"
+description = "Session history tools and insights"
+argument_hint = "<standup|tips|improve|reindex|skills create|skills review|skills status>"
+
+[[command]]
+name = "clear"
+description = "Start a new conversation"
+argument_hint = "[PROMPT]"
+
+[[command]]
+name = "clikit"
+description = "Preview CLI business components (for example, quota info)"
+argument_hint = "[COMPONENT]"
+
+[[command]]
+name = "collect-debug-logs"
+description = "Collect debug logs to an archive, a GitHub gist, or upload them to GitHub (share)"
+argument_hint = "[file|gist|share] [PATH]"
+
+[[command]]
+name = "compact"
+description = "Summarize the conversation history to reduce context window usage"
+argument_hint = "[FOCUS-INSTRUCTIONS]"
+
+[[command]]
+name = "context"
+description = "Show the context window token usage and visualization"
+
+[[command]]
+name = "copy"
+description = "Copy the last response to the clipboard"
+
+[[command]]
+name = "cwd"
+description = "Change the working directory or display the current directory"
+
+[[command]]
+name = "delegate"
+description = "Delegate changes to a remote repository with an AI-generated pull request"
+argument_hint = "[PROMPT]"
+
+[[command]]
+name = "diagnose"
+description = "Analyze the current session log for errors, unexpected behavior, and other issues"
+argument_hint = "[PROMPT]"
+
+[[command]]
+name = "diff"
+description = "Review changes in the current directory; auto-switches to branch diff when the working tree is clean (experimental)"
+
+[[command]]
+name = "downgrade"
+description = "Download and restart into a specific CLI version"
+argument_hint = "VERSION"
+
+[[command]]
+name = "env"
+description = "Show loaded environment details (instructions, MCP servers, skills, agents, hooks, plugins, LSPs, extensions)"
+
+[[command]]
+name = "every"
+description = "Schedule a recurring prompt, skill, or schedulable slash command for the current session (for example, /every 1h run tests or /every 1d /chronicle standup) (experimental)"
+argument_hint = "[INTERVAL] PROMPT"
+
+[[command]]
+name = "exit"
+description = "Close the current session"
+
+[[command]]
+name = "extensions"
+description = "Manage CLI extensions (experimental)"
+argument_hint = "[manage|mode]"
+
+[[command]]
+name = "experimental"
+description = "Toggle, set, or show experimental features"
+argument_hint = "[on|off|show]"
+
+[[command]]
+name = "feedback"
+description = "Provide feedback about the CLI. Can offer a feedback-with-logs route; see Collecting and sharing debug logs"
+
+[[command]]
+name = "fleet"
+description = "Enable parallel subagent execution of parts of a task"
+argument_hint = "[PROMPT]"
+
+[[command]]
+name = "help"
+description = "Show the help for interactive commands"
+
+[[command]]
+name = "ide"
+description = "Connect to an IDE workspace"
+
+[[command]]
+name = "init"
+description = "Initialize Copilot custom instructions and agentic features for this repository"
+
+[[command]]
+name = "instructions"
+description = "View and toggle custom instruction files"
+
+[[command]]
+name = "keep-alive"
+description = "Prevent the machine from going to sleep: while a CLI session is active, while the agent is busy, or for a defined length of time"
+argument_hint = "[on|off|busy|DURATION]"
+
+[[command]]
+name = "limits"
+description = "Open the interactive response limits dialog"
+
+[[command]]
+name = "list-dirs"
+description = "Display all of the directories for which file access has been allowed"
+
+[[command]]
+name = "login"
+description = "Log in to Copilot"
+
+[[command]]
+name = "logout"
+description = "Log out of Copilot"
+
+[[command]]
+name = "lsp"
+description = "Manage the language server configuration"
+argument_hint = "[show|test|reload|logs|help] [SERVER-NAME]"
+
+[[command]]
+name = "mcp"
+description = "Manage the MCP server configuration"
+argument_hint = "[config|list|show|add|edit|delete|disable|enable|auth|reload|search] [SERVER-NAME]"
+
+[[command]]
+name = "model"
+description = "Select the AI model you want to use, or choose **Auto**. Model IDs are case-insensitive, and the canonical ID is saved"
+argument_hint = "[--session|--global|--repo|--local] [MODEL|auto TIER]"
+
+[[command]]
+name = "permissions"
+description = "Switch between permission modes (default, assisted, allow-all), or show the current mode (show)"
+argument_hint = "[default|assisted|allow-all|show]"
+
+[[command]]
+name = "plan"
+description = "Create an implementation plan before coding"
+argument_hint = "[PROMPT]"
+
+[[command]]
+name = "plugin"
+description = "Open the plugins dashboard showing your installed plugins"
+
+[[command]]
+name = "pr"
+description = "Manage pull requests for the current branch"
+argument_hint = "[view|create|fix|auto|automerge]"
+
+[[command]]
+name = "refine"
+description = "Rewrite a roughly composed prompt into a clear one for review"
+argument_hint = "TEXT"
+
+[[command]]
+name = "remote"
+description = "Show the remote control status (if no argument provided), enable remote steering (on), or end the remote connection (off)"
+argument_hint = "[on|off]"
+
+[[command]]
+name = "rename"
+description = "Rename the current session (auto-generates a name if omitted; alias for /session rename)"
+argument_hint = "[NAME]"
+
+[[command]]
+name = "research"
+description = "Run a deep research investigation using GitHub search and web sources"
+argument_hint = "TOPIC"
+
+[[command]]
+name = "reset-allowed-tools"
+description = "Reset permissions for the current session"
+
+[[command]]
+name = "restart"
+description = "Restart the CLI, restoring all of the current process's live sessions, not only the foreground one"
+
+[[command]]
+name = "resume"
+description = "Switch to a different session by choosing from a list (optionally specify a session ID)"
+argument_hint = "[SESSION-ID]"
+
+[[command]]
+name = "review"
+description = "Run the code review agent to analyze changes"
+argument_hint = "[PROMPT]"
+
+[[command]]
+name = "rubber-duck"
+description = "Consult the rubber duck agent for a second opinion on plans, code, and tests"
+argument_hint = "[PROMPT]"
+
+[[command]]
+name = "sandbox"
+description = "Manage sandbox restrictions on filesystem and network access"
+argument_hint = "[config|status|policy [COMMAND]|enable|disable]"
+
+[[command]]
+name = "search"
+description = "Search the conversation timeline"
+argument_hint = "[QUERY]"
+
+[[command]]
+name = "security-review"
+description = "Run a focused security review of active local code changes and return prioritized vulnerability findings with remediation suggestions"
+argument_hint = "[PROMPT]"
+
+[[command]]
+name = "session"
+description = "Show session information and manage sessions"
+argument_hint = "[info|checkpoints [n]|files|plan|rename [NAME]|cleanup|prune|delete [ID]|delete-all]"
+
+[[command]]
+name = "settings"
+description = "Open the settings dialog, open it focused on a specific setting (KEY), set a setting inline (KEY VALUE), or display a setting's current value (show KEY)"
+argument_hint = "[--repo|--local] [show KEY|KEY|KEY VALUE]"
+
+[[command]]
+name = "share"
+description = "Share the current session"
+argument_hint = "[link|off|file|html|gist|research] [...]"
+
+[[command]]
+name = "skills"
+description = "Open the plugins dashboard on the Skills tab"
+
+[[command]]
+name = "statusline"
+description = "Configure which items appear in the status line"
+
+[[command]]
+name = "subagents"
+description = "Configure default and per-agent subagent models"
+
+[[command]]
+name = "tasks"
+description = "View and manage tasks (subagents and shell commands)"
+
+[[command]]
+name = "terminal-setup"
+description = "Configure the terminal for multiline input support (Shift+Enter and Ctrl+Enter)"
+
+[[command]]
+name = "theme"
+description = "View or set the color mode"
+argument_hint = "[default|github|dim|high-contrast|colorblind]"
+
+[[command]]
+name = "tuikit"
+description = "Preview TUIkit design-system components and color tokens"
+argument_hint = "[colors|icons|select|tabbar]"
+
+[[command]]
+name = "undo"
+description = "Open the rewind picker to roll the session back to an earlier user turn"
+
+[[command]]
+name = "update"
+description = "Update the CLI to the latest version"
+
+[[command]]
+name = "usage"
+description = "Display session usage metrics and statistics, including per-model token totals"
+
+[[command]]
+name = "user"
+description = "Manage signed-in accounts"
+argument_hint = "[show|list|switch]"
+
+[[command]]
+name = "version"
+description = "Display version information and check for updates"
+
+[[command]]
+name = "vim"
+description = "Toggle Vim mode for the prompt box, enabling Vim-style modal editing: motions (for example, hjkl, w, b, e, 0, $, gg, G), character search (f/F/t/T/;/,), insert commands (i/a/o), edit commands (r/~/J/x/D/C), operators (d/c/y), yank and put (y/p/P), repeat (.), undo and redo (u/Ctrl+R), counts, and Esc to return to normal mode"
+
+[[command]]
+name = "voice"
+description = "Toggle voice mode, browse available voice models, or choose the input device (microphone)"
+argument_hint = "[on|off|models|devices]"
+
+[[command]]
+name = "workflows"
+description = "Observe workflow runs, phases, agents, and progress"
+
+[[command]]
+name = "fork"
+description = "Fork the current session into a new session, optionally with a name"
+argument_hint = "[NAME]"
+
+[[command]]
+name = "worktree"
+description = "Create a new Git worktree and switch to it, leaving uncommitted changes behind in the current worktree"
+argument_hint = "[branch|task]"
+
+[[command]]
+name = "move"
+description = "Move uncommitted changes into a new Git worktree and switch to it"
+argument_hint = "[branch|task]"
