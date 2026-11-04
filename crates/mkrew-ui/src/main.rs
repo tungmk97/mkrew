@@ -527,6 +527,11 @@ struct Shell {
     settings_dialog: Option<SettingsDialog>,
     /// Scrolls its rows.
     settings_scroll: ScrollHandle,
+    /// Keeps the open prompt's row in view in Settings → Prompts.
+    prompts_scroll: ScrollHandle,
+    /// Scrolls the prompt text of Settings → Prompts (not `prompt_scroll`: the task dialog can
+    /// be open under Settings).
+    prompts_body_scroll: ScrollHandle,
     /// Keeps the selected comment thread in view in the Docs / Git margin.
     comments_scroll: ScrollHandle,
     /// The open workspace menu (Open in Zed, default agent).

@@ -749,9 +749,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// The prompt picker's empty state: opens the prompts folder (created if missing) in Zed
-    /// to add Markdown prompts; a failure toasts.
-    pub(crate) fn open_prompts_dir(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    /// Opens the prompts folder (created if missing) in Zed; a failure toasts.
+    pub(crate) fn open_prompts_folder(&mut self, cx: &mut Context<'_, Self>) {
         let opened = std::fs::create_dir_all(&self.prompts_dir)
             .map_err(|error| format!("Cannot create the prompts folder: {error}"))
             .and_then(|()| zed::open(&self.prompts_dir, None).map_err(|error| error.to_string()));
@@ -759,6 +758,11 @@ impl Shell {
             tracing::warn!(path = %self.prompts_dir.display(), "open prompts folder failed: {error}");
             self.toast_error(error, cx);
         }
+    }
+
+    /// The prompt picker's empty state: opens the prompts folder in Zed to add Markdown prompts.
+    pub(crate) fn open_prompts_dir(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.open_prompts_folder(cx);
         self.close_prompt_picker(None, window, cx);
     }
 

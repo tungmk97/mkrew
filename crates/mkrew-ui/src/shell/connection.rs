@@ -314,6 +314,8 @@ impl Shell {
             ports_dialog: None,
             settings_dialog: None,
             settings_scroll: ScrollHandle::new(),
+            prompts_scroll: ScrollHandle::new(),
+            prompts_body_scroll: ScrollHandle::new(),
             comments_scroll: ScrollHandle::new(),
             workspace_menu: None,
             file_menu: None,

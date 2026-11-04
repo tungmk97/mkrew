@@ -3,6 +3,7 @@
 
 use crate::*;
 use mkrew_core::settings_fields::{Kind, Setting};
+use mkrew_ui::prompts_page::Spot;
 use mkrew_ui::settings_dialog::{Effect, Focus, Row, Tab};
 
 impl Shell {
@@ -56,8 +57,11 @@ impl Shell {
         }
         cx.stop_propagation();
         let key = task_dialog::dialog_key(&event.keystroke);
+        // Ctrl+N and Ctrl+S of the Prompts page work from a button too.
+        let page_key = settings_dialog::prompts_shortcut(&event.keystroke).is_some();
         // A button or link has the keyboard: the rows take nothing but Esc / Ctrl+Enter.
         if self.dialog_control_focused(window)
+            && !page_key
             && !matches!(key, Some(DialogKey::Cancel | DialogKey::Save))
         {
             return;
@@ -74,6 +78,14 @@ impl Shell {
         }
         let effect = dialog.key(&event.keystroke, paste.as_deref(), &keymap);
         self.apply_settings_effect(effect, window, cx);
+        // Typing at the end of a long prompt keeps its last line in view, like the task dialog.
+        if let Some(dialog) = &self.settings_dialog
+            && dialog.focus == Focus::Prompts(Spot::Body)
+            && let Some(draft) = &dialog.prompts.draft
+            && draft.body.input().cursor() == draft.body.input().len()
+        {
+            self.prompts_body_scroll.scroll_to_bottom();
+        }
         // Keep the focused row on screen: the banner and the search box come before the rows.
         if let Some(dialog) = &self.settings_dialog
             && let Focus::Row(index) = dialog.focus
@@ -98,7 +110,12 @@ impl Shell {
     ) {
         match effect {
             Effect::None => {}
-            Effect::Close => return self.close_settings_dialog(window, cx),
+            // Esc: unsaved prompt text asks first (Save / Don't save / Cancel).
+            Effect::Close => {
+                let then: AfterSave =
+                    Box::new(|shell, window, cx| shell.close_settings_dialog(window, cx));
+                return self.leave_prompt_draft(then, window, cx);
+            }
             Effect::Write { setting, text } => {
                 let result = setting
                     .write(&self.settings_file, &text)
@@ -141,7 +158,10 @@ impl Shell {
                 }
             }
             Effect::AddMachine(machine) => self.add_machine(machine, cx),
+            Effect::Prompts(action) => self.prompts_action(action, window, cx),
         }
+        // The Prompts page reads its folder when it opens and after every write.
+        self.sync_prompts();
         cx.notify();
     }
 

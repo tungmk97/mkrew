@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use gpui::Keystroke;
+use mkrew_core::prompt::PromptLibrary;
 use mkrew_core::settings::Settings;
 use mkrew_core::settings_fields::{Kind, Page, SETTINGS, Setting};
 
@@ -12,6 +13,7 @@ use crate::editor::Motion;
 use crate::keymap::{Command, Keymap, KeymapError, keys_label};
 use crate::machines::{Field, Invalid, Machine};
 use crate::palette;
+use crate::prompts_page::{PromptAction, PromptsPage, Spot, Written};
 use crate::task_dialog::{DialogKey, dialog_key};
 use crate::text_box::Input;
 
@@ -20,6 +22,7 @@ pub enum Tab {
     Settings(Page),
     Keyboard,
     Machines,
+    Prompts,
 }
 
 impl Tab {
@@ -35,6 +38,7 @@ impl Tab {
             Tab::Settings(page) => page.title(),
             Tab::Keyboard => "Keyboard",
             Tab::Machines => "Machines",
+            Tab::Prompts => "Prompts",
         }
     }
 }
@@ -93,6 +97,8 @@ pub enum Focus {
     Row(usize),
     /// A field of the Machines page's Add form.
     Add(Field),
+    /// A spot of the Prompts page.
+    Prompts(Spot),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,6 +125,8 @@ pub enum Effect {
     /// Save in the Add form: the shell adds it to the machine list and answers with
     /// [`SettingsDialog::close_add`] or [`SettingsDialog::add_refused`].
     AddMachine(Machine),
+    /// A Prompts page action the shell runs: file reads and writes, the questions.
+    Prompts(PromptAction),
 }
 
 /// The Machines page's "Add machine…" fields (spec §6.2).
@@ -175,6 +183,8 @@ pub struct SettingsDialog {
     pub list_pick: Option<ListPick>,
     /// The open Add form of the Machines page.
     pub add: Option<AddForm>,
+    /// The Prompts page (spec 2026-11-04 section 7.2); its draft outlives a switch of page.
+    pub prompts: PromptsPage,
 }
 
 impl SettingsDialog {
@@ -190,6 +200,7 @@ impl SettingsDialog {
             capture: None,
             list_pick: None,
             add: None,
+            prompts: PromptsPage::default(),
         }
     }
 
@@ -204,7 +215,7 @@ impl SettingsDialog {
                 .filter(|s| s.page == page && !s.hidden)
                 .map(Row::Setting)
                 .collect(),
-            Tab::Machines => Vec::new(),
+            Tab::Machines | Tab::Prompts => Vec::new(),
             Tab::Keyboard => {
                 let query = self.search.trim().to_lowercase();
                 Command::all()
@@ -271,6 +282,10 @@ impl SettingsDialog {
     pub fn set_tab(&mut self, tab: Tab) -> Effect {
         let effect = self.commit_draft();
         self.tab = tab;
+        if tab == Tab::Prompts {
+            // The folder is read when the page opens (spec 2026-11-04 section 7.2).
+            self.prompts.stale = true;
+        }
         self.focus = Focus::Tabs;
         self.capture = None;
         self.add = None;
@@ -386,6 +401,12 @@ impl SettingsDialog {
         if self.tab == Tab::Keyboard {
             order.push(Focus::Search);
         }
+        if self.tab == Tab::Prompts {
+            order.push(Focus::Prompts(Spot::List));
+            if self.prompts.draft.is_some() {
+                order.extend([Spot::Name, Spot::Body].map(Focus::Prompts));
+            }
+        }
         if self.add.is_some() {
             order.extend([Field::Name, Field::Host, Field::Mk].map(Focus::Add));
         }
@@ -414,7 +435,13 @@ impl SettingsDialog {
             Focus::Row(i) => i + 1 >= rows,
             Focus::Search => rows == 0,
             Focus::Add(field) => field == Field::Mk,
-            Focus::Tabs => self.tab != Tab::Keyboard && rows == 0 && self.add.is_none(),
+            Focus::Prompts(spot) => spot == self.prompts_last_spot(),
+            Focus::Tabs => {
+                self.tab != Tab::Keyboard
+                    && self.tab != Tab::Prompts
+                    && rows == 0
+                    && self.add.is_none()
+            }
         }
     }
 
@@ -429,6 +456,7 @@ impl SettingsDialog {
         let last = match self.rows(keymap).len() {
             0 if self.tab == Tab::Keyboard => Focus::Search,
             0 if self.add.is_some() => Focus::Add(Field::Mk),
+            0 if self.tab == Tab::Prompts => Focus::Prompts(self.prompts_last_spot()),
             0 => Focus::Tabs,
             count => Focus::Row(count - 1),
         };
@@ -487,11 +515,23 @@ impl SettingsDialog {
                 keys: Some(keystroke.unparse()),
             };
         }
+        // Ctrl+N and Ctrl+S are not text keys, so `dialog_key` has no meaning for them.
+        if self.tab == Tab::Prompts
+            && let Some(action) = prompts_shortcut(keystroke)
+        {
+            return Effect::Prompts(action);
+        }
         let Some(key) = dialog_key(keystroke) else {
             return Effect::None;
         };
         if self.list_pick.is_some() {
             return self.list_key(key);
+        }
+        if self.tab == Tab::Prompts
+            && let Focus::Prompts(spot) = self.focus
+            && let Some(effect) = self.prompts_key(spot, &key, paste)
+        {
+            return effect;
         }
         match key {
             DialogKey::Cancel => {
@@ -538,7 +578,7 @@ impl SettingsDialog {
                         };
                         self.move_focus(Focus::Row(next), keymap)
                     }
-                    Focus::Search | Focus::Add(_) => Effect::None,
+                    Focus::Search | Focus::Add(_) | Focus::Prompts(_) => Effect::None,
                 }
             }
             DialogKey::Enter | DialogKey::Save => self.activate(keymap),
@@ -598,6 +638,13 @@ impl SettingsDialog {
             Some(&self.search)
         } else if let Focus::Add(field) = self.focus {
             self.add.as_ref().map(|form| form.input(field))
+        } else if let Focus::Prompts(spot) = self.focus {
+            let draft = self.prompts.draft.as_ref();
+            match spot {
+                Spot::Name => draft.map(|draft| &draft.name),
+                Spot::Body => draft.map(|draft| draft.body.input()),
+                Spot::List => None,
+            }
         } else {
             self.draft.as_ref().map(|(_, input)| input)
         }
@@ -630,6 +677,135 @@ impl SettingsDialog {
     pub fn close_add(&mut self) {
         self.add = None;
         self.focus = Focus::Tabs;
+    }
+
+    /// "New prompt": an empty draft with the keyboard on its Name.
+    pub fn prompts_new(&mut self) {
+        self.prompts.start_new();
+        self.focus = Focus::Prompts(Spot::Name);
+    }
+
+    /// The file of `name` was read: it is the draft now (the keyboard stays where it is).
+    pub fn prompts_open(&mut self, name: &str, text: &str) {
+        self.prompts.open(name, text);
+    }
+
+    /// The folder was read.
+    pub fn prompts_loaded(&mut self, library: PromptLibrary) {
+        self.prompts.reload(library);
+        self.settle_prompts_focus();
+    }
+
+    /// The open prompt was deleted.
+    pub fn prompts_deleted(&mut self) {
+        self.prompts.draft = None;
+        self.settle_prompts_focus();
+    }
+
+    /// A write ran; `true` when the file holds the draft now. A refused name takes the keyboard.
+    pub fn prompts_written(&mut self, written: Written) -> bool {
+        let saved = self.prompts.written(written);
+        if (self.prompts.draft.as_ref()).is_some_and(|draft| draft.name_error.is_some()) {
+            self.focus = Focus::Prompts(Spot::Name);
+        }
+        saved
+    }
+
+    /// The editor spots need a draft: without one the keyboard goes back to the list.
+    fn settle_prompts_focus(&mut self) {
+        if matches!(self.focus, Focus::Prompts(Spot::Name | Spot::Body))
+            && self.prompts.draft.is_none()
+        {
+            self.focus = Focus::Prompts(Spot::List);
+        }
+    }
+
+    /// The last keyboard stop of the Prompts page before its buttons.
+    fn prompts_last_spot(&self) -> Spot {
+        if self.prompts.draft.is_some() {
+            Spot::Body
+        } else {
+            Spot::List
+        }
+    }
+
+    fn prompts_step(&self, by: i32) -> Effect {
+        match self.prompts.neighbour(by) {
+            Some(name) => Effect::Prompts(PromptAction::Open(name)),
+            None => Effect::None,
+        }
+    }
+
+    /// A key on the Prompts page's list, Name field or text. `None` = the generic handling
+    /// applies (Esc closes, Tab moves).
+    fn prompts_key(&mut self, spot: Spot, key: &DialogKey, paste: Option<&str>) -> Option<Effect> {
+        match (spot, key) {
+            (_, DialogKey::Cancel | DialogKey::SwitchField) => None,
+            (_, DialogKey::Save) => Some(Effect::Prompts(PromptAction::Save)),
+            (
+                Spot::List,
+                DialogKey::Move {
+                    motion: Motion::Up,
+                    extend: false,
+                },
+            ) => Some(self.prompts_step(-1)),
+            (
+                Spot::List,
+                DialogKey::Move {
+                    motion: Motion::Down,
+                    extend: false,
+                },
+            ) => Some(self.prompts_step(1)),
+            (Spot::List, DialogKey::Enter) => {
+                if self.prompts.draft.is_some() {
+                    self.focus = Focus::Prompts(Spot::Name);
+                }
+                Some(Effect::None)
+            }
+            (Spot::List, _) => Some(Effect::None),
+            (Spot::Name, DialogKey::Enter) => {
+                self.focus = Focus::Prompts(Spot::Body);
+                Some(Effect::None)
+            }
+            (
+                Spot::Name,
+                DialogKey::Move {
+                    motion: Motion::Up | Motion::Down,
+                    ..
+                },
+            ) => Some(Effect::None),
+            (Spot::Name, key) => {
+                if let Some(draft) = self.prompts.draft.as_mut() {
+                    // What was refused is being fixed.
+                    draft.name_error = None;
+                    match key {
+                        // A name is one line.
+                        DialogKey::Paste => {
+                            let line = paste.and_then(|text| text.lines().next());
+                            draft.name.insert(line.unwrap_or_default());
+                        }
+                        DialogKey::Insert(text) => {
+                            draft.name.insert(text);
+                        }
+                        other => {
+                            draft.name.edit(other);
+                        }
+                    }
+                }
+                Some(Effect::None)
+            }
+            (Spot::Body, key) => {
+                if let Some(draft) = self.prompts.draft.as_mut() {
+                    match key {
+                        DialogKey::Paste => draft.body.insert(paste.unwrap_or_default()),
+                        other => {
+                            draft.body.key(other.clone());
+                        }
+                    }
+                }
+                Some(Effect::None)
+            }
+        }
     }
 
     /// The file changed (a write, a hand edit): new values; the open draft stays.
@@ -668,9 +844,25 @@ pub fn binding_error(error: &KeymapError) -> String {
     }
 }
 
+/// Ctrl+N (new prompt) and Ctrl+S (save) of the Prompts page; Cmd on macOS. They are page keys
+/// of the dialog, not commands of `keymap.toml`.
+pub fn prompts_shortcut(keystroke: &Keystroke) -> Option<PromptAction> {
+    let m = keystroke.modifiers;
+    if !(m.control || m.platform) || m.alt || m.shift {
+        return None;
+    }
+    match keystroke.key.as_str() {
+        "n" => Some(PromptAction::New),
+        "s" => Some(PromptAction::Save),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prompts_page::Write;
+    use mkrew_core::prompt::{NameError, Prompt, PromptError};
     use mkrew_core::settings::Settings;
 
     fn key(keys: &str) -> Keystroke {
@@ -1075,5 +1267,244 @@ mod tests {
         assert_eq!(d.focus, Focus::Add(Field::Mk), "Shift+Tab from the buttons");
         d.enter(true, &keymap);
         assert_eq!(d.focus, Focus::Tabs);
+    }
+
+    fn library(names: &[&str]) -> PromptLibrary {
+        PromptLibrary {
+            prompts: names
+                .iter()
+                .map(|name| Prompt {
+                    name: (*name).into(),
+                    title: (*name).into(),
+                    body: String::new(),
+                })
+                .collect(),
+            errors: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_prompts_tab_asks_for_a_read_when_it_opens_and_has_no_setting_rows() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.prompts.stale = false;
+        d.set_tab(Tab::Prompts);
+        assert!(
+            d.prompts.stale,
+            "the folder is read again when the page opens"
+        );
+        assert!(d.rows(&keymap).is_empty());
+        assert_eq!(Tab::Prompts.title(), "Prompts");
+    }
+
+    #[test]
+    fn ctrl_n_and_ctrl_s_reach_the_shell_on_the_prompts_page_only() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        assert_eq!(
+            d.key(&key("ctrl-s"), None, &keymap),
+            Effect::None,
+            "General page"
+        );
+        d.set_tab(Tab::Prompts);
+        assert_eq!(
+            d.key(&key("ctrl-n"), None, &keymap),
+            Effect::Prompts(PromptAction::New)
+        );
+        assert_eq!(
+            d.key(&key("ctrl-s"), None, &keymap),
+            Effect::Prompts(PromptAction::Save)
+        );
+        assert_eq!(d.key(&key("ctrl-shift-n"), None, &keymap), Effect::None);
+        assert_eq!(d.key(&key("alt-s"), None, &keymap), Effect::None);
+        assert_eq!(prompts_shortcut(&key("ctrl-n")), Some(PromptAction::New));
+        assert_eq!(prompts_shortcut(&key("n")), None);
+    }
+
+    #[test]
+    fn tab_walks_the_prompts_list_name_and_text_and_then_leaves() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Prompts);
+        d.prompts_loaded(library(&["a", "b"]));
+        d.key(&key("tab"), None, &keymap);
+        assert_eq!(d.focus, Focus::Prompts(Spot::List));
+        assert!(
+            d.chain_edge(false, &keymap),
+            "no prompt open: the list is the last stop"
+        );
+        d.prompts_new();
+        assert_eq!(d.focus, Focus::Prompts(Spot::Name));
+        assert!(!d.chain_edge(false, &keymap));
+        d.key(&key("tab"), None, &keymap);
+        assert_eq!(d.focus, Focus::Prompts(Spot::Body));
+        assert!(d.chain_edge(false, &keymap));
+        d.enter(false, &keymap);
+        assert_eq!(
+            d.focus,
+            Focus::Prompts(Spot::Body),
+            "Shift+Tab from the buttons"
+        );
+        d.enter(true, &keymap);
+        assert_eq!(d.focus, Focus::Tabs, "Tab from the last button");
+    }
+
+    #[test]
+    fn arrows_in_the_list_ask_for_the_neighbour_and_stop_at_the_ends() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Prompts);
+        d.prompts_loaded(library(&["a", "b", "c"]));
+        d.prompts_open("b", "text");
+        d.focus = Focus::Prompts(Spot::List);
+        assert_eq!(
+            d.key(&key("down"), None, &keymap),
+            Effect::Prompts(PromptAction::Open("c".into()))
+        );
+        assert_eq!(
+            d.key(&key("up"), None, &keymap),
+            Effect::Prompts(PromptAction::Open("a".into()))
+        );
+        d.prompts_open("c", "text");
+        assert_eq!(d.key(&key("down"), None, &keymap), Effect::None);
+        d.key(&key("enter"), None, &keymap);
+        assert_eq!(
+            d.focus,
+            Focus::Prompts(Spot::Name),
+            "Enter on the list goes to the editor"
+        );
+    }
+
+    #[test]
+    fn typing_goes_to_the_focused_field_spaces_included_and_enter_moves_on() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Prompts);
+        d.prompts_new();
+        type_text(&mut d, "my review", &keymap);
+        assert_eq!(d.prompts.draft.as_ref().unwrap().name(), "my review");
+        d.key(&key("enter"), None, &keymap);
+        assert_eq!(d.focus, Focus::Prompts(Spot::Body));
+        type_text(&mut d, "a", &keymap);
+        d.key(&key("enter"), None, &keymap);
+        type_text(&mut d, "b c", &keymap);
+        assert_eq!(d.prompts.draft.as_ref().unwrap().body.text(), "a\nb c");
+        assert_eq!(
+            d.key(&key("ctrl-enter"), None, &keymap),
+            Effect::Prompts(PromptAction::Save)
+        );
+        assert_eq!(d.key(&key("escape"), None, &keymap), Effect::Close);
+    }
+
+    #[test]
+    fn a_pasted_name_keeps_its_first_line_and_a_pasted_text_keeps_every_line() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Prompts);
+        d.prompts_new();
+        d.key(&key("ctrl-v"), Some("first\nsecond"), &keymap);
+        assert_eq!(d.prompts.draft.as_ref().unwrap().name(), "first");
+        d.key(&key("tab"), None, &keymap);
+        d.key(&key("ctrl-v"), Some("one\r\ntwo"), &keymap);
+        assert_eq!(d.prompts.draft.as_ref().unwrap().body.text(), "one\ntwo");
+    }
+
+    #[test]
+    fn editing_the_name_clears_its_refusal_and_typing_names_the_focused_text() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Prompts);
+        d.prompts_new();
+        d.prompts.draft.as_mut().unwrap().name_error =
+            Some("A name cannot start with a dot.".into());
+        type_text(&mut d, "x", &keymap);
+        assert_eq!(d.prompts.draft.as_ref().unwrap().name_error, None);
+        assert_eq!(d.typing().map(|input| input.as_str()), Some("x"));
+        d.key(&key("tab"), None, &keymap);
+        assert_eq!(d.typing().map(|input| input.as_str()), Some(""));
+        d.focus = Focus::Prompts(Spot::List);
+        assert!(d.typing().is_none());
+    }
+
+    #[test]
+    fn a_file_deleted_outside_closes_a_clean_draft_and_hands_the_keyboard_to_the_list() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Prompts);
+        d.prompts_loaded(library(&["a", "b"]));
+        d.prompts_open("a", "x");
+        d.focus = Focus::Prompts(Spot::Body);
+        d.prompts_loaded(library(&["b"]));
+        assert!(d.prompts.draft.is_none());
+        assert_eq!(d.focus, Focus::Prompts(Spot::List));
+        // Typed text outlives its file.
+        d.prompts_open("b", "x");
+        d.focus = Focus::Prompts(Spot::Body);
+        d.key(&typed("!"), None, &keymap);
+        d.prompts_loaded(library(&[]));
+        assert!(d.prompts.draft.is_some());
+        assert_eq!(d.focus, Focus::Prompts(Spot::Body));
+        d.prompts_deleted();
+        assert_eq!(d.focus, Focus::Prompts(Spot::List));
+    }
+
+    #[test]
+    fn a_refused_name_puts_the_keyboard_on_the_name_field() {
+        let mut d = dialog();
+        d.set_tab(Tab::Prompts);
+        d.prompts_new();
+        d.focus = Focus::Prompts(Spot::Body);
+        // An empty name is refused before the folder is touched.
+        let dir = tempfile::tempdir().unwrap();
+        let written = Write::Create {
+            name: String::new(),
+            text: String::new(),
+        }
+        .run(dir.path());
+        assert!(matches!(
+            written.result,
+            Err(PromptError::Name(NameError::Empty))
+        ));
+        assert!(!d.prompts_written(written));
+        assert_eq!(d.focus, Focus::Prompts(Spot::Name));
+        assert_eq!(
+            d.prompts.draft.as_ref().unwrap().name_error.as_deref(),
+            Some("Give the prompt a name.")
+        );
+    }
+
+    #[test]
+    fn switching_tabs_keeps_an_edited_draft() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Prompts);
+        d.prompts_new();
+        type_text(&mut d, "idea", &keymap);
+        d.set_tab(Tab::Keyboard);
+        d.set_tab(Tab::Prompts);
+        assert_eq!(d.prompts.draft.as_ref().unwrap().name(), "idea");
+        assert!(d.prompts.is_dirty());
+    }
+
+    #[test]
+    fn a_save_that_leaves_newer_keystrokes_unsaved_does_not_count_as_saved() {
+        let mut d = dialog();
+        d.set_tab(Tab::Prompts);
+        d.prompts_new();
+        d.prompts.draft.as_mut().unwrap().name.insert("idea");
+        let dir = tempfile::tempdir().unwrap();
+        let written = d
+            .prompts
+            .draft
+            .as_ref()
+            .unwrap()
+            .write()
+            .unwrap()
+            .run(dir.path());
+        // A key typed after the write was taken.
+        d.prompts.draft.as_mut().unwrap().body.insert("more");
+        assert!(!d.prompts_written(written), "the file lacks the newer text");
+        assert!(d.prompts.stale, "the folder changed all the same");
+        assert!(d.prompts.is_dirty());
     }
 }

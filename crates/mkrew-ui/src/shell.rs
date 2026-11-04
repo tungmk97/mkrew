@@ -50,6 +50,7 @@ mod peek;
 mod phone_access;
 mod ports;
 mod prompt_keys;
+mod prompts;
 mod run;
 mod sessions;
 mod settings;
