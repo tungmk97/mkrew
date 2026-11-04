@@ -359,3 +359,245 @@ fn worktree_folders_come_before_the_main_checkout_for_one_kind() {
     assert_eq!(find(&items, "same").description, "worktree");
     assert_eq!(find(&items, "x").description, "main skill");
 }
+
+// --- settings and plugins ---
+
+use crate::slash::testing::World;
+
+fn names(items: &[SlashItem]) -> Vec<String> {
+    items.iter().map(|i| i.name.clone()).collect()
+}
+
+/// Installs plugin `key` at `home/store/<dir>` and lists it in `installed_plugins.json`.
+fn install(w: &World, key: &str, dir: &str, manifest: &str) -> std::path::PathBuf {
+    let path = w.home.join("store").join(dir);
+    put(&path, ".claude-plugin/plugin.json", manifest);
+    let index = w.home.join(".claude/plugins/installed_plugins.json");
+    let mut plugins: serde_json::Value = std::fs::read_to_string(&index)
+        .map(|t| serde_json::from_str(&t).unwrap())
+        .unwrap_or_else(|_| serde_json::json!({"version": 2, "plugins": {}}));
+    plugins["plugins"][key] =
+        serde_json::json!([{ "scope": "user", "installPath": path.to_str().unwrap() }]);
+    put(
+        &w.home,
+        ".claude/plugins/installed_plugins.json",
+        &plugins.to_string(),
+    );
+    path
+}
+
+fn enable(w: &World, switches: &str) {
+    put(
+        &w.home,
+        ".claude/settings.json",
+        &format!("{{\"enabledPlugins\": {{{switches}}}}}"),
+    );
+}
+
+#[test]
+fn an_enabled_plugin_lists_its_skills_and_commands_under_its_manifest_name() {
+    let w = world();
+    let dir = install(&w, "kit@market", "kit", r#"{"name": "toolkit"}"#);
+    put(&dir, "skills/deploy/SKILL.md", &skill("deploy", "Ship it"));
+    put(
+        &dir,
+        "commands/lint.md",
+        "---\nargument-hint: <path>\n---\nLint files\n",
+    );
+    put(&dir, "commands/sub/ignored.md", "x");
+    enable(&w, r#""kit@market": true"#);
+    let items = rows(&w, &w.repo);
+    let deploy = find(&items, "toolkit:deploy");
+    assert_eq!(deploy.source, SlashSource::Plugin("toolkit".into()));
+    assert_eq!(deploy.description, "Ship it");
+    let lint = find(&items, "toolkit:lint");
+    assert_eq!(
+        (lint.description.as_str(), lint.argument_hint.as_deref()),
+        ("Lint files", Some("<path>"))
+    );
+    assert!(
+        !names(&items).contains(&"toolkit:sub:ignored".to_owned()),
+        "commands/*.md is not recursive"
+    );
+}
+
+#[test]
+fn a_plugin_is_off_unless_a_setting_or_its_manifest_turns_it_on() {
+    let w = world();
+    for (key, dir, manifest) in [
+        ("off@m", "off", r#"{"name": "off"}"#),
+        (
+            "default@m",
+            "default",
+            r#"{"name": "default", "defaultEnabled": true}"#,
+        ),
+        (
+            "vetoed@m",
+            "vetoed",
+            r#"{"name": "vetoed", "defaultEnabled": true}"#,
+        ),
+    ] {
+        let path = install(&w, key, dir, manifest);
+        put(&path, "commands/c.md", "x\n");
+    }
+    enable(&w, r#""vetoed@m": false"#);
+    let names = names(&rows(&w, &w.repo));
+    assert!(names.contains(&"default:c".to_owned()));
+    assert!(!names.contains(&"off:c".to_owned()));
+    assert!(!names.contains(&"vetoed:c".to_owned()));
+}
+
+#[test]
+fn settings_merge_by_key_from_user_to_project_to_local_to_managed() {
+    let w = world();
+    for key in ["a", "b", "c"] {
+        let path = install(
+            &w,
+            &format!("{key}@m"),
+            key,
+            &format!(r#"{{"name": "{key}"}}"#),
+        );
+        put(&path, "commands/c.md", "x\n");
+    }
+    put(
+        &w.home,
+        ".claude/settings.json",
+        r#"{"enabledPlugins": {"a@m": true, "b@m": true, "c@m": false}}"#,
+    );
+    put(
+        &w.repo,
+        ".claude/settings.json",
+        r#"{"enabledPlugins": {"b@m": false, "c@m": true}}"#,
+    );
+    put(
+        &w.repo,
+        ".claude/settings.local.json",
+        r#"{"enabledPlugins": {"b@m": true}}"#,
+    );
+    put(
+        &w.managed,
+        "managed-settings.json",
+        r#"{"enabledPlugins": {"a@m": false}}"#,
+    );
+    let names = names(&rows(&w, &w.repo));
+    assert!(!names.contains(&"a:c".to_owned()), "managed wins");
+    assert!(
+        names.contains(&"b:c".to_owned()),
+        "local beats project beats user"
+    );
+    assert!(names.contains(&"c:c".to_owned()), "project beats user");
+}
+
+#[test]
+fn a_manifest_commands_path_replaces_the_default_folder_and_skills_adds_to_it() {
+    let w = world();
+    let dir = install(
+        &w,
+        "kit@m",
+        "kit",
+        r#"{"name": "kit", "commands": ["./extra", "./single.md"], "skills": "./more"}"#,
+    );
+    put(&dir, "commands/default.md", "x\n");
+    put(&dir, "extra/one.md", "x\n");
+    put(&dir, "single.md", "Single\n");
+    put(&dir, "skills/base/SKILL.md", &skill("base", "b"));
+    put(&dir, "more/added/SKILL.md", &skill("added", "a"));
+    enable(&w, r#""kit@m": true"#);
+    let names = names(&rows(&w, &w.repo));
+    for name in ["kit:one", "kit:single", "kit:base", "kit:added"] {
+        assert!(names.contains(&name.to_owned()), "{name}");
+    }
+    assert!(
+        !names.contains(&"kit:default".to_owned()),
+        "commands replaces the default folder"
+    );
+}
+
+#[test]
+fn a_manifest_commands_map_gives_names_descriptions_and_hints() {
+    let w = world();
+    let dir = install(
+        &w,
+        "kit@m",
+        "kit",
+        r#"{"name": "kit", "commands": {
+            "inline": {"content": "---\ndescription: From content\n---\nbody", "argumentHint": "<x>"},
+            "filed": {"source": "./cmds/filed.md"},
+            "told": {"source": "./cmds/filed.md", "description": "Declared"}
+        }}"#,
+    );
+    put(&dir, "cmds/filed.md", "From the file\n");
+    enable(&w, r#""kit@m": true"#);
+    let items = rows(&w, &w.repo);
+    let inline = find(&items, "kit:inline");
+    assert_eq!(
+        (inline.description.as_str(), inline.argument_hint.as_deref()),
+        ("From content", Some("<x>"))
+    );
+    assert_eq!(find(&items, "kit:filed").description, "From the file");
+    assert_eq!(find(&items, "kit:told").description, "Declared");
+}
+
+#[test]
+fn disable_bundled_skills_hides_only_the_bundled_rows() {
+    let w = world();
+    put(
+        &w.home,
+        ".claude/settings.json",
+        r#"{"disableBundledSkills": true}"#,
+    );
+    let names = names(&rows(&w, &w.repo));
+    assert!(!names.contains(&"simplify".to_owned()), "bundled skill");
+    assert!(names.contains(&"compact".to_owned()), "built-in command");
+}
+
+#[test]
+fn skill_overrides_off_hides_that_skill_and_other_values_keep_it() {
+    let w = world();
+    put(
+        &w.repo,
+        ".claude/skills/noisy/SKILL.md",
+        &skill("noisy", "n"),
+    );
+    put(
+        &w.repo,
+        ".claude/skills/quiet/SKILL.md",
+        &skill("quiet", "q"),
+    );
+    put(
+        &w.repo,
+        ".claude/skills/terse/SKILL.md",
+        &skill("terse", "t"),
+    );
+    put(
+        &w.home,
+        ".claude/settings.json",
+        r#"{"skillOverrides": {"Noisy": "off", "terse": "name-only", "simplify": "off"}}"#,
+    );
+    let names = names(&rows(&w, &w.repo));
+    assert!(
+        !names.contains(&"noisy".to_owned()),
+        "key matches case-insensitively"
+    );
+    assert!(names.contains(&"quiet".to_owned()));
+    assert!(names.contains(&"terse".to_owned()));
+    assert!(
+        !names.contains(&"simplify".to_owned()),
+        "a bundled skill too"
+    );
+}
+
+#[test]
+fn a_settings_file_that_does_not_parse_is_an_error_line_and_the_scan_goes_on() {
+    let w = world();
+    put(&w.home, ".claude/settings.json", "{ not json");
+    put(
+        &w.repo,
+        ".claude/skills/still/SKILL.md",
+        &skill("still", "s"),
+    );
+    let out = list(Cli::Claude, &w.roots(&w.repo), &SlashOverrides::default());
+    assert_eq!(out.errors.len(), 1, "{:?}", out.errors);
+    assert!(out.errors[0].contains("settings.json"));
+    find(&out.items, "still");
+}

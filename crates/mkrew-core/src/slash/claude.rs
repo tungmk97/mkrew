@@ -1,5 +1,8 @@
 //! Claude Code (spec 2026-11-04 §5.1): built-ins and bundled skills from the table, plus the
-//! skill and command files of the managed, user and project scopes.
+//! skill and command files of the managed, user and project scopes and of enabled plugins.
+
+mod plugins;
+mod settings;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -9,6 +12,7 @@ use mkrew_protocol::{SlashItem, SlashSource};
 use super::ScanRoots;
 use super::scan::{self, Doc};
 use super::tables::Builtin;
+use settings::Settings;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Kind {
@@ -19,7 +23,7 @@ enum Kind {
 /// A skill or command file that may become a row.
 struct Candidate {
     kind: Kind,
-    /// 0 managed, 1 user, 2 project.
+    /// 0 managed, 1 user, 2 project, 3 plugin.
     scope: u8,
     item: SlashItem,
     invocable: bool,
@@ -31,6 +35,7 @@ pub(super) fn scan(
     builtins: Vec<Builtin>,
     errors: &mut Vec<String>,
 ) -> Vec<SlashItem> {
+    let settings = settings::load(roots, errors);
     let mut found = Vec::new();
     for managed in &roots.managed {
         add_skills(
@@ -73,7 +78,8 @@ pub(super) fn scan(
             errors,
         );
     }
-    resolve(found, builtins)
+    plugins::scan(roots, &settings, &mut found, errors);
+    resolve(found, builtins, &settings)
 }
 
 /// The folders to scan: `folder` up to the repo root. A linked worktree with no `.claude/skills`
@@ -137,8 +143,14 @@ fn candidate(kind: Kind, scope: u8, name: String, doc: &Doc, source: SlashSource
 
 /// Same name, case-insensitively: a skill beats a command file, then managed beats user beats
 /// project, then the folder nearer to the working folder. A skill also replaces the built-in row
-/// of its name; a command file never does. Skills with `user-invocable: false` are left out.
-fn resolve(mut found: Vec<Candidate>, builtins: Vec<Builtin>) -> Vec<SlashItem> {
+/// of its name; a command file never does. Left out: `user-invocable: false`, skills that
+/// `skillOverrides` turns `off` (bundled ones too) and, with `disableBundledSkills`, the bundled
+/// rows of the table.
+fn resolve(
+    mut found: Vec<Candidate>,
+    builtins: Vec<Builtin>,
+    settings: &Settings,
+) -> Vec<SlashItem> {
     found.sort_by_key(|c| (c.kind, c.scope)); // stable: nearer folders stay first
     let mut seen = HashSet::new();
     found.retain(|c| seen.insert(c.item.name.to_lowercase()));
@@ -154,12 +166,16 @@ fn resolve(mut found: Vec<Candidate>, builtins: Vec<Builtin>) -> Vec<SlashItem> 
     let mut items: Vec<SlashItem> = builtins
         .into_iter()
         .filter(|b| !replaced.contains(&b.item.name.to_lowercase()))
+        .filter(|b| {
+            !(b.bundled && (settings.disable_bundled_skills || settings.skill_is_off(&b.item.name)))
+        })
         .map(|b| b.item)
         .collect();
     items.extend(
         found
             .into_iter()
             .filter(|c| c.invocable)
+            .filter(|c| !(c.kind == Kind::Skill && settings.skill_is_off(&c.item.name)))
             .filter(|c| {
                 c.kind == Kind::Skill || !builtin_names.contains(&c.item.name.to_lowercase())
             })
