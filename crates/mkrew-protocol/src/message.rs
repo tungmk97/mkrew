@@ -1329,8 +1329,9 @@ pub struct AttachmentSaveParams {
 pub enum AttachmentOwner {
     /// `<data>/attachments/<session_id>/`: deleted 7 days after the session ended.
     Session(Ulid),
-    /// `<data>/attachments/projects/<project_id>/`: kept while a task of the project that is
-    /// not done names the file, else deleted after 7 days.
+    /// `<data>/attachments/projects/<project_id>/`: a file is deleted only when it is older than
+    /// 7 days, no task that is not done names it, and no task done within the last 7 days (its
+    /// `updated_at`) names it.
     Project(Ulid),
 }
 

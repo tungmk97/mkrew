@@ -29,7 +29,7 @@ A machine window (ADR 0089) must list the commands of the computer that runs the
 
 - A new request `slash.list` (protocol 52) returns the commands of one agent profile for a project folder, or for the project's folder inside a task worktree (`worktree_task_id`, resolved like `fs.*` without keeping a watcher).
   The daemon runs `mkrew_core::slash::list` on the blocking pool; `~` is the daemon user's home; the environment is the daemon's with the profile's `env` on top.
-- Which CLI an agent runs comes from a new optional profile key `cli` (`claude`, `codex`, `omp`, `copilot`), else from the file stem of `command`; shell profiles and wrappers such as `npx` infer nothing and answer `cli: null` with no rows.
+- Which CLI an agent runs comes from a new optional profile key `cli` (`claude`, `codex`, `omp`, `copilot`), else from the file stem of `command`; shell profiles and wrappers such as `npx` infer nothing and answer with no `cli` and no rows (the key is omitted on the wire).
   Inference exists because `seed_profiles` never overwrites a profile the user already has.
 - Built-in commands come from one TOML table per CLI under `crates/mkrew-core/slash/`, pinned to a CLI version (Codex: a commit of `slash_command.rs`).
   Skills, command files and plugin commands are scanned by the per-CLI rules in the design spec (`docs/superpowers/specs/2026-11-04-prompt-skills-design.md`, section 5).

@@ -17,7 +17,7 @@ A new task has no task id either: the daemon makes it at `task.create`.
 - `Project` writes `<data>/attachments/projects/<project_id>/<ulid>.<ext>`.
 - An unknown session or project is `not_found`.
 - The composer and the panes send `Session`; the task dialog sends `Project(dialog.project_id())`, for a new task and for an edit.
-- Retention (ADR 0060): the hourly check keeps the session rule and deletes a file under `projects/<id>/` when it is more than 7 days old and no task of that project that is not done has a prompt containing the file name.
+- Retention (ADR 0060): the hourly check keeps the session rule and deletes a file under `projects/<id>/` only when it is older than 7 days, no task that is not done names it, and no task done within the last 7 days (its `updated_at`) names it.
   The age is the time in the ULID of the file name, which `attachment.save` wrote, so a copy of the file does not reset it.
   When the tasks cannot be read, nothing is deleted.
 - Ctrl+V with an image in the dialog's Prompt box saves it and types its path, through the code the composer uses (`prompt_key_down`, ADR 0094).
@@ -41,11 +41,11 @@ A new task has no task id either: the daemon makes it at `task.create`.
 
 ## Consequences
 
-- A task in the backlog keeps its screenshot as long as it is not done; a done or deleted task's screenshot goes within about 8 days.
+- A task in the backlog keeps its screenshot as long as it is not done; a done task's screenshot goes 7 days after it was done (and never before the file is 7 days old).
 - An image pasted and then abandoned (dialog cancelled) goes after 7 days, like a session's.
 - Editing a task so its prompt no longer names an image releases the file for the next check after 7 days.
-- OS file drops onto the dialog's Prompt box work (Task 21) and Ctrl+V image paste works (Task 20).
+- OS file drops onto the dialog's Prompt box work and Ctrl+V image paste works.
   File tree row drags cannot start while the modal shade covers the tree, so they stay out of scope until the modal changes.
 - Every client of `attachment.save` migrates in this change: the composer, the pane's paste and the daemon tests.
 - SPEC §20B.1, §20B.5 and the protocol section say so.
-- Tests: `attachments_are_saved_per_project_and_unknown_projects_rejected` (daemon), `retention_keeps_the_screenshot_of_a_task_until_it_is_done` (daemon unit), `an_image_pasted_in_the_prompt_belongs_to_the_project` (UI).
+- Tests: `attachments_are_saved_per_project_and_unknown_projects_rejected` (daemon), `retention_keeps_the_screenshot_of_a_task_until_7_days_after_it_is_done` (daemon unit), `an_image_pasted_in_the_prompt_belongs_to_the_project` (UI).

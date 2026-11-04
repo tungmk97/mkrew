@@ -2167,12 +2167,12 @@ context_window = 200000        # tokens, for the % shown
 1. **Prompt composer.** `Ctrl+Shift+Enter` on a focused agent pane opens a composer docked at the
    pane's bottom: a multi-line text box (Enter = newline, Ctrl+Enter = send, Esc = hide and keep
    the draft; these keys are local to the composer like dialog keys, so they never reach the
-   terminal or Run task). Send = `session.send` with submit; multi-line text already goes as one bracketed
-   paste (§7). Typing `@` or `/` at the start of a line or after whitespace opens a picker; in the
-   middle of a word (`a@b.com`, `src/main.rs`) they type as they are. `@` opens the quick-open file
-   picker (§12A); the pick inserts
-   `composer.file_ref` with `{path}` = the project-relative path, `/` separators, quoted with `"`
-   if it contains spaces. `/` opens the agent's command picker (§20B.7). Drafts are kept per session in UI memory (lost on UI restart, which is fine).
+   terminal or Run task).
+   Send = `session.send` with submit; multi-line text already goes as one bracketed paste (§7).
+   Typing `@` or `/` at the start of a line or after whitespace opens a picker; in the middle of a word (`a@b.com`, `src/main.rs`) they type as they are.
+   `@` opens the quick-open file picker (§12A); the pick inserts `composer.file_ref` with `{path}` = the project-relative path, `/` separators, quoted with `"` if it contains spaces.
+   `/` opens the agent's command picker (§20B.7).
+   Drafts are kept per session in UI memory (lost on UI restart, which is fine).
    ✦ (shown while the composer has the keyboard and the draft is not blank) sends the draft to
    the session's own agent profile via `ai.generate` (`enhance_prompt`, §7). The agent may read
    the project folder for context. The rewrite replaces the draft, and the user still sends it.
@@ -2196,17 +2196,11 @@ context_window = 200000        # tokens, for the % shown
    or unavailable variable renders as empty and is listed in a muted note under the preview. Pure
    `mkrew_core::prompt::render(template, vars)`. Entry points: palette "Insert prompt…" (into the
    open composer, else opens one on the focused agent pane), a "Prompts" menu in the composer,
-   and a "From prompt…" menu in the task dialog (one modal picker). Three
-   samples are seeded on first run if the dir is missing: `review.md`, `explain.md`,
-   `fix-tests.md`. Read and written by the UI directly (config, not state); a machine window uses
-   this computer's folder.
-   The picker's last row "Manage prompts…" and the palette's "Global: Manage prompts…" open
-   Settings → Prompts (§14), where prompts are added, edited, renamed and deleted with
-   `mkrew_core::prompt::{validate_name, create, save, rename, delete, read}`.
-   A name is at most 64 characters and cannot be empty, start with a dot, contain
-   `/ \ : * ? " < > |` or a control character, end in a space or a dot, or be a Windows reserved name
-   (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, also before a first dot); it is
-   unique ignoring case, except that a prompt may be renamed to a new case of its own name.
+   and a "From prompt…" menu in the task dialog (one modal picker).
+   Three samples are seeded on first run if the dir is missing: `review.md`, `explain.md`, `fix-tests.md`.
+   Read and written by the UI directly (config, not state); a machine window uses this computer's folder.
+   The picker's last row "Manage prompts…" and the palette's "Global: Manage prompts…" open Settings → Prompts (§14), where prompts are added, edited, renamed and deleted with `mkrew_core::prompt::{validate_name, create, save, rename, delete, read}`.
+   A name is at most 64 characters and cannot be empty, start with a dot, contain `/ \ : * ? " < > |` or a control character, end in a space or a dot, or be a Windows reserved name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, also before a first dot); it is unique ignoring case, except that a prompt may be renamed to a new case of its own name.
    `save` writes a temp file in the folder and renames it over the target.
 4. **Send selection to agent.** `Ctrl+Shift+L` in the Editor (the editor's selected lines, else the caret's line), Git diff (picked new-side
    lines) and a terminal (selected text) opens a session picker (default: the task's session for
