@@ -55,7 +55,11 @@ fn slash_list_scans_the_project_folder_or_its_task_worktree() {
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "one"]);
 
-    let (_daemon, mut client) = env.start();
+    // An empty home: the scan must never read the developer's real `~/.claude`.
+    let home = env.dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let (_daemon, mut client) =
+        env.start_with(&[("HOME", home.as_path()), ("USERPROFILE", home.as_path())]);
     let project = client.add_project(&app);
     let task: Task = client
         .call(Request::TaskCreate(TaskCreateParams {
