@@ -859,7 +859,11 @@ impl Shell {
                                 theme.surface_raised,
                             )
                             .flex_none()
-                            .tooltip(tooltip(theme, "Insert a prompt from the library", ""))
+                            .tooltip(tooltip(
+                                theme,
+                                "Insert a prompt from the library (type / in the box for the agent's commands)",
+                                "",
+                            ))
                             .on_click(cx.listener(
                                 move |shell, _, window, cx| {
                                     shell.open_prompt_picker(

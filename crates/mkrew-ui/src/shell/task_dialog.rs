@@ -328,11 +328,13 @@ impl Shell {
                                     .active(|style| style.opacity(opacity::ACTIVE))
                                     .child(choice.label)
                             })
-                            .on_click(cx.listener(move |shell, _, _, cx| {
+                            .on_click(cx.listener(move |shell, _, window, cx| {
                                 if let Some(dialog) = shell.task_dialog.as_mut() {
                                     dialog.choose_agent(&agent);
-                                    cx.notify();
                                 }
+                                // An open `/` picker lists the new agent's commands (§20B.7).
+                                shell.retarget_slash_picker(window, cx);
+                                cx.notify();
                             }))
                             .focusable_bordered(theme)
                             .chip_arrows(index, len)
@@ -409,7 +411,9 @@ impl Shell {
             .font_family(theme.ui_font_family.clone())
             // A picker over it (library prompt, `@` file) has the keyboard meanwhile.
             .when(
-                self.prompt_picker.is_none() && self.quick_open.is_none(),
+                self.prompt_picker.is_none()
+                    && self.quick_open.is_none()
+                    && self.slash_picker.is_none(),
                 |el| {
                     el.dialog_root(
                         &self.dialog_focus,

@@ -4,8 +4,9 @@
 use crate::*;
 
 impl Shell {
-    /// Applies `event` to the prompt `target`: `@` opens the file picker (at a line start or
-    /// after a space), a paste takes the clipboard's text (an image too in the composer), Ctrl+C
+    /// Applies `event` to the prompt `target`: `@` opens the file picker and `/` the agent's
+    /// command picker (at a line start or after a space), a paste takes the clipboard's text
+    /// (an image too in the composer), Ctrl+C
     /// / Ctrl+X copy the selection, every other key edits. Returns `true` when the key was
     /// typed or opened a picker, `false` when it asks the box to leave (Esc, Ctrl+Enter, Enter
     /// in the dialog's title): nothing changed and the caller answers it.
@@ -19,8 +20,11 @@ impl Shell {
         let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
             return true;
         };
-        if self.prompt_trigger(target, &key) == Some(composer::Trigger::File) {
-            self.open_file_ref_picker(target, window, cx);
+        if let Some(trigger) = self.prompt_trigger(target, &key) {
+            match trigger {
+                composer::Trigger::File => self.open_file_ref_picker(target, window, cx),
+                composer::Trigger::Slash => self.open_slash_picker(target, window, cx),
+            }
             return true;
         }
         if key == DialogKey::Paste

@@ -463,6 +463,9 @@ impl Shell {
             theme_pick: None,
             prompt_picker: None,
             prompt_picker_scroll: ScrollHandle::new(),
+            slash_picker: None,
+            slash_picker_scroll: ScrollHandle::new(),
+            slash_cache: HashMap::new(),
             peek: None,
             peek_hover: peek::Hover::default(),
             peek_focus: cx.focus_handle(),
@@ -755,6 +758,7 @@ impl Shell {
         self.restore_theme_pick(window, cx);
         self.palette = None;
         self.prompt_picker = None;
+        self.slash_picker = None;
         self.palette_return = None;
         self.peek = None;
         self.peek_return = None;
@@ -801,6 +805,7 @@ impl Shell {
         self.history_pane = None;
         self.doc_dialog = None;
         self.diagram_dialog = None;
+        self.slash_cache.clear();
         // Typed drafts outlive the connection too (spec §8): a card's follow-up, a Docs comment
         // and a commit message stay; everything else of those views is read again.
         self.follow_up = self.follow_up.take().and_then(FollowUp::into_draft);

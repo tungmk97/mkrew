@@ -39,8 +39,8 @@ use mkrew_protocol::{
     SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionReadResult,
     SessionRef, SessionResumeParams, SessionSendParams, SessionSendResult, SessionSpawnResult,
     SessionState, SessionTranscript, SessionTranscriptParams, SessionUnqueueParams,
-    SessionUsageEvent, StateSource, TabCreateParams, TabListParams, TabPinParams, TabRef,
-    TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef,
+    SessionUsageEvent, SlashItem, StateSource, TabCreateParams, TabListParams, TabPinParams,
+    TabRef, TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef,
     TaskStatus, TerminalTab, Turn, UndoPreview, ViewedFile,
 };
 use mkrew_ui::ask::{self, Ask};
@@ -104,6 +104,7 @@ use mkrew_ui::run_setup::{self, RunSetup};
 use mkrew_ui::scrollbar;
 use mkrew_ui::settings_dialog::{self, SettingsDialog};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
+use mkrew_ui::slash_picker::{self, SlashKey, SlashPicker};
 use mkrew_ui::split::{Axis, Direction, Divider, Preset, drop_axis};
 use mkrew_ui::status;
 use mkrew_ui::stt;
@@ -834,6 +835,13 @@ struct Shell {
     prompt_picker: Option<PromptPicker>,
     /// Keeps the prompt picker's pick in view.
     prompt_picker_scroll: ScrollHandle,
+    /// The open `/` command picker (modal; over the task dialog when it types into it).
+    slash_picker: Option<SlashPicker>,
+    /// Keeps the `/` picker's pick in view.
+    slash_picker_scroll: ScrollHandle,
+    /// The last `slash.list` answer per (agent profile, project, task worktree): shown at once
+    /// when the picker opens again, then refreshed (§20B.7). Lives for the connection.
+    slash_cache: HashMap<SlashKey, Vec<SlashItem>>,
     /// The open peek popover (§20A.1).
     peek: Option<Peek>,
     /// The session row under the mouse, for the peek's hover delay.
@@ -1088,6 +1096,11 @@ impl Render for Shell {
                         self.prompt_picker
                             .as_ref()
                             .map(|picker| self.render_prompt_picker(picker, &theme, cx)),
+                    )
+                    .children(
+                        self.slash_picker
+                            .as_ref()
+                            .map(|picker| self.render_slash_picker(picker, &theme, cx)),
                     )
                     .children(
                         self.workspace_menu

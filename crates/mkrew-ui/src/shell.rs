@@ -53,6 +53,7 @@ mod prompt_keys;
 mod run;
 mod sessions;
 mod settings;
+mod slash;
 mod tabs;
 mod task_dialog;
 pub(crate) mod thread_panel;

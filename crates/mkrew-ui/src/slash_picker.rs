@@ -193,6 +193,9 @@ impl SlashPicker {
     pub fn retarget(&mut self, scope: SlashKey, cached: Option<Vec<SlashItem>>) {
         self.scope = scope;
         self.show(cached);
+        // Request numbers start at 1: the old agent's answer is refused even before the next
+        // request goes out.
+        self.sent = 0;
     }
 
     pub fn scope(&self) -> &SlashKey {
@@ -581,6 +584,16 @@ mod tests {
         assert_eq!(picker.query().as_str(), "re");
         assert_eq!(picker.empty(), Some(Empty::Loading));
         assert_eq!(picker.cli(), None);
+    }
+
+    #[test]
+    fn an_old_agents_answer_is_refused_before_the_next_request() {
+        let project = Ulid::new();
+        let mut picker = SlashPicker::new(Target::TaskDialog, scope(), None);
+        let (old, _) = picker.request();
+        picker.retarget(("codex".into(), project, None), Some(items(&["resume"])));
+        assert!(!picker.answered(old, answer(Some(Cli::Claude), items(&["review"]))));
+        assert_eq!(shown(&picker), ["resume"]);
     }
 
     #[test]
