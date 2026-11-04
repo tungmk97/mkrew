@@ -100,6 +100,17 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Install the new build and restart the daemon** (protocol 53; a window from before it shows a version mismatch).
 - [ ] **Composer and pane paste still work:** Ctrl+V of an image in an agent pane and in its composer types a path under `attachments\<session id>\`.
 - [ ] **Backlog keeps the screenshot:** the file from the New task check in the 2026-11-02 section below is still there after a daemon restart (the hourly check runs at start); it is deleted only once its task is done and the file is over 7 days old (covered by the daemon tests; no wait needed).
+- [ ] **OS file drop (dark + light):** Board → New task; drag a file from Explorer over the Prompt box: it shows the accent ring (border plus a faint tint, also while the box is focused); let go: the quoted absolute path is typed at the end of the prompt, no Enter, the caret stays in the prompt.
+  Drag two files: both paths, one space apart.
+  Move the drag out of the box without dropping: the ring goes away.
+  Drop on the Title, the buttons or beside the dialog: nothing is typed.
+- [ ] **Drop in a machine window:** the same drop on a machine window's New task shows "These files are on this computer; <machine> cannot read them." and types nothing.
+  Paste of an image there works (it is uploaded as bytes).
+- [ ] **While busy:** drop a file while ✦ Improve runs: the path is added after the rewritten text.
+  While "Saving…": nothing is typed and no ring shows.
+- [ ] **File tree rows (known limit):** OS file drops onto the New task Prompt box type their paths like a pane drop; file-tree drags cannot start while the dialog's modal shade covers the tree (ADR 0095).
+- [ ] **Panes unchanged:** drop a file and a tree row on an agent pane and on a shell pane with no dialog open: same text and the same ring as before.
+  With the dialog open, a drag over the dimmed pane behind it types nothing.
 
 ### To verify - 2026-11-02 Task dialog prompt works like the composer
 

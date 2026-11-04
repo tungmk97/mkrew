@@ -64,6 +64,20 @@ impl Shell {
         cx.notify();
     }
 
+    /// What an OS file drop types (§20B.5), or `None` after a toast: in a machine window these
+    /// files are on this computer, the session or project is not.
+    fn dropped_files_text(
+        &mut self,
+        paths: &ExternalPaths,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<String> {
+        if let Some(name) = self.machine_name().map(str::to_owned) {
+            self.toast_info(mkrew_ui::machines::local_files_refused(&name), cx);
+            return None;
+        }
+        Some(composer::dropped_files(paths.paths()))
+    }
+
     /// Files dropped from the OS on `session`'s pane (§20B.5): their absolute paths.
     pub(crate) fn drop_paths(
         &mut self,
@@ -72,18 +86,29 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        // A machine window: these files are on this computer, the session is not.
-        if let Some(name) = self.machine_name().map(str::to_owned) {
-            self.toast_info(mkrew_ui::machines::local_files_refused(&name), cx);
+        if let Some(text) = self.dropped_files_text(paths, cx) {
+            self.type_into_pane(session, &text, window, cx);
+        }
+    }
+
+    /// Files dropped from the OS on the task dialog's Prompt box (§20B.5, ADR 0095): typed
+    /// like a pane drop. A dialog that is saving takes nothing.
+    pub(crate) fn drop_prompt_paths(
+        &mut self,
+        paths: &ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let busy = (self.task_dialog.as_ref()).is_none_or(|dialog| dialog.busy);
+        if busy {
             return;
         }
-        let paths: Vec<String> = paths
-            .paths()
-            .iter()
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect();
-        let text = composer::typed_paths(paths.iter().map(String::as_str));
-        self.type_into_pane(session, &text, window, cx);
+        if let Some(text) = self.dropped_files_text(paths, cx)
+            && !text.is_empty()
+        {
+            self.prompt_typed(composer::Target::TaskDialog, &text, window, cx);
+            cx.notify();
+        }
     }
 
     /// A file tree row dropped on `session`'s pane (§20B.5, ADR 0081): `composer.file_ref`

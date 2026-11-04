@@ -663,9 +663,10 @@ struct Shell {
     follow_up_scroll: ScrollHandle,
     /// The prompt composer draft of every agent session (§20B.1).
     composers: Composers,
-    /// The pane under an OS file drag (§20B.5), tracked without GPUI's hover check: gpui-pre
-    /// 0.3.7 keeps keyboard modality during OLE drags, so `on_drop` misses drops after typing.
-    drop_hover: Option<(Ulid, ExternalPaths)>,
+    /// What is under an OS file drag (§20B.5): a pane, or the task dialog's Prompt box. Tracked
+    /// without GPUI's hover check: gpui-pre 0.3.7 keeps keyboard modality during OLE drags, so
+    /// `on_drop` misses drops after typing.
+    drop_hover: Option<(DropTarget, ExternalPaths)>,
     /// Where the tab or pane dragged over a pane would split it (stale once no drag is active).
     pane_drop: Option<PaneDrop>,
     /// Focused while the focused pane's composer takes keys.

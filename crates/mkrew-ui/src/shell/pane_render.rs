@@ -498,18 +498,21 @@ impl Shell {
             )
             .on_drag_move::<ExternalPaths>(cx.listener(
                 move |shell, event: &DragMoveEvent<ExternalPaths>, _, cx| {
-                    if event.bounds.contains(&event.event.position) {
-                        shell.drop_hover = Some((session, event.drag(cx).clone()));
+                    // A modal dialog covers the pane: its own box takes the drop, and this
+                    // pane's catcher (painted first) must not take the slot from it.
+                    if !shell.modal_open() && event.bounds.contains(&event.event.position) {
+                        shell.drop_hover =
+                            Some((DropTarget::Pane(session), event.drag(cx).clone()));
                     } else if shell
                         .drop_hover
                         .as_ref()
-                        .is_some_and(|(hovered, _)| *hovered == session)
+                        .is_some_and(|(hovered, _)| *hovered == DropTarget::Pane(session))
                     {
                         shell.drop_hover = None;
                     }
                 },
             ))
-            .child(drop_catcher(session, cx))
+            .child(drop_catcher(DropTarget::Pane(session), cx))
             .when(several, |el| {
                 el.children(info.map(|info| self.pane_header(info, color, now, theme, cx)))
             })
@@ -979,12 +982,24 @@ pub(crate) fn detach(connection: &Connection, session_id: Ulid, cx: &mut Context
         .detach();
 }
 
-/// Delivers an OS file drop on `session`'s pane (see `Shell::drop_hover`).
+/// What an OS file drag hovers (§20B.5, ADR 0095).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DropTarget {
+    /// An agent or shell pane.
+    Pane(Ulid),
+    /// The Prompt box of the open task dialog.
+    TaskPrompt,
+}
+
+/// Delivers an OS file drop on `target` (see `Shell::drop_hover`).
 // ponytail: works around gpui-pre 0.3.7 keeping keyboard modality during OLE drags
 // (window.rs:5415 skips FileDrop), which makes every hover-gated mouse-up listener (`on_drop`,
 // `capture_any_mouse_up`) miss drops after typing. Use plain `.on_drop` on the pane when
 // upstream treats FileDrop as mouse input.
-pub(crate) fn drop_catcher(session: Ulid, cx: &Context<'_, Shell>) -> impl IntoElement + use<> {
+pub(crate) fn drop_catcher(
+    target: DropTarget,
+    cx: &Context<'_, Shell>,
+) -> impl IntoElement + use<> {
     let view = cx.entity();
     canvas(
         |_, _, _| (),
@@ -996,10 +1011,15 @@ pub(crate) fn drop_catcher(session: Ulid, cx: &Context<'_, Shell>) -> impl IntoE
                     return;
                 }
                 view.update(cx, |shell, cx| {
-                    let hovered = shell.drop_hover.take_if(|(hovered, _)| *hovered == session);
+                    let hovered = shell.drop_hover.take_if(|(hovered, _)| *hovered == target);
                     if let Some((_, paths)) = hovered {
                         cx.stop_propagation();
-                        shell.drop_paths(session, &paths, window, cx);
+                        match target {
+                            DropTarget::Pane(session) => {
+                                shell.drop_paths(session, &paths, window, cx);
+                            }
+                            DropTarget::TaskPrompt => shell.drop_prompt_paths(&paths, window, cx),
+                        }
                     }
                 });
             });

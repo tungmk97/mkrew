@@ -2171,6 +2171,7 @@ context_window = 200000        # tokens, for the % shown
    agent (the workspace default when none is picked), with the same waiting and failure rules;
    saving waits for the answer.
    Ctrl+V with an image saves it as a project attachment (§20B.5) and types its path, as in the composer.
+   OS files dropped on the Prompt box type their absolute paths as on a pane (§20B.5).
    The Board follow-up input reuses the same multi-line text box.
 2. **Send queue visible.** While a send waits (session working), the composer lists queued texts
    (first line each) with ✕ to remove. Daemon: each queued text gets a `send_id`; `session.send`
@@ -2203,6 +2204,13 @@ context_window = 200000        # tokens, for the % shown
    worktree) on an agent pane, the bare path on a shell pane, a folder ending with `/`, then one
    space; no Enter. The same rules as above: the whole pane accepts it, the paths go into the
    composer draft while it is shown, and the pane shows an accent ring while the row hovers it.
+   **Task dialog.** The Prompt box of the task dialog takes the same inputs (ADR 0095).
+   A pasted image is saved with `attachment.save` and owner `project` (the dialog's project), because a new task has no id and no session yet.
+   Dropped OS files type their absolute paths as on a pane, quoted and separated the same way.
+   While a drag is over the box it shows the accent ring (accent border plus a faint tint).
+   A machine window refuses OS files as on a pane.
+   File tree rows cannot be dragged onto the box: the dialog's modal shade covers the tree, so no drag can start.
+   `type_into_pane` keeps ignoring drops while a dialog is open: the box handles its own.
 6. **Run with…** A task card's menu offers "Run with…" (pick a profile): updates the task's agent,
    then runs it. Only for Todo or Review cards without a live session.
 7. **Slash picker.** Typing `/` at the start of a line or after whitespace in the composer or the task dialog's Prompt opens a picker that lists what typing `/` lists in the agent's own terminal, with the same names, descriptions and order (ADR 0094).

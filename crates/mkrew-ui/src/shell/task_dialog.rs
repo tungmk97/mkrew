@@ -396,6 +396,25 @@ impl Shell {
             (false, true) => "Save",
             (false, false) => "Create task",
         };
+        // The accent ring while an OS file drag is over the Prompt box: state-driven
+        // (`drop_hover`), as `drag_over` never fires for `ExternalPaths`. The tint keeps it
+        // visible on a focused field, whose own border is already the accent.
+        let ring = !dialog.busy
+            && matches!(self.drop_hover, Some((DropTarget::TaskPrompt, _)))
+            && cx.has_active_drag();
+        let ring_border: gpui::Hsla = if ring {
+            rgb(theme.accent).into()
+        } else {
+            gpui::transparent_black()
+        };
+        let tint = theme.tint(theme.accent);
+        let drop_ring = div()
+            .absolute()
+            .inset_0()
+            .rounded(px(radius::MEDIUM))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(ring_border)
+            .when(ring, move |el| el.bg(tint));
         let panel = div()
             .id("task-dialog")
             .w(px(theme::DIALOG_WIDTH))
@@ -499,15 +518,39 @@ impl Shell {
                             }),
                     )
                     .child(
-                        field(
-                            "task-prompt",
-                            Field::Prompt,
-                            "Sent to the agent when the task runs.",
-                        )
-                        .h(px(theme::PROMPT_FIELD_HEIGHT))
-                        .overflow_y_scroll()
-                        .track_scroll(&self.prompt_scroll)
-                        .when(rewriting, |el| el.opacity(opacity::DISABLED)),
+                        div()
+                            .relative()
+                            .on_drag_move::<ExternalPaths>(cx.listener(
+                                |shell, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                                    let inside = event.bounds.contains(&event.event.position);
+                                    let hovered = matches!(
+                                        shell.drop_hover,
+                                        Some((DropTarget::TaskPrompt, _))
+                                    );
+                                    if inside {
+                                        shell.drop_hover =
+                                            Some((DropTarget::TaskPrompt, event.drag(cx).clone()));
+                                    } else if hovered {
+                                        shell.drop_hover = None;
+                                    }
+                                    if inside != hovered {
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                            .child(
+                                field(
+                                    "task-prompt",
+                                    Field::Prompt,
+                                    "Sent to the agent when the task runs.",
+                                )
+                                .h(px(theme::PROMPT_FIELD_HEIGHT))
+                                .overflow_y_scroll()
+                                .track_scroll(&self.prompt_scroll)
+                                .when(rewriting, |el| el.opacity(opacity::DISABLED)),
+                            )
+                            .child(drop_catcher(DropTarget::TaskPrompt, cx))
+                            .child(drop_ring),
                     )
                     // The composer's keys hold here too; the line stays so the dialog
                     // never jumps.
@@ -521,7 +564,7 @@ impl Shell {
                             .child(if rewriting {
                                 "Improving the prompt…"
                             } else {
-                                "@ for a file · Ctrl+Enter to save"
+                                "@ for a file · paste an image or drop a file · Ctrl+Enter to save"
                             }),
                     ),
             )

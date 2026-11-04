@@ -340,6 +340,13 @@ pub fn typed_paths<'a>(paths: impl IntoIterator<Item = &'a str>) -> String {
         .join(" ")
 }
 
+/// What an OS file drop types (§20B.5), on an agent pane or on the task dialog's prompt:
+/// the absolute paths as [`typed_paths`] writes them.
+pub fn dropped_files(paths: &[std::path::PathBuf]) -> String {
+    let paths: Vec<_> = paths.iter().map(|path| path.to_string_lossy()).collect();
+    typed_paths(paths.iter().map(|path| &**path))
+}
+
 /// The `attachment.save` extension of a clipboard image (§20B.5); `None` for formats the
 /// daemon does not store (svg, bmp, tiff, …).
 pub fn attachment_ext(format: ImageFormat) -> Option<&'static str> {
@@ -659,6 +666,23 @@ mod tests {
             !typed_paths(["/a", "/b c"]).contains('\n'),
             "never an Enter"
         );
+    }
+
+    /// A drop on the task dialog types what a drop on a pane types (§20B.5): absolute paths,
+    /// a path with whitespace quoted, separated by one space, no Enter, no trailing space.
+    #[test]
+    fn dropped_files_type_their_paths_like_a_pane_drop() {
+        use std::path::PathBuf;
+        let paths = [
+            PathBuf::from("/tmp/a.png"),
+            PathBuf::from(r"C:\Users\Nguyen Tung\Pictures\ảnh 1.png"),
+        ];
+        assert_eq!(
+            dropped_files(&paths),
+            "/tmp/a.png \"C:\\Users\\Nguyen Tung\\Pictures\\ảnh 1.png\""
+        );
+        assert_eq!(dropped_files(&paths[..1]), "/tmp/a.png");
+        assert_eq!(dropped_files(&[]), "");
     }
 
     #[test]
