@@ -2229,7 +2229,7 @@ context_window = 200000        # tokens, for the % shown
 | `attachment.save` | `owner` (`{"session": id}` or `{"project": id}`), `ext` (`png`/`jpg`/`gif`/`webp`), `data` (base64, ≤ 10 MiB) | `path`: `<data>/mkrew/attachments/<session_id>/<ulid>.<ext>`, or `<data>/mkrew/attachments/projects/<project_id>/<ulid>.<ext>` for a project; an unknown session or project is `not_found` |
 
 Attachments of sessions that ended more than 7 days ago are deleted by the hourly backup check (§8).
-A project attachment is deleted by the same check when it is more than 7 days old (counted from the ULID in its file name) and no task of that project that is not done has a prompt containing its file name.
+A project attachment is deleted by the same check when it is more than 7 days old (counted from the ULID in its file name) and no task of that project has a prompt containing its file name unless that task has been done for more than 7 days.
 
 ### §20C Reviewing per turn (M11)
 

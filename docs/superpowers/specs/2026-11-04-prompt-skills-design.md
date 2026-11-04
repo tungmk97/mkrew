@@ -258,8 +258,8 @@ pub enum AttachmentOwner { Session(Ulid), Project(Ulid) }
 ### 6.2 Retention (ADR 0060)
 
 The hourly check keeps today's session rule and adds:
-a file under `attachments/projects/<id>/` is deleted when it is older than 7 days and no task of that project that is not done has a prompt containing the file name.
-A task in the backlog for weeks keeps its screenshot; a done task's screenshot goes after 7 days, like a session's.
+a file under `attachments/projects/<id>/` is deleted when it is older than 7 days and no task of that project has a prompt containing the file name, unless that task has been done for more than 7 days.
+A task in the backlog for weeks keeps its screenshot; a done task's screenshot goes 7 days after the task is done, like a session's.
 
 ### 6.3 Paste
 

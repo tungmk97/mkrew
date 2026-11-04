@@ -52,7 +52,7 @@ pub fn start(
                     hub.store().get_session(id).ok().and_then(|s| s.ended_at)
                 });
                 let cleaned_projects = attachment::cleanup_projects(&attachments, now, |id| {
-                    attachment::open_task_prompts(&hub.store(), id)
+                    attachment::open_task_prompts(&hub.store(), id, now)
                 });
                 let retained = crate::retention::run(&hub.store(), &sessions, now);
                 (backed_up, cleaned, cleaned_projects, retained)

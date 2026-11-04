@@ -87,15 +87,18 @@ pub fn cleanup(
     Ok(removed)
 }
 
-/// Prompts of `project`'s tasks that are not done (Todo, Running, NeedsInput, Review), the
-/// text that keeps a project image alive. `None` when the tasks cannot be read: the caller
-/// must then keep every file.
-pub fn open_task_prompts(store: &Store, project: Ulid) -> Option<Vec<String>> {
+/// Prompts of `project`'s tasks that keep a project image alive: tasks that are not done
+/// (Todo, Running, NeedsInput, Review) and done tasks updated no more than [`KEEP_MS`] before
+/// `now_ms`, so an image goes 7 days after its task is done, like a session's files.
+/// `None` when the tasks cannot be read: the caller must then keep every file.
+pub fn open_task_prompts(store: &Store, project: Ulid, now_ms: i64) -> Option<Vec<String>> {
     match store.list_tasks(Some(project), None) {
         Ok(tasks) => Some(
             tasks
                 .into_iter()
-                .filter(|task| task.status != TaskStatus::Done)
+                .filter(|task| {
+                    task.status != TaskStatus::Done || now_ms - task.updated_at <= KEEP_MS
+                })
                 .map(|task| task.prompt)
                 .collect(),
         ),
@@ -137,13 +140,18 @@ pub fn cleanup_projects(
         else {
             continue;
         };
-        let Ok(files) = std::fs::read_dir(entry.path()) else {
-            continue;
+        let files = match std::fs::read_dir(entry.path()) {
+            Ok(files) => files,
+            Err(e) if e.kind() == io::ErrorKind::NotADirectory => continue,
+            Err(e) => {
+                tracing::warn!(path = %entry.path().display(), "read attachments: {e}");
+                continue;
+            }
         };
         let mut prompts: Option<Option<Vec<String>>> = None;
         for file in files.flatten() {
             let path = file.path();
-            let Some(name) = path.file_name().and_then(|n| n.to_str()).map(str::to_owned) else {
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
             let Some(created) = created_ms(&path) else {
@@ -152,11 +160,14 @@ pub fn cleanup_projects(
             if now_ms - created <= KEEP_MS {
                 continue;
             }
+            if !file.file_type().is_ok_and(|t| t.is_file()) {
+                continue;
+            }
             let open = prompts.get_or_insert_with(|| open_prompts(project));
             let Some(open) = open.as_ref() else {
                 continue;
             };
-            if open.iter().any(|prompt| prompt.contains(&name)) {
+            if open.iter().any(|prompt| prompt.contains(name)) {
                 continue;
             }
             match std::fs::remove_file(&path) {
@@ -399,22 +410,26 @@ mod tests {
             .create_task(other.id, "x", "prompt other", None, None, false)
             .unwrap();
 
-        let mut prompts = open_task_prompts(&store, project.id).unwrap();
+        let mut prompts = open_task_prompts(&store, project.id, i64::MAX).unwrap();
         prompts.sort();
         assert_eq!(
             prompts,
             ["prompt input", "prompt review", "prompt run", "prompt todo"]
         );
-        assert_eq!(open_task_prompts(&store, Ulid::new()), Some(Vec::new()));
+        assert_eq!(
+            open_task_prompts(&store, Ulid::new(), i64::MAX),
+            Some(Vec::new())
+        );
     }
 
-    /// SPEC §20B.5: a task in the backlog keeps its screenshot; a done task's goes after 7 days.
+    /// SPEC §20B.5: a task in the backlog keeps its screenshot; a done task's goes 7 days
+    /// after it is done.
     #[test]
-    fn retention_keeps_the_screenshot_of_a_task_until_it_is_done() {
+    fn retention_keeps_the_screenshot_of_a_task_until_7_days_after_it_is_done() {
         let data = tempfile::tempdir().unwrap();
         let attachments = data.path().join("attachments");
         let (store, project) = store_with_project(data.path(), "repo");
-        let (path, _) = project_file(&attachments, project.id, 3 * KEEP_MS);
+        let (path, _) = project_file(&attachments, project.id, 30 * 24 * 60 * 60 * 1000);
         let task = store
             .create_task(
                 project.id,
@@ -425,22 +440,34 @@ mod tests {
                 false,
             )
             .unwrap();
-        let check = |store: &Store| {
-            cleanup_projects(&attachments, NOW, |id| open_task_prompts(store, id)).unwrap()
+        // The file is 30 days old at NOW; `open_at` is the clock the task check sees.
+        let check = |open_at: i64| {
+            cleanup_projects(&attachments, NOW, |id| {
+                open_task_prompts(&store, id, open_at)
+            })
+            .unwrap()
         };
 
-        assert!(check(&store).is_empty(), "a Todo task keeps it");
-        assert!(path.exists());
+        assert!(check(NOW).is_empty(), "a Todo task keeps it");
         store
             .set_task_status(task.id, TaskStatus::Review, false)
             .unwrap();
-        assert!(check(&store).is_empty(), "a Review task keeps it");
-        assert!(path.exists());
-
+        assert!(check(NOW).is_empty(), "a Review task keeps it");
         store
             .set_task_status(task.id, TaskStatus::Done, false)
             .unwrap();
-        assert_eq!(check(&store), std::slice::from_ref(&path));
+        let done_at = store.list_tasks(Some(project.id), None).unwrap()[0].updated_at;
+
+        assert!(
+            check(done_at + 24 * 60 * 60 * 1000).is_empty(),
+            "done 1 day ago keeps it"
+        );
+        assert!(
+            check(done_at + KEEP_MS).is_empty(),
+            "done exactly 7 days ago keeps it"
+        );
+        assert!(path.exists());
+        assert_eq!(check(done_at + KEEP_MS + 1), std::slice::from_ref(&path));
         assert!(!path.exists());
     }
 }
