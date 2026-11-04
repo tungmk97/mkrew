@@ -49,7 +49,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Empty states:** a profile with `command = "aider"` and no `cli` shows "Mkrew doesn't know which CLI this agent runs. Set `cli` in its profile." and Open profile opens its file in Zed.
   Enter on that note also opens the profile (the button shows "(Enter)").
   `no-such` typed in the filter shows the no-match sentence.
-  With the daemon stopped the picker shows the error and Try again; Enter on it retries the load (the button shows "(Enter)"); once the daemon runs the rows appear.
+  To see the error line, keep the daemon running and rename `<config>/agents/<id>.toml` of that session's agent (for example `claude.toml`) to another name; the daemon then answers "agent profile <id> not found" to `slash.list`.
+  Type `/` in that session's composer: the picker shows the error and "Try again (Enter)".
+  Rename the file back and press Enter: the rows appear.
+  With the daemon stopped, `/` just types a plain `/` (no picker opens).
   Tab never runs either action: it only types what the picker would type, or nothing when there are no rows.
   An unreadable command file adds "1 file could not be read" with its name in the tooltip.
 - [ ] **Remote machine window (ADR 0089):** the list is the remote computer's (its `~/.claude/commands`, its project folder); Open profile says it works on this computer only.
