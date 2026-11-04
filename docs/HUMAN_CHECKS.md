@@ -21,6 +21,41 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-04 `/` command picker in the prompt boxes (ADR 0094)
+
+- [ ] **Install the new build and restart the daemon** (protocol 52; the daemon reads the lists).
+- [ ] **Look (dark + light):** on a Claude pane open the composer (Ctrl+Shift+Enter) and type `/`.
+  The picker has the same frame as the prompt picker: a filter field, rows with `/name` in the mono font, the argument hint and the description in muted text (one line, cut with an ellipsis), a chip on the right (`built-in`, `project`, `user`, `managed`, `plugin: x`, `profile`), the pick ringed, hover on the others.
+  The footer shows the keys and, for Claude, "MCP prompts are not listed; type /mcp__server__prompt".
+  Matched letters turn accent colored while you type.
+  The omp `skill:` group row has no source chip (it stands for many skills, not one source).
+- [ ] **Long text:** a plugin with a very long name and a command with a long argument hint shrink with an ellipsis.
+  The chip stays inside the panel and is never pushed out or clipped.
+- [ ] **Reopen:** close the picker and type `/` again; the cached rows and the footer show at once, with no empty flash.
+- [ ] **Claude order and descriptions vs the TUI:** open `claude` in a plain terminal pane and type `/`, then compare with the composer's picker for the same workspace.
+  Names and order should match for the first screen of rows; tell which row is the first that differs.
+  Descriptions here are condensed docs text, not the TUI's own, so only judge that they say the same thing.
+  The built-in table is pinned to Claude Code 2.1.312; a newer `claude` may add or drop rows.
+  Do the same for Codex, omp (the `skill:` row, then `skill:` expands the skills) and Copilot.
+- [ ] **Keys:** ↑ ↓ move; Enter and Tab type `/name ` with the caret after the space; Esc types `/` and what you typed after it (`/re` stays `/re`).
+  `/` after a word or inside a path (`src/`) types a plain `/`.
+- [ ] **`@` change:** `@` opens the file picker only at a line start or after whitespace.
+  `a@b.com` types a plain `@` and stays text.
+  This is a change: `@` used to open the file picker anywhere.
+- [ ] **New task:** Board, New task, click Prompt, type `/`: the commands of the workspace's default agent.
+  Pick another agent with the Agent chips before you open the picker; the list follows the agent picked before opening.
+  Changing the agent while the picker is open cannot be done: the modal shade covers the chips, so there is nothing to check there.
+  Edit a task that has a worktree: a command file that exists only in its worktree is listed.
+- [ ] **Empty states:** a profile with `command = "aider"` and no `cli` shows "Mkrew doesn't know which CLI this agent runs. Set `cli` in its profile." and Open profile opens its file in Zed.
+  Enter on that note also opens the profile (the button shows "(Enter)").
+  `no-such` typed in the filter shows the no-match sentence.
+  With the daemon stopped the picker shows the error and Try again; Enter on it retries the load (the button shows "(Enter)"); once the daemon runs the rows appear.
+  Tab never runs either action: it only types what the picker would type, or nothing when there are no rows.
+  An unreadable command file adds "1 file could not be read" with its name in the tooltip.
+- [ ] **Remote machine window (ADR 0089):** the list is the remote computer's (its `~/.claude/commands`, its project folder); Open profile says it works on this computer only.
+- [ ] **Decision (default taken):** when no agent can be told (New task with no agent picked and no workspace default), `/` types a plain `/` and opens no picker.
+  Want a picker of every agent's commands there instead?
+
 ### To verify - 2026-11-03 A restart drops the panes it cannot bring back (ADR 0093)
 
 - [ ] **Install the new build and restart the daemon** (no protocol change).

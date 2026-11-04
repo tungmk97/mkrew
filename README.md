@@ -184,6 +184,10 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
 - **Docs** (`Ctrl+Shift+5`): review Markdown plans, comment on passages and send the comments
   back to the agent session that wrote them.
 - **Command palette** `Ctrl+Shift+P`: every command, plus actions without a shortcut.
+- **Prompt boxes** (the composer, `Ctrl+Shift+Enter`, and the New task Prompt):
+  type `/` at the start of a line to pick one of the agent's own commands, skills and plugin commands (Claude Code, Codex, Oh My Pi, Copilot), as its terminal would list them.
+  Type `@` to pick a file.
+  If an agent's CLI is not recognised, set `cli = "claude"` (or `codex`, `omp`, `copilot`) in its profile; `[slash] hide` and `[[slash.add]]` fix single rows.
 - **Shortcuts**: `Ctrl+,` creates `keymap.toml` in the config directory (every command listed,
   commented out, at its default) and opens it in Zed. Edits apply after restarting Mkrew;
   duplicate or invalid entries are listed in the command palette. Defaults:
