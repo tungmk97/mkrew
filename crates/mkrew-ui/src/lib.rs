@@ -75,6 +75,7 @@ pub mod ports;
 pub mod preview;
 pub mod preview_select;
 pub mod prompt_picker;
+pub mod prompts_page;
 pub mod quick_open;
 pub mod redraw;
 pub mod router;
