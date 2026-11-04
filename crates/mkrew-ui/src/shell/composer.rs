@@ -127,9 +127,11 @@ impl Shell {
                             }
                             composer::Target::TaskDialog => {
                                 if let Some(dialog) = shell.task_dialog.as_mut() {
-                                    dialog.insert_prompt(&text);
+                                    dialog.prompt.insert(&text);
+                                    if dialog.field == Field::Prompt {
+                                        shell.prompt_scroll.scroll_to_bottom();
+                                    }
                                 }
-                                shell.prompt_scroll.scroll_to_bottom();
                             }
                         }
                         cx.notify();
