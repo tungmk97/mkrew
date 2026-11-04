@@ -12,10 +12,10 @@ use std::time::{Duration, Instant};
 use interprocess::local_socket::{Stream, prelude::*};
 use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
-    AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, AttachmentSaveParams,
-    AttachmentSaveResult, ClientKind, CommentContext, CommentCreateParams, CommentId,
-    CommentListParams, CommentRef, CommentReplyParams, CommentSendParams, CommentStatus, Commit,
-    CommitDetail, DaemonStatusResult, DocChangedEvent, DocComment, DocContent, DocFile,
+    AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, AttachmentOwner,
+    AttachmentSaveParams, AttachmentSaveResult, ClientKind, CommentContext, CommentCreateParams,
+    CommentId, CommentListParams, CommentRef, CommentReplyParams, CommentSendParams, CommentStatus,
+    Commit, CommitDetail, DaemonStatusResult, DocChangedEvent, DocComment, DocContent, DocFile,
     DocListParams, DocReadParams, ErrorCode, Event, FileDiff, Frame, FrameDecoder, FsContent,
     FsCreateParams, FsCreated, FsEntry, FsFindParams, FsIgnoreParams, FsListParams, FsMatch,
     FsReadParams, FsWriteParams, FsWritten, GitChangedEvent, GitCommitParams, GitCommitResult,
@@ -431,9 +431,9 @@ fn wait_comment(client: &mut Client, id: CommentId, status: CommentStatus) -> Do
     }
 }
 
-fn save_attachment(session_id: Ulid, ext: &str, data: Vec<u8>) -> Request {
+fn save_attachment(owner: AttachmentOwner, ext: &str, data: Vec<u8>) -> Request {
     Request::AttachmentSave(AttachmentSaveParams {
-        session_id,
+        owner,
         ext: ext.into(),
         data,
     })

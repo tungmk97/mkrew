@@ -308,9 +308,14 @@ fn every_m1_request_round_trips() {
             send_id: sid(),
         }),
         Request::AttachmentSave(AttachmentSaveParams {
-            session_id: sid(),
+            owner: AttachmentOwner::Session(sid()),
             ext: "png".into(),
             data: vec![0x89, b'P', b'N', b'G'],
+        }),
+        Request::AttachmentSave(AttachmentSaveParams {
+            owner: AttachmentOwner::Project(sid()),
+            ext: "jpg".into(),
+            data: vec![0xff, 0xd8],
         }),
         Request::TurnList(SessionRef { session_id: sid() }),
         Request::SessionFiles(SessionFilesParams {
@@ -1292,4 +1297,20 @@ fn slash_list_result_leaves_an_unknown_cli_out() {
         assert_eq!(serde_json::to_value(&known).unwrap()["cli"], json!(name));
     }
     assert!(serde_json::from_value::<Cli>(json!("gemini")).is_err());
+}
+
+#[test]
+fn an_attachment_owner_is_named_by_its_kind_on_the_wire() {
+    let id = sid();
+    assert_eq!(
+        serde_json::to_value(AttachmentOwner::Session(id)).unwrap(),
+        serde_json::json!({ "session": id.to_string() })
+    );
+    assert_eq!(
+        serde_json::to_value(AttachmentOwner::Project(id)).unwrap(),
+        serde_json::json!({ "project": id.to_string() })
+    );
+    // The old shape (`session_id`) is not accepted: protocol 53 is a clean cutover.
+    let old = serde_json::json!({ "session_id": id.to_string(), "ext": "png", "data": "AA==" });
+    assert!(serde_json::from_value::<AttachmentSaveParams>(old).is_err());
 }

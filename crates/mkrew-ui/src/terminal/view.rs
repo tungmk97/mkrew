@@ -21,8 +21,8 @@ use gpui::{
     outline, point, px, relative, rgb, size,
 };
 use mkrew_protocol::{
-    AttachmentSaveParams, AttachmentSaveResult, Outcome, Request, ScreenSnapshot, Session,
-    SessionInputParams, SessionResizeParams,
+    AttachmentOwner, AttachmentSaveParams, AttachmentSaveResult, Outcome, Request, ScreenSnapshot,
+    Session, SessionInputParams, SessionResizeParams,
 };
 use ulid::Ulid;
 
@@ -888,7 +888,7 @@ impl TerminalPane {
         let saved = self
             .connection
             .call::<AttachmentSaveResult>(Request::AttachmentSave(AttachmentSaveParams {
-                session_id,
+                owner: AttachmentOwner::Session(session_id),
                 ext: ext.to_owned(),
                 data,
             }));

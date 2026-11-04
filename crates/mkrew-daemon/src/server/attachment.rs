@@ -1,22 +1,28 @@
 //! `attachment.save` (SPEC §20B.5).
 
-use mkrew_protocol::{AttachmentSaveParams, AttachmentSaveResult, ErrorCode, Outcome};
+use mkrew_protocol::{
+    AttachmentOwner, AttachmentSaveParams, AttachmentSaveResult, ErrorCode, Outcome,
+};
 
 use super::{Daemon, ok, store_outcome};
 use crate::attachment;
 
 impl Daemon {
-    /// Stores a pasted image for a known session and returns its absolute path.
+    /// Stores a pasted image for a known session or project and returns its absolute path.
     pub(super) async fn attachment_save(&self, params: AttachmentSaveParams) -> Outcome {
         if let Err(message) = attachment::check(&params.ext, params.data.len()) {
             return Outcome::error(ErrorCode::InvalidRequest, message);
         }
-        if let Err(e) = self.hub.store().get_session(params.session_id) {
+        let known = match params.owner {
+            AttachmentOwner::Session(id) => self.hub.store().get_session(id).map(|_| ()),
+            AttachmentOwner::Project(id) => self.hub.store().get_project(id).map(|_| ()),
+        };
+        if let Err(e) = known {
             return store_outcome::<()>(Err(e));
         }
         let dir = self.paths.attachments_dir();
         let saved = tokio::task::spawn_blocking(move || {
-            attachment::save(&dir, params.session_id, &params.ext, &params.data)
+            attachment::save(&dir, params.owner, &params.ext, &params.data)
         })
         .await;
         match saved {

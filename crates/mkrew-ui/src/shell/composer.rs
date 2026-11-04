@@ -80,7 +80,7 @@ impl Shell {
         }
         let saved = connection.call::<mkrew_protocol::AttachmentSaveResult>(
             Request::AttachmentSave(mkrew_protocol::AttachmentSaveParams {
-                session_id: session,
+                owner: mkrew_protocol::AttachmentOwner::Session(session),
                 ext: ext.to_owned(),
                 data,
             }),

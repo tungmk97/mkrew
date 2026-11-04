@@ -1311,15 +1311,27 @@ pub struct SessionUnqueueParams {
     pub send_id: Ulid,
 }
 
-/// `attachment.save`: an image pasted into an agent pane (SPEC §20B.5).
+/// `attachment.save`: an image pasted into an agent pane, a composer or the task dialog
+/// (SPEC §20B.5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttachmentSaveParams {
-    pub session_id: Ulid,
+    pub owner: AttachmentOwner,
     /// `png`, `jpg`, `gif` or `webp`.
     pub ext: String,
     /// The file content (≤ 10 MiB), base64 on the wire.
     #[serde(with = "base64_bytes")]
     pub data: Vec<u8>,
+}
+
+/// Whose folder an attachment is written to (SPEC §20B.5, ADR 0095).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentOwner {
+    /// `<data>/attachments/<session_id>/`: deleted 7 days after the session ended.
+    Session(Ulid),
+    /// `<data>/attachments/projects/<project_id>/`: kept while a task of the project that is
+    /// not done names the file, else deleted after 7 days.
+    Project(Ulid),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

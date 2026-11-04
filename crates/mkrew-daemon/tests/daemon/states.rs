@@ -65,7 +65,11 @@ fn attachments_are_saved_per_session_and_bad_ones_rejected() {
 
     let image = vec![0x89, b'P', b'N', b'G', 0, 1, 2];
     let saved: AttachmentSaveResult = client
-        .call(save_attachment(id, "png", image.clone()))
+        .call(save_attachment(
+            AttachmentOwner::Session(id),
+            "png",
+            image.clone(),
+        ))
         .into_result()
         .unwrap();
     let path = PathBuf::from(&saved.path);
@@ -76,15 +80,66 @@ fn attachments_are_saved_per_session_and_bad_ones_rejected() {
 
     let too_big = vec![0; 10 * 1024 * 1024 + 1];
     for request in [
-        save_attachment(id, "exe", vec![1]),
-        save_attachment(id, "png", Vec::new()),
-        save_attachment(id, "png", too_big),
+        save_attachment(AttachmentOwner::Session(id), "exe", vec![1]),
+        save_attachment(AttachmentOwner::Session(id), "png", Vec::new()),
+        save_attachment(AttachmentOwner::Session(id), "png", too_big),
     ] {
         assert_eq!(error_code(client.call(request)), ErrorCode::InvalidRequest);
     }
     assert_eq!(
-        error_code(client.call(save_attachment(Ulid::new(), "png", vec![1]))),
+        error_code(client.call(save_attachment(
+            AttachmentOwner::Session(Ulid::new()),
+            "png",
+            vec![1]
+        ))),
         ErrorCode::NotFound
+    );
+    assert_eq!(dir.read_dir().unwrap().count(), 1);
+    client.stop();
+}
+
+/// A project image (New task dialog) lands under `attachments/projects/<project_id>/`; an
+/// unknown project is `not_found`, a session id is not a project id (SPEC §20B.5, ADR 0095).
+#[test]
+fn attachments_are_saved_per_project_and_unknown_projects_rejected() {
+    let env = Env::new();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+
+    let image = vec![0x89, b'P', b'N', b'G', 3];
+    let saved: AttachmentSaveResult = client
+        .call(save_attachment(
+            AttachmentOwner::Project(project.id),
+            "webp",
+            image.clone(),
+        ))
+        .into_result()
+        .unwrap();
+    let path = PathBuf::from(&saved.path);
+    let dir = env
+        .data_dir()
+        .join("attachments")
+        .join("projects")
+        .join(project.id.to_string());
+    assert_eq!(path.parent().unwrap(), dir);
+    assert_eq!(path.extension().unwrap(), "webp");
+    assert_eq!(std::fs::read(&path).unwrap(), image);
+
+    assert_eq!(
+        error_code(client.call(save_attachment(
+            AttachmentOwner::Project(Ulid::new()),
+            "png",
+            vec![1]
+        ))),
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        error_code(client.call(save_attachment(
+            AttachmentOwner::Project(project.id),
+            "exe",
+            vec![1]
+        ))),
+        ErrorCode::InvalidRequest
     );
     assert_eq!(dir.read_dir().unwrap().count(), 1);
     client.stop();
