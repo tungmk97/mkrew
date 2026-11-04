@@ -3,7 +3,8 @@
 //! No async runtime, GPUI or SQLite here (SPEC §4); the only I/O is reading profile and
 //! settings files and the prompt library, plus seeding it (and looking up the platform
 //! directories in [`paths`] and programs on `PATH` in [`lookup`]), and the one-shot calls to the
-//! `tailscale` CLI in [`tailscale`], shared by `mk web`, the daemon and the UI.
+//! `tailscale` CLI in [`tailscale`], shared by `mk web`, the daemon and the UI, and reading the
+//! skill, command and prompt files of an agent CLI in [`slash`].
 
 pub mod conflict;
 pub mod git;
@@ -20,6 +21,7 @@ pub mod review;
 pub mod run;
 pub mod settings;
 pub mod settings_fields;
+pub mod slash;
 pub mod state;
 pub mod tailscale;
 pub mod task;
