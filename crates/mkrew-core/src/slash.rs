@@ -5,6 +5,7 @@
 //! and keeps what it cannot read as one line in [`SlashList::errors`].
 
 pub mod front_matter;
+mod scan;
 mod tables;
 
 use std::collections::BTreeMap;
