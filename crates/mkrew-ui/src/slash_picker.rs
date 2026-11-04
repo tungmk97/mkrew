@@ -198,17 +198,6 @@ impl SlashPicker {
         self.selected = 0;
     }
 
-    /// The agent changed (the dialog's Agent chips): the rows of `scope` replace these, the
-    /// filter text stays. The caller sends a new [`Self::request`]; answers to the old one are
-    /// dropped.
-    pub fn retarget(&mut self, scope: SlashKey, cached: Option<SlashListResult>) {
-        self.scope = scope;
-        self.show(cached);
-        // Request numbers start at 1: the old agent's answer is refused even before the next
-        // request goes out.
-        self.sent = 0;
-    }
-
     pub fn scope(&self) -> &SlashKey {
         &self.scope
     }
@@ -567,67 +556,6 @@ mod tests {
         assert!(third > second);
         assert!(!next.answered(second, answer(Some(Cli::Claude), items(&["late"]))));
         assert!(next.items().is_empty());
-    }
-
-    #[test]
-    fn an_agent_change_replaces_the_rows_and_keeps_the_filter() {
-        let project = Ulid::new();
-        let claude: SlashKey = ("claude".into(), project, None);
-        let mut picker = SlashPicker::new(
-            Target::TaskDialog,
-            claude,
-            cached(items(&["review", "init"]), Cli::Claude),
-        );
-        type_in(&mut picker, "re");
-        assert_eq!(shown(&picker), ["review"]);
-        let (claude_request, _) = picker.request();
-
-        picker.retarget(
-            ("codex".into(), project, None),
-            cached(items(&["resume", "model"]), Cli::Codex),
-        );
-        assert_eq!(picker.query().as_str(), "re", "the filter stays");
-        assert_eq!(shown(&picker), ["resume"]);
-        let (codex_request, params) = picker.request();
-        assert_eq!(
-            (params.profile_id.as_str(), params.project_id),
-            ("codex", project)
-        );
-        assert!(
-            !picker.answered(
-                claude_request,
-                answer(Some(Cli::Claude), items(&["review"]))
-            ),
-            "claude's late answer"
-        );
-        assert!(picker.answered(
-            codex_request,
-            answer(Some(Cli::Codex), items(&["resume", "model", "review"]))
-        ));
-        assert_eq!(
-            shown(&picker),
-            ["resume", "review"],
-            "a tie keeps the CLI's order"
-        );
-
-        // Nothing cached for the next agent: loading, still filtered by `re`.
-        picker.retarget(("omp".into(), project, None), None);
-        assert_eq!(picker.query().as_str(), "re");
-        assert_eq!(picker.empty(), Some(Empty::Loading));
-        assert_eq!(picker.cli(), None);
-    }
-
-    #[test]
-    fn an_old_agents_answer_is_refused_before_the_next_request() {
-        let project = Ulid::new();
-        let mut picker = SlashPicker::new(Target::TaskDialog, scope(), None);
-        let (old, _) = picker.request();
-        picker.retarget(
-            ("codex".into(), project, None),
-            cached(items(&["resume"]), Cli::Codex),
-        );
-        assert!(!picker.answered(old, answer(Some(Cli::Claude), items(&["review"]))));
-        assert_eq!(shown(&picker), ["resume"]);
     }
 
     #[test]

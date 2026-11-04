@@ -83,35 +83,6 @@ impl Shell {
         .detach();
     }
 
-    /// The dialog's Agent changed while the picker is open: the new agent's cached rows replace
-    /// the old ones (the filter stays) and its list is asked for. Not reachable by the user
-    /// today: the picker's modal shade covers the Agent chips; kept for when it stops doing so.
-    pub(crate) fn retarget_slash_picker(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(picker) = self
-            .slash_picker
-            .as_ref()
-            .filter(|picker| picker.target == composer::Target::TaskDialog)
-        else {
-            return;
-        };
-        let Some(scope) = self.slash_key(composer::Target::TaskDialog) else {
-            return;
-        };
-        if &scope == picker.scope() {
-            return;
-        }
-        let cached = self.slash_cache.get(&scope).cloned();
-        if let Some(picker) = self.slash_picker.as_mut() {
-            picker.retarget(scope, cached);
-        }
-        self.request_slash(window, cx);
-        cx.notify();
-    }
-
     /// Closes the picker: `typed` (a pick, or the `/` and filter Esc gives back) goes into its
     /// target, which gets the keyboard; `None` closes without typing.
     pub(crate) fn close_slash_picker(

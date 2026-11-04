@@ -126,7 +126,7 @@ pub struct SlashItem {
 | New task | `dialog.agent`, else the workspace default agent | the project folder (no worktree exists before Run) |
 | Edit task | `dialog.agent`, else the default | the task's worktree when it has one, else the project folder |
 
-Changing Agent in the dialog while the picker is open sends a new `slash.list` and replaces the rows; the filter text stays.
+The list follows the agent picked before `/` opens; the picker's modal shade covers the Agent chips, so the agent cannot change while it is open.
 
 ### 4.5 UI cache and refresh
 

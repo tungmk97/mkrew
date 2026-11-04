@@ -328,12 +328,10 @@ impl Shell {
                                     .active(|style| style.opacity(opacity::ACTIVE))
                                     .child(choice.label)
                             })
-                            .on_click(cx.listener(move |shell, _, window, cx| {
+                            .on_click(cx.listener(move |shell, _, _, cx| {
                                 if let Some(dialog) = shell.task_dialog.as_mut() {
                                     dialog.choose_agent(&agent);
                                 }
-                                // An open `/` picker lists the new agent's commands (§20B.7).
-                                shell.retarget_slash_picker(window, cx);
                                 cx.notify();
                             }))
                             .focusable_bordered(theme)
