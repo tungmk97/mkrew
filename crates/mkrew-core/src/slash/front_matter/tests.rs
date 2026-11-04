@@ -142,3 +142,23 @@ fn first_line_skips_blank_lines_and_trims() {
     );
     assert_eq!(first_line(" \n\t\n"), None);
 }
+
+#[test]
+fn a_quoted_value_continues_on_indented_lines() {
+    let f =
+        fields("---\ndescription: \"long text\\n\n  continued\n  here\"\nname: 'a\n  b'\n---\n");
+    assert_eq!(f.description.as_deref(), Some("long text\n continued here"));
+    assert_eq!(f.name.as_deref(), Some("a b"));
+    let text = "---\nname: ok\ndescription: \"never\n  closed\n---\n";
+    assert_eq!(parse(text).0, Some(FrontMatter::default()));
+}
+
+#[test]
+fn a_map_or_a_sequence_under_a_known_key_is_none_and_the_rest_stays() {
+    let f = fields(
+        "---\nname: x\ndescription:\n  en: Hello\n  fr: Salut\nwhen_to_use:\n  - a\n  - b\nargument-hint:\n-\n---\n",
+    );
+    assert_eq!(f.name.as_deref(), Some("x"));
+    assert_eq!(f.description, None);
+    assert_eq!(f.when_to_use, None);
+}

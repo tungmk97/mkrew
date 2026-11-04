@@ -57,7 +57,7 @@ fn parse_block(lines: &[&str]) -> Option<FrontMatter> {
             continue;
         }
         let Some((key, inline)) = split_key(line) else {
-            if line.starts_with('-') {
+            if line == "-" || line.starts_with("- ") {
                 continue; // an item of a sequence under the previous key
             }
             return None;
@@ -105,11 +105,16 @@ fn scalar(inline: &str, more: &[&str]) -> Option<String> {
     if is_block {
         return Some(block(inline.starts_with('>'), more));
     }
-    if let Some(rest) = inline.strip_prefix('"') {
-        return quoted(rest, '"');
+    if let Some(rest) = inline.strip_prefix(['"', '\'']) {
+        let quote = inline.chars().next()?;
+        return quoted(&fold_lines(rest, more), quote);
     }
-    if let Some(rest) = inline.strip_prefix('\'') {
-        return quoted(rest, '\'');
+    // A nested mapping or sequence under the key is not a scalar.
+    if inline.is_empty()
+        && let Some(first) = more.iter().map(|l| l.trim()).find(|l| !l.is_empty())
+        && (first == "-" || first.starts_with("- ") || split_key(first).is_some())
+    {
+        return Some(String::new());
     }
     // Plain: ` #` starts a comment; indented lines continue the value, folded with spaces.
     let mut words = Vec::new();
@@ -125,6 +130,24 @@ fn scalar(inline: &str, more: &[&str]) -> Option<String> {
         }
     }
     Some(words.join(" "))
+}
+
+/// `first` plus the continuation lines, line breaks folded into one space (a blank line is a
+/// line break), as YAML does inside a quoted scalar.
+fn fold_lines(first: &str, more: &[&str]) -> String {
+    let mut text = first.to_owned();
+    for line in more {
+        let line = line.trim();
+        if line.is_empty() {
+            text.push('\n');
+        } else {
+            if !text.ends_with('\n') {
+                text.push(' ');
+            }
+            text.push_str(line);
+        }
+    }
+    text
 }
 
 /// A `|` (keep line breaks) or `>` (fold single breaks into spaces) block, trimmed.
