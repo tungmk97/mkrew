@@ -59,6 +59,17 @@ fn lexical(path: &Path) -> PathBuf {
     out
 }
 
+/// Whether `path` is `base` or below it, compared by text with `.` and `..` resolved; ignoring
+/// case on Windows.
+pub(super) fn is_within(path: &Path, base: &Path) -> bool {
+    let (path, base) = (lexical(path), lexical(base));
+    if cfg!(windows) {
+        let fold = |p: &Path| PathBuf::from(p.to_string_lossy().to_lowercase());
+        return fold(&path).starts_with(fold(&base));
+    }
+    path.starts_with(base)
+}
+
 /// A skill or command file, read once.
 pub(super) struct Doc {
     /// A skill's folder name, or a command's path below its folder with `:` between the parts

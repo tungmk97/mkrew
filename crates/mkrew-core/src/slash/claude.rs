@@ -175,7 +175,10 @@ fn resolve(
         found
             .into_iter()
             .filter(|c| c.invocable)
-            .filter(|c| !(c.kind == Kind::Skill && settings.skill_is_off(&c.item.name)))
+            // `skillOverrides` does not reach plugin skills (scope 3).
+            .filter(|c| {
+                !(c.kind == Kind::Skill && c.scope < 3 && settings.skill_is_off(&c.item.name))
+            })
             .filter(|c| {
                 c.kind == Kind::Skill || !builtin_names.contains(&c.item.name.to_lowercase())
             })

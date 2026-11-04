@@ -422,14 +422,19 @@ fn an_enabled_plugin_lists_its_skills_and_commands_under_its_manifest_name() {
 }
 
 #[test]
-fn a_plugin_is_off_unless_a_setting_or_its_manifest_turns_it_on() {
+fn a_plugin_is_on_unless_a_setting_or_its_manifest_turns_it_off() {
     let w = world();
     for (key, dir, manifest) in [
-        ("off@m", "off", r#"{"name": "off"}"#),
+        ("plain@m", "plain", r#"{"name": "plain"}"#),
         (
-            "default@m",
-            "default",
-            r#"{"name": "default", "defaultEnabled": true}"#,
+            "off@m",
+            "off",
+            r#"{"name": "off", "defaultEnabled": false}"#,
+        ),
+        (
+            "forced@m",
+            "forced",
+            r#"{"name": "forced", "defaultEnabled": false}"#,
         ),
         (
             "vetoed@m",
@@ -440,11 +445,77 @@ fn a_plugin_is_off_unless_a_setting_or_its_manifest_turns_it_on() {
         let path = install(&w, key, dir, manifest);
         put(&path, "commands/c.md", "x\n");
     }
-    enable(&w, r#""vetoed@m": false"#);
+    enable(&w, r#""vetoed@m": false, "forced@m": true"#);
     let names = names(&rows(&w, &w.repo));
-    assert!(names.contains(&"default:c".to_owned()));
+    assert!(
+        names.contains(&"plain:c".to_owned()),
+        "defaultEnabled is true when absent"
+    );
+    assert!(
+        names.contains(&"forced:c".to_owned()),
+        "a setting beats the manifest"
+    );
     assert!(!names.contains(&"off:c".to_owned()));
     assert!(!names.contains(&"vetoed:c".to_owned()));
+}
+
+#[test]
+fn skill_overrides_do_not_reach_plugin_skills() {
+    let w = world();
+    let dir = install(&w, "kit@m", "kit", r#"{"name": "toolkit"}"#);
+    put(&dir, "skills/deploy/SKILL.md", &skill("deploy", "d"));
+    put(
+        &w.home,
+        ".claude/settings.json",
+        r#"{"skillOverrides": {"toolkit:deploy": "off", "deploy": "off"}}"#,
+    );
+    find(&rows(&w, &w.repo), "toolkit:deploy");
+}
+
+#[test]
+fn a_project_install_shows_only_inside_its_project() {
+    let w = world();
+    let here = install(&w, "here@m", "here", r#"{"name": "here"}"#);
+    let there = install(&w, "there@m", "there", r#"{"name": "there"}"#);
+    put(&here, "commands/c.md", "x\n");
+    put(&there, "commands/c.md", "x\n");
+    let index = w.home.join(".claude/plugins/installed_plugins.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&index).unwrap()).unwrap();
+    json["plugins"]["here@m"][0]["projectPath"] = w.repo.to_str().unwrap().into();
+    json["plugins"]["there@m"][0]["projectPath"] = w.home.join("other").to_str().unwrap().into();
+    put(
+        &w.home,
+        ".claude/plugins/installed_plugins.json",
+        &json.to_string(),
+    );
+    let sub = w.repo.join("src");
+    std::fs::create_dir_all(&sub).unwrap();
+    let names = names(&rows(&w, &sub));
+    assert!(
+        names.contains(&"here:c".to_owned()),
+        "at or below projectPath"
+    );
+    assert!(!names.contains(&"there:c".to_owned()), "another project");
+}
+
+#[test]
+fn a_manifest_path_that_escapes_the_plugin_is_an_error_line_and_is_skipped() {
+    let w = world();
+    let dir = install(
+        &w,
+        "kit@m",
+        "kit",
+        r#"{"name": "kit", "commands": ["../escape.md", "ok.md"]}"#,
+    );
+    put(&dir, "ok.md", "x\n");
+    put(&dir, "../escape.md", "x\n");
+    let out = list(Cli::Claude, &w.roots(&w.repo), &SlashOverrides::default());
+    assert_eq!(out.errors.len(), 1, "{:?}", out.errors);
+    assert!(out.errors[0].contains("../escape.md"));
+    let names = names(&out.items);
+    assert!(names.contains(&"kit:ok".to_owned()));
+    assert!(!names.contains(&"kit:escape".to_owned()));
 }
 
 #[test]

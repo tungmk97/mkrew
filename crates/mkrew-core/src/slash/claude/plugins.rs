@@ -50,6 +50,12 @@ pub(super) fn scan(
             let Some(install) = entry.get("installPath").and_then(Value::as_str) else {
                 continue;
             };
+            // A project or local install belongs to that project only.
+            if let Some(project) = entry.get("projectPath").and_then(Value::as_str)
+                && !scan::is_within(&roots.folder, Path::new(project))
+            {
+                continue;
+            }
             plugin(Path::new(install), key, settings, found, errors);
         }
     }
@@ -74,10 +80,11 @@ fn plugin(
             Value::Null
         }
     };
+    // An `enabledPlugins` entry wins, else the manifest's `defaultEnabled`, which is true when absent.
     let default_on = manifest
         .get("defaultEnabled")
         .and_then(Value::as_bool)
-        .unwrap_or(false);
+        .unwrap_or(true);
     if !settings
         .enabled_plugins
         .get(key)
@@ -109,7 +116,8 @@ fn plugin(
 
     // Skills: the default folder, plus every `skills` path of the manifest.
     let mut skill_dirs = vec![install.join("skills")];
-    skill_dirs.extend(paths(manifest.get("skills")).map(|p| install.join(p)));
+    let extra = paths(manifest.get("skills"), &manifest_file, errors);
+    skill_dirs.extend(extra.into_iter().map(|p| install.join(p)));
     for dir in skill_dirs {
         for doc in scan::skill_docs(&dir, errors) {
             add(found, Kind::Skill, &doc.key, &doc);
@@ -141,7 +149,7 @@ fn plugin(
             }
         }
         Some(paths_value) => {
-            for path in paths(Some(paths_value)) {
+            for path in paths(Some(paths_value), &manifest_file, errors) {
                 let path = install.join(path);
                 if path.is_dir() {
                     for doc in scan::command_docs(&path, false, errors) {
@@ -179,16 +187,30 @@ fn command_spec(install: &Path, spec: &Value, errors: &mut Vec<String>) -> Doc {
     })
 }
 
-/// A manifest path value: one string or an array of strings, `./` removed.
-fn paths(value: Option<&Value>) -> impl Iterator<Item = String> + '_ {
+/// A manifest path value: one string or an array of strings, `./` removed. An absolute path or
+/// one with a `..` part escapes the plugin folder (Claude Code rejects it): it is left out and
+/// named in `errors`.
+fn paths(value: Option<&Value>, manifest: &Path, errors: &mut Vec<String>) -> Vec<String> {
     let list: Vec<&Value> = match value {
         Some(Value::Array(list)) => list.iter().collect(),
         Some(single) => vec![single],
         None => Vec::new(),
     };
-    list.into_iter()
-        .filter_map(Value::as_str)
-        .map(|p| p.trim_start_matches("./").to_owned())
+    let mut out = Vec::new();
+    for path in list.into_iter().filter_map(Value::as_str) {
+        let escapes = Path::new(path).is_absolute()
+            || path.starts_with(['/', '\\'])
+            || path.split(['/', '\\']).any(|part| part == "..");
+        if escapes {
+            errors.push(format!(
+                "{}: path escapes plugin directory: {path}",
+                manifest.display()
+            ));
+        } else {
+            out.push(path.trim_start_matches("./").to_owned());
+        }
+    }
+    out
 }
 
 fn row(
