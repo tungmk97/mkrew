@@ -21,6 +21,20 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-10 Detached windows for terminal tabs (ADR 0096)
+
+- [ ] **Tear off (dark + light):** drag a tab with a split out of the main window: a window opens at the pointer with the same size; both panes keep their scrollback and take keys.
+- [ ] **Between windows:** drag the chip onto the main strip between two tabs (the accent line shows there while dragging), onto another detached window, and reorder inside a detached strip.
+- [ ] **Keys stay home:** in a detached window, Ctrl+Shift+W, Alt+Shift+=, Ctrl+Shift+M, Alt+arrows, F2 act on that window's tab; the main window's tabs do not change.
+- [ ] **Menus and palette:** right-click a detached chip: Move to main window, Move to new window, Move to window N; Ctrl+Shift+P there lists only the tab and pane commands.
+- [ ] **Move all back:** the title bar button returns every tab in strip order and closes the window.
+- [ ] **Close:** ✕ with a running agent asks once; Cancel keeps all; Close removes the tabs and the window.
+- [ ] **Restart:** quit with two detached windows (one maximized on the second display) and start again: both come back; unplug the second display first: the window opens on the primary display.
+- [ ] **Tray:** with close to tray on, ✕ on the main window hides every window; tray Open brings them all back.
+- [ ] **Reconnect:** `mk daemon stop` then start: the detached window shows the banner, then its tab again.
+- [ ] **Links:** Ctrl+click a file path in a detached pane: the main window comes forward with the file in the Editor.
+- [ ] **Panes in the right window:** with a detached window focused, zoom or Alt+arrow there: main-window panes keep working (typing, Ctrl+click links) and no pane appears in the wrong window.
+
 ### To verify - 2026-11-04 Prompts page in Settings (spec 2026-11-04 part C)
 
 - [ ] **Look (dark + light):** Ctrl+, then Prompts (between Keyboard and Machines).

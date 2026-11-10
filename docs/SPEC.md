@@ -795,7 +795,8 @@ records the agent as author). `mk attach` makes Mkrew usable without the UI, inc
 
 ## §10 UI: layout, workspaces & terminals
 
-One window. A title bar on top spans both columns (Windows and macOS draw it; Linux keeps the OS
+The main window, plus any number of detached windows holding terminal tabs (ADR 0096).
+A title bar on top spans both columns (Windows and macOS draw it; Linux keeps the OS
 title bar and shows the same bar under it, without window controls; ADR 0034):
 
 ```
@@ -993,6 +994,17 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   resize sends `session.resize` (nothing reflows its output). Agent panes start with
   `[ui] reading_width` (default `true`); the toggle holds per pane until restart. Shell and run
   panes are always full width.
+
+### Detached windows (ADR 0096)
+
+- A terminal tab moves into a window of its own by dragging its chip outside every Mkrew window (the new window opens at the pointer), with `Shift+F4`, or from the tab menu and the palette.
+- A detached window has a title bar (the shown tab and its workspace, Move all back, the window controls), a tab strip with each tab's workspace, and the tab's panes.
+- Tabs move between windows by dragging their chip onto another window (onto its strip: at the gap under the pointer) or with the tab menu's Move to main window / Move to window N.
+- Its keys act on its own tab only: tab and pane commands of §13, the palette (its commands only), the context menu, the composer.
+- Closing a detached window closes its tabs (one confirmation for running agents); quitting Mkrew keeps them and reopens the windows on the next start (`<data>/windows.json`).
+- A hidden or minimized detached window detaches its panes like the main window.
+- File tabs stay in the main window (until the Editor part of the spec ships).
+
 - **Right panel** (ADR 0038, ADR 0081, ADR 0084): a column right of the Terminals, Editor and Diff views with
   tabs `Files │ Session │ Git` (a click switches the tab; the `Git` tab shows the changed count). The title bar's `◨` and `Ctrl+Shift+Y` hide
   and show it and keep the tab; from the Board or Docs view the key shows Terminals with the
@@ -1465,6 +1477,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Tabs | Jump to tab 1–9 (file tabs while the Editor is shown; 9 = the last) | Ctrl+Alt+1 … Ctrl+Alt+9 |
 | Tabs | Rename / close tab (close: the active file tab while the Editor is shown) | Ctrl+Shift+R / Ctrl+Shift+W |
 | Tabs | Move the active tab (the active file tab in the Editor) one place left / right inside its pinned or unpinned group | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn |
+| Tabs | Move to new window | Shift+F4 |
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
