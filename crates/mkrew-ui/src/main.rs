@@ -453,6 +453,8 @@ struct Shell {
     pending_jump: Option<(Ulid, Ulid)>,
     /// Last failure of a tab action (new tab), shown in the tab bar.
     tab_error: Option<String>,
+    /// The window that last set `tab_error` from a pane action (the main one otherwise).
+    tab_error_host: HostId,
     /// A one-line notice in the tab bar that goes away by itself (link hints found none).
     tab_notice: Option<String>,
     /// The kind of pane `session.spawn` is starting (large agent exes can take seconds on a

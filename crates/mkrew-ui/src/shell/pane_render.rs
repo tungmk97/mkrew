@@ -101,6 +101,7 @@ impl Shell {
             .children(
                 self.tab_error
                     .clone()
+                    .filter(|_| self.tab_error_host == HostId::Main)
                     .map(|error| notice(theme.text, format!("✕ {error}"))),
             )
             .children(

@@ -14,6 +14,8 @@ pub(crate) struct HostUi {
     pub(crate) strip: Rc<RefCell<Option<mkrew_ui::window_place::Strip>>>,
     /// The tab content area as painted last: the size of a window torn off from here.
     pub(crate) content: Rc<Cell<gpui::Size<Pixels>>>,
+    /// The window title last set: `set_window_title` is a system call, made only on a change.
+    pub(crate) title: String,
 }
 
 /// Saved windows waiting until every workspace they show has its tabs loaded.

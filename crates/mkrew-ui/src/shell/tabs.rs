@@ -81,6 +81,7 @@ impl Shell {
                 preset.label(),
                 preset.panes()
             ));
+            self.tab_error_host = self.host_of(window);
             cx.notify();
             return;
         }
@@ -98,11 +99,12 @@ impl Shell {
         let focused = (self.focused_session(window))
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let kind = lifecycle::split_kind(focused);
-        if self.still_starting(cx) || self.ask_for_default(project_id, kind, window, cx) {
+        if self.still_starting(window, cx) || self.ask_for_default(project_id, kind, window, cx) {
             return;
         }
         self.starting_pane = Some(kind);
         cx.notify();
+        let host = self.host_of(window);
         cx.spawn_in(window, async move |this, cx| {
             let mut started = Vec::new();
             let mut failed = None;
@@ -141,6 +143,7 @@ impl Shell {
                     tracing::warn!(%project_id, "session.spawn failed: {error}");
                     let what = lifecycle::kind_noun(kind);
                     shell.tab_error = Some(format!("Cannot start {what}: {error}"));
+                    shell.tab_error_host = host;
                 }
                 shell.sync_panes(window, cx);
                 cx.notify();

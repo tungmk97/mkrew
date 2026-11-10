@@ -34,13 +34,14 @@ impl Shell {
         if profile.is_some() {
             self.tab_error = None;
         }
-        if self.still_starting(cx)
+        if self.still_starting(window, cx)
             || (profile.is_none() && self.ask_for_default(project_id, kind, window, cx))
         {
             return;
         }
         self.starting_pane = Some(kind);
         cx.notify();
+        let host = self.host_of(window);
         let params = lifecycle::spawn_params(project_id, Some(tab_id), kind, profile.as_deref());
         let spawned = connection.call::<SessionSpawnResult>(Request::SessionSpawn(params));
         cx.spawn_in(window, async move |this, cx| {
@@ -61,6 +62,7 @@ impl Shell {
                         tracing::warn!(%project_id, "session.spawn failed: {error:#}");
                         let what = lifecycle::kind_noun(kind);
                         shell.tab_error = Some(format!("Cannot start {what}: {error:#}"));
+                        shell.tab_error_host = host;
                     }
                 }
                 cx.notify();
@@ -81,12 +83,13 @@ impl Shell {
 
     /// True (after telling the user in the tab bar) while another pane is still starting: one
     /// `session.spawn` at a time. The note goes once that pane is up.
-    pub(crate) fn still_starting(&mut self, cx: &mut Context<'_, Self>) -> bool {
+    pub(crate) fn still_starting(&mut self, window: &Window, cx: &mut Context<'_, Self>) -> bool {
         let Some(kind) = self.starting_pane else {
             return false;
         };
         let (still, what) = (lifecycle::STILL_STARTING, lifecycle::kind_noun(kind));
         self.tab_error = Some(format!("{still} {what}; try again once it shows."));
+        self.tab_error_host = self.host_of(window);
         cx.notify();
         true
     }
@@ -101,6 +104,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> bool {
         self.tab_error = None;
+        self.tab_error_host = HostId::Main;
         let project = (self.sidebar.projects().iter()).find(|project| project.id == project_id);
         let (default, what) = match kind {
             SessionKind::Agent => (project.map(|p| &p.default_agent), "agent"),
@@ -111,7 +115,11 @@ impl Shell {
             self.tab_error = Some(format!(
                 "Pick a default {what} for this workspace, then try again."
             ));
-            self.open_workspace_menu_at_switcher(project_id, window, cx);
+            self.tab_error_host = self.host_of(window);
+            // The menu hangs on the main window's title bar: not opened from a detached one.
+            if self.detached_key(window).is_none() {
+                self.open_workspace_menu_at_switcher(project_id, window, cx);
+            }
         }
         missing
     }

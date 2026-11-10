@@ -42,7 +42,13 @@ impl Shell {
                 Some(format!("{label} - {name}"))
             })
             .unwrap_or_else(|| "Mkrew".to_owned());
-        window.set_window_title(&title);
+        // Only on a change: setting it is a system call, and a frame comes with every output.
+        if let Some(ui) = self.hosts.get_mut(&host)
+            && ui.title != title
+        {
+            window.set_window_title(&title);
+            ui.title = title.clone();
+        }
         let content = (self.hosts.get(&host))
             .map(|ui| ui.content.clone())
             .unwrap_or_default();
@@ -316,6 +322,7 @@ impl Shell {
             .children(
                 self.tab_error
                     .clone()
+                    .filter(|_| self.tab_error_host == HostId::Detached(key))
                     .map(|error| notice(theme.text, format!("✕ {error}"))),
             )
             .children(

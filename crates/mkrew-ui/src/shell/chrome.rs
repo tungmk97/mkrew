@@ -212,6 +212,9 @@ impl Shell {
                         .and_then(|session| self.panes.get(&session))
                         .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
                 });
+                let every_tab_detached = !tabs.tabs().is_empty()
+                    && (tabs.tabs().iter())
+                        .all(|tab| self.terminal_host(project_id, tab.id) != HostId::Main);
                 let terminals = div()
                     .flex_1()
                     .min_w_0()
@@ -219,7 +222,16 @@ impl Shell {
                     .flex()
                     .flex_col()
                     .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
-                    .child(
+                    .child(if every_tab_detached {
+                        empty_state(
+                            theme,
+                            Some(">_"),
+                            Some("Every tab of this workspace is in another window"),
+                            "Press + for a new tab here.".into(),
+                            Some("Or use Move all back in the other window.".into()),
+                        )
+                        .flex_1()
+                    } else {
                         self.render_tab(
                             tabs.active(),
                             now,
@@ -231,8 +243,8 @@ impl Shell {
                                 .map(|ui| ui.content.clone())
                                 .unwrap_or_default(),
                             cx,
-                        ),
-                    );
+                        )
+                    });
                 main.child(
                     div()
                         .flex_1()
