@@ -362,7 +362,7 @@ impl Shell {
                 Ok(listed) => Agents::Loaded(listed.profiles),
                 Err(error) => Agents::Failed(format!("{error:#}")),
             };
-            let _ = this.update(cx, |shell, cx| {
+            let _ = this.update_in(cx, |shell, window, cx| {
                 // Unless the menu closed (or moved to another workspace) meanwhile.
                 let Some(menu) = shell
                     .workspace_menu
@@ -372,7 +372,7 @@ impl Shell {
                     return;
                 };
                 menu.agents = agents;
-                shell.apply_menu_pending();
+                shell.apply_menu_pending(window);
                 cx.notify();
             });
         })

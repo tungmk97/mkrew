@@ -46,7 +46,7 @@ impl Shell {
     /// Splits the focused pane with a new session of the same kind.
     pub(crate) fn split(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<'_, Self>) {
         let focused = self
-            .focused_session()
+            .focused_session(window)
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let kind = lifecycle::split_kind(focused);
         self.new_pane(kind, axis, window, cx);
@@ -65,12 +65,12 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        let Some(project_id) = self.workspace else {
+        let Some((project_id, tab_id)) = self.tab_scope(window) else {
             return;
         };
-        let Some((tab_id, have)) = (self.tabs.get(&project_id))
-            .and_then(|tabs| tabs.active())
-            .map(|tab| (tab.id, tab.sessions().len()))
+        let Some(have) = (self.tabs.get(&project_id))
+            .and_then(|tabs| tabs.tab(tab_id))
+            .map(|tab| tab.sessions().len())
         else {
             return;
         };
@@ -95,7 +95,7 @@ impl Shell {
             cx.notify();
             return;
         }
-        let focused = (self.focused_session())
+        let focused = (self.focused_session(window))
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let kind = lifecycle::split_kind(focused);
         if self.still_starting(cx) || self.ask_for_default(project_id, kind, window, cx) {
@@ -151,11 +151,10 @@ impl Shell {
 
     /// Starts editing the active tab's title inline, starting from the current one.
     pub(crate) fn start_rename(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(tab) = self
-            .workspace
-            .and_then(|id| self.tabs.get(&id))
-            .and_then(|tabs| tabs.active())
-        else {
+        let Some((project, tab_id)) = self.tab_scope(window) else {
+            return;
+        };
+        let Some(tab) = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id)) else {
             return;
         };
         self.renaming = Some(Renaming {
@@ -209,10 +208,10 @@ impl Shell {
         if !std::mem::take(&mut self.pane_dragging) {
             return;
         }
-        let Some(project_id) = self.workspace else {
+        let Some((project_id, _)) = self.tab_scope(window) else {
             return;
         };
-        if let Some(write) = self.active_tabs_mut().and_then(Tabs::write_active) {
+        if let Some(write) = self.with_tab(window, Tabs::write_active).flatten() {
             self.save_layout(project_id, write, window, cx);
         }
     }
@@ -428,9 +427,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(tabs) = self.active_tabs_mut() {
-            tabs.focus(session_id);
-        }
+        self.focus_session_pane(session_id);
         // Keyboard focus follows the highlighted pane (typed keys, F2, Ctrl+W).
         self.focus_pane(window, cx);
         self.begin_menu(window, cx);
@@ -601,29 +598,28 @@ impl Shell {
         cx.notify();
     }
 
-    /// `tab.close` for `tab_id` of the shown workspace (the active one, or any tab's ✕).
+    /// `tab.close` for `tab_id` of `project_id` (the active one, or any tab's ✕).
     pub(crate) fn close_tab(
         &mut self,
+        project_id: Ulid,
         tab_id: Ulid,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.close_tabs(vec![tab_id], window, cx);
+        self.close_tabs(project_id, vec![tab_id], window, cx);
     }
 
-    /// `tab.close` for each of `tab_ids` of the shown workspace. The daemon removes the sessions
+    /// `tab.close` for each of `tab_ids` of `project_id`. The daemon removes the sessions
     /// of their panes too (ADR 0041), so a running agent among them asks once first; closing the
     /// last tab leaves a fresh empty one.
     pub(crate) fn close_tabs(
         &mut self,
+        project_id: Ulid,
         tab_ids: Vec<Ulid>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let Some(connection) = self.connection.clone() else {
-            return;
-        };
-        let Some(project_id) = self.workspace else {
             return;
         };
         let closing: Vec<(Ulid, Vec<Ulid>)> = (tab_ids.into_iter())
@@ -705,18 +701,21 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.tab_menu = None;
+        let Some(project_id) = self.workspace else {
+            return;
+        };
         let Some(tabs) = self.active_tabs_mut() else {
             return;
         };
         let targets = tabs.close_targets(tab_id, right_only);
         tabs.activate(tab_id);
         self.sync_panes(window, cx);
-        self.close_tabs(targets, window, cx);
+        self.close_tabs(project_id, targets, window, cx);
         cx.notify();
     }
 
     pub(crate) fn close_focused_pane(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if let Some(session) = self.focused_session() {
+        if let Some(session) = self.focused_session(window) {
             self.close_pane(session, window, cx);
         }
     }
@@ -783,7 +782,7 @@ impl Shell {
             if let Some(tab_id) = emptied
                 && self.workspace == Some(project_id)
             {
-                self.close_tab(tab_id, window, cx);
+                self.close_tab(project_id, tab_id, window, cx);
             }
         }
         self.sync_panes(window, cx);

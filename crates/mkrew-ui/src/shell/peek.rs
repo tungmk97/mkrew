@@ -72,7 +72,7 @@ impl Shell {
         }
         let rows = self.sidebar.view(&self.viewed).rows;
         self.sidebar
-            .browse_from(&rows, self.focused_session(), self.workspace);
+            .browse_from(&rows, self.focused_session(window), self.workspace);
         window.focus(&self.filter_focus, cx);
         cx.notify();
     }
@@ -81,7 +81,7 @@ impl Shell {
     /// Inbox is empty. The key and the sidebar footer's Inbox state both land here.
     pub(crate) fn jump_next_inbox(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let entries = self.inbox_entries();
-        let focused = self.focused_session().and_then(|id| {
+        let focused = self.focused_session(window).and_then(|id| {
             self.sidebar
                 .sessions()
                 .iter()
@@ -96,7 +96,7 @@ impl Shell {
     /// Inbox is empty.
     pub(crate) fn jump_previous_inbox(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let entries = self.inbox_entries();
-        let focused = self.focused_session().and_then(|id| {
+        let focused = self.focused_session(window).and_then(|id| {
             self.sidebar
                 .sessions()
                 .iter()
@@ -143,7 +143,7 @@ impl Shell {
 
     /// Moves the keyboard into the open peek, remembering where it was.
     pub(crate) fn take_peek_focus(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let terminal = self.focused_session().filter(|session| {
+        let terminal = self.focused_session(window).filter(|session| {
             self.panes
                 .get(session)
                 .is_some_and(|pane| pane.read(cx).has_focus(window, cx))

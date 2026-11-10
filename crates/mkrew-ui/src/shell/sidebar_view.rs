@@ -30,7 +30,7 @@ impl Render for SidebarView {
             .update(cx, |shell, cx| {
                 if shell.sidebar_layout.compact() {
                     shell
-                        .render_compact_sidebar(now, &theme, cx)
+                        .render_compact_sidebar(now, &theme, window, cx)
                         .into_any_element()
                 } else {
                     shell

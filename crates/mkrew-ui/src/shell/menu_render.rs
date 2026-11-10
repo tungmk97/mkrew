@@ -334,9 +334,9 @@ impl Shell {
 
     /// The rows of the open menu, rebuilt: the keyboard decides on the same rows the screen
     /// shows. One arm per menu.
-    pub(crate) fn open_menu_rows(&self) -> Option<Rows> {
+    pub(crate) fn open_menu_rows(&self, window: &Window) -> Option<Rows> {
         if let Some(menu) = &self.tab_menu {
-            return Some(self.tab_menu_rows(menu));
+            return Some(self.tab_menu_rows(menu, window));
         }
         if let Some(menu) = &self.layout_menu {
             return Some(self.layout_menu_rows(menu));
@@ -389,7 +389,7 @@ impl Shell {
 
     /// What has the keyboard now, and the terminal session when it is that session's pane.
     fn keyboard_owner(&self, window: &Window, cx: &App) -> Option<(FocusHandle, Option<Ulid>)> {
-        let terminal = self.focused_session().filter(|session| {
+        let terminal = self.focused_session(window).filter(|session| {
             self.panes
                 .get(session)
                 .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
@@ -418,7 +418,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let rows = self.open_menu_rows();
+        let rows = self.open_menu_rows(window);
         self.menu_selected = rows
             .as_deref()
             .filter(|_| by_keyboard)
@@ -481,7 +481,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let Some(rows) = self.open_menu_rows() else {
+        let Some(rows) = self.open_menu_rows(window) else {
             return self.dismiss_menus(window, cx);
         };
         match menu_model::key(
@@ -514,17 +514,17 @@ impl Shell {
 
     /// Selects the first row under `heading` (now, or as soon as the rows exist). The workspace
     /// menu's agent and shell lists load after it opens.
-    pub(crate) fn menu_select_after(&mut self, heading: &'static str) {
+    pub(crate) fn menu_select_after(&mut self, heading: &'static str, window: &Window) {
         self.menu_pending = Some(heading);
-        self.apply_menu_pending();
+        self.apply_menu_pending(window);
     }
 
     /// Applies a pending [`Self::menu_select_after`] when its rows are there.
-    pub(crate) fn apply_menu_pending(&mut self) {
+    pub(crate) fn apply_menu_pending(&mut self, window: &Window) {
         let Some(heading) = self.menu_pending else {
             return;
         };
-        let Some(rows) = self.open_menu_rows() else {
+        let Some(rows) = self.open_menu_rows(window) else {
             return;
         };
         if let Some(at) = menu_model::after_heading(&rows, heading) {
@@ -555,27 +555,32 @@ impl Anchor {
     }
 }
 
+type Recorded = HashMap<(gpui::WindowId, Anchor), Bounds<Pixels>>;
+
 /// Where owners were laid out in the last frame (recorded by [`record_bounds`] during
 /// prepaint, cleared at the start of every `Shell` render, except the sidebar's keys: the
-/// sidebar is a cached view that clears and records them itself).
+/// sidebar is a cached view that clears and records them itself). Per window.
 #[derive(Clone, Default)]
-pub(crate) struct MenuAnchors(Rc<RefCell<HashMap<Anchor, Bounds<Pixels>>>>);
+pub(crate) struct MenuAnchors(Rc<RefCell<Recorded>>);
 
 impl gpui::Global for MenuAnchors {}
 
 impl MenuAnchors {
-    /// Forgets every anchor but the sidebar's (the `Shell` frame start).
-    pub(crate) fn clear(&self) {
-        self.0.borrow_mut().retain(|key, _| key.in_sidebar());
+    /// Forgets `window`'s anchors but the sidebar's, and leaves other windows' alone (the
+    /// `Shell` frame start).
+    pub(crate) fn clear(&self, window: gpui::WindowId) {
+        (self.0.borrow_mut()).retain(|(id, key), _| *id != window || key.in_sidebar());
     }
 
-    /// Forgets the sidebar's anchors (it records them again while it renders).
+    /// Forgets the sidebar's anchors (it records them again while it renders; only the main
+    /// window has a sidebar).
     pub(crate) fn clear_sidebar(&self) {
-        self.0.borrow_mut().retain(|key, _| !key.in_sidebar());
+        self.0.borrow_mut().retain(|(_, key), _| !key.in_sidebar());
     }
 
-    fn bottom_left(&self, key: &Anchor) -> Option<Point<Pixels>> {
-        self.0.borrow().get(key).map(Bounds::bottom_left)
+    fn bottom_left(&self, window: gpui::WindowId, key: &Anchor) -> Option<Point<Pixels>> {
+        let anchors = self.0.borrow();
+        anchors.get(&(window, key.clone())).map(Bounds::bottom_left)
     }
 }
 
@@ -584,8 +589,9 @@ impl MenuAnchors {
 pub(crate) fn record_bounds(key: Anchor, cx: &App) -> impl IntoElement + use<> {
     let anchors = cx.global::<MenuAnchors>().clone();
     canvas(
-        move |bounds, _, _| {
-            anchors.0.borrow_mut().insert(key, bounds);
+        move |bounds, window, _| {
+            let id = window.window_handle().window_id();
+            anchors.0.borrow_mut().insert((id, key), bounds);
         },
         |_, _, _, _| {},
     )
@@ -598,9 +604,10 @@ impl Shell {
     /// switcher; else just under the title bar.
     pub(crate) fn menu_anchor(&self, key: &Anchor, window: &Window, cx: &App) -> Point<Pixels> {
         let anchors = cx.global::<MenuAnchors>();
+        let id = window.window_handle().window_id();
         anchors
-            .bottom_left(key)
-            .or_else(|| anchors.bottom_left(&Anchor::Switcher))
+            .bottom_left(id, key)
+            .or_else(|| anchors.bottom_left(id, &Anchor::Switcher))
             .unwrap_or_else(|| {
                 point(
                     px(space::M),
@@ -613,7 +620,7 @@ impl Shell {
 impl Shell {
     /// What has the keyboard, for [`menu_model::owner`].
     fn menu_focus_state(&self, project_id: Ulid, window: &Window, cx: &App) -> menu_model::Focus {
-        let terminal = self.focused_session().filter(|session| {
+        let terminal = self.focused_session(window).filter(|session| {
             self.panes
                 .get(session)
                 .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
@@ -701,6 +708,7 @@ mod tests {
     #[test]
     fn the_cached_sidebar_keeps_its_anchors_across_shell_frames() {
         let id = Ulid::from(1u128);
+        let (main, other) = (gpui::WindowId::from(1u64), gpui::WindowId::from(2u64));
         let anchors = MenuAnchors::default();
         for key in [
             Anchor::Switcher,
@@ -708,9 +716,16 @@ mod tests {
             Anchor::WorkspaceRow(id),
             Anchor::SessionRow(id),
         ] {
-            anchors.0.borrow_mut().insert(key, Bounds::default());
+            anchors
+                .0
+                .borrow_mut()
+                .insert((main, key), Bounds::default());
         }
-        anchors.clear();
+        anchors
+            .0
+            .borrow_mut()
+            .insert((other, Anchor::PaneHeader(id)), Bounds::default());
+        anchors.clear(main);
         let left = |anchors: &MenuAnchors| {
             let mut keys: Vec<_> = anchors.0.borrow().keys().cloned().collect();
             keys.sort_by_key(|key| format!("{key:?}"));
@@ -718,9 +733,13 @@ mod tests {
         };
         assert_eq!(
             left(&anchors),
-            [Anchor::SessionRow(id), Anchor::WorkspaceRow(id)]
+            [
+                (main, Anchor::SessionRow(id)),
+                (main, Anchor::WorkspaceRow(id)),
+                (other, Anchor::PaneHeader(id)),
+            ]
         );
         anchors.clear_sidebar();
-        assert!(left(&anchors).is_empty());
+        assert_eq!(left(&anchors), [(other, Anchor::PaneHeader(id))]);
     }
 }

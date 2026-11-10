@@ -51,6 +51,7 @@ impl Shell {
         let right_panel = inspector::RightPanel::from_mode(ui.right_panel);
         let prompts_dir = paths.prompts_dir();
         let config_dir = paths.config_dir.clone();
+        let main_window = window.window_handle();
         // System mode follows the OS live (ADR 0027).
         cx.observe_window_appearance(window, |_, window, cx| {
             theme::refresh(cx.theme().mode, window, cx);
@@ -58,7 +59,8 @@ impl Shell {
         })
         .detach();
         // Minimized → detach every pane; restored → re-attach from daemon snapshots (§10).
-        cx.observe_window_visibility(window, |shell, _, window, cx| {
+        cx.observe_window_visibility(window, |shell, visibility, window, cx| {
+            shell.main_visible = visibility == gpui::WindowVisibility::Visible;
             shell.sync_panes(window, cx);
             cx.notify();
         })
@@ -67,10 +69,15 @@ impl Shell {
         // even one marked unread while it kept the keyboard, and ends the taskbar flash.
         cx.observe_window_activation(window, |shell, window, cx| {
             if window.is_window_active() {
+                shell.activated(HostId::Main);
                 shell.viewed.activated();
                 shell.desktop.flash(false);
             }
             cx.notify();
+        })
+        .detach();
+        cx.observe_window_bounds(window, |shell, window, _| {
+            shell.record_bounds(HostId::Main, window);
         })
         .detach();
         // The tray icon (Windows): its clicks arrive here from the tray thread. A machine
@@ -481,6 +488,18 @@ impl Shell {
             first_frame_logged: false,
             sidebar_view: None,
             toasts: Toasts::default(),
+            detached: Detached::new(),
+            main_window,
+            windows: HashMap::new(),
+            window_handles: HashMap::new(),
+            hosts: HashMap::from([(HostId::Main, shell::hosts::HostUi::default())]),
+            menu_host: HostId::Main,
+            palette_host: HostId::Main,
+            activation: vec![HostId::Main],
+            main_visible: true,
+            link_subscriptions: HashMap::new(),
+            windows_dirty: false,
+            restore: None,
             pending_jump: jump,
         };
         if let Status::NoMachine(text) = &shell.status {
@@ -784,6 +803,7 @@ impl Shell {
         self.tab_error = None;
         self.router.clear();
         self.panes.clear();
+        self.link_subscriptions.clear();
         self.attach_errors.clear();
         self.renaming = None;
         self.run_setup = None;
@@ -1118,7 +1138,7 @@ impl Shell {
             workspace: self.workspace,
             view,
             panes: on_screen(window.is_visible(), tabs),
-            focused: self.focused_session(),
+            focused: self.focused_session(window),
             panel: self.panel_shown().then(|| self.panel_tab()),
             panel_session: self.panel_session(),
             sidebar: self.sidebar_layout.mode(),

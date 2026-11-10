@@ -17,7 +17,7 @@ impl Shell {
         fonts.dedup();
         self.settings_dialog = Some(SettingsDialog::new(settings, fonts));
         self.settings_from_composer =
-            self.composer_session().is_some() && self.composer_focus.is_focused(window);
+            self.composer_session(window).is_some() && self.composer_focus.is_focused(window);
         // The task dialog under it stays the open dialog: its late replies (the image save,
         // the agent list) still land.
         if self.task_dialog.is_none() {
@@ -33,7 +33,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.settings_dialog = None;
-        if std::mem::take(&mut self.settings_from_composer) && self.composer_session().is_some() {
+        if std::mem::take(&mut self.settings_from_composer)
+            && self.composer_session(window).is_some()
+        {
             window.focus(&self.composer_focus, cx);
         } else {
             self.focus_pane(window, cx);

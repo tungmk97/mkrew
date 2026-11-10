@@ -273,6 +273,20 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let Some(tabs) = self.tabs.get(&project_id) else {
+            return;
+        };
+        if let Some(tab_id) = tabs.tab_of(session).map(|tab| tab.id)
+            && self.detached.is_detached(&DockTab::Terminal {
+                project: project_id,
+                tab_id,
+            })
+        {
+            if let Some(tabs) = self.tabs.get_mut(&project_id) {
+                tabs.focus_pane(tab_id, session);
+            }
+            return;
+        }
         let Some(tabs) = self.tabs.get_mut(&project_id) else {
             return;
         };

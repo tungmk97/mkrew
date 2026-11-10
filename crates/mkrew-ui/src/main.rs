@@ -55,6 +55,7 @@ use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::context_menu::{LayoutMenu, PaneMenu, TabMenu};
 use mkrew_ui::desktop::{Desktop, TrayEvent};
+use mkrew_ui::detached::{self, Detached, DockTab, HostId, WindowKey};
 use mkrew_ui::diagram::Diagram;
 use mkrew_ui::dialog_focus::{self, Nav};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
@@ -877,6 +878,31 @@ struct Shell {
     /// The in-app toasts (SPEC §14): pushed by `toast_error` / `toast_info`, expired on the
     /// status tick.
     toasts: Toasts,
+    /// Which terminal tab is in which detached window (ADR 0096).
+    detached: Detached,
+    /// The main window, for work that must run there (a file link from a detached pane).
+    main_window: gpui::AnyWindowHandle,
+    /// The detached OS windows and their keys, both ways.
+    windows: HashMap<gpui::AnyWindowHandle, WindowKey>,
+    window_handles: HashMap<WindowKey, gpui::AnyWindowHandle>,
+    /// Per window: screen bounds, maximized, the strip and content size painted last.
+    hosts: HashMap<HostId, shell::hosts::HostUi>,
+    /// The window the open popover menu / the palette belongs to (spec §4.3).
+    #[expect(dead_code, reason = "read by the detached window tasks that follow")]
+    menu_host: HostId,
+    #[expect(dead_code, reason = "read by the detached window tasks that follow")]
+    palette_host: HostId,
+    /// Mkrew windows, most recently activated first (drop target order, toast placement).
+    activation: Vec<HostId>,
+    /// The main window is shown (not minimized or hidden): its panes stay attached.
+    main_visible: bool,
+    /// `OpenLink` of each attached pane, kept so a move to another window subscribes again.
+    link_subscriptions: HashMap<Ulid, gpui::Subscription>,
+    /// A detached window moved, resized or changed tabs: saved on the next status tick.
+    windows_dirty: bool,
+    /// Saved windows waiting for their workspaces' tabs (startup).
+    #[expect(dead_code, reason = "read by the detached window tasks that follow")]
+    restore: Option<shell::hosts::Restore>,
 }
 
 impl Render for Shell {
@@ -885,7 +911,7 @@ impl Render for Shell {
         // A menu closed behind the keyboard's back (workspace switched, dialog opened, daemon
         // event) must not leave it on the hidden menu: give it back to the pane. A menu whose
         // owner went away (no rows) draws nothing: close it the same way.
-        if self.menu_open() && self.open_menu_rows().is_none() {
+        if self.menu_open() && self.open_menu_rows(window).is_none() {
             self.dismiss_menus(window, cx);
         }
         if !self.menu_open() && self.menu_focus.contains_focused(window, cx) {
@@ -896,7 +922,8 @@ impl Render for Shell {
         // paints the listening ring.
         self.typing_target.field.replace(None);
         // Menus opened from the keyboard hang from what this frame lays out.
-        cx.global::<MenuAnchors>().clear();
+        cx.global::<MenuAnchors>()
+            .clear(window.window_handle().window_id());
         self.typing_target.ring.set(self.voice_ring(&theme, cx));
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
         // A dialog control that vanished while focused (a button swapped for its disabled twin
@@ -925,7 +952,7 @@ impl Render for Shell {
         // needs the user also reaches the badge and the tray.
         let mut viewed_changed = false;
         if window.is_window_active()
-            && let Some(id) = self.focused_session()
+            && let Some(id) = self.focused_session(window)
             && let Some(session) = self.sidebar.sessions().iter().find(|s| s.id == id)
         {
             viewed_changed = self.viewed.view(session);
@@ -1120,7 +1147,7 @@ impl Render for Shell {
                         self.tab_menu
                             .as_ref()
                             .filter(|_| self.view() == View::Terminals && !self.modal_open())
-                            .map(|menu| self.render_tab_menu(menu, &theme, cx)),
+                            .map(|menu| self.render_tab_menu(menu, window, &theme, cx)),
                     )
                     .children(
                         self.layout_menu

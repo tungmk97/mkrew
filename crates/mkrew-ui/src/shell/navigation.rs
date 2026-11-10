@@ -144,9 +144,7 @@ impl Shell {
         if self.modal_open() || text.is_empty() {
             return;
         }
-        if let Some(tabs) = self.active_tabs_mut() {
-            tabs.focus(session);
-        }
+        self.focus_session_pane(session);
         if self.composers.shown(session).is_some() {
             self.prompt_typed(composer::Target::Composer(session), text, window, cx);
         } else if let Some(pane) = self.panes.get(&session).cloned() {
@@ -375,7 +373,7 @@ impl Shell {
     /// palette-only actions and "Go to" items.
     pub(crate) fn open_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let workspace = self.workspace;
-        let terminal = self.focused_session().filter(|session| {
+        let terminal = self.focused_session(window).filter(|session| {
             self.panes
                 .get(session)
                 .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
@@ -401,7 +399,7 @@ impl Shell {
                 && self.board.can_fan_out(id, self.sidebar.sessions())
                 && !self.starting.contains(&id)
         });
-        let focused = self.focused_session();
+        let focused = self.focused_session(window);
         let focused_info = focused
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id))
             .cloned();
@@ -431,9 +429,9 @@ impl Shell {
             task_changes,
             fan_out,
             agents: workspace.is_some_and(|id| broadcast::has_targets(id, self.sidebar.sessions())),
-            agent_pane: self.focused_agent().is_some(),
+            agent_pane: self.focused_agent(window).is_some(),
             markable: self
-                .focused_session()
+                .focused_session(window)
                 .is_some_and(|id| self.can_mark_unread(id)),
             run_stopped: workspace.is_some()
                 && (run_state.rows.is_empty() || run_state.live() < run_state.rows.len()),
@@ -446,13 +444,13 @@ impl Shell {
             live_session: focused_info.as_ref().is_some_and(|session| {
                 inspector::stop_action(Some(session)) != inspector::StopAction::Nothing
             }),
-            transcript: self.focused_agent().is_some_and(|id| {
+            transcript: self.focused_agent(window).is_some_and(|id| {
                 self.usages
                     .get(id)
                     .and_then(|usage| usage.transcript.as_ref())
                     .is_some()
             }),
-            plan_linked: self.focused_agent().is_some_and(|id| {
+            plan_linked: self.focused_agent(window).is_some_and(|id| {
                 (self.sidebar.sessions().iter()).any(|s| s.id == id && s.plan_path.is_some())
             }),
             composer_open: focused.is_some_and(|id| self.composers.shown(id).is_some()),
@@ -513,7 +511,7 @@ impl Shell {
         self.workspace_menu = None;
         self.palette_scroll.scroll_to_item(palette.selected);
         self.palette = Some(palette);
-        let terminal = self.focused_session().filter(|session| {
+        let terminal = self.focused_session(window).filter(|session| {
             self.panes
                 .get(session)
                 .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
@@ -724,7 +722,7 @@ impl Shell {
                     Extra::Broadcast => self.open_broadcast(project_id, window, cx),
                     // Into the open composer, else one opened on the focused agent pane.
                     Extra::InsertPrompt => {
-                        if let Some(session) = self.focused_agent() {
+                        if let Some(session) = self.focused_agent(window) {
                             if self.composers.shown(session).is_none() {
                                 self.open_composer(window, cx);
                             }
@@ -733,12 +731,12 @@ impl Shell {
                         }
                     }
                     Extra::Turns => {
-                        if let Some(session) = self.focused_agent() {
+                        if let Some(session) = self.focused_agent(window) {
                             self.open_turns(session, window, cx);
                         }
                     }
                     Extra::FollowInZed => {
-                        if let Some(session) = self.focused_agent() {
+                        if let Some(session) = self.focused_agent(window) {
                             self.toggle_follow(session, cx);
                         }
                     }
@@ -754,7 +752,7 @@ impl Shell {
                     // The default agent is chosen in the workspace's menu.
                     Extra::WorkspaceDefaultAgent => {
                         self.open_workspace_menu_at_switcher(project_id, window, cx);
-                        self.menu_select_after(DEFAULT_AGENT_HEADING);
+                        self.menu_select_after(DEFAULT_AGENT_HEADING, window);
                     }
                     Extra::WorkspaceMenu => {
                         self.open_workspace_menu_at_switcher(project_id, window, cx);
@@ -779,7 +777,7 @@ impl Shell {
                     }
                     Extra::TabMoveToMainWindow | Extra::WindowMoveAllBack => {}
                     Extra::PanePin => {
-                        let pane = self.focused_session().and_then(|id| {
+                        let pane = self.focused_session(window).and_then(|id| {
                             let session = self.sidebar.sessions().iter().find(|s| s.id == id)?;
                             Some((id, session.pinned))
                         });
@@ -788,44 +786,44 @@ impl Shell {
                         }
                     }
                     Extra::PaneReading => {
-                        if let Some(session) = self.focused_agent() {
+                        if let Some(session) = self.focused_agent(window) {
                             self.toggle_reading_width(session, cx);
                         }
                     }
                     // Opens the workspace menu at the switcher with the shell list selected.
                     Extra::WorkspaceDefaultShell => {
                         self.open_workspace_menu_at_switcher(project_id, window, cx);
-                        self.menu_select_after(DEFAULT_SHELL_HEADING);
+                        self.menu_select_after(DEFAULT_SHELL_HEADING, window);
                     }
                     Extra::WorkspaceMoveUp => self.move_workspace(project_id, -1, window, cx),
                     Extra::WorkspaceMoveDown => self.move_workspace(project_id, 1, window, cx),
                     Extra::AgentStop => {
-                        if let Some(session) = self.focused_session() {
+                        if let Some(session) = self.focused_session(window) {
                             self.stop_session(session, window, cx);
                         }
                     }
                     Extra::AgentTranscript => {
-                        if let Some(session) = self.focused_agent() {
+                        if let Some(session) = self.focused_agent(window) {
                             self.open_transcript(session, cx);
                         }
                     }
                     Extra::AgentLinkPlan => {
-                        if let Some(session) = self.focused_agent() {
+                        if let Some(session) = self.focused_agent(window) {
                             self.pick_plan(session, window, cx);
                         }
                     }
                     Extra::AgentUnlinkPlan => {
-                        if let Some(session) = self.focused_agent() {
+                        if let Some(session) = self.focused_agent(window) {
                             self.link_plan(session, None, window, cx);
                         }
                     }
                     Extra::AgentImprove => {
-                        if let Some(session) = self.composer_session() {
+                        if let Some(session) = self.composer_session(window) {
                             self.enhance_prompt(composer::Target::Composer(session), window, cx);
                         }
                     }
                     Extra::MarkUnread => {
-                        if let Some(session) = self.focused_session() {
+                        if let Some(session) = self.focused_session(window) {
                             self.mark_unread(session, cx);
                         }
                     }

@@ -341,7 +341,7 @@ impl Shell {
                 Ok(listed) => Agents::Loaded(listed.profiles),
                 Err(error) => Agents::Failed(format!("{error:#}")),
             };
-            let _ = this.update(cx, |shell, cx| {
+            let _ = this.update_in(cx, |shell, window, cx| {
                 // Unless the picker closed (or moved to another card) meanwhile.
                 if let Some(menu) = shell
                     .run_with
@@ -350,7 +350,7 @@ impl Shell {
                 {
                     menu.agents = agents;
                     if by_keyboard {
-                        shell.menu_select_after("Run with");
+                        shell.menu_select_after("Run with", window);
                     }
                     cx.notify();
                 }
@@ -450,7 +450,7 @@ impl Shell {
                 Ok(listed) => Agents::Loaded(listed.profiles),
                 Err(error) => Agents::Failed(format!("{error:#}")),
             };
-            let _ = this.update(cx, |shell, cx| {
+            let _ = this.update_in(cx, |shell, window, cx| {
                 // Unless the picker closed (or moved to another card) meanwhile.
                 if let Some(menu) = shell
                     .fan_out
@@ -459,7 +459,7 @@ impl Shell {
                 {
                     menu.agents = agents;
                     if by_keyboard {
-                        shell.menu_select_after("Run with several agents");
+                        shell.menu_select_after("Run with several agents", window);
                     }
                     cx.notify();
                 }

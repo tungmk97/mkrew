@@ -97,7 +97,7 @@ impl Shell {
         match (typed, picker.target) {
             (Some(text), target) => self.prompt_typed(target, &text, window, cx),
             (None, composer::Target::Composer(session))
-                if self.composer_session() == Some(session) =>
+                if self.composer_session(window) == Some(session) =>
             {
                 window.focus(&self.composer_focus, cx);
             }

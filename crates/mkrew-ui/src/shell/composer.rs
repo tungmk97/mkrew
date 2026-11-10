@@ -4,14 +4,14 @@ use crate::*;
 
 impl Shell {
     /// The focused pane's session while its composer is shown.
-    pub(crate) fn composer_session(&self) -> Option<Ulid> {
-        self.focused_session()
+    pub(crate) fn composer_session(&self, window: &Window) -> Option<Ulid> {
+        self.focused_session(window)
             .filter(|&session| self.composers.shown(session).is_some())
     }
 
     /// The focused pane's session when it runs an agent.
-    pub(crate) fn focused_agent(&self) -> Option<Ulid> {
-        self.focused_session().filter(|&id| {
+    pub(crate) fn focused_agent(&self, window: &Window) -> Option<Ulid> {
+        self.focused_session(window).filter(|&id| {
             self.sidebar
                 .sessions()
                 .iter()
@@ -21,7 +21,7 @@ impl Shell {
 
     /// Shows the focused agent pane's composer (keeping its draft) and gives it the keyboard.
     pub(crate) fn open_composer(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(session) = self.focused_agent() else {
+        let Some(session) = self.focused_agent(window) else {
             return;
         };
         self.composers.open(session);
@@ -39,7 +39,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let Some(session) = self.composer_session() else {
+        let Some(session) = self.composer_session(window) else {
             return;
         };
         if self.prompt_key_down(composer::Target::Composer(session), event, window, cx) {
@@ -170,7 +170,7 @@ impl Shell {
             composer::Target::Composer(session) => {
                 self.composers.insert(session, text);
                 self.composer_scroll.scroll_to_bottom();
-                if self.composer_session() == Some(session) {
+                if self.composer_session(window) == Some(session) {
                     window.focus(&self.composer_focus, cx);
                 } else {
                     self.focus_pane(window, cx);
@@ -441,7 +441,7 @@ impl Shell {
                 self.prompt_typed(target, &text, window, cx);
             }
             (composer::Target::Composer(session), None)
-                if self.composer_session() == Some(session) =>
+                if self.composer_session(window) == Some(session) =>
             {
                 window.focus(&self.composer_focus, cx);
             }
@@ -850,9 +850,7 @@ impl Shell {
                 MouseButton::Left,
                 cx.listener(move |shell, _, window, cx| {
                     cx.stop_propagation();
-                    if let Some(tabs) = shell.active_tabs_mut() {
-                        tabs.focus(session);
-                    }
+                    shell.focus_session_pane(session);
                     window.focus(&shell.composer_focus, cx);
                     cx.notify();
                 }),

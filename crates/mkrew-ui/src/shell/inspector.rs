@@ -156,10 +156,10 @@ impl Shell {
             }
             return;
         }
-        if self.view() == View::Terminals
+        if (self.detached_key(window).is_some() || self.view() == View::Terminals)
             && self
-                .active_tabs_mut()
-                .is_some_and(|tabs| tabs.focus_neighbour(direction))
+                .with_tab(window, |tabs| tabs.focus_neighbour(direction))
+                .unwrap_or(false)
         {
             // A focus move ends a zoom: the hidden panes come back (and re-attach).
             self.sync_panes(window, cx);

@@ -123,16 +123,6 @@ impl Shell {
         self.menu_pending = None;
     }
 
-    /// The pane keyboard input goes to: the focused pane of the active tab (none while the
-    /// board is shown).
-    pub(crate) fn focused_session(&self) -> Option<Ulid> {
-        if self.view() != View::Terminals {
-            return None;
-        }
-        let tabs = self.tabs.get(&self.workspace?)?;
-        tabs.active()?.focused()
-    }
-
     /// The views the right panel is drawn next to.
     pub(crate) fn panel_view(&self) -> bool {
         matches!(self.view(), View::Terminals | View::Editor | View::Diff)
@@ -181,16 +171,33 @@ impl Shell {
         tabs.active()?.focused()
     }
 
-    /// Attaches the sessions on screen (live ones, or already attached; none while the window
-    /// is minimized or the board is shown) and detaches all others (SPEC §10), then focuses
-    /// the focused pane.
+    /// Attaches the sessions on screen in any window (live ones, or already attached; none
+    /// for a hidden window or while the main window shows another view) and detaches all others
+    /// (SPEC §10), then focuses the focused pane of `window`.
     pub(crate) fn sync_panes(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let visible = on_screen(
-            window.is_visible(),
+        self.keep_main_active_visible();
+        self.prune_detached(cx);
+        let mut visible = on_screen(
+            self.main_visible,
             self.workspace
                 .filter(|_| self.view() == View::Terminals)
                 .and_then(|id| self.tabs.get(&id)),
         );
+        let here = self.host_of(window);
+        let mut elsewhere: Vec<(HostId, Ulid)> = Vec::new();
+        for tab in self.detached.visible_tabs() {
+            let DockTab::Terminal { project, tab_id } = tab;
+            let Some(shown) = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id)) else {
+                continue;
+            };
+            let host = self.detached.host_of(&tab);
+            for session in shown.shown() {
+                visible.push(session);
+                if host != here {
+                    elsewhere.push((host, session));
+                }
+            }
+        }
         for session in self.router.wanted() {
             if visible.contains(&session) {
                 continue;
@@ -201,14 +208,24 @@ impl Shell {
                 detach(connection, session, cx);
             }
             self.panes.remove(&session);
+            self.link_subscriptions.remove(&session);
         }
         self.attach_errors.retain(|id, _| visible.contains(id));
         for &session in &visible {
             let skip = self.router.is_wanted(session)
                 || self.attach_errors.contains_key(&session)
                 || self.is_exited(session);
-            if !skip {
-                self.attach(session, window, cx);
+            if skip {
+                continue;
+            }
+            match elsewhere.iter().find(|(_, s)| *s == session) {
+                // A pane is built in the window that shows it.
+                Some(&(host, _)) => self.in_window(host, cx, move |shell, window, cx| {
+                    if !shell.router.is_wanted(session) {
+                        shell.attach(session, window, cx);
+                    }
+                }),
+                None => self.attach(session, window, cx),
             }
         }
         self.focus_pane(window, cx);
@@ -248,7 +265,7 @@ impl Shell {
             return;
         }
         match self
-            .focused_session()
+            .focused_session(window)
             .and_then(|session| self.panes.get(&session))
         {
             Some(pane) => pane.update(cx, |pane, cx| pane.focus(window, cx)),
@@ -316,14 +333,14 @@ impl Shell {
                     }
                     pane
                 });
-                cx.subscribe_in(
+                let link = cx.subscribe_in(
                     &pane,
                     window,
                     move |shell, _, link: &OpenLink, window, cx| {
                         shell.open_terminal_link(session, link, window, cx);
                     },
-                )
-                .detach();
+                );
+                shell.link_subscriptions.insert(session, link);
                 cx.subscribe(&pane, |shell, _, failed: &AttachFailed, cx| {
                     shell.toast_error(failed.0.clone(), cx);
                 })
@@ -341,7 +358,7 @@ impl Shell {
                 })
                 .detach();
                 shell.panes.insert(session, pane);
-                if shell.focused_session() == Some(session) {
+                if shell.focused_session(window) == Some(session) {
                     shell.focus_pane(window, cx);
                 }
                 cx.notify();

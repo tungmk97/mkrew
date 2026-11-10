@@ -197,7 +197,7 @@ impl Shell {
             }
             View::Terminals => {
                 let pane = self
-                    .focused_session()
+                    .focused_session(window)
                     .and_then(|session| self.panes.get(&session))
                     .cloned();
                 // Sending ends copy mode (held output resumes); the text is read first.
@@ -252,7 +252,7 @@ impl Shell {
         self.composers.insert(session, &text);
         self.composer_scroll.scroll_to_bottom();
         self.open_session(session, window, cx);
-        if self.composer_session() == Some(session) {
+        if self.composer_session(window) == Some(session) {
             window.focus(&self.composer_focus, cx);
         }
         cx.notify();

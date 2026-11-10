@@ -4,6 +4,7 @@
 
 pub(crate) mod cards;
 mod chrome;
+pub(crate) mod hosts;
 pub(crate) mod inspector;
 pub(crate) mod menu_render;
 pub(crate) mod menus;

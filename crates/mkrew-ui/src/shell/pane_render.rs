@@ -176,7 +176,7 @@ impl Shell {
                             move |shell, _, window, cx| {
                                 // Never activate the tab being closed.
                                 cx.stop_propagation();
-                                shell.close_tab(tab_id, window, cx);
+                                shell.close_tab(project_id, tab_id, window, cx);
                             },
                         )),
                     )
@@ -430,8 +430,8 @@ impl Shell {
                         // ponytail: live ratio, one `session.resize` per changed column count
                         // like the session panel's edge; throttle if a TUI flickers.
                         if shell
-                            .active_tabs_mut()
-                            .is_some_and(|tabs| tabs.drag_divider(divider.index, ratio))
+                            .with_tab(window, |tabs| tabs.drag_divider(divider.index, ratio))
+                            .unwrap_or(false)
                         {
                             shell.pane_dragging = true;
                             cx.notify();
@@ -489,9 +489,7 @@ impl Shell {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |shell, _, window, cx| {
-                    if let Some(tabs) = shell.active_tabs_mut() {
-                        tabs.focus(session);
-                    }
+                    shell.focus_session_pane(session);
                     shell.focus_pane(window, cx);
                     cx.notify();
                 }),

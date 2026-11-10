@@ -28,15 +28,7 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        let Some(project_id) = self.workspace else {
-            return;
-        };
-        let Some(tab_id) = self
-            .tabs
-            .get(&project_id)
-            .and_then(|tabs| tabs.active())
-            .map(|tab| tab.id)
-        else {
+        let Some((project_id, tab_id)) = self.tab_scope(window) else {
             return;
         };
         if profile.is_some() {
@@ -271,7 +263,7 @@ impl Shell {
         // Same for the focused pane's composer (§20B.1), unless it went away. Its own shortcut
         // keeps it focused (Ctrl+Shift+Enter would read as Ctrl+Enter: send).
         if self.composer_focus.is_focused(window) {
-            if self.composer_session().is_some() {
+            if self.composer_session(window).is_some() {
                 if *command != Command::OpenComposer {
                     cx.propagate();
                 }
@@ -356,18 +348,13 @@ impl Shell {
             ),
             Command::RenameTab => self.start_rename(window, cx),
             Command::RenamePane => {
-                if let Some(session_id) = self.focused_session() {
+                if let Some(session_id) = self.focused_session(window) {
                     self.start_pane_rename(session_id, window, cx);
                 }
             }
             Command::CloseTab => {
-                let active = self
-                    .workspace
-                    .and_then(|project_id| self.tabs.get(&project_id))
-                    .and_then(|tabs| tabs.active())
-                    .map(|tab| tab.id);
-                if let Some(tab_id) = active {
-                    self.close_tab(tab_id, window, cx);
+                if let Some((project_id, tab_id)) = self.tab_scope(window) {
+                    self.close_tab(project_id, tab_id, window, cx);
                 }
             }
             Command::SplitRight => self.split(Axis::Vertical, window, cx),
@@ -378,29 +365,29 @@ impl Shell {
             Command::Layout(preset) => self.apply_layout(preset, window, cx),
             Command::Focus(direction) => self.move_focus(direction, window, cx),
             Command::Resize(direction) => {
-                let Some(project_id) = self.workspace else {
+                let Some((project_id, _)) = self.tab_scope(window) else {
                     return;
                 };
                 let write = self
-                    .active_tabs_mut()
-                    .and_then(|tabs| tabs.resize_focused(direction));
+                    .with_tab(window, |tabs| tabs.resize_focused(direction))
+                    .flatten();
                 if let Some(write) = write {
                     self.save_layout(project_id, write, window, cx);
                     cx.notify();
                 }
             }
             Command::EqualizePanes => {
-                let Some(project_id) = self.workspace else {
+                let Some((project_id, _)) = self.tab_scope(window) else {
                     return;
                 };
-                let write = self.active_tabs_mut().and_then(Tabs::equalize_active);
+                let write = self.with_tab(window, Tabs::equalize_active).flatten();
                 if let Some(write) = write {
                     self.save_layout(project_id, write, window, cx);
                     cx.notify();
                 }
             }
             Command::ZoomPane => {
-                if self.active_tabs_mut().is_some_and(Tabs::toggle_zoom) {
+                if self.with_tab(window, Tabs::toggle_zoom).unwrap_or(false) {
                     self.sync_panes(window, cx);
                     cx.notify();
                 }

@@ -49,6 +49,7 @@ impl Shell {
         &self,
         project_id: Ulid,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> Vec<gpui::AnyElement> {
         let summary = self.run_summary(project_id);
@@ -68,7 +69,7 @@ impl Shell {
         if rows.is_empty() {
             return Vec::new();
         }
-        let shown = self.focused_session();
+        let shown = self.focused_session(window);
         let hover = theme.hover;
         let collapsed = self.collapsed_groups.contains(&(project_id, RowGroup::Run));
         let mut label =
@@ -371,7 +372,7 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let shown = self.focused_session();
+        let shown = self.focused_session(window);
         // Also while the last screen is kept: the layout must not jump (it is inert then).
         let connected = self.shows_workspaces();
         let add_workspace_keys = self.keymap.label(Command::AddWorkspace);
@@ -654,7 +655,7 @@ impl Shell {
                 };
                 let shown_project = open.filter(|_| !filtering);
                 let run = shown_project
-                    .map(|project_id| self.render_run_group(project_id, theme, cx))
+                    .map(|project_id| self.render_run_group(project_id, theme, window, cx))
                     .unwrap_or_default();
                 // A label (and so folding) needs the workspace's own, unfiltered rows.
                 let labeled = !terminals.is_empty() && (!rows.is_empty() || !run.is_empty());
@@ -865,11 +866,12 @@ impl Shell {
         &self,
         now: i64,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
         // The rail is the session list folded: it keeps the pre-restyle look too.
         let theme = theme.classic();
-        let shown = self.focused_session();
+        let shown = self.focused_session(window);
         let header = div()
             .flex_none()
             .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))

@@ -191,8 +191,9 @@ impl Shell {
     /// Close, Close others, Close tabs to the right (pinned tabs stay); on the active tab also
     /// the focused pane's Rename pane, Close pane and, for an agent, Follow in Zed (✓ while on)
     /// and Turns….
-    pub(crate) fn tab_menu_rows(&self, menu: &TabMenu) -> Rows {
+    pub(crate) fn tab_menu_rows(&self, menu: &TabMenu, window: &Window) -> Rows {
         let tab_id = menu.tab_id;
+        let project_id = self.workspace;
         let pinned = (self.tabs.values())
             .find_map(|tabs| tabs.tab(tab_id))
             .is_some_and(|tab| tab.pinned);
@@ -201,7 +202,7 @@ impl Shell {
             .and_then(|tabs| tabs.active())
             .map(|tab| tab.id);
         let pane = self
-            .focused_session()
+            .focused_session(window)
             .filter(|_| active_tab == Some(tab_id))
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let tabs = (self.workspace).and_then(|project_id| self.tabs.get(&project_id));
@@ -231,7 +232,11 @@ impl Shell {
             .row(),
             MenuItem::new(
                 "Close",
-                act(move |shell, window, cx| shell.close_tab(tab_id, window, cx)),
+                act(move |shell, window, cx| {
+                    if let Some(project_id) = project_id {
+                        shell.close_tab(project_id, tab_id, window, cx);
+                    }
+                }),
             )
             .keys(key(Command::CloseTab))
             .row(),
@@ -298,13 +303,14 @@ impl Shell {
     pub(crate) fn render_tab_menu(
         &self,
         menu: &TabMenu,
+        window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         render_menu(
             self.menu_state(),
             "tab-menu",
-            self.tab_menu_rows(menu),
+            self.tab_menu_rows(menu, window),
             None,
             Place::At(menu.position),
             theme,
