@@ -66,6 +66,16 @@ fn chips_not_drawn_are_no_gap() {
 }
 
 #[test]
+fn a_drop_slot_stays_in_the_pin_group() {
+    // 2 pinned of 5 chips.
+    assert_eq!(clamp_to_group(4, 2, 5, true), 2);
+    assert_eq!(clamp_to_group(1, 2, 5, true), 1);
+    assert_eq!(clamp_to_group(0, 2, 5, false), 2);
+    assert_eq!(clamp_to_group(3, 2, 5, false), 3);
+    assert_eq!(clamp_to_group(9, 2, 5, false), 5);
+}
+
+#[test]
 fn the_drop_line_sits_in_the_gap_before_a_drawn_chip() {
     let mut gapped = strip(&[(8.0, 100.0), (112.0, 100.0)]);
     // Before the first chip (gap 4, line 2: 3 px left of the edge); chips sit 4 px below the strip top.

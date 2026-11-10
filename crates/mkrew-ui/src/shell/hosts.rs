@@ -188,6 +188,9 @@ impl Shell {
         self.activation
             .retain(|host| *host != HostId::Detached(key));
         self.windows_dirty = true;
+        self.drop_hint = None;
+        self.reorder = None;
+        self.tab_drag = false;
         // A popover of the closing window has no one to draw it: close it, and give the
         // keyboard back in the main window.
         let gone = HostId::Detached(key);

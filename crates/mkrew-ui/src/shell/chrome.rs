@@ -164,6 +164,14 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        // The tab strip is hit-tested by drops from other windows: not while it is not painted.
+        let strip_shown =
+            (self.workspace.filter(|_| self.shows_workspaces())).is_some_and(|project| {
+                self.view() == View::Terminals && self.tabs.contains_key(&project)
+            });
+        if !strip_shown && let Some(ui) = self.hosts.get(&HostId::Main) {
+            *ui.strip.borrow_mut() = None;
+        }
         // The last screen stays while a lost connection is down (`reconnecting`).
         let Some(project_id) = self.workspace.filter(|_| self.shows_workspaces()) else {
             let (sentence, detail) = self.status_line();

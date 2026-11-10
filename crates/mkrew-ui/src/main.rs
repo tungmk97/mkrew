@@ -896,6 +896,9 @@ struct Shell {
     /// A tab drag from another window hovers this strip: before chip slot `index` (its window's
     /// accent line; set by `tear_off_catcher` of the source window).
     drop_hint: Option<(HostId, usize)>,
+    /// A `DraggedItem` drag moved over a window (the tear-off catcher saw its payload): only
+    /// then may a release tear the dragged tab off.
+    tab_drag: bool,
     /// The main window is shown (not minimized or hidden): its panes stay attached.
     main_visible: bool,
     /// `OpenLink` of each attached pane, kept so a move to another window subscribes again.

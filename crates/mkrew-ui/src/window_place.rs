@@ -64,6 +64,17 @@ pub fn drop_target<H: Copy + PartialEq>(
     }
 }
 
+/// A drop slot of a main-strip tab clamped to its pin group: pinned tabs lead the strip
+/// (`pinned_chips` of the `chips` shown), so a pinned tab lands in `0..=pinned_chips`, an
+/// unpinned one in `pinned_chips..=chips` (what `Tabs::move_tab_before` does with the drop).
+pub fn clamp_to_group(slot: usize, pinned_chips: usize, chips: usize, pinned: bool) -> usize {
+    if pinned {
+        slot.min(pinned_chips)
+    } else {
+        slot.clamp(pinned_chips, chips)
+    }
+}
+
 /// Where the accent line of a drop before chip slot `index` goes, relative to the strip's top
 /// left (`gap`: the space between chips, where the line is centered; the end = after the last
 /// drawn chip). `None` while no chip is drawn.

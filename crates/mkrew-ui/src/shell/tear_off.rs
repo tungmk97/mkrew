@@ -25,13 +25,19 @@ impl Shell {
     }
 
     /// Every Mkrew window with its screen bounds and strip, most recently activated first.
-    fn placed_windows(&self) -> Vec<Placed<HostId>> {
+    /// `window`'s own bounds are read live (the recorded ones lag a move or resize).
+    fn placed_windows(&self, window: &Window) -> Vec<Placed<HostId>> {
+        let source = self.host_of(window);
         (self.activation.iter())
             .filter_map(|host| {
                 let ui = self.hosts.get(host)?;
                 Some(Placed {
                     host: *host,
-                    window: ui.bounds,
+                    window: if *host == source {
+                        window.bounds()
+                    } else {
+                        ui.bounds
+                    },
                     strip: ui.strip.borrow().clone(),
                 })
             })
@@ -44,8 +50,45 @@ impl Shell {
         window.bounds().origin + position
     }
 
-    fn release_target(&self, screen: Point<Pixels>, window: &Window) -> Option<Target<HostId>> {
-        window_place::drop_target(screen, self.host_of(window), &self.placed_windows())
+    /// Where `tab` released at `screen` lands. In the main strip a tab of a workspace that is
+    /// not shown goes to the end of its group (its chips are not there); a shown one keeps to
+    /// its pin group.
+    fn release_target(
+        &self,
+        tab: DockTab,
+        screen: Point<Pixels>,
+        window: &Window,
+    ) -> Option<Target<HostId>> {
+        let target =
+            window_place::drop_target(screen, self.host_of(window), &self.placed_windows(window))?;
+        let (
+            Target::Strip {
+                host: HostId::Main,
+                index,
+            },
+            DockTab::Terminal { project, tab_id },
+        ) = (target, tab)
+        else {
+            return Some(target);
+        };
+        let Some(tabs) = self
+            .tabs
+            .get(&project)
+            .filter(|_| self.workspace == Some(project))
+        else {
+            return Some(Target::Window(HostId::Main));
+        };
+        let shown = || {
+            (tabs.tabs().iter()).filter(|other| {
+                other.id != tab_id && self.terminal_host(project, other.id) == HostId::Main
+            })
+        };
+        let pinned = tabs.tab(tab_id).is_some_and(|tab| tab.pinned);
+        let pinned_chips = shown().filter(|other| other.pinned).count();
+        Some(Target::Strip {
+            host: HostId::Main,
+            index: window_place::clamp_to_group(index, pinned_chips, shown().count(), pinned),
+        })
     }
 
     fn tear_off_move(
@@ -54,9 +97,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let hint = (self.dragged_dock_tab().is_some())
-            .then(|| self.release_target(Self::screen_point(position, window), window))
-            .flatten()
+        let hint = self
+            .dragged_dock_tab()
+            .and_then(|tab| self.release_target(tab, Self::screen_point(position, window), window))
             .and_then(|target| match target {
                 Target::Strip { host, index } => Some((host, index)),
                 _ => None,
@@ -67,21 +110,33 @@ impl Shell {
         }
     }
 
+    /// The drag is over: no hint, no stale reorder state for the next (unrelated) drag.
+    fn end_tab_drag(&mut self, cx: &mut Context<'_, Self>) {
+        let dirty = self.drop_hint.take().is_some() | self.reorder.take().is_some();
+        self.tab_drag = false;
+        if dirty {
+            cx.notify();
+        }
+    }
+
+    /// A tab drag released: moves the tab when it ended outside its window's own handlers.
     fn tear_off_release(
         &mut self,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> bool {
-        self.drop_hint = None;
-        let Some(tab) = self.dragged_dock_tab() else {
-            return false;
-        };
+        let tab = self.dragged_dock_tab().filter(|_| self.tab_drag);
         let screen = Self::screen_point(position, window);
-        let Some(target) = self.release_target(screen, window) else {
+        let target = tab.and_then(|tab| self.release_target(tab, screen, window));
+        let (Some(tab), Some(target)) = (tab, target) else {
+            // Inside its own window: the on_drop handlers run, then the bubble listener ends it.
+            if self.drop_hint.take().is_some() {
+                cx.notify();
+            }
             return false;
         };
-        self.reorder = None;
+        self.end_tab_drag(cx);
         match target {
             Target::Strip { host, index } => self.move_tab_to(tab, host, Some(index), window, cx),
             Target::Window(host) => self.move_tab_to(tab, host, None, window, cx),
@@ -109,37 +164,49 @@ impl Shell {
     }
 }
 
-/// Watches the whole window during a tab drag (capture phase, before every element): pointer
-/// moves update the drop hint; a release outside the window moves the tab.
+/// Watches the whole window during a tab drag: pointer moves of a `DraggedItem` drag (gpui
+/// checks the payload type; sidebar grips, panes, cards and dividers never reach it) update
+/// the drop hint; a release outside the window moves the tab. The mouse-up hooks: capture
+/// (before every element) decides the move, bubble (after every `on_drop`) ends the drag.
 pub(crate) fn tear_off_catcher(cx: &Context<'_, Shell>) -> impl IntoElement + use<> {
     let view = cx.entity();
-    canvas(
-        |_, _, _| (),
-        move |_, (), window, _| {
-            let moving = view.clone();
-            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                if phase == DispatchPhase::Capture && cx.has_active_drag() {
-                    moving.update(cx, |shell, cx| {
-                        shell.tear_off_move(event.position, window, cx);
-                    });
-                }
-            });
-            let releasing = view.clone();
-            window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
-                if phase != DispatchPhase::Capture || !cx.has_active_drag() {
-                    return;
-                }
-                let moved = releasing.update(cx, |shell, cx| {
-                    shell.tear_off_release(event.position, window, cx)
-                });
-                if moved {
-                    cx.stop_propagation();
-                }
-            });
-        },
-    )
-    .absolute()
-    .size_full()
+    div()
+        .absolute()
+        .size_full()
+        .on_drag_move(
+            cx.listener(|shell, event: &DragMoveEvent<DraggedItem>, window, cx| {
+                shell.tab_drag = true;
+                shell.tear_off_move(event.event.position, window, cx);
+            }),
+        )
+        .child(
+            canvas(
+                |_, _, _| (),
+                move |_, (), window, _| {
+                    let releasing = view.clone();
+                    window.on_mouse_event(
+                        move |event: &MouseUpEvent, phase, window, cx| match phase {
+                            DispatchPhase::Capture => {
+                                if !cx.has_active_drag() {
+                                    return;
+                                }
+                                let moved = releasing.update(cx, |shell, cx| {
+                                    shell.tear_off_release(event.position, window, cx)
+                                });
+                                if moved {
+                                    cx.stop_propagation();
+                                }
+                            }
+                            DispatchPhase::Bubble => {
+                                releasing.update(cx, |shell, cx| shell.end_tab_drag(cx));
+                            }
+                        },
+                    );
+                },
+            )
+            .absolute()
+            .size_full(),
+        )
 }
 
 /// Records the strip (`None`) or chip slot `index`'s bounds, window-local, at prepaint. Slots
