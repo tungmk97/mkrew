@@ -56,13 +56,6 @@ pub enum Keep {
     Unknown,
 }
 
-/// Where a moved tab came from, and the window it left empty (now dropped).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Moved {
-    pub from: HostId,
-    pub emptied: Option<WindowKey>,
-}
-
 #[derive(Debug, Default)]
 pub struct Detached {
     windows: Vec<Window>,
@@ -123,17 +116,18 @@ impl Detached {
     }
 
     /// Moves `tab` to `to` (at `index`, else the end) and shows it there. Moving to
-    /// [`HostId::Main`] forgets it. A window left without tabs is dropped. Moving to its
-    /// own window reorders it in place; a window that does not exist changes nothing.
-    pub fn move_tab(&mut self, tab: DockTab, to: HostId, index: Option<usize>) -> Moved {
+    /// [`HostId::Main`] forgets it. Returns the window the move left without tabs (dropped).
+    /// Moving to its own window reorders it in place; a window that does not exist changes
+    /// nothing.
+    pub fn move_tab(
+        &mut self,
+        tab: DockTab,
+        to: HostId,
+        index: Option<usize>,
+    ) -> Option<WindowKey> {
         let current = self.host_of(&tab);
         if let HostId::Detached(key) = to {
-            let Some(window) = self.window_mut(key) else {
-                return Moved {
-                    from: current,
-                    emptied: None,
-                };
-            };
+            let window = self.window_mut(key)?;
             if current == to {
                 if let Some(pos) = window.tabs.iter().position(|t| *t == tab) {
                     window.tabs.remove(pos);
@@ -141,13 +135,10 @@ impl Detached {
                     window.tabs.insert(at, tab);
                     window.active = at;
                 }
-                return Moved {
-                    from: current,
-                    emptied: None,
-                };
+                return None;
             }
         }
-        let (from, emptied) = self.take(&tab);
+        let emptied = self.take(&tab);
         if let HostId::Detached(key) = to
             && let Some(window) = self.window_mut(key)
         {
@@ -155,18 +146,15 @@ impl Detached {
             window.tabs.insert(at, tab);
             window.active = at;
         }
-        Moved { from, emptied }
+        emptied
     }
 
-    /// Removes `tab` from its window; returns that window and whether it emptied (dropped).
-    fn take(&mut self, tab: &DockTab) -> (HostId, Option<WindowKey>) {
-        let Some(at) = self
+    /// Removes `tab` from its window; returns that window if it emptied (dropped).
+    fn take(&mut self, tab: &DockTab) -> Option<WindowKey> {
+        let at = self
             .windows
             .iter()
-            .position(|window| window.tabs.contains(tab))
-        else {
-            return (HostId::Main, None);
-        };
+            .position(|window| window.tabs.contains(tab))?;
         let window = &mut self.windows[at];
         let key = window.key;
         if let Some(index) = window.tabs.iter().position(|t| t == tab) {
@@ -178,9 +166,9 @@ impl Detached {
         }
         if window.tabs.is_empty() {
             self.windows.remove(at);
-            return (HostId::Detached(key), Some(key));
+            return Some(key);
         }
-        (HostId::Detached(key), None)
+        None
     }
 
     /// Reorders a window's strip; the moved tab stays selected if it was.
@@ -232,7 +220,7 @@ impl Detached {
             .flat_map(|window| window.tabs.iter().copied())
             .filter(|tab| keep(tab) == Keep::No)
             .collect();
-        gone.iter().filter_map(|tab| self.take(tab).1).collect()
+        gone.iter().filter_map(|tab| self.take(tab)).collect()
     }
 
     pub fn set_visible(&mut self, key: WindowKey, visible: bool) {
@@ -249,9 +237,18 @@ impl Detached {
             .collect()
     }
 
-    /// Quitting the app keeps every detached tab alive (spec §6.2): nothing to close.
-    pub fn quit_closes(&self) -> Vec<DockTab> {
-        Vec::new()
+    /// Tabs in every detached window (a change in it means a strip changed).
+    pub fn tab_count(&self) -> usize {
+        self.windows.iter().map(|window| window.tabs.len()).sum()
+    }
+
+    /// Where a tab that came from `from` goes back (a window that failed to open): `from` if
+    /// that window is still open, else the main window.
+    pub fn still_open(&self, from: HostId) -> HostId {
+        match from {
+            HostId::Detached(key) if self.window(key).is_none() => HostId::Main,
+            other => other,
+        }
     }
 
     /// Rebuilds the windows from a save (keys renumbered). Returns the keys in file order.
@@ -280,6 +277,14 @@ impl Detached {
             })
             .collect()
     }
+}
+
+/// The window that draws the toasts: the most recently active of `activation` that is `shown`
+/// (a hidden or minimized window draws nothing), else the main window.
+pub fn toast_host(activation: &[HostId], shown: impl Fn(HostId) -> bool) -> HostId {
+    (activation.iter().copied())
+        .find(|&host| shown(host))
+        .unwrap_or(HostId::Main)
 }
 
 /// The commands a detached window acts on (spec 2026-11-10 §4.2); every other key there does

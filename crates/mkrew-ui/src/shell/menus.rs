@@ -306,7 +306,7 @@ impl Shell {
                 rows.push(
                     MenuItem::new(
                         "Turns…",
-                        act(move |shell, window, cx| shell.open_turns(session, window, cx)),
+                        act(move |shell, window, cx| shell.open_turns_in_main(session, window, cx)),
                     )
                     .tip("The agent's turns: restore the files to before one")
                     .row(),

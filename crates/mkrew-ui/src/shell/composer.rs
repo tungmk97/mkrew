@@ -418,6 +418,7 @@ impl Shell {
         }
         self.workspace_menu = None;
         self.prompt_picker = Some(PromptPicker::new(target, library, vars));
+        self.picker_host = self.host_of(window);
         self.prompt_picker_scroll.scroll_to_item(0);
         window.focus(&self.dialog_focus, cx);
         cx.notify();
@@ -434,6 +435,7 @@ impl Shell {
         let Some(picker) = self.prompt_picker.take() else {
             return;
         };
+        self.picker_host = HostId::Main;
         match (picker.target, text) {
             (target, Some(text)) => {
                 let before = self.prompt(target).map_or("", |prompt| prompt.text.text());

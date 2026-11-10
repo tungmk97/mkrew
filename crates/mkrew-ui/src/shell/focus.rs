@@ -29,6 +29,20 @@ impl Shell {
             || self.settings_dialog.is_some()
     }
 
+    /// The `/` picker, the prompt picker or the `@` quick open is open.
+    pub(crate) fn picker_open(&self) -> bool {
+        self.quick_open.is_some() || self.prompt_picker.is_some() || self.slash_picker.is_some()
+    }
+
+    /// The window that draws the open palette or picker (they can open in a detached window).
+    pub(crate) fn popup_host(&self) -> Option<HostId> {
+        if self.palette.is_some() {
+            Some(self.palette_host)
+        } else {
+            self.picker_open().then_some(self.picker_host)
+        }
+    }
+
     /// A picker or dialog is painted over the task dialog: its Prompt box takes no OS file
     /// drop (the capture-phase drag listeners ignore the cover's occlusion).
     pub(crate) fn prompt_box_covered(&self) -> bool {
@@ -358,8 +372,9 @@ impl Shell {
                 .detach();
                 cx.subscribe(&pane, |_, _, _: &CopyModeChanged, cx| cx.notify())
                     .detach();
-                cx.subscribe(&pane, |shell, _, _: &NoLinks, cx| {
-                    shell.show_tab_notice("No links on screen.", cx);
+                cx.subscribe(&pane, move |shell, _, _: &NoLinks, cx| {
+                    let host = shell.session_host(session);
+                    shell.show_tab_notice(host, "No links on screen.", cx);
                 })
                 .detach();
                 shell.panes.insert(session, pane);

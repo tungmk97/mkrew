@@ -501,6 +501,7 @@ impl Shell {
             hosts: HashMap::from([(HostId::Main, shell::hosts::HostUi::default())]),
             menu_host: HostId::Main,
             palette_host: HostId::Main,
+            picker_host: HostId::Main,
             activation: vec![HostId::Main],
             drop_hint: None,
             tab_drag: false,
@@ -791,6 +792,7 @@ impl Shell {
         self.restore_theme_pick(window, cx);
         self.palette = None;
         self.palette_host = HostId::Main;
+        self.picker_host = HostId::Main;
         self.prompt_picker = None;
         self.slash_picker = None;
         self.palette_return = None;
@@ -1154,10 +1156,17 @@ impl Shell {
         let tabs = (self.workspace)
             .filter(|_| view == View::Terminals)
             .and_then(|id| self.tabs.get(&id));
+        let mut panes = on_screen(window.is_visible(), tabs);
+        // An idle detached window draws its shown tab's panes too.
+        for DockTab::Terminal { project, tab_id } in self.detached.visible_tabs() {
+            if let Some(tab) = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id)) {
+                panes.extend(tab.shown());
+            }
+        }
         redraw::Shown {
             workspace: self.workspace,
             view,
-            panes: on_screen(window.is_visible(), tabs),
+            panes,
             focused: self.focused_session(window),
             panel: self.panel_shown().then(|| self.panel_tab()),
             panel_session: self.panel_session(),
@@ -1221,7 +1230,7 @@ impl Shell {
                 }
                 // Before the sidebar applies it: `viewed` and the flash read the previous state.
                 if self.notify.flash_taskbar
-                    && !window.is_window_active()
+                    && !self.any_window_active(window, cx)
                     && attention::entered_needs_input(event, self.sidebar.sessions())
                 {
                     self.desktop.flash(true);

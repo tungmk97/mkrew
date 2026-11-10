@@ -42,6 +42,7 @@ impl Shell {
         let cached = self.slash_cache.get(&scope).cloned();
         self.workspace_menu = None;
         self.slash_picker = Some(SlashPicker::new(target, scope, cached));
+        self.picker_host = self.host_of(window);
         self.slash_picker_scroll.scroll_to_item(0);
         window.focus(&self.dialog_focus, cx);
         self.request_slash(window, cx);
@@ -94,6 +95,7 @@ impl Shell {
         let Some(picker) = self.slash_picker.take() else {
             return;
         };
+        self.picker_host = HostId::Main;
         match (typed, picker.target) {
             (Some(text), target) => self.prompt_typed(target, &text, window, cx),
             (None, composer::Target::Composer(session))

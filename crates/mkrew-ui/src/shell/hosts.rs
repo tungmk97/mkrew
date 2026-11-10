@@ -18,11 +18,6 @@ pub(crate) struct HostUi {
     pub(crate) title: String,
 }
 
-/// Saved windows waiting until every workspace they show has its tabs loaded.
-pub(crate) struct Restore {
-    pub(crate) windows: Vec<detached::SavedWindow>,
-}
-
 impl Shell {
     pub(crate) fn host_of(&self, window: &Window) -> HostId {
         self.detached_key(window)
@@ -47,6 +42,25 @@ impl Shell {
     /// The workspace and tab whose layout holds `session`.
     pub(crate) fn tab_of_session(&self, session: Ulid) -> Option<(Ulid, Ulid)> {
         (self.tabs.iter()).find_map(|(project, tabs)| Some((*project, tabs.tab_of(session)?.id)))
+    }
+
+    /// How a window names its shown tab, "<tab> - <workspace>": its title and the "Move to
+    /// window" rows.
+    pub(crate) fn tab_title(&self, project: Ulid, tab_id: Ulid) -> Option<String> {
+        let tab = self.tabs.get(&project)?.tab(tab_id)?;
+        let name = &(self.sidebar.projects().iter())
+            .find(|p| p.id == project)?
+            .name;
+        let label = session_label(tab, self.sidebar.sessions()).unwrap_or(&tab.title);
+        Some(format!("{label} - {name}"))
+    }
+
+    /// The window that shows the tab holding `session` (the main one if it is in no tab).
+    pub(crate) fn session_host(&self, session: Ulid) -> HostId {
+        self.tab_of_session(session)
+            .map_or(HostId::Main, |(project, tab_id)| {
+                self.terminal_host(project, tab_id)
+            })
     }
 
     /// Whether a tab of `project` is shown in the same window as `tab_id`: the tabs that
@@ -151,6 +165,23 @@ impl Shell {
         self.activation.insert(0, host);
     }
 
+    /// Whether any Mkrew window, main or detached, is the OS's active one. `window` is the one
+    /// being updated (it cannot be asked again).
+    pub(crate) fn any_window_active(&self, window: &Window, cx: &mut Context<'_, Self>) -> bool {
+        window.is_window_active()
+            || (self.windows.keys()).any(|handle| {
+                (handle.update(cx, |_, window, _| window.is_window_active())).unwrap_or(false)
+            })
+    }
+
+    /// The window that draws the toasts (see [`detached::toast_host`]).
+    pub(crate) fn toast_host(&self) -> HostId {
+        detached::toast_host(&self.activation, |host| match host {
+            HostId::Main => self.main_visible,
+            HostId::Detached(key) => self.detached.window(key).is_some_and(|w| w.visible),
+        })
+    }
+
     pub(crate) fn record_bounds(&mut self, host: HostId, window: &Window) {
         let (bounds, maximized) = match window.window_bounds() {
             gpui::WindowBounds::Maximized(bounds) => (bounds, true),
@@ -173,6 +204,7 @@ impl Shell {
         // The sidebar's list is the daemon's once connected: a workspace missing there is
         // archived. Before that (startup, reconnect) nothing is pruned for it.
         let listed = matches!(self.status, Status::Connected);
+        let before = self.detached.tab_count();
         let emptied = self.detached.prune(|tab| {
             let DockTab::Terminal { project, tab_id } = *tab;
             let archived = listed && !self.sidebar.projects().iter().any(|p| p.id == project);
@@ -183,6 +215,10 @@ impl Shell {
                 None => detached::Keep::Unknown,
             }
         });
+        // A window that kept its other tabs has a new strip to save.
+        if self.detached.tab_count() != before {
+            self.windows_dirty = true;
+        }
         for key in emptied {
             self.close_os_window(key, cx);
         }
@@ -206,6 +242,7 @@ impl Shell {
         let gone = HostId::Detached(key);
         let menu = self.menu_host == gone && self.menu_open();
         let palette = self.palette_host == gone && self.palette.is_some();
+        let picker = self.picker_host == gone && self.picker_open();
         if menu {
             self.close_menus();
         }
@@ -213,6 +250,11 @@ impl Shell {
             self.palette = None;
             self.palette_host = HostId::Main;
             self.palette_return = None;
+        }
+        if picker {
+            self.quick_open = None;
+            self.prompt_picker = None;
+            self.slash_picker = None;
         }
         self.menu_host = if self.menu_host == gone {
             HostId::Main
@@ -224,7 +266,10 @@ impl Shell {
         } else {
             self.palette_host
         };
-        if menu || palette {
+        if self.picker_host == gone {
+            self.picker_host = HostId::Main;
+        }
+        if menu || palette || picker {
             self.in_window(HostId::Main, cx, |shell, window, cx| {
                 shell.restore_theme_pick(window, cx);
                 shell.focus_pane(window, cx);
@@ -261,7 +306,7 @@ impl Shell {
                 })
             })
             .collect();
-        let pending = self.restore.as_ref().map_or(&[][..], |r| &r.windows);
+        let pending = self.restore.as_deref().unwrap_or(&[]);
         let windows = detached::merge_saved(live, pending);
         match detached::save(&self.windows_path, &windows) {
             Ok(()) => self.windows_save_failed = false,
@@ -288,7 +333,7 @@ impl Shell {
             Ok(_) => return,
             Err(error) => return tracing::warn!("ignoring the detached windows file: {error}"),
         };
-        self.restore = Some(Restore { windows });
+        self.restore = Some(windows);
         self.load_restore_tabs(window, cx);
         self.restore_progress(window, cx);
     }
@@ -301,12 +346,12 @@ impl Shell {
         let Some(restore) = self.restore.as_mut() else {
             return HashSet::new();
         };
-        restore.windows = std::mem::take(&mut restore.windows)
+        *restore = std::mem::take(restore)
             .into_iter()
             .map(|saved| saved.keeping(|tab| listed.contains(&tab.project())))
             .filter(|saved| !saved.tabs.is_empty())
             .collect();
-        detached::waiting_projects(&restore.windows, |project| self.tabs.contains_key(&project))
+        detached::waiting_projects(restore, |project| self.tabs.contains_key(&project))
     }
 
     fn load_restore_tabs(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -326,7 +371,7 @@ impl Shell {
         };
         let displays: Vec<Bounds<Pixels>> = cx.displays().iter().map(|d| d.bounds()).collect();
         let primary = cx.primary_display().map(|d| d.bounds());
-        for saved in restore.windows {
+        for saved in restore {
             let saved = saved.keeping(|tab| {
                 let DockTab::Terminal { project, tab_id } = *tab;
                 self.tabs
@@ -340,7 +385,7 @@ impl Shell {
             };
             let bounds = Bounds::new(point(px(b.x), px(b.y)), size(px(b.width), px(b.height)));
             let bounds = mkrew_ui::window_place::fit_on_displays(bounds, &displays, primary);
-            self.open_os_window(key, bounds, maximized, window, cx);
+            self.open_os_window(key, bounds, maximized, HostId::Main, window, cx);
         }
     }
 

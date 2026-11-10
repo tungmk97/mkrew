@@ -19,23 +19,33 @@ impl Shell {
         let (near, size) = (ui.bounds, ui.content.get());
         let displays: Vec<Bounds<Pixels>> = cx.displays().iter().map(|d| d.bounds()).collect();
         let bounds = mkrew_ui::window_place::new_window_bounds(at, size, near, &displays);
-        let moved = self.detached.move_tab(tab, HostId::Main, None);
+        let from = self.detached.host_of(&tab);
+        let emptied = self.detached.move_tab(tab, HostId::Main, None);
         let key = self.detached.open(tab);
-        self.after_move(moved, cx);
-        self.open_os_window(key, bounds, false, window, cx);
+        self.after_move(emptied, cx);
+        self.open_os_window(key, bounds, false, from, window, cx);
     }
 
-    /// Opens the OS window of `key` (its tabs are in the model already). Off the current
-    /// update: the new window draws `Shell`, which is busy until this update ends.
+    /// Opens the OS window of `key` (its tabs are in the model already; `origin` is the window
+    /// they came from, where they go back if the open fails). Off the current update: the new
+    /// window draws `Shell`, which is busy until this update ends.
     pub(crate) fn open_os_window(
         &mut self,
         key: WindowKey,
         bounds: Bounds<Pixels>,
         maximized: bool,
+        origin: HostId,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.hosts.insert(HostId::Detached(key), HostUi::default());
+        // The bounds are known: a save before `window_opened` writes them, never zeros.
+        let ui = HostUi {
+            bounds,
+            restore: bounds,
+            maximized,
+            ..HostUi::default()
+        };
+        self.hosts.insert(HostId::Detached(key), ui);
         self.windows_dirty = true;
         self.sync_panes_if_alive(window, cx);
         let shell = cx.entity();
@@ -78,8 +88,15 @@ impl Shell {
                 Err(error) => {
                     let _ = this.update(cx, |shell, cx| {
                         tracing::warn!("cannot open a window: {error:#}");
-                        shell.detached.remove_window(key);
+                        // The tabs go back where they came from: that window if it is still
+                        // open, else the main one.
+                        let back = shell.detached.still_open(origin);
+                        for tab in shell.detached.remove_window(key) {
+                            shell.detached.move_tab(tab, back, None);
+                        }
                         shell.hosts.remove(&HostId::Detached(key));
+                        shell.windows_dirty = true;
+                        shell.in_window(back, cx, |shell, window, cx| shell.sync_panes(window, cx));
                         shell.toast_error(format!("Cannot open a window: {error:#}"), cx);
                     });
                 }
@@ -161,8 +178,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let moved = self.detached.move_tab(tab, to, index);
-        self.after_move(moved, cx);
+        let emptied = self.detached.move_tab(tab, to, index);
+        self.after_move(emptied, cx);
         let DockTab::Terminal { project, tab_id } = tab;
         if to == HostId::Main {
             // The strip shows the shown workspace's tabs: a drop between its chips lands
@@ -218,8 +235,8 @@ impl Shell {
         let tabs = self.detached.tabs_of(key);
         let last = tabs.last().copied();
         for tab in &tabs {
-            let moved = self.detached.move_tab(*tab, HostId::Main, None);
-            self.after_move(moved, cx);
+            let emptied = self.detached.move_tab(*tab, HostId::Main, None);
+            self.after_move(emptied, cx);
         }
         let Some(last) = last else {
             return;
@@ -234,8 +251,8 @@ impl Shell {
     }
 
     /// A move left a window empty: its OS window goes.
-    fn after_move(&mut self, moved: detached::Moved, cx: &mut Context<'_, Self>) {
-        if let Some(key) = moved.emptied {
+    fn after_move(&mut self, emptied: Option<WindowKey>, cx: &mut Context<'_, Self>) {
+        if let Some(key) = emptied {
             self.close_os_window(key, cx);
         }
     }
@@ -270,7 +287,16 @@ impl Shell {
         for (at, other) in self.detached.windows().iter().enumerate() {
             let to = HostId::Detached(other.key);
             if to != host {
-                rows.push(move_to(format!("Move to window {}", at + 1), to).row());
+                // Named by the tab that window shows, so the row says where the tab goes.
+                let shown = self.detached.active(other.key);
+                let title = shown.and_then(|DockTab::Terminal { project, tab_id }| {
+                    self.tab_title(project, tab_id)
+                });
+                let label = match title {
+                    Some(title) => format!("Move to window: {title}"),
+                    None => format!("Move to window {}", at + 1),
+                };
+                rows.push(move_to(label, to).row());
             }
         }
         rows

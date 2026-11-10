@@ -113,6 +113,23 @@ impl Shell {
         .detach();
     }
 
+    /// "Turns…" is a main-window dialog: from a detached window it opens there, and that
+    /// window comes forward.
+    pub(crate) fn open_turns_in_main(
+        &mut self,
+        session_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.host_of(window) == HostId::Main {
+            return self.open_turns(session_id, window, cx);
+        }
+        self.in_window(HostId::Main, cx, move |shell, window, cx| {
+            window.activate_window();
+            shell.open_turns(session_id, window, cx);
+        });
+    }
+
     pub(crate) fn close_turns_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.turns_dialog = None;
         self.focus_pane(window, cx);

@@ -122,6 +122,7 @@ pub enum Extra {
     TabCloseRight,
     TabMoveToMainWindow,
     WindowMoveAllBack,
+    WindowClose,
     PanePin,
     PaneReading,
     WorkspaceDefaultShell,
@@ -146,7 +147,7 @@ pub enum Extra {
 }
 
 impl Extra {
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 47] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -172,6 +173,7 @@ impl Extra {
         Self::TabCloseRight,
         Self::TabMoveToMainWindow,
         Self::WindowMoveAllBack,
+        Self::WindowClose,
         Self::PanePin,
         Self::PaneReading,
         Self::WorkspaceDefaultShell,
@@ -222,6 +224,7 @@ impl Extra {
             Self::TabCloseRight => "Tab: Close tabs to the right",
             Self::TabMoveToMainWindow => "Tab: Move to main window",
             Self::WindowMoveAllBack => "Window: Move all tabs back",
+            Self::WindowClose => "Window: Close",
             Self::PanePin => "Pane: Pin / Unpin",
             Self::PaneReading => "Pane: Reading width (on / off)",
             Self::WorkspaceDefaultShell => "Workspace: Set default shell…",
@@ -276,7 +279,9 @@ impl Extra {
             Self::TabPin => in_view(View::Terminals) && context.tabs > 0,
             Self::TabCloseOthers => in_view(View::Terminals) && context.tab_others,
             Self::TabCloseRight => in_view(View::Terminals) && context.tab_right,
-            Self::TabMoveToMainWindow | Self::WindowMoveAllBack => context.detached_window,
+            Self::TabMoveToMainWindow | Self::WindowMoveAllBack | Self::WindowClose => {
+                context.detached_window
+            }
             Self::PanePin => in_view(View::Terminals) && context.tabs > 0 && context.pane,
             Self::PaneReading | Self::AgentLinkPlan => {
                 in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
@@ -341,7 +346,10 @@ pub fn acts_in_detached_window(action: &Action) -> bool {
         Action::Run(command) => crate::detached::handles(*command),
         Action::Extra(extra) => matches!(
             extra,
-            Extra::TabMoveToMainWindow | Extra::WindowMoveAllBack | Extra::TabPin
+            Extra::TabMoveToMainWindow
+                | Extra::WindowMoveAllBack
+                | Extra::WindowClose
+                | Extra::TabPin
         ),
         Action::GoTo(Target::Session(_)) => true,
         _ => false,

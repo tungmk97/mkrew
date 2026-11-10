@@ -453,8 +453,9 @@ struct Shell {
     pending_jump: Option<(Ulid, Ulid)>,
     /// Last failure of a tab action (new tab), with the window that shows it.
     tab_error: Option<(HostId, String)>,
-    /// A one-line notice in the tab bar that goes away by itself (link hints found none).
-    tab_notice: Option<String>,
+    /// A one-line notice in the tab bar that goes away by itself (link hints found none), with
+    /// the window whose strip shows it.
+    tab_notice: Option<(HostId, String)>,
     /// The kind of pane `session.spawn` is starting (large agent exes can take seconds on a
     /// cold start): its buttons show a loading mark and further starts are ignored meanwhile.
     starting_pane: Option<SessionKind>,
@@ -686,6 +687,8 @@ struct Shell {
     /// Focused while the focused pane's composer takes keys.
     composer_focus: FocusHandle,
     /// Composing IME chars typed into the focused field so far (see `mkrew_ui::ime`).
+    // ponytail: one state for every window (spec §4.3): the OS gives one window the keyboard at
+    // a time. Per-window state if IME composition across windows ever matters.
     ime_marked: Rc<ime::Composing<FocusHandle>>,
     /// The text field that had the keyboard at the last paint (voice input types there, §20G).
     typing_target: ime::FocusedField<Shell>,
@@ -896,6 +899,9 @@ struct Shell {
     /// The window the open popover menu / the palette belongs to (spec §4.3).
     menu_host: HostId,
     palette_host: HostId,
+    /// The window the open `/` picker, prompt picker or `@` quick open is drawn in: the one
+    /// whose composer opened it.
+    picker_host: HostId,
     /// Mkrew windows, most recently activated first (drop target order, toast placement).
     activation: Vec<HostId>,
     /// A tab drag from another window hovers this strip: before chip slot `index` (its window's
@@ -911,7 +917,7 @@ struct Shell {
     /// A detached window moved, resized or changed tabs: saved on the next status tick.
     windows_dirty: bool,
     /// Saved windows waiting for their workspaces' tabs (startup).
-    restore: Option<shell::hosts::Restore>,
+    restore: Option<Vec<detached::SavedWindow>>,
     /// The saved windows were read (the first workspace listing of this process).
     restored_once: bool,
     /// Where `windows.json` lives: this computer's file, or the machine window's own.
@@ -945,7 +951,7 @@ impl Render for Shell {
         // while saving, the next step of a dialog) would leave the keyboard on nothing and Esc
         // would miss the dialog: the dialog itself takes the keyboard back.
         if self.modal_open()
-            && (self.palette.is_none() || self.palette_host == HostId::Main)
+            && self.popup_host().is_none_or(|host| host == HostId::Main)
             && !window.has_active_prompt()
             && !self.dialog_focus.contains_focused(window, cx)
         {
@@ -1137,6 +1143,7 @@ impl Render for Shell {
                     .children(
                         self.quick_open
                             .as_ref()
+                            .filter(|_| self.picker_host == HostId::Main)
                             .map(|open| self.render_quick_open(open, &theme, cx)),
                     )
                     .children(
@@ -1148,11 +1155,13 @@ impl Render for Shell {
                     .children(
                         self.prompt_picker
                             .as_ref()
+                            .filter(|_| self.picker_host == HostId::Main)
                             .map(|picker| self.render_prompt_picker(picker, &theme, cx)),
                     )
                     .children(
                         self.slash_picker
                             .as_ref()
+                            .filter(|_| self.picker_host == HostId::Main)
                             .map(|picker| self.render_slash_picker(picker, &theme, cx)),
                     )
                     .children(
@@ -1227,7 +1236,7 @@ impl Render for Shell {
                     )
                     .children(
                         self.render_toasts(&theme, cx)
-                            .filter(|_| self.activation.first() == Some(&HostId::Main)),
+                            .filter(|_| self.toast_host() == HostId::Main),
                     )
                     .children(self.render_voice_pill(&theme, cx)),
             )

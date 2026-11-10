@@ -14,6 +14,7 @@ impl Shell {
             .get(&project_id)
             .and_then(|view| view.worktree_task_id);
         self.quick_open = Some(QuickOpen::new(project_id, target));
+        self.picker_host = self.host_of(window);
         self.dialog_serial += 1;
         window.focus(&self.dialog_focus, cx);
         self.find_files(window, cx);
@@ -22,6 +23,7 @@ impl Shell {
 
     pub(crate) fn close_quick_open(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let open = self.quick_open.take();
+        self.picker_host = HostId::Main;
         // Esc on an `@` picker types the `@` it replaced (an e-mail, a handle).
         match open.and_then(|open| open.insert_into) {
             Some(target) => self.prompt_typed(target, "@", window, cx),
@@ -54,6 +56,7 @@ impl Shell {
         let mut open = QuickOpen::new(project_id, None);
         open.insert_into = Some(target);
         self.quick_open = Some(open);
+        self.picker_host = self.host_of(window);
         // The task dialog under it stays the open dialog: its late replies (the agent list)
         // still land.
         if target != composer::Target::TaskDialog {
@@ -236,6 +239,7 @@ impl Shell {
             self.quick_open = Some(open);
             return;
         };
+        self.picker_host = HostId::Main;
         if let Some(target) = open.insert_into {
             // A missing or broken settings file types the default form (the daemon reports it).
             let template = mkrew_core::settings::load(&self.settings_file)
@@ -690,6 +694,11 @@ impl Shell {
                 palette::Action::Extra(Extra::WindowMoveAllBack) => {
                     return self.move_all_back(key, window, cx);
                 }
+                // The ✕ of the window: its tabs close for real, one question for the agents.
+                palette::Action::Extra(Extra::WindowClose) => {
+                    self.detached_should_close(key, window, cx);
+                    return;
+                }
                 palette::Action::Extra(Extra::TabPin) => {
                     if let Some((project, tab_id)) = self.tab_scope(window) {
                         let pinned = (self.tabs.get(&project))
@@ -837,7 +846,7 @@ impl Shell {
                         }
                     }
                     // Handled above: a detached window's own entries.
-                    Extra::TabMoveToMainWindow | Extra::WindowMoveAllBack => {}
+                    Extra::TabMoveToMainWindow | Extra::WindowMoveAllBack | Extra::WindowClose => {}
                     Extra::PanePin => {
                         let pane = self.focused_session(window).and_then(|id| {
                             let session = self.sidebar.sessions().iter().find(|s| s.id == id)?;

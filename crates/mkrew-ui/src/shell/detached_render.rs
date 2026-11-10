@@ -19,12 +19,23 @@ impl Shell {
         if !self.menu_open() && self.menu_focus.contains_focused(window, cx) {
             self.focus_pane(window, cx);
         }
-        if self.palette.is_some()
-            && self.palette_host == host
+        if self.popup_host() == Some(host)
             && !window.has_active_prompt()
             && !self.dialog_focus.contains_focused(window, cx)
         {
             window.focus(&self.dialog_focus, cx);
+        }
+        // Rendering marks the focused pane of the active window viewed (its done leaves the
+        // Inbox), as `Render for Shell` does for the main window.
+        let mut viewed_changed = false;
+        if window.is_window_active()
+            && let Some(id) = self.focused_session(window)
+            && let Some(session) = self.sidebar.sessions().iter().find(|s| s.id == id)
+        {
+            viewed_changed = self.viewed.view(session);
+        }
+        if viewed_changed {
+            self.sync_attention(cx);
         }
         let now = status::now_ms();
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
@@ -32,15 +43,7 @@ impl Shell {
             .clear(window.window_handle().window_id());
         let scope = self.tab_scope(window);
         let title = scope
-            .and_then(|(project, tab_id)| {
-                let tab = self.tabs.get(&project)?.tab(tab_id)?;
-                let name = (self.sidebar.projects().iter())
-                    .find(|p| p.id == project)?
-                    .name
-                    .clone();
-                let label = session_label(tab, self.sidebar.sessions()).unwrap_or(&tab.title);
-                Some(format!("{label} - {name}"))
-            })
+            .and_then(|(project, tab_id)| self.tab_title(project, tab_id))
             .unwrap_or_else(|| "Mkrew".to_owned());
         // Only on a change: setting it is a system call, and a frame comes with every output.
         if let Some(ui) = self.hosts.get_mut(&host)
@@ -116,7 +119,20 @@ impl Shell {
                 (self.palette.as_ref()).map(|palette| self.render_palette(palette, theme, cx)),
             );
         }
-        if self.activation.first() == Some(&host) {
+        if self.picker_host == host {
+            overlays.extend(
+                (self.quick_open.as_ref()).map(|open| self.render_quick_open(open, theme, cx)),
+            );
+            overlays.extend(
+                (self.prompt_picker.as_ref())
+                    .map(|picker| self.render_prompt_picker(picker, theme, cx)),
+            );
+            overlays.extend(
+                (self.slash_picker.as_ref())
+                    .map(|picker| self.render_slash_picker(picker, theme, cx)),
+            );
+        }
+        if self.toast_host() == host {
             overlays.extend(self.render_toasts(theme, cx));
         }
         overlays
@@ -291,6 +307,7 @@ impl Shell {
                         workspace,
                         move |shell: &mut Shell| {
                             shell.detached.select(key, index);
+                            shell.windows_dirty = true;
                         },
                         theme,
                         cx,
@@ -325,9 +342,9 @@ impl Shell {
                     .map(|(_, error)| notice(theme.text, format!("✕ {error}"))),
             )
             .children(
-                self.tab_notice
-                    .clone()
-                    .map(|text| notice(theme.text_muted, text)),
+                (self.tab_notice.as_ref())
+                    .filter(|(host, _)| *host == HostId::Detached(key))
+                    .map(|(_, text)| notice(theme.text_muted, text.clone())),
             )
             .child(
                 icon_button("tab-split", Icon::Columns2, theme)

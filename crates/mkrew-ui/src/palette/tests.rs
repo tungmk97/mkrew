@@ -1208,7 +1208,11 @@ fn window_extras_show_only_in_a_detached_window() {
         detached_window: true,
         ..context(View::Terminals)
     };
-    for extra in [Extra::TabMoveToMainWindow, Extra::WindowMoveAllBack] {
+    for extra in [
+        Extra::TabMoveToMainWindow,
+        Extra::WindowMoveAllBack,
+        Extra::WindowClose,
+    ] {
         assert!(!extra.available(&main), "{extra:?} in the main window");
         assert!(extra.available(&detached), "{extra:?} in a detached window");
     }
@@ -1233,6 +1237,7 @@ fn a_detached_window_lists_only_what_acts_there() {
         Action::Run(Command::CommandPalette),
         Action::Extra(Extra::TabMoveToMainWindow),
         Action::Extra(Extra::WindowMoveAllBack),
+        Action::Extra(Extra::WindowClose),
         Action::Extra(Extra::TabPin),
         Action::GoTo(Target::Session(id)),
     ] {
