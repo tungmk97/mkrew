@@ -201,6 +201,8 @@ pub enum Command {
     /// within its pinned / unpinned group.
     MoveTabLeft,
     MoveTabRight,
+    /// Move the active terminal tab into a new window of its own (spec 2026-11-10, ADR 0096).
+    MoveTabToNewWindow,
     /// Git only: wrap long diff lines or cut them at the edge (the Wrap button).
     GitToggleWrap,
     /// Tree only: open the tree's cursor file in a kept tab (Enter opens a transient one).
@@ -350,6 +352,7 @@ impl Command {
             Command::ResolveComment,
             Command::MoveTabLeft,
             Command::MoveTabRight,
+            Command::MoveTabToNewWindow,
             Command::GitToggleWrap,
             Command::OpenKept,
         ]);
@@ -460,6 +463,7 @@ impl Command {
             Command::ResolveComment => "resolve_comment".into(),
             Command::MoveTabLeft => "move_tab_left".into(),
             Command::MoveTabRight => "move_tab_right".into(),
+            Command::MoveTabToNewWindow => "move_tab_to_new_window".into(),
             Command::GitToggleWrap => "git_toggle_wrap".into(),
             Command::OpenKept => "open_kept".into(),
         }
@@ -593,6 +597,7 @@ impl Command {
             Command::ResolveComment => "ctrl-alt-enter".into(),
             Command::MoveTabLeft => "ctrl-shift-pageup".into(),
             Command::MoveTabRight => "ctrl-shift-pagedown".into(),
+            Command::MoveTabToNewWindow => "shift-f4".into(),
             Command::GitToggleWrap => "w".into(),
             Command::OpenKept => "alt-enter".into(),
         }
@@ -1128,6 +1133,7 @@ mod tests {
         let keymap = Keymap::defaults();
         let bound = |keys| keymap.command_for(&keystroke(keys));
         assert_eq!(bound("ctrl-shift-k"), Some(Command::AddWorkspace));
+        assert_eq!(keymap.label(Command::MoveTabToNewWindow), "Shift+F4");
         assert_eq!(bound("alt-3"), Some(Command::Workspace(3)));
         assert_eq!(bound("ctrl-alt-9"), Some(Command::Tab(9)));
         assert_eq!(bound("ctrl-tab"), Some(Command::NextTab));
@@ -1290,6 +1296,15 @@ mod tests {
         assert_eq!(keymap.label(Command::Card(CardKey::MoveLeft)), "Shift+←");
         assert_eq!(keymap.label(Command::Card(CardKey::Open)), "Enter");
         assert_eq!(keymap.label(Command::GitPush), "Shift+P");
+    }
+
+    #[test]
+    fn move_tab_to_new_window_is_window_wide() {
+        assert_eq!(Command::MoveTabToNewWindow.context(), None);
+        assert_eq!(
+            Command::from_name("move_tab_to_new_window"),
+            Some(Command::MoveTabToNewWindow)
+        );
     }
 
     #[test]

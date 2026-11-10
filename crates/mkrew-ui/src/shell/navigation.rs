@@ -471,6 +471,7 @@ impl Shell {
             toast: !self.toasts.items().is_empty(),
             update_ready: self.update.is_some() && !self.updating,
             machine: self.target.is_machine(),
+            detached_window: false,
             features: self.features,
         };
         let mut entries = palette::settings_error(&self.keymap, self.settings_error.as_deref());
@@ -776,6 +777,7 @@ impl Shell {
                             self.close_other_tabs(tab_id, right_only, window, cx);
                         }
                     }
+                    Extra::TabMoveToMainWindow | Extra::WindowMoveAllBack => {}
                     Extra::PanePin => {
                         let pane = self.focused_session().and_then(|id| {
                             let session = self.sidebar.sessions().iter().find(|s| s.id == id)?;

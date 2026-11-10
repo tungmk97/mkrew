@@ -88,6 +88,8 @@ pub struct Context {
     pub update_ready: bool,
     /// A machine's window: Phone access and the in-app update belong to this computer's.
     pub machine: bool,
+    /// The palette was opened in a detached window (ADR 0096): only its commands are listed.
+    pub detached_window: bool,
     /// `[features]` (ADR 0046): Docs and Turns entries are listed only when on.
     pub features: FeatureSettings,
 }
@@ -118,6 +120,8 @@ pub enum Extra {
     TabPin,
     TabCloseOthers,
     TabCloseRight,
+    TabMoveToMainWindow,
+    WindowMoveAllBack,
     PanePin,
     PaneReading,
     WorkspaceDefaultShell,
@@ -142,7 +146,7 @@ pub enum Extra {
 }
 
 impl Extra {
-    pub const ALL: [Self; 44] = [
+    pub const ALL: [Self; 46] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -166,6 +170,8 @@ impl Extra {
         Self::TabPin,
         Self::TabCloseOthers,
         Self::TabCloseRight,
+        Self::TabMoveToMainWindow,
+        Self::WindowMoveAllBack,
         Self::PanePin,
         Self::PaneReading,
         Self::WorkspaceDefaultShell,
@@ -214,6 +220,8 @@ impl Extra {
             Self::TabPin => "Tab: Pin / Unpin",
             Self::TabCloseOthers => "Tab: Close others",
             Self::TabCloseRight => "Tab: Close tabs to the right",
+            Self::TabMoveToMainWindow => "Tab: Move to main window",
+            Self::WindowMoveAllBack => "Window: Move all tabs back",
             Self::PanePin => "Pane: Pin / Unpin",
             Self::PaneReading => "Pane: Reading width (on / off)",
             Self::WorkspaceDefaultShell => "Workspace: Set default shell…",
@@ -268,6 +276,7 @@ impl Extra {
             Self::TabPin => in_view(View::Terminals) && context.tabs > 0,
             Self::TabCloseOthers => in_view(View::Terminals) && context.tab_others,
             Self::TabCloseRight => in_view(View::Terminals) && context.tab_right,
+            Self::TabMoveToMainWindow | Self::WindowMoveAllBack => context.detached_window,
             Self::PanePin => in_view(View::Terminals) && context.tabs > 0 && context.pane,
             Self::PaneReading | Self::AgentLinkPlan => {
                 in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
@@ -404,6 +413,7 @@ pub fn title(command: Command) -> String {
         Command::ResolveComment => "Comments: Resolve or reopen the selected thread".into(),
         Command::MoveTabLeft => "Tabs: Move tab left".into(),
         Command::MoveTabRight => "Tabs: Move tab right".into(),
+        Command::MoveTabToNewWindow => "Tab: Move to new window".into(),
         Command::ToggleIgnored => "File tree: Toggle ignored files".into(),
         Command::OpenKept => "File tree: Open file in a kept tab".into(),
         Command::SaveFile => "Editor: Save file".into(),
@@ -538,6 +548,9 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ResolveComment => in_view(View::Docs) || in_view(View::Diff),
         Command::MoveTabLeft | Command::MoveTabRight => {
             on_panes || (in_view(View::Editor) && context.file_tabs > 0)
+        }
+        Command::MoveTabToNewWindow => {
+            context.workspace && context.view == View::Terminals && context.tabs > 0
         }
         Command::ToggleIgnored => context.workspace,
         Command::OpenKept => context.workspace && context.file_tree,

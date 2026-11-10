@@ -236,3 +236,47 @@ fn move_within_keeps_the_shown_tab_selected() {
     assert_eq!(detached.tabs_of(key), vec![b, c, a]);
     assert_eq!(detached.active(key), Some(b));
 }
+
+#[test]
+fn detached_commands_are_an_explicit_list() {
+    use crate::keymap::Command;
+    use crate::split::{Direction, Preset};
+    for command in [
+        Command::NextTab,
+        Command::PreviousTab,
+        Command::Tab(3),
+        Command::CloseTab,
+        Command::MoveTabLeft,
+        Command::MoveTabRight,
+        Command::SplitRight,
+        Command::SplitDown,
+        Command::SplitAgent,
+        Command::SplitShell,
+        Command::Layout(Preset::Grid),
+        Command::EqualizePanes,
+        Command::Focus(Direction::Left),
+        Command::Resize(Direction::Up),
+        Command::ZoomPane,
+        Command::ClosePane,
+        Command::RenamePane,
+        Command::RenameTab,
+        Command::OpenComposer,
+        Command::CommandPalette,
+        Command::ContextMenu,
+        Command::ToggleFullScreen,
+        Command::MoveTabToNewWindow,
+    ] {
+        assert!(handles(command), "{command:?}");
+    }
+    for command in [
+        Command::NewShellTab,
+        Command::ShowBoard,
+        Command::ToggleSidebar,
+        Command::Workspace(1),
+        Command::SaveFile,
+        Command::VoiceInput,
+        Command::NextInbox,
+    ] {
+        assert!(!handles(command), "{command:?}");
+    }
+}

@@ -5,6 +5,8 @@
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+use crate::keymap::Command;
+
 /// A detached window, local to this UI process (never reused within it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WindowKey(pub u64);
@@ -252,3 +254,34 @@ impl Detached {
 
 #[cfg(test)]
 mod tests;
+
+/// The commands a detached window acts on (spec 2026-11-10 §4.2); every other key there does
+/// nothing, so none can act on the main window's tabs.
+pub fn handles(command: Command) -> bool {
+    matches!(
+        command,
+        Command::NextTab
+            | Command::PreviousTab
+            | Command::Tab(_)
+            | Command::CloseTab
+            | Command::MoveTabLeft
+            | Command::MoveTabRight
+            | Command::SplitRight
+            | Command::SplitDown
+            | Command::SplitAgent
+            | Command::SplitShell
+            | Command::Layout(_)
+            | Command::EqualizePanes
+            | Command::Focus(_)
+            | Command::Resize(_)
+            | Command::ZoomPane
+            | Command::ClosePane
+            | Command::RenamePane
+            | Command::RenameTab
+            | Command::OpenComposer
+            | Command::CommandPalette
+            | Command::ContextMenu
+            | Command::ToggleFullScreen
+            | Command::MoveTabToNewWindow
+    )
+}

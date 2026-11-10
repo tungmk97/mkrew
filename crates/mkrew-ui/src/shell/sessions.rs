@@ -662,6 +662,7 @@ impl Shell {
             Command::ReplaceInFile => self.open_file_find(true, window, cx),
             // Bound in the Editor view only; handled above.
             Command::CloseFileTab => {}
+            Command::MoveTabToNewWindow => {}
         }
     }
 }

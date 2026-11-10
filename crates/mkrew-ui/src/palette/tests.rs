@@ -39,6 +39,7 @@ fn context(view: View) -> Context {
         toast: false,
         update_ready: false,
         machine: false,
+        detached_window: false,
         features: FeatureSettings {
             docs: true,
             turns: true,
@@ -1198,4 +1199,27 @@ fn the_picker_starts_on_the_current_theme_and_moves_from_there() {
     assert_eq!(palette.picked(), Some(Action::Theme(3)));
     palette.insert("solar");
     assert_eq!(palette.picked(), Some(Action::Theme(10)));
+}
+
+#[test]
+fn window_extras_show_only_in_a_detached_window() {
+    let main = context(View::Terminals);
+    let detached = Context {
+        detached_window: true,
+        ..context(View::Terminals)
+    };
+    for extra in [Extra::TabMoveToMainWindow, Extra::WindowMoveAllBack] {
+        assert!(!extra.available(&main), "{extra:?} in the main window");
+        assert!(extra.available(&detached), "{extra:?} in a detached window");
+    }
+    assert!(available(Command::MoveTabToNewWindow, &main));
+    let no_tabs = Context {
+        tabs: 0,
+        ..context(View::Terminals)
+    };
+    assert!(!available(Command::MoveTabToNewWindow, &no_tabs));
+    assert!(
+        !available(Command::MoveTabToNewWindow, &context(View::Editor)),
+        "file tabs move in Plan 2"
+    );
 }
