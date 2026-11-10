@@ -165,13 +165,10 @@ impl Shell {
         self.activation.insert(0, host);
     }
 
-    /// Whether any Mkrew window, main or detached, is the OS's active one. `window` is the one
-    /// being updated (it cannot be asked again).
-    pub(crate) fn any_window_active(&self, window: &Window, cx: &mut Context<'_, Self>) -> bool {
-        window.is_window_active()
-            || (self.windows.keys()).any(|handle| {
-                (handle.update(cx, |_, window, _| window.is_window_active())).unwrap_or(false)
-            })
+    /// Whether any Mkrew window, main or detached, is the OS's active one.
+    pub(crate) fn any_window_active(&self, cx: &App) -> bool {
+        cx.active_window()
+            .is_some_and(|active| active == self.main_window || self.windows.contains_key(&active))
     }
 
     /// The window that draws the toasts (see [`detached::toast_host`]).

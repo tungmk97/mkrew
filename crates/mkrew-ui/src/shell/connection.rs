@@ -1230,7 +1230,7 @@ impl Shell {
                 }
                 // Before the sidebar applies it: `viewed` and the flash read the previous state.
                 if self.notify.flash_taskbar
-                    && !self.any_window_active(window, cx)
+                    && !self.any_window_active(cx)
                     && attention::entered_needs_input(event, self.sidebar.sessions())
                 {
                     self.desktop.flash(true);
