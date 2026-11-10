@@ -821,3 +821,61 @@ fn a_tab_merges_beside_a_pane_of_another_tab_keeping_its_layout() {
             .is_some_and(|tab| tab.sessions().is_empty())
     );
 }
+
+#[test]
+fn with_active_acts_on_another_tab_and_restores_the_active_one() {
+    let project = Ulid::new();
+    let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, pane(a));
+    let split = json!({"split":"vertical","ratio":0.5,"children":[pane(b), pane(c)]});
+    let two = wire(project, "two", 2.0, split);
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone()]);
+    assert_eq!(tabs.active().map(|t| t.id), Some(one.id));
+
+    let zoomed = tabs.with_active(two.id, Tabs::toggle_zoom);
+    assert_eq!(zoomed, Some(true));
+    assert_eq!(tabs.active().map(|t| t.id), Some(one.id), "active restored");
+    assert!(
+        tabs.tab(two.id).and_then(Tab::zoomed).is_some(),
+        "the change stays"
+    );
+    assert_eq!(tabs.with_active(Ulid::new(), Tabs::toggle_zoom), None);
+}
+
+#[test]
+fn focus_pane_leaves_the_active_tab() {
+    let project = Ulid::new();
+    let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, pane(a));
+    let split = json!({"split":"vertical","ratio":0.5,"children":[pane(b), pane(c)]});
+    let two = wire(project, "two", 2.0, split);
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone()]);
+
+    assert!(tabs.focus_pane(two.id, c));
+    assert_eq!(tabs.active().map(|t| t.id), Some(one.id));
+    assert_eq!(tabs.tab(two.id).and_then(Tab::focused), Some(c));
+    assert!(!tabs.focus_pane(two.id, a), "a is not in that tab");
+}
+
+#[test]
+fn activate_skipping_moves_off_a_hidden_tab() {
+    let project = Ulid::new();
+    let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, pane(a));
+    let two = wire(project, "two", 2.0, pane(b));
+    let three = wire(project, "three", 3.0, pane(c));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone(), three.clone()]);
+    assert!(tabs.activate(two.id));
+
+    tabs.activate_skipping(|id| id == two.id);
+    assert_eq!(tabs.active().map(|t| t.id), Some(three.id), "right first");
+    tabs.activate_skipping(|id| id == three.id || id == two.id);
+    assert_eq!(tabs.active().map(|t| t.id), Some(one.id), "else left");
+    tabs.activate_skipping(|_| true);
+    assert!(tabs.active().is_none(), "every tab hidden");
+    tabs.activate_skipping(|_| false);
+    assert!(tabs.active().is_none(), "nothing to move off");
+}

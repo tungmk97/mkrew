@@ -367,6 +367,45 @@ impl Tabs {
         true
     }
 
+    /// Runs `f` as if `tab_id` were the active tab, then gives the active tab back (a detached
+    /// window acts on its own tab without moving the main window's, spec 2026-11-10 §4.1).
+    pub fn with_active<R>(&mut self, tab_id: Ulid, f: impl FnOnce(&mut Tabs) -> R) -> Option<R> {
+        self.tab(tab_id)?;
+        let saved = self.active.replace(tab_id);
+        let result = f(self);
+        self.active = saved;
+        if self.active.is_some_and(|id| self.tab(id).is_none()) {
+            self.fix_active();
+        }
+        Some(result)
+    }
+
+    /// Focuses `session`'s pane in `tab_id` without making that tab active.
+    pub fn focus_pane(&mut self, tab_id: Ulid, session: Ulid) -> bool {
+        let Some(tab) = self.tab_mut(tab_id).filter(|tab| tab.contains(session)) else {
+            return false;
+        };
+        tab.focused = Some(session);
+        tab.fix_focus();
+        true
+    }
+
+    /// While the active tab is `hidden` (shown in a detached window), the next tab that is not
+    /// becomes active (right of it, else left), or none.
+    pub fn activate_skipping(&mut self, hidden: impl Fn(Ulid) -> bool) {
+        let Some(active) = self.active.filter(|id| hidden(*id)) else {
+            return;
+        };
+        let at = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id == active)
+            .unwrap_or(0);
+        let right = self.tabs[at..].iter().find(|tab| !hidden(tab.id));
+        let left = self.tabs[..at].iter().rev().find(|tab| !hidden(tab.id));
+        self.active = right.or(left).map(|tab| tab.id);
+    }
+
     /// Moves the focus in the active tab (ending a zoom); false if there is no pane that way.
     pub fn focus_neighbour(&mut self, direction: Direction) -> bool {
         let Some(tab) = self.active_mut() else {
