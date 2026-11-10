@@ -182,6 +182,12 @@ pub const WINDOW_HEIGHT: f32 = 760.0;
 /// Smallest main window: the title bar's contents fit (ADR 0034).
 pub const WINDOW_MIN_WIDTH: f32 = 1100.0;
 pub const WINDOW_MIN_HEIGHT: f32 = 560.0;
+/// Smallest detached window (ADR 0096): a tab strip and one pane fit.
+pub const DETACHED_MIN_WIDTH: f32 = 480.0;
+pub const DETACHED_MIN_HEIGHT: f32 = 320.0;
+/// Where a detached window opened from the keyboard goes: this far right and down of the
+/// window it came from.
+pub const DETACHED_OFFSET: f32 = 32.0;
 /// One ─ □ ✕ button of the Windows title bar (the system caption button width).
 pub const WINDOW_CONTROL_WIDTH: f32 = 46.0;
 /// Room for the macOS traffic lights at the left of the title bar.
