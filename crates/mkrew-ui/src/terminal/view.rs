@@ -214,8 +214,16 @@ impl TerminalPane {
     }
 
     /// The pane now shows in `window` (ADR 0096): its appearance and blur follow that window.
-    /// Emulator, scrollback, selection, copy mode and focus handle stay.
+    /// Emulator, scrollback, selection, copy mode and focus handle stay. State tied to the old
+    /// window resets: link hints (their blur listener is replaced, so they end here and release
+    /// the output hold), the painted geometry, a drag in progress and a find-bar click.
     pub fn rehost(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.hints.is_some() {
+            self.stop_hints();
+        }
+        self.geometry = None;
+        self.selecting = false;
+        self.find_clicked = false;
         self.window_subscriptions = Self::window_subscriptions(&self.focus_handle, window, cx);
         cx.notify();
     }
