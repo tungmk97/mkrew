@@ -49,9 +49,12 @@ pub fn drop_target<H: Copy + PartialEq>(
     let local = point - over.window.origin;
     match &over.strip {
         Some(strip) if strip.bounds.contains(&local) => {
-            let index = (strip.chips.iter())
-                .position(|chip| local.x < chip.origin.x + chip.size.width / 2.0)
-                .unwrap_or(strip.chips.len());
+            // `chips[i]` is tab `i`'s slot; a tab not drawn leaves an empty one: never a gap.
+            let index = (strip.chips.iter().enumerate())
+                .find(|(_, chip)| {
+                    chip.size.width > px(0.0) && local.x < chip.origin.x + chip.size.width / 2.0
+                })
+                .map_or(strip.chips.len(), |(slot, _)| slot);
             Some(Target::Strip {
                 host: over.host,
                 index,
@@ -59,6 +62,26 @@ pub fn drop_target<H: Copy + PartialEq>(
         }
         _ => Some(Target::Window(over.host)),
     }
+}
+
+/// Where the accent line of a drop before chip slot `index` goes, relative to the strip's top
+/// left (`gap`: the space between chips, where the line is centered; the end = after the last
+/// drawn chip). `None` while no chip is drawn.
+pub fn drop_line(strip: &Strip, index: usize, gap: f32) -> Option<Bounds<Pixels>> {
+    let mut drawn = (strip.chips.iter().enumerate()).filter(|(_, chip)| chip.size.width > px(0.0));
+    let line = theme::DROP_LINE_WIDTH;
+    let (x, chip) = match drawn.clone().find(|(slot, _)| *slot >= index) {
+        Some((_, chip)) => (chip.origin.x - px((gap + line) / 2.0), chip),
+        None => {
+            let (_, chip) = drawn.next_back()?;
+            (
+                chip.origin.x + chip.size.width + px((gap - line) / 2.0),
+                chip,
+            )
+        }
+    };
+    let top_left = point(x, chip.origin.y) - strip.bounds.origin;
+    Some(Bounds::new(top_left, size(px(line), chip.size.height)))
 }
 
 /// A new detached window of `size` (at least the minimum): its top left at `at` (the release

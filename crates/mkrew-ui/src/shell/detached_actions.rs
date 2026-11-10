@@ -165,10 +165,34 @@ impl Shell {
         self.after_move(moved, cx);
         let DockTab::Terminal { project, tab_id } = tab;
         if to == HostId::Main {
+            // The strip shows the shown workspace's tabs: a drop between its chips lands
+            // there; a tab of another workspace keeps its place.
+            let params = index
+                .filter(|_| self.workspace == Some(project))
+                .and_then(|at| {
+                    let tabs = self.tabs.get(&project)?;
+                    let anchor = (tabs.tabs().iter())
+                        .filter(|other| {
+                            other.id != tab_id
+                                && self.terminal_host(project, other.id) == HostId::Main
+                        })
+                        .nth(at)
+                        .map(|other| other.id);
+                    self.tabs.get_mut(&project)?.move_tab_before(tab_id, anchor)
+                });
             if let Some(tabs) = self.tabs.get_mut(&project) {
                 tabs.activate(tab_id);
             }
             self.views.insert(project, View::Terminals);
+            if let Some(params) = params {
+                self.send_edit(
+                    Request::TabMove(params),
+                    "Cannot move the tab",
+                    |_: &mut Self, _: serde_json::Value| {},
+                    window,
+                    cx,
+                );
+            }
         }
         self.windows_dirty = true;
         self.in_window(to, cx, move |shell, window, cx| {

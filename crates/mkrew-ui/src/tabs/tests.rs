@@ -531,6 +531,34 @@ fn moving_a_tab_stays_in_its_pin_group() {
 }
 
 #[test]
+fn a_tab_moves_before_another_within_its_pin_group() {
+    let project = Ulid::new();
+    let [pin, one, two, three] = [
+        TerminalTab {
+            pinned: true,
+            ..wire(project, "pin", 9.0, serde_json::Value::Null)
+        },
+        wire(project, "one", 1.0, serde_json::Value::Null),
+        wire(project, "two", 2.0, serde_json::Value::Null),
+        wire(project, "three", 3.0, serde_json::Value::Null),
+    ];
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![pin.clone(), one.clone(), two.clone(), three.clone()]);
+    let titles =
+        |tabs: &Tabs| -> Vec<String> { tabs.tabs().iter().map(|t| t.title.clone()).collect() };
+
+    tabs.move_tab_before(three.id, Some(two.id)).unwrap();
+    assert_eq!(titles(&tabs), ["pin", "one", "three", "two"]);
+    // No anchor: the end of its group.
+    tabs.move_tab_before(one.id, None).unwrap();
+    assert_eq!(titles(&tabs), ["pin", "three", "two", "one"]);
+    // An anchor in the pinned group puts an unpinned tab first among the unpinned.
+    tabs.move_tab_before(one.id, Some(pin.id)).unwrap();
+    assert_eq!(titles(&tabs), ["pin", "one", "three", "two"]);
+    assert!(tabs.move_tab_before(Ulid::new(), None).is_none());
+}
+
+#[test]
 fn close_others_and_to_the_right_keep_pinned_tabs() {
     let project = Ulid::new();
     let [pin, one, two, three] = [

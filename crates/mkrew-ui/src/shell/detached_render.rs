@@ -1,7 +1,6 @@
 //! What a detached window shows (ADR 0096): title bar, its tab strip, the active tab.
 
 use crate::*;
-use mkrew_ui::window_place::Strip;
 
 impl Shell {
     pub(crate) fn render_host(
@@ -72,6 +71,7 @@ impl Shell {
             .flex_col()
             .bg(rgb(theme.bg))
             .font_family(theme.ui_font_family.clone())
+            .child(tear_off_catcher(cx))
             .child(self.render_detached_title_bar(key, &title, &theme, window, cx))
             .children(self.render_reconnect_banner(&theme, cx))
             .child(self.render_detached_strip(key, &theme, cx))
@@ -252,8 +252,6 @@ impl Shell {
         let strip = (self.hosts.get(&HostId::Detached(key)))
             .map(|ui| ui.strip.clone())
             .unwrap_or_default();
-        let chips: Rc<RefCell<Vec<Bounds<Pixels>>>> =
-            Rc::new(RefCell::new(vec![Bounds::default(); tabs.len()]));
         let sessions = self.sidebar.sessions();
         let chip_elements: Vec<gpui::AnyElement> = tabs
             .iter()
@@ -279,7 +277,6 @@ impl Shell {
                         .to_owned()
                         .into(),
                 };
-                let record = chips.clone();
                 let chip = self
                     .tab_chip(
                         project,
@@ -292,18 +289,7 @@ impl Shell {
                         theme,
                         cx,
                     )
-                    .child(
-                        canvas(
-                            move |bounds, _, _| {
-                                if let Some(slot) = record.borrow_mut().get_mut(index) {
-                                    *slot = bounds;
-                                }
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .absolute()
-                        .size_full(),
-                    );
+                    .child(record_strip(strip.clone(), Some(index)));
                 Some(self.reorderable(chip.into_any_element(), item, true, space::XS, theme, cx))
             })
             .collect();
@@ -322,6 +308,8 @@ impl Shell {
             .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
                 shell.drop_reordered(item, window, cx);
             }))
+            // First: the strip records before its chips (prepaint goes parent first).
+            .child(record_strip(strip, None))
             .children(chip_elements)
             // Pushes the notices and the layout / ⋯ group to the right.
             .child(div().flex_1())
@@ -357,20 +345,7 @@ impl Shell {
                         )),
                 )
             })
-            // Last, so it reads the chips' bounds painted before it.
-            .child(
-                canvas(
-                    move |bounds, _, _| {
-                        *strip.borrow_mut() = Some(Strip {
-                            bounds,
-                            chips: chips.borrow().clone(),
-                        });
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
+            .children(self.drop_hint_line(HostId::Detached(key), theme))
             .into_any_element()
     }
 }

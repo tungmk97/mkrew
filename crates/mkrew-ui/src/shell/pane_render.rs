@@ -22,8 +22,12 @@ impl Shell {
         let active = tabs.active().map(|tab| tab.id);
         // Pinned tabs lead the strip; each kind is dragged among its own.
         let pinned_count = tabs.tabs().iter().filter(|tab| tab.pinned).count();
+        let strip = (self.hosts.get(&HostId::Main))
+            .map(|ui| ui.strip.clone())
+            .unwrap_or_default();
         div()
             .flex_none()
+            .relative()
             .h(theme::rems_px(theme::TAB_STRIP_HEIGHT))
             .flex()
             .items_center()
@@ -36,12 +40,15 @@ impl Shell {
             .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
                 shell.drop_reordered(item, window, cx);
             }))
+            // First: the strip records before its chips (prepaint goes parent first).
+            .child(record_strip(strip.clone(), None))
             .children(
                 tabs.tabs()
                     .iter()
                     .enumerate()
                     .filter(|(_, tab)| self.terminal_host(project_id, tab.id) == HostId::Main)
-                    .map(|(place, tab)| {
+                    .enumerate()
+                    .map(|(slot, (place, tab))| {
                         let tab_id = tab.id;
                         let is_active = active == Some(tab_id);
                         // F2 on a single pane: its rename field takes the tab's place (no header).
@@ -68,8 +75,9 @@ impl Shell {
                                 tabs.activate(tab_id);
                             }
                         };
-                        let chip =
-                            self.tab_chip(project_id, tab, is_active, None, select, theme, cx);
+                        let chip = self
+                            .tab_chip(project_id, tab, is_active, None, select, theme, cx)
+                            .child(record_strip(strip.clone(), Some(slot)));
                         self.reorderable(chip.into_any_element(), item, true, space::XS, theme, cx)
                     }),
             )
@@ -168,6 +176,7 @@ impl Shell {
                         )),
                 )
             })
+            .children(self.drop_hint_line(HostId::Main, theme))
     }
 
     /// One tab of a strip (main or detached): kind icon, title, status dot, pin, ×. `select`

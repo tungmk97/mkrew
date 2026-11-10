@@ -496,6 +496,7 @@ impl Shell {
             menu_host: HostId::Main,
             palette_host: HostId::Main,
             activation: vec![HostId::Main],
+            drop_hint: None,
             main_visible: true,
             link_subscriptions: HashMap::new(),
             windows_dirty: false,

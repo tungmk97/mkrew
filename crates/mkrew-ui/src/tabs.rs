@@ -324,6 +324,20 @@ impl Tabs {
         Some(TabMoveParams { tab_id, position })
     }
 
+    /// Moves `tab_id` before `anchor` (the end of its pin group when `None`); an anchor of the
+    /// other pin group means the start (anchor pinned) or the end of the tab's own group.
+    pub fn move_tab_before(&mut self, tab_id: Ulid, anchor: Option<Ulid>) -> Option<TabMoveParams> {
+        let pinned = self.tab(tab_id)?.pinned;
+        let mut group = (self.tabs.iter()).filter(|tab| tab.pinned == pinned && tab.id != tab_id);
+        let to = match anchor.and_then(|id| self.tab(id)) {
+            Some(anchor) if anchor.pinned == pinned => group.position(|tab| tab.id == anchor.id),
+            Some(anchor) if anchor.pinned => Some(0),
+            _ => None,
+        };
+        let to = to.unwrap_or(usize::MAX);
+        self.move_tab(tab_id, to)
+    }
+
     /// The active tab's pin group and place in it: (pinned, index among those tabs, how many
     /// there are). What Move tab left / right steps from.
     pub fn active_place(&self) -> Option<(bool, usize, usize)> {

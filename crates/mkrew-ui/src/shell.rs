@@ -16,6 +16,7 @@ pub(crate) mod pane_render;
 pub(crate) mod reorder;
 pub(crate) mod sidebar;
 pub(crate) mod sidebar_view;
+pub(crate) mod tear_off;
 pub(crate) mod widgets;
 
 mod comments;

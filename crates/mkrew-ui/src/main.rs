@@ -149,6 +149,7 @@ use shell::pane_drop::*;
 use shell::pane_render::*;
 use shell::reorder::*;
 use shell::sidebar::*;
+use shell::tear_off::*;
 use shell::thread_panel::*;
 use shell::widgets::*;
 
@@ -892,6 +893,9 @@ struct Shell {
     palette_host: HostId,
     /// Mkrew windows, most recently activated first (drop target order, toast placement).
     activation: Vec<HostId>,
+    /// A tab drag from another window hovers this strip: before chip slot `index` (its window's
+    /// accent line; set by `tear_off_catcher` of the source window).
+    drop_hint: Option<(HostId, usize)>,
     /// The main window is shown (not minimized or hidden): its panes stay attached.
     main_visible: bool,
     /// `OpenLink` of each attached pane, kept so a move to another window subscribes again.
@@ -999,6 +1003,7 @@ impl Render for Shell {
                     cx.notify();
                 }
             }))
+            .child(tear_off_catcher(cx))
             .child(self.render_title_bar(self.view(), now, &theme, window, cx))
             .children(self.render_reconnect_banner(&theme, cx))
             .child(

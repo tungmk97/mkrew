@@ -49,6 +49,39 @@ fn over_another_strip_picks_the_gap_under_the_pointer() {
 }
 
 #[test]
+fn chips_not_drawn_are_no_gap() {
+    // Slot 0 and 2 are not drawn (empty); the pointer is left of the only chip.
+    let mut gapped = strip(&[(8.0, 100.0)]);
+    gapped.chips.insert(0, Bounds::default());
+    gapped.chips.push(Bounds::default());
+    let windows = [Placed {
+        host: 2,
+        window: rect(1000.0, 0.0, 800.0, 600.0),
+        strip: Some(gapped),
+    }];
+    let at = drop_target(point(px(1000.0 + 20.0), px(60.0)), 1, &windows);
+    assert_eq!(at, Some(Target::Strip { host: 2, index: 1 }));
+    let at = drop_target(point(px(1000.0 + 600.0), px(60.0)), 1, &windows);
+    assert_eq!(at, Some(Target::Strip { host: 2, index: 3 }));
+}
+
+#[test]
+fn the_drop_line_sits_in_the_gap_before_a_drawn_chip() {
+    let mut gapped = strip(&[(8.0, 100.0), (112.0, 100.0)]);
+    // Before the first chip (gap 4, line 2: 3 px left of the edge); chips sit 4 px below the strip top.
+    let line = drop_line(&gapped, 0, 4.0).unwrap();
+    assert_eq!(line.origin, point(px(5.0), px(4.0)));
+    assert_eq!(line.size.height, px(28.0));
+    // At the end: right of the last chip, in its gap.
+    let line = drop_line(&gapped, 2, 4.0).unwrap();
+    assert_eq!(line.origin.x, px(213.0));
+    // A slot not drawn leads to the next drawn chip.
+    gapped.chips.insert(1, Bounds::default());
+    assert_eq!(drop_line(&gapped, 1, 4.0).unwrap().origin.x, px(109.0));
+    assert!(drop_line(&strip(&[]), 0, 4.0).is_none());
+}
+
+#[test]
 fn overlapping_windows_go_to_the_most_recently_activated() {
     let windows = [
         Placed {
