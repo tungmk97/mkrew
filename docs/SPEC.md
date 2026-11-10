@@ -995,16 +995,6 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   `[ui] reading_width` (default `true`); the toggle holds per pane until restart. Shell and run
   panes are always full width.
 
-### Detached windows (ADR 0096)
-
-- A terminal tab moves into a window of its own by dragging its chip outside every Mkrew window (the new window opens at the pointer), with `Shift+F4`, or from the tab menu and the palette.
-- A detached window has a title bar (the shown tab and its workspace, Move all back, the window controls), a tab strip with each tab's workspace, and the tab's panes.
-- Tabs move between windows by dragging their chip onto another window (onto its strip: at the gap under the pointer) or with the tab menu's Move to main window / Move to window N.
-- Its keys act on its own tab only: tab and pane commands of §13, the palette (its commands only), the context menu, the composer.
-- Closing a detached window closes its tabs (one confirmation for running agents); quitting Mkrew keeps them and reopens the windows on the next start (`<data>/windows.json`).
-- A hidden or minimized detached window detaches its panes like the main window.
-- File tabs stay in the main window (until the Editor part of the spec ships).
-
 - **Right panel** (ADR 0038, ADR 0081, ADR 0084): a column right of the Terminals, Editor and Diff views with
   tabs `Files │ Session │ Git` (a click switches the tab; the `Git` tab shows the changed count). The title bar's `◨` and `Ctrl+Shift+Y` hide
   and show it and keep the tab; from the Board or Docs view the key shows Terminals with the
@@ -1122,6 +1112,16 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   `port.list` is asked when it opens, every 2 s while it is open and after each Stop; nothing runs while it is closed; it closes on disconnect.
   `↑` / `↓` select, Enter opens the pane.
 - **Empty states** everywhere (see §14).
+
+### Detached windows (ADR 0096)
+
+- A terminal tab moves into a window of its own by dragging its chip outside every Mkrew window (the new window opens at the pointer), with `Shift+F4`, or from the tab menu and the palette.
+- A detached window has a title bar (the shown tab and its workspace, Move all back, the window controls), a tab strip with each tab's workspace, and the tab's panes.
+- Tabs move between windows by dragging their chip onto another window (onto its strip: at the gap under the pointer) or with the tab menu's Move to main window / Move to window N.
+- Its keys act on its own tab only: tab and pane commands of §13, the palette (its commands only), the context menu, the composer.
+- Closing a detached window closes its tabs (one confirmation for running agents); quitting Mkrew keeps them and reopens the windows on the next start (`<data>/windows.json`).
+- A hidden or minimized detached window detaches its panes like the main window.
+- File tabs stay in the main window (until the Editor part of the spec ships).
 
 ---
 
