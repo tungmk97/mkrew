@@ -76,12 +76,14 @@ impl Shell {
         };
         self.tab_error = None;
         if have > preset.panes() {
-            self.tab_error = Some(format!(
-                "This tab has {have} panes; the {} layout holds {}. Close panes first.",
-                preset.label(),
-                preset.panes()
+            self.tab_error = Some((
+                self.host_of(window),
+                format!(
+                    "This tab has {have} panes; the {} layout holds {}. Close panes first.",
+                    preset.label(),
+                    preset.panes()
+                ),
             ));
-            self.tab_error_host = self.host_of(window);
             cx.notify();
             return;
         }
@@ -125,7 +127,7 @@ impl Shell {
                 shell.starting_pane = None;
                 shell
                     .tab_error
-                    .take_if(|error| error.starts_with(lifecycle::STILL_STARTING));
+                    .take_if(|(_, error)| error.starts_with(lifecycle::STILL_STARTING));
                 let write = (shell.tabs.get_mut(&project_id))
                     .and_then(|tabs| tabs.arrange(tab_id, preset, &started));
                 match write {
@@ -142,8 +144,7 @@ impl Shell {
                 if let Some(error) = failed {
                     tracing::warn!(%project_id, "session.spawn failed: {error}");
                     let what = lifecycle::kind_noun(kind);
-                    shell.tab_error = Some(format!("Cannot start {what}: {error}"));
-                    shell.tab_error_host = host;
+                    shell.tab_error = Some((host, format!("Cannot start {what}: {error}")));
                 }
                 shell.sync_panes(window, cx);
                 cx.notify();
@@ -467,6 +468,7 @@ impl Shell {
         };
         self.tab_error = None;
         let edited = connection.call::<T>(request);
+        let host = self.host_of(window);
         cx.spawn_in(window, async move |this, cx| {
             let edited = edited.await;
             let _ = this.update(cx, |shell, cx| {
@@ -474,7 +476,7 @@ impl Shell {
                     Ok(edited) => shown(shell, edited),
                     Err(error) => {
                         tracing::warn!("{failure}: {error:#}");
-                        shell.tab_error = Some(format!("{failure}: {error:#}"));
+                        shell.tab_error = Some((host, format!("{failure}: {error:#}")));
                     }
                 }
                 cx.notify();
@@ -691,7 +693,9 @@ impl Shell {
                         }
                         Err(error) => {
                             tracing::warn!(%tab_id, "tab.close failed: {error:#}");
-                            shell.tab_error = Some(format!("Cannot close the tab: {error:#}"));
+                            let host = shell.host_of(window);
+                            shell.tab_error =
+                                Some((host, format!("Cannot close the tab: {error:#}")));
                         }
                     }
                     cx.notify();
@@ -818,11 +822,12 @@ impl Shell {
             session_id,
             force: false,
         }));
+        let host = self.host_of(window);
         cx.spawn_in(window, async move |this, cx| {
             if let Err(error) = killed.await {
                 tracing::warn!(%session_id, "session.kill failed: {error:#}");
                 let _ = this.update(cx, |shell, cx| {
-                    shell.tab_error = Some(format!("Cannot kill the session: {error:#}"));
+                    shell.tab_error = Some((host, format!("Cannot kill the session: {error:#}")));
                     cx.notify();
                 });
             }

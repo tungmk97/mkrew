@@ -156,7 +156,8 @@ impl Shell {
                             shell.tabs_load_failed(project_id);
                             shell.list_failed(error);
                         } else {
-                            shell.tab_error = Some(format!("Cannot add a tab: {error}"));
+                            let host = shell.host_of(window);
+                            shell.tab_error = Some((host, format!("Cannot add a tab: {error}")));
                         }
                     }
                 }
@@ -328,6 +329,7 @@ impl Shell {
             return;
         };
         let saved = connection.call::<()>(Request::TabSetLayout(write.clone()));
+        let host = self.host_of(window);
         cx.spawn_in(window, async move |this, cx| {
             if let Err(error) = saved.await {
                 tracing::warn!(tab_id = %write.tab_id, "tab.set_layout failed: {error:#}");
@@ -335,7 +337,7 @@ impl Shell {
                     if let Some(tabs) = shell.tabs.get_mut(&project_id) {
                         tabs.write_failed(&write);
                     }
-                    shell.tab_error = Some(format!("Cannot save the layout: {error:#}"));
+                    shell.tab_error = Some((host, format!("Cannot save the layout: {error:#}")));
                     cx.notify();
                 });
             }

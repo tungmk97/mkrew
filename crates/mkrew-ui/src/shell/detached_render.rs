@@ -320,10 +320,9 @@ impl Shell {
             // Pushes the notices and the layout / ⋯ group to the right.
             .child(div().flex_1())
             .children(
-                self.tab_error
-                    .clone()
-                    .filter(|_| self.tab_error_host == HostId::Detached(key))
-                    .map(|error| notice(theme.text, format!("✕ {error}"))),
+                (self.tab_error.as_ref())
+                    .filter(|(host, _)| *host == HostId::Detached(key))
+                    .map(|(_, error)| notice(theme.text, format!("✕ {error}"))),
             )
             .children(
                 self.tab_notice

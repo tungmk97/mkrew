@@ -201,6 +201,7 @@ impl Shell {
         self.tab_error = None;
         // One after another, the close last: `tab.close` removes the sessions of the tab's saved
         // layout (ADR 0041), so it must only run once that layout is empty.
+        let host = self.host_of(window);
         cx.spawn_in(window, async move |this, cx| {
             for write in writes {
                 let saved = connection.call::<()>(Request::TabSetLayout(write.clone()));
@@ -210,7 +211,8 @@ impl Shell {
                         if let Some(tabs) = shell.tabs.get_mut(&project_id) {
                             tabs.write_failed(&write);
                         }
-                        shell.tab_error = Some(format!("Cannot save the layout: {error:#}"));
+                        shell.tab_error =
+                            Some((host, format!("Cannot save the layout: {error:#}")));
                         cx.notify();
                     });
                     return;
@@ -228,7 +230,8 @@ impl Shell {
                     }
                     Err(error) => {
                         tracing::warn!(tab_id = %source, "tab.close failed: {error:#}");
-                        shell.tab_error = Some(format!("Cannot close the tab: {error:#}"));
+                        let host = shell.host_of(window);
+                        shell.tab_error = Some((host, format!("Cannot close the tab: {error:#}")));
                     }
                 }
                 cx.notify();

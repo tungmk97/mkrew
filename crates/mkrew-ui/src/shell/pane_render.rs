@@ -99,10 +99,9 @@ impl Shell {
             // Pushes the notices, the pane status and the split / ⋯ group to the right.
             .child(div().flex_1())
             .children(
-                self.tab_error
-                    .clone()
-                    .filter(|_| self.tab_error_host == HostId::Main)
-                    .map(|error| notice(theme.text, format!("✕ {error}"))),
+                (self.tab_error.as_ref())
+                    .filter(|(host, _)| *host == HostId::Main)
+                    .map(|(_, error)| notice(theme.text, format!("✕ {error}"))),
             )
             .children(
                 self.tab_notice

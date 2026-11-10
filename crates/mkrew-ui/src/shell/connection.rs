@@ -291,7 +291,6 @@ impl Shell {
             early_tab_events: Vec::new(),
             reveal: None,
             tab_error: None,
-            tab_error_host: HostId::Main,
             tab_notice: None,
             starting_pane: None,
             router: Router::default(),

@@ -50,7 +50,7 @@ impl Shell {
                 shell.starting_pane = None;
                 shell
                     .tab_error
-                    .take_if(|error| error.starts_with(lifecycle::STILL_STARTING));
+                    .take_if(|(_, error)| error.starts_with(lifecycle::STILL_STARTING));
                 match spawned {
                     Ok(spawned) => {
                         // Next to the focused pane of the tab active now (the user may have
@@ -61,8 +61,7 @@ impl Shell {
                     Err(error) => {
                         tracing::warn!(%project_id, "session.spawn failed: {error:#}");
                         let what = lifecycle::kind_noun(kind);
-                        shell.tab_error = Some(format!("Cannot start {what}: {error:#}"));
-                        shell.tab_error_host = host;
+                        shell.tab_error = Some((host, format!("Cannot start {what}: {error:#}")));
                     }
                 }
                 cx.notify();
@@ -88,8 +87,10 @@ impl Shell {
             return false;
         };
         let (still, what) = (lifecycle::STILL_STARTING, lifecycle::kind_noun(kind));
-        self.tab_error = Some(format!("{still} {what}; try again once it shows."));
-        self.tab_error_host = self.host_of(window);
+        self.tab_error = Some((
+            self.host_of(window),
+            format!("{still} {what}; try again once it shows."),
+        ));
         cx.notify();
         true
     }
@@ -104,7 +105,6 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> bool {
         self.tab_error = None;
-        self.tab_error_host = HostId::Main;
         let project = (self.sidebar.projects().iter()).find(|project| project.id == project_id);
         let (default, what) = match kind {
             SessionKind::Agent => (project.map(|p| &p.default_agent), "agent"),
@@ -112,10 +112,11 @@ impl Shell {
         };
         let missing = default.is_some_and(Option::is_none);
         if missing {
-            self.tab_error = Some(format!(
-                "Pick a default {what} for this workspace, then try again."
+            let host = self.host_of(window);
+            self.tab_error = Some((
+                host,
+                format!("Pick a default {what} for this workspace, then try again."),
             ));
-            self.tab_error_host = self.host_of(window);
             // The menu hangs on the main window's title bar: not opened from a detached one.
             if self.detached_key(window).is_none() {
                 self.open_workspace_menu_at_switcher(project_id, window, cx);

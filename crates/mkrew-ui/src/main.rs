@@ -451,10 +451,8 @@ struct Shell {
     /// The session a `mkrew://` link asked for when it started this UI (ADR 0079); shown
     /// after the first session list.
     pending_jump: Option<(Ulid, Ulid)>,
-    /// Last failure of a tab action (new tab), shown in the tab bar.
-    tab_error: Option<String>,
-    /// The window that last set `tab_error` from a pane action (the main one otherwise).
-    tab_error_host: HostId,
+    /// Last failure of a tab action (new tab), with the window that shows it.
+    tab_error: Option<(HostId, String)>,
     /// A one-line notice in the tab bar that goes away by itself (link hints found none).
     tab_notice: Option<String>,
     /// The kind of pane `session.spawn` is starting (large agent exes can take seconds on a
