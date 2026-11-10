@@ -1,7 +1,7 @@
 # Detached windows: drag a terminal tab or an Editor file out into its own window - Design
 
 - Date: 2026-11-10
-- Status: approved by the user in brainstorming (2026-11-10); this file is the written spec.
+- Status: approved by the user in brainstorming (2026-11-10); amended the same day after reading the code (§2 Approach, §4.1-§4.5, §5.1, §6.1, §9), amendment approved by the user.
 - ADR: `docs/decisions/0096-detached-windows.md` (written by the first implementation task).
 - Inspiration: JetBrains IntelliJ "drag an editor tab out of the window" / "Open in New Window".
 
@@ -22,7 +22,8 @@ Done means: a tab dragged out lands in a new window under the pointer, the termi
 | Mixing | Free: one detached window may hold terminal tabs and file tabs of different workspaces; each chip shows its workspace. |
 | Restart | Detached windows come back with their bounds, display, tabs and active tab; stored locally by the UI, no protocol change. |
 | Close | Closing a detached window really closes its tabs (terminal `tab.close`, which removes the sessions, ADR 0041; unsaved files ask). "Move back" is a separate action. |
-| Approach | A: `Shell` stays the single owner of all state; each detached window is a thin host view that asks `Shell` to render its part. |
+| Approach | A: `Shell` stays the single owner of all state; each detached window is a thin host view that asks `Shell` to render its part. The window an input or a render belongs to is read from its `window` handle, never from a stored "current window" field. |
+| Delivery | Two plans: Plan 1 = the detached-window machinery and terminal tabs; Plan 2 = Editor file tabs (§9). |
 
 ## 3. Non-goals
 
@@ -51,7 +52,8 @@ flowchart LR
 ### 4.1 Model
 
 - `HostId`: `Main` or `Detached(WindowKey)`, where `WindowKey` is a small counter local to the UI process.
-- `DockTab`: `Terminal { project: Ulid, tab_id: Ulid }` or `File { project: Ulid, path: PathBuf }` (path relative to the workspace root).
+- `DockTab`: `Terminal { project: Ulid, tab_id: Ulid }` or `File { project: Ulid, worktree: Option<Ulid>, path: String }`.
+  `path` is `FileTab.path` as it is today: relative to the folder the Files view shows (the project folder, or the task worktree `worktree`), `/` separators.
 - A tab keeps living where it lives today: a terminal tab in `Shell.tabs[project]`, a file tab in `Shell.files[project].tabs`.
   The daemon, `tab.set_layout`, the router, file watch, save and reload do not change.
 - `Detached` (pure module `crates/mkrew-ui/src/detached.rs`) lists the detached windows: for each, its key, its tabs (`Vec<DockTab>`, strip order) and its active index.
@@ -61,6 +63,9 @@ flowchart LR
   Every change goes through `Detached::move_tab(tab, to: HostId, index: Option<usize>)`, which removes it from its old window, inserts it at the index (or the end), makes it active, and drops a detached window left without tabs.
 - The main window's terminal tab strip and Files tab strip skip tabs present in `Detached`.
   When every tab of the shown workspace is detached, the existing empty state shows.
+- Invariant: the main window's choices never name a detached tab.
+  `Tabs.active` (one per workspace, `tabs.rs:151`) and `FilesView.active` stay the main window's; a detach moves them to a tab that stays in the main window, or to none.
+  The detached window's own active tab is the one in `Detached`.
 - Opening something that is already detached activates its window and selects its tab instead of opening a second copy:
   a file opened from the Files tree, a session picked in the sidebar, a palette jump to a session.
 
@@ -72,15 +77,21 @@ flowchart LR
   `render_host` draws the title bar, the mixed tab strip and the active tab's content with the existing pane and editor render code.
 - `DetachedWindow` observes `Shell` (`cx.observe(&shell, ...)`) so a `Shell` change redraws every detached window.
 - The root sets the same key contexts as the main window: the terminal context, or `EDITOR_CONTEXT` when a file tab is active.
-  Its `on_action` forwards to `Shell::run` with this window and `Shell.host` set to the detached host.
-- `Shell.host: HostId` names the window being rendered or handling an input.
-  Code that reads "the active tab", focus, menus, the find bar, prompts or the drop hint reads it through `Shell.host`.
+- The host of a render, a listener, an action or an async continuation is `Shell::host_of(window)`: a lookup of `window.window_handle()` in `Shell.windows: HashMap<AnyWindowHandle, WindowKey>`; a window not in the map is the main window.
+  There is no stored "current host": every gpui callback that runs code for a window already receives that window.
+- Code that runs for a detached window takes the tab explicitly: `(project, tab_id)` for a terminal tab, `(project, path)` for a file tab.
+  Functions that read `self.workspace` or `Tabs::active` today and must also serve a detached window get that explicit parameter (for example `close_tabs(project_id, tab_ids, ...)`).
+  Everything that only the main window shows (sidebar, Board, Git, Docs, dialogs) keeps reading `self.workspace`.
+- Keyboard commands in a detached window go through its own `on_action`, which calls `Shell::run_detached(key, command, window, cx)`.
+  It handles an explicit list of commands for the active tab (tab and pane commands of §13, palette, the commands of §5.2) and ignores the rest, so no command of a detached window can act on the main window's tabs.
 
 ### 4.3 Per-window UI state
 
-- `Shell.hosts: HashMap<HostId, HostUi>` includes the main window.
-- `HostUi` holds: the editor focus handle (today `files_focus`), the editor find bar, the open context menu, the tab strip rects recorded after paint, and the drop hint.
-- These fields move out of `Shell` into `HostUi`; the main window uses the same struct, so there is one convention, not two.
+- `Shell.hosts: HashMap<HostId, HostUi>` holds what each window shows on its own: the tab strip rect and chip rects recorded after paint, and the drop hint.
+- Popovers stay single, as today (one context menu, one palette at a time, app-wide), and remember the window they opened in: `Shell.menu_host: HostId` and `Shell.palette_host: HostId`.
+  Only that window renders them; opening one in another window dismisses the open one first, as a click elsewhere does today.
+- Plan 2 adds the Editor state that exists once today and must exist per window when two editors are on screen: the find bar (`FilesView.find`), the editor, find, replace, block and preview focus handles, `file_code_scroll`, `file_tabs_scroll`, `file_page`, `file_text_left`, `md_split_bounds` and `md_split_sync`.
+  These fields move out of `Shell` into `HostUi`, the main window included, so there is one convention, not two.
 - IME state (`typing_target`, `ime_marked`) stays single: only one OS window holds the keyboard at a time.
   Mark it with a `ponytail:` comment naming that ceiling.
 
@@ -89,7 +100,9 @@ flowchart LR
 - `TerminalPane` stores its two window-bound subscriptions (`observe_window_appearance`, `on_blur`, `terminal/view.rs:187-197`) as `Subscription` fields instead of detaching them.
 - `TerminalPane::rehost(window, cx)` replaces both for the new window.
   The emulator, scrollback, selection, copy mode and focus handle survive the move.
-- `Shell::attach` keeps the `OpenLink` subscription (`subscribe_in(window)`) per pane so a move re-subscribes it for the new window.
+- `Shell::attach` keeps the `OpenLink` subscription (`subscribe_in(window)`) in `Shell.link_subscriptions: HashMap<Ulid, Subscription>` so a move re-subscribes it for the new window.
+- A pane click in a detached window focuses the pane through a new `Tabs::focus_pane(tab_id, session)`, which, unlike `Tabs::focus`, leaves `Tabs.active` alone.
+- Attaching a session shown in another window than the one `sync_panes` runs for: `Shell` cannot borrow that window while it is itself being updated, so it schedules the attach with `cx.defer` and runs it inside `WindowHandle::update` of the window that shows it.
 - The new window's size reaches the session through the existing resize path (`session.resize`).
 - `sync_panes` (`shell/focus.rs:187`) computes the visible sessions as the union of:
   the main window's visible tab (today's rule), and the active tab of every detached window that is not minimized.
@@ -98,9 +111,13 @@ flowchart LR
 
 ### 4.5 Editor in a detached window
 
+Plan 2 (§9).
+
 - Only the tab strip and the editor: no file tree, no inspector.
-- Typing, save, find, Markdown mode, preview select and block edit work as in the main window, because the same render and input code runs on the tab's `FileTab`.
+- Typing, save, find, Markdown mode, preview select and block edit work as in the main window.
+  The render and input code takes the tab's path and the window's `HostUi` explicitly instead of `FilesView::tab()` and the single `Shell` fields.
 - Markdown mode, scroll position and caret move with the `FileTab`.
+- Switching a workspace's Files view to another folder (project or worktree) replaces its `FilesView` (`shell/files.rs:44`), so its detached file tabs are pruned like closed tabs, after the existing unsaved-changes questions.
 
 ### 4.6 Where overlays show
 
@@ -134,8 +151,10 @@ Dark and light themes both apply; every color, spacing, radius and font size com
 
 - The target comes from `cx.windows()` and each window's `bounds()`; strip rects come from `HostUi`.
 - During a drag `Shell` keeps a drop hint (target host and index), so the target window highlights the insertion point although it receives no mouse events.
-- Overlapping Mkrew windows: the frontmost one by last activation wins.
+- Overlapping Mkrew windows: the most recently activated one wins (`Shell` keeps the activation order; `App::window_stack` returns `None` on Windows in gpui-pre 0.3.7).
   Other apps' windows are ignored (`ponytail:` comment: no OS z-order query; add one if drops through other apps confuse users).
+- The release point is the source window's logical position plus its `bounds().origin`.
+  On two displays with different scale factors this can be off by the scale difference (`ponytail:` comment naming it; convert through physical pixels if users hit it).
 - A detached window left without tabs closes.
 
 ### 5.2 Keyboard, palette and menus (ADR 0085)
@@ -177,7 +196,7 @@ Dark and light themes both apply; every color, spacing, radius and font size com
       "maximized": false,
       "tabs": [
         { "terminal": { "project": "01J...", "tab_id": "01J..." } },
-        { "file": { "project": "01J...", "path": "src/main.rs" } }
+        { "file": { "project": "01J...", "worktree": null, "path": "src/main.rs" } }
       ],
       "active": 0
     }
@@ -188,6 +207,7 @@ Dark and light themes both apply; every color, spacing, radius and font size com
 - Written atomically (temporary file, then rename) after a window move or resize, a tab move, a tab close, and on quit.
 - Unknown `version`, unreadable or broken file: `tracing::warn`, start without detached windows, overwrite on the next write.
 - A failed write shows an error toast, like `settings_write_failed`.
+- A file tab is restored only when its workspace's Files view shows the same folder (`worktree`) at restore time; a Files view created by the restore starts on that folder.
 
 ### 6.2 Lifecycle
 
@@ -222,3 +242,12 @@ The manual checks go to `docs/HUMAN_CHECKS.md` "2026-11-10 Detached windows".
 - SPEC §13: the `Shift+F4` default for `Tab: Move to new window`.
 - `docs/PROGRESS.md` note and `docs/HUMAN_CHECKS.md` entry.
 - No protocol change (`PROTOCOL_VERSION` stays 53), no migration.
+
+## 9. Delivery
+
+| Plan | Contents | Done when |
+| --- | --- | --- |
+| Plan 1 | `detached.rs` model and `windows.json`; `DetachedWindow` host view and title bar; host lookup; terminal tab strip and tab content in a detached window; pane rehost and cross-window attach; drag out, drag between windows, Move back, Move all back, Close; `run_detached`; palette and menu commands; restore; lifecycle (§6.2) for terminal tabs; ADR 0096; SPEC §10 and §13. | A terminal tab can live in a detached window end to end, and every §5 and §6 rule holds for terminal tabs. File tabs cannot be detached yet: the Files strip has no "Move to new window" and its drags stay inside the main window. |
+| Plan 2 | Per-window Editor state in `HostUi`; file tabs in detached windows (strip, editor, find, save, preview, block edit); file tab commands and drags; file tab persistence and restore; unsaved-changes path of Close. | Every §2 Editor row holds. |
+
+Plan 2 is written after Plan 1 is merged, from the code Plan 1 leaves.
