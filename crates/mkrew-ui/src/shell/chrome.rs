@@ -211,14 +211,20 @@ impl Shell {
                     .flex()
                     .flex_col()
                     .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
-                    .child(self.render_tab(
-                        tabs,
-                        now,
-                        self.composer_focus.is_focused(window),
-                        voice_ring,
-                        theme,
-                        cx,
-                    ));
+                    .child(
+                        self.render_tab(
+                            tabs.active(),
+                            now,
+                            self.composer_focus.is_focused(window),
+                            voice_ring,
+                            theme,
+                            self.hosts
+                                .get(&HostId::Main)
+                                .map(|ui| ui.content.clone())
+                                .unwrap_or_default(),
+                            cx,
+                        ),
+                    );
                 main.child(
                     div()
                         .flex_1()

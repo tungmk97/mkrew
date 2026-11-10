@@ -163,9 +163,9 @@ const OUTPUT_FRAME: Duration = Duration::from_millis(16);
 const DRAIN_BATCH: usize = 256;
 
 /// Windows and macOS draw their own title bar (ADR 0034); elsewhere the OS bar stays.
-const CUSTOM_TITLE_BAR: bool = cfg!(any(target_os = "windows", target_os = "macos"));
+pub(crate) const CUSTOM_TITLE_BAR: bool = cfg!(any(target_os = "windows", target_os = "macos"));
 /// Only Windows draws ─ □ ✕ (macOS keeps its traffic lights).
-const DRAWN_CONTROLS: bool = cfg!(target_os = "windows");
+pub(crate) const DRAWN_CONTROLS: bool = cfg!(target_os = "windows");
 
 fn main() {
     let launched = Instant::now();
@@ -888,9 +888,7 @@ struct Shell {
     /// Per window: screen bounds, maximized, the strip and content size painted last.
     hosts: HashMap<HostId, shell::hosts::HostUi>,
     /// The window the open popover menu / the palette belongs to (spec §4.3).
-    #[expect(dead_code, reason = "read by the detached window tasks that follow")]
     menu_host: HostId,
-    #[expect(dead_code, reason = "read by the detached window tasks that follow")]
     palette_host: HostId,
     /// Mkrew windows, most recently activated first (drop target order, toast placement).
     activation: Vec<HostId>,
@@ -930,6 +928,7 @@ impl Render for Shell {
         // while saving, the next step of a dialog) would leave the keyboard on nothing and Esc
         // would miss the dialog: the dialog itself takes the keyboard back.
         if self.modal_open()
+            && (self.palette.is_none() || self.palette_host == HostId::Main)
             && !window.has_active_prompt()
             && !self.dialog_focus.contains_focused(window, cx)
         {
@@ -1125,6 +1124,7 @@ impl Render for Shell {
                     .children(
                         self.palette
                             .as_ref()
+                            .filter(|_| self.palette_host == HostId::Main)
                             .map(|palette| self.render_palette(palette, &theme, cx)),
                     )
                     .children(
@@ -1146,25 +1146,41 @@ impl Render for Shell {
                     .children(
                         self.tab_menu
                             .as_ref()
-                            .filter(|_| self.view() == View::Terminals && !self.modal_open())
+                            .filter(|_| {
+                                self.view() == View::Terminals
+                                    && !self.modal_open()
+                                    && self.menu_host == HostId::Main
+                            })
                             .map(|menu| self.render_tab_menu(menu, window, &theme, cx)),
                     )
                     .children(
                         self.layout_menu
                             .as_ref()
-                            .filter(|_| self.view() == View::Terminals && !self.modal_open())
+                            .filter(|_| {
+                                self.view() == View::Terminals
+                                    && !self.modal_open()
+                                    && self.menu_host == HostId::Main
+                            })
                             .map(|menu| self.render_layout_menu(menu, &theme, cx)),
                     )
                     .children(
                         self.pane_menu
                             .as_ref()
-                            .filter(|_| self.view() == View::Terminals && !self.modal_open())
+                            .filter(|_| {
+                                self.view() == View::Terminals
+                                    && !self.modal_open()
+                                    && self.menu_host == HostId::Main
+                            })
                             .and_then(|menu| self.render_pane_menu(menu, &theme, cx)),
                     )
                     .children(
                         self.share_menu
                             .as_ref()
-                            .filter(|_| self.view() == View::Terminals && !self.modal_open())
+                            .filter(|_| {
+                                self.view() == View::Terminals
+                                    && !self.modal_open()
+                                    && self.menu_host == HostId::Main
+                            })
                             .map(|menu| self.render_share_menu(menu, &theme, cx)),
                     )
                     .children(
@@ -1191,7 +1207,10 @@ impl Render for Shell {
                             .filter(|_| self.view() == View::Board && !self.modal_open())
                             .map(|menu| self.render_card_menu(menu, &theme, cx)),
                     )
-                    .children(self.render_toasts(&theme, cx))
+                    .children(
+                        self.render_toasts(&theme, cx)
+                            .filter(|_| self.activation.first() == Some(&HostId::Main)),
+                    )
                     .children(self.render_voice_pill(&theme, cx)),
             )
     }

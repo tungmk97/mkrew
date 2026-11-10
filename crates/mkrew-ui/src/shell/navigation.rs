@@ -293,7 +293,14 @@ impl Shell {
                 let Some((project_id, target, _)) = self.link_scope(session) else {
                     return;
                 };
-                self.open_file_at(project_id, target, path.clone(), *line, window, cx);
+                let (path, line) = (path.clone(), *line);
+                if self.host_of(window) != HostId::Main {
+                    return self.in_window(HostId::Main, cx, move |shell, window, cx| {
+                        window.activate_window();
+                        shell.open_file_at(project_id, target, path, line, window, cx);
+                    });
+                }
+                self.open_file_at(project_id, target, path, line, window, cx);
             }
         }
     }
@@ -372,7 +379,18 @@ impl Shell {
     /// The command palette (Ctrl+Shift+P): the commands that can act where the keyboard is,
     /// palette-only actions and "Go to" items.
     pub(crate) fn open_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let workspace = self.workspace;
+        // The workspace of the window's tab: the shown one in the main window, the tab's own
+        // in a detached one.
+        let window_key = self.detached_key(window);
+        let workspace = match window_key {
+            None => self.workspace,
+            Some(_) => self.tab_scope(window).map(|(project, _)| project),
+        };
+        let view = if window_key.is_some() {
+            View::Terminals
+        } else {
+            self.view()
+        };
         let terminal = self.focused_session(window).filter(|session| {
             self.panes
                 .get(session)
@@ -403,19 +421,21 @@ impl Shell {
         let focused_info = focused
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id))
             .cloned();
-        let active_tab = workspace
-            .filter(|_| self.view() == View::Terminals)
-            .and_then(|id| self.tabs.get(&id))
-            .and_then(|tabs| Some((tabs, tabs.active()?.id)));
+        let active_tab = self
+            .tab_scope(window)
+            .and_then(|(project, tab_id)| Some((self.tabs.get(&project)?, tab_id)));
         let run_state = workspace.map(|id| self.run_summary(id)).unwrap_or_default();
         let context = palette::Context {
             workspace: workspace.is_some(),
-            view: self.view(),
+            view,
             workspaces: self.sidebar.projects().len(),
-            tabs: match (workspace, self.view()) {
-                (Some(id), View::Editor) => self.files.get(&id).map_or(0, |view| view.tabs().len()),
-                (Some(id), _) => self.tabs.get(&id).map_or(0, |tabs| tabs.tabs().len()),
-                (None, _) => 0,
+            tabs: match (window_key, workspace, view) {
+                (Some(key), _, _) => self.detached.tabs_of(key).len(),
+                (None, Some(id), View::Editor) => {
+                    self.files.get(&id).map_or(0, |view| view.tabs().len())
+                }
+                (None, Some(id), _) => self.tabs.get(&id).map_or(0, |tabs| tabs.tabs().len()),
+                (None, None, _) => 0,
             },
             file_tabs: workspace.map_or(0, |id| {
                 self.files.get(&id).map_or(0, |view| view.tabs().len())
@@ -469,7 +489,7 @@ impl Shell {
             toast: !self.toasts.items().is_empty(),
             update_ready: self.update.is_some() && !self.updating,
             machine: self.target.is_machine(),
-            detached_window: false,
+            detached_window: window_key.is_some(),
             features: self.features,
         };
         let mut entries = palette::settings_error(&self.keymap, self.settings_error.as_deref());
@@ -490,8 +510,13 @@ impl Shell {
         if workspace.is_some() {
             entries.extend(palette::run_entries(&run_state));
         }
+        // A detached window lists what acts there.
+        if window_key.is_some() {
+            entries.retain(|entry| palette::acts_in_detached_window(&entry.action));
+        }
         self.restore_theme_pick(window, cx);
         self.workspace_menu = None;
+        self.palette_host = self.host_of(window);
         self.palette = Some(Palette::new(entries));
         self.palette_return = window.focused(cx).map(|focus| (focus, terminal));
         self.palette_scroll.scroll_to_item(0);
@@ -641,6 +666,31 @@ impl Shell {
             return;
         }
         self.close_palette(window, cx);
+        // A detached window's own extras; they need no workspace of the main window.
+        if let Some(key) = self.detached_key(window) {
+            match action {
+                palette::Action::Extra(Extra::TabMoveToMainWindow) => {
+                    if let Some((project, tab_id)) = self.tab_scope(window) {
+                        let tab = DockTab::Terminal { project, tab_id };
+                        self.move_tab_to(tab, HostId::Main, None, window, cx);
+                    }
+                    return;
+                }
+                palette::Action::Extra(Extra::WindowMoveAllBack) => {
+                    return self.move_all_back(key, window, cx);
+                }
+                palette::Action::Extra(Extra::TabPin) => {
+                    if let Some((project, tab_id)) = self.tab_scope(window) {
+                        let pinned = (self.tabs.get(&project))
+                            .and_then(|tabs| tabs.tab(tab_id))
+                            .is_some_and(|tab| tab.pinned);
+                        self.pin_tab(tab_id, !pinned, window, cx);
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
         let workspace = self.workspace;
         match action {
             palette::Action::Run(command) => {
@@ -775,6 +825,7 @@ impl Shell {
                             self.close_other_tabs(tab_id, right_only, window, cx);
                         }
                     }
+                    // Handled above: a detached window's own entries.
                     Extra::TabMoveToMainWindow | Extra::WindowMoveAllBack => {}
                     Extra::PanePin => {
                         let pane = self.focused_session(window).and_then(|id| {

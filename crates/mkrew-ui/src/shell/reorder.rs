@@ -16,6 +16,8 @@ pub(crate) enum ReorderList {
     Workspaces(bool),
     /// A workspace's pinned (`true`) or unpinned Files tabs.
     FileTabs(Ulid, bool),
+    /// The tab strip of a detached window.
+    Detached(WindowKey),
 }
 
 /// Payload of a reorder drag: the `index`-th item of `list`.
@@ -156,6 +158,10 @@ impl Shell {
             }
             ReorderList::FileTabs(project_id, pinned) => {
                 self.files_view(project_id).move_tab(pinned, item.index, to);
+            }
+            ReorderList::Detached(key) => {
+                self.detached.move_within(key, item.index, to);
+                self.windows_dirty = true;
             }
             ReorderList::Workspaces(pinned) => {
                 self.drop_workspace(pinned, item.index, to, window, cx);

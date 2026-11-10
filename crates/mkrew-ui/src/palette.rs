@@ -334,6 +334,20 @@ pub enum Action {
     OpenMachine(usize),
 }
 
+/// Whether picking `action` does something in a detached window (ADR 0096): its own tab's
+/// commands, its window extras and the jumps to a session. The palette lists nothing else there.
+pub fn acts_in_detached_window(action: &Action) -> bool {
+    match action {
+        Action::Run(command) => crate::detached::handles(*command),
+        Action::Extra(extra) => matches!(
+            extra,
+            Extra::TabMoveToMainWindow | Extra::WindowMoveAllBack | Extra::TabPin
+        ),
+        Action::GoTo(Target::Session(_)) => true,
+        _ => false,
+    }
+}
+
 /// One palette line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {

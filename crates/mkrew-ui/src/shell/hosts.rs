@@ -4,7 +4,6 @@ use crate::*;
 
 /// What each window shows on its own.
 #[derive(Default)]
-#[expect(dead_code, reason = "read by the detached window tasks that follow")]
 pub(crate) struct HostUi {
     /// Screen bounds (`Window::bounds`), restore bounds when maximized.
     pub(crate) bounds: Bounds<Pixels>,
@@ -32,6 +31,11 @@ impl Shell {
 
     pub(crate) fn detached_key(&self, window: &Window) -> Option<WindowKey> {
         self.windows.get(&window.window_handle()).copied()
+    }
+
+    /// The workspace of a loaded terminal tab.
+    pub(crate) fn terminal_project(&self, tab_id: Ulid) -> Option<Ulid> {
+        (self.tabs.iter()).find_map(|(project, tabs)| tabs.tab(tab_id).map(|_| *project))
     }
 
     /// Where a terminal tab is shown.

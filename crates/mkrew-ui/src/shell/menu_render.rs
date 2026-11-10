@@ -407,6 +407,7 @@ impl Shell {
             self.keyboard_owner(window, cx)
         };
         self.close_menus();
+        self.menu_host = self.host_of(window);
         self.menu_return = back;
     }
 

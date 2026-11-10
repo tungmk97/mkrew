@@ -4,6 +4,9 @@
 
 pub(crate) mod cards;
 mod chrome;
+mod detached_actions;
+mod detached_render;
+pub(crate) mod detached_view;
 pub(crate) mod hosts;
 pub(crate) mod inspector;
 pub(crate) mod menu_render;

@@ -123,6 +123,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        // A detached window acts on its own tab with its own list of commands (spec §4.2).
+        if let Some(key) = self.detached_key(window) {
+            return self.run_detached(key, *command, window, cx);
+        }
         // Shortcuts act on the daemon: off while its connection is down (dialogs keep their keys).
         if self.reconnecting() && !self.modal_open() {
             return;
@@ -649,7 +653,12 @@ impl Shell {
             Command::ReplaceInFile => self.open_file_find(true, window, cx),
             // Bound in the Editor view only; handled above.
             Command::CloseFileTab => {}
-            Command::MoveTabToNewWindow => {}
+            Command::MoveTabToNewWindow => {
+                if let Some((project, tab_id)) = self.tab_scope(window) {
+                    let tab = DockTab::Terminal { project, tab_id };
+                    self.move_tab_to_new_window(tab, None, window, cx);
+                }
+            }
         }
     }
 }

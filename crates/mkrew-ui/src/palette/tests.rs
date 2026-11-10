@@ -1223,3 +1223,31 @@ fn window_extras_show_only_in_a_detached_window() {
         "file tabs move in Plan 2"
     );
 }
+
+#[test]
+fn a_detached_window_lists_only_what_acts_there() {
+    let id = Ulid::new();
+    for action in [
+        Action::Run(Command::SplitRight),
+        Action::Run(Command::MoveTabToNewWindow),
+        Action::Run(Command::CommandPalette),
+        Action::Extra(Extra::TabMoveToMainWindow),
+        Action::Extra(Extra::WindowMoveAllBack),
+        Action::Extra(Extra::TabPin),
+        Action::GoTo(Target::Session(id)),
+    ] {
+        assert!(acts_in_detached_window(&action), "{action:?}");
+    }
+    for action in [
+        Action::Run(Command::ShowBoard),
+        Action::Run(Command::ToggleSidebar),
+        Action::Extra(Extra::TabCloseOthers),
+        Action::Extra(Extra::Broadcast),
+        Action::GoTo(Target::Workspace(id)),
+        Action::Theme(0),
+        Action::NewAgentPane(0),
+        Action::OpenMachine(0),
+    ] {
+        assert!(!acts_in_detached_window(&action), "{action:?}");
+    }
+}

@@ -165,8 +165,9 @@ impl Shell {
         cx.notify();
     }
 
-    /// Opens the menu of `tab_id` at `position`: the tab becomes the active one first, because
-    /// Split and Rename act on the active tab.
+    /// Opens the menu of `tab_id` at `position`: the tab becomes the active one of its window
+    /// first, because Split and Rename act on the window's tab. A detached tab leaves the main
+    /// window's active tab alone.
     pub(crate) fn open_tab_menu(
         &mut self,
         tab_id: Ulid,
@@ -174,8 +175,22 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(tabs) = self.active_tabs_mut() {
-            tabs.activate(tab_id);
+        let host = (self.terminal_project(tab_id))
+            .map_or(HostId::Main, |project| self.terminal_host(project, tab_id));
+        match host {
+            HostId::Main => {
+                if let Some(tabs) = self.active_tabs_mut() {
+                    tabs.activate(tab_id);
+                }
+            }
+            HostId::Detached(key) => {
+                let at = (self.detached.tabs_of(key).iter()).position(
+                    |tab| matches!(tab, DockTab::Terminal { tab_id: id, .. } if *id == tab_id),
+                );
+                if let Some(at) = at {
+                    self.detached.select(key, at);
+                }
+            }
         }
         self.sync_panes(window, cx);
         // After the tab switch: the keyboard goes back to the pane that is on screen now.
@@ -191,11 +206,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(tab_id) = (self.workspace)
-            .and_then(|id| self.tabs.get(&id))
-            .and_then(|tabs| tabs.active())
-            .map(|tab| tab.id)
-        else {
+        let Some((_, tab_id)) = self.tab_scope(window) else {
             return;
         };
         self.begin_menu(window, cx);

@@ -188,24 +188,22 @@ impl Shell {
     }
 
     /// The tab menu (right-click a tab, or the tab bar's ⋯): Pin, Split right / down, Rename,
-    /// Close, Close others, Close tabs to the right (pinned tabs stay); on the active tab also
-    /// the focused pane's Rename pane, Close pane and, for an agent, Follow in Zed (✓ while on)
-    /// and Turns….
+    /// the moves to other windows, Close, and in the main window Close others and Close tabs to
+    /// the right (pinned tabs stay); on the active tab also the focused pane's Rename pane,
+    /// Close pane and, for an agent, Follow in Zed (✓ while on) and Turns….
     pub(crate) fn tab_menu_rows(&self, menu: &TabMenu, window: &Window) -> Rows {
         let tab_id = menu.tab_id;
-        let project_id = self.workspace;
+        let project_id = self.terminal_project(tab_id);
+        let tab = project_id.map(|project| DockTab::Terminal { project, tab_id });
         let pinned = (self.tabs.values())
             .find_map(|tabs| tabs.tab(tab_id))
             .is_some_and(|tab| tab.pinned);
-        let active_tab = (self.workspace)
-            .and_then(|project_id| self.tabs.get(&project_id))
-            .and_then(|tabs| tabs.active())
-            .map(|tab| tab.id);
+        let active_tab = self.tab_scope(window).map(|(_, id)| id);
         let pane = self
             .focused_session(window)
             .filter(|_| active_tab == Some(tab_id))
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
-        let tabs = (self.workspace).and_then(|project_id| self.tabs.get(&project_id));
+        let tabs = project_id.and_then(|project_id| self.tabs.get(&project_id));
         let has_others = tabs.is_some_and(|tabs| !tabs.close_targets(tab_id, false).is_empty());
         let has_right = tabs.is_some_and(|tabs| !tabs.close_targets(tab_id, true).is_empty());
         let key = |command: Command| self.keymap.label(command);
@@ -230,6 +228,13 @@ impl Shell {
             )
             .keys(key(Command::RenameTab))
             .row(),
+        ];
+        if let Some(tab) = tab {
+            rows.push(MenuRow::Separator);
+            rows.extend(self.move_rows(tab));
+            rows.push(MenuRow::Separator);
+        }
+        rows.push(
             MenuItem::new(
                 "Close",
                 act(move |shell, window, cx| {
@@ -240,19 +245,25 @@ impl Shell {
             )
             .keys(key(Command::CloseTab))
             .row(),
-            MenuItem::new(
-                "Close others",
-                act(move |shell, window, cx| shell.close_other_tabs(tab_id, false, window, cx)),
-            )
-            .enabled(has_others)
-            .row(),
-            MenuItem::new(
-                "Close tabs to the right",
-                act(move |shell, window, cx| shell.close_other_tabs(tab_id, true, window, cx)),
-            )
-            .enabled(has_right)
-            .row(),
-        ];
+        );
+        if matches!(self.menu_host, HostId::Main) {
+            rows.push(
+                MenuItem::new(
+                    "Close others",
+                    act(move |shell, window, cx| shell.close_other_tabs(tab_id, false, window, cx)),
+                )
+                .enabled(has_others)
+                .row(),
+            );
+            rows.push(
+                MenuItem::new(
+                    "Close tabs to the right",
+                    act(move |shell, window, cx| shell.close_other_tabs(tab_id, true, window, cx)),
+                )
+                .enabled(has_right)
+                .row(),
+            );
+        }
         if let Some(info) = pane {
             let session = info.id;
             let agent = info.kind == SessionKind::Agent;

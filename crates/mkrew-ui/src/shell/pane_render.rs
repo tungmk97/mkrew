@@ -20,7 +20,6 @@ impl Shell {
             .and_then(Tab::single)
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let active = tabs.active().map(|tab| tab.id);
-        let hover = theme.hover;
         // Pinned tabs lead the strip; each kind is dragged among its own.
         let pinned_count = tabs.tabs().iter().filter(|tab| tab.pinned).count();
         div()
@@ -37,152 +36,43 @@ impl Shell {
             .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
                 shell.drop_reordered(item, window, cx);
             }))
-            .children(tabs.tabs().iter().enumerate().map(|(place, tab)| {
-                let tab_id = tab.id;
-                let is_active = active == Some(tab_id);
-                // F2 on a single pane: its rename field takes the tab's place (no header).
-                if let Some(renaming) = self.renaming.as_ref().filter(|r| {
-                    r.target == RenameTarget::Tab(tab_id)
-                        || tab.single().map(RenameTarget::Session).as_ref() == Some(&r.target)
-                }) {
-                    return self.render_rename(&renaming.draft, theme, cx);
-                }
-                // A lone pane's title stands in for a default tab name.
-                let label = session_label(tab, self.sidebar.sessions());
-                let item = DraggedItem {
-                    list: ReorderList::Tabs(project_id, tab.pinned),
-                    index: if tab.pinned {
-                        place
-                    } else {
-                        place - pinned_count
-                    },
-                    title: label.unwrap_or(&tab.title).to_owned().into(),
-                };
-                let labeled = tab.single().filter(|_| label.is_some());
-                // The most urgent state among the tab's panes (SPEC §11), as one dot.
-                let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
-                let dot = self.tab_dot(tab, urgent, theme);
-                let group = SharedString::from(format!("tab-{tab_id}"));
-                let icon = match tab_kind(tab, self.sidebar.sessions()) {
-                    TabKind::Agent(profile) => {
-                        Some(agent_chip(self.agent_badge(&profile), theme.text, theme))
-                    }
-                    // The `>_` icon in a chip-sized box, so shell and agent tabs line up.
-                    TabKind::Shell => Some(
-                        div()
-                            .flex_none()
-                            .size(theme::rems_px(theme::AGENT_CHIP_SIZE))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(icon_svg(
-                                Icon::Terminal,
-                                theme::ICON_SIZE_SMALL,
-                                theme.text_muted,
-                            )),
-                    ),
-                    TabKind::Empty => None,
-                };
-                let element = div()
-                    .id(group.clone())
-                    .group(group.clone())
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::XS))
-                    .h(theme::rems_px(theme::CONTROL_HEIGHT))
-                    .pl(px(space::M))
-                    .pr(px(space::S))
-                    .rounded(px(radius::MEDIUM))
-                    // Same box as the rename field, so the bar does not shift while renaming.
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(gpui::transparent_black())
-                    .cursor_pointer()
-                    .whitespace_nowrap()
-                    .text_size(font_size::BODY)
-                    .when(is_active, |el| {
-                        el.bg(rgb(theme.card))
-                            .border_color(rgb(theme.selected))
-                            .font_weight(FontWeight(weight::MEDIUM))
-                            .text_color(rgb(theme.text))
-                    })
-                    .when(!is_active, |el| {
-                        el.text_color(rgb(theme.text_muted))
-                            .hover(move |style| style.bg(rgb(hover)))
-                            .active(|style| style.opacity(opacity::ACTIVE))
-                    })
-                    .on_click(
-                        cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
+            .children(
+                tabs.tabs()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, tab)| self.terminal_host(project_id, tab.id) == HostId::Main)
+                    .map(|(place, tab)| {
+                        let tab_id = tab.id;
+                        let is_active = active == Some(tab_id);
+                        // F2 on a single pane: its rename field takes the tab's place (no header).
+                        if let Some(renaming) = self.renaming.as_ref().filter(|r| {
+                            r.target == RenameTarget::Tab(tab_id)
+                                || tab.single().map(RenameTarget::Session).as_ref()
+                                    == Some(&r.target)
+                        }) {
+                            return self.render_rename(&renaming.draft, theme, cx);
+                        }
+                        // A lone pane's title stands in for a default tab name.
+                        let label = session_label(tab, self.sidebar.sessions());
+                        let item = DraggedItem {
+                            list: ReorderList::Tabs(project_id, tab.pinned),
+                            index: if tab.pinned {
+                                place
+                            } else {
+                                place - pinned_count
+                            },
+                            title: label.unwrap_or(&tab.title).to_owned().into(),
+                        };
+                        let select = move |shell: &mut Shell| {
                             if let Some(tabs) = shell.active_tabs_mut() {
                                 tabs.activate(tab_id);
                             }
-                            shell.sync_panes(window, cx);
-                            if event.click_count() == 2 {
-                                match labeled {
-                                    Some(session) => shell.start_pane_rename(session, window, cx),
-                                    None => shell.start_rename(window, cx),
-                                }
-                            }
-                            cx.notify();
-                        }),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                            shell.open_tab_menu(tab_id, event.position, window, cx);
-                        }),
-                    )
-                    .children(icon)
-                    .when_some(urgent, |el, session| {
-                        el.tooltip(status_tooltip(
-                            theme,
-                            session.state,
-                            session.state_source,
-                            session.state_changed_at,
-                        ))
-                    })
-                    .when_some(label.filter(|_| urgent.is_none()), |el, label| {
-                        el.tooltip(tooltip(theme, label, ""))
-                    })
-                    .when(tab.pinned, |el| el.child(pin_mark()))
-                    .child(
-                        div()
-                            .max_w(px(theme::TAB_TITLE_MAX_WIDTH))
-                            .truncate()
-                            .child(label.unwrap_or(&tab.title).to_owned()),
-                    )
-                    .children(dot.map(|(color, hollow)| status_dot(color, hollow)))
-                    .child(
-                        row_action(
-                            SharedString::from(format!("tab-close-{tab_id}")),
-                            icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
-                            theme,
-                        )
-                        // Always on the active tab, on hover for the others.
-                        .when(!is_active, |el| {
-                            el.opacity(opacity::HIDDEN)
-                                .group_hover(group, |style| style.opacity(opacity::FULL))
-                        })
-                        .tooltip(tooltip(
-                            theme,
-                            "Close tab",
-                            if is_active {
-                                self.keymap.label(Command::CloseTab)
-                            } else {
-                                String::new()
-                            },
-                        ))
-                        .on_click(cx.listener(
-                            move |shell, _, window, cx| {
-                                // Never activate the tab being closed.
-                                cx.stop_propagation();
-                                shell.close_tab(project_id, tab_id, window, cx);
-                            },
-                        )),
-                    )
-                    .into_any_element();
-                self.reorderable(element, item, true, space::XS, theme, cx)
-            }))
+                        };
+                        let chip =
+                            self.tab_chip(project_id, tab, is_active, None, select, theme, cx);
+                        self.reorderable(chip.into_any_element(), item, true, space::XS, theme, cx)
+                    }),
+            )
             .child(
                 icon_button("new-tab", Icon::Plus, theme)
                     .tooltip(tooltip(
@@ -280,6 +170,152 @@ impl Shell {
             })
     }
 
+    /// One tab of a strip (main or detached): kind icon, title, status dot, pin, ×. `select`
+    /// makes it the shown tab of its window (a click); `prefix` (the workspace name, in a
+    /// detached strip) leads the title. The caller wraps it for drag and drop.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn tab_chip(
+        &self,
+        project_id: Ulid,
+        tab: &Tab,
+        is_active: bool,
+        prefix: Option<&str>,
+        select: impl Fn(&mut Shell) + 'static,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let tab_id = tab.id;
+        let hover = theme.hover;
+        // A lone pane's title stands in for a default tab name.
+        let label = session_label(tab, self.sidebar.sessions());
+        let labeled = tab.single().filter(|_| label.is_some());
+        // The most urgent state among the tab's panes (SPEC §11), as one dot.
+        let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
+        let dot = self.tab_dot(tab, urgent, theme);
+        let group = SharedString::from(format!("tab-{tab_id}"));
+        let icon = match tab_kind(tab, self.sidebar.sessions()) {
+            TabKind::Agent(profile) => {
+                Some(agent_chip(self.agent_badge(&profile), theme.text, theme))
+            }
+            // The `>_` icon in a chip-sized box, so shell and agent tabs line up.
+            TabKind::Shell => Some(
+                div()
+                    .flex_none()
+                    .size(theme::rems_px(theme::AGENT_CHIP_SIZE))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon_svg(
+                        Icon::Terminal,
+                        theme::ICON_SIZE_SMALL,
+                        theme.text_muted,
+                    )),
+            ),
+            TabKind::Empty => None,
+        };
+        div()
+            .id(group.clone())
+            .group(group.clone())
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .h(theme::rems_px(theme::CONTROL_HEIGHT))
+            .pl(px(space::M))
+            .pr(px(space::S))
+            .rounded(px(radius::MEDIUM))
+            // Same box as the rename field, so the bar does not shift while renaming.
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(gpui::transparent_black())
+            .cursor_pointer()
+            .whitespace_nowrap()
+            .text_size(font_size::BODY)
+            .when(is_active, |el| {
+                el.bg(rgb(theme.card))
+                    .border_color(rgb(theme.selected))
+                    .font_weight(FontWeight(weight::MEDIUM))
+                    .text_color(rgb(theme.text))
+            })
+            .when(!is_active, |el| {
+                el.text_color(rgb(theme.text_muted))
+                    .hover(move |style| style.bg(rgb(hover)))
+                    .active(|style| style.opacity(opacity::ACTIVE))
+            })
+            .on_click(
+                cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
+                    select(shell);
+                    shell.sync_panes(window, cx);
+                    if event.click_count() == 2 {
+                        match labeled {
+                            Some(session) => shell.start_pane_rename(session, window, cx),
+                            None => shell.start_rename(window, cx),
+                        }
+                    }
+                    cx.notify();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                    shell.open_tab_menu(tab_id, event.position, window, cx);
+                }),
+            )
+            .children(icon)
+            .when_some(urgent, |el, session| {
+                el.tooltip(status_tooltip(
+                    theme,
+                    session.state,
+                    session.state_source,
+                    session.state_changed_at,
+                ))
+            })
+            .when_some(label.filter(|_| urgent.is_none()), |el, label| {
+                el.tooltip(tooltip(theme, label, ""))
+            })
+            .when(tab.pinned, |el| el.child(pin_mark()))
+            .children(prefix.map(|name| {
+                div()
+                    .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
+                    .truncate()
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_muted))
+                    .child(name.to_owned())
+            }))
+            .child(
+                div()
+                    .max_w(px(theme::TAB_TITLE_MAX_WIDTH))
+                    .truncate()
+                    .child(label.unwrap_or(&tab.title).to_owned()),
+            )
+            .children(dot.map(|(color, hollow)| status_dot(color, hollow)))
+            .child(
+                row_action(
+                    SharedString::from(format!("tab-close-{tab_id}")),
+                    icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
+                    theme,
+                )
+                // Always on the active tab, on hover for the others.
+                .when(!is_active, |el| {
+                    el.opacity(opacity::HIDDEN)
+                        .group_hover(group, |style| style.opacity(opacity::FULL))
+                })
+                .tooltip(tooltip(
+                    theme,
+                    "Close tab",
+                    if is_active {
+                        self.keymap.label(Command::CloseTab)
+                    } else {
+                        String::new()
+                    },
+                ))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    // Never activate the tab being closed.
+                    cx.stop_propagation();
+                    shell.close_tab(project_id, tab_id, window, cx);
+                })),
+            )
+    }
+
     /// The title being renamed inline: the draft with its caret and selection, in the active
     /// tab's place; a click puts the caret under the pointer, a drag selects.
     pub(crate) fn render_rename(
@@ -325,19 +361,22 @@ impl Shell {
         .into_any_element()
     }
 
-    /// The active tab's split tree: each pane placed at its fraction of the area.
-    /// `composer_focused`: the focused pane's composer has the keyboard. `voice_ring`: the
-    /// focused pane's terminal gets the voice text; its ring color (§20G).
+    /// The tab's split tree: each pane placed at its fraction of the area (`None`: the
+    /// empty state). `composer_focused`: the focused pane's composer has the keyboard.
+    /// `voice_ring`: the focused pane's terminal gets the voice text; its ring color (§20G).
+    /// `content` gets the size of the area.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_tab(
         &self,
-        tabs: &Tabs,
+        tab: Option<&Tab>,
         now: i64,
         composer_focused: bool,
         voice_ring: Option<Hsla>,
         theme: &Theme,
+        content: Rc<Cell<gpui::Size<Pixels>>>,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
-        if tabs.active().and_then(|tab| tab.layout()).is_none() {
+        if tab.and_then(|tab| tab.layout()).is_none() {
             return empty_state(
                 theme,
                 Some(">_"),
@@ -376,11 +415,13 @@ impl Shell {
                         })),
                     )
                     .into_any_element(),
-            });
+            })
+            .relative()
+            .child(content_canvas(content));
         }
-        let focused = tabs.active().and_then(|tab| tab.focused());
-        let rects = tabs.active().map(Tab::rects).unwrap_or_default();
-        let dividers = tabs.active().map(Tab::dividers).unwrap_or_default();
+        let focused = tab.and_then(|tab| tab.focused());
+        let rects = tab.map(Tab::rects).unwrap_or_default();
+        let dividers = tab.map(Tab::dividers).unwrap_or_default();
         let several = rects.len() > 1;
         let half_gap = px(theme::PANE_HALF_GAP);
         let panes: Vec<_> = rects
@@ -410,35 +451,41 @@ impl Shell {
             .into_iter()
             .map(|divider| pane_divider(divider, theme, cx))
             .collect();
-        div().flex_1().min_h_0().p(half_gap).child(
-            div()
-                .id("tab-panes")
-                .size_full()
-                .relative()
-                .children(panes)
-                .children(dividers)
-                // Every divider drag lands here: `bounds` is this area, the panes' 0..1 space.
-                .on_drag_move(
-                    cx.listener(|shell, event: &DragMoveEvent<Divider>, window, cx| {
-                        let divider = *event.drag(cx);
-                        cx.set_active_drag_cursor_style(divider_cursor(divider.axis), window);
-                        let bounds = event.bounds;
-                        let at = event.event.position - bounds.origin;
-                        let x = f64::from(at.x / bounds.size.width);
-                        let y = f64::from(at.y / bounds.size.height);
-                        let ratio = divider.ratio_at(x, y);
-                        // ponytail: live ratio, one `session.resize` per changed column count
-                        // like the session panel's edge; throttle if a TUI flickers.
-                        if shell
-                            .with_tab(window, |tabs| tabs.drag_divider(divider.index, ratio))
-                            .unwrap_or(false)
-                        {
-                            shell.pane_dragging = true;
-                            cx.notify();
-                        }
-                    }),
-                ),
-        )
+        div()
+            .flex_1()
+            .min_h_0()
+            .p(half_gap)
+            .relative()
+            .child(content_canvas(content))
+            .child(
+                div()
+                    .id("tab-panes")
+                    .size_full()
+                    .relative()
+                    .children(panes)
+                    .children(dividers)
+                    // Every divider drag lands here: `bounds` is this area, the panes' 0..1 space.
+                    .on_drag_move(cx.listener(
+                        |shell, event: &DragMoveEvent<Divider>, window, cx| {
+                            let divider = *event.drag(cx);
+                            cx.set_active_drag_cursor_style(divider_cursor(divider.axis), window);
+                            let bounds = event.bounds;
+                            let at = event.event.position - bounds.origin;
+                            let x = f64::from(at.x / bounds.size.width);
+                            let y = f64::from(at.y / bounds.size.height);
+                            let ratio = divider.ratio_at(x, y);
+                            // ponytail: live ratio, one `session.resize` per changed column count
+                            // like the session panel's edge; throttle if a TUI flickers.
+                            if shell
+                                .with_tab(window, |tabs| tabs.drag_divider(divider.index, ratio))
+                                .unwrap_or(false)
+                            {
+                                shell.pane_dragging = true;
+                                cx.notify();
+                            }
+                        },
+                    )),
+            )
     }
 
     /// One pane: the terminal (or why it is not shown; at reading width, centered, for an agent
@@ -1107,4 +1154,15 @@ fn pane_divider(divider: Divider, theme: &Theme, cx: &mut Context<'_, Shell>) ->
                 ),
         )
         .into_any_element()
+}
+
+/// Paints nothing; stores the size of its parent (the tab content area) for a window torn
+/// off from here (`HostUi::content`).
+fn content_canvas(content: Rc<Cell<gpui::Size<Pixels>>>) -> impl IntoElement {
+    canvas(
+        move |bounds, _, _| content.set(bounds.size),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
 }
