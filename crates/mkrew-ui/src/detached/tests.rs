@@ -280,3 +280,98 @@ fn detached_commands_are_an_explicit_list() {
         assert!(!handles(command), "{command:?}");
     }
 }
+
+fn saved(tabs: Vec<DockTab>) -> SavedWindow {
+    SavedWindow {
+        bounds: SavedBounds {
+            x: 1920.0,
+            y: 80.0,
+            width: 1100.0,
+            height: 760.0,
+        },
+        maximized: false,
+        tabs,
+        active: 0,
+    }
+}
+
+#[test]
+fn windows_round_trip() {
+    let windows = vec![saved(vec![term(), term()])];
+    let json = to_json(&windows);
+    assert!(json.contains("\"version\":1"), "{json}");
+    assert!(json.contains("\"terminal\""), "{json}");
+    assert_eq!(from_json(&json), Ok(windows));
+}
+
+#[test]
+fn unknown_version_and_broken_files_are_errors() {
+    assert!(from_json(r#"{"version":2,"windows":[]}"#).is_err());
+    assert!(from_json("not json").is_err());
+    assert!(from_json("").is_err());
+}
+
+#[test]
+fn unknown_tab_kinds_are_skipped_and_empty_windows_dropped() {
+    let project = Ulid::new();
+    let tab_id = Ulid::new();
+    let json = format!(
+        r#"{{"version":1,"windows":[
+            {{"bounds":{{"x":0,"y":0,"width":800,"height":600}},"maximized":true,
+              "tabs":[{{"file":{{"project":"{project}","path":"a.rs"}}}},
+                      {{"terminal":{{"project":"{project}","tab_id":"{tab_id}"}}}}],"active":1}},
+            {{"bounds":{{"x":0,"y":0,"width":800,"height":600}},"maximized":false,
+              "tabs":[{{"file":{{"project":"{project}","path":"b.rs"}}}}],"active":0}}]}}"#
+    );
+    let windows = from_json(&json).unwrap();
+    assert_eq!(windows.len(), 1);
+    assert_eq!(windows[0].tabs, vec![DockTab::Terminal { project, tab_id }]);
+    assert_eq!(windows[0].active, 0, "re-based onto the kept tabs");
+    assert!(windows[0].maximized);
+}
+
+#[test]
+fn save_writes_through_a_temp_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(WINDOWS_FILE);
+    let windows = vec![saved(vec![term()])];
+    save(&path, &windows).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(from_json(&text), Ok(windows));
+    let names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 1, "no temp file left: {names:?}");
+}
+
+#[test]
+fn a_machine_window_has_its_own_file() {
+    assert_eq!(windows_file(None), "windows.json");
+    let file = windows_file(Some("machine:box"));
+    assert!(
+        file.starts_with("windows-") && file.ends_with(".json"),
+        "{file}"
+    );
+    assert_ne!(file, windows_file(Some("machine:other")));
+}
+
+#[test]
+fn restore_rebuilds_windows_and_skips_duplicates() {
+    let (a, b) = (term(), term());
+    let mut detached = Detached::new();
+    let keys = detached.restore(&[
+        SavedWindow {
+            active: 1,
+            ..saved(vec![a, b])
+        },
+        saved(vec![a]),
+    ]);
+    assert_eq!(
+        keys.len(),
+        1,
+        "a tab already restored is not restored twice"
+    );
+    assert_eq!(detached.tabs_of(keys[0]), vec![a, b]);
+    assert_eq!(detached.active(keys[0]), Some(b));
+}

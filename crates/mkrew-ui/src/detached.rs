@@ -3,6 +3,8 @@
 //! main window.
 
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+
 use ulid::Ulid;
 
 use crate::keymap::Command;
@@ -250,10 +252,26 @@ impl Detached {
     pub fn quit_closes(&self) -> Vec<DockTab> {
         Vec::new()
     }
-}
 
-#[cfg(test)]
-mod tests;
+    /// Rebuilds the windows from a save (keys renumbered). Returns the keys in file order.
+    pub fn restore(&mut self, saved: &[SavedWindow]) -> Vec<WindowKey> {
+        saved
+            .iter()
+            .filter_map(|window| {
+                let tabs: Vec<DockTab> = (window.tabs.iter().copied())
+                    .filter(|tab| !self.is_detached(tab))
+                    .collect();
+                let (&first, rest) = tabs.split_first()?;
+                let key = self.open(first);
+                for &tab in rest {
+                    self.move_tab(tab, HostId::Detached(key), None);
+                }
+                self.select(key, window.active);
+                Some(key)
+            })
+            .collect()
+    }
+}
 
 /// The commands a detached window acts on (spec 2026-11-10 §4.2); every other key there does
 /// nothing, so none can act on the main window's tabs.
@@ -285,3 +303,110 @@ pub fn handles(command: Command) -> bool {
             | Command::MoveTabToNewWindow
     )
 }
+
+/// This computer's detached windows, in the data dir (UI-only: the daemon never reads it).
+pub const WINDOWS_FILE: &str = "windows.json";
+const VERSION: u32 = 1;
+
+/// The windows file of a window: [`WINDOWS_FILE`] for this computer's window (`None`), its own
+/// `windows-<key>.json` for a machine window (same key as [`crate::inbox::viewed_file`]).
+pub fn windows_file(instance: Option<&str>) -> String {
+    instance.map_or_else(
+        || WINDOWS_FILE.to_owned(),
+        |id| format!("windows-{}.json", crate::desktop::instance_key("", id)),
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedBounds {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// One saved window: restore bounds, maximized, strip, shown tab.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SavedWindow {
+    pub bounds: SavedBounds,
+    pub maximized: bool,
+    pub tabs: Vec<DockTab>,
+    pub active: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct File {
+    version: u32,
+    windows: Vec<FileWindow>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FileWindow {
+    bounds: SavedBounds,
+    #[serde(default)]
+    maximized: bool,
+    /// Raw, so a tab kind this build does not know (a newer build's) is skipped, not fatal.
+    tabs: Vec<serde_json::Value>,
+    #[serde(default)]
+    active: usize,
+}
+
+pub fn to_json(windows: &[SavedWindow]) -> String {
+    let file = File {
+        version: VERSION,
+        windows: (windows.iter())
+            .map(|window| FileWindow {
+                bounds: window.bounds.clone(),
+                maximized: window.maximized,
+                tabs: (window.tabs.iter())
+                    .filter_map(|tab| serde_json::to_value(tab).ok())
+                    .collect(),
+                active: window.active,
+            })
+            .collect(),
+    };
+    // A struct of plain fields always serializes.
+    serde_json::to_string(&file).unwrap_or_default()
+}
+
+pub fn from_json(text: &str) -> Result<Vec<SavedWindow>, String> {
+    let file: File = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    if file.version != VERSION {
+        return Err(format!("unknown version {}", file.version));
+    }
+    Ok((file.windows.into_iter())
+        .filter_map(|window| {
+            let shown = window.tabs.get(window.active).cloned();
+            let tabs: Vec<DockTab> = (window.tabs.into_iter())
+                .filter_map(|tab| serde_json::from_value(tab).ok())
+                .collect();
+            let shown = shown.and_then(|tab| serde_json::from_value::<DockTab>(tab).ok());
+            let active = shown
+                .and_then(|shown| tabs.iter().position(|tab| *tab == shown))
+                .unwrap_or(0);
+            (!tabs.is_empty()).then_some(SavedWindow {
+                bounds: window.bounds,
+                maximized: window.maximized,
+                tabs,
+                active,
+            })
+        })
+        .collect())
+}
+
+/// Writes through `<file>.tmp` and a rename, so a crash never leaves half a file.
+pub fn save(path: &Path, windows: &[SavedWindow]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let temp = path.with_extension("json.tmp");
+    let result =
+        std::fs::write(&temp, to_json(windows)).and_then(|()| std::fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests;
