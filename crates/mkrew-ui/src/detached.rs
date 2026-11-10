@@ -258,15 +258,23 @@ impl Detached {
         saved
             .iter()
             .filter_map(|window| {
-                let tabs: Vec<DockTab> = (window.tabs.iter().copied())
-                    .filter(|tab| !self.is_detached(tab))
-                    .collect();
+                let mut tabs: Vec<DockTab> = Vec::with_capacity(window.tabs.len());
+                for &tab in &window.tabs {
+                    if !self.is_detached(&tab) && !tabs.contains(&tab) {
+                        tabs.push(tab);
+                    }
+                }
                 let (&first, rest) = tabs.split_first()?;
                 let key = self.open(first);
                 for &tab in rest {
                     self.move_tab(tab, HostId::Detached(key), None);
                 }
-                self.select(key, window.active);
+                let shown = window.tabs.get(window.active);
+                if let Some(index) =
+                    shown.and_then(|shown| tabs.iter().position(|tab| tab == shown))
+                {
+                    self.select(key, index);
+                }
                 Some(key)
             })
             .collect()
@@ -377,9 +385,14 @@ pub fn from_json(text: &str) -> Result<Vec<SavedWindow>, String> {
     Ok((file.windows.into_iter())
         .filter_map(|window| {
             let shown = window.tabs.get(window.active).cloned();
-            let tabs: Vec<DockTab> = (window.tabs.into_iter())
-                .filter_map(|tab| serde_json::from_value(tab).ok())
-                .collect();
+            let mut tabs: Vec<DockTab> = Vec::with_capacity(window.tabs.len());
+            for tab in window.tabs {
+                if let Ok(tab) = serde_json::from_value::<DockTab>(tab)
+                    && !tabs.contains(&tab)
+                {
+                    tabs.push(tab);
+                }
+            }
             let shown = shown.and_then(|tab| serde_json::from_value::<DockTab>(tab).ok());
             let active = shown
                 .and_then(|shown| tabs.iter().position(|tab| *tab == shown))

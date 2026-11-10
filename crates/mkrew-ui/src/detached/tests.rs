@@ -375,3 +375,42 @@ fn restore_rebuilds_windows_and_skips_duplicates() {
     assert_eq!(detached.tabs_of(keys[0]), vec![a, b]);
     assert_eq!(detached.active(keys[0]), Some(b));
 }
+
+#[test]
+fn from_json_drops_repeated_tabs() {
+    let (a, b) = (term(), term());
+    let json = to_json(&[SavedWindow {
+        active: 2,
+        ..saved(vec![a, b, a])
+    }]);
+    let windows = from_json(&json).unwrap();
+    assert_eq!(windows[0].tabs, vec![a, b]);
+    assert_eq!(windows[0].active, 0, "shown tab a");
+}
+
+#[test]
+fn restore_skips_a_repeated_tab() {
+    let (a, b) = (term(), term());
+    let mut detached = Detached::new();
+    let keys = detached.restore(&[SavedWindow {
+        active: 1,
+        ..saved(vec![a, b, a])
+    }]);
+    assert_eq!(detached.tabs_of(keys[0]), vec![a, b]);
+    assert_eq!(detached.active(keys[0]), Some(b));
+}
+
+#[test]
+fn restore_shows_the_saved_tab_when_an_earlier_one_is_skipped() {
+    let (a, b, c) = (term(), term(), term());
+    let mut detached = Detached::new();
+    let keys = detached.restore(&[
+        saved(vec![a]),
+        SavedWindow {
+            active: 2,
+            ..saved(vec![a, b, c])
+        },
+    ]);
+    assert_eq!(detached.tabs_of(keys[1]), vec![b, c]);
+    assert_eq!(detached.active(keys[1]), Some(c));
+}
