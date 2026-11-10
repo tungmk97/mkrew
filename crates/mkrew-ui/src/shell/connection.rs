@@ -146,6 +146,9 @@ impl Shell {
                     if shell.toasts.expire(Instant::now()) {
                         cx.notify();
                     }
+                    if shell.windows_dirty {
+                        shell.save_windows(cx);
+                    }
                     shell.sync_thread(cx);
                     shell.poll_machines(cx);
                     // Clicks of this window's own notifications where they come back on a
@@ -253,6 +256,9 @@ impl Shell {
                 .data_dir
                 .join(inbox::viewed_file((!local).then_some(id.as_str()))),
         );
+        let windows_path = paths
+            .data_dir
+            .join(detached::windows_file((!local).then_some(id.as_str())));
         // This computer's window is the launcher of the machine windows (spec §4.5); the list
         // is read here, once, and again before each change made on the Machines page.
         let machines = if local {
@@ -502,6 +508,8 @@ impl Shell {
             link_subscriptions: HashMap::new(),
             windows_dirty: false,
             restore: None,
+            restored_once: false,
+            windows_path,
             pending_jump: jump,
         };
         if let Status::NoMachine(text) = &shell.status {
@@ -950,6 +958,14 @@ impl Shell {
                         if let Some((session, project)) = shell.pending_jump.take() {
                             shell.notification_clicked(session, project, window, cx);
                         }
+                        // The saved windows open once, after the first listing.
+                        if !shell.restored_once {
+                            shell.restored_once = true;
+                            shell.start_restore(window, cx);
+                        }
+                        // Tabs come back with `tab.list`: a detached window's workspace (or a
+                        // restore still waiting) loads again after a reconnect.
+                        shell.reload_detached_tabs(window, cx);
                     }
                     Err(error) => {
                         tracing::warn!("listing workspaces failed: {error:#}");

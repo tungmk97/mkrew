@@ -342,6 +342,23 @@ pub struct SavedWindow {
     pub active: usize,
 }
 
+impl SavedWindow {
+    /// The window with only the tabs `exists` approves; the shown tab stays shown, else the
+    /// first one is.
+    pub fn keeping(self, exists: impl Fn(&DockTab) -> bool) -> Self {
+        let shown = self.tabs.get(self.active).copied();
+        let tabs: Vec<DockTab> = self.tabs.into_iter().filter(|tab| exists(tab)).collect();
+        let active = shown
+            .and_then(|shown| tabs.iter().position(|tab| *tab == shown))
+            .unwrap_or(0);
+        Self {
+            tabs,
+            active,
+            ..self
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct File {
     version: u32,

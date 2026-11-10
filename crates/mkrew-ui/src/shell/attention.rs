@@ -51,6 +51,7 @@ impl Shell {
     /// after a tick.
     pub(crate) fn restore_window(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.desktop.show_window();
+        self.set_detached_shown(true, cx);
         window.activate_window();
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(theme::STATUS_TICK).await;
@@ -92,6 +93,7 @@ impl Shell {
         }
         // The machine windows are asked to quit too (each asks about its own unsaved changes and
         // ends by itself; this process does not wait for them).
+        self.save_windows(cx);
         self.close_machines();
         self.desktop.remove_tray();
         cx.quit();

@@ -284,13 +284,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> bool {
-        let mut by_project: HashMap<Ulid, Vec<Ulid>> = HashMap::new();
-        for DockTab::Terminal { project, tab_id } in self.detached.tabs_of(key) {
-            by_project.entry(project).or_default().push(tab_id);
-        }
-        for (project, tab_ids) in by_project {
-            self.close_tabs(project, tab_ids, window, cx);
-        }
+        let tabs = (self.detached.tabs_of(key).into_iter())
+            .map(|DockTab::Terminal { project, tab_id }| (project, tab_id))
+            .collect();
+        self.close_tabs(tabs, window, cx);
         false
     }
 
@@ -346,7 +343,7 @@ impl Shell {
                     }
                 }
             }
-            Command::CloseTab => self.close_tabs(project, vec![tab_id], window, cx),
+            Command::CloseTab => self.close_tabs(vec![(project, tab_id)], window, cx),
             Command::SplitRight => self.split(Axis::Vertical, window, cx),
             Command::SplitDown => self.split(Axis::Horizontal, window, cx),
             Command::SplitAgent => self.new_pane(SessionKind::Agent, Axis::Vertical, window, cx),

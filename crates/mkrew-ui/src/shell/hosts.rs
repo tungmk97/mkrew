@@ -17,7 +17,6 @@ pub(crate) struct HostUi {
 }
 
 /// Saved windows waiting until every workspace they show has its tabs loaded.
-#[expect(dead_code, reason = "read by the detached window tasks that follow")]
 pub(crate) struct Restore {
     pub(crate) windows: Vec<detached::SavedWindow>,
     pub(crate) waiting: HashSet<Ulid>,
@@ -223,5 +222,124 @@ impl Shell {
         cx.defer(move |cx| {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         });
+    }
+
+    /// Writes `windows.json` (spec §6.1); a failure is a toast. Not before the saved windows
+    /// were read and opened: an app that never reached its daemon must not erase them.
+    pub(crate) fn save_windows(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.restored_once || self.restore.is_some() {
+            return;
+        }
+        self.windows_dirty = false;
+        let windows: Vec<detached::SavedWindow> = (self.detached.windows().iter())
+            .filter_map(|window| {
+                let ui = self.hosts.get(&HostId::Detached(window.key))?;
+                let bounds = ui.restore;
+                Some(detached::SavedWindow {
+                    bounds: detached::SavedBounds {
+                        x: f32::from(bounds.origin.x),
+                        y: f32::from(bounds.origin.y),
+                        width: f32::from(bounds.size.width),
+                        height: f32::from(bounds.size.height),
+                    },
+                    maximized: ui.maximized,
+                    tabs: window.tabs.clone(),
+                    active: window.active,
+                })
+            })
+            .collect();
+        if let Err(error) = detached::save(&self.windows_path, &windows) {
+            tracing::warn!("cannot save the detached windows: {error}");
+            self.toast_error(format!("Cannot save the detached windows: {error}"), cx);
+        }
+    }
+
+    /// Reads `windows.json` once the workspaces are listed: loads the tabs of every workspace
+    /// a saved window shows; the windows open once all answered (`restore_progress`).
+    pub(crate) fn start_restore(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let text = match std::fs::read_to_string(&self.windows_path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => return tracing::warn!("cannot read the detached windows: {error}"),
+        };
+        let windows = match detached::from_json(&text) {
+            Ok(windows) if !windows.is_empty() => windows,
+            Ok(_) => return,
+            Err(error) => return tracing::warn!("ignoring the detached windows file: {error}"),
+        };
+        let waiting: HashSet<Ulid> = (windows.iter())
+            .flat_map(|w| w.tabs.iter().map(DockTab::project))
+            .filter(|project| !self.tabs.contains_key(project))
+            .collect();
+        for &project in &waiting {
+            self.load_tabs(project, window, cx);
+        }
+        self.restore = Some(Restore { windows, waiting });
+        self.restore_progress(None, window, cx);
+    }
+
+    /// `project`'s tabs answered (or failed): once none is awaited, the saved windows open
+    /// with the tabs that still exist.
+    pub(crate) fn restore_progress(
+        &mut self,
+        project: Option<Ulid>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(restore) = self.restore.as_mut() else {
+            return;
+        };
+        if let Some(project) = project {
+            restore.waiting.remove(&project);
+        }
+        if !restore.waiting.is_empty() {
+            return;
+        }
+        let Some(restore) = self.restore.take() else {
+            return;
+        };
+        let displays: Vec<Bounds<Pixels>> = cx.displays().iter().map(|d| d.bounds()).collect();
+        let primary = cx.primary_display().map(|d| d.bounds());
+        for saved in restore.windows {
+            let saved = saved.keeping(|tab| {
+                let DockTab::Terminal { project, tab_id } = *tab;
+                self.tabs
+                    .get(&project)
+                    .is_some_and(|tabs| tabs.tab(tab_id).is_some())
+            });
+            let b = saved.bounds.clone();
+            let maximized = saved.maximized;
+            let Some(key) = self.detached.restore(&[saved]).first().copied() else {
+                continue;
+            };
+            let bounds = Bounds::new(point(px(b.x), px(b.y)), size(px(b.width), px(b.height)));
+            let bounds = mkrew_ui::window_place::fit_on_displays(bounds, &displays, primary);
+            self.open_os_window(key, bounds, maximized, window, cx);
+        }
+    }
+
+    /// After a reconnect the tabs are read again: those of every workspace a detached window
+    /// (or a restore still waiting) shows.
+    pub(crate) fn reload_detached_tabs(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let shown = (self.detached.windows().iter())
+            .flat_map(|w| w.tabs.iter().map(DockTab::project))
+            .chain(self.restore.iter().flat_map(|r| r.waiting.iter().copied()))
+            .collect::<HashSet<_>>();
+        for project in shown {
+            if !self.tabs.contains_key(&project) {
+                self.load_tabs(project, window, cx);
+            }
+        }
+    }
+
+    /// Shows or hides every detached window (they follow the main one to the tray).
+    pub(crate) fn set_detached_shown(&self, shown: bool, cx: &mut Context<'_, Self>) {
+        for &handle in self.windows.keys() {
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, _| {
+                    mkrew_ui::desktop::set_window_shown(window, shown);
+                });
+            });
+        }
     }
 }

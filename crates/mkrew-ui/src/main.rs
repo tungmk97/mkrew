@@ -272,14 +272,19 @@ fn main() {
                     Shell::new(launched, paths, keymap, &keymap_errors, opening, window, cx)
                 })
             });
-            if let Err(error) = opened {
-                eprintln!("mkrew: cannot open window: {error:#}");
-                cx.quit();
-                return;
-            }
-            // Sessions live in the daemon, so closing the window simply ends the app.
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
+            let main = match opened {
+                Ok(main) => main,
+                Err(error) => {
+                    eprintln!("mkrew: cannot open window: {error:#}");
+                    cx.quit();
+                    return;
+                }
+            };
+            // Sessions live in the daemon, so closing the main window ends the app, detached
+            // windows included (they come back on the next start, ADR 0096).
+            let main_id = main.window_id();
+            cx.on_window_closed(move |cx, closed| {
+                if closed == main_id || cx.windows().is_empty() {
                     cx.quit();
                 }
             })
@@ -906,8 +911,11 @@ struct Shell {
     /// A detached window moved, resized or changed tabs: saved on the next status tick.
     windows_dirty: bool,
     /// Saved windows waiting for their workspaces' tabs (startup).
-    #[expect(dead_code, reason = "read by the detached window tasks that follow")]
     restore: Option<shell::hosts::Restore>,
+    /// The saved windows were read (the first workspace listing of this process).
+    restored_once: bool,
+    /// Where `windows.json` lives: this computer's file, or the machine window's own.
+    windows_path: PathBuf,
 }
 
 impl Render for Shell {

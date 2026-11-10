@@ -715,6 +715,19 @@ impl Os {
     }
 }
 
+/// Shows or hides any Mkrew window (detached windows follow the main one to the tray).
+pub fn set_window_shown(window: &gpui::Window, shown: bool) {
+    if let Ok(RawWindowHandle::Win32(handle)) =
+        HasWindowHandle::window_handle(window).map(|handle| handle.as_raw())
+    {
+        let hwnd = HWND(handle.hwnd.get() as *mut c_void);
+        // SAFETY: `hwnd` is the live window gpui just handed us.
+        unsafe {
+            let _ = ShowWindow(hwnd, if shown { SW_SHOW } else { SW_HIDE });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -414,3 +414,18 @@ fn restore_shows_the_saved_tab_when_an_earlier_one_is_skipped() {
     assert_eq!(detached.tabs_of(keys[1]), vec![b, c]);
     assert_eq!(detached.active(keys[1]), Some(c));
 }
+
+#[test]
+fn keeping_drops_gone_tabs_and_follows_the_shown_one() {
+    let (a, b, c) = (term(), term(), term());
+    let window = SavedWindow {
+        active: 2,
+        ..saved(vec![a, b, c])
+    };
+    let kept = window.clone().keeping(|tab| *tab != a);
+    assert_eq!(kept.tabs, vec![b, c]);
+    assert_eq!(kept.active, 1, "c is still shown");
+    let kept = window.keeping(|tab| *tab != c);
+    assert_eq!(kept.tabs, vec![a, b]);
+    assert_eq!(kept.active, 0, "the shown tab is gone: the first one");
+}

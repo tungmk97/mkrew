@@ -16,6 +16,7 @@ use none as os;
 use win32 as os;
 
 pub use os::Os as Desktop;
+pub use os::set_window_shown;
 
 /// What a click in the tray asks of the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

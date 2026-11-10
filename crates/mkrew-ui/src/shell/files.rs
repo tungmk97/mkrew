@@ -612,6 +612,7 @@ impl Shell {
     ) -> bool {
         if attention::hide_on_close(self.close_to_tray, self.desktop.has_tray()) {
             self.desktop.hide_window();
+            self.set_detached_shown(false, cx);
             return false;
         }
         let again: AfterSave = Box::new(|shell, window, cx| shell.close_when_saved(window, cx));
@@ -620,6 +621,7 @@ impl Shell {
         }
         // No tray to hide to (macOS, Linux): closing this window ends Mkrew, so the machine
         // windows are asked to quit here, not left to the drop of the `Shell`.
+        self.save_windows(cx);
         self.close_machines();
         true
     }
@@ -628,6 +630,7 @@ impl Shell {
     fn close_when_saved(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let again: AfterSave = Box::new(|shell, window, cx| shell.close_when_saved(window, cx));
         if !self.ask_unsaved(again, window, cx) {
+            self.save_windows(cx);
             self.close_machines();
             window.remove_window();
         }

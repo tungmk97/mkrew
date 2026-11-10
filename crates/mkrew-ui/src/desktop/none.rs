@@ -37,6 +37,9 @@ impl Os {
     pub fn show_window(&mut self) {}
 }
 
+/// Nothing to hide or show here (no tray: a window's ✕ ends the app).
+pub fn set_window_shown(_window: &gpui::Window, _shown: bool) {}
+
 pub fn raise(_key: &str, _jump: Option<(Ulid, Ulid)>) -> bool {
     false
 }

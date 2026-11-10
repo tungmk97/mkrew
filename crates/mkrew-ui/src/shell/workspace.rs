@@ -82,7 +82,7 @@ impl Shell {
                 }
                 Err(error) => {
                     tracing::warn!(%project_id, "tab.list failed: {error:#}");
-                    shell.tabs_load_failed(project_id);
+                    shell.tabs_load_failed(project_id, window, cx);
                     if shell.project_of_reveal() == Some(project_id) {
                         shell.reveal = None;
                     }
@@ -153,7 +153,7 @@ impl Shell {
                         tracing::warn!(%project_id, "tab.create failed: {error:#}");
                         let error = format!("{error:#}");
                         if first {
-                            shell.tabs_load_failed(project_id);
+                            shell.tabs_load_failed(project_id, window, cx);
                             shell.list_failed(error);
                         } else {
                             shell.tab_error = Some(format!("Cannot add a tab: {error}"));
@@ -194,16 +194,23 @@ impl Shell {
         }
         self.fill_empty_tab(project_id, window, cx);
         self.sync_panes(window, cx);
+        self.restore_progress(Some(project_id), window, cx);
         cx.notify();
     }
 
     /// `project_id`'s tabs failed to load: it stops loading and its buffered `tab.updated`
-    /// events go (other workspaces still loading keep theirs).
-    pub(crate) fn tabs_load_failed(&mut self, project_id: Ulid) {
+    /// events go (other workspaces still loading keep theirs). A restore no longer waits for it.
+    pub(crate) fn tabs_load_failed(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.loading_tabs.remove(&project_id);
         self.early_tab_events.retain(
             |event| !matches!(event, Event::TabUpdated(tab) if tab.project_id == project_id),
         );
+        self.restore_progress(Some(project_id), window, cx);
     }
 
     pub(crate) fn project_of(&self, session: Ulid) -> Option<Ulid> {

@@ -617,33 +617,32 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.close_tabs(project_id, vec![tab_id], window, cx);
+        self.close_tabs(vec![(project_id, tab_id)], window, cx);
     }
 
-    /// `tab.close` for each of `tab_ids` of `project_id`. The daemon removes the sessions
-    /// of their panes too (ADR 0041), so a running agent among them asks once first; closing the
-    /// last tab leaves a fresh empty one.
+    /// `tab.close` for each (workspace, tab) of `tabs`. The daemon removes the sessions
+    /// of their panes too (ADR 0041), so a running agent among them asks once first (also across
+    /// workspaces); closing the last tab of a workspace leaves a fresh empty one.
     pub(crate) fn close_tabs(
         &mut self,
-        project_id: Ulid,
-        tab_ids: Vec<Ulid>,
+        tabs: Vec<(Ulid, Ulid)>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        let closing: Vec<(Ulid, Vec<Ulid>)> = (tab_ids.into_iter())
-            .map(|tab_id| {
+        let closing: Vec<(Ulid, Ulid, Vec<Ulid>)> = (tabs.into_iter())
+            .map(|(project_id, tab_id)| {
                 let sessions = (self.tabs.get(&project_id))
                     .and_then(|tabs| tabs.tab(tab_id))
                     .map(Tab::sessions)
                     .unwrap_or_default();
-                (tab_id, sessions)
+                (project_id, tab_id, sessions)
             })
             .collect();
         let running_agent = (closing.iter())
-            .flat_map(|(_, sessions)| sessions)
+            .flat_map(|(_, _, sessions)| sessions)
             .any(|id| {
                 let known = self.sidebar.sessions().iter().find(|s| s.id == *id);
                 lifecycle::close_action(known) == CloseAction::Ask
@@ -668,7 +667,7 @@ impl Shell {
             {
                 return;
             }
-            for (tab_id, sessions) in closing {
+            for (project_id, tab_id, sessions) in closing {
                 let closed = connection
                     .call::<()>(Request::TabClose(TabRef { tab_id }))
                     .await;
@@ -718,10 +717,12 @@ impl Shell {
         let Some(tabs) = self.active_tabs_mut() else {
             return;
         };
-        let targets = tabs.close_targets(tab_id, right_only);
+        let targets = (tabs.close_targets(tab_id, right_only).into_iter())
+            .map(|target| (project_id, target))
+            .collect();
         tabs.activate(tab_id);
         self.sync_panes(window, cx);
-        self.close_tabs(project_id, targets, window, cx);
+        self.close_tabs(targets, window, cx);
         cx.notify();
     }
 
