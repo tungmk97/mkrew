@@ -184,7 +184,11 @@ impl Shell {
                 .and_then(|id| self.tabs.get(&id)),
         );
         let here = self.host_of(window);
-        let mut elsewhere: Vec<(HostId, Ulid)> = Vec::new();
+        // Every session on screen with the window that shows it.
+        let mut hosted: Vec<(HostId, Ulid)> = visible
+            .iter()
+            .map(|&session| (HostId::Main, session))
+            .collect();
         for tab in self.detached.visible_tabs() {
             let DockTab::Terminal { project, tab_id } = tab;
             let Some(shown) = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id)) else {
@@ -193,9 +197,7 @@ impl Shell {
             let host = self.detached.host_of(&tab);
             for session in shown.shown() {
                 visible.push(session);
-                if host != here {
-                    elsewhere.push((host, session));
-                }
+                hosted.push((host, session));
             }
         }
         for session in self.router.wanted() {
@@ -218,14 +220,16 @@ impl Shell {
             if skip {
                 continue;
             }
-            match elsewhere.iter().find(|(_, s)| *s == session) {
+            match hosted.iter().find(|(_, s)| *s == session) {
                 // A pane is built in the window that shows it.
-                Some(&(host, _)) => self.in_window(host, cx, move |shell, window, cx| {
-                    if !shell.router.is_wanted(session) {
-                        shell.attach(session, window, cx);
-                    }
-                }),
-                None => self.attach(session, window, cx),
+                Some(&(host, _)) if host != here => {
+                    self.in_window(host, cx, move |shell, window, cx| {
+                        if !shell.router.is_wanted(session) {
+                            shell.attach(session, window, cx);
+                        }
+                    });
+                }
+                _ => self.attach(session, window, cx),
             }
         }
         self.focus_pane(window, cx);
