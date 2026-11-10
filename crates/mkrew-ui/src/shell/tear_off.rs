@@ -111,7 +111,7 @@ impl Shell {
     }
 
     /// The drag is over: no hint, no stale reorder state for the next (unrelated) drag.
-    fn end_tab_drag(&mut self, cx: &mut Context<'_, Self>) {
+    pub(crate) fn end_tab_drag(&mut self, cx: &mut Context<'_, Self>) {
         let dirty = self.drop_hint.take().is_some() | self.reorder.take().is_some();
         self.tab_drag = false;
         if dirty {
@@ -130,7 +130,8 @@ impl Shell {
         let screen = Self::screen_point(position, window);
         let target = tab.and_then(|tab| self.release_target(tab, screen, window));
         let (Some(tab), Some(target)) = (tab, target) else {
-            // Inside its own window: the on_drop handlers run, then the bubble listener ends it.
+            // Inside its own window: the on_drop handlers run (a handled drop ends the drag),
+            // else the bubble listener ends it.
             if self.drop_hint.take().is_some() {
                 cx.notify();
             }
@@ -167,7 +168,8 @@ impl Shell {
 /// Watches the whole window during a tab drag: pointer moves of a `DraggedItem` drag (gpui
 /// checks the payload type; sidebar grips, panes, cards and dividers never reach it) update
 /// the drop hint; a release outside the window moves the tab. The mouse-up hooks: capture
-/// (before every element) decides the move, bubble (after every `on_drop`) ends the drag.
+/// (before every element) decides the move; bubble ends the drag unless a handled `on_drop`
+/// stopped propagation first (`drop_reordered` / `drop_tab_on_pane` end it themselves).
 pub(crate) fn tear_off_catcher(cx: &Context<'_, Shell>) -> impl IntoElement + use<> {
     let view = cx.entity();
     div()

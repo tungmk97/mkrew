@@ -83,6 +83,7 @@ impl Shell {
                 };
                 let _ = view.update(cx, |shell, cx| {
                     shell.reorder = Some(start);
+                    shell.tab_drag = true;
                     cx.notify();
                 });
                 let (style, title) = (style.clone(), item.title.clone());
@@ -141,7 +142,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let reorder = self.reorder.take();
+        let reorder = self.reorder;
+        self.end_tab_drag(cx);
         cx.notify();
         let Some(to) = reorder
             .filter(|reorder| reorder.list == item.list && reorder.from == item.index)

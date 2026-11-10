@@ -178,7 +178,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.reorder = None;
+        self.end_tab_drag(cx);
         let Some(axis) = self.take_pane_drop(target, cx) else {
             return;
         };
