@@ -118,8 +118,30 @@ impl Detached {
     }
 
     /// Moves `tab` to `to` (at `index`, else the end) and shows it there. Moving to
-    /// [`HostId::Main`] forgets it. A window left without tabs is dropped.
+    /// [`HostId::Main`] forgets it. A window left without tabs is dropped. Moving to its
+    /// own window reorders it in place; a window that does not exist changes nothing.
     pub fn move_tab(&mut self, tab: DockTab, to: HostId, index: Option<usize>) -> Moved {
+        let current = self.host_of(&tab);
+        if let HostId::Detached(key) = to {
+            let Some(window) = self.window_mut(key) else {
+                return Moved {
+                    from: current,
+                    emptied: None,
+                };
+            };
+            if current == to {
+                if let Some(pos) = window.tabs.iter().position(|t| *t == tab) {
+                    window.tabs.remove(pos);
+                    let at = index.unwrap_or(window.tabs.len()).min(window.tabs.len());
+                    window.tabs.insert(at, tab);
+                    window.active = at;
+                }
+                return Moved {
+                    from: current,
+                    emptied: None,
+                };
+            }
+        }
         let (from, emptied) = self.take(&tab);
         if let HostId::Detached(key) = to
             && let Some(window) = self.window_mut(key)
