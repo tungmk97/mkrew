@@ -252,9 +252,13 @@ impl Shell {
         self.composers.insert(session, &text);
         self.composer_scroll.scroll_to_bottom();
         self.open_session(session, window, cx);
-        if self.composer_session(window) == Some(session) {
-            window.focus(&self.composer_focus, cx);
-        }
+        // The composer can sit in a detached window: give it the keyboard there, after
+        // `open_session` brought that window forward.
+        self.in_window(self.session_host(session), cx, move |shell, window, cx| {
+            if shell.composer_session(window) == Some(session) {
+                window.focus(&shell.composer_focus, cx);
+            }
+        });
         cx.notify();
     }
 
