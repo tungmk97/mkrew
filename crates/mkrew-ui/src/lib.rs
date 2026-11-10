@@ -29,6 +29,7 @@ pub mod conflicts;
 pub mod connect;
 pub mod context_menu;
 pub mod desktop;
+pub mod detached;
 pub mod diagram;
 pub mod dialog_focus;
 pub mod doc_dialog;
