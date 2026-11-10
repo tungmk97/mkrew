@@ -53,9 +53,17 @@ impl Shell {
                     .take_if(|(_, error)| error.starts_with(lifecycle::STILL_STARTING));
                 match spawned {
                     Ok(spawned) => {
-                        // Next to the focused pane of the tab active now (the user may have
-                        // switched tabs meanwhile), unless the daemon placed it already.
-                        shell.place_session(project_id, spawned.session_id, axis, window, cx);
+                        // In the tab the request came from when a detached window shows it,
+                        // else next to the focused pane of the tab active now (the user may
+                        // have switched tabs meanwhile), unless the daemon placed it already.
+                        shell.place_session(
+                            project_id,
+                            spawned.session_id,
+                            Some(tab_id),
+                            axis,
+                            window,
+                            cx,
+                        );
                         shell.sync_panes(window, cx);
                     }
                     Err(error) => {
@@ -350,11 +358,15 @@ impl Shell {
             Command::PreviousWorkspace => self.cycle_workspace(-1, window, cx),
             Command::NewShellTab => self.new_tab(SessionKind::Shell, window, cx),
             Command::NewAgentTab => self.new_tab(SessionKind::Agent, window, cx),
-            Command::NextTab => self.switch_tab(|tabs| tabs.activate_offset(1), window, cx),
-            Command::PreviousTab => self.switch_tab(|tabs| tabs.activate_offset(-1), window, cx),
+            Command::NextTab => {
+                self.switch_tab(|tabs, hidden| tabs.activate_offset(1, hidden), window, cx);
+            }
+            Command::PreviousTab => {
+                self.switch_tab(|tabs, hidden| tabs.activate_offset(-1, hidden), window, cx);
+            }
             Command::Tab(n) => self.switch_tab(
-                |tabs| {
-                    tabs.activate_nth(usize::from(n) - 1);
+                |tabs, hidden| {
+                    tabs.activate_nth(usize::from(n) - 1, hidden);
                 },
                 window,
                 cx,

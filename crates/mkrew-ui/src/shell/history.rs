@@ -450,7 +450,7 @@ impl Shell {
                         // focuses it, and the pane takes the keyboard once attached.
                         if shell.tabs.contains_key(&project_id) {
                             let id = resumed.session_id;
-                            shell.place_session(project_id, id, Axis::Vertical, window, cx);
+                            shell.place_session(project_id, id, None, Axis::Vertical, window, cx);
                         } else {
                             shell.reveal = Some(resumed.session_id);
                         }

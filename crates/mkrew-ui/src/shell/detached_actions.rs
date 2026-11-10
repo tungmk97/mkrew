@@ -284,9 +284,18 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> bool {
-        let tabs = (self.detached.tabs_of(key).into_iter())
+        let tabs: Vec<(Ulid, Ulid)> = (self.detached.tabs_of(key).into_iter())
             .map(|DockTab::Terminal { project, tab_id }| (project, tab_id))
             .collect();
+        // Just after a reconnect the tabs of a workspace are not loaded yet: `close_tabs`
+        // would see no sessions, skip the running-agent question and close them (ADR 0041).
+        // The window stays until they are.
+        if tabs
+            .iter()
+            .any(|(project, _)| !self.tabs.contains_key(project))
+        {
+            return false;
+        }
         self.close_tabs(tabs, window, cx);
         false
     }

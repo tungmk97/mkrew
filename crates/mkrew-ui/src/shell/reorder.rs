@@ -192,6 +192,15 @@ impl Shell {
         let Some(params) = tab_id.and_then(|tab_id| tabs.move_tab(tab_id, to)) else {
             return;
         };
+        self.send_tab_move(params, window, cx);
+    }
+
+    fn send_tab_move(
+        &mut self,
+        params: mkrew_protocol::TabMoveParams,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.send_edit(
             Request::TabMove(params),
             "Cannot move the tab",
@@ -227,12 +236,18 @@ impl Shell {
             cx.notify();
             return;
         }
-        let Some((pinned, from, len)) = self.tabs.get(&project_id).and_then(Tabs::active_place)
-        else {
-            return;
-        };
-        if let Some(to) = sidebar::step_index(len, from, by) {
-            self.drop_tab(project_id, pinned, from, to, window, cx);
+        // Past the tabs the strip does not show (those in a detached window).
+        let detached = &self.detached;
+        let params = (self.tabs.get_mut(&project_id)).and_then(|tabs| {
+            tabs.move_active(by, |tab_id| {
+                detached.is_detached(&DockTab::Terminal {
+                    project: project_id,
+                    tab_id,
+                })
+            })
+        });
+        if let Some(params) = params {
+            self.send_tab_move(params, window, cx);
         }
     }
 

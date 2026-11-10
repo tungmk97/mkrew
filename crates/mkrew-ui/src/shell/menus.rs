@@ -203,9 +203,14 @@ impl Shell {
             .focused_session(window)
             .filter(|_| active_tab == Some(tab_id))
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
-        let tabs = project_id.and_then(|project_id| self.tabs.get(&project_id));
-        let has_others = tabs.is_some_and(|tabs| !tabs.close_targets(tab_id, false).is_empty());
-        let has_right = tabs.is_some_and(|tabs| !tabs.close_targets(tab_id, true).is_empty());
+        let closable = |right_only| {
+            let project = project_id?;
+            let tabs = self.tabs.get(&project)?;
+            let targets = tabs.close_targets(tab_id, right_only, self.same_window(project, tab_id));
+            Some(!targets.is_empty())
+        };
+        let has_others = closable(false).unwrap_or(false);
+        let has_right = closable(true).unwrap_or(false);
         let key = |command: Command| self.keymap.label(command);
         let run =
             |command: Command| act(move |shell, window, cx| shell.run(&Run(command), window, cx));

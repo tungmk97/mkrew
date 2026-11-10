@@ -460,17 +460,17 @@ fn remove_and_cycle_tabs() {
     ];
     let mut tabs = Tabs::new(project);
     tabs.load(vec![one.clone(), two.clone(), three.clone()]);
-    tabs.activate_offset(-1);
+    tabs.activate_offset(-1, |_| false);
     assert_eq!(tabs.active().map(|t| t.id), Some(three.id));
-    tabs.activate_offset(1);
+    tabs.activate_offset(1, |_| false);
     assert_eq!(tabs.active().map(|t| t.id), Some(one.id));
     assert!(tabs.activate(two.id));
     assert!(!tabs.activate(Ulid::new()));
-    assert!(tabs.activate_nth(2));
+    assert!(tabs.activate_nth(2, |_| false));
     assert_eq!(tabs.active().map(|t| t.id), Some(three.id));
-    assert!(!tabs.activate_nth(3));
+    assert!(!tabs.activate_nth(3, |_| false));
     assert_eq!(tabs.active().map(|t| t.id), Some(three.id));
-    assert!(tabs.activate_nth(1));
+    assert!(tabs.activate_nth(1, |_| false));
 
     tabs.remove(two.id);
     assert_eq!(tabs.active().map(|t| t.id), Some(three.id));
@@ -479,7 +479,7 @@ fn remove_and_cycle_tabs() {
     tabs.remove(one.id);
     assert!(tabs.active().is_none());
     assert!(tabs.is_empty());
-    tabs.activate_offset(1);
+    tabs.activate_offset(1, |_| false);
 }
 
 #[test]
@@ -572,12 +572,27 @@ fn close_others_and_to_the_right_keep_pinned_tabs() {
     ];
     let mut tabs = Tabs::new(project);
     tabs.load(vec![pin.clone(), one.clone(), two.clone(), three.clone()]);
-    assert_eq!(tabs.close_targets(two.id, false), [one.id, three.id]);
-    assert_eq!(tabs.close_targets(two.id, true), [three.id]);
-    assert!(tabs.close_targets(three.id, true).is_empty());
+    assert_eq!(
+        tabs.close_targets(two.id, false, |_| true),
+        [one.id, three.id]
+    );
+    assert_eq!(tabs.close_targets(two.id, true, |_| true), [three.id]);
+    assert!(tabs.close_targets(three.id, true, |_| true).is_empty());
     // From a pinned tab: every unpinned one is to its right.
-    assert_eq!(tabs.close_targets(pin.id, true), [one.id, two.id, three.id]);
-    assert!(tabs.close_targets(Ulid::new(), false).is_empty());
+    assert_eq!(
+        tabs.close_targets(pin.id, true, |_| true),
+        [one.id, two.id, three.id]
+    );
+    assert!(tabs.close_targets(Ulid::new(), false, |_| true).is_empty());
+    // A tab in another window is not this one's to close.
+    assert_eq!(
+        tabs.close_targets(two.id, false, |id| id != three.id),
+        [one.id]
+    );
+    assert!(
+        tabs.close_targets(two.id, true, |id| id != three.id)
+            .is_empty()
+    );
 }
 
 #[test]
@@ -744,26 +759,87 @@ fn a_default_named_tab_with_one_pane_on_screen_shows_its_session_title() {
 }
 
 #[test]
-fn active_place_counts_inside_the_pin_group() {
+fn move_active_steps_over_the_visible_tabs_of_its_pin_group() {
     let project = Ulid::new();
-    let mut tabs = Tabs::new(project);
     let mut pinned = wire(project, "pin", 1.0, serde_json::Value::Null);
     pinned.pinned = true;
-    let one = wire(project, "one", 2.0, serde_json::Value::Null);
-    let two = wire(project, "two", 3.0, serde_json::Value::Null);
-    tabs.load(vec![pinned.clone(), one.clone(), two.clone()]);
-    assert_eq!(
-        tabs.active_place(),
-        Some((true, 0, 1)),
-        "the pinned tab is first"
-    );
-    tabs.activate_nth(2);
-    assert_eq!(
-        tabs.active_place(),
-        Some((false, 1, 2)),
-        "second of the unpinned two"
-    );
-    assert_eq!(Tabs::new(project).active_place(), None, "no tab");
+    let [a, d, b] = [
+        wire(project, "a", 2.0, serde_json::Value::Null),
+        wire(project, "d", 3.0, serde_json::Value::Null),
+        wire(project, "b", 4.0, serde_json::Value::Null),
+    ];
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![pinned.clone(), a.clone(), d.clone(), b.clone()]);
+    let titles = |tabs: &Tabs| -> Vec<String> {
+        (tabs.tabs().iter()).map(|tab| tab.title.clone()).collect()
+    };
+    let hidden = |id: Ulid| id == d.id;
+    assert!(tabs.activate(pinned.id));
+    assert!(tabs.move_active(1, hidden).is_none(), "alone in its group");
+    assert!(tabs.activate(b.id));
+    assert!(tabs.move_active(1, hidden).is_none(), "last of the visible");
+    // [pin, a, d, b]: b left of the hidden d lands before a, the visible neighbour.
+    assert!(tabs.move_active(-1, hidden).is_some());
+    assert_eq!(titles(&tabs), ["pin", "b", "a", "d"]);
+    // And right again: past a, before whatever follows it (the hidden d).
+    assert!(tabs.move_active(1, hidden).is_some());
+    assert_eq!(titles(&tabs), ["pin", "a", "b", "d"]);
+    assert!(tabs.move_active(1, hidden).is_none(), "d is not a place");
+}
+
+#[test]
+fn activate_offset_and_nth_count_only_visible_tabs() {
+    let project = Ulid::new();
+    let [a, d, b] = [
+        wire(project, "a", 1.0, serde_json::Value::Null),
+        wire(project, "d", 2.0, serde_json::Value::Null),
+        wire(project, "b", 3.0, serde_json::Value::Null),
+    ];
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![a.clone(), d.clone(), b.clone()]);
+    let hidden = |id: Ulid| id == d.id;
+    assert!(tabs.activate(b.id));
+    tabs.activate_offset(-1, hidden);
+    assert_eq!(tabs.active().map(|t| t.id), Some(a.id), "d is skipped");
+    tabs.activate_offset(-1, hidden);
+    assert_eq!(tabs.active().map(|t| t.id), Some(b.id), "wraps over d");
+    assert!(tabs.activate_nth(1, hidden));
+    assert_eq!(tabs.active().map(|t| t.id), Some(b.id), "Ctrl+Alt+2 is b");
+    assert!(!tabs.activate_nth(2, hidden), "only two are shown");
+}
+
+#[test]
+fn split_focused_in_a_non_active_tab_leaves_the_active_one() {
+    let project = Ulid::new();
+    let [a, b, new] = [Ulid::new(), Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, pane(a));
+    let two = wire(project, "two", 2.0, pane(b));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone()]);
+    let write = tabs
+        .with_active(two.id, |tabs| tabs.split_focused(Axis::Vertical, new))
+        .flatten();
+    assert_eq!(write.map(|w| w.tab_id), Some(two.id));
+    assert_eq!(tabs.active().map(|t| t.id), Some(one.id));
+    assert!(tabs.tab(two.id).is_some_and(|tab| tab.contains(new)));
+    assert!(tabs.tab(one.id).is_some_and(|tab| !tab.contains(new)));
+}
+
+#[test]
+fn move_pane_in_a_non_active_tab_leaves_the_active_one() {
+    let project = Ulid::new();
+    let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, pane(a));
+    let split = json!({"split":"vertical","ratio":0.5,"children":[pane(b), pane(c)]});
+    let two = wire(project, "two", 2.0, split);
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone()]);
+    let writes = (tabs.with_active(two.id, |tabs| tabs.move_pane(b, c, Axis::Horizontal)))
+        .flatten()
+        .unwrap_or_default();
+    assert_eq!(writes.len(), 1, "one tab, one write");
+    assert_eq!(tabs.active().map(|t| t.id), Some(one.id), "active restored");
+    assert_eq!(tabs.tab(two.id).and_then(Tab::focused), Some(b));
 }
 
 fn split(axis: &str, first: serde_json::Value, second: serde_json::Value) -> serde_json::Value {

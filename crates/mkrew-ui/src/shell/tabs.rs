@@ -15,15 +15,21 @@ impl Shell {
         }
     }
 
-    /// Changes the active tab of the shown workspace.
+    /// Changes the active tab of the shown workspace; `change` is told which tabs a detached
+    /// window shows (the strip has no place for them).
     pub(crate) fn switch_tab(
         &mut self,
-        change: impl FnOnce(&mut Tabs),
+        change: impl FnOnce(&mut Tabs, &dyn Fn(Ulid) -> bool),
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(tabs) = self.active_tabs_mut() {
-            change(tabs);
+        let Some(project) = self.workspace else {
+            return;
+        };
+        let detached = &self.detached;
+        let hidden = |tab_id| detached.is_detached(&DockTab::Terminal { project, tab_id });
+        if let Some(tabs) = self.tabs.get_mut(&project) {
+            change(tabs, &hidden);
             self.sync_panes(window, cx);
             cx.notify();
         }
@@ -137,7 +143,14 @@ impl Shell {
                         // daemon placed in an empty tab, or one a snapshot brought in), so
                         // none is placed twice.
                         for session in started {
-                            shell.place_session(project_id, session, Axis::Vertical, window, cx);
+                            shell.place_session(
+                                project_id,
+                                session,
+                                Some(tab_id),
+                                Axis::Vertical,
+                                window,
+                                cx,
+                            );
                         }
                     }
                 }
@@ -721,13 +734,16 @@ impl Shell {
         let Some(project_id) = self.workspace else {
             return;
         };
-        let Some(tabs) = self.active_tabs_mut() else {
-            return;
-        };
-        let targets = (tabs.close_targets(tab_id, right_only).into_iter())
+        // Only the tabs of the same window: those in another one are not on this strip.
+        let targets = (self.tabs.get(&project_id).into_iter())
+            .flat_map(|tabs| {
+                tabs.close_targets(tab_id, right_only, self.same_window(project_id, tab_id))
+            })
             .map(|target| (project_id, target))
             .collect();
-        tabs.activate(tab_id);
+        if let Some(tabs) = self.active_tabs_mut() {
+            tabs.activate(tab_id);
+        }
         self.sync_panes(window, cx);
         self.close_tabs(targets, window, cx);
         cx.notify();
@@ -798,8 +814,10 @@ impl Shell {
             // Saved first: requests go out in call order, so `tab.close` sees no panes and
             // leaves a hidden session alive.
             self.save_layout(project_id, write, window, cx);
+            // A tab in a detached window closes too, whichever workspace the main window shows.
             if let Some(tab_id) = emptied
-                && self.workspace == Some(project_id)
+                && (self.workspace == Some(project_id)
+                    || self.terminal_host(project_id, tab_id) != HostId::Main)
             {
                 self.close_tab(project_id, tab_id, window, cx);
             }

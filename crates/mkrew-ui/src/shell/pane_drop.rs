@@ -158,11 +158,20 @@ impl Shell {
         let Some(axis) = self.take_pane_drop(target, cx) else {
             return;
         };
-        let Some(project_id) = self.workspace else {
+        // The workspace of the moved pane's tab, not the one the main window shows; a drop in a
+        // detached window leaves the main window's active tab alone.
+        let Some((project_id, _)) = self.tab_of_session(moved) else {
             return;
         };
-        let writes =
-            (self.tabs.get_mut(&project_id)).and_then(|tabs| tabs.move_pane(moved, target, axis));
+        let detached = (self.tab_of_session(target))
+            .map(|(_, tab_id)| tab_id)
+            .filter(|tab_id| self.terminal_host(project_id, *tab_id) != HostId::Main);
+        let writes = (self.tabs.get_mut(&project_id)).and_then(|tabs| match detached {
+            Some(tab_id) => {
+                (tabs.with_active(tab_id, |tabs| tabs.move_pane(moved, target, axis))).flatten()
+            }
+            None => tabs.move_pane(moved, target, axis),
+        });
         for write in writes.into_iter().flatten() {
             self.save_layout(project_id, write, window, cx);
         }

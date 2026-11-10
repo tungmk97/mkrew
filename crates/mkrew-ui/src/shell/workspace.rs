@@ -191,7 +191,7 @@ impl Shell {
             && self.project_of(session) == Some(project_id)
         {
             self.reveal = None;
-            self.place_session(project_id, session, Axis::Vertical, window, cx);
+            self.place_session(project_id, session, None, Axis::Vertical, window, cx);
         }
         self.fill_empty_tab(project_id, window, cx);
         self.sync_panes(window, cx);
@@ -228,7 +228,10 @@ impl Shell {
             .any(|s| s.id == session && s.state == SessionState::Exited)
     }
 
-    /// Shows a session picked in the sidebar: focuses its pane, or places it next to the
+    /// Shows a session picked in the sidebar, the palette or a notification. A pane in a
+    /// detached window comes forward there (its tab is selected, its window activated); from a
+    /// detached window a session of the main one activates the main window (never a silent
+    /// change of the window we are in). Otherwise it focuses its pane, or places it next to the
     /// focused pane of its workspace's active tab.
     pub(crate) fn open_session(
         &mut self,
@@ -239,9 +242,34 @@ impl Shell {
         let Some(project_id) = self.project_of(session) else {
             return;
         };
+        let held = self.tab_of_session(session);
+        if let Some((project, tab_id)) = held
+            && let host @ HostId::Detached(key) = self.terminal_host(project, tab_id)
+        {
+            let dock = DockTab::Terminal { project, tab_id };
+            if let Some(at) = self.detached.tabs_of(key).iter().position(|t| *t == dock) {
+                self.detached.select(key, at);
+            }
+            self.focus_session_pane(session);
+            self.windows_dirty = true;
+            self.in_window(host, cx, move |shell, window, cx| {
+                window.activate_window();
+                shell.sync_panes(window, cx);
+                cx.notify();
+            });
+            cx.notify();
+            return;
+        }
+        if self.host_of(window) != HostId::Main {
+            self.in_window(HostId::Main, cx, move |shell, window, cx| {
+                window.activate_window();
+                shell.open_session(session, window, cx);
+            });
+            return;
+        }
         self.views.insert(project_id, View::Terminals);
         if self.tabs.contains_key(&project_id) {
-            self.place_session(project_id, session, Axis::Vertical, window, cx);
+            self.place_session(project_id, session, None, Axis::Vertical, window, cx);
         } else {
             self.reveal = Some(session);
         }
@@ -267,36 +295,43 @@ impl Shell {
     }
 
     /// Focuses the pane of `session` (activating its tab) or splits the focused pane along
-    /// `axis` to show it.
+    /// `axis` to show it: in `tab` when that is shown in a detached window (a split started
+    /// there must not land in the main window's tab, spec §4.2), else in the workspace's
+    /// active tab.
     pub(crate) fn place_session(
         &mut self,
         project_id: Ulid,
         session: Ulid,
+        tab: Option<Ulid>,
         axis: Axis,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(tabs) = self.tabs.get(&project_id) else {
-            return;
-        };
-        if let Some(tab_id) = tabs.tab_of(session).map(|tab| tab.id)
-            && self.detached.is_detached(&DockTab::Terminal {
-                project: project_id,
-                tab_id,
-            })
+        let held = (self.tabs.get(&project_id))
+            .and_then(|tabs| tabs.tab_of(session))
+            .map(|tab| tab.id);
+        if let Some(tab_id) = held
+            && self.terminal_host(project_id, tab_id) != HostId::Main
         {
             if let Some(tabs) = self.tabs.get_mut(&project_id) {
                 tabs.focus_pane(tab_id, session);
             }
             return;
         }
+        let detached = tab.filter(|id| self.terminal_host(project_id, *id) != HostId::Main);
         let Some(tabs) = self.tabs.get_mut(&project_id) else {
             return;
         };
         if tabs.focus(session) {
             return;
         }
-        if let Some(write) = tabs.split_focused(axis, session) {
+        let write = match detached {
+            Some(tab_id) => {
+                (tabs.with_active(tab_id, |tabs| tabs.split_focused(axis, session))).flatten()
+            }
+            None => tabs.split_focused(axis, session),
+        };
+        if let Some(write) = write {
             self.save_layout(project_id, write, window, cx);
         }
     }
@@ -313,7 +348,7 @@ impl Shell {
             .get(&project_id)
             .and_then(|tabs| newest_unplaced(tabs, self.sidebar.sessions()));
         if let Some(session) = newest {
-            self.place_session(project_id, session, Axis::Vertical, window, cx);
+            self.place_session(project_id, session, None, Axis::Vertical, window, cx);
         }
     }
 

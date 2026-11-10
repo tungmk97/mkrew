@@ -278,22 +278,30 @@ impl Tabs {
         exists
     }
 
-    /// Activates the tab `offset` places after the active one, wrapping around.
-    pub fn activate_offset(&mut self, offset: isize) {
+    /// Activates the tab `offset` places after the active one, wrapping around, among the tabs
+    /// that are not `hidden` (shown in a detached window).
+    pub fn activate_offset(&mut self, offset: isize, hidden: impl Fn(Ulid) -> bool) {
+        let shown: Vec<Ulid> = (self.tabs.iter())
+            .map(|tab| tab.id)
+            .filter(|id| !hidden(*id))
+            .collect();
         let Some(index) = self
             .active
-            .and_then(|id| self.tabs.iter().position(|t| t.id == id))
+            .and_then(|id| shown.iter().position(|shown| *shown == id))
         else {
             return;
         };
-        let len = self.tabs.len() as isize;
-        let next = (index as isize + offset).rem_euclid(len) as usize;
-        self.active = Some(self.tabs[next].id);
+        let next = (index as isize + offset).rem_euclid(shown.len() as isize) as usize;
+        self.active = Some(shown[next]);
     }
 
-    /// Activates the tab at `index` (0-based); false if there is none.
-    pub fn activate_nth(&mut self, index: usize) -> bool {
-        let Some(tab_id) = self.tabs.get(index).map(|tab| tab.id) else {
+    /// Activates the `index`-th (0-based) tab that is not `hidden`; false if there is none.
+    pub fn activate_nth(&mut self, index: usize, hidden: impl Fn(Ulid) -> bool) -> bool {
+        let Some(tab_id) = (self.tabs.iter())
+            .map(|tab| tab.id)
+            .filter(|id| !hidden(*id))
+            .nth(index)
+        else {
             return false;
         };
         self.active = Some(tab_id);
@@ -338,26 +346,55 @@ impl Tabs {
         self.move_tab(tab_id, to)
     }
 
-    /// The active tab's pin group and place in it: (pinned, index among those tabs, how many
-    /// there are). What Move tab left / right steps from.
-    pub fn active_place(&self) -> Option<(bool, usize, usize)> {
+    /// Moves the active tab one place (`by` -1 / 1) along the tabs of its pin group that are
+    /// not `hidden` (shown in a detached window): Move tab left / right never steps over a tab
+    /// the strip does not show. Applied at once; returns the `tab.move` to send, `None` at
+    /// either end.
+    pub fn move_active(
+        &mut self,
+        by: isize,
+        hidden: impl Fn(Ulid) -> bool,
+    ) -> Option<TabMoveParams> {
         let active = self.active()?;
+        let (id, pinned) = (active.id, active.pinned);
         let group: Vec<Ulid> = (self.tabs.iter())
-            .filter(|tab| tab.pinned == active.pinned)
+            .filter(|tab| tab.pinned == pinned)
             .map(|tab| tab.id)
             .collect();
-        let at = group.iter().position(|id| *id == active.id)?;
-        Some((active.pinned, at, group.len()))
+        let shown: Vec<Ulid> = (group.iter().copied())
+            .filter(|tab| !hidden(*tab))
+            .collect();
+        let from = shown.iter().position(|tab| *tab == id)?;
+        let neighbour = shown[crate::sidebar::step_index(shown.len(), from, by)?];
+        // Left: before the neighbour. Right: before whatever follows it, or at the end.
+        let anchor = if by < 0 {
+            Some(neighbour)
+        } else {
+            group
+                .iter()
+                .skip_while(|tab| **tab != neighbour)
+                .nth(1)
+                .copied()
+        };
+        self.move_tab_before(id, anchor)
     }
 
     /// The tabs "Close others" (`right_only` false) or "Close tabs to the right" closes from
-    /// `tab_id`'s menu: the unpinned ones besides it, or only those after it.
-    pub fn close_targets(&self, tab_id: Ulid, right_only: bool) -> Vec<Ulid> {
+    /// `tab_id`'s menu: the unpinned ones besides it, or only those after it, that `hosted`
+    /// accepts (the ones in the same window).
+    pub fn close_targets(
+        &self,
+        tab_id: Ulid,
+        right_only: bool,
+        hosted: impl Fn(Ulid) -> bool,
+    ) -> Vec<Ulid> {
         let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
             return Vec::new();
         };
         (self.tabs.iter().enumerate())
-            .filter(|&(i, tab)| !tab.pinned && i != index && (!right_only || i > index))
+            .filter(|&(i, tab)| {
+                !tab.pinned && i != index && (!right_only || i > index) && hosted(tab.id)
+            })
             .map(|(_, tab)| tab.id)
             .collect()
     }

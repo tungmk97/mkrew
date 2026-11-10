@@ -421,9 +421,17 @@ impl Shell {
         let focused_info = focused
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id))
             .cloned();
-        let active_tab = self
-            .tab_scope(window)
-            .and_then(|(project, tab_id)| Some((self.tabs.get(&project)?, tab_id)));
+        // Offered in the main window only (as in the tab menu), for the tabs on its strip.
+        let tab_closable = |right_only| {
+            (self.tab_scope(window).filter(|_| window_key.is_none())).is_some_and(
+                |(project, tab_id)| {
+                    let same = self.same_window(project, tab_id);
+                    (self.tabs.get(&project)).is_some_and(|tabs| {
+                        !tabs.close_targets(tab_id, right_only, same).is_empty()
+                    })
+                },
+            )
+        };
         let run_state = workspace.map(|id| self.run_summary(id)).unwrap_or_default();
         let context = palette::Context {
             workspace: workspace.is_some(),
@@ -434,7 +442,10 @@ impl Shell {
                 (None, Some(id), View::Editor) => {
                     self.files.get(&id).map_or(0, |view| view.tabs().len())
                 }
-                (None, Some(id), _) => self.tabs.get(&id).map_or(0, |tabs| tabs.tabs().len()),
+                (None, Some(id), _) => self.tabs.get(&id).map_or(0, |tabs| {
+                    let main = |tab: &&Tab| self.terminal_host(id, tab.id) == HostId::Main;
+                    tabs.tabs().iter().filter(main).count()
+                }),
                 (None, None, _) => 0,
             },
             file_tabs: workspace.map_or(0, |id| {
@@ -456,10 +467,8 @@ impl Shell {
             run_stopped: workspace.is_some()
                 && (run_state.rows.is_empty() || run_state.live() < run_state.rows.len()),
             run_live: run_state.any_live(),
-            tab_others: active_tab
-                .is_some_and(|(tabs, id)| !tabs.close_targets(id, false).is_empty()),
-            tab_right: active_tab
-                .is_some_and(|(tabs, id)| !tabs.close_targets(id, true).is_empty()),
+            tab_others: tab_closable(false),
+            tab_right: tab_closable(true),
             pane: focused.is_some(),
             live_session: focused_info.as_ref().is_some_and(|session| {
                 inspector::stop_action(Some(session)) != inspector::StopAction::Nothing
@@ -920,36 +929,7 @@ impl Shell {
                 self.activate_workspace(project_id, window, cx);
             }
             palette::Action::GoTo(palette::Target::Session(session_id)) => {
-                if self.detached_key(window).is_none() {
-                    self.open_session(session_id, window, cx);
-                    return;
-                }
-                // From a detached window the jump goes where the session is, and that window
-                // comes forward: never a silent change of the window we are in.
-                let tab = (self.tabs.iter())
-                    .find_map(|(project, tabs)| Some((*project, tabs.tab_of(session_id)?.id)));
-                let host = tab.map_or(HostId::Main, |(project, tab_id)| {
-                    self.terminal_host(project, tab_id)
-                });
-                if let (HostId::Detached(key), Some((project, tab_id))) = (host, tab) {
-                    let dock = DockTab::Terminal { project, tab_id };
-                    if let Some(at) = self.detached.tabs_of(key).iter().position(|t| *t == dock) {
-                        self.detached.select(key, at);
-                    }
-                    self.focus_session_pane(session_id);
-                    self.windows_dirty = true;
-                    self.in_window(host, cx, move |shell, window, cx| {
-                        window.activate_window();
-                        shell.sync_panes(window, cx);
-                        cx.notify();
-                    });
-                } else {
-                    self.in_window(HostId::Main, cx, move |shell, window, cx| {
-                        window.activate_window();
-                        shell.open_session(session_id, window, cx);
-                    });
-                }
-                cx.notify();
+                self.open_session(session_id, window, cx);
             }
             palette::Action::GoTo(palette::Target::Task {
                 project_id,

@@ -44,6 +44,18 @@ impl Shell {
             .host_of(&DockTab::Terminal { project, tab_id })
     }
 
+    /// The workspace and tab whose layout holds `session`.
+    pub(crate) fn tab_of_session(&self, session: Ulid) -> Option<(Ulid, Ulid)> {
+        (self.tabs.iter()).find_map(|(project, tabs)| Some((*project, tabs.tab_of(session)?.id)))
+    }
+
+    /// Whether a tab of `project` is shown in the same window as `tab_id`: the tabs that
+    /// "Close others" and its siblings may reach.
+    pub(crate) fn same_window(&self, project: Ulid, tab_id: Ulid) -> impl Fn(Ulid) -> bool + '_ {
+        let host = self.terminal_host(project, tab_id);
+        move |other| self.terminal_host(project, other) == host
+    }
+
     /// The terminal tab `window` shows: the main window's shown workspace and active tab, or
     /// the detached window's active tab.
     pub(crate) fn tab_scope(&self, window: &Window) -> Option<(Ulid, Ulid)> {
@@ -87,9 +99,7 @@ impl Shell {
     /// Focuses `session`'s pane in its tab; a tab in a detached window does not become the
     /// main window's active tab (spec §4.4).
     pub(crate) fn focus_session_pane(&mut self, session: Ulid) {
-        let Some((project, tab_id)) = (self.tabs.iter())
-            .find_map(|(project, tabs)| Some((*project, tabs.tab_of(session)?.id)))
-        else {
+        let Some((project, tab_id)) = self.tab_of_session(session) else {
             return;
         };
         let detached = self.terminal_host(project, tab_id) != HostId::Main;
