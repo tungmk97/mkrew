@@ -44,7 +44,9 @@ impl Shell {
             })
             .unwrap_or_else(|| "Mkrew".to_owned());
         window.set_window_title(&title);
-        let content = self.hosts.entry(host).or_default().content.clone();
+        let content = (self.hosts.get(&host))
+            .map(|ui| ui.content.clone())
+            .unwrap_or_default();
         let body = match scope {
             Some((project, tab_id)) => {
                 let tab = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id));

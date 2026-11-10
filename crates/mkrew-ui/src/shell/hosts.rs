@@ -188,6 +188,35 @@ impl Shell {
         self.activation
             .retain(|host| *host != HostId::Detached(key));
         self.windows_dirty = true;
+        // A popover of the closing window has no one to draw it: close it, and give the
+        // keyboard back in the main window.
+        let gone = HostId::Detached(key);
+        let menu = self.menu_host == gone && self.menu_open();
+        let palette = self.palette_host == gone && self.palette.is_some();
+        if menu {
+            self.close_menus();
+        }
+        if palette {
+            self.palette = None;
+            self.palette_host = HostId::Main;
+            self.palette_return = None;
+        }
+        self.menu_host = if self.menu_host == gone {
+            HostId::Main
+        } else {
+            self.menu_host
+        };
+        self.palette_host = if self.palette_host == gone {
+            HostId::Main
+        } else {
+            self.palette_host
+        };
+        if menu || palette {
+            self.in_window(HostId::Main, cx, |shell, window, cx| {
+                shell.restore_theme_pick(window, cx);
+                shell.focus_pane(window, cx);
+            });
+        }
         cx.defer(move |cx| {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         });

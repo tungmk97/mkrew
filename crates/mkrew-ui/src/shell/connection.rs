@@ -779,6 +779,7 @@ impl Shell {
         self.quick_open = None;
         self.restore_theme_pick(window, cx);
         self.palette = None;
+        self.palette_host = HostId::Main;
         self.prompt_picker = None;
         self.slash_picker = None;
         self.palette_return = None;

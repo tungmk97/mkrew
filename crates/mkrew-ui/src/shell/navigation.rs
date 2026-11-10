@@ -535,6 +535,7 @@ impl Shell {
         }
         self.workspace_menu = None;
         self.palette_scroll.scroll_to_item(palette.selected);
+        self.palette_host = self.host_of(window);
         self.palette = Some(palette);
         let terminal = self.focused_session(window).filter(|session| {
             self.panes
@@ -604,6 +605,7 @@ impl Shell {
         // Esc from the theme picker: back to the theme it opened on.
         self.restore_theme_pick(window, cx);
         self.palette = None;
+        self.palette_host = HostId::Main;
         match self.palette_return.take() {
             Some((focus, session))
                 if session.is_none_or(|session| self.panes.contains_key(&session)) =>
@@ -918,7 +920,36 @@ impl Shell {
                 self.activate_workspace(project_id, window, cx);
             }
             palette::Action::GoTo(palette::Target::Session(session_id)) => {
-                self.open_session(session_id, window, cx);
+                if self.detached_key(window).is_none() {
+                    self.open_session(session_id, window, cx);
+                    return;
+                }
+                // From a detached window the jump goes where the session is, and that window
+                // comes forward: never a silent change of the window we are in.
+                let tab = (self.tabs.iter())
+                    .find_map(|(project, tabs)| Some((*project, tabs.tab_of(session_id)?.id)));
+                let host = tab.map_or(HostId::Main, |(project, tab_id)| {
+                    self.terminal_host(project, tab_id)
+                });
+                if let (HostId::Detached(key), Some((project, tab_id))) = (host, tab) {
+                    let dock = DockTab::Terminal { project, tab_id };
+                    if let Some(at) = self.detached.tabs_of(key).iter().position(|t| *t == dock) {
+                        self.detached.select(key, at);
+                    }
+                    self.focus_session_pane(session_id);
+                    self.windows_dirty = true;
+                    self.in_window(host, cx, move |shell, window, cx| {
+                        window.activate_window();
+                        shell.sync_panes(window, cx);
+                        cx.notify();
+                    });
+                } else {
+                    self.in_window(HostId::Main, cx, move |shell, window, cx| {
+                        window.activate_window();
+                        shell.open_session(session_id, window, cx);
+                    });
+                }
+                cx.notify();
             }
             palette::Action::GoTo(palette::Target::Task {
                 project_id,

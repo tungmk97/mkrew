@@ -104,6 +104,7 @@ impl Shell {
     /// through `dismiss_menus`.
     pub(crate) fn close_menus(&mut self) {
         self.tab_menu = None;
+        self.menu_host = HostId::Main;
         self.layout_menu = None;
         self.pane_menu = None;
         self.share_menu = None;

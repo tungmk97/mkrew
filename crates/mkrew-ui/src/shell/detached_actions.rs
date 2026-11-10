@@ -37,9 +37,7 @@ impl Shell {
     ) {
         self.hosts.insert(HostId::Detached(key), HostUi::default());
         self.windows_dirty = true;
-        if self.window_alive(window) {
-            self.sync_panes(window, cx);
-        }
+        self.sync_panes_if_alive(window, cx);
         let shell = cx.entity();
         let mode = cx.theme().mode;
         cx.spawn(async move |this, cx| {
@@ -110,9 +108,11 @@ impl Shell {
 
     /// `window` is still one of ours: not a detached window that `close_os_window` just let
     /// go (it is gone once the current update ends, and `host_of` reads it as the main one).
-    fn window_alive(&self, window: &Window) -> bool {
+    fn sync_panes_if_alive(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let handle = window.window_handle();
-        handle == self.main_window || self.windows.contains_key(&handle)
+        if handle == self.main_window || self.windows.contains_key(&handle) {
+            self.sync_panes(window, cx);
+        }
     }
 
     /// Every attached pane of `key`'s tabs now lives in `window`.
@@ -180,9 +180,7 @@ impl Shell {
             window.activate_window();
             cx.notify();
         });
-        if self.window_alive(window) {
-            self.sync_panes(window, cx);
-        }
+        self.sync_panes_if_alive(window, cx);
         cx.notify();
     }
 
@@ -370,9 +368,7 @@ impl Shell {
             _ => {}
         }
         self.windows_dirty = true;
-        if self.window_alive(window) {
-            self.sync_panes(window, cx);
-        }
+        self.sync_panes_if_alive(window, cx);
         cx.notify();
     }
 }
