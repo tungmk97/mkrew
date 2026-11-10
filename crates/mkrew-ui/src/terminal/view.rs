@@ -51,6 +51,8 @@ pub struct TerminalPane {
     theme: Theme,
     rows: Rc<RefCell<RowCache<ShapedRow>>>,
     focus_handle: FocusHandle,
+    /// Appearance and blur of the window the pane is in; replaced by [`TerminalPane::rehost`].
+    window_subscriptions: [gpui::Subscription; 2],
     /// Signalled after each paint; paces the owner's output drain loop.
     painted: async_channel::Sender<()>,
     /// `Some(exit_code)` once the session's process exited.
@@ -184,17 +186,8 @@ impl TerminalPane {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
-        cx.observe_window_appearance(window, |_, _, cx| cx.notify())
-            .detach();
         let focus_handle = cx.focus_handle();
-        // Labels belong to the keys that type them: leaving the pane ends them.
-        cx.on_blur(&focus_handle, window, |pane, _, cx| {
-            if pane.hints.is_some() {
-                pane.stop_hints();
-                cx.notify();
-            }
-        })
-        .detach();
+        let window_subscriptions = Self::window_subscriptions(&focus_handle, window, cx);
         Self {
             session_id,
             connection,
@@ -202,6 +195,7 @@ impl TerminalPane {
             theme: cx.theme().clone(),
             rows: Rc::default(),
             focus_handle,
+            window_subscriptions,
             painted,
             exited,
             geometry: None,
@@ -217,6 +211,29 @@ impl TerminalPane {
             hints: None,
             files_refused: false,
         }
+    }
+
+    /// The pane now shows in `window` (ADR 0096): its appearance and blur follow that window.
+    /// Emulator, scrollback, selection, copy mode and focus handle stay.
+    pub fn rehost(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.window_subscriptions = Self::window_subscriptions(&self.focus_handle, window, cx);
+        cx.notify();
+    }
+
+    fn window_subscriptions(
+        focus_handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> [gpui::Subscription; 2] {
+        let appearance = cx.observe_window_appearance(window, |_, _, cx| cx.notify());
+        // Labels belong to the keys that type them: leaving the pane ends them.
+        let blur = cx.on_blur(focus_handle, window, |pane, _, cx| {
+            if pane.hints.is_some() {
+                pane.stop_hints();
+                cx.notify();
+            }
+        });
+        [appearance, blur]
     }
 
     pub fn session_id(&self) -> Ulid {
