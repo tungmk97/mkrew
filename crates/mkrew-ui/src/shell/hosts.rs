@@ -19,7 +19,6 @@ pub(crate) struct HostUi {
 /// Saved windows waiting until every workspace they show has its tabs loaded.
 pub(crate) struct Restore {
     pub(crate) windows: Vec<detached::SavedWindow>,
-    pub(crate) waiting: HashSet<Ulid>,
 }
 
 impl Shell {
@@ -224,14 +223,16 @@ impl Shell {
         });
     }
 
-    /// Writes `windows.json` (spec §6.1); a failure is a toast. Not before the saved windows
-    /// were read and opened: an app that never reached its daemon must not erase them.
+    /// Writes `windows.json` (spec §6.1): the live windows, plus the saved ones a pending
+    /// restore has not opened yet, so neither is lost. Not before the file was read (an app
+    /// that never got that far must not erase it). A failed write is a toast (once) and is
+    /// tried again on the next tick.
     pub(crate) fn save_windows(&mut self, cx: &mut Context<'_, Self>) {
-        if !self.restored_once || self.restore.is_some() {
+        if !self.restored_once {
             return;
         }
         self.windows_dirty = false;
-        let windows: Vec<detached::SavedWindow> = (self.detached.windows().iter())
+        let live: Vec<detached::SavedWindow> = (self.detached.windows().iter())
             .filter_map(|window| {
                 let ui = self.hosts.get(&HostId::Detached(window.key))?;
                 let bounds = ui.restore;
@@ -248,9 +249,17 @@ impl Shell {
                 })
             })
             .collect();
-        if let Err(error) = detached::save(&self.windows_path, &windows) {
-            tracing::warn!("cannot save the detached windows: {error}");
-            self.toast_error(format!("Cannot save the detached windows: {error}"), cx);
+        let pending = self.restore.as_ref().map_or(&[][..], |r| &r.windows);
+        let windows = detached::merge_saved(live, pending);
+        match detached::save(&self.windows_path, &windows) {
+            Ok(()) => self.windows_save_failed = false,
+            Err(error) => {
+                tracing::warn!("cannot save the detached windows: {error}");
+                self.windows_dirty = true;
+                if !std::mem::replace(&mut self.windows_save_failed, true) {
+                    self.toast_error(format!("Cannot save the detached windows: {error}"), cx);
+                }
+            }
         }
     }
 
@@ -267,32 +276,37 @@ impl Shell {
             Ok(_) => return,
             Err(error) => return tracing::warn!("ignoring the detached windows file: {error}"),
         };
-        let waiting: HashSet<Ulid> = (windows.iter())
-            .flat_map(|w| w.tabs.iter().map(DockTab::project))
-            .filter(|project| !self.tabs.contains_key(project))
-            .collect();
-        for &project in &waiting {
-            self.load_tabs(project, window, cx);
-        }
-        self.restore = Some(Restore { windows, waiting });
-        self.restore_progress(None, window, cx);
+        self.restore = Some(Restore { windows });
+        self.load_restore_tabs(window, cx);
+        self.restore_progress(window, cx);
     }
 
-    /// `project`'s tabs answered (or failed): once none is awaited, the saved windows open
-    /// with the tabs that still exist.
-    pub(crate) fn restore_progress(
-        &mut self,
-        project: Option<Ulid>,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
+    /// The pending restore's workspaces whose tabs are not loaded: saved tabs of a workspace the
+    /// daemon no longer lists are gone (dropped); one that did not answer (failed, or the
+    /// connection was lost) keeps waiting.
+    fn restore_waiting(&mut self) -> HashSet<Ulid> {
+        let listed: HashSet<Ulid> = self.sidebar.projects().iter().map(|p| p.id).collect();
         let Some(restore) = self.restore.as_mut() else {
-            return;
+            return HashSet::new();
         };
-        if let Some(project) = project {
-            restore.waiting.remove(&project);
+        restore.windows = std::mem::take(&mut restore.windows)
+            .into_iter()
+            .map(|saved| saved.keeping(|tab| listed.contains(&tab.project())))
+            .filter(|saved| !saved.tabs.is_empty())
+            .collect();
+        detached::waiting_projects(&restore.windows, |project| self.tabs.contains_key(&project))
+    }
+
+    fn load_restore_tabs(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        for project in self.restore_waiting() {
+            self.load_tabs(project, window, cx);
         }
-        if !restore.waiting.is_empty() {
+    }
+
+    /// A workspace's tabs answered: once none is awaited, the saved windows open with the tabs
+    /// that still exist.
+    pub(crate) fn restore_progress(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.restore.is_none() || !self.restore_waiting().is_empty() {
             return;
         }
         let Some(restore) = self.restore.take() else {
@@ -318,17 +332,17 @@ impl Shell {
         }
     }
 
-    /// After a reconnect the tabs are read again: those of every workspace a detached window
-    /// (or a restore still waiting) shows.
+    /// After a reconnect (or a failed answer) the tabs are read again: those of every listed
+    /// workspace a detached window or a pending restore shows.
     pub(crate) fn reload_detached_tabs(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.load_restore_tabs(window, cx);
+        let listed: HashSet<Ulid> = self.sidebar.projects().iter().map(|p| p.id).collect();
         let shown = (self.detached.windows().iter())
             .flat_map(|w| w.tabs.iter().map(DockTab::project))
-            .chain(self.restore.iter().flat_map(|r| r.waiting.iter().copied()))
+            .filter(|project| listed.contains(project) && !self.tabs.contains_key(project))
             .collect::<HashSet<_>>();
         for project in shown {
-            if !self.tabs.contains_key(&project) {
-                self.load_tabs(project, window, cx);
-            }
+            self.load_tabs(project, window, cx);
         }
     }
 

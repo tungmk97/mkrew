@@ -429,3 +429,32 @@ fn keeping_drops_gone_tabs_and_follows_the_shown_one() {
     assert_eq!(kept.tabs, vec![a, b]);
     assert_eq!(kept.active, 0, "the shown tab is gone: the first one");
 }
+
+#[test]
+fn a_workspace_that_did_not_answer_stays_waiting() {
+    let (a, b) = (term(), term());
+    let window = saved(vec![a, b]);
+    let (pa, pb) = (a.project(), b.project());
+    assert_eq!(
+        waiting_projects(std::slice::from_ref(&window), |_| false),
+        HashSet::from([pa, pb])
+    );
+    assert_eq!(
+        waiting_projects(std::slice::from_ref(&window), |project| project == pa),
+        HashSet::from([pb]),
+        "a failed tab.list leaves its workspace waiting"
+    );
+    assert!(waiting_projects(&[window], |_| true).is_empty());
+}
+
+#[test]
+fn merging_keeps_live_and_pending_windows_without_repeating_a_tab() {
+    let (a, b, c) = (term(), term(), term());
+    let live = saved(vec![a]);
+    let pending = [saved(vec![a, b]), saved(vec![a]), saved(vec![c])];
+    let merged = merge_saved(vec![live.clone()], &pending);
+    assert_eq!(merged.len(), 3);
+    assert_eq!(merged[0], live);
+    assert_eq!(merged[1].tabs, vec![b], "the live window wins a shared tab");
+    assert_eq!(merged[2].tabs, vec![c]);
+}

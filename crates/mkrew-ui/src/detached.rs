@@ -3,6 +3,7 @@
 //! main window.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::Path;
 
 use ulid::Ulid;
@@ -357,6 +358,27 @@ impl SavedWindow {
             ..self
         }
     }
+}
+
+/// The workspaces of `windows` whose tabs are not `loaded` yet: a saved tab can only be called
+/// gone once its workspace answered (a failed or lost answer leaves it waiting).
+pub fn waiting_projects(windows: &[SavedWindow], loaded: impl Fn(Ulid) -> bool) -> HashSet<Ulid> {
+    (windows.iter())
+        .flat_map(|window| window.tabs.iter().map(DockTab::project))
+        .filter(|project| !loaded(*project))
+        .collect()
+}
+
+/// What `windows.json` keeps while a restore is pending: the `live` windows, then the `pending`
+/// ones (not opened yet) without any tab a live window has.
+pub fn merge_saved(mut live: Vec<SavedWindow>, pending: &[SavedWindow]) -> Vec<SavedWindow> {
+    let shown: HashSet<DockTab> = live.iter().flat_map(|w| w.tabs.iter().copied()).collect();
+    live.extend(
+        (pending.iter().cloned())
+            .map(|window| window.keeping(|tab| !shown.contains(tab)))
+            .filter(|window| !window.tabs.is_empty()),
+    );
+    live
 }
 
 #[derive(Serialize, Deserialize)]

@@ -510,6 +510,7 @@ impl Shell {
             restore: None,
             restored_once: false,
             windows_path,
+            windows_save_failed: false,
             pending_jump: jump,
         };
         if let Status::NoMachine(text) = &shell.status {

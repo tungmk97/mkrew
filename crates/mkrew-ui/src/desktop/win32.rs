@@ -723,7 +723,12 @@ pub fn set_window_shown(window: &gpui::Window, shown: bool) {
         let hwnd = HWND(handle.hwnd.get() as *mut c_void);
         // SAFETY: `hwnd` is the live window gpui just handed us.
         unsafe {
-            let _ = ShowWindow(hwnd, if shown { SW_SHOW } else { SW_HIDE });
+            let command = match (shown, IsIconic(hwnd).as_bool()) {
+                (false, _) => SW_HIDE,
+                (true, true) => SW_RESTORE,
+                (true, false) => SW_SHOW,
+            };
+            let _ = ShowWindow(hwnd, command);
         }
     }
 }

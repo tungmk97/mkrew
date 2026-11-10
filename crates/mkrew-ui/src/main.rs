@@ -916,6 +916,8 @@ struct Shell {
     restored_once: bool,
     /// Where `windows.json` lives: this computer's file, or the machine window's own.
     windows_path: PathBuf,
+    /// The last write of `windows.json` failed (its toast shows once).
+    windows_save_failed: bool,
 }
 
 impl Render for Shell {
