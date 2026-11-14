@@ -325,6 +325,7 @@ impl Shell {
             || self.file_tab_menu.is_some()
             || self.run_menu.is_some()
             || self.workspace_switcher
+            || self.repo_menu
             || self.new_menu
             || self.run_with.is_some()
             || self.fan_out.is_some()
@@ -363,6 +364,11 @@ impl Shell {
             return self
                 .workspace
                 .map(|project_id| self.switcher_rows(project_id));
+        }
+        if self.repo_menu {
+            return self
+                .workspace
+                .map(|project_id| self.repo_menu_rows(project_id));
         }
         if self.new_menu {
             return Some(self.new_menu_rows());

@@ -890,9 +890,13 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
 - **Title bar** (44 px, ADR 0027, ADR 0034, ADR 0054), left to right: the Mkrew logo; in a machine window (ADR 0089) the machine chip (below);
   the sidebar toggle `◧`; the workspace avatar + name ▾ (a dropdown of the workspaces, click
   switches, plus "Add workspace…") followed, muted, by `⎇ master` (one repository) or
-  `⎇ N repos` (several; the only place this shows; the tooltip lists each repository's
+  `⎇ N repos ▾` (several; the only place this shows; the tooltip lists each repository's
   branch and HEAD; a workspace folder without `.git` but with child repositories shows the
-  children, ADR 0029; hidden when there is no repository; a click opens the Git tab and the diff); the
+  children, ADR 0029; hidden when there is no repository). A click on `⎇ master` opens the Git
+  tab and the diff; a click on `⎇ N repos ▾` opens a "Repositories" dropdown, one row per
+  repository in `git.repos` order (the workspace name for the folder itself, else the child
+  folder; its branch, `detached` on a detached HEAD, as the second line; `Clean` / `1 change` /
+  `N changes` on the right); a row opens that repository in the Git tab and the diff; the
   views Terminals / Board / Docs / Editor / Diff as a segmented control (tooltips show their
   shortcuts, §13; Editor and Diff only while a file tab or a diff is open); then, right-aligned,
   the Run pill, History (`◷`: finished sessions

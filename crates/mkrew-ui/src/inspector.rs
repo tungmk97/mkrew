@@ -169,11 +169,7 @@ pub struct ChangeLine {
 fn change_line(repo: &RepoSummary, workspace: &str) -> ChangeLine {
     ChangeLine {
         repo: repo.repo.clone(),
-        label: if repo.repo.is_empty() {
-            workspace.to_owned()
-        } else {
-            repo.repo.clone()
-        },
+        label: repo.label(workspace).to_owned(),
         modified: (repo.modified > 0).then(|| format!("M {}", repo.modified)),
         untracked: (repo.untracked > 0).then(|| format!("?{}", repo.untracked)),
     }

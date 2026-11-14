@@ -164,14 +164,8 @@ impl Shell {
                     let name = repo.as_deref().unwrap_or("");
                     summary.repos.iter().find(|summary| summary.repo == name)
                 });
-                let branch = summary
-                    .map(|summary| summary.branch.clone().unwrap_or_else(|| "detached".into()))
-                    .unwrap_or_default();
-                let state = match summary.map(RepoSummary::changed) {
-                    Some(0) => "Clean".to_owned(),
-                    Some(n) => format!("{n} changes"),
-                    None => String::new(),
-                };
+                let branch = summary.map(RepoSummary::branch_name).unwrap_or_default();
+                let state = summary.map(RepoSummary::state).unwrap_or_default();
                 let shown = *active == repo;
                 let item = MenuItem::new(
                     label.to_owned(),
@@ -184,7 +178,7 @@ impl Shell {
                 if branch.is_empty() {
                     item
                 } else {
-                    item.sub(branch)
+                    item.sub(branch.to_owned())
                 }
                 .row()
             })

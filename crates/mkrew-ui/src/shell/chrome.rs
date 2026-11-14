@@ -15,6 +15,33 @@ impl Shell {
         self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
+    pub(crate) fn open_repo_menu(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.begin_menu(window, cx);
+        self.repo_menu = true;
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
+    }
+
+    /// The branch chip's dropdown (several repositories): each one in `git.repos` order with
+    /// its branch and Clean / N changes; a click shows it in the Git tab and the diff.
+    pub(crate) fn repo_menu_rows(&self, project_id: Ulid) -> Rows {
+        let mut rows: Rows = vec![MenuRow::Heading("Repositories".into())];
+        let workspace = self.workspace_name(project_id);
+        let repos = self.git_summary().map_or(&[][..], |summary| &summary.repos);
+        rows.extend(repos.iter().map(|repo| {
+            let name = repo.repo.clone();
+            MenuItem::new(
+                repo.label(workspace).to_owned(),
+                act(move |shell, window, cx| {
+                    shell.review_diff(project_id, name.clone(), window, cx);
+                }),
+            )
+            .sub(repo.branch_name().to_owned())
+            .detail(repo.state())
+            .row()
+        }));
+        rows
+    }
+
     /// Every workspace (the shown one checked), then "Add workspace…".
     pub(crate) fn switcher_rows(&self, project_id: Ulid) -> Rows {
         let mut rows: Rows = self
@@ -517,9 +544,10 @@ impl Shell {
     }
 
     /// The workspace name with ▾: opens a dropdown of every workspace (click switches) and
-    /// "Add workspace…". After it, muted, the repository label `⎇ master` / `⎇ 2 repos` (its
-    /// only place; tooltip: one line per repository; a click opens the Git tab and the diff),
-    /// hidden while the summary is not loaded or the folder holds no repository.
+    /// "Add workspace…". After it, muted, the repository label `⎇ master` / `⎇ 2 repos ▾` (its
+    /// only place; tooltip: one line per repository). A click opens the Git tab and the diff
+    /// (one repository) or a dropdown of each repository's branch (several). Hidden while the
+    /// summary is not loaded or the folder holds no repository.
     pub(crate) fn render_workspace_switcher(
         &self,
         project_id: Ulid,
@@ -550,15 +578,18 @@ impl Shell {
             .text_color(rgb(theme.text))
             .hover(move |style| style.bg(rgb(hover)))
             .active(|style| style.opacity(opacity::ACTIVE))
-            .tooltip(tooltip(
-                theme,
-                "Switch workspace",
-                format!(
-                    "{} … {}",
-                    self.keymap.label(Command::Workspace(1)),
-                    self.keymap.label(Command::Workspace(9))
-                ),
-            ))
+            // Not while its dropdown is open: the tooltip would cover the rows.
+            .when(!self.workspace_switcher, |el| {
+                el.tooltip(tooltip(
+                    theme,
+                    "Switch workspace",
+                    format!(
+                        "{} … {}",
+                        self.keymap.label(Command::Workspace(1)),
+                        self.keymap.label(Command::Workspace(9))
+                    ),
+                ))
+            })
             // An open menu already closed on this mouse down (outside it): the click reopens it.
             .on_click(cx.listener(|shell, _, window, cx| {
                 shell.open_switcher(window, cx);
@@ -581,6 +612,7 @@ impl Shell {
         let repos = self.git_summary().and_then(|summary| {
             let label = summary.branch_label()?;
             let tip = summary.branch_tooltip().unwrap_or_default();
+            let many = summary.repos.len() > 1;
             Some(
                 div()
                     .id("title-branch")
@@ -598,13 +630,19 @@ impl Shell {
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .hover(move |style| style.bg(rgb(hover)))
-                    .tooltip(tooltip(
-                        theme,
-                        &tip,
-                        self.keymap.label(Command::ShowGitPanel),
-                    ))
-                    .on_click(cx.listener(|shell, _, window, cx| {
-                        if let Some(id) = shell.workspace {
+                    .when(!self.repo_menu, |el| {
+                        el.tooltip(tooltip(
+                            theme,
+                            &tip,
+                            self.keymap.label(Command::ShowGitPanel),
+                        ))
+                    })
+                    // An open menu already closed on this mouse down (outside it): the click
+                    // reopens it.
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        if many {
+                            shell.open_repo_menu(window, cx);
+                        } else if let Some(id) = shell.workspace {
                             shell.open_git(id, window, cx);
                         }
                     }))
@@ -619,7 +657,25 @@ impl Shell {
                             .overflow_hidden()
                             .text_ellipsis()
                             .child(label),
-                    ),
+                    )
+                    .when(many, |el| {
+                        el.child(icon_svg(
+                            Icon::ChevronDown,
+                            theme::ICON_SIZE_SMALL,
+                            theme.text_muted,
+                        ))
+                    }),
+            )
+        });
+        let repo_menu = (self.repo_menu && !self.modal_open()).then(|| {
+            render_menu(
+                self.menu_state(),
+                "repo-menu-panel",
+                self.repo_menu_rows(project_id),
+                None,
+                Place::Dropdown,
+                theme,
+                cx,
             )
         });
         let menu = (self.workspace_switcher && !self.modal_open()).then(|| {
@@ -639,7 +695,7 @@ impl Shell {
             .items_center()
             .gap(px(space::XS))
             .child(div().child(button).children(menu))
-            .children(repos)
+            .child(div().min_w_0().children(repos).children(repo_menu))
             .into_any_element()
     }
 

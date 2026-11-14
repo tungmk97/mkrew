@@ -21,6 +21,13 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-14 Repositories dropdown on the title bar branch chip
+
+- [ ] **Look (dark + light):** in a workspace with 2+ repositories the chip reads `⎇ N repos` with a small ▾.
+  A click opens a "Repositories" dropdown under it: one row per repository, its name, its branch as a muted second line, and `Clean` / `1 change` / `N changes` on the right.
+- [ ] **Open:** clicking a row (or ↓ then Enter) shows that repository in the Git tab and the diff; Esc or a click outside closes the dropdown.
+- [ ] **One repository:** the chip reads `⎇ master` without ▾ and a click still opens the Git tab directly.
+
 ### To verify - 2026-11-10 Detached windows for terminal tabs (ADR 0096)
 
 - [ ] **Tear off (dark + light):** drag a tab with a split out of the main window: a window opens at the pointer with the same size; both panes keep their scrollback and take keys.

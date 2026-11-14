@@ -585,6 +585,8 @@ struct Shell {
     run_menu: Option<Ulid>,
     /// The title bar's workspace dropdown is open.
     workspace_switcher: bool,
+    /// The title bar's repository dropdown (the branch chip, several repositories) is open.
+    repo_menu: bool,
     /// The title bar's "+ New" dropdown is open.
     new_menu: bool,
     /// The sidebar's "N empty workspaces" line is expanded (in memory only).

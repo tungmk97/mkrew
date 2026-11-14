@@ -1,5 +1,6 @@
 //! The git state of the shown workspace for the title bar (SPEC §10, ADR 0029): the branch
-//! chip (`master` / `2 repos`, after a branch icon) and the `Git N` badge. One `RepoSummary` per repository of
+//! chip (`master` / `2 repos`, after a branch icon; with several repositories it opens a
+//! dropdown of each one's branch) and the `Git N` badge. One `RepoSummary` per repository of
 //! the workspace folder, reduced from its `git.status` (Working mode). Pure; `main.rs` loads it.
 
 use std::collections::HashSet;
@@ -48,6 +49,29 @@ impl RepoSummary {
         self.modified + self.untracked
     }
 
+    /// The workspace name for the folder itself, else the child folder.
+    pub fn label<'a>(&'a self, workspace: &'a str) -> &'a str {
+        if self.repo.is_empty() {
+            workspace
+        } else {
+            &self.repo
+        }
+    }
+
+    /// The checked-out branch, `detached` on a detached HEAD.
+    pub fn branch_name(&self) -> &str {
+        self.branch.as_deref().unwrap_or("detached")
+    }
+
+    /// `Clean`, `1 change`, `N changes`.
+    pub fn state(&self) -> String {
+        match self.changed() {
+            0 => "Clean".to_owned(),
+            1 => "1 change".to_owned(),
+            n => format!("{n} changes"),
+        }
+    }
+
     /// `fe — main · 1a2b3c4`.
     fn line(&self) -> String {
         let name = if self.repo.is_empty() {
@@ -79,7 +103,7 @@ impl GitSummary {
     pub fn branch_label(&self) -> Option<String> {
         match self.repos.as_slice() {
             [] => None,
-            [one] => Some(one.branch.as_deref().unwrap_or("detached").to_owned()),
+            [one] => Some(one.branch_name().to_owned()),
             many => Some(format!("{} repos", many.len())),
         }
     }
@@ -212,6 +236,36 @@ mod tests {
         assert_eq!(
             fresh.branch_tooltip().as_deref(),
             Some("(root) — main · no commits")
+        );
+    }
+
+    /// The title bar's repository dropdown: a row per repository with its branch and state.
+    #[test]
+    fn dropdown_rows_name_each_repo_with_its_branch_and_state() {
+        let mut one = status(Some("main"), Some("aaaaaaaa"));
+        one.unstaged = vec![file("a.rs", ChangeKind::Modified)];
+        let mut two = status(None, Some("bbbbbbbb"));
+        two.untracked = vec![
+            file("n.txt", ChangeKind::Untracked),
+            file("m.txt", ChangeKind::Untracked),
+        ];
+        let s = summary(&[
+            ("", status(Some("dev"), Some("cccccccc"))),
+            ("fe", one),
+            ("be", two),
+        ]);
+        let rows: Vec<_> = s
+            .repos
+            .iter()
+            .map(|r| (r.label("EA"), r.branch_name(), r.state()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("EA", "dev", "Clean".to_owned()),
+                ("fe", "main", "1 change".to_owned()),
+                ("be", "detached", "2 changes".to_owned()),
+            ]
         );
     }
 
