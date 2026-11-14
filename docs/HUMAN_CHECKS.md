@@ -21,6 +21,11 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-14 Git commit box footer on two rows
+
+- [ ] **Look (dark + light):** under the commit message, `Nothing staged` (or `N staged`) sits left and `0 / 72` right on one line; ✦ Generate and the Commit button sit right-aligned on the next line.
+  Drag the right panel to its narrowest (240 px): nothing overflows; the Commit button moves under Generate if they no longer fit side by side.
+
 ### To verify - 2026-11-14 Repositories dropdown on the title bar branch chip
 
 - [ ] **Look (dark + light):** in a workspace with 2+ repositories the chip reads `⎇ N repos` with a small ▾.

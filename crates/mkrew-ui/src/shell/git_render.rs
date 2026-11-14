@@ -829,8 +829,8 @@ impl Shell {
     }
 
     /// The commit box pinned under the list (Working changes): the message (Enter breaks a
-    /// line, Ctrl+Enter or Commit commits the staged changes); under it the summary line's
-    /// length over what is staged, ✦ Generate (accent) and Commit (muted while it cannot go).
+    /// line, Ctrl+Enter or Commit commits the staged changes); under it what is staged and the
+    /// summary line's length, then ✦ Generate (accent) and Commit (muted while it cannot go).
     pub(crate) fn git_commit_box(
         &self,
         project_id: Ulid,
@@ -945,35 +945,37 @@ impl Shell {
                     .text_color(rgb(theme.text))
                     .child(format!("✕ {error}"))
             }))
+            // Counts and buttons on rows of their own: on one row the buttons squeezed the
+            // counts into fragments (`0 /` `72` `No…`) at the default panel width.
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(space::S))
+                    .whitespace_nowrap()
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_subtle))
+                    .child(div().flex_1().min_w_0().truncate().child(summary))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .text_size(font_size::META)
-                            .text_color(rgb(theme.text_subtle))
-                            .child(
-                                div()
-                                    .id("git-commit-length")
-                                    .when(too_long, |el| el.text_color(rgb(theme.danger_text)))
-                                    .tooltip(tooltip(
-                                        theme,
-                                        "Length of the summary line (keep it under 72)",
-                                        "",
-                                    ))
-                                    .child(format!(
-                                        "{summary_len} / {}",
-                                        git_actions::SUMMARY_LIMIT
-                                    )),
-                            )
-                            .child(div().truncate().child(summary)),
-                    )
+                            .id("git-commit-length")
+                            .flex_none()
+                            .when(too_long, |el| el.text_color(rgb(theme.danger_text)))
+                            .tooltip(tooltip(
+                                theme,
+                                "Length of the summary line (keep it under 72)",
+                                "",
+                            ))
+                            .child(format!("{summary_len} / {}", git_actions::SUMMARY_LIMIT)),
+                    ),
+            )
+            // Wraps at the narrowest panel instead of overflowing it.
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(space::S))
                     .child(write.flex_none().tooltip(tooltip(
                         theme,
                         "Write the message with the workspace's default agent (Conventional Commits)",
