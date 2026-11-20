@@ -137,6 +137,17 @@ pub enum CopyEnd {
 }
 
 /// Terminal state machine fed with a session's output.
+/// What a wheel scroll over the pane does ([`Emulator::wheel`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wheel {
+    /// Scrolls the UI-side history.
+    History,
+    /// Sent as Up/Down arrow presses (alternate scroll).
+    Arrows,
+    /// Sent as wheel button reports; `sgr` = the program asked for the SGR encoding.
+    Mouse { sgr: bool },
+}
+
 pub struct Emulator {
     term: Term<VoidListener>,
     parser: Processor<StdSyncHandler>,
@@ -364,12 +375,20 @@ impl Emulator {
         }
     }
 
-    /// A full-screen program (alternate screen, no history) asked for the wheel as arrow keys
-    /// and does not read the mouse itself.
-    pub fn wheel_sends_arrows(&self) -> bool {
+    /// Where the wheel goes: to a program that reads the mouse (Claude Code's full-screen view
+    /// scrolls its own transcript), as arrow keys to a full-screen program that asked for
+    /// alternate scroll, else the UI-side history.
+    pub fn wheel(&self) -> Wheel {
         let mode = self.term.mode();
-        mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
-            && !mode.intersects(TermMode::MOUSE_MODE)
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            Wheel::Mouse {
+                sgr: mode.contains(TermMode::SGR_MOUSE),
+            }
+        } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
+            Wheel::Arrows
+        } else {
+            Wheel::History
+        }
     }
 
     /// Lines scrolled back into the history; 0 = following the live screen.
@@ -796,13 +815,35 @@ mod tests {
     fn wheel_becomes_arrows_only_in_alt_screen_without_mouse_mode() {
         let mut emu = Emulator::new(10, 3);
         // ALTERNATE_SCROLL is on by default; the main screen scrolls the history.
-        assert!(!emu.wheel_sends_arrows());
+        assert_eq!(emu.wheel(), Wheel::History);
         emu.advance(b"\x1b[?1049h");
-        assert!(emu.wheel_sends_arrows());
+        assert_eq!(emu.wheel(), Wheel::Arrows);
         emu.advance(b"\x1b[?1000h");
-        assert!(!emu.wheel_sends_arrows(), "program reads the mouse");
+        assert_eq!(
+            emu.wheel(),
+            Wheel::Mouse { sgr: false },
+            "program reads the mouse"
+        );
         emu.advance(b"\x1b[?1000l\x1b[?1007l");
-        assert!(!emu.wheel_sends_arrows(), "alternate scroll off");
+        assert_eq!(emu.wheel(), Wheel::History, "alternate scroll off");
+    }
+
+    #[test]
+    fn claude_code_full_screen_gets_sgr_wheel_reports() {
+        let mut emu = Emulator::new(10, 3);
+        // What Claude Code's full-screen view sends on start (from a real session log).
+        emu.advance(b"\x1b[?1049h\x1b[2J\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h");
+        assert_eq!(emu.wheel(), Wheel::Mouse { sgr: true });
+        // On exit it turns the mouse off and leaves the alternate screen.
+        emu.advance(b"\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1049l");
+        assert_eq!(emu.wheel(), Wheel::History);
+    }
+
+    #[test]
+    fn a_main_screen_program_that_reads_the_mouse_gets_the_wheel() {
+        let mut emu = Emulator::new(10, 3);
+        emu.advance(b"\x1b[?1002h\x1b[?1006h");
+        assert_eq!(emu.wheel(), Wheel::Mouse { sgr: true });
     }
 
     fn found_cols(emu: &Emulator, row: usize) -> Vec<(usize, Found)> {

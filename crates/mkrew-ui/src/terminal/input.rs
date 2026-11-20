@@ -115,6 +115,21 @@ pub fn wheel_bytes(lines: i32, mode: InputMode) -> Vec<u8> {
     arrow.repeat(lines.unsigned_abs() as usize)
 }
 
+/// Mouse tracking: `lines` wheel lines (positive = up) as that many xterm wheel button reports
+/// (64 up, 65 down) at the 0-based cell `col`, `row`. SGR form when `sgr`, else the legacy
+/// `CSI M` bytes, whose coordinates stop at 223.
+pub fn wheel_report_bytes(lines: i32, col: usize, row: usize, sgr: bool) -> Vec<u8> {
+    let button: u8 = if lines > 0 { 64 } else { 65 };
+    let report = if sgr {
+        format!("\x1b[<{button};{};{}M", col + 1, row + 1).into_bytes()
+    } else {
+        // 32 + the 1-based coordinate; `min(222)` keeps it ≤ 255, so the cast cannot truncate.
+        let coord = |n: usize| (n.min(222) + 33) as u8;
+        vec![0x1b, b'[', b'M', 32 + button, coord(col), coord(row)]
+    };
+    report.repeat(lines.unsigned_abs() as usize)
+}
+
 /// Keys whose encoding already carries the modifiers (no extra ESC prefix for Alt).
 fn is_csi(key: &str) -> bool {
     matches!(
@@ -375,6 +390,27 @@ mod tests {
         assert_eq!(wheel_bytes(2, NORMAL), b"\x1b[A\x1b[A".to_vec());
         assert_eq!(wheel_bytes(-1, NORMAL), b"\x1b[B".to_vec());
         assert_eq!(wheel_bytes(-2, APP), b"\x1bOB\x1bOB".to_vec());
+    }
+
+    #[test]
+    fn wheel_lines_become_mouse_wheel_reports() {
+        assert_eq!(
+            wheel_report_bytes(2, 4, 9, true),
+            b"\x1b[<64;5;10M\x1b[<64;5;10M".to_vec()
+        );
+        assert_eq!(
+            wheel_report_bytes(-1, 0, 0, true),
+            b"\x1b[<65;1;1M".to_vec()
+        );
+        assert_eq!(
+            wheel_report_bytes(-1, 4, 9, false),
+            vec![0x1b, b'[', b'M', 32 + 65, 32 + 5, 32 + 10]
+        );
+        assert_eq!(
+            wheel_report_bytes(1, 500, 0, false),
+            vec![0x1b, b'[', b'M', 32 + 64, 255, 33],
+            "legacy coordinates clamp"
+        );
     }
 
     #[test]

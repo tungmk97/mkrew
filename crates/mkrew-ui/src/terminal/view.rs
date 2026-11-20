@@ -32,10 +32,12 @@ use crate::field::{caret_mouse, caret_text, copy_selection};
 use crate::icons::{Icon, icon_svg};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::copy_mode::{CopyKey, copy_key};
-use crate::terminal::emulator::{CopyEnd, Emulator, Grid};
+use crate::terminal::emulator::{CopyEnd, Emulator, Grid, Wheel};
 use crate::terminal::find::{FindBar, FindKey, FindStatus, find_key};
 use crate::terminal::hints::{self, Typed};
-use crate::terminal::input::{KeyAction, is_copy_key, key_action, paste_bytes, wheel_bytes};
+use crate::terminal::input::{
+    KeyAction, is_copy_key, key_action, paste_bytes, wheel_bytes, wheel_report_bytes,
+};
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
 use crate::terminal::links::{self, Target};
 use crate::theme::{self, ActiveTheme, Theme, font_size, radius, space};
@@ -668,8 +670,9 @@ impl TerminalPane {
         self.selecting = false;
     }
 
-    /// The wheel scrolls the UI-side history (wheel up = back in time); full-screen programs
-    /// that asked for alternate scroll get arrow keys instead.
+    /// The wheel scrolls the UI-side history (wheel up = back in time); a program that reads the
+    /// mouse gets wheel reports, and full-screen programs that asked for alternate scroll get
+    /// arrow keys instead.
     fn scroll_wheel(
         &mut self,
         event: &ScrollWheelEvent,
@@ -692,9 +695,21 @@ impl TerminalPane {
         if whole == 0 {
             return;
         }
-        if self.emulator.wheel_sends_arrows() && !self.emulator.copy_mode() {
+        let wheel = if self.emulator.copy_mode() {
+            Wheel::History
+        } else {
+            self.emulator.wheel()
+        };
+        if wheel != Wheel::History {
             if self.exited.is_none() {
-                let data = wheel_bytes(whole, self.emulator.input_mode());
+                let data = match wheel {
+                    Wheel::Mouse { sgr } => {
+                        let (row, col) = (self.cell_at(event.position))
+                            .map_or((0, 0), |(row, col, _)| (row, col));
+                        wheel_report_bytes(whole, col, row, sgr)
+                    }
+                    _ => wheel_bytes(whole, self.emulator.input_mode()),
+                };
                 self.input(data, cx);
             }
         } else {

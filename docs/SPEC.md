@@ -1037,6 +1037,9 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
 - **Terminal rendering:** cell grid from `alacritty_terminal`; 256-color/truecolor, cursor,
   selection & copy, paste (bracketed), scrollback (UI-side, 1,000 lines like the daemon's, only for
   attached panes; the History replay pane keeps 10,000; ADR 0088),
+  wheel (scrolls that history; a program that turned on mouse tracking, like Claude Code's
+  full-screen view, gets wheel reports instead, SGR when it asked; a full-screen program with
+  alternate scroll gets Up/Down; copy mode always scrolls the history),
   search, resize → `session.resize`. Performance rules (mandatory — this is the hottest path):
     - Batch adjacent cells with identical style into one shaped text run per row (as Zed's
       terminal element does). Never one GPUI element per cell.
