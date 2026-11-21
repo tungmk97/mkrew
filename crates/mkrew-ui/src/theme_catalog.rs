@@ -94,7 +94,8 @@ impl ThemeCatalog {
                     continue;
                 }
             };
-            let taken = (catalog.themes.iter().chain(&loaded)).find(|t| *t.name == *parsed.name);
+            let taken = (catalog.themes.iter().chain(&loaded))
+                .find(|t| t.name.eq_ignore_ascii_case(&parsed.name));
             if let Some(other) = taken {
                 let by = match &other.origin {
                     Origin::BuiltIn => "the built-in theme".to_owned(),
@@ -302,6 +303,31 @@ mod tests {
         assert_eq!(
             names(&catalog).iter().filter(|n| **n == "Dracula").count(),
             1
+        );
+    }
+
+    #[test]
+    fn a_name_differing_only_in_case_is_a_clash() {
+        // File-name order is byte order: AURORA.toml is taken before Aurora.toml.
+        let catalog = ThemeCatalog::from_files(vec![
+            file("dracula", true),
+            file("Aurora", true),
+            file("AURORA", true),
+        ]);
+        assert!(catalog.find("dracula").is_none());
+        assert!(catalog.find("Dracula").is_some());
+        assert!(catalog.find("AURORA").is_some() && catalog.find("Aurora").is_none());
+        let taken: Vec<_> = catalog.errors().iter().map(|e| e.file.as_str()).collect();
+        assert_eq!(taken, ["Aurora.toml", "dracula.toml"]);
+        assert!(
+            catalog.errors()[0].message.contains("AURORA.toml"),
+            "{:?}",
+            catalog.errors()
+        );
+        assert!(
+            catalog.errors()[1].message.contains("built-in"),
+            "{:?}",
+            catalog.errors()
         );
     }
 
