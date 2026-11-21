@@ -940,12 +940,12 @@ fn fake_agent_hooks_drive_the_session_state() {
     let waited = env.ok(&["wait", id, "--until", "needs_input", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "needs_input");
 
-    // The answer makes the fake agent run `mk hook fake busy`.
-    let answered = Instant::now();
+    // The answer makes the fake agent run `mk hook fake busy`. The deadline is only a bound for
+    // a loaded machine: the scenario's own 3 s sleep ends the working state, so a late
+    // "working" fails the next wait. No stopwatch: it also timed two process starts.
     env.ok(&["send", id, "y"]);
-    let waited = env.ok(&["wait", id, "--until", "working", "--timeout", "2000"]);
+    let waited = env.ok(&["wait", id, "--until", "working", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "working");
-    assert!(answered.elapsed() < Duration::from_secs(2));
     let waited = env.ok(&["wait", id, "--until", "done", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "done");
 
