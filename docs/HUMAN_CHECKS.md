@@ -69,6 +69,23 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
 - [ ] **Board and Jira look changes (spec 5.2, not bugs):** the Jira List row now hovers with `theme.hover` (it used `row_hover`).
   The cards keep their border-light hover and gain a press dim.
   Pressing a nested chip (Edit, the fold chevron) dims its card or row.
+- [ ] **Files (dark + light):** hover a file tree row: a fill and a pointer.
+  The row at the cursor and the opened row show a pointer and no fill, and a click on either still opens it.
+  Hover the "Search files..." box and the Ignored chip: a fill.
+  Turn Ignored on: it shows the selected fill and a pointer.
+- [ ] **Docs (dark + light):** hover a doc list row, the inactive Preview / Source / Split segment, and a block in Preview: each shows a fill.
+  The active segment shows no pointer and no fill.
+  Click a block, Shift+click another: both lines are picked as before.
+  Hover a source line in Docs Source: a fill; click and Shift+click still pick.
+- [ ] **Preview extras (dark + light):** hover the Copy chip of a code block and the Expand chip of a diagram: each shows a fill on its block.
+  In the Files preview hover a task checkbox: a fill around the box, and a ticked box keeps its accent fill.
+  Click ticks the source.
+- [ ] **Comments and split grip (dark + light):** hover a comment thread header with lines: a fill, and a click picks them.
+  Hover a thread header without lines: no pointer.
+  Hover the Markdown split grip: the tint shows; drag and double-click still work.
+- [ ] **Files and Docs look changes (spec 5.2, not bugs):** the file row, doc row, doc block and source line now hover with `theme.hover` (they used `card` or `surface_raised`).
+  The Ignored chip, the search box and the mode segment turn their label to full text on hover.
+  The row at the cursor, the opened file, a picked doc block or source line and the Ignored chip while on no longer dim while pressed.
 
 ### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
 - [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.

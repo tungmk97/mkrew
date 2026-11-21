@@ -72,33 +72,33 @@ impl Shell {
         .id("files-search")
         .flex_1()
         .min_w_0()
-        .cursor_pointer()
-        .active(|style| style.opacity(opacity::ACTIVE))
+        .pressable(Look::Chip, true, theme)
         .tooltip(tooltip(theme, "Find a file of this workspace", search_keys))
-        .on_click(cx.listener(|shell, _, window, cx| {
-            shell.open_palette_on(palette::Scope::Files, window, cx);
-        }));
+        .on_press(
+            true,
+            cx.listener(|shell, _, window, cx| {
+                shell.open_palette_on(palette::Scope::Files, window, cx);
+            }),
+        );
         let ignored = button_frame("files-ignored", "Ignored")
             .flex_none()
-            .cursor_pointer()
             .h(theme::rems_px(theme::INPUT_HEIGHT))
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.border))
             .text_size(font_size::META)
-            .active(|style| style.opacity(opacity::ACTIVE))
             .when(showing_ignored, |el| {
                 el.bg(rgb(theme.selected)).text_color(rgb(theme.text))
             })
-            .when(!showing_ignored, |el| {
-                let hover = theme.hover;
-                el.text_color(rgb(theme.text_muted))
-                    .hover(move |style| style.bg(rgb(hover)))
-            })
+            .when(!showing_ignored, |el| el.text_color(rgb(theme.text_muted)))
+            .pressable_unless(showing_ignored, Look::Chip, theme)
             .tooltip(tooltip(theme, ignored_tip, ignored_keys.clone()))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                let requests = shell.files_view(project_id).toggle_ignored();
-                shell.files_requests(project_id, requests, window, cx);
-            }));
+            .on_press(
+                true,
+                cx.listener(move |shell, _, window, cx| {
+                    let requests = shell.files_view(project_id).toggle_ignored();
+                    shell.files_requests(project_id, requests, window, cx);
+                }),
+            );
         let header = div()
             .flex_none()
             .flex()
@@ -968,7 +968,6 @@ pub(crate) fn file_row(
     };
     let at_cursor = state.cursor == Some(entry.path.as_str());
     let opened = state.opened == Some(entry.path.as_str());
-    let hover = theme.card;
     let chevron = match (entry.is_dir, expanded) {
         (false, _) => None,
         (true, false) => Some(Icon::ChevronRight),
@@ -1002,17 +1001,13 @@ pub(crate) fn file_row(
         .rounded(px(radius::CHIP))
         .border(px(theme::BORDER_WIDTH))
         .border_color(ring)
-        .cursor_pointer()
         .text_size(font_size::BODY)
         .when(at_cursor || opened, |el| el.bg(rgb(theme.selected)))
-        .when(!at_cursor && !opened, |el| {
-            el.hover(move |style| style.bg(rgb(hover)))
-        })
+        .pressable_unless(at_cursor || opened, Look::Row, theme)
         .when(at_cursor, |el| {
             el.relative()
                 .child(record_bounds(Anchor::FileRow(entry.path.clone()), cx))
         })
-        .active(|style| style.opacity(opacity::ACTIVE))
         .child(
             div()
                 .flex_none()
@@ -1078,7 +1073,8 @@ pub(crate) fn file_row(
                 })
             },
         )
-        .on_click(
+        .on_press(
+            true,
             cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
                 let how = if event.click_count() == 2 {
                     Open::Kept
