@@ -30,6 +30,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Hover preview without flashing (dark + light):** sweep the pointer across several cards: nothing changes until it rests about a tenth of a second on one; the whole app then shows that theme; leaving the gallery, pressing Esc and closing Settings each bring the kept theme back.
   A click keeps the card for its own slot (the badge moves) and does not change the mode; with the other appearance shown, the app keeps its own theme.
 - [ ] **Keyboard:** Tab reaches the gallery as one stop, arrows move between cards in reading order across Dark and Light, the focused card previews at once, Enter keeps it.
+- [ ] **Gallery buttons (dark + light):** Tab reaches "New theme from current" and "Open themes folder" with a focus ring and a tooltip each; Enter runs them.
+  The palette lists "Theme: New theme from current" and "Theme: Open themes folder".
 - [ ] **A broken file's card:** save `<config>/themes/broken.toml` with `name = "x"` only: an error card names the file and the missing key; the rest of the gallery works and the card cannot be clicked.
   A file named like a built-in (any letter case) shows "Name taken by the built-in theme".
 - [ ] **Live reload in Zed:** "New theme from current" opens `<name> copy.toml` in Zed; change `bg`, save: the card (and the app, when that theme is kept) follows within a second; delete the file: the card goes and the slot shows its Mkrew theme.
