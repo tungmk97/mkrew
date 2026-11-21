@@ -106,7 +106,9 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
         | Event::NotificationClicked(_)
         | Event::SessionEdited(_)
         | Event::DocChanged(_)
-        | Event::GitChanged(_) => true,
+        | Event::GitChanged(_)
+        | Event::AgentLimits(_)
+        | Event::MachineStats(_) => true,
     }
 }
 
