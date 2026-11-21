@@ -40,18 +40,26 @@ fn color(key: &str, text: &str) -> Result<u32, String> {
     text.strip_prefix('#')
         .filter(|hex| hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
         .and_then(|hex| u32::from_str_radix(hex, 16).ok())
-        .ok_or_else(|| format!("{key}: \"{text}\" is not a color like #RRGGBB"))
+        .ok_or_else(|| format!("{key}: {text:?} is not a color like #RRGGBB"))
 }
 
 /// Reads a theme file. The error is one line a person can act on: the TOML line and message,
 /// or the key that is missing, unknown or wrong.
 pub fn parse(src: &str) -> Result<ThemeFile, String> {
     let raw: Raw = toml::from_str(src).map_err(|error| {
-        let line = error.span().map_or(String::new(), |span| {
-            let before = src.get(..span.start).unwrap_or_default();
-            format!("line {}: ", before.matches('\n').count() + 1)
-        });
-        format!("{line}{}", error.message().trim_end())
+        let Some(span) = error.span() else {
+            return error.message().trim_end().to_owned();
+        };
+        let before = src.get(..span.start).unwrap_or_default();
+        let line = before.matches('\n').count() + 1;
+        // A wrong-type value: name the key from the `key = ` in front of the value.
+        let key = before
+            .rsplit('\n')
+            .next()
+            .and_then(|head| head.trim_end().strip_suffix('='))
+            .filter(|_| error.message().starts_with("invalid type"))
+            .map_or(String::new(), |key| format!("{}: ", key.trim()));
+        format!("line {line}: {key}{}", error.message().trim_end())
     })?;
     let name = raw.name.trim().to_owned();
     if name.is_empty() {
@@ -145,8 +153,25 @@ pub fn file_name(theme_name: &str) -> String {
             }
         })
         .collect();
+    let stem = stem
+        .char_indices()
+        .nth(100)
+        .map_or(&stem[..], |(end, _)| &stem[..end]);
     let stem = stem.trim_end_matches(['.', ' ']);
-    format!("{}.toml", if stem.is_empty() { "theme" } else { stem })
+    let device = stem
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let reserved = matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (device.len() == 4
+            && (device.starts_with("COM") || device.starts_with("LPT"))
+            && matches!(device.as_bytes()[3], b'1'..=b'9'));
+    match (stem.is_empty(), reserved) {
+        (true, _) => "theme.toml".to_owned(),
+        (_, true) => format!("_{stem}.toml"),
+        _ => format!("{stem}.toml"),
+    }
 }
 
 /// The name of a copy of `name`: "<name> copy", then "<name> copy 2", "<name> copy 3", ...
@@ -281,6 +306,31 @@ ansi = ["#1b1d2b", "#ff757f", "#c3e88d", "#ffc777", "#82aaff", "#c099ff", "#86e1
         assert_eq!(file_name("Rosé Pine copy"), "Rosé Pine copy.toml");
         assert_eq!(file_name("trailing. "), "trailing.toml");
         assert_eq!(file_name("..."), "theme.toml");
+    }
+
+    #[test]
+    fn reserved_device_names_and_long_names_are_made_safe() {
+        assert_eq!(file_name("CON"), "_CON.toml");
+        assert_eq!(file_name("nul.txt"), "_nul.txt.toml");
+        assert_eq!(file_name("Lpt9"), "_Lpt9.toml");
+        assert_eq!(file_name("COM0"), "COM0.toml");
+        assert_eq!(file_name("Console"), "Console.toml");
+        let long = file_name(&"é".repeat(300));
+        assert_eq!(long, format!("{}.toml", "é".repeat(100)));
+    }
+
+    #[test]
+    fn a_wrong_type_names_its_key_on_one_line() {
+        let error = parse(&SAMPLE.replace("\"#1e2030\"", "5")).unwrap_err();
+        assert!(error.contains("bg") && !error.contains('\n'), "{error}");
+        let error = parse(&format!("{SAMPLE}\n").replacen("ansi = [", "ansi = \"x\"\nold = [", 1))
+            .unwrap_err();
+        assert!(error.contains("ansi") && !error.contains('\n'), "{error}");
+        let error =
+            parse(&SAMPLE.replace("[\"#1b1d2b\"", "[\"#1b1d2b\", \"#000000\"")).unwrap_err();
+        assert!(error.contains("found 17"), "{error}");
+        let error = parse(&SAMPLE.replace("\"#1e2030\"", "\"a\\nb\"")).unwrap_err();
+        assert!(!error.contains('\n'), "{error}");
     }
 
     #[test]
