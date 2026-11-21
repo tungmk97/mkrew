@@ -838,8 +838,9 @@ pub struct Theme {
     pub dark: bool,
     /// The chosen mode (`[ui] theme`); `dark` is what it resolved to.
     pub mode: ThemeMode,
-    /// The built-in theme this is (ADR 0078), e.g. "Mkrew Dark".
-    pub name: &'static str,
+    /// The theme this is, e.g. "Mkrew Dark" (ADR 0078); owned because the name of a theme
+    /// file is not `'static` (ADR 0101).
+    pub name: SharedString,
     pub ui_font_family: SharedString,
     pub terminal_font_family: SharedString,
     pub terminal_font_size: f32,
@@ -1000,7 +1001,7 @@ impl Theme {
                 0xF472B6,
             ],
             dark: true,
-            name: "Mkrew Dark",
+            name: "Mkrew Dark".into(),
             ..Self::shared()
         }
         .with_glass();
@@ -1093,7 +1094,7 @@ impl Theme {
                 0xDB2777,
             ],
             dark: false,
-            name: "Mkrew Light",
+            name: "Mkrew Light".into(),
             ..Self::shared()
         }
         .with_glass();
@@ -1331,7 +1332,7 @@ impl Theme {
             workspace_colors: [0; WORKSPACE_COLORS.len()],
             dark: false,
             mode: ThemeMode::System,
-            name: "",
+            name: "".into(),
             ui_font_family: UI_FONT.into(),
             terminal_font_family: pick_family(TERMINAL_FONTS, &[]).into(),
             terminal_font_size: 13.0,
@@ -1472,7 +1473,7 @@ impl Theme {
 
     /// A built-in theme from its palette (ADR 0078; token table in the spec). Status, workspace
     /// and QR colors, the classic sidebar palette, fonts and sizes stay the Mkrew base's.
-    pub fn from_palette(name: &'static str, p: &Palette) -> Self {
+    pub fn from_palette(name: impl Into<SharedString>, p: &Palette) -> Self {
         let base = if p.dark { Self::dark() } else { Self::light() };
         let tint = |hue, t| mix(p.bg, hue, t);
         let surface_raised = mix(p.surface, p.fg, 0.10);
@@ -1503,7 +1504,7 @@ impl Theme {
             p.fg
         };
         Self {
-            name,
+            name: name.into(),
             bg: p.bg,
             terminal_bg: p.bg,
             sidebar: p.chrome,
@@ -2056,7 +2057,7 @@ mod tests {
         for entry in THEMES {
             let theme = entry.build();
             assert_eq!(theme.dark, entry.dark, "{}", entry.name);
-            assert_eq!(theme.name, entry.name);
+            assert_eq!(theme.name.as_ref(), entry.name);
         }
         assert_eq!(
             find_theme("Mkrew Dark").map(ThemeEntry::build),
@@ -2067,6 +2068,31 @@ mod tests {
             Some(Theme::light())
         );
         assert!(find_theme("dracula").is_none(), "exact names only");
+    }
+
+    #[test]
+    fn a_theme_may_carry_a_name_that_is_not_static() {
+        let palette = Palette {
+            dark: true,
+            bg: 0x1E2030,
+            chrome: 0x191A2A,
+            surface: 0x222436,
+            fg: 0xC8D3F5,
+            muted: 0x828BB8,
+            accent: 0x82AAFF,
+            red: 0xFF757F,
+            green: 0xC3E88D,
+            yellow: 0xFFC777,
+            blue: 0x82AAFF,
+            magenta: 0xC099FF,
+            cyan: 0x86E1FC,
+            ansi: [
+                0x1B1D2B, 0xFF757F, 0xC3E88D, 0xFFC777, 0x82AAFF, 0xC099FF, 0x86E1FC, 0x828BB8,
+                0x444A73, 0xFF8D94, 0xC7FB6D, 0xFFD8AB, 0x9AB8FF, 0xCAABFF, 0xB2EBFF, 0xC8D3F5,
+            ],
+        };
+        let theme = Theme::from_palette(String::from("My Theme"), &palette);
+        assert_eq!(theme.name.as_ref(), "My Theme");
     }
 
     #[test]
@@ -2330,19 +2356,25 @@ mod tests {
     #[test]
     fn each_slot_picks_its_name() {
         let n = names("Solarized Light", "Dracula");
-        assert_eq!(Theme::resolve(ThemeMode::Dark, false, &n).name, "Dracula");
         assert_eq!(
-            Theme::resolve(ThemeMode::Light, true, &n).name,
+            Theme::resolve(ThemeMode::Dark, false, &n).name.as_ref(),
+            "Dracula"
+        );
+        assert_eq!(
+            Theme::resolve(ThemeMode::Light, true, &n).name.as_ref(),
             "Solarized Light"
         );
-        assert_eq!(Theme::resolve(ThemeMode::System, true, &n).name, "Dracula");
+        assert_eq!(
+            Theme::resolve(ThemeMode::System, true, &n).name.as_ref(),
+            "Dracula"
+        );
     }
 
     #[test]
     fn a_slot_may_hold_the_other_appearance() {
         let n = names("Mkrew Light", "GitHub Light");
         let theme = Theme::resolve(ThemeMode::Dark, false, &n);
-        assert_eq!((theme.name, theme.dark), ("GitHub Light", false));
+        assert_eq!((theme.name.as_ref(), theme.dark), ("GitHub Light", false));
     }
 
     #[test]

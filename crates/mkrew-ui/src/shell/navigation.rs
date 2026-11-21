@@ -528,8 +528,11 @@ impl Shell {
     pub(crate) fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.restore_theme_pick(window, cx);
         let current = cx.theme().clone();
-        let mut palette = Palette::new(palette::theme_entries(current.name));
-        if let Some(index) = theme::THEMES.iter().position(|e| e.name == current.name) {
+        let mut palette = Palette::new(palette::theme_entries(&current.name));
+        if let Some(index) = theme::THEMES
+            .iter()
+            .position(|e| e.name == current.name.as_ref())
+        {
             palette.pick_entry(index);
         }
         self.workspace_menu = None;
