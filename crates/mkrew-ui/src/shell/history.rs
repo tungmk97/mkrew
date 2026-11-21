@@ -525,7 +525,6 @@ impl Shell {
                 .child(text)
         };
         let state = self.session_state(dialog.session_id);
-        let hover = theme.surface_raised;
         let list: gpui::AnyElement = match &dialog.listing {
             turns_dialog::Listing::Loading => muted("Loading the turns…".into()).into_any_element(),
             turns_dialog::Listing::Failed(error) => div()
@@ -601,13 +600,16 @@ impl Shell {
                                 .py(px(space::XS))
                                 .rounded(px(radius::SMALL))
                                 .when(selected, |el| el.bg(rgb(theme.surface_raised)))
-                                .when(!selected, |el| el.hover(move |style| style.bg(rgb(hover))))
-                                .on_click(cx.listener(move |shell, _, _, cx| {
-                                    if let Some(dialog) = shell.turns_dialog.as_mut() {
-                                        dialog.selected = index;
-                                        cx.notify();
-                                    }
-                                }))
+                                .pressable_unless(selected, Look::Row, theme)
+                                .on_press(
+                                    true,
+                                    cx.listener(move |shell, _, _, cx| {
+                                        if let Some(dialog) = shell.turns_dialog.as_mut() {
+                                            dialog.selected = index;
+                                            cx.notify();
+                                        }
+                                    }),
+                                )
                                 .child(
                                     div()
                                         .flex_1()
@@ -689,7 +691,6 @@ impl Shell {
                 .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                 .child(div().text_color(rgb(theme.text)).child(error))
         };
-        let hover = theme.surface_raised;
         let list: Vec<gpui::AnyElement> = match &dialog.listing {
             Listing::Loading => vec![muted("Loading the sessions…".into()).into_any_element()],
             Listing::Failed(error) => {
@@ -710,15 +711,14 @@ impl Shell {
                         .px(px(space::S))
                         .py(px(space::XS))
                         .rounded(px(radius::SMALL))
-                        .cursor_pointer()
                         .when(selected, |el| el.bg(rgb(theme.surface_raised)))
-                        .when(!selected, |el| {
-                            el.hover(move |style| style.bg(rgb(hover)))
-                                .active(|style| style.opacity(opacity::ACTIVE))
-                        })
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.select_history(id, window, cx);
-                        }))
+                        .pressable_unless(selected, Look::Row, theme)
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                shell.select_history(id, window, cx);
+                            }),
+                        )
                         .child(
                             div()
                                 .flex()

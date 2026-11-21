@@ -3949,3 +3949,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
 - [x] (T0.9 / T0.8) Perceived latency and idle cost: type in
   `cargo run --release -p spike-term -- --stats` (read `key_p50` lines) and judge the idle CPU
   (~3.5 % of one core, GPUI vsync floor) and flood CPU (~0.8 core at 165 Hz) in the ADR. — ok
+- [ ] **Thread (dark + light):** hover "Earlier turns: Open transcript" and a "+N tool calls" line.
+  Each underlines and turns to full text color.
+- [ ] **Pickers (dark + light):** open the prompt picker and the slash picker and hover an unpicked row.
+  It shows a fill and a pointer, and no faint outline around any row.
+  The keyboard-picked row keeps its ring and fill, and a click on it still picks.
+- [ ] **Queue and history (dark + light):** queue a second message while an agent works and hover its X.
+  It shows a fill, and clicking it does not dim or select the panel.
+  Open History and the turns dialog and hover an unselected row: a fill and a pointer.
+  The selected row keeps a pointer and no fill change.
+  In the turns dialog press and hold Restore or Diff on a row: the button dims and so does its row (intended; the click acts as before).
+- [ ] **Inspector (dark + light):** with the right panel open hover its title bar toggle.
+  The hover is visible against the open fill.

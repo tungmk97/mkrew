@@ -232,7 +232,6 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let accent = gpui::Hsla::from(rgb(theme.accent));
-        let hover = theme.surface_raised;
         let muted = |text: String| {
             div()
                 .text_size(font_size::META)
@@ -274,21 +273,22 @@ impl Shell {
                         .text_color(rgb(theme.text))
                         // The pick has a focus-colored ring, so it stays visible under hover.
                         .border(px(theme::BORDER_WIDTH))
-                        .border_color(rgb(if picked {
-                            theme.pane_focus_border
+                        .border_color(if picked {
+                            gpui::Hsla::from(rgb(theme.pane_focus_border))
                         } else {
-                            theme.surface
-                        }))
+                            gpui::transparent_black()
+                        })
                         .when(picked, |el| el.bg(rgb(theme.surface_raised)))
-                        .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-                        .cursor_pointer()
-                        .active(|style| style.opacity(opacity::ACTIVE))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            if let Some(picker) = shell.slash_picker.as_mut() {
-                                picker.pick(position);
-                            }
-                            shell.accept_slash_pick(false, window, cx);
-                        }))
+                        .pressable_unless(picked, Look::Row, theme)
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                if let Some(picker) = shell.slash_picker.as_mut() {
+                                    picker.pick(position);
+                                }
+                                shell.accept_slash_pick(false, window, cx);
+                            }),
+                        )
                         .child(
                             div()
                                 .min_w_0()

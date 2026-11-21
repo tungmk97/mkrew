@@ -531,7 +531,6 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let hover = theme.surface_raised;
         // One frame for every row: the pick has a focus-colored ring, so it stays visible under
         // hover.
         let frame = |id: gpui::ElementId, picked: bool| {
@@ -547,15 +546,13 @@ impl Shell {
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text))
                 .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(if picked {
-                    theme.pane_focus_border
+                .border_color(if picked {
+                    gpui::Hsla::from(rgb(theme.pane_focus_border))
                 } else {
-                    theme.surface
-                }))
+                    gpui::transparent_black()
+                })
                 .when(picked, |el| el.bg(rgb(theme.surface_raised)))
-                .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-                .cursor_pointer()
-                .active(|style| style.opacity(opacity::ACTIVE))
+                .pressable_unless(picked, Look::Row, theme)
         };
         let mut rows: Vec<gpui::AnyElement> = picker
             .library
@@ -565,12 +562,15 @@ impl Shell {
             .map(|(index, prompt)| {
                 let picked = index == picker.selected;
                 frame(("prompt-entry", index).into(), picked)
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        if let Some(picker) = shell.prompt_picker.as_mut() {
-                            picker.pick(index);
-                            shell.insert_prompt_pick(window, cx);
-                        }
-                    }))
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, _, window, cx| {
+                            if let Some(picker) = shell.prompt_picker.as_mut() {
+                                picker.pick(index);
+                                shell.insert_prompt_pick(window, cx);
+                            }
+                        }),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -593,13 +593,16 @@ impl Shell {
         let empty = rows.is_empty();
         rows.push(
             frame("prompt-manage".into(), picker.on_manage())
-                .on_click(cx.listener(|shell, _, window, cx| {
-                    if let Some(picker) = shell.prompt_picker.as_mut() {
-                        let manage = picker.manage_row();
-                        picker.pick(manage);
-                        shell.insert_prompt_pick(window, cx);
-                    }
-                }))
+                .on_press(
+                    true,
+                    cx.listener(|shell, _, window, cx| {
+                        if let Some(picker) = shell.prompt_picker.as_mut() {
+                            let manage = picker.manage_row();
+                            picker.pick(manage);
+                            shell.insert_prompt_pick(window, cx);
+                        }
+                    }),
+                )
                 .child(
                     div()
                         .flex_1()
@@ -785,7 +788,6 @@ impl Shell {
             })
         };
         // The texts waiting for the agent (§20B.2), first line each, ✕ removes one.
-        let hover = theme.border;
         let queued = self
             .composers
             .queue(session)
@@ -821,15 +823,16 @@ impl Shell {
                             .items_center()
                             .px(px(space::S))
                             .rounded(px(radius::SMALL))
-                            .cursor_pointer()
                             .text_color(rgb(theme.text_muted))
-                            .hover(move |style| style.bg(rgb(hover)))
-                            .active(|style| style.opacity(opacity::ACTIVE))
+                            .pressable(Look::Icon, true, theme)
                             .tooltip(tooltip(theme, "Remove from the queue (not sent)", ""))
-                            .on_click(cx.listener(move |shell, _, _, cx| {
-                                cx.stop_propagation();
-                                shell.unqueue(session, send_id, cx);
-                            }))
+                            .on_press(
+                                true,
+                                cx.listener(move |shell, _, _, cx| {
+                                    cx.stop_propagation();
+                                    shell.unqueue(session, send_id, cx);
+                                }),
+                            )
                             .child(icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted)),
                     )
             })
