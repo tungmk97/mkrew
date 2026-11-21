@@ -176,6 +176,7 @@ impl Shell {
                     .children(errors.iter().map(|error| theme_error_card(error, theme))),
             );
         }
+        let folder = self.themes_dir.display().to_string();
         div()
             .flex()
             .flex_col()
@@ -186,32 +187,40 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap(px(space::M))
-                    .child(div().flex_1().min_w_0().child(meta_line(
-                        theme,
-                        self.themes_dir.display().to_string().into(),
-                    )))
                     .child(
-                        quiet_button(
-                            "theme-new-from-current",
-                            "New theme from current",
-                            theme,
-                            theme.hover,
-                        )
-                        .on_press(
-                            true,
-                            cx.listener(|shell, _, _, cx| shell.new_theme_from_current(cx)),
+                        div().flex_1().min_w_0().child(
+                            meta_line(theme, folder.clone().into())
+                                .id("theme-folder-path")
+                                .truncate()
+                                .tooltip(tooltip(theme, &folder, "")),
                         ),
                     )
                     .child(
-                        quiet_button(
-                            "theme-open-folder",
-                            "Open themes folder",
-                            theme,
-                            theme.hover,
-                        )
-                        .on_press(
-                            true,
-                            cx.listener(|shell, _, _, cx| shell.open_themes_folder(cx)),
+                        div().flex_none().child(
+                            quiet_button(
+                                "theme-new-from-current",
+                                "New theme from current",
+                                theme,
+                                theme.hover,
+                            )
+                            .on_press(
+                                true,
+                                cx.listener(|shell, _, _, cx| shell.new_theme_from_current(cx)),
+                            ),
+                        ),
+                    )
+                    .child(
+                        div().flex_none().child(
+                            quiet_button(
+                                "theme-open-folder",
+                                "Open themes folder",
+                                theme,
+                                theme.hover,
+                            )
+                            .on_press(
+                                true,
+                                cx.listener(|shell, _, _, cx| shell.open_themes_folder(cx)),
+                            ),
                         ),
                     ),
             )
