@@ -113,6 +113,11 @@ impl Paths {
     pub fn prompts_dir(&self) -> PathBuf {
         self.config_dir.join("prompts")
     }
+
+    /// Theme files, one `*.toml` per theme (ADR 0101).
+    pub fn themes_dir(&self) -> PathBuf {
+        self.config_dir.join("themes")
+    }
 }
 
 /// `\\.\pipe\mkrew-<username>`, with anything but ASCII letters and digits in the name
@@ -166,6 +171,7 @@ mod tests {
             Path::new("/tmp/c").join("settings.toml")
         );
         assert_eq!(paths.prompts_dir(), Path::new("/tmp/c").join("prompts"));
+        assert_eq!(paths.themes_dir(), Path::new("/tmp/c").join("themes"));
         assert_eq!(
             paths.attachments_dir(),
             Path::new("/tmp/d").join("attachments")
