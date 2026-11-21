@@ -719,6 +719,7 @@ Protocol 47 (ADR 0069): `Project.position`, `project.update` `position?`.
 - Output fan-out per chunk: emulator → state detector (at most 4 scans/s per session, ADR 0088),
   session log file (buffered writer), attached clients (binary frames, §7).
 - **Command lookup:** on Windows try `PATHEXT` (`claude.cmd`, `.ps1` shims). Clear error if not found.
+  On macOS, `mkrew` and `mkrew-daemon` started with launchd's bare `PATH` (Finder, Dock, non-interactive ssh) first take `PATH` from `$SHELL -l -i`, so Homebrew/npm installs are found.
 - **State detection:** one state machine per session (lives in `mkrew-core`, pure, unit-tested).
 - **Send queue:** `session.send` while the session is `working` is queued and delivered when the
   session reaches idle/done/needs_input.

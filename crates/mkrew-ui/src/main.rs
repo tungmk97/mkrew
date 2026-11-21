@@ -175,6 +175,11 @@ fn main() {
         .with_writer(std::io::stderr)
         .with_env_filter(filter)
         .init();
+    // Before GPUI starts any thread (`set_var`); the daemon this UI starts inherits it.
+    #[cfg(target_os = "macos")]
+    if let Some(path) = mkrew_core::lookup::adopt_login_shell_path() {
+        tracing::info!("PATH from the login shell: {}", path.to_string_lossy());
+    }
     let paths = match Paths::from_env() {
         Ok(paths) => paths,
         Err(error) => {

@@ -9,6 +9,9 @@ use tracing_appender::rolling::{Builder, Rotation};
 use tracing_subscriber::EnvFilter;
 
 fn main() -> ExitCode {
+    // Before logging starts its writer thread (`set_var`).
+    #[cfg(target_os = "macos")]
+    let login_path = mkrew_core::lookup::adopt_login_shell_path();
     let paths = match Paths::from_env() {
         Ok(paths) => paths,
         Err(e) => {
@@ -23,6 +26,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    #[cfg(target_os = "macos")]
+    if let Some(path) = login_path {
+        tracing::info!("PATH from the login shell: {}", path.to_string_lossy());
+    }
     match mkrew_daemon::run(&paths) {
         Ok(()) => ExitCode::SUCCESS,
         Err(RunError::Lock(e @ LockError::AlreadyRunning(_))) => {
