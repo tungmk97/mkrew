@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use mkrew_core::viewed::{self, Mark};
 use mkrew_protocol::{
-    ChangedFile, ErrorCode, Event, GitChangedEvent, GitCommitParams, GitCommitResult,
-    GitDiffParams, GitDiscardParams, GitLogParams, GitRemoteParams, GitSetBaseParams,
-    GitSetViewedParams, GitShowParams, GitStageParams, GitStatusParams, HunkTarget, Outcome,
-    Project, ProjectRef, ViewedFile,
+    ChangedFile, ErrorCode, Event, GitBranchesParams, GitChangedEvent, GitCheckoutParams,
+    GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams, GitLogParams,
+    GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams,
+    GitStatusParams, HunkTarget, Outcome, Project, ProjectRef, ViewedFile,
 };
 use mkrew_store::ViewedScope;
 use serde::Serialize;
@@ -398,6 +398,72 @@ impl Daemon {
         })
         .await;
         view_outcome("git.log", log)
+    }
+
+    /// `git.branches`: every local and remote-tracking branch, newest commit first.
+    pub(super) async fn git_branches(&self, params: GitBranchesParams) -> Outcome {
+        let dir = match self
+            .target(
+                params.project_id,
+                params.worktree_task_id,
+                params.repo.as_deref(),
+            )
+            .await
+        {
+            Ok(target) => target.dir,
+            Err(outcome) => return outcome,
+        };
+        let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
+        let branches = tokio::task::spawn_blocking(move || {
+            cache.repo(&*git, &dir)?;
+            git.branches(&dir).map_err(ViewError::from)
+        })
+        .await;
+        view_outcome("git.branches", branches)
+    }
+
+    /// `git.checkout`: `git switch` in the target's folder. Git's refusal comes back as
+    /// `invalid_state` with its own words; a success broadcasts `git.changed` at once (the
+    /// watcher misses a `.git` outside the project folder).
+    pub(super) async fn git_checkout(&self, params: GitCheckoutParams) -> Outcome {
+        if params.branch.is_empty() {
+            return Outcome::error(ErrorCode::InvalidRequest, "git.checkout needs a branch");
+        }
+        if let Err(reason) = check_ref(&params.branch) {
+            return Outcome::error(ErrorCode::InvalidRequest, reason);
+        }
+        let GitCheckoutParams {
+            project_id,
+            worktree_task_id,
+            repo,
+            branch,
+        } = params;
+        let dir = match self
+            .target(project_id, worktree_task_id, repo.as_deref())
+            .await
+        {
+            Ok(target) => target.dir,
+            Err(outcome) => return outcome,
+        };
+        let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
+        let switched = tokio::task::spawn_blocking(move || {
+            cache.repo(&*git, &dir)?;
+            git.checkout(&dir, &branch).map_err(ViewError::from)
+        })
+        .await;
+        match switched {
+            Ok(Ok(())) => {
+                let _ = self.hub.events.send(Event::GitChanged(GitChangedEvent {
+                    project_id,
+                    worktree_task_id,
+                }));
+                ok(&())
+            }
+            Ok(Err(ViewError::Git(error))) => {
+                Outcome::error(ErrorCode::InvalidState, error.to_string())
+            }
+            other => view_outcome("git.checkout", other),
+        }
     }
 
     /// `git.show`: one commit and the files of the project folder it changed.

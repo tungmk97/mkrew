@@ -159,18 +159,10 @@ pub trait GitBackend: Send + Sync {
     /// The branches under `refs/heads` and `refs/remotes`, newest commit first.
     /// `refs/remotes/<remote>/HEAD` and a remote branch whose short name a local branch has
     /// are left out.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the git handlers call it from the next task")
-    )]
     fn branches(&self, dir: &Path) -> io::Result<Vec<mkrew_protocol::Branch>>;
 
     /// `git switch <branch>`, with `--track` for a remote-tracking branch that has no local
     /// namesake. An error carries git's stderr as is.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the git handlers call it from the next task")
-    )]
     fn checkout(&self, dir: &Path, branch: &str) -> io::Result<()>;
 }
 
@@ -990,10 +982,6 @@ fn nul_separated(bytes: &[u8]) -> Vec<String> {
 }
 
 /// The rows of the `for-each-ref` format of [`GitBackend::branches`], in their order.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the git handlers call it from the next task")
-)]
 fn parse_branches(text: &str) -> Vec<mkrew_protocol::Branch> {
     struct Row<'a> {
         full: &'a str,

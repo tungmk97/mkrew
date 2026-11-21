@@ -433,6 +433,8 @@ impl Daemon {
             Request::AiGenerate(params) => (self.ai_generate(params).await, After::Continue),
             Request::GitLog(params) => (self.git_log(params).await, After::Continue),
             Request::GitShow(params) => (self.git_show(params).await, After::Continue),
+            Request::GitBranches(params) => (self.git_branches(params).await, After::Continue),
+            Request::GitCheckout(params) => (self.git_checkout(params).await, After::Continue),
             Request::GitFetch(params) => (self.git_remote(params, false).await, After::Continue),
             Request::GitPush(params) => (self.git_remote(params, true).await, After::Continue),
             Request::FsList(params) => (self.fs_list(params).await, After::Continue),
