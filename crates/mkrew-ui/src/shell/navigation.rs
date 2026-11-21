@@ -625,16 +625,12 @@ impl Shell {
         ) {
             Err(error) => self.settings_write_failed("the theme", error, cx),
             Ok(()) => {
-                // Now, not at the next mtime poll: the dialog's rows show the new value.
+                // Now, not at the next mtime poll: the dialog's rows show the new value, and a
+                // hand edit saved in the same poll window applies too.
                 self.settings_modified = std::fs::metadata(&self.settings_file)
                     .and_then(|m| m.modified())
                     .ok();
-                if let Some(dialog) = &mut self.settings_dialog {
-                    dialog.reload(
-                        mkrew_core::settings::load(&self.settings_file)
-                            .map_err(|error| error.to_string()),
-                    );
-                }
+                self.apply_settings_file(window, cx);
             }
         }
     }
