@@ -529,6 +529,76 @@ fn git_stage_and_discard_refuse_a_hunk_line_with_a_line_break() {
     client.stop();
 }
 
+/// A carriage return inside a line is not a line break for `git apply`: such a hunk stages
+/// and discards.
+#[test]
+fn git_stage_and_discard_accept_a_hunk_line_with_an_inner_carriage_return() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "user.email", "t@t"]);
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(repo.join("a.txt"), "a\rb\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("a.txt"), "c\rd\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+    let target = |client: &mut Client| {
+        let request = Request::GitDiff(GitDiffParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: None,
+            path: "a.txt".into(),
+            mode: GitMode::Working,
+            staged: false,
+            commit: None,
+            since: None,
+        });
+        let diff: FileDiff = client.call(request).into_result().unwrap();
+        Some(HunkTarget {
+            path: "a.txt".into(),
+            hunk: diff.hunks.into_iter().next().unwrap(),
+        })
+    };
+    let hunk = target(&mut client);
+    let _: () = client
+        .call(Request::GitStage(GitStageParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: None,
+            paths: vec![],
+            hunk,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        git(&repo, &["diff", "--cached", "--name-only"]).trim(),
+        "a.txt"
+    );
+    // A new unstaged edit, then its hunk is discarded: back to the staged text.
+    std::fs::write(repo.join("a.txt"), "e\rf\n").unwrap();
+    let hunk = target(&mut client);
+    let _: () = client
+        .call(Request::GitDiscard(GitDiscardParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: None,
+            paths: vec![],
+            hunk,
+            confirm: true,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+        "c\rd\n"
+    );
+    client.stop();
+}
+
 /// T7.5: history and one commit's files; push to the upstream and fetch from it, against a
 /// local bare remote (no network). Both report `git.changed`.
 #[test]

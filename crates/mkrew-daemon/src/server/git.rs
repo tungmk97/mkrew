@@ -638,14 +638,11 @@ fn view_outcome<T: Serialize>(
 }
 
 /// A hunk's repo-relative path and the hunk itself, refused (`invalid_request`) when a line
-/// holds a line break: it would add sections to the patch built from it.
+/// holds a line feed: it would add sections to the patch built from it. A lone carriage
+/// return inside a line is legal (`git apply` splits on line feeds only).
 fn hunk_target(repo: Option<&str>, path: String, hunk: Hunk) -> Result<(String, Hunk), Outcome> {
-    if hunk
-        .lines
-        .iter()
-        .any(|line| line.text.contains(['\n', '\r']))
-    {
-        let message = "hunk line holds a line break";
+    if hunk.lines.iter().any(|line| line.text.contains('\n')) {
+        let message = "hunk line holds a line feed";
         return Err(Outcome::error(ErrorCode::InvalidRequest, message));
     }
     Ok((project_path(repo, &path)?, hunk))
