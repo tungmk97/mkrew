@@ -850,6 +850,8 @@ impl Shell {
                 .on_press(!read_only, Self::press_row(index, cx))
                 .into_any_element()
             }
+            // Hidden rows are never drawn.
+            Kind::Strings => div().into_any_element(),
         }
     }
 

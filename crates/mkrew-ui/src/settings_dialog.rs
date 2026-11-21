@@ -508,7 +508,7 @@ impl SettingsDialog {
                     });
                     Effect::None
                 }
-                Kind::Font | Kind::List(_) => Effect::None,
+                Kind::Font | Kind::List(_) | Kind::Strings => Effect::None,
                 // Enter in a text row: write it and keep editing.
                 Kind::Text | Kind::Number => {
                     let effect = self.commit_draft();
@@ -1931,7 +1931,7 @@ mod tests {
         let rows = d.rows(&keymap);
         let groups = grouped(&rows, false);
         let titles: Vec<&str> = groups.iter().map(|g| g.title).collect();
-        assert_eq!(titles, ["Theme", "Fonts", "Diffs", "Markdown"]);
+        assert_eq!(titles, ["Theme", "Fonts", "Diffs", "Markdown", "Window"]);
         let indices: Vec<usize> = groups
             .iter()
             .flat_map(|g| g.rows.iter().map(|(i, _)| *i))
