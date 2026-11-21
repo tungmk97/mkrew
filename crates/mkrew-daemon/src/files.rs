@@ -69,7 +69,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// A git-aware walk below `dir`: `.gitignore`, `.git/info/exclude` and the global excludes
 /// apply inside a repo; hidden files are kept; `.git`, `node_modules` and `target` are never
 /// entered (the watcher does not report them either).
-fn walker(dir: &Path) -> ignore::WalkBuilder {
+pub(crate) fn walker(dir: &Path) -> ignore::WalkBuilder {
     let mut walk = ignore::WalkBuilder::new(dir);
     walk.hidden(false).filter_entry(|entry| {
         entry.depth() == 0
@@ -111,7 +111,7 @@ pub fn walk_files(git: &dyn GitBackend, root: &Path) -> Vec<String> {
     files
 }
 
-fn relative(root: &Path, path: &Path) -> Option<String> {
+pub(crate) fn relative(root: &Path, path: &Path) -> Option<String> {
     let parts: Option<Vec<&str>> = path
         .strip_prefix(root)
         .ok()?
@@ -385,7 +385,7 @@ pub fn write(file: &Path, content: &str, expected_hash: &str) -> Result<FsWritte
     })
 }
 
-fn has_nul(bytes: &[u8]) -> bool {
+pub(crate) fn has_nul(bytes: &[u8]) -> bool {
     bytes.iter().take(SNIFF_BYTES).any(|&b| b == 0)
 }
 

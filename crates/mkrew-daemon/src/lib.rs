@@ -21,6 +21,7 @@ mod plan;
 mod ports;
 mod retention;
 mod scan;
+mod search;
 mod server;
 mod session;
 mod session_log;
