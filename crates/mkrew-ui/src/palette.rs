@@ -321,8 +321,86 @@ pub enum Target {
     Task { project_id: Ulid, task_id: Ulid },
 }
 
+/// What the palette searches (Polish spec 2026-11-21 §7.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Scope {
+    All,
+    Commands,
+    Sessions,
+    Files,
+    Search,
+    Branches,
+    Commits,
+}
+
+impl Scope {
+    /// The tab order: Tab moves to the next scope, Shift+Tab to the previous one, wrapping.
+    pub const ORDER: [Scope; 7] = [
+        Scope::All,
+        Scope::Commands,
+        Scope::Sessions,
+        Scope::Files,
+        Scope::Search,
+        Scope::Branches,
+        Scope::Commits,
+    ];
+
+    /// The tab label and the section overline.
+    pub fn title(self) -> &'static str {
+        match self {
+            Scope::All => "All",
+            Scope::Commands => "Commands",
+            Scope::Sessions => "Sessions",
+            Scope::Files => "Files",
+            Scope::Search => "Search",
+            Scope::Branches => "Branches",
+            Scope::Commits => "Commits",
+        }
+    }
+
+    /// The query field's placeholder.
+    pub fn placeholder(self) -> &'static str {
+        match self {
+            Scope::All => "Search commands, sessions, files, branches and commits",
+            Scope::Commands => "Type a command",
+            Scope::Sessions => "Type a workspace, session or task",
+            Scope::Files => "Type part of a file name or path",
+            Scope::Search => "Search the text of the files",
+            Scope::Branches => "Type a branch name",
+            Scope::Commits => "Type a commit message or hash",
+        }
+    }
+
+    pub fn next(self) -> Scope {
+        self.shifted(1)
+    }
+
+    pub fn prev(self) -> Scope {
+        self.shifted(Self::ORDER.len() - 1)
+    }
+
+    fn shifted(self, by: usize) -> Scope {
+        let at = Self::ORDER
+            .iter()
+            .position(|scope| *scope == self)
+            .unwrap_or(0);
+        Self::ORDER[(at + by) % Self::ORDER.len()]
+    }
+}
+
+/// Tab (`Some(1)`) and Shift+Tab (`Some(-1)`) without another modifier: the scope switch of
+/// the open palette. Every other key is not one.
+pub fn scope_step(keystroke: &Keystroke) -> Option<isize> {
+    let m = keystroke.modifiers;
+    (keystroke.key == "tab" && !m.control && !m.alt && !m.platform).then_some(if m.shift {
+        -1
+    } else {
+        1
+    })
+}
+
 /// What picking an entry does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Run(Command),
     Extra(Extra),
@@ -338,6 +416,45 @@ pub enum Action {
     /// "Machine: Open <name>": the `usize`-th machine of the shell's list (see
     /// [`machine_entries`]).
     OpenMachine(usize),
+    /// Files scope: open the file in the Files view (`@` insert mode types its path instead).
+    OpenFile {
+        path: String,
+    },
+    /// Search scope: open the file with the caret on `line` (1-based).
+    OpenSearchHit {
+        path: String,
+        line: u32,
+    },
+    /// Branches scope: `git switch` (after a question when something is at risk). `repo` is
+    /// the repository of the Git view (ADR 0029), `None` = the workspace folder.
+    Checkout {
+        repo: Option<String>,
+        branch: String,
+    },
+    /// Commits scope: the Git view's History on that commit.
+    ShowCommit {
+        repo: Option<String>,
+        sha: String,
+    },
+}
+
+impl Action {
+    /// The scope whose section lists this action.
+    pub fn scope(&self) -> Scope {
+        match self {
+            Action::Run(_)
+            | Action::Extra(_)
+            | Action::Theme(_)
+            | Action::NewAgentPane(_)
+            | Action::RunCommand(..)
+            | Action::OpenMachine(_) => Scope::Commands,
+            Action::GoTo(_) => Scope::Sessions,
+            Action::OpenFile { .. } => Scope::Files,
+            Action::OpenSearchHit { .. } => Scope::Search,
+            Action::Checkout { .. } => Scope::Branches,
+            Action::ShowCommit { .. } => Scope::Commits,
+        }
+    }
 }
 
 /// Whether picking `action` does something in a detached window (ADR 0096): its own tab's
@@ -365,6 +482,26 @@ pub struct Entry {
     pub title: String,
     /// Shortcut label, e.g. "Ctrl+Shift+T"; empty if none.
     pub shortcut: String,
+    /// Muted text after the title: a path, a short hash, a session state, a branch note.
+    pub detail: Option<String>,
+    /// Right-aligned age of a commit or branch (`git_history::age`).
+    pub age: Option<String>,
+    /// Byte ranges of `title` to highlight when the daemon ranked the entry (Files, Search);
+    /// empty = highlight what the query matched.
+    pub marks: Vec<Range<usize>>,
+}
+
+impl Entry {
+    pub fn new(action: Action, title: impl Into<String>, shortcut: impl Into<String>) -> Self {
+        Self {
+            action,
+            title: title.into(),
+            shortcut: shortcut.into(),
+            detail: None,
+            age: None,
+            marks: Vec::new(),
+        }
+    }
 }
 
 /// A shown entry with the byte ranges of its title the query matched.
@@ -372,6 +509,10 @@ pub struct Entry {
 pub struct Row<'a> {
     pub entry: &'a Entry,
     pub ranges: Vec<Range<usize>>,
+    /// The scope section the entry belongs to.
+    pub section: Scope,
+    pub detail: Option<&'a str>,
+    pub age: Option<&'a str>,
 }
 
 /// Palette title of `command`, "Group: Action" like the SPEC §13 table.
@@ -607,10 +748,12 @@ pub fn available(command: Command, context: &Context) -> bool {
 pub fn keymap_errors(keymap: &Keymap, errors: &[KeymapError]) -> Vec<Entry> {
     errors
         .iter()
-        .map(|error| Entry {
-            action: Action::Run(Command::OpenSettings),
-            title: format!("Keymap error: {error}"),
-            shortcut: keymap.label(Command::OpenSettings),
+        .map(|error| {
+            Entry::new(
+                Action::Run(Command::OpenSettings),
+                format!("Keymap error: {error}"),
+                keymap.label(Command::OpenSettings),
+            )
         })
         .collect()
 }
@@ -619,10 +762,12 @@ pub fn keymap_errors(keymap: &Keymap, errors: &[KeymapError]) -> Vec<Entry> {
 /// picking it opens the Settings dialog, which shows the problem and "Fix in Zed".
 pub fn settings_error(keymap: &Keymap, error: Option<&str>) -> Vec<Entry> {
     error
-        .map(|error| Entry {
-            action: Action::Run(Command::OpenSettings),
-            title: format!("Settings error: {error}"),
-            shortcut: keymap.label(Command::OpenSettings),
+        .map(|error| {
+            Entry::new(
+                Action::Run(Command::OpenSettings),
+                format!("Settings error: {error}"),
+                keymap.label(Command::OpenSettings),
+            )
         })
         .into_iter()
         .collect()
@@ -636,15 +781,15 @@ pub fn theme_entries(current: &str) -> Vec<Entry> {
         .enumerate()
         .map(|(index, entry)| {
             let look = if entry.dark { "Dark" } else { "Light" };
-            Entry {
-                action: Action::Theme(index),
-                title: entry.name.into(),
-                shortcut: if entry.name == current {
+            Entry::new(
+                Action::Theme(index),
+                entry.name,
+                if entry.name == current {
                     format!("✓ {look}")
                 } else {
                     look.into()
                 },
-            }
+            )
         })
         .collect()
 }
@@ -662,14 +807,16 @@ pub fn agent_entries(
     }
     agents
         .iter()
-        .map(|agent| Entry {
-            action: Action::NewAgentPane(agent.index),
-            title: format!("Agent: New {} pane", agent.name),
-            shortcut: if agent.default {
-                keymap.label(Command::SplitAgent)
-            } else {
-                String::new()
-            },
+        .map(|agent| {
+            Entry::new(
+                Action::NewAgentPane(agent.index),
+                format!("Agent: New {} pane", agent.name),
+                if agent.default {
+                    keymap.label(Command::SplitAgent)
+                } else {
+                    String::new()
+                },
+            )
         })
         .collect()
 }
@@ -687,11 +834,11 @@ pub fn run_entries(summary: &crate::run::Summary) -> Vec<Entry> {
             &[(RunAction::Start, "Start")]
         };
         for &(action, verb) in actions {
-            entries.push(Entry {
-                action: Action::RunCommand(action, index),
-                title: format!("Run: {verb} {}", row.name),
-                shortcut: String::new(),
-            });
+            entries.push(Entry::new(
+                Action::RunCommand(action, index),
+                format!("Run: {verb} {}", row.name),
+                "",
+            ));
         }
     }
     entries
@@ -705,10 +852,12 @@ pub fn machine_entries(context: &Context, names: &[String]) -> Vec<Entry> {
     names
         .iter()
         .enumerate()
-        .map(|(index, name)| Entry {
-            action: Action::OpenMachine(index),
-            title: format!("Machine: Open {name}"),
-            shortcut: String::new(),
+        .map(|(index, name)| {
+            Entry::new(
+                Action::OpenMachine(index),
+                format!("Machine: Open {name}"),
+                "",
+            )
         })
         .collect()
 }
@@ -727,21 +876,13 @@ pub fn entries(
     let mut entries: Vec<Entry> = Command::all()
         .into_iter()
         .filter(|command| available(*command, context))
-        .map(|command| Entry {
-            action: Action::Run(command),
-            title: title(command),
-            shortcut: keymap.label(command),
-        })
+        .map(|command| Entry::new(Action::Run(command), title(command), keymap.label(command)))
         .collect();
     entries.extend(
         Extra::ALL
             .into_iter()
             .filter(|extra| extra.available(context))
-            .map(|extra| Entry {
-                action: Action::Extra(extra),
-                title: extra.title().into(),
-                shortcut: String::new(),
-            }),
+            .map(|extra| Entry::new(Action::Extra(extra), extra.title(), "")),
     );
     let workspace = |id: Ulid| {
         projects
@@ -749,11 +890,7 @@ pub fn entries(
             .find(|project| project.id == id && !project.archived)
             .map(|project| project.name.as_str())
     };
-    let go_to = |target, title| Entry {
-        action: Action::GoTo(target),
-        title,
-        shortcut: String::new(),
-    };
+    let go_to = |target, title: String| Entry::new(Action::GoTo(target), title, "");
     entries.extend(
         projects
             .iter()
@@ -772,7 +909,7 @@ pub fn entries(
             let name = workspace(session.project_id)?;
             let status = crate::sidebar::status_display(session.state);
             let entry = Entry {
-                shortcut: format!("{} {}", status.icon, status.label),
+                detail: Some(format!("{} {}", status.icon, status.label)),
                 ..go_to(
                     Target::Session(session.id),
                     format!("Go to session: {} · {name}", history::label(session)),
@@ -1023,6 +1160,9 @@ impl Palette {
                 Row {
                     entry,
                     ranges: match_ranges(&entry.title, indices),
+                    section: entry.action.scope(),
+                    detail: entry.detail.as_deref(),
+                    age: entry.age.as_deref(),
                 }
             })
             .collect()
@@ -1031,7 +1171,7 @@ impl Palette {
     /// What the picked row does.
     pub fn picked(&self) -> Option<Action> {
         let (index, _) = self.shown.get(self.selected)?;
-        Some(self.entries[*index].action)
+        Some(self.entries[*index].action.clone())
     }
 }
 

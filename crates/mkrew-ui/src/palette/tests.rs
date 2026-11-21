@@ -72,7 +72,7 @@ fn machines_are_added_and_opened_from_this_computers_window_only() {
     assert_eq!(
         listed
             .iter()
-            .map(|entry| (entry.action, entry.title.as_str()))
+            .map(|entry| (entry.action.clone(), entry.title.as_str()))
             .collect::<Vec<_>>(),
         [
             (Action::OpenMachine(0), "Machine: Open Home PC"),
@@ -105,7 +105,11 @@ fn commands(context: &Context) -> Vec<Command> {
             | Action::Theme(_)
             | Action::NewAgentPane(_)
             | Action::RunCommand(..)
-            | Action::OpenMachine(_) => None,
+            | Action::OpenMachine(_)
+            | Action::OpenFile { .. }
+            | Action::OpenSearchHit { .. }
+            | Action::Checkout { .. }
+            | Action::ShowCommit { .. } => None,
         })
         .collect()
 }
@@ -753,6 +757,10 @@ fn palette_only_actions_follow_the_view_and_state() {
             Action::NewAgentPane(_) => 4,
             Action::RunCommand(..) => 5,
             Action::OpenMachine(_) => 6,
+            Action::OpenFile { .. }
+            | Action::OpenSearchHit { .. }
+            | Action::Checkout { .. }
+            | Action::ShowCommit { .. } => 7,
         })
         .collect();
     assert!(kinds.is_sorted(), "{kinds:?}");
@@ -1008,7 +1016,7 @@ fn go_to_workspaces_live_sessions_and_tasks() {
     let go_to: Vec<(Action, &str)> = all
         .iter()
         .filter(|entry| matches!(entry.action, Action::GoTo(_)))
-        .map(|entry| (entry.action, entry.title.as_str()))
+        .map(|entry| (entry.action.clone(), entry.title.as_str()))
         .collect();
     assert_eq!(
         go_to,
@@ -1039,7 +1047,8 @@ fn go_to_workspaces_live_sessions_and_tasks() {
     let working = all
         .iter()
         .find(|entry| entry.action == Action::GoTo(Target::Session(sessions[0].id)));
-    assert_eq!(working.map(|e| e.shortcut.as_str()), Some("● working"));
+    assert_eq!(working.and_then(|e| e.detail.as_deref()), Some("● working"));
+    assert_eq!(working.map(|e| e.shortcut.as_str()), Some(""));
 
     // A session that needs input leads the list, before the commands.
     let asking = session(app.id, Some("deploy?"), SessionState::NeedsInput);
@@ -1051,7 +1060,7 @@ fn go_to_workspaces_live_sessions_and_tasks() {
         &[],
     );
     assert_eq!(all[0].action, Action::GoTo(Target::Session(asking.id)));
-    assert_eq!(all[0].shortcut, "? needs input");
+    assert_eq!(all[0].detail.as_deref(), Some("? needs input"));
     assert!(matches!(all[1].action, Action::Run(_)));
 }
 
@@ -1286,4 +1295,98 @@ fn matched_chars_become_merged_byte_ranges() {
     // Multi-byte chars: indices are chars, ranges are bytes.
     assert_eq!(match_ranges("é/ab", &[0, 1, 3]), vec![0..3, 4..5]);
     assert_eq!(match_ranges("ab", &[5]), Vec::<Range<usize>>::new());
+}
+
+#[test]
+fn tab_walks_the_scopes_in_order_and_wraps() {
+    assert_eq!(
+        Scope::ORDER,
+        [
+            Scope::All,
+            Scope::Commands,
+            Scope::Sessions,
+            Scope::Files,
+            Scope::Search,
+            Scope::Branches,
+            Scope::Commits
+        ]
+    );
+    let mut scope = Scope::All;
+    let mut walked = Vec::new();
+    for _ in 0..7 {
+        scope = scope.next();
+        walked.push(scope);
+    }
+    assert_eq!(walked[..6], Scope::ORDER[1..]);
+    assert_eq!(scope, Scope::All, "Commits wraps to All");
+    assert_eq!(
+        Scope::All.prev(),
+        Scope::Commits,
+        "Shift+Tab from All wraps"
+    );
+    assert_eq!(Scope::Files.prev(), Scope::Sessions);
+}
+
+#[test]
+fn tab_and_shift_tab_are_the_scope_keys() {
+    let step = |keys: &str| scope_step(&Keystroke::parse(keys).unwrap());
+    assert_eq!(step("tab"), Some(1));
+    assert_eq!(step("shift-tab"), Some(-1));
+    assert_eq!(step("ctrl-tab"), None);
+    assert_eq!(step("alt-tab"), None);
+    assert_eq!(step("a"), None);
+}
+
+#[test]
+fn an_entry_belongs_to_the_section_of_its_action() {
+    let section = |action: Action| Entry::new(action, "x", "").action.scope();
+    assert_eq!(section(Action::Run(Command::NewTask)), Scope::Commands);
+    assert_eq!(section(Action::Theme(1)), Scope::Commands);
+    assert_eq!(
+        section(Action::GoTo(Target::Workspace(Ulid::new()))),
+        Scope::Sessions
+    );
+    assert_eq!(section(Action::OpenFile { path: "a".into() }), Scope::Files);
+    assert_eq!(
+        section(Action::OpenSearchHit {
+            path: "a".into(),
+            line: 1
+        }),
+        Scope::Search
+    );
+    assert_eq!(
+        section(Action::Checkout {
+            repo: None,
+            branch: "main".into()
+        }),
+        Scope::Branches
+    );
+    assert_eq!(
+        section(Action::ShowCommit {
+            repo: None,
+            sha: "abc".into()
+        }),
+        Scope::Commits
+    );
+}
+
+#[test]
+fn a_row_carries_its_section_detail_and_age() {
+    let entry = Entry {
+        detail: Some("abc1234".into()),
+        age: Some("3d".into()),
+        ..Entry::new(
+            Action::ShowCommit {
+                repo: None,
+                sha: "abc1234def".into(),
+            },
+            "fix login",
+            "",
+        )
+    };
+    let palette = Palette::new(vec![entry]);
+    let rows = palette.rows();
+    assert_eq!(rows[0].section, Scope::Commits);
+    assert_eq!(rows[0].detail, Some("abc1234"));
+    assert_eq!(rows[0].age, Some("3d"));
 }

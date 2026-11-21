@@ -951,6 +951,11 @@ impl Shell {
                 self.show_view(View::Board, window, cx);
                 cx.notify();
             }
+            // Wired in Task 11, which replaces this arm; nothing produces these four before then.
+            palette::Action::OpenFile { .. }
+            | palette::Action::OpenSearchHit { .. }
+            | palette::Action::Checkout { .. }
+            | palette::Action::ShowCommit { .. } => {}
         }
     }
 
