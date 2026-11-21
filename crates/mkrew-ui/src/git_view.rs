@@ -1728,6 +1728,30 @@ impl GitView {
         })
     }
 
+    /// After `v` marked `target` viewed: selects the next file below it that is not viewed,
+    /// wrapping to the top (ADR 0103); the file's diff is in the returned requests, as for an
+    /// arrow key. Nothing moves when `target` is not the selected file (a row's box), is not
+    /// viewed (the mark was cleared), is a History file, or every file is viewed. Uses the
+    /// local marks, so a fast second `v` does not jump back.
+    pub fn next_unviewed(&mut self, target: &Target) -> Requests {
+        let marked = self.viewed.contains(target.group, &target.path);
+        if self.history.is_some() || self.selected.as_ref() != Some(target) || !marked {
+            return Requests::default();
+        }
+        let files = self.steppable();
+        let Some(at) = files.iter().position(|(listed, _)| listed == target) else {
+            return Requests::default();
+        };
+        let next = (1..files.len())
+            .map(|by| &files[(at + by) % files.len()].0)
+            .find(|listed| !self.viewed.contains(listed.group, &listed.path))
+            .cloned();
+        Requests {
+            diff: next.and_then(|next| self.select(next)),
+            ..Requests::default()
+        }
+    }
+
     /// The selected file is viewed and its diff is shown collapsed ("Show diff" opens it).
     pub fn diff_collapsed(&self) -> bool {
         self.selected.as_ref().is_some_and(|selected| {

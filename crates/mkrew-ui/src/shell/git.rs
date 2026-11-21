@@ -693,6 +693,20 @@ impl Shell {
         }
     }
 
+    /// Scrolls the file list so the selected file shows (the selection moved by itself).
+    pub(crate) fn reveal_git_selection(&mut self, project_id: Ulid) {
+        let Some(view) = self.git.get(&project_id) else {
+            return;
+        };
+        let row = view.list_rows().iter().position(|row| {
+            matches!(row, git_view::ListRow::File(target, _) if view.selected.as_ref() == Some(target))
+        });
+        if let Some(at) = row {
+            self.git_files_scroll
+                .scroll_to_item(at, ScrollStrategy::Nearest);
+        }
+    }
+
     /// Scrolls the diff to `row` once its list is laid out for the shown diff (the render
     /// resets the list for another diff or mode, which would drop a scroll done now).
     pub(crate) fn scroll_diff_to(&self, row: usize) {

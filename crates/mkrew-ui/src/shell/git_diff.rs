@@ -431,7 +431,7 @@ impl Shell {
                 if on {
                     "Mark as not viewed"
                 } else {
-                    "Mark as viewed: its diff collapses until it changes"
+                    "Mark as viewed: its diff collapses until it changes, and the next file opens"
                 },
                 self.keymap.label(Command::GitToggleViewed),
             ))

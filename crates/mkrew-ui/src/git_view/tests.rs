@@ -1766,3 +1766,85 @@ fn show_commit_closes_the_file_diff_of_the_commit_it_leaves() {
         Some("a")
     );
 }
+
+/// A Working view whose only listed files are the modified Changes files `names`, the first
+/// one selected.
+fn changes(names: &[&str]) -> GitView {
+    let mut view = GitView::new(Ulid::new(), None);
+    assert!(view.begin_status().is_some());
+    let status = GitStatus {
+        unstaged: names
+            .iter()
+            .map(|name| file(name, ChangeKind::Modified))
+            .collect(),
+        ..GitStatus::default()
+    };
+    let requests = view.status_loaded(Ok(status));
+    assert_eq!(requests.diff, Some(target(Group::Unstaged, names[0])));
+    view
+}
+
+/// The daemon answers that the Changes files `names` are viewed.
+fn mark_viewed(view: &mut GitView, names: &[&str]) {
+    let (params, serial) = view.begin_viewed();
+    let files = names.iter().map(|name| viewed_file(name, false)).collect();
+    view.viewed_loaded(serial, (params.mode, params.since), files);
+}
+
+fn unstaged(path: &str) -> Target {
+    target(Group::Unstaged, path)
+}
+
+#[test]
+fn marking_a_file_viewed_selects_the_next_one_that_is_not_viewed() {
+    let mut view = changes(&["a.rs", "b.rs", "c.rs"]);
+    // Not viewed yet: nothing moves.
+    assert_eq!(view.next_unviewed(&unstaged("a.rs")), Requests::default());
+    view.toggle_viewed(&unstaged("a.rs")).unwrap();
+    let moved = view.next_unviewed(&unstaged("a.rs"));
+    assert_eq!(moved.diff, Some(unstaged("b.rs")));
+    assert_eq!(view.selected, Some(unstaged("b.rs")));
+    // The optimistic marks decide: a second `v` does not jump back to a.rs.
+    view.toggle_viewed(&unstaged("b.rs")).unwrap();
+    assert_eq!(
+        view.next_unviewed(&unstaged("b.rs")).diff,
+        Some(unstaged("c.rs"))
+    );
+    // Every file viewed: the selection stays and nothing is requested.
+    view.toggle_viewed(&unstaged("c.rs")).unwrap();
+    assert_eq!(view.next_unviewed(&unstaged("c.rs")), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("c.rs")));
+}
+
+#[test]
+fn next_unviewed_wraps_to_the_top_and_skips_viewed_files() {
+    let mut view = changes(&["a.rs", "b.rs", "c.rs"]);
+    mark_viewed(&mut view, &["b.rs"]);
+    view.select(unstaged("c.rs"));
+    view.toggle_viewed(&unstaged("c.rs")).unwrap();
+    // Nothing below c.rs: wraps to a.rs (b.rs is viewed).
+    assert_eq!(
+        view.next_unviewed(&unstaged("c.rs")).diff,
+        Some(unstaged("a.rs"))
+    );
+}
+
+#[test]
+fn v_on_a_viewed_file_only_clears_the_mark() {
+    let mut view = changes(&["a.rs", "b.rs"]);
+    mark_viewed(&mut view, &["a.rs"]);
+    assert!(!view.toggle_viewed(&unstaged("a.rs")).unwrap().viewed);
+    assert_eq!(view.next_unviewed(&unstaged("a.rs")), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("a.rs")));
+}
+
+#[test]
+fn marking_another_row_or_a_history_file_moves_nothing() {
+    let mut view = changes(&["a.rs", "b.rs", "c.rs"]);
+    // a.rs is selected; the box of b.rs was ticked.
+    view.toggle_viewed(&unstaged("b.rs")).unwrap();
+    assert_eq!(view.next_unviewed(&unstaged("b.rs")), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("a.rs")));
+    let _ = view.show(Section::History);
+    assert_eq!(view.next_unviewed(&unstaged("a.rs")), Requests::default());
+}
