@@ -1,6 +1,23 @@
 //! Shared widgets: buttons, text fields, menus, status marks, tooltips.
 
 use crate::*;
+pub(crate) use mkrew_ui::pressable::{Look, PressStyle, Pressable, apply_press, press_style};
+
+/// A filled control (primary button, switch): the fill stays, it dims on hover and press.
+fn filled_press(
+    el: gpui::Stateful<gpui::Div>,
+    enabled: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let style = PressStyle {
+        hover_bg: None,
+        hover_fg: None,
+        ..press_style(Look::Chip, enabled, theme)
+    };
+    apply_press(el, style).when(enabled, |el| {
+        el.hover(|style| style.opacity(opacity::HOVER))
+    })
+}
 
 /// A centered message: optional title, one sentence, optional smaller detail (an
 /// [`empty_state`] without a glyph).
@@ -93,7 +110,6 @@ pub(crate) fn button_frame(id: &'static str, label: impl IntoElement) -> gpui::S
         .h(theme::rems_px(theme::CONTROL_HEIGHT))
         .px(px(space::M))
         .rounded(px(radius::MEDIUM))
-        .cursor_pointer()
         .whitespace_nowrap()
         .text_size(font_size::BODY)
         .child(label)
@@ -107,12 +123,14 @@ pub(crate) fn button(
     primary: bool,
 ) -> gpui::Stateful<gpui::Div> {
     if primary {
-        button_frame(id, label)
-            .bg(rgb(theme.accent))
-            .text_color(rgb(button_fg(theme, true)))
-            .font_weight(FontWeight(weight::SEMIBOLD))
-            .hover(|style| style.opacity(opacity::HOVER))
-            .active(|style| style.opacity(opacity::ACTIVE))
+        filled_press(
+            button_frame(id, label)
+                .bg(rgb(theme.accent))
+                .text_color(rgb(button_fg(theme, true)))
+                .font_weight(FontWeight(weight::SEMIBOLD)),
+            true,
+            theme,
+        )
     } else {
         quiet_button(id, label, theme, theme.hover)
     }
@@ -144,13 +162,11 @@ pub(crate) fn secondary_button(
     label: impl IntoElement,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    let hover = theme.hover;
     button_frame(id, label)
         .border(px(theme::BORDER_WIDTH))
         .border_color(rgb(theme.control_border))
         .text_color(rgb(theme.text_dim))
-        .hover(move |style| style.bg(rgb(hover)))
-        .active(|style| style.opacity(opacity::ACTIVE))
+        .pressable(Look::Row, true, theme)
 }
 
 /// A ghost [`button`] whose hover shows `hover` (e.g. one step above a raised card) and the
@@ -161,11 +177,14 @@ pub(crate) fn quiet_button(
     theme: &Theme,
     hover: u32,
 ) -> gpui::Stateful<gpui::Div> {
-    let text = theme.text;
-    button_frame(id, label)
-        .text_color(rgb(theme.text_muted))
-        .hover(move |style| style.bg(rgb(hover)).text_color(rgb(text)))
-        .active(|style| style.opacity(opacity::ACTIVE))
+    let style = PressStyle {
+        hover_bg: Some(hover),
+        ..press_style(Look::Icon, true, theme)
+    };
+    apply_press(
+        button_frame(id, label).text_color(rgb(theme.text_muted)),
+        style,
+    )
 }
 
 /// A [`button`] that cannot be used right now: faded, no hover, no click.
@@ -193,8 +212,8 @@ pub(crate) fn disabled_button(
             .text_color(rgb(theme.text_disabled))
             .font_weight(FontWeight(weight::SEMIBOLD))
     } else {
-        base.opacity(opacity::DISABLED)
-            .text_color(rgb(theme.text_muted))
+        base.text_color(rgb(theme.text_muted))
+            .pressable(Look::Row, false, theme)
     }
 }
 
@@ -205,11 +224,15 @@ pub(crate) fn danger_button(
     label: impl IntoElement,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    let hover = theme.danger_bg;
-    button_frame(id, label)
-        .text_color(rgb(theme.danger_text))
-        .hover(move |style| style.bg(rgb(hover)))
-        .active(|style| style.opacity(opacity::ACTIVE))
+    let style = PressStyle {
+        hover_bg: Some(theme.danger_bg),
+        hover_fg: None,
+        ..press_style(Look::Row, true, theme)
+    };
+    apply_press(
+        button_frame(id, label).text_color(rgb(theme.danger_text)),
+        style,
+    )
 }
 
 /// Keyboard focus for the controls of a modal dialog (ADR 0085). gpui keeps the focus handle
@@ -355,7 +378,6 @@ pub(crate) fn icon_button_in(
     color: u32,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    let (hover, text) = (theme.hover, theme.text);
     div()
         .id(id)
         .flex_none()
@@ -364,10 +386,8 @@ pub(crate) fn icon_button_in(
         .items_center()
         .justify_center()
         .rounded(px(radius::MEDIUM))
-        .cursor_pointer()
         .text_color(rgb(theme.text_muted))
-        .hover(move |style| style.bg(rgb(hover)).text_color(rgb(text)))
-        .active(|style| style.opacity(opacity::ACTIVE))
+        .pressable(Look::Icon, true, theme)
         .child(icon_svg(glyph, theme::ICON_SIZE, color))
 }
 
@@ -392,7 +412,16 @@ pub(crate) fn segment(
     active: bool,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    let (hover, text) = (theme.hover, theme.text);
+    segment_in(id, active, true, theme)
+}
+
+/// [`segment`] that can be disabled (a read-only Settings page): faded, no pointer, no hover.
+pub(crate) fn segment_in(
+    id: impl Into<gpui::ElementId>,
+    active: bool,
+    enabled: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex()
@@ -402,16 +431,17 @@ pub(crate) fn segment(
         .h(theme::rems_px(theme::SEGMENT_HEIGHT))
         .px(px(space::M))
         .rounded(px(radius::CHIP))
-        .cursor_pointer()
         .whitespace_nowrap()
         .text_size(font_size::BODY)
         .when(active, |el| {
-            el.bg(rgb(theme.selected)).text_color(rgb(text))
+            el.bg(rgb(theme.selected))
+                .text_color(rgb(theme.text))
+                .when(enabled, |el| el.cursor_pointer())
+                .when(!enabled, |el| el.opacity(opacity::DISABLED))
         })
         .when(!active, |el| {
             el.text_color(rgb(theme.text_muted))
-                .hover(move |style| style.bg(rgb(hover)).text_color(rgb(text)))
-                .active(|style| style.opacity(opacity::ACTIVE))
+                .pressable(Look::Chip, enabled, theme)
         })
 }
 
@@ -717,21 +747,21 @@ pub(crate) fn meta_line(theme: &Theme, text: SharedString) -> gpui::Div {
 
 /// A full-width row of a popover menu; callers add the label (and a shortcut on the right).
 pub(crate) fn menu_item(id: SharedString, theme: &Theme) -> gpui::Stateful<gpui::Div> {
-    // One step above the menu's own `surface_raised`.
-    let hover = theme.border;
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap(px(space::S))
-        .px(px(space::S))
-        .py(px(space::XS))
-        .rounded(px(radius::SMALL))
-        .cursor_pointer()
-        .text_size(font_size::BODY)
-        .text_color(rgb(theme.text_muted))
-        .hover(move |style| style.bg(rgb(hover)))
-        .active(|style| style.opacity(opacity::ACTIVE))
+    // A menu sits on `surface_raised`: its rows use `Look::Raised` (hover `border`).
+    let style = press_style(Look::Raised, true, theme);
+    apply_press(
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::S))
+            .py(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .text_size(font_size::BODY)
+            .text_color(rgb(theme.text_muted)),
+        style,
+    )
 }
 
 /// The floating panel of a menu drawn in a `deferred(anchored(..))` (workspace, switcher, Run ▾,
@@ -754,6 +784,108 @@ pub(crate) fn menu_panel(
         .shadow_md()
         .font_family(theme.ui_font_family.clone())
         .occlude()
+}
+
+/// The on / off switch: `SWITCH_WIDTH` x `SWITCH_HEIGHT`, knob inset `SWITCH_INSET`, accent
+/// track while `on`. A disabled switch is faded and takes no press.
+#[allow(dead_code)] // used by Task 11
+pub(crate) fn toggle(
+    id: impl Into<gpui::ElementId>,
+    on: bool,
+    enabled: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let knob = px(theme::SWITCH_HEIGHT - 2.0 * theme::SWITCH_INSET);
+    filled_press(
+        div()
+            .id(id)
+            .flex_none()
+            .w(px(theme::SWITCH_WIDTH))
+            .h(px(theme::SWITCH_HEIGHT))
+            .p(px(theme::SWITCH_INSET))
+            .rounded_full()
+            .flex()
+            .when(on, |el| el.justify_end())
+            .bg(rgb(if on { theme.accent } else { theme.border }))
+            .child(div().size(knob).rounded_full().bg(rgb(theme.surface))),
+        enabled,
+        theme,
+    )
+}
+
+/// A field frame with `label` and a chevron; the frame is accent while `open`.
+#[allow(dead_code)] // used by Task 11
+pub(crate) fn dropdown_trigger(
+    id: impl Into<gpui::ElementId>,
+    label: impl IntoElement,
+    open: bool,
+    enabled: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(space::S))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::MEDIUM))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(if open { theme.accent } else { theme.border }))
+        .bg(rgb(theme.chrome))
+        .text_size(font_size::BODY)
+        .text_color(rgb(theme.text))
+        .pressable(Look::Row, enabled, theme)
+        .child(
+            div()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .child(label),
+        )
+        .child(icon_svg(
+            Icon::ChevronDown,
+            theme::ICON_SIZE_SMALL,
+            theme.text_muted,
+        ))
+}
+
+/// A `Look::Row` list row; `selected` adds the `theme.selected` fill and the
+/// `PALETTE_SELECTED_BAR` accent bar on the left. Callers add the content and the handler.
+#[allow(dead_code)] // used by Plan P2
+pub(crate) fn list_row(
+    id: impl Into<gpui::ElementId>,
+    selected: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .relative()
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .px(px(space::M))
+        .py(px(space::XS))
+        .rounded(px(radius::MEDIUM))
+        .text_size(font_size::BODY)
+        .text_color(rgb(theme.text))
+        .when(selected, |el| {
+            // A selected row keeps its `selected` fill on hover (no hover fill) and the pointer.
+            el.bg(rgb(theme.selected)).cursor_pointer().child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px(space::XS))
+                    .bottom(px(space::XS))
+                    .w(px(theme::PALETTE_SELECTED_BAR))
+                    .rounded_full()
+                    .bg(rgb(theme.accent)),
+            )
+        })
+        .when(!selected, |el| el.pressable(Look::Row, true, theme))
 }
 
 /// One color choice of a color menu: a filled dot (`None` = an empty ring = no color); the

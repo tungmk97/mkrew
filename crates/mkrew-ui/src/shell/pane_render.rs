@@ -813,6 +813,7 @@ impl Shell {
                 },
             ),
         )
+        .cursor_pointer()
         .flex_none()
         .px(px(space::S))
         .py_0()

@@ -78,6 +78,7 @@ impl Shell {
         .on_click(cx.listener(|shell, _, window, cx| shell.open_quick_open(window, cx)));
         let ignored = button_frame("files-ignored", "Ignored")
             .flex_none()
+            .cursor_pointer()
             .h(theme::rems_px(theme::INPUT_HEIGHT))
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.border))
