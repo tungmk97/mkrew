@@ -860,8 +860,9 @@ struct Shell {
     theme_pick: Option<mkrew_core::settings::ThemeMode>,
     /// The theme shown for a gallery card (mode it had, name), while one is previewed.
     gallery_preview: Option<(mkrew_core::settings::ThemeMode, SharedString)>,
-    /// Scrolls the keyboard's gallery card into view in the Settings body.
-    gallery_anchor: gpui::ScrollAnchor,
+    /// Set by a key press in the theme gallery: the keyboard's card scrolls into view when it
+    /// is next painted.
+    gallery_reveal: std::rc::Rc<std::cell::Cell<bool>>,
     /// The open prompt picker (modal; over the task dialog when it types into it).
     prompt_picker: Option<PromptPicker>,
     /// Keeps the prompt picker's pick in view.

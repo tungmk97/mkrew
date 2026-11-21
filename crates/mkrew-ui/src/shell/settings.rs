@@ -129,7 +129,7 @@ impl Shell {
                     self.settings_scroll
                         .scroll_to_item(card + banner + note + search + gallery);
                 }
-                Focus::Gallery(_) => self.gallery_anchor.scroll_to(window, cx),
+                Focus::Gallery(_) => self.gallery_reveal.set(true),
                 _ => {}
             }
         }

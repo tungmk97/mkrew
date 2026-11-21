@@ -283,7 +283,6 @@ impl Shell {
             })
             .flatten()
             .map(Launcher::new);
-        let settings_scroll = ScrollHandle::new();
         let mut shell = Self {
             status: match &target {
                 Target::Missing(text) => Status::NoMachine(text.clone()),
@@ -341,7 +340,7 @@ impl Shell {
             ports_dialog: None,
             settings_dialog: None,
             settings_from_composer: false,
-            settings_scroll: settings_scroll.clone(),
+            settings_scroll: ScrollHandle::new(),
             prompts_scroll: ScrollHandle::new(),
             prompts_body_scroll: ScrollHandle::new(),
             comments_scroll: ScrollHandle::new(),
@@ -492,7 +491,7 @@ impl Shell {
             palette_return: None,
             theme_pick: None,
             gallery_preview: None,
-            gallery_anchor: gpui::ScrollAnchor::for_handle(settings_scroll),
+            gallery_reveal: Default::default(),
             prompt_picker: None,
             prompt_picker_scroll: ScrollHandle::new(),
             slash_picker: None,

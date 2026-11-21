@@ -288,9 +288,35 @@ impl Shell {
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(ring))
             .map(|el| card_press(el, kept || focused, theme))
-            // The keyboard card scrolls itself into view (see `settings_key_down`).
+            // After a key moved to this card, it scrolls itself into view when it is painted,
+            // by the least that shows it whole (its bounds are this frame's).
             .when(focused, |el| {
-                el.anchor_scroll(Some(self.gallery_anchor.clone()))
+                let reveal = self.gallery_reveal.clone();
+                let scroll = self.settings_scroll.clone();
+                el.child(
+                    canvas(
+                        |_, _, _| (),
+                        move |card, (), window, _| {
+                            if !reveal.replace(false) {
+                                return;
+                            }
+                            let view = scroll.bounds();
+                            let mut offset = scroll.offset();
+                            if card.top() < view.top() {
+                                offset.y += view.top() - card.top();
+                            } else if card.bottom() > view.bottom() {
+                                offset.y -= card.bottom() - view.bottom();
+                            } else {
+                                return;
+                            }
+                            offset.y = offset.y.clamp(-scroll.max_offset().y, px(0.));
+                            scroll.set_offset(offset);
+                            window.refresh();
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                )
             })
             .on_hover(cx.listener(move |shell, hovered: &bool, window, cx| {
                 if *hovered {
