@@ -662,6 +662,13 @@ struct Shell {
     jira_scroll: ScrollHandle,
     /// The Board shows every workspace's tasks (`[ui] board_all_workspaces`, SPEC §10).
     board_all: bool,
+    /// `[ui] widget_bar` (ADR 0102): the thin bar at the bottom of the main window.
+    widget_bar: bool,
+    /// `[ui] widgets_hidden`: ids of the bar's hidden widgets (ids this build does not know
+    /// are kept).
+    widgets_hidden: Vec<String>,
+    /// The agent limits and machine stats the bar shows (events and `limits.get`).
+    widget_data: mkrew_ui::widget_bar::WidgetData,
     /// The card Ctrl+Enter runs (clicked last).
     selected_card: Option<Ulid>,
     /// Tasks whose `task.run` is in flight (Run is disabled meanwhile).
