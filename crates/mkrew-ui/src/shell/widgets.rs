@@ -1,6 +1,7 @@
 //! Shared widgets: buttons, text fields, menus, status marks, tooltips.
 
 use crate::*;
+use gpui::AnimationExt as _;
 pub(crate) use mkrew_ui::pressable::{Look, PressStyle, Pressable, apply_press, press_style};
 
 /// A filled control (primary button, switch): the fill stays, it dims on hover and press.
@@ -886,6 +887,62 @@ pub(crate) fn list_row(
             )
         })
         .when(!selected, |el| el.pressable(Look::Row, true, theme))
+}
+
+/// The one frame of every floating panel (palette, Settings, dialogs; ADR 0097): the glass
+/// fill, the accent tint gradient over the top `GLASS_TINT_HEIGHT` px, a 1 px glass border,
+/// the float shadow, `radius::LARGE`, and it swallows the mouse. Callers set size, layout and
+/// content; the gradient is the first child, so their children paint over it.
+#[allow(dead_code)] // moved into by Task 7
+pub(crate) fn floating_panel(
+    id: impl Into<gpui::ElementId>,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let (top, bottom) = theme::glass_gradient(theme);
+    div()
+        .id(id)
+        .relative()
+        .rounded(px(radius::LARGE))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::rgba(theme.glass_border))
+        .bg(gpui::rgba(theme.glass))
+        .shadow(theme::shadow_float(theme))
+        .occlude()
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(px(theme::GLASS_TINT_HEIGHT))
+                .rounded_t(px(radius::LARGE))
+                .bg(gpui::linear_gradient(
+                    theme::GLASS_TINT_ANGLE,
+                    gpui::linear_color_stop(gpui::rgba(top), theme::GLASS_TINT_FROM),
+                    gpui::linear_color_stop(gpui::rgba(bottom), theme::GLASS_TINT_TO),
+                )),
+        )
+}
+
+/// A floating panel's entrance: it fades in and rises `PANEL_RISE` over `motion::FAST`,
+/// ease-out. Under reduced motion gpui draws the end state, so then it appears at once. The
+/// wrapper fills its parent and centers the panel, so a panel sized as a fraction of the
+/// window still resolves.
+pub(crate) fn appear(
+    id: &'static str,
+    content: impl IntoElement,
+) -> gpui::AnimationElement<gpui::Div> {
+    div()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(content)
+        .with_animation(
+            id,
+            gpui::Animation::new(theme::motion::FAST).with_easing(gpui::ease_out_quint()),
+            |el, delta| el.opacity(delta).mt(px(theme::PANEL_RISE * (1.0 - delta))),
+        )
 }
 
 /// One color choice of a color menu: a filled dot (`None` = an empty ring = no color); the

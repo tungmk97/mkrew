@@ -173,6 +173,6 @@ impl Render for ConfirmPrompt {
             .font_family(theme.ui_font_family.clone())
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
-            .child(panel)
+            .child(super::widgets::appear("confirm-panel", panel))
     }
 }
