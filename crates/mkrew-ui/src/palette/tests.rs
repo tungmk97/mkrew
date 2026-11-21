@@ -1202,28 +1202,29 @@ fn mark_unread_is_listed_only_for_a_session_that_can_be_marked() {
 
 #[test]
 fn theme_entries_list_every_theme_with_its_appearance_and_mark_the_current() {
-    let entries = theme_entries(&crate::theme_catalog::ThemeCatalog::builtin(), "Dracula");
+    let catalog = crate::theme_catalog::ThemeCatalog::builtin();
+    let entries = theme_entries(&catalog, "Dracula");
     assert_eq!(entries.len(), crate::theme::THEMES.len());
     assert_eq!(entries[0].action, Action::Theme(0));
     assert_eq!(entries[0].title, "Mkrew Dark");
     assert_eq!(entries[0].shortcut, "Dark");
     assert_eq!(entries[2].title, "Dracula");
     assert_eq!(entries[2].shortcut, "✓ Dark");
-    assert_eq!(entries[7].shortcut, "Light");
+    assert_eq!(entries[12].title, "Mkrew Light");
+    assert_eq!(entries[13].shortcut, "Light");
 }
 
 #[test]
 fn the_picker_starts_on_the_current_theme_and_moves_from_there() {
-    let mut palette = Palette::new(theme_entries(
-        &crate::theme_catalog::ThemeCatalog::builtin(),
-        "Dracula",
-    ));
+    let catalog = crate::theme_catalog::ThemeCatalog::builtin();
+    let mut palette = Palette::new(theme_entries(&catalog, "Dracula"));
     palette.pick_entry(2);
     assert_eq!(palette.picked(), Some(Action::Theme(2)));
     palette.step(1);
     assert_eq!(palette.picked(), Some(Action::Theme(3)));
-    palette.insert("solar");
-    assert_eq!(palette.picked(), Some(Action::Theme(10)));
+    palette.insert("solarized light");
+    let solarized_light = catalog.index_of("Solarized Light").unwrap();
+    assert_eq!(palette.picked(), Some(Action::Theme(solarized_light)));
 }
 
 #[test]

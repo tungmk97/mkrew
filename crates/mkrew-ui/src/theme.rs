@@ -1655,7 +1655,7 @@ const fn light_entry(name: &'static str, palette: Palette) -> ThemeEntry {
     }
 }
 
-/// Every built-in theme, in [`mkrew_core::settings::THEME_NAMES`] order.
+/// Every built-in theme, in [`mkrew_core::settings::THEME_NAMES`] order: dark ones, then light ones.
 pub const THEMES: &[ThemeEntry] = &[
     ThemeEntry {
         name: "Mkrew Dark",
@@ -1772,6 +1772,163 @@ pub const THEMES: &[ThemeEntry] = &[
             ],
         },
     ),
+    // Nord. Source: palette https://www.nordtheme.com/docs/colors-and-palettes (nord0 to
+    // nord15); ANSI and the muted text (dim_foreground) from
+    // https://github.com/nordtheme/alacritty/blob/main/src/nord.yaml; the flat nord0 surfaces
+    // as in https://github.com/arcticicestudio/nord-visual-studio-code/blob/develop/themes/nord-color-theme.json
+    dark_entry(
+        "Nord",
+        Palette {
+            dark: true,
+            bg: 0x2E3440,
+            chrome: 0x2E3440,
+            surface: 0x2E3440,
+            fg: 0xD8DEE9,
+            muted: 0xA5ABB6,
+            accent: 0x88C0D0,
+            red: 0xBF616A,
+            green: 0xA3BE8C,
+            yellow: 0xEBCB8B,
+            blue: 0x81A1C1,
+            magenta: 0xB48EAD,
+            cyan: 0x88C0D0,
+            ansi: [
+                0x3B4252, 0xBF616A, 0xA3BE8C, 0xEBCB8B, 0x81A1C1, 0xB48EAD, 0x88C0D0, 0xE5E9F0,
+                0x4C566A, 0xBF616A, 0xA3BE8C, 0xEBCB8B, 0x81A1C1, 0xB48EAD, 0x8FBCBB, 0xECEFF4,
+            ],
+        },
+    ),
+    // Solarized Dark. Source: https://ethanschoonover.com/solarized/ (base03 to base3 and the
+    // eight accents) and the terminal mapping of
+    // https://github.com/altercation/solarized/blob/master/xresources/solarized
+    // Changed for the contrast rules (ADR 0101): fg 839496 (base0) -> EEE8D5 (base2), accent
+    // 268BD2 -> 62ABDE; muted is base1.
+    dark_entry(
+        "Solarized Dark",
+        Palette {
+            dark: true,
+            bg: 0x002B36,
+            chrome: 0x002B36,
+            surface: 0x002B36,
+            fg: 0xEEE8D5,
+            muted: 0x93A1A1,
+            accent: 0x62ABDE,
+            red: 0xDC322F,
+            green: 0x859900,
+            yellow: 0xB58900,
+            blue: 0x268BD2,
+            magenta: 0xD33682,
+            cyan: 0x2AA198,
+            ansi: [
+                0x073642, 0xDC322F, 0x859900, 0xB58900, 0x268BD2, 0xD33682, 0x2AA198, 0xEEE8D5,
+                0x002B36, 0xCB4B16, 0x586E75, 0x657B83, 0x839496, 0x6C71C4, 0x93A1A1, 0xFDF6E3,
+            ],
+        },
+    ),
+    // GitHub Dark (GitHub Dark Default). Source: https://github.com/primer/github-vscode-theme
+    // (src/colors.js: fg e6edf3, muted 7d8590) with the primitives of
+    // https://github.com/primer/primitives/blob/main/src/tokens/base/color/dark/dark.json5
+    // (canvas 0d1117, inset 010409, overlay 151b23, blue 58a6ff); ANSI as exported in
+    // https://gist.github.com/stef-k/aa85769be6b0a080a97cb2b623665137 (its terminal.ansi* keys).
+    // Changed for the contrast rules (ADR 0101): accent 2F81F7 (accent.fg) -> 58A6FF.
+    dark_entry(
+        "GitHub Dark",
+        Palette {
+            dark: true,
+            bg: 0x0D1117,
+            chrome: 0x010409,
+            surface: 0x151B23,
+            fg: 0xE6EDF3,
+            muted: 0x7D8590,
+            accent: 0x58A6FF,
+            red: 0xFF7B72,
+            green: 0x3FB950,
+            yellow: 0xD29922,
+            blue: 0x58A6FF,
+            magenta: 0xBC8CFF,
+            cyan: 0x39C5CF,
+            ansi: [
+                0x484F58, 0xFF7B72, 0x3FB950, 0xD29922, 0x58A6FF, 0xBC8CFF, 0x39C5CF, 0xB1BAC4,
+                0x6E7681, 0xFFA198, 0x56D364, 0xE3B341, 0x79C0FF, 0xD2A8FF, 0x56D4DD, 0xFFFFFF,
+            ],
+        },
+    ),
+    // Rosé Pine. Source: https://github.com/rose-pine/alacritty/blob/main/dist/rose-pine.toml
+    // (base 191724, surface 1f1d2e, text e0def4, subtle 908caa, love, gold, rose, pine, foam,
+    // iris and the ANSI table) and https://rosepinetheme.com/palette/
+    dark_entry(
+        "Rosé Pine",
+        Palette {
+            dark: true,
+            bg: 0x191724,
+            chrome: 0x191724,
+            surface: 0x1F1D2E,
+            fg: 0xE0DEF4,
+            muted: 0x908CAA,
+            accent: 0xC4A7E7,
+            red: 0xEB6F92,
+            green: 0x31748F,
+            yellow: 0xF6C177,
+            blue: 0x9CCFD8,
+            magenta: 0xC4A7E7,
+            cyan: 0xEBBCBA,
+            ansi: [
+                0x26233A, 0xEB6F92, 0x31748F, 0xF6C177, 0x9CCFD8, 0xC4A7E7, 0xEBBCBA, 0xE0DEF4,
+                0x6E6A86, 0xEB6F92, 0x31748F, 0xF6C177, 0x9CCFD8, 0xC4A7E7, 0xEBBCBA, 0xE0DEF4,
+            ],
+        },
+    ),
+    // Kanagawa (wave). Source: https://github.com/rebelot/kanagawa.nvim/blob/master/lua/kanagawa/colors.lua
+    // (palette) and .../lua/kanagawa/themes.lua (the wave `ui`, `syn` and `term` tables):
+    // sumiInk3 bg, sumiInk0 chrome, sumiInk2 surface, fujiWhite fg, oldWhite muted, crystalBlue.
+    dark_entry(
+        "Kanagawa",
+        Palette {
+            dark: true,
+            bg: 0x1F1F28,
+            chrome: 0x16161D,
+            surface: 0x1A1A22,
+            fg: 0xDCD7BA,
+            muted: 0xC8C093,
+            accent: 0x7E9CD8,
+            red: 0xE46876,
+            green: 0x98BB6C,
+            yellow: 0xE6C384,
+            blue: 0x7E9CD8,
+            magenta: 0x957FB8,
+            cyan: 0x7AA89F,
+            ansi: [
+                0x16161D, 0xC34043, 0x76946A, 0xC0A36E, 0x7E9CD8, 0x957FB8, 0x6A9589, 0xC8C093,
+                0x727169, 0xE82424, 0x98BB6C, 0xE6C384, 0x7FB4CA, 0x938AA9, 0x7AA89F, 0xDCD7BA,
+            ],
+        },
+    ),
+    // Everforest Dark (medium). Source: https://github.com/sainnhe/everforest/blob/master/palette.md
+    // (bg0 2d353b, bg_dim 232a2e, grey1 859289 and the accents) and the terminal table of
+    // https://github.com/sainnhe/everforest/blob/master/colors/everforest.vim
+    // Changed for the contrast rules (ADR 0101): fg D3C6AA -> D5C9AE (the ANSI white stays D3C6AA).
+    dark_entry(
+        "Everforest Dark",
+        Palette {
+            dark: true,
+            bg: 0x2D353B,
+            chrome: 0x232A2E,
+            surface: 0x232A2E,
+            fg: 0xD5C9AE,
+            muted: 0x859289,
+            accent: 0xA7C080,
+            red: 0xE67E80,
+            green: 0xA7C080,
+            yellow: 0xDBBC7F,
+            blue: 0x7FBBB3,
+            magenta: 0xD699B6,
+            cyan: 0x83C092,
+            ansi: [
+                0x475258, 0xE67E80, 0xA7C080, 0xDBBC7F, 0x7FBBB3, 0xD699B6, 0x83C092, 0xD3C6AA,
+                0x475258, 0xE67E80, 0xA7C080, 0xDBBC7F, 0x7FBBB3, 0xD699B6, 0x83C092, 0xD3C6AA,
+            ],
+        },
+    ),
     ThemeEntry {
         name: "Mkrew Light",
         dark: false,
@@ -1884,6 +2041,114 @@ pub const THEMES: &[ThemeEntry] = &[
             ansi: [
                 0xFBF1C7, 0xCC241D, 0x98971A, 0xD79921, 0x458588, 0xB16286, 0x689D6A, 0x7C6F64,
                 0x928374, 0x9D0006, 0x79740E, 0xB57614, 0x076678, 0x8F3F71, 0x427B58, 0x3C3836,
+            ],
+        },
+    ),
+    // Rosé Pine Dawn. Source: https://github.com/rose-pine/alacritty/blob/main/dist/rose-pine-dawn.toml
+    // (base faf4ed, surface fffaf3, overlay f2e9e1, text 575279, subtle 797593, pine 286983,
+    // and the ANSI table) and https://rosepinetheme.com/palette/
+    light_entry(
+        "Rosé Pine Dawn",
+        Palette {
+            dark: false,
+            bg: 0xFAF4ED,
+            chrome: 0xF2E9E1,
+            surface: 0xFFFAF3,
+            fg: 0x575279,
+            muted: 0x797593,
+            accent: 0x286983,
+            red: 0xB4637A,
+            green: 0x286983,
+            yellow: 0xEA9D34,
+            blue: 0x56949F,
+            magenta: 0x907AA9,
+            cyan: 0xD7827E,
+            ansi: [
+                0xF2E9E1, 0xB4637A, 0x286983, 0xEA9D34, 0x56949F, 0x907AA9, 0xD7827E, 0x575279,
+                0x9893A5, 0xB4637A, 0x286983, 0xEA9D34, 0x56949F, 0x907AA9, 0xD7827E, 0x575279,
+            ],
+        },
+    ),
+    // Everforest Light. Source: https://github.com/sainnhe/everforest/blob/master/palette.md
+    // (light: bg0 fdf6e3, bg_dim efebd4, hard bg0 fffbef, grey2 829181 and the accents) and the
+    // terminal table of .../colors/everforest.vim (black is fg, white is bg3 in the light scheme).
+    // Changed for the contrast rules (ADR 0101): fg 5C6A72 -> 525F66, accent 3A94C5 -> 2A6F94,
+    // surface F4F0D9 (bg1) -> FFFBEF (the hard-contrast bg0).
+    light_entry(
+        "Everforest Light",
+        Palette {
+            dark: false,
+            bg: 0xFDF6E3,
+            chrome: 0xEFEBD4,
+            surface: 0xFFFBEF,
+            fg: 0x525F66,
+            muted: 0x829181,
+            accent: 0x2A6F94,
+            red: 0xF85552,
+            green: 0x8DA101,
+            yellow: 0xDFA000,
+            blue: 0x3A94C5,
+            magenta: 0xDF69BA,
+            cyan: 0x35A77C,
+            ansi: [
+                0x5C6A72, 0xF85552, 0x8DA101, 0xDFA000, 0x3A94C5, 0xDF69BA, 0x35A77C, 0xE6E2CC,
+                0x5C6A72, 0xF85552, 0x8DA101, 0xDFA000, 0x3A94C5, 0xDF69BA, 0x35A77C, 0xE6E2CC,
+            ],
+        },
+    ),
+    // Ayu Light. Source: https://github.com/ayu-theme/ayu-colors/blob/master/themes/light.yaml
+    // (surface lift fcfcfc, base f8f9fa, over ffffff, accent f29718, palette) and the terminal
+    // table of https://github.com/ayu-theme/vscode-ayu/blob/master/ayu-light.json; fg is the
+    // editor text 020a12 at 64 % over fcfcfc (5C6166), muted the ui text 021a3c at 48 % over
+    // f8f9fa (828E9F).
+    // Changed for the contrast rules (ADR 0101): accent F29718 -> 975E0F.
+    light_entry(
+        "Ayu Light",
+        Palette {
+            dark: false,
+            bg: 0xFCFCFC,
+            chrome: 0xF8F9FA,
+            surface: 0xFFFFFF,
+            fg: 0x5C6166,
+            muted: 0x828E9F,
+            accent: 0x975E0F,
+            red: 0xF07171,
+            green: 0x86B300,
+            yellow: 0xEBA400,
+            blue: 0x22A4E6,
+            magenta: 0xA37ACC,
+            cyan: 0x4CBF99,
+            ansi: [
+                0x000000, 0xF06B6C, 0x6CBF43, 0xE7A100, 0x21A1E2, 0xA176CB, 0x4ABC96, 0xC7C7C7,
+                0x686868, 0xF07171, 0x86B300, 0xEBA400, 0x22A4E6, 0xA37ACC, 0x4CBF99, 0xD1D1D1,
+            ],
+        },
+    ),
+    // Tokyo Night Day. Source: https://github.com/folke/tokyonight.nvim/blob/main/extras/alacritty/tokyonight_day.toml
+    // (bg e1e2e7, fg 3760bf, fg_dark 6172b0, the ANSI table).
+    // Changed for the contrast rules (ADR 0101): the Mkrew workspace colors need 3:1 on the
+    // hover and selected fills, which a bg this dark cannot give, so bg and surface are
+    // E1E2E7 lightened to F1F2F5 and the published bg is the chrome; fg 3760BF -> 2F52A2 and
+    // accent 2E7DE9 -> 2461B5 (text and code need 4.5:1).
+    light_entry(
+        "Tokyo Night Day",
+        Palette {
+            dark: false,
+            bg: 0xF1F2F5,
+            chrome: 0xE1E2E7,
+            surface: 0xF1F2F5,
+            fg: 0x2F52A2,
+            muted: 0x6172B0,
+            accent: 0x2461B5,
+            red: 0xF52A65,
+            green: 0x587539,
+            yellow: 0x8C6C3E,
+            blue: 0x2E7DE9,
+            magenta: 0x9854F1,
+            cyan: 0x007197,
+            ansi: [
+                0xB4B5B9, 0xF52A65, 0x587539, 0x8C6C3E, 0x2E7DE9, 0x9854F1, 0x007197, 0x6172B0,
+                0xA1A6C5, 0xFF4774, 0x5C8524, 0xA27629, 0x358AFF, 0xA463FF, 0x007EA8, 0x3760BF,
             ],
         },
     ),
@@ -2355,6 +2620,21 @@ mod tests {
             "light_theme"
         );
         assert_eq!(slot_key(slot_is_dark(ThemeMode::Dark, false)), "dark_theme");
+    }
+
+    #[test]
+    fn there_are_22_built_in_themes_grouped_dark_then_light() {
+        assert_eq!(THEMES.len(), 22);
+        assert_eq!(THEMES.iter().filter(|e| e.dark).count(), 12);
+        assert!(
+            THEMES.iter().take(12).all(|e| e.dark),
+            "picker order: dark first"
+        );
+        assert!(THEMES.iter().skip(12).all(|e| !e.dark));
+        let mut names: Vec<&str> = THEMES.iter().map(|e| e.name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), 22, "names are unique");
     }
 
     #[test]
