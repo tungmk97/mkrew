@@ -327,7 +327,9 @@ impl Shell {
             keymap_errors: keymap_errors.to_vec(),
             keymap_file,
             settings_modified: None,
-            themes_stamp: ThemesStamp::read(&themes_dir),
+            // The first tick reloads once if the folder changed since the startup load (an empty
+            // or missing folder reads as the default stamp, so no extra load).
+            themes_stamp: ThemesStamp::default(),
             themes_dir,
             settings_error: None,
             settings_file,
@@ -488,6 +490,7 @@ impl Shell {
             palette_recent: Vec::new(),
             palette_return: None,
             theme_pick: None,
+            gallery_preview: None,
             prompt_picker: None,
             prompt_picker_scroll: ScrollHandle::new(),
             slash_picker: None,
