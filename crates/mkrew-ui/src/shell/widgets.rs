@@ -998,16 +998,19 @@ pub(crate) fn floating_panel(
 
 /// A floating panel's entrance: it fades in and rises `PANEL_RISE` over `motion::FAST`,
 /// ease-out. Under reduced motion gpui draws the end state, so then it appears at once. The
-/// wrapper fills its parent and centers the panel, so a panel sized as a fraction of the
-/// window still resolves.
+/// wrapper fills its parent and centers the panel horizontally, so a panel sized as a
+/// fraction of the window still resolves; vertically it centers it, or keeps it at the top
+/// when `top` (a top-anchored shade such as the palette's, whose height changes).
 pub(crate) fn appear(
     id: &'static str,
     content: impl IntoElement,
+    top: bool,
 ) -> gpui::AnimationElement<gpui::Div> {
     div()
         .size_full()
         .flex()
-        .items_center()
+        .when(top, |el| el.items_start())
+        .when(!top, |el| el.items_center())
         .justify_center()
         .child(content)
         .with_animation(

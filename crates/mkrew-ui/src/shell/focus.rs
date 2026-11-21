@@ -432,7 +432,7 @@ impl Shell {
                     shell.focus_pane(window, cx);
                 }),
             )
-            .child(super::widgets::appear(id, panel))
+            .child(super::widgets::appear(id, panel, top.is_some()))
             .into_any_element()
     }
 }
