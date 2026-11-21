@@ -1592,6 +1592,12 @@ impl ThemeEntry {
             (None, false) => Theme::light(),
         }
     }
+
+    /// The palette the theme is derived from; `None` for the two Mkrew themes, which are
+    /// written token by token.
+    pub fn palette(&self) -> Option<&Palette> {
+        self.palette.as_ref()
+    }
 }
 
 /// The theme named `name` (exact match).
@@ -1951,6 +1957,128 @@ pub fn contrast(a: u32, b: u32) -> f32 {
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
+/// A contrast rule a theme does not meet (ADR 0101): which rule, and the colors that fail it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub rule: &'static str,
+    pub detail: String,
+}
+
+impl std::fmt::Display for Problem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.rule, self.detail)
+    }
+}
+
+/// The contrast rules `theme` does not meet, each failing pair once; empty for every built-in
+/// theme (a test), and the reason for the "Low contrast" badge of a theme file.
+pub fn problems(theme: &Theme) -> Vec<Problem> {
+    let t = theme;
+    let mut found: Vec<Problem> = Vec::new();
+    let mut check = |rule: &'static str, fg: u32, bg: u32, min: f32| {
+        let ratio = contrast(fg, bg);
+        if ratio < min {
+            let problem = Problem {
+                rule,
+                detail: format!("{fg:06X} on {bg:06X} reads {ratio:.2}:1, needs {min}:1"),
+            };
+            if !found.contains(&problem) {
+                found.push(problem);
+            }
+        }
+    };
+    let grounds = [
+        t.bg,
+        t.surface,
+        t.surface_raised,
+        t.sidebar,
+        t.hover,
+        t.selected,
+        t.card,
+    ];
+    for bg in grounds {
+        for fg in [t.text, t.text_muted] {
+            check("body text", fg, bg, 4.5);
+        }
+    }
+    // Decoded exactly as `with_glass` quantized them; the page behind is a light or a dark one.
+    let alpha = (t.glass & 0xFF) as f32 / 255.0;
+    let tint = (t.glass_tint & 0xFF) as f32 / 255.0;
+    for backdrop in [t.bg, t.text] {
+        let fill = glass_over(t.surface, t.accent, alpha, tint, backdrop);
+        check("text on glass", t.text, fill, 4.5);
+    }
+    check("on accent", t.on_accent, t.accent, 3.0);
+    // The close button's red hover under its cross.
+    check("window close", t.on_accent, t.status_exited, 3.0);
+    for bg in [
+        t.terminal_selection_bg,
+        t.terminal_match_bg,
+        t.terminal_match_current_bg,
+    ] {
+        check("selected text", t.text, bg, 4.5);
+    }
+    let code = [
+        t.syntax_keyword,
+        t.syntax_string,
+        t.syntax_number,
+        t.syntax_type,
+        t.syntax_function,
+    ];
+    for fg in code.into_iter().chain([t.accent]) {
+        for bg in [t.bg, t.surface, t.surface_raised] {
+            check("code", fg, bg, 4.5);
+        }
+    }
+    check("toast", t.text, t.surface_raised, 4.5);
+    for mark in [t.accent_text, t.status_exited, t.text_muted] {
+        check("toast mark", mark, t.surface_raised, 3.0);
+    }
+    for fg in code.into_iter().chain([t.text, t.text_muted]) {
+        for bg in [t.diff_add_bg, t.diff_del_bg, t.diff_mod_bg] {
+            check("highlighted diff", fg, bg, 4.5);
+        }
+    }
+    // WCAG 1.4.11: the Files editor's change bars are graphical objects.
+    for fg in [t.diff_add_text, t.diff_mod_text, t.diff_del_text] {
+        for bg in [t.bg, t.surface, t.surface_raised] {
+            check("change bars", fg, bg, 3.0);
+        }
+    }
+    for (fg, bg) in [
+        (t.diff_add_text, t.diff_add_bg),
+        (t.diff_del_text, t.diff_del_bg),
+        (t.diff_mod_text, t.diff_mod_bg),
+        (t.text_dim, t.diff_add_gutter),
+        (t.text_dim, t.diff_del_gutter),
+        (t.text_dim, t.diff_mod_gutter),
+        (t.git_modified, t.bg),
+        (t.git_untracked, t.bg),
+        (t.git_modified, t.selected),
+        (t.git_untracked, t.selected),
+    ] {
+        check("diff lines", fg, bg, 4.5);
+    }
+    // The sidebar's session list keeps Mkrew's classic palette on this theme's sidebar.
+    let classic = t.classic();
+    for fg in [classic.text, classic.text_muted] {
+        check("sidebar text", fg, t.sidebar, 4.5);
+    }
+    for color in t.workspace_colors {
+        for bg in grounds {
+            check("workspace colors", color, bg, 3.0);
+        }
+    }
+    for bg in [t.sidebar, t.hover, t.selected] {
+        for color in t.workspace_colors {
+            let (letter, fill) = t.avatar_colors(color, bg);
+            check("avatar letters", letter, fill, 4.5);
+        }
+        check("chevron", t.chevron_color(), bg, 3.0);
+    }
+    found
+}
+
 /// `0xRRGGBB` as the CSS / SVG color `#RRGGBB` (diagram and QR code SVGs).
 pub fn hex(color: u32) -> String {
     format!("#{color:06X}")
@@ -1964,6 +2092,38 @@ mod tests {
 
     fn all_themes() -> Vec<Theme> {
         THEMES.iter().map(ThemeEntry::build).collect()
+    }
+
+    #[test]
+    fn every_built_in_theme_meets_every_contrast_rule() {
+        for theme in all_themes() {
+            let found = problems(&theme);
+            assert!(
+                found.is_empty(),
+                "{}: {}",
+                theme.name,
+                found
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+    }
+
+    #[test]
+    fn a_palette_with_no_contrast_reports_the_rules_it_breaks() {
+        let mut palette = *THEMES[1].palette().expect("One Dark has a palette");
+        palette.fg = palette.bg;
+        palette.accent = palette.bg;
+        let found = problems(&Theme::from_palette("Bad", &palette));
+        let rules: Vec<&str> = found.iter().map(|problem| problem.rule).collect();
+        for rule in ["body text", "on accent", "code"] {
+            assert!(rules.contains(&rule), "{rule} missing from {rules:?}");
+        }
+        let first = found[0].to_string();
+        assert!(first.starts_with(found[0].rule), "{first}");
+        assert!(first.contains(" on "), "the colors are named: {first}");
     }
 
     #[test]
@@ -1989,24 +2149,6 @@ mod tests {
         assert_eq!(dark.scrim, with_alpha(0x000000, 0.24));
         assert_eq!(light.scrim, with_alpha(0x000000, 0.16));
         assert!(dark.scrim & 0xFF < 0x59 && light.scrim & 0xFF < dark.scrim & 0xFF);
-    }
-
-    #[test]
-    fn text_on_glass_reads_at_4_5_over_a_light_or_dark_page() {
-        for theme in all_themes() {
-            // Decoded exactly as `with_glass` quantized them.
-            let alpha = (theme.glass & 0xFF) as f32 / 255.0;
-            let tint = (theme.glass_tint & 0xFF) as f32 / 255.0;
-            for backdrop in [theme.bg, theme.text] {
-                let fill = glass_over(theme.surface, theme.accent, alpha, tint, backdrop);
-                let ratio = contrast(theme.text, fill);
-                assert!(
-                    ratio >= 4.5,
-                    "{}: {ratio:.2}:1 over {backdrop:06X}",
-                    theme.name
-                );
-            }
-        }
     }
 
     #[test]
@@ -2101,17 +2243,6 @@ mod tests {
         assert_eq!(mix(0x102030, 0x102030, 0.7), 0x102030);
         assert_eq!(mix(0xFF0000, 0x0000FF, 0.0), 0xFF0000);
         assert_eq!(mix(0xFF0000, 0x0000FF, 1.0), 0x0000FF);
-    }
-
-    #[test]
-    fn the_classic_sidebar_text_reads_on_every_sidebar() {
-        for theme in all_themes() {
-            let classic = theme.classic();
-            for (what, color) in [("text", classic.text), ("text_muted", classic.text_muted)] {
-                let ratio = contrast(color, theme.sidebar);
-                assert!(ratio >= 4.5, "{} {what}: {ratio:.2}", theme.name);
-            }
-        }
     }
 
     #[test]
@@ -2264,30 +2395,6 @@ mod tests {
     }
 
     #[test]
-    fn body_text_contrast_is_at_least_4_5() {
-        for theme in all_themes() {
-            for bg in [
-                theme.bg,
-                theme.surface,
-                theme.surface_raised,
-                theme.sidebar,
-                theme.hover,
-                theme.selected,
-                theme.card,
-            ] {
-                for fg in [theme.text, theme.text_muted] {
-                    let ratio = contrast(fg, bg);
-                    assert!(
-                        ratio >= 4.5,
-                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
     fn hex_is_a_padded_css_color() {
         assert_eq!(hex(0x17181C), "#17181C");
         assert_eq!(hex(0x00000A), "#00000A", "leading zeros stay");
@@ -2387,159 +2494,6 @@ mod tests {
         );
     }
 
-    /// ✕ on the red hover of the Close button must stay readable in both themes.
-    #[test]
-    fn window_close_hover_is_readable() {
-        for theme in all_themes() {
-            let ratio = contrast(theme.on_accent, theme.status_exited);
-            assert!(ratio >= 3.0, "{}: {ratio:.2}", theme.name);
-        }
-    }
-
-    #[test]
-    fn on_accent_text_is_readable_on_the_accent() {
-        for t in all_themes() {
-            assert!(
-                contrast(t.on_accent, t.accent) >= 3.0,
-                "{}: {:06X}",
-                t.name,
-                t.accent
-            );
-        }
-    }
-
-    #[test]
-    fn selected_text_stays_readable() {
-        for theme in all_themes() {
-            for bg in [
-                theme.terminal_selection_bg,
-                theme.terminal_match_bg,
-                theme.terminal_match_current_bg,
-            ] {
-                let ratio = contrast(theme.text, bg);
-                assert!(ratio >= 4.5, "{}: {bg:06X}: {ratio:.2}", theme.name);
-            }
-        }
-    }
-
-    #[test]
-    fn code_stays_readable() {
-        for theme in all_themes() {
-            for fg in [
-                theme.syntax_keyword,
-                theme.syntax_string,
-                theme.syntax_number,
-                theme.syntax_type,
-                theme.syntax_function,
-                theme.accent,
-            ] {
-                // `surface_raised` = the Files viewer's selected line.
-                for bg in [theme.bg, theme.surface, theme.surface_raised] {
-                    let ratio = contrast(fg, bg);
-                    assert!(
-                        ratio >= 4.5,
-                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-            }
-        }
-    }
-
-    /// A toast card is `surface_raised`: its text, its two marks (info accent, error red) and
-    /// the ✕ must read on it in both appearances.
-    #[test]
-    fn toast_text_and_marks_read_on_the_card() {
-        for theme in all_themes() {
-            let ratio = contrast(theme.text, theme.surface_raised);
-            assert!(ratio >= 4.5, "{}: text: {ratio:.2}", theme.name);
-            for (name, mark) in [
-                ("info", theme.accent_text),
-                ("error", theme.status_exited),
-                ("close", theme.text_muted),
-            ] {
-                let ratio = contrast(mark, theme.surface_raised);
-                assert!(ratio >= 3.0, "{}: {name}: {ratio:.2}", theme.name);
-            }
-        }
-    }
-
-    #[test]
-    fn highlighted_diff_lines_stay_readable() {
-        for theme in all_themes() {
-            for fg in [
-                theme.syntax_keyword,
-                theme.syntax_string,
-                theme.syntax_number,
-                theme.syntax_type,
-                theme.syntax_function,
-                theme.text,
-                // Comments and line numbers.
-                theme.text_muted,
-            ] {
-                for bg in [theme.diff_add_bg, theme.diff_del_bg, theme.diff_mod_bg] {
-                    let ratio = contrast(fg, bg);
-                    assert!(
-                        ratio >= 4.5,
-                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-            }
-        }
-    }
-
-    /// The Files editor's change bars stand out from the editor and its caret row
-    /// (WCAG 1.4.11: graphical objects ≥ 3:1).
-    #[test]
-    fn change_bars_stand_out_from_the_editor() {
-        for theme in all_themes() {
-            for fg in [
-                theme.diff_add_text,
-                theme.diff_mod_text,
-                theme.diff_del_text,
-            ] {
-                for bg in [theme.bg, theme.surface, theme.surface_raised] {
-                    let ratio = contrast(fg, bg);
-                    assert!(
-                        ratio >= 3.0,
-                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-            }
-        }
-    }
-
-    /// Added, removed and modified (a line changed in place, Split diff) lines read on
-    /// their own backgrounds, in both appearances.
-    #[test]
-    fn diff_line_colors_read_on_their_backgrounds() {
-        for theme in all_themes() {
-            for (fg, bg) in [
-                (theme.diff_add_text, theme.diff_add_bg),
-                (theme.diff_del_text, theme.diff_del_bg),
-                (theme.diff_mod_text, theme.diff_mod_bg),
-                // Line numbers in the gutter of a changed line.
-                (theme.text_dim, theme.diff_add_gutter),
-                (theme.text_dim, theme.diff_del_gutter),
-                (theme.text_dim, theme.diff_mod_gutter),
-                // Git status letters on the list and on its selected row.
-                (theme.git_modified, theme.bg),
-                (theme.git_untracked, theme.bg),
-                (theme.git_modified, theme.selected),
-                (theme.git_untracked, theme.selected),
-            ] {
-                let ratio = contrast(fg, bg);
-                assert!(
-                    ratio >= 4.5,
-                    "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
-                    theme.name
-                );
-            }
-        }
-    }
-
     #[test]
     fn contrast_matches_known_values() {
         assert!((contrast(0x000000, 0xFFFFFF) - 21.0).abs() < 0.01);
@@ -2586,29 +2540,8 @@ mod tests {
     }
 
     #[test]
-    fn workspace_colors_stand_out_from_every_surface_and_from_each_other() {
+    fn workspace_colors_are_distinct_and_every_name_has_one() {
         for theme in all_themes() {
-            // Where a swatch or avatar sits: the dialogs, the menu, the sidebar and its row fills.
-            let surfaces = [
-                theme.bg,
-                theme.surface,
-                theme.surface_raised,
-                theme.sidebar,
-                theme.card,
-                theme.hover,
-                theme.selected,
-            ];
-            for (name, color) in WORKSPACE_COLORS.iter().zip(theme.workspace_colors) {
-                for bg in surfaces {
-                    // WCAG 1.4.11: graphical objects ≥ 3:1.
-                    let ratio = contrast(color, bg);
-                    assert!(
-                        ratio >= 3.0,
-                        "{}: {name} {color:06X} on {bg:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-            }
             // Clearly distinct: neighbouring hues (round the color wheel) differ by ≥ 12°.
             let mut hues: Vec<f32> = theme.workspace_colors.iter().map(|c| hue(*c)).collect();
             hues.sort_by(f32::total_cmp);
@@ -2638,29 +2571,5 @@ mod tests {
             assert!(Theme::dark().workspace_color(old).is_some(), "{old}");
         }
         assert!(Theme::dark().workspace_color("lime").is_some());
-    }
-
-    #[test]
-    fn avatar_letters_and_chevrons_stay_readable() {
-        for theme in all_themes() {
-            for bg in [theme.sidebar, theme.hover, theme.selected] {
-                for color in theme.workspace_colors {
-                    let (letter, fill) = theme.avatar_colors(color, bg);
-                    let ratio = contrast(letter, fill);
-                    assert!(
-                        ratio >= 4.5,
-                        "{}: {letter:06X} on {fill:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-                // The chevron is the only sign of expanded / collapsed (WCAG 1.4.11).
-                let ratio = contrast(theme.chevron_color(), bg);
-                assert!(
-                    ratio >= 3.0,
-                    "{}: chevron on {bg:06X}: {ratio:.2}",
-                    theme.name
-                );
-            }
-        }
     }
 }
