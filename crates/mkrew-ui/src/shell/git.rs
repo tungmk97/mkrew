@@ -519,9 +519,20 @@ impl Shell {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, path = target.path, "git.diff failed: {error}");
                 }
-                let again = shell
-                    .git_at(project_id, &at)
-                    .and_then(|view| view.diff_loaded(&target, loaded));
+                let mode = shell.diff_mode;
+                let mut reveal = None;
+                let again = shell.git_at(project_id, &at).and_then(|view| {
+                    let again = view.diff_loaded(&target, loaded);
+                    // A cross-file `n` / `p` picked its hunk: scroll to it (not on a refresh).
+                    reveal = view.take_hunk_reveal().and_then(|hunk| match &view.diff {
+                        git_view::Diff::Shown(shown) => shown.hunk_row(hunk, mode),
+                        _ => None,
+                    });
+                    again
+                });
+                if let Some(row) = reveal {
+                    shell.scroll_diff_to(row);
+                }
                 if let Some(target) = again {
                     shell.load_git_diff(project_id, target, window, cx);
                 }
@@ -651,7 +662,11 @@ impl Shell {
         }
         match key {
             git_view::Key::NextHunk | git_view::Key::PreviousHunk => {
-                if let Some(at) = hunk_row {
+                // Into another file: its diff loads first, then its hunk is scrolled to
+                // (`load_git_diff`).
+                if requests.diff.is_some() {
+                    self.scroll_diff_to(0);
+                } else if let Some(at) = hunk_row {
                     self.scroll_diff_to(at);
                 }
             }
