@@ -2050,15 +2050,18 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
         t.syntax_type,
         t.syntax_function,
     ];
+    // `surface_raised` is the Files viewer's selected line.
     for fg in code.into_iter().chain([t.accent]) {
         for bg in [t.bg, t.surface, t.surface_raised] {
             check("code", fg, bg, 4.5);
         }
     }
+    // A toast card is `surface_raised`; its marks are the info accent, the error red and the X.
     check("toast", t.text, t.surface_raised, 4.5);
     for mark in [t.accent_text, t.status_exited, t.text_muted] {
         check("toast mark", mark, t.surface_raised, 3.0);
     }
+    // Comments and line numbers are `text_muted`.
     for fg in code.into_iter().chain([t.text, t.text_muted]) {
         for bg in [t.diff_add_bg, t.diff_del_bg, t.diff_mod_bg] {
             check("highlighted diff", fg, bg, 4.5);
@@ -2074,9 +2077,11 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
         (t.diff_add_text, t.diff_add_bg),
         (t.diff_del_text, t.diff_del_bg),
         (t.diff_mod_text, t.diff_mod_bg),
+        // Line numbers in the gutter of a changed line.
         (t.text_dim, t.diff_add_gutter),
         (t.text_dim, t.diff_del_gutter),
         (t.text_dim, t.diff_mod_gutter),
+        // Git status letters on the list and on its selected row.
         (t.git_modified, t.bg),
         (t.git_untracked, t.bg),
         (t.git_modified, t.selected),
@@ -2089,16 +2094,20 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
     for fg in [classic.text, classic.text_muted] {
         check("sidebar text", fg, t.sidebar, 4.5);
     }
+    // Where a swatch or avatar sits: the dialogs, the menu, the sidebar and its row fills.
+    // WCAG 1.4.11: graphical objects >= 3:1.
     for color in t.workspace_colors {
         for bg in grounds {
             check("workspace colors", color, bg, 3.0);
         }
     }
+    // Avatars and chevrons sit on the sidebar and its row fills.
     for bg in [t.sidebar, t.hover, t.selected] {
         for color in t.workspace_colors {
             let (letter, fill) = t.avatar_colors(color, bg);
             check("avatar letters", letter, fill, 4.5);
         }
+        // The only sign of expanded / collapsed (WCAG 1.4.11).
         check("chevron", t.chevron_color(), bg, 3.0);
     }
     found
@@ -2149,6 +2158,127 @@ mod tests {
         let first = found[0].to_string();
         assert!(first.starts_with(found[0].rule), "{first}");
         assert!(first.contains(" on "), "the colors are named: {first}");
+    }
+
+    #[test]
+    fn each_contrast_rule_fires_when_its_token_is_broken() {
+        let t = Theme::dark();
+        let broken = [
+            (
+                "body text",
+                Theme {
+                    text_muted: t.bg,
+                    ..t.clone()
+                },
+            ),
+            // Alpha 0: the fill is the page itself, and the page can be the text color.
+            (
+                "text on glass",
+                Theme {
+                    glass: 0,
+                    ..t.clone()
+                },
+            ),
+            (
+                "on accent",
+                Theme {
+                    on_accent: t.accent,
+                    ..t.clone()
+                },
+            ),
+            (
+                "window close",
+                Theme {
+                    status_exited: t.on_accent,
+                    ..t.clone()
+                },
+            ),
+            (
+                "selected text",
+                Theme {
+                    terminal_selection_bg: t.text,
+                    ..t.clone()
+                },
+            ),
+            (
+                "code",
+                Theme {
+                    syntax_keyword: t.bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "toast",
+                Theme {
+                    text: t.surface_raised,
+                    ..t.clone()
+                },
+            ),
+            (
+                "toast mark",
+                Theme {
+                    accent_text: t.surface_raised,
+                    ..t.clone()
+                },
+            ),
+            (
+                "highlighted diff",
+                Theme {
+                    syntax_keyword: t.diff_add_bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "change bars",
+                Theme {
+                    diff_add_text: t.bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "diff lines",
+                Theme {
+                    git_modified: t.bg,
+                    ..t.clone()
+                },
+            ),
+            // A built-in Mkrew theme is its own classic palette.
+            (
+                "sidebar text",
+                Theme {
+                    sidebar: t.text,
+                    ..t.clone()
+                },
+            ),
+            ("workspace colors", {
+                let mut colors = t.workspace_colors;
+                colors[0] = t.bg;
+                Theme {
+                    workspace_colors: colors,
+                    ..t.clone()
+                }
+            }),
+            // The letter is `text`; a fill is the tint over the sidebar, so `text` = sidebar.
+            (
+                "avatar letters",
+                Theme {
+                    text: t.sidebar,
+                    ..t.clone()
+                },
+            ),
+            (
+                "chevron",
+                Theme {
+                    text_muted: t.sidebar,
+                    ..t.clone()
+                },
+            ),
+        ];
+        assert!(problems(&t).is_empty(), "the base theme is clean");
+        for (rule, theme) in broken {
+            let rules: Vec<&str> = problems(&theme).iter().map(|p| p.rule).collect();
+            assert!(rules.contains(&rule), "{rule} missing from {rules:?}");
+        }
     }
 
     #[test]
