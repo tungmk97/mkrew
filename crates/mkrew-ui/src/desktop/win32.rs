@@ -19,8 +19,9 @@ use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateIconIndirect, DestroyIcon, FLASHW_STOP, FLASHW_TIMERNOFG, FLASHW_TRAY, FLASHWINFO,
-    FlashWindowEx, GetSystemMetrics, HICON, ICONINFO, IsIconic, SM_CXSMICON, SW_HIDE, SW_RESTORE,
-    SW_SHOW, ShowWindow,
+    FlashWindowEx, GetSystemMetrics, HICON, ICONINFO, IsIconic, SM_CXSMICON,
+    SPI_GETCLIENTAREAANIMATION, SW_HIDE, SW_RESTORE, SW_SHOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    ShowWindow, SystemParametersInfoW,
 };
 use windows::core::HSTRING;
 
@@ -571,6 +572,28 @@ pub fn running(key: &str) -> bool {
     unsafe { FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()) }.is_ok()
 }
 
+/// Whether the OS asks for reduced motion: the call worked and "Animation effects" is off
+/// (Windows Settings, Accessibility, Visual effects). A failed call keeps motion on.
+fn reduce_from(read_ok: bool, animations_on: bool) -> bool {
+    read_ok && !animations_on
+}
+
+/// Windows' "Animation effects" setting, as `SPI_GETCLIENTAREAANIMATION` reports it.
+pub fn reduce_motion() -> bool {
+    let mut animations_on = windows::core::BOOL(1);
+    // SAFETY: `SPI_GETCLIENTAREAANIMATION` writes one BOOL through `pvparam`; it points at
+    // `animations_on`, which outlives the call, and `uiparam` is 0 as the action requires.
+    let read = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some(std::ptr::from_mut(&mut animations_on).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    reduce_from(read.is_ok(), animations_on.as_bool())
+}
+
 /// The main window's Windows-only extras.
 pub struct Os {
     hwnd: Option<HWND>,
@@ -736,6 +759,13 @@ pub fn set_window_shown(window: &gpui::Window, shown: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_read_keeps_motion_on() {
+        assert!(!reduce_from(false, false), "the call failed: animate");
+        assert!(!reduce_from(true, true), "animations are on: animate");
+        assert!(reduce_from(true, false), "animations are off: reduce");
+    }
 
     #[test]
     fn a_second_launch_reaches_the_tray_window() {

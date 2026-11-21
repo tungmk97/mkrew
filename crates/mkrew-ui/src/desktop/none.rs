@@ -40,6 +40,11 @@ impl Os {
 /// Nothing to hide or show here (no tray: a window's ✕ ends the app).
 pub fn set_window_shown(_window: &gpui::Window, _shown: bool) {}
 
+/// gpui-pre 0.3.7 exposes no reduced-motion setting here: motion stays on.
+pub fn reduce_motion() -> bool {
+    false
+}
+
 pub fn raise(_key: &str, _jump: Option<(Ulid, Ulid)>) -> bool {
     false
 }

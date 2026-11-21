@@ -69,6 +69,7 @@ impl Shell {
         // even one marked unread while it kept the keyboard, and ends the taskbar flash.
         cx.observe_window_activation(window, |shell, window, cx| {
             if window.is_window_active() {
+                cx.set_reduce_motion(mkrew_ui::desktop::reduce_motion());
                 shell.activated(HostId::Main);
                 shell.viewed.activated();
                 shell.desktop.flash(false);

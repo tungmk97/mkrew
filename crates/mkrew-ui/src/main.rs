@@ -223,6 +223,8 @@ fn main() {
             cx.bind_keys(bindings);
             cx.set_global(ActiveKeymap(keymap.clone()));
             cx.set_global(MenuAnchors::default());
+            // gpui draws animations in their end state while this is set (ADR 0097).
+            cx.set_reduce_motion(mkrew_ui::desktop::reduce_motion());
             // Which char a shifted digit reports depends on the layout: bind again after a switch
             // (e.g. US ↔ Vietnamese), or Ctrl+Shift+1..5 stop working until a restart.
             cx.on_keyboard_layout_change(|cx| {
