@@ -88,7 +88,7 @@ use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
 use mkrew_ui::machine_notify::MachineNotices;
 use mkrew_ui::machines::{Machine, MachineState, Machines};
 use mkrew_ui::menu::{self as menu_model, Dot, Lead, MenuItem, MenuKey, MenuRow, Tone, Trail};
-use mkrew_ui::palette::{self, Extra, Palette};
+use mkrew_ui::palette::{self, Extra, Palette, Scope};
 use mkrew_ui::pane_text;
 use mkrew_ui::peek::{self, Peek};
 use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, PushSwitch, SetUp, Switch};

@@ -884,7 +884,7 @@ pub fn machine_entries(context: &Context, names: &[String]) -> Vec<Entry> {
 /// The palette's entries: "Go to" every session that needs input first, then the available
 /// commands in keymap order, the available palette-only actions, then "Go to" every workspace,
 /// other live session and task (archived workspaces and their items left out). Session rows
-/// show their state on the right.
+/// show their state as the muted detail.
 pub fn entries(
     keymap: &Keymap,
     context: &Context,

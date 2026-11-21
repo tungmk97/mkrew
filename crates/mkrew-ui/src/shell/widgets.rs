@@ -854,7 +854,6 @@ pub(crate) fn dropdown_trigger(
 
 /// A `Look::Row` list row; `selected` adds the `theme.selected` fill and the
 /// `PALETTE_SELECTED_BAR` accent bar on the left. Callers add the content and the handler.
-#[allow(dead_code)] // used by Plan P2
 pub(crate) fn list_row(
     id: impl Into<gpui::ElementId>,
     selected: bool,

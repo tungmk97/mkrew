@@ -1147,8 +1147,9 @@ impl Shell {
         cx.notify();
     }
 
-    /// The command palette: the query field over the matching entries (matched chars in the
-    /// accent color, shortcuts muted on the right, the pick ringed); a click or Enter runs one.
+    /// The palette: the query field, the scope pills, then the lines of the scope (overlines,
+    /// rows with their matched chars in the accent color, "+N more", notes) and the key hints.
+    /// A click on a pill switches scope; a click on a row runs it.
     pub(crate) fn render_palette(
         &self,
         palette: &Palette,
@@ -1156,119 +1157,227 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let accent = gpui::Hsla::from(rgb(theme.accent));
-        let hover = theme.surface_raised;
-        let rows: Vec<gpui::AnyElement> = palette
-            .rows()
-            .into_iter()
-            .enumerate()
-            .map(|(index, row)| {
-                let picked = index == palette.selected;
-                let highlights = row.ranges.into_iter().map(|range| {
+        let highlights = move |ranges: Vec<std::ops::Range<usize>>| {
+            ranges
+                .into_iter()
+                .map(|range| {
                     let style = gpui::HighlightStyle {
                         color: Some(accent),
                         font_weight: Some(FontWeight(weight::SEMIBOLD)),
                         ..gpui::HighlightStyle::default()
                     };
                     (range, style)
-                });
-                div()
-                    .id(("palette-entry", index))
+                })
+                .collect::<Vec<_>>()
+        };
+        let muted = |text: String| {
+            div()
+                .flex_none()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        let lines = palette.lines();
+        let empty = lines.is_empty();
+        let rows: Vec<gpui::AnyElement> = lines
+            .into_iter()
+            .enumerate()
+            .map(|(at, line)| match line {
+                palette::Line::Header(title) => overline(title, theme)
+                    .flex_none()
+                    .px(px(space::M))
+                    .pt(px(space::S))
+                    .pb(px(space::XS))
+                    .into_any_element(),
+                palette::Line::Note { text, error } => div()
                     .flex_none()
                     .flex()
-                    .items_center()
-                    .gap(px(space::M))
-                    .px(px(space::S))
+                    .gap(px(space::XS))
+                    .px(px(space::M))
                     .py(px(space::XS))
-                    .rounded(px(radius::SMALL))
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    // The pick has a focus-colored ring, so it stays visible under hover.
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(if picked {
-                        theme.pane_focus_border
-                    } else {
-                        theme.surface
-                    }))
-                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
-                    .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-                    .cursor_pointer()
-                    .active(|style| style.opacity(opacity::ACTIVE))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        if let Some(palette) = shell.palette.as_mut() {
-                            palette.pick(index);
-                            shell.run_palette_pick(window, cx);
-                        }
-                    }))
+                    .text_size(font_size::META)
+                    .when(error, |el| {
+                        el.child(icon_svg(
+                            Icon::X,
+                            theme::ICON_SIZE_SMALL,
+                            theme.status_exited,
+                        ))
+                    })
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(
-                                gpui::StyledText::new(row.entry.title.clone())
-                                    .with_highlights(highlights),
-                            ),
+                            .text_color(rgb(if error { theme.text } else { theme.text_muted }))
+                            .child(text),
                     )
-                    .when(!row.entry.shortcut.is_empty(), |el| {
-                        el.child(
+                    .into_any_element(),
+                palette::Line::More {
+                    scope,
+                    hidden,
+                    pick,
+                } => list_row(("palette-more", at), pick == palette.selected, theme)
+                    .flex_none()
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        if let Some(palette) = shell.palette.as_mut() {
+                            palette.set_scope(scope);
+                        }
+                        shell.palette_changed(window, cx);
+                    }))
+                    .child(muted(format!("+{hidden} more ›")))
+                    .into_any_element(),
+                palette::Line::Row { row, pick } => {
+                    let title = gpui::StyledText::new(row.entry.title.clone())
+                        .with_highlights(highlights(row.ranges));
+                    let has_detail = row.detail.is_some();
+                    list_row(("palette-row", at), pick == palette.selected, theme)
+                        .flex_none()
+                        .gap(px(space::M))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            if let Some(palette) = shell.palette.as_mut() {
+                                palette.pick(pick);
+                            }
+                            shell.run_palette_pick(window, cx);
+                        }))
+                        .child(
                             div()
-                                .flex_none()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .when(has_detail, |el| {
+                                    el.flex_none()
+                                        .max_w(relative(theme::PALETTE_TITLE_MAX_FRACTION))
+                                })
+                                .when(!has_detail, |el| el.flex_1())
+                                .child(title),
+                        )
+                        .children(row.detail.map(|detail| {
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
                                 .text_size(font_size::META)
                                 .text_color(rgb(theme.text_muted))
-                                .child(row.entry.shortcut.clone()),
-                        )
-                    })
-                    .into_any_element()
+                                .child(detail.to_owned())
+                        }))
+                        .children(row.age.map(|age| muted(age.to_owned())))
+                        .when(!row.entry.shortcut.is_empty(), |el| {
+                            // The flat theme picker keeps its muted "Dark" / "✓ Light" text.
+                            if palette.tabs() {
+                                el.child(kbd(row.entry.shortcut.clone(), theme, false))
+                            } else {
+                                el.child(muted(row.entry.shortcut.clone()))
+                            }
+                        })
+                        .into_any_element()
+                }
             })
             .collect();
-        let empty = rows.is_empty();
+
         let picking_theme = self.theme_pick.is_some();
+        let workspace = palette
+            .source()
+            .and_then(|source| {
+                (self.sidebar.projects().iter()).find(|project| project.id == source.project_id)
+            })
+            .map_or_else(String::new, |project| format!(" · {}", project.name));
+        let title = if picking_theme {
+            Some("Select theme".to_owned())
+        } else if palette.insert_into().is_some() {
+            Some(format!("Insert file{workspace}"))
+        } else {
+            None
+        };
+        // Pills, not `segment`s: the current scope is outlined in the accent, no fill.
+        let tabs = palette.tabs().then(|| {
+            div().flex().items_center().gap(px(space::XS)).children(
+                Scope::ORDER.iter().enumerate().map(|(index, scope)| {
+                    let scope = *scope;
+                    let current = scope == palette.scope();
+                    div()
+                        .id(("palette-scope", index))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .h(theme::rems_px(theme::SEGMENT_HEIGHT))
+                        .px(px(space::M))
+                        .rounded(px(radius::PILL))
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(if current {
+                            gpui::Hsla::from(rgb(theme.accent))
+                        } else {
+                            gpui::transparent_black()
+                        })
+                        .whitespace_nowrap()
+                        .text_size(font_size::BODY)
+                        .text_color(rgb(if current {
+                            theme.text
+                        } else {
+                            theme.text_muted
+                        }))
+                        .pressable(Look::Chip, true, theme)
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            if let Some(palette) = shell.palette.as_mut() {
+                                palette.set_scope(scope);
+                            }
+                            shell.palette_changed(window, cx);
+                        }))
+                        .child(scope.title())
+                }),
+            )
+        });
+        let (hint, close): (&str, &str) = if picking_theme {
+            ("↑↓ preview · ↵ save", "esc restore")
+        } else if palette.insert_into().is_some() {
+            ("↑↓ navigate · ↵ type its path", "esc type @")
+        } else {
+            ("↑↓ navigate · ↵ run · Tab next scope", "esc close")
+        };
         let panel = floating_panel("palette", theme)
-            .w(px(theme::DIALOG_WIDTH))
+            .w(px(theme::PALETTE_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
-            .p(px(space::XL))
+            .p(px(space::L))
             .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::palette_key_down))
-            .relative()
             .child(self.typing(&self.dialog_focus, Self::palette_key_down, cx))
-            .child(
+            .children(title.map(|title| {
                 div()
                     .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
-                    .child(if picking_theme {
-                        "Select theme"
+                    .child(title)
+            }))
+            .child(search_box(
+                caret_field(
+                    "palette-query",
+                    palette.query(),
+                    if picking_theme {
+                        "Type a theme name"
                     } else {
-                        "Command palette"
-                    }),
-            )
-            .child(caret_field(
-                "palette-query",
-                palette.query(),
-                if picking_theme {
-                    "Type a theme name"
-                } else {
-                    "Type a command, workspace, session or task"
-                },
+                        palette.scope().placeholder()
+                    },
+                    true,
+                    theme,
+                    cx,
+                    |shell, caret| {
+                        if let Some(palette) = shell.palette.as_mut() {
+                            palette.click(caret.at, caret.extend, caret.clicks);
+                        }
+                    },
+                ),
+                Some(kbd("esc".to_owned(), theme, false).into_any_element()),
                 true,
                 theme,
-                cx,
-                |shell, caret| {
-                    if let Some(palette) = shell.palette.as_mut() {
-                        palette.click(caret.at, caret.extend, caret.clicks);
-                    }
-                },
             ))
+            .children(tabs)
             .when(!empty, |el| {
                 el.child(
                     div()
                         .id("palette-entries")
-                        .max_h(px(theme::QUICK_OPEN_LIST_HEIGHT))
+                        .max_h(px(theme::PALETTE_LIST_HEIGHT))
                         .overflow_y_scroll()
                         .track_scroll(&self.palette_scroll)
                         .flex()
@@ -1287,13 +1396,13 @@ impl Shell {
             })
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
-                    .child(if picking_theme {
-                        "↑ ↓ to preview · Enter saves it · Esc restores"
-                    } else {
-                        "↑ ↓ to pick · Enter runs it · Esc closes"
-                    }),
+                    .child(hint)
+                    .child(close),
             );
         Self::modal_shade("palette-shade", panel, cx)
     }

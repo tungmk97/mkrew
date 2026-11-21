@@ -454,11 +454,14 @@ pub const GLASS_TINT_ANGLE: f32 = 180.0;
 pub const GLASS_TINT_FROM: f32 = 0.0;
 pub const GLASS_TINT_TO: f32 = 1.0;
 pub const PANEL_RISE: f32 = space::XS;
-/// The scoped palette (Plan P2 uses these; Plan P1 only defines them).
+/// The scoped palette.
 pub const PALETTE_WIDTH: f32 = 640.0;
 pub const PALETTE_LIST_HEIGHT: f32 = 480.0;
 pub const PALETTE_SELECTED_BAR: f32 = 3.0;
 pub const PALETTE_GROUP_LIMIT: usize = 5;
+/// Widest share of a palette row its title may take while a muted detail follows (the title
+/// is cut with `…` past that).
+pub const PALETTE_TITLE_MAX_FRACTION: f32 = 0.6;
 
 /// How much of a `/` picker row's width its command name and its argument hint may take before
 /// they are cut with `…` (the description takes what is left, the source chip never shrinks).
