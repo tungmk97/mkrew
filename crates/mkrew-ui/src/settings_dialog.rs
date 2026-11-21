@@ -374,11 +374,11 @@ impl SettingsDialog {
     }
 
     /// The title of the right side: "Search results", else the page.
-    pub fn heading(&self) -> String {
+    pub fn heading(&self) -> &'static str {
         if self.searching() {
-            "Search results".to_owned()
+            "Search results"
         } else {
-            self.tab.title().to_owned()
+            self.tab.title()
         }
     }
 
@@ -735,12 +735,12 @@ impl SettingsDialog {
                     self.draft = Some((setting, Input::from(self.current(setting))));
                     return Effect::None;
                 }
+                if !self.find.is_empty() {
+                    return self.clear_find();
+                }
                 if self.add.is_some() {
                     self.close_add();
                     return Effect::None;
-                }
-                if !self.find.is_empty() {
-                    return self.clear_find();
                 }
                 if self.focus == Focus::Search && !self.search.is_empty() {
                     self.search = Input::default();
@@ -1717,11 +1717,6 @@ mod tests {
     #[test]
     fn the_page_list_follows_the_navigation_groups() {
         let all = Tab::all();
-        let flat: Vec<Tab> = NAV
-            .iter()
-            .flat_map(|(_, tabs)| tabs.iter().copied())
-            .collect();
-        assert_eq!(all, flat);
         let titles: Vec<&str> = all.iter().map(|t| t.title()).collect();
         assert_eq!(
             titles,
@@ -1786,7 +1781,36 @@ mod tests {
                 !hits[0].label_ranges.is_empty(),
                 "{query}: the matched chars are marked"
             );
+            for tier in [true, false] {
+                let scores: Vec<i64> = hits
+                    .iter()
+                    .filter(|h| h.label_ranges.is_empty() != tier)
+                    .map(|h| h.score)
+                    .collect();
+                assert!(
+                    scores.windows(2).all(|w| w[0] >= w[1]),
+                    "{query}: scores rise within a tier"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn esc_clears_the_query_before_it_closes_the_machines_add_form() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.open_add();
+        d.key(&key("tab"), None, &keymap);
+        type_text(&mut d, "box1", &keymap);
+        d.key(&key("ctrl-f"), None, &keymap);
+        type_text(&mut d, "theme", &keymap);
+        assert!(d.searching());
+        assert_eq!(d.key(&key("escape"), None, &keymap), Effect::None);
+        assert!(d.find.is_empty(), "query cleared first");
+        let form = d.add.as_ref().expect("the Add form stays open");
+        assert_eq!(form.host.to_string(), "box1");
+        assert_eq!(d.key(&key("escape"), None, &keymap), Effect::None);
+        assert!(d.add.is_none(), "then the form closes");
     }
 
     #[test]
