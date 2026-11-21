@@ -21,6 +21,21 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
+- [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.
+- [ ] **Palette stays put:** switch scopes All -> Commands -> Branches and check the top of the palette does not move when the list gets shorter or taller.
+- [ ] **All:** an empty query lists sessions (a session that needs input first) and the commands run lately; a query lists sections with at most five rows and "+N more ›", which switches to that scope; Search never has a section; Files, Branches and Commits appear only once they have rows, All never shows "Loading" or an error line (those are in the scope's own tab).
+- [ ] **Files:** `Ctrl+Shift+O` opens on Files, empty query lists files at once, typing fast shows only the last answer, matched letters are accent colored, Enter opens the file in the Editor view; in a task worktree it searches the worktree.
+- [ ] **Search:** `Ctrl+Alt+Shift+F` opens on Search; one character shows "Type 2 characters to search the files."; `(` or `a.c` is searched as text; each hit shows the line with the match colored and `path:line` muted; Enter opens the file with the caret on that line; a repository with many hits stops at 200.
+- [ ] **Branches:** newest first, `current` marked, a remote branch without a local one listed as `origin/x`; Enter on a clean repository switches at once with a toast "Switched to ..."; with changed files, or a live agent in that folder, a question comes first and says which; a refusal by git shows git's own message in a toast.
+- [ ] **Commits:** 500 commits found by message or hash; Enter opens the Git panel on History with that commit expanded, also a commit older than the 50 the History lists by default; leaving History puts the default back.
+- [ ] **`@` in a composer and in the New task prompt:** the palette opens on Files with no tabs and the title "Insert file", Enter types the path (the `composer.file_ref` form), Esc types the `@`; the New task dialog stays open under it.
+- [ ] **No workspace:** Files, Search, Branches and Commits say "Open a workspace to search it."; with the daemon stopped they show its error, not "Loading..." forever.
+- [ ] **Theme picker (`Ctrl+Alt+J`):** no tabs, still previews on Up / Down and restores on Esc; its rows keep the muted "Dark" / "Light" text.
+- [ ] **Detached window:** `Ctrl+Shift+P` there lists what acts in that window; a picked file, search hit, branch or commit is run in the main window (it comes to the front, on the palette's workspace).
+- [ ] **Detached window closed under the `@` palette:** close a detached window while its `@` palette is open; check whether `@` is typed anywhere (decide if that is acceptable).
+- [ ] **`/` and prompt pickers:** their lists are now as tall as the palette's (480 px).
+
 ### To verify - 2026-11-21 Polish P1: glass panels, pressable widgets, Settings
 
 - [ ] **Look (dark + light, then Mkrew Light and one palette theme):** open Settings (Ctrl+,), the Ask AI dialog (palette), a Git discard confirm and the in-app confirm prompt; each is a translucent panel with a thin light border, a faint accent tint at the top and a soft shadow; the text stays easy to read over a bright pane and over a dark pane behind it.
