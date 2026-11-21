@@ -35,26 +35,15 @@ The Settings model (`settings_dialog.rs`, lib) gets the navigation groups, the g
   A second `.hover(..)` on one element replaces the first.
   `voice_input.rs:247` is the existing `with_animation` example (`Animation::new(theme::motion::SLOW).with_easing(ease_out_quint())`).
 
-## Spec gaps and deviations found while planning (the parent should fix the spec)
+## Spec notes
 
-1. **Section 4.3, scale 0.98 to 1:** gpui-pre 0.3.7 has no element transform (`style.rs` and `styled.rs` have no scale; only SVG has one).
-   The plan animates opacity plus a rise of `theme::PANEL_RISE` (4 px) over `motion::FAST`, ease-out.
-2. **Section 4.3, reduced motion "only fades":** gpui renders `with_animation` in its end state under `reduce_motion()`, so a reduced-motion panel appears at once with no fade.
-   The plan accepts that (it is stricter than the spec) instead of writing a second animation clock.
-3. **Section 4.3 / 4.2, where the motion lives:** `floating_panel` returns `Stateful<Div>` (callers keep chaining `.w(..)`, `.dialog_root(..)`), and `with_animation` returns a different element type.
-   The motion is therefore `widgets::appear(id, panel)`, applied by `modal_shade` and the confirm prompt, not inside `floating_panel`.
-4. **Reduced-motion detection did not exist:** `cx.reduce_motion()` is read by `voice_input.rs`, but nothing in the repo ever calls `set_reduce_motion`, and gpui's Windows backend does not either, so it is always false today.
-   Task 3 reads `SPI_GETCLIENTAREAANIMATION` and sets it (Windows only; macOS and Linux stay false because gpui offers no read there).
-5. **Section 6.3 names the wrong file:** `Setting` lives in `crates/mkrew-core/src/settings_fields.rs` (with `Page`, `Kind`, `SETTINGS` and the template test), not in `settings_dialog.rs`.
-   The 5 hidden rows (`hidden(..)`) have no group; the invariants apply to non-hidden settings.
-6. **Section 6.1 order vs `Page::ALL`:** the navigation order (Features before Jira and Phone, Machines before Keyboard and Prompts) differs from `Page::ALL` and from `Tab::all()`; the plan adds `settings_dialog::NAV` as the single order and the existing test that expects Prompts before Machines is replaced.
-7. **Section 6.2, "scores above zero" on help text:** `palette::fuzzy` is a subsequence match, so a 3-letter query matches most long help lines.
-   The plan follows the spec and ranks by the best score; Review Focus item 4 pins that a label match ranks first.
-8. **Section 5.2, hover fills (decided by the parent):** `press_style(look, enabled, theme)` does not know the rest fill, so `Row`, `Chip` and `Icon` hover to `theme.hover` (never `surface_raised`: it equals `theme.selected` in Mkrew Dark and Light, so a hovered row would look selected), and the new `Look::Raised` (for elements that sit on `surface_raised`: menus, toasts, cards, the find bar) hovers to `theme.border`.
-9. **Section 5.2, buttons keep signatures:** `quiet_button(.., hover: u32)` keeps its `hover` argument, so the widgets use `apply_press` with an overridden `hover_bg`.
-   A filled control (primary button, switch) dims on hover instead of changing fill; that is `filled_press` in `widgets.rs`.
-10. **Section 4.2, the confirm prompt:** `confirm_prompt.rs` builds its own panel and its own scrim outside `modal_shade`; it is a modal dialog and is moved too (Task 7).
-11. **Section 5.2 placement:** `Look` / `Pressable` are in the lib crate (`mkrew_ui::pressable`), not in `shell/widgets.rs` as the spec says, because `preview.rs` and `field.rs` (lib) need them for Plan P3; `widgets.rs` re-exports them.
+The spec was amended after the first draft of this plan (no element scale, `appear` in `modal_shade` and the confirm prompt, `settings_fields.rs` and `NAV`, `Look::Raised`, `Look` and `Pressable` in the lib crate, accent plus semibold matches, the Prompts footer hint).
+The plan follows the amended spec.
+Two choices the spec leaves open:
+
+1. **Hover fills:** `Row`, `Chip` and `Icon` hover to `theme.hover` (never `surface_raised`, which equals `theme.selected` in Mkrew Dark and Light), `Raised` (menus, toasts, cards, the find bar) to `theme.border`.
+   A selected element (`list_row(selected = true)`, the active Settings page) has no hover fill: it keeps the `selected` fill.
+2. **Buttons keep signatures:** `quiet_button(.., hover: u32)` keeps its `hover` argument and `button_frame` stays hover-free, so widgets use `apply_press` with an overridden `hover_bg`; a filled control (primary button, switch) dims on hover instead of changing fill (`filled_press` in `widgets.rs`).
 
 ## Dialog panels moved to `floating_panel` (found with `modal_shade` and `.shadow_md()` + `radius::LARGE`)
 
@@ -101,14 +90,14 @@ Each line has its test in the task named after it.
    Test in Task 9: `esc_restores_a_draft_then_clears_the_search_then_closes`.
 3. A query that matches nothing, or only hidden settings (`sidebar_width`, `md_split` ...), never lists a hidden row and an unmatched query gives no rows (the empty state).
    Test in Task 9: `hidden_settings_are_never_listed_and_no_match_is_empty`.
-4. Long help lines match almost any short query: a label match must still rank first.
-   Test in Task 9: `a_label_match_ranks_before_a_help_only_match`.
+4. Long help lines match almost any short query: a label match must always rank above a help-only match.
+   Test in Task 9: `a_label_match_ranks_above_a_help_only_match`, over several queries.
 5. A theme whose `text` on `surface` is only just readable must not fall under 4.5:1 once the panel is translucent.
    Test in Task 2: `text_on_glass_reads_at_4_5_over_a_light_or_dark_page` (and `with_glass` raises the alpha until it holds).
 6. A failed read of the OS animation setting must not disable motion for good.
    Test in Task 3: `a_failed_read_keeps_motion_on`.
-7. A read-only Settings (broken `settings.toml`) keeps every control inert: toggle, segments and dropdown triggers take no press.
-   Covered by `on_press(false, ..)` attaching nothing and `a_disabled_press_style_has_no_pointer_hover_or_active` (Task 4) and the manual check in Task 12.
+7. A read-only Settings (broken `settings.toml`) keeps every control inert: toggle, segments and dropdown triggers take no press and show no hover or pointer.
+   Covered by `on_press(false, ..)` attaching nothing, `segment_in(.., false, ..)` and `a_disabled_press_style_has_no_pointer_hover_or_active` (Task 4), and the manual check in Task 12.
 8. A dialog taller or wider than the window: Settings caps its width and height at the viewport minus `space::XXL * 2`.
    Manual check in Task 12 (resize the window to its minimum).
 
@@ -117,11 +106,11 @@ Each line has its test in the task named after it.
 - Create `docs/decisions/0097-glass-panels-and-pressable.md`.
 - Create `crates/mkrew-ui/src/pressable.rs` (lib): `Look`, `PressStyle`, `press_style`, `apply_press`, `Pressable`; unit tests.
 - Modify `crates/mkrew-ui/src/lib.rs`: `pub mod pressable;`.
-- Modify `crates/mkrew-ui/src/theme.rs`: fields, `with_alpha`, `glass_over`, `with_glass`, `glass_gradient`, `shadow_float`, constants, tests.
+- Modify `crates/mkrew-ui/src/theme.rs`: fields, `with_alpha`, `glass_over`, `with_glass`, `glass_gradient`, `shadow_float`, constants (`GLASS_TINT_ANGLE`, `opacity::DIMMED`), tests.
 - Modify `crates/mkrew-ui/src/snapshots/mkrew_ui__theme__tests__mkrew_{dark,light}.snap` (accepted with insta).
 - Modify `crates/mkrew-ui/src/desktop.rs`, `desktop/win32.rs`, `desktop/none.rs`, `shell/connection.rs`, `main.rs`: reduced-motion detection.
-- Modify `crates/mkrew-ui/src/shell/widgets.rs`: re-exports, rebuilt widgets, `floating_panel`, `appear`, `toggle`, `dropdown_trigger`, `list_row`.
-- Modify `crates/mkrew-ui/src/shell/focus.rs` (`modal_shade`), `shell/confirm_prompt.rs`, and the dialog files of the table.
+- Modify `crates/mkrew-ui/src/shell/widgets.rs`: re-exports, rebuilt widgets, `segment_in`, `floating_panel`, `appear`, `toggle`, `dropdown_trigger`, `list_row`.
+- Modify `crates/mkrew-ui/src/shell/files_render.rs:79` and `shell/pane_render.rs:804` (they keep the pointer once `button_frame` stops setting it), `shell/focus.rs` (`modal_shade`), `shell/confirm_prompt.rs`, and the dialog files of the table.
 - Modify `crates/mkrew-core/src/settings_fields.rs`: `group` field, row order, tests.
 - Modify `crates/mkrew-ui/src/settings_dialog.rs`: `NAV`, `Focus::Find`, `find`, `search`, `Hit`, `grouped`, key handling, tests.
 - Modify `crates/mkrew-ui/src/shell/settings.rs`: frame, nav, search box, results, cards, controls, footer.
@@ -164,7 +153,7 @@ The user liked the crisp feel of Tern's palette, Settings window and hover feedb
 - Fake glass, no backdrop blur (gpui-pre 0.3.7 cannot blur behind one element): a translucent `glass` fill, a 1 px `glass_border`, a `glass_tint` gradient over the top `GLASS_TINT_HEIGHT` px, `shadow_float` (two layers) and a lighter `scrim`.
 - The three glass colors are derived from each theme's `surface` and `accent` in one function, `Theme::with_glass`, so every built-in theme gets them; the function raises the fill alpha until body text keeps 4.5:1 over a light or a dark page behind the panel.
 - `widgets::floating_panel` is the only panel frame; no dialog builds its own.
-  Its entrance (fade and a 4 px rise over `motion::FAST`) is `widgets::appear`, applied by `modal_shade`.
+  Its entrance (fade and a 4 px rise over `motion::FAST`) is `widgets::appear`, applied by `modal_shade` and the confirm prompt.
   gpui has no element scale, and under reduced motion gpui draws the end state, so the panel then appears at once.
 - Reduced motion is read from Windows (`SPI_GETCLIENTAREAANIMATION`) at start and on window activation and stored with `App::set_reduce_motion`.
 - `mkrew_ui::pressable` (`Look`, `PressStyle`, `press_style`, `Pressable`) is the only place that calls `.hover(` and `.active(` for a clickable element; `widgets.rs` and the lib code both use it.
@@ -201,7 +190,7 @@ git -c user.email=tungnv975@gmail.com commit -m "docs(adr): 0097 glass floating 
 
 **Interfaces:**
 - Consumes: `theme::mix`, `theme::contrast`, `Theme::{surface, accent, bg, text, dark}`.
-- Produces: `Theme.glass`, `Theme.glass_border`, `Theme.glass_tint` (RGBA `u32`), changed `Theme.scrim`; `pub fn with_alpha(color: u32, alpha: f32) -> u32`; `pub fn glass_over(surface: u32, accent: u32, alpha: f32, tint: f32, backdrop: u32) -> u32`; `pub fn glass_gradient(theme: &Theme) -> (u32, u32)`; `pub fn shadow_float(theme: &Theme) -> Vec<gpui::BoxShadow>`; constants `GLASS_TINT_HEIGHT`, `PANEL_RISE`, `PALETTE_WIDTH`, `PALETTE_LIST_HEIGHT`, `PALETTE_SELECTED_BAR`, `PALETTE_GROUP_LIMIT`, changed `SETTINGS_DIALOG_WIDTH`, `SETTINGS_DIALOG_HEIGHT`, `SETTINGS_NAV_WIDTH`.
+- Produces: `Theme.glass`, `Theme.glass_border`, `Theme.glass_tint` (RGBA `u32`), changed `Theme.scrim`; `pub fn with_alpha(color: u32, alpha: f32) -> u32`; `pub fn glass_over(surface: u32, accent: u32, alpha: f32, tint: f32, backdrop: u32) -> u32`; `pub fn glass_gradient(theme: &Theme) -> (u32, u32)`; `pub fn shadow_float(theme: &Theme) -> Vec<gpui::BoxShadow>`; `opacity::DIMMED`; constants `GLASS_TINT_HEIGHT`, `GLASS_TINT_ANGLE`, `GLASS_TINT_FROM`, `GLASS_TINT_TO`, `PANEL_RISE`, `PALETTE_WIDTH`, `PALETTE_LIST_HEIGHT`, `PALETTE_SELECTED_BAR`, `PALETTE_GROUP_LIMIT`, changed `SETTINGS_DIALOG_WIDTH`, `SETTINGS_DIALOG_HEIGHT`, `SETTINGS_NAV_WIDTH` (the sizes are constants, so they have no test of their own).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -273,18 +262,6 @@ Add inside `mod tests` of `theme.rs` (it already has `all_themes()`):
         for (d, l) in dark.iter().zip(&light) {
             assert!((d.color.a / 2.0 - l.color.a).abs() < 0.01);
         }
-    }
-
-    #[test]
-    fn the_polish_sizes_match_the_spec() {
-        assert_eq!(GLASS_TINT_HEIGHT, 120.0);
-        assert_eq!(PALETTE_WIDTH, 640.0);
-        assert_eq!(PALETTE_LIST_HEIGHT, 480.0);
-        assert_eq!(PALETTE_SELECTED_BAR, 3.0);
-        assert_eq!(PALETTE_GROUP_LIMIT, 5);
-        assert_eq!(SETTINGS_DIALOG_WIDTH, 880.0);
-        assert_eq!(SETTINGS_DIALOG_HEIGHT, 640.0);
-        assert_eq!(SETTINGS_NAV_WIDTH, 200.0);
     }
 ```
 
@@ -414,14 +391,26 @@ and next to `QUICK_OPEN_LIST_HEIGHT` (~439; it stays until Plan P2 removes it) a
 
 ```rust
 /// Floating panels (ADR 0097): how far the accent tint gradient reaches down from the top,
-/// and how far a panel rises while it fades in (gpui has no element scale).
+/// its direction (180 = top to bottom in gpui) and color stops, and how far a panel rises
+/// while it fades in (gpui has no element scale).
 pub const GLASS_TINT_HEIGHT: f32 = 120.0;
+pub const GLASS_TINT_ANGLE: f32 = 180.0;
+pub const GLASS_TINT_FROM: f32 = 0.0;
+pub const GLASS_TINT_TO: f32 = 1.0;
 pub const PANEL_RISE: f32 = space::XS;
 /// The scoped palette (Plan P2 uses these; Plan P1 only defines them).
 pub const PALETTE_WIDTH: f32 = 640.0;
 pub const PALETTE_LIST_HEIGHT: f32 = 480.0;
 pub const PALETTE_SELECTED_BAR: f32 = 3.0;
 pub const PALETTE_GROUP_LIMIT: usize = 5;
+```
+
+In `pub mod opacity` of `theme.rs` (next to `VIEWED`) add:
+
+```rust
+    /// A non-matching item that stays readable and clickable (Settings pages without a search
+    /// match).
+    pub const DIMMED: f32 = 0.6;
 ```
 
 - [ ] **Step 4: Run the tests**
@@ -617,8 +606,7 @@ pub fn press_style(look: Look, enabled: bool, theme: &Theme) -> PressStyle {
     }
     let (hover_bg, hover_fg, underline_on_hover) = match look {
         Look::Row => (Some(theme.hover), None, false),
-        Look::Chip => (Some(theme.hover), Some(theme.text), false),
-        Look::Icon => (Some(theme.hover), Some(theme.text), false),
+        Look::Chip | Look::Icon => (Some(theme.hover), Some(theme.text), false),
         Look::Raised => (Some(theme.border), None, false),
         Look::Text => (None, Some(theme.text), true),
     };
@@ -737,15 +725,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn dark_and_light_differ_because_they_read_the_theme() {
-        let (dark, light) = (Theme::dark(), Theme::light());
-        assert_ne!(
-            press_style(Look::Row, true, &dark).hover_bg,
-            press_style(Look::Row, true, &light).hover_bg
-        );
-    }
-
     /// Over every built-in theme: a hover fill is never the rest fill of the element and never
     /// `theme.selected` (a hovered row must not look selected).
     #[test]
@@ -769,12 +748,12 @@ mod tests {
 }
 ```
 
-In `lib.rs` add `pub mod pressable;` in sorted place (after `pub mod prompts_page;` if `preview*` entries sort before it; keep the list sorted).
+In `lib.rs` add `pub mod pressable;` between `pub mod ports;` and `pub mod preview;` (the list is sorted).
 
 - [ ] **Step 2: Run to verify**
 
 Run: `cargo test -p mkrew-ui pressable`
-Expected: 4 tests PASS.
+Expected: 3 tests PASS.
 If it fails to compile on a gpui method (`underline`, `text_color` on `StyleRefinement`), the names come from `gpui::Styled`, which `use gpui::prelude::*` brings in (`settings.rs` already calls `.hover(|style| style.underline())`).
 
 - [ ] **Step 3: Commit**
@@ -790,10 +769,11 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Pressable, Look and p
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/shell/widgets.rs` (top, `button_frame` 83-100, `button` 103-119, `secondary_button` 142-154, `quiet_button` 158-169, `disabled_button` 172-199, `danger_button` 203-213, `icon_button_in` 352-372, `segment` 390-416, `menu_item` 719-735; new functions after `menu_panel`)
+- Modify: `crates/mkrew-ui/src/shell/files_render.rs:79`, `crates/mkrew-ui/src/shell/pane_render.rs:804` (keep the pointer)
 
 **Interfaces:**
 - Consumes: Task 4 items; `theme::{PALETTE_SELECTED_BAR, SWITCH_*}`, `icon_svg`, `Icon::ChevronDown`.
-- Produces: `pub(crate) use mkrew_ui::pressable::{Look, PressStyle, Pressable, apply_press, press_style};`, unchanged signatures of `button`, `secondary_button`, `quiet_button(id, label, theme, hover: u32)`, `danger_button`, `disabled_button`, `icon_button_in`, `segment`, `menu_item`, and new `toggle(id: impl Into<ElementId>, on: bool, enabled: bool, theme: &Theme) -> Stateful<Div>`, `dropdown_trigger(id: impl Into<ElementId>, label: impl IntoElement, open: bool, enabled: bool, theme: &Theme) -> Stateful<Div>`, `list_row(id: impl Into<ElementId>, selected: bool, theme: &Theme) -> Stateful<Div>`.
+- Produces: `pub(crate) use mkrew_ui::pressable::{Look, PressStyle, Pressable, apply_press, press_style};`, unchanged signatures of `button`, `secondary_button`, `quiet_button(id, label, theme, hover: u32)`, `danger_button`, `disabled_button`, `icon_button_in`, `segment`, `menu_item`, `button_frame` (hover-free and, from this task, cursor-free), and new `segment_in(id: impl Into<ElementId>, active: bool, enabled: bool, theme: &Theme) -> Stateful<Div>` (`segment` delegates with `enabled = true`), `toggle(id: impl Into<ElementId>, on: bool, enabled: bool, theme: &Theme) -> Stateful<Div>`, `dropdown_trigger(id: impl Into<ElementId>, label: impl IntoElement, open: bool, enabled: bool, theme: &Theme) -> Stateful<Div>`, `list_row(id: impl Into<ElementId>, selected: bool, theme: &Theme) -> Stateful<Div>` (a selected row has no hover fill).
 
 Widget construction needs a window, so it has no unit test; the decision logic is tested in Task 4, and `cargo clippy` plus the Task 12 visual check cover the rest.
 
@@ -821,7 +801,9 @@ fn filled_press(
 
 - [ ] **Step 2: Buttons**
 
-`button_frame`: delete the line `.cursor_pointer()` (the pressable adds it).
+`button_frame`: delete the line `.cursor_pointer()` (the pressable adds it) and keep it hover-free.
+Its two callers outside this file build their own hover and click, so they would lose the pointer: add `.cursor_pointer()` to the chain at `shell/files_render.rs:79` (`let ignored = button_frame("files-ignored", "Ignored")` ... after `.flex_none()`) and at `shell/pane_render.rs:804` (`let share = button_frame("pane-share", ..)` ... after its `)` closing the call, as the first chained method).
+`git_render.rs:375` already sets `.cursor_default()` and needs nothing.
 Replace the bodies:
 
 ```rust
@@ -915,13 +897,46 @@ pub(crate) fn icon_button_in(
 }
 ```
 
-In `segment`: remove `.cursor_pointer()` from the base chain, replace `let (hover, text) = (theme.hover, theme.text);` with `let text = theme.text;`, keep the existing `.when(active, ..)` block, and replace the `.when(!active, ..)` block with:
+Replace `segment` with these two functions (the old `.cursor_pointer()` and the `let (hover, text) = ..` line go; a disabled segment is faded, has no pointer and no hover, an active one keeps its `selected` fill and the pointer):
 
 ```rust
+pub(crate) fn segment(
+    id: impl Into<gpui::ElementId>,
+    active: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    segment_in(id, active, true, theme)
+}
+
+/// [`segment`] that can be disabled (a read-only Settings page): faded, no pointer, no hover.
+pub(crate) fn segment_in(
+    id: impl Into<gpui::ElementId>,
+    active: bool,
+    enabled: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(space::XS))
+        .h(theme::rems_px(theme::SEGMENT_HEIGHT))
+        .px(px(space::M))
+        .rounded(px(radius::CHIP))
+        .whitespace_nowrap()
+        .text_size(font_size::BODY)
+        .when(active, |el| {
+            el.bg(rgb(theme.selected))
+                .text_color(rgb(theme.text))
+                .when(enabled, |el| el.cursor_pointer())
+                .when(!enabled, |el| el.opacity(opacity::DISABLED))
+        })
         .when(!active, |el| {
             el.text_color(rgb(theme.text_muted))
-                .pressable(Look::Chip, true, theme)
+                .pressable(Look::Chip, enabled, theme)
         })
+}
 ```
 
 ```rust
@@ -1033,7 +1048,8 @@ pub(crate) fn list_row(
         .text_size(font_size::BODY)
         .text_color(rgb(theme.text))
         .when(selected, |el| {
-            el.bg(rgb(theme.selected)).child(
+            // A selected row keeps its `selected` fill on hover (no hover fill) and the pointer.
+            el.bg(rgb(theme.selected)).cursor_pointer().child(
                 div()
                     .absolute()
                     .left_0()
@@ -1044,7 +1060,7 @@ pub(crate) fn list_row(
                     .bg(rgb(theme.accent)),
             )
         })
-        .pressable(Look::Row, true, theme)
+        .when(!selected, |el| el.pressable(Look::Row, true, theme))
 }
 ```
 
@@ -1073,11 +1089,11 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): rebuild shared widget
 - Modify: `crates/mkrew-ui/src/shell/confirm_prompt.rs:165-176`
 
 **Interfaces:**
-- Consumes: `theme::{glass_gradient, shadow_float, GLASS_TINT_HEIGHT, PANEL_RISE, motion::FAST}`, `Theme.{glass, glass_border}`.
+- Consumes: `theme::{glass_gradient, shadow_float, GLASS_TINT_HEIGHT, GLASS_TINT_ANGLE, GLASS_TINT_FROM, GLASS_TINT_TO, PANEL_RISE, motion::FAST}`, `Theme.{glass, glass_border}`.
 - Produces: `floating_panel(id: impl Into<ElementId>, theme: &Theme) -> Stateful<Div>` (glass fill, tint gradient, 1 px `glass_border`, `shadow_float`, `radius::LARGE`, `.relative()`, `.occlude()`; callers add size, layout and content), `appear(id: &'static str, content: impl IntoElement) -> AnimationElement<Div>`.
 
 The pure part (gradient colors, shadow) is tested in Task 2.
-The structure test that every dialog moved is written in Task 7 and fails until then.
+Task 7 ends with a one-off grep that no dialog frame is left (no source-text test: the repo keeps none).
 
 - [ ] **Step 1: Add the functions**
 
@@ -1109,17 +1125,17 @@ pub(crate) fn floating_panel(
                 .h(px(theme::GLASS_TINT_HEIGHT))
                 .rounded_t(px(radius::LARGE))
                 .bg(gpui::linear_gradient(
-                    180.0,
-                    gpui::linear_color_stop(gpui::rgba(top), 0.0),
-                    gpui::linear_color_stop(gpui::rgba(bottom), 1.0),
+                    theme::GLASS_TINT_ANGLE,
+                    gpui::linear_color_stop(gpui::rgba(top), theme::GLASS_TINT_FROM),
+                    gpui::linear_color_stop(gpui::rgba(bottom), theme::GLASS_TINT_TO),
                 )),
         )
 }
 
 /// A floating panel's entrance: it fades in and rises `PANEL_RISE` over `motion::FAST`,
-/// ease-out. gpui has no element scale (spec 4.3 asked for 0.98 to 1), and under reduced
-/// motion gpui draws the end state, so then it appears at once. The wrapper fills its parent
-/// and centers the panel, so a panel sized as a fraction of the window still resolves.
+/// ease-out. Under reduced motion gpui draws the end state, so then it appears at once. The
+/// wrapper fills its parent and centers the panel, so a panel sized as a fraction of the
+/// window still resolves.
 pub(crate) fn appear(
     id: &'static str,
     content: impl IntoElement,
@@ -1280,13 +1296,6 @@ Add to `mod tests`:
             }
         }
     }
-
-    #[test]
-    fn the_hidden_rows_have_no_group_and_no_label() {
-        for s in SETTINGS.iter().filter(|s| s.hidden) {
-            assert!(s.group.is_empty() && s.label.is_empty(), "{}", s.id());
-        }
-    }
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -1421,7 +1430,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(core): group every setting
 
 **Interfaces:**
 - Consumes: `palette::fuzzy(query, text) -> Option<(i64, Vec<u32>)>`, `crate::quick_open::match_ranges(text, &[u32]) -> Vec<Range<usize>>` (Plan P2 moves it to `crate::palette::match_ranges` and edits this one import), `Setting.group` (Task 8).
-- Produces: `pub const NAV: [(&str, &[Tab]); 3]`, `Tab::all()` in `NAV` order, `Focus::Find`, `SettingsDialog.find: Input`, `pub fn search(query: &str) -> Vec<Hit>`, `pub struct Hit { setting, score, label_ranges }`, `SettingsDialog::{searching, hits, heading, dimmed_tabs, clear_find, group_of}`, `pub struct Group { pub title: &'static str, pub rows: Vec<(usize, Row)> }`, `pub fn grouped(rows: &[Row], searching: bool) -> Vec<Group>`, Ctrl+F focuses `Focus::Find`, Esc clears a non-empty query before closing.
+- Produces: `pub const NAV: [(&str, &[Tab]); 3]`, `Tab::all()` in `NAV` order, `Focus::Find`, `SettingsDialog.find: Input` (plus a private cache of the last search keyed by its query text), `pub fn search(query: &str) -> Vec<Hit>` (a label match always ranks above a help-only match), `pub struct Hit { setting, score, label_ranges }`, `SettingsDialog::{searching, hits() -> Rc<Vec<Hit>>, heading, dimmed_tabs, clear_find, group_of}`, `pub struct Group { pub title: &'static str, pub rows: Vec<(usize, Row)> }`, `pub fn grouped(rows: &[Row], searching: bool) -> Vec<Group>`, Ctrl+F focuses `Focus::Find`, Esc clears a non-empty query before closing.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1465,14 +1474,19 @@ Add to `mod tests` of `settings_dialog.rs` (helpers `dialog()`, `key()`, `typed(
     }
 
     #[test]
-    fn a_label_match_ranks_before_a_help_only_match() {
-        let hits = search("theme");
-        assert!(
-            hits[0].setting.label.to_lowercase().contains("theme"),
-            "first hit is {}",
-            hits[0].setting.id()
-        );
-        assert!(!hits[0].label_ranges.is_empty(), "the matched chars are marked");
+    fn a_label_match_ranks_above_a_help_only_match() {
+        for query in ["theme", "font", "notif", "size", "wrap", "zed", "api"] {
+            let hits = search(query);
+            assert!(!hits.is_empty(), "{query}");
+            let first_help_only = hits.iter().position(|h| h.label_ranges.is_empty());
+            if let Some(at) = first_help_only {
+                assert!(
+                    hits[at..].iter().all(|h| h.label_ranges.is_empty()),
+                    "{query}: a label match follows a help-only match"
+                );
+            }
+            assert!(!hits[0].label_ranges.is_empty(), "{query}: the matched chars are marked");
+        }
     }
 
     #[test]
@@ -1585,7 +1599,7 @@ Expected: FAIL to compile (`NAV`, `search`, `Focus::Find`, ... not defined).
 
 - [ ] **Step 3: Implement the model**
 
-Imports: add `use std::collections::HashSet;`, `use std::ops::Range;` and `use crate::quick_open::match_ranges;`.
+Imports: add `use std::cell::RefCell;`, `use std::collections::HashSet;`, `use std::ops::Range;`, `use std::rc::Rc;` and `use crate::quick_open::match_ranges;`.
 
 Navigation (replace `Tab::all`; `title()` stays):
 
@@ -1647,16 +1661,16 @@ pub fn search(query: &str) -> Vec<Hit> {
                 palette::fuzzy(query, &setting.id()),
                 palette::fuzzy(query, setting.page.title()),
             ];
+            let label_ranges = scores[0]
+                .as_ref()
+                .map(|(_, at)| match_ranges(setting.label, at))
+                .unwrap_or_default();
             let score = scores
                 .iter()
                 .flatten()
                 .map(|(score, _)| *score)
                 .max()
                 .filter(|score| *score > 0)?;
-            let label_ranges = scores[0]
-                .as_ref()
-                .map(|(_, at)| match_ranges(setting.label, at))
-                .unwrap_or_default();
             Some(Hit {
                 setting,
                 score,
@@ -1664,7 +1678,11 @@ pub fn search(query: &str) -> Vec<Hit> {
             })
         })
         .collect();
-    hits.sort_by(|a, b| b.score.cmp(&a.score));
+    // A label match always ranks above a help-only match; the best score orders within each.
+    hits.sort_by(|a, b| {
+        let (a_label, b_label) = (!a.label_ranges.is_empty(), !b.label_ranges.is_empty());
+        b_label.cmp(&a_label).then(b.score.cmp(&a.score))
+    });
     hits
 }
 
@@ -1710,16 +1728,18 @@ pub fn grouped(rows: &[Row], searching: bool) -> Vec<Group> {
 ```rust
     /// The global search over every page (Ctrl+F).
     pub find: Input,
+    /// The last search, keyed by its query text (see [`SettingsDialog::hits`]).
+    hit_cache: RefCell<Option<(String, Rc<Vec<Hit>>)>>,
 ```
 
-and `find: Input::default(),` in `new()`.
+and `find: Input::default(), hit_cache: RefCell::new(None),` in `new()`.
 `rows`: at the top of the body add:
 
 ```rust
         if self.searching() {
             return self
                 .hits()
-                .into_iter()
+                .iter()
                 .map(|hit| Row::Setting(hit.setting))
                 .collect();
         }
@@ -1733,12 +1753,22 @@ New methods in `impl SettingsDialog`:
         !self.find.trim().is_empty()
     }
 
-    /// The matches of the query, in the order of [`Self::rows`] (empty without a query).
-    pub fn hits(&self) -> Vec<Hit> {
-        if self.searching() {
-            search(self.find.trim())
-        } else {
-            Vec::new()
+    /// The matches of the query, in the order of [`Self::rows`] (empty without a query). The
+    /// result is cached under the query text it was computed for, so a render or key press
+    /// computes the search once, and an edit of `find` by any path just misses the cache.
+    pub fn hits(&self) -> Rc<Vec<Hit>> {
+        let query = self.find.trim();
+        if query.is_empty() {
+            return Rc::default();
+        }
+        let mut cache = self.hit_cache.borrow_mut();
+        match cache.as_ref() {
+            Some((cached, hits)) if cached == query => hits.clone(),
+            _ => {
+                let hits = Rc::new(search(query));
+                *cache = Some((query.to_owned(), hits.clone()));
+                hits
+            }
         }
     }
 
@@ -1875,14 +1905,13 @@ The space rule `!matches!(self.focus, Focus::Search | Focus::Add(_))` becomes `!
 
 Run: `cargo test -p mkrew-ui settings_dialog`
 Expected: all PASS.
-If `a_label_match_ranks_before_a_help_only_match` fails because a help-only hit outscores the label hits, weight the label: in `search` add `+ 100` to the score when `scores[0]` matched (change `let score = ..` so it takes `max` of `[label + 100, help, key, page]`) and keep the test.
 Run: `cargo check -p mkrew-ui`
-Expected: exhaustive-`match` errors in `shell/settings.rs` for `Focus::Find`; make them treat `Focus::Find` like `Focus::Search` for now (Task 10 rewrites that code).
+Expected: no errors (`shell/settings.rs` has no exhaustive `match` on `Focus`, so it is not touched in this task).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/mkrew-ui/src/settings_dialog.rs crates/mkrew-ui/src/shell/settings.rs
+git add crates/mkrew-ui/src/settings_dialog.rs
 git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Settings navigation groups and global search model"
 ```
 
@@ -1891,7 +1920,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Settings navigation g
 ### Task 10: Settings frame, navigation, search box, results, empty state and footer
 
 **Files:**
-- Modify: `crates/mkrew-ui/src/shell/settings.rs` (`render_settings_dialog` 195-376, `settings_link` 413-429, `settings_key_down` scroll lines 101-113)
+- Modify: `crates/mkrew-ui/src/shell/settings.rs` (`render_settings_dialog` 195-376, `settings_link` 413-429, `settings_row` 431-445 (signature only; Task 11 writes the body), `settings_key_down` scroll lines 101-113)
 
 **Interfaces:**
 - Consumes: Tasks 4-7 widgets, Task 9 model (`NAV`, `dimmed_tabs`, `heading`, `hits`, `searching`, `clear_find`, `group_of`, `grouped`), `search_box`, `caret_field`, `overline`, `empty_state`, `secondary_button`, `kbd`, `icon_button`.
@@ -1917,14 +1946,15 @@ Replace the `tabs` / `nav` block (lines 206-237) with:
                 .rounded(px(radius::SMALL))
                 .text_size(font_size::BODY)
                 .text_color(rgb(if active { theme.text } else { theme.text_muted }))
-                .when(active, |el| el.bg(rgb(theme.selected)))
+                // The active page keeps its `selected` fill on hover; the others hover.
+                .when(active, |el| el.bg(rgb(theme.selected)).cursor_pointer())
+                .when(!active, |el| el.pressable(Look::Row, true, theme))
                 .when(focused, |el| {
                     el.border(px(theme::BORDER_WIDTH))
                         .border_color(rgb(theme.selected_ring))
                 })
                 // Dimmed, still readable and still clickable.
-                .when(dimmed.contains(&tab), |el| el.opacity(opacity::VIEWED))
-                .pressable(Look::Row, true, theme)
+                .when(dimmed.contains(&tab), |el| el.opacity(opacity::DIMMED))
                 .on_press(
                     true,
                     cx.listener(move |shell, _, window, cx| {
@@ -2001,7 +2031,16 @@ In `render_settings_dialog` the body's last child (the `.children(rows.iter().en
 ```
 
 and the body's `.gap(px(space::XS))` becomes `.gap(px(space::M))` so cards breathe.
-The Keyboard page's own search box is shown only without a global query: `let search = (dialog.tab == Tab::Keyboard && !dialog.searching()).then(|| { .. })`, and the Machines and Prompts pages likewise (`dialog.tab == Tab::Machines && !dialog.searching()`).
+The Keyboard page's own search box is shown only without a global query; the render and the scroll index of Step 3 both ask one helper, a free function in `shell/settings.rs`:
+
+```rust
+/// Whether the Keyboard page's own search box is drawn (a global query hides it).
+fn keyboard_search_shown(dialog: &SettingsDialog) -> bool {
+    dialog.tab == Tab::Keyboard && !dialog.searching()
+}
+```
+
+`render_settings_dialog` uses it as `let search = keyboard_search_shown(dialog).then(|| { .. })`; the Machines and Prompts pages likewise draw only while `!dialog.searching()`.
 
 Add the method:
 
@@ -2181,7 +2220,7 @@ In `settings_key_down` (lines 101-113) replace the scroll block with:
                 (_, Tab::Keyboard) => keymap::notice(&self.keymap_errors).is_some(),
                 _ => false,
             };
-            let search = dialog.tab == Tab::Keyboard && !dialog.searching();
+            let search = keyboard_search_shown(dialog);
             let card = dialog.group_of(index, &self.keymap);
             self.settings_scroll
                 .scroll_to_item(card + usize::from(banner) + usize::from(search));
@@ -2209,8 +2248,8 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Settings frame, group
 - Modify: `crates/mkrew-ui/src/shell/widgets.rs` (remove the `#[allow(dead_code)]` of `toggle` and `dropdown_trigger`)
 
 **Interfaces:**
-- Consumes: `toggle`, `segmented`, `segment`, `dropdown_trigger`, `Pressable`, `Look`, `Hit` (Task 9), `gpui::StyledText` highlights.
-- Produces: `settings_row(&self, dialog, index, row, divider: bool, hit: Option<&Hit>, typing, theme, cx) -> AnyElement`, `settings_control(&self, dialog, index, setting, focused, typing, theme, cx)`.
+- Consumes: `toggle`, `segmented`, `segment_in`, `dropdown_trigger`, `Pressable`, `Look`, `Hit` (Task 9), `gpui::StyledText` highlights.
+- Produces: `settings_row(&self, dialog, index, row, divider: bool, hit: Option<&Hit>, typing, theme, cx) -> AnyElement`, `settings_control(&self, dialog, index, setting, focused, typing, theme, cx)`, `Shell::press_row(index, cx)` (the one row-click handler).
 
 - [ ] **Step 1: The row**
 
@@ -2279,10 +2318,9 @@ Replace `settings_row` (it keeps the `title` / `help` / `control` tuple, the `is
                 el.border_t(px(theme::BORDER_WIDTH))
                     .border_color(rgb(theme.divider))
             })
-            .when(focused, |el| el.bg(rgb(theme.selected)))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.settings_do(|d, keymap| d.click(Focus::Row(index), keymap), window, cx);
-            }))
+            .when(focused, |el| el.bg(rgb(theme.selected)).cursor_pointer())
+            .when(!focused, |el| el.pressable(Look::Row, true, theme))
+            .on_press(true, Self::press_row(index, cx))
             .children(crumb.map(|crumb| meta_line(theme, crumb.into())))
             .child(
                 div()
@@ -2333,7 +2371,24 @@ Replace `settings_row` (it keeps the `title` / `help` / `control` tuple, the `is
     }
 ```
 
-The row stays a click target that only moves the keyboard (as today); the controls inside take their own press.
+Add the shared click handler next to `settings_row` (the row, the switch and the dropdown trigger all use it, so the closure is written once):
+
+```rust
+    /// A click on a row, or on its switch or dropdown trigger: the keyboard moves to the row
+    /// and the click acts like Enter (`SettingsDialog::click`).
+    fn press_row(
+        index: usize,
+        cx: &Context<'_, Self>,
+    ) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static + use<> {
+        cx.listener(move |shell, _, window, cx| {
+            cx.stop_propagation();
+            shell.settings_do(|d, keymap| d.click(Focus::Row(index), keymap), window, cx);
+        })
+    }
+```
+
+The row is a click target that moves the keyboard to it and acts like Enter (as today), through `.pressable(Look::Row, ..)` and `.on_press(..)`; a focused row keeps its `selected` fill and gets no hover fill.
+The controls inside take their own press and stop it from reaching the row.
 
 - [ ] **Step 2: The controls**
 
@@ -2346,22 +2401,21 @@ In `settings_control` add the parameter `index: usize` after `dialog` and replac
                 !read_only,
                 theme,
             )
-            .on_press(
-                !read_only,
-                cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.settings_do(|d, keymap| d.click(Focus::Row(index), keymap), window, cx);
-                }),
-            )
+            // Today's focus ring (`shell/settings.rs:552-554`): a 1 px ring while the row has the keyboard.
+            .when(focused, |el| {
+                el.border(px(theme::BORDER_WIDTH)).border_color(rgb(ring))
+            })
+            .on_press(!read_only, Self::press_row(index, cx))
             .into_any_element(),
             Kind::Choice(choices) => segmented(theme)
-                .when(read_only, |el| el.opacity(opacity::DISABLED))
                 .when(focused, |el| el.border_color(rgb(ring)))
                 .children(choices.iter().map(|&choice| {
                     let active = shown == choice;
-                    segment(
+                    // Read-only: each segment is faded, with no pointer and no hover.
+                    segment_in(
                         SharedString::from(format!("choice-{}-{choice}", setting.id())),
                         active,
+                        !read_only,
                         theme,
                     )
                     .text_size(font_size::META)
@@ -2375,28 +2429,27 @@ In `settings_control` add the parameter `index: usize` after `dialog` and replac
                     .child(choice)
                 }))
                 .into_any_element(),
-            Kind::Font | Kind::List(_) => dropdown_trigger(
-                SharedString::from(format!("dropdown-{}", setting.id())),
-                if shown.is_empty() {
-                    "Default".to_owned()
-                } else {
-                    shown
-                },
-                dialog
+            Kind::Font | Kind::List(_) => {
+                let open = dialog
                     .list_pick
                     .as_ref()
-                    .is_some_and(|pick| pick.setting.id() == setting.id()),
-                !read_only,
-                theme,
-            )
-            .on_press(
-                !read_only,
-                cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.settings_do(|d, keymap| d.click(Focus::Row(index), keymap), window, cx);
-                }),
-            )
-            .into_any_element(),
+                    .is_some_and(|pick| pick.setting.id() == setting.id());
+                dropdown_trigger(
+                    SharedString::from(format!("dropdown-{}", setting.id())),
+                    if shown.is_empty() {
+                        "Default".to_owned()
+                    } else {
+                        shown
+                    },
+                    open,
+                    !read_only,
+                    theme,
+                )
+                // Today's focus ring (`shell/settings.rs:628`); an open pick keeps the accent frame.
+                .when(focused && !open, |el| el.border_color(rgb(ring)))
+                .on_press(!read_only, Self::press_row(index, cx))
+                .into_any_element()
+            }
 ```
 
 A click on a Font or List row's control calls `d.click(Focus::Row(index))`, which focuses the row and activates it, opening the pick (`Row::click_focuses_only` is false for these kinds, as today).
@@ -2485,8 +2538,8 @@ Replace lines 1695-1703 (from "- Settings (Ctrl+," to "opens `settings.toml` and
   search box (Ctrl+F focuses it) and lists the pages under three overlines: App (General, Appearance, Notifications, Voice, Features),
   Integrations (Jira, Phone, Machines) and Input (Keyboard, Prompts). The right side has the page title and a close button.
   With a query, the right side lists the matching settings of every page (a muted `Page › Group` breadcrumb, the label with the
-  matched characters accented, the help line and the real control); a setting matches when `palette::fuzzy` scores its label,
-  help, TOML key or page name above zero, ranked by the best score; pages with no match are dimmed; shortcuts are not searched.
+  matched characters in accent and semibold, the help line and the real control); a setting matches when `palette::fuzzy` scores its label,
+  help, TOML key or page name above zero; a label match always ranks above a help-only match, then by score; pages with no match are dimmed; shortcuts are not searched.
   Esc clears a non-empty query first and closes Settings on an empty one; no match shows "No setting matches “<query>”." with
   "Clear search (Esc)". Each page shows its settings in cards, one per group (`Setting::group`: an overline title and a card
   of rows with faint dividers; label and muted help on the left, the control on the right). Controls: switch (`toggle`), segmented
@@ -2494,8 +2547,8 @@ Replace lines 1695-1703 (from "- Settings (Ctrl+," to "opens `settings.toml` and
   written on Enter or when the row loses the keyboard, Esc drops the draft. Keyboard rows show a
   chip, an accent dot when changed and Reset; a click or Enter captures the next keystroke, Esc
   cancels. A refused value or duplicate keystroke shows under its row, never as a toast. A file that
-  does not parse shows a banner with "Fix in Zed" and the settings controls do nothing. The footer
-  shows `v<version>`, the links `settings.toml` and `keymap.toml` (they open the files in Zed) and "Changes apply at once."
+  does not parse shows a banner with "Fix in Zed" and the settings controls do nothing (switches, segments and dropdowns are faded, with no hover and no pointer). The footer
+  shows `v<version>`, the links `settings.toml` and `keymap.toml` (they open the files in Zed) and "Changes apply at once."; on the Prompts page the hint stays "Ctrl+N new · Ctrl+S saves · Esc closes".
 ```
 
 - [ ] **Step 3: HUMAN_CHECKS**
@@ -2541,8 +2594,8 @@ git -c user.email=tungnv975@gmail.com commit -m "docs: SPEC 14 glass and pressab
 | --- | --- |
 | 4.1 tokens `glass`, `glass_border`, `glass_tint`, `scrim`, `shadow_float`, sizes | 2 |
 | 4.1 per-theme derivation (dark and light differ) | 2 (`with_glass` in `dark()`, `light()`, `from_palette`) |
-| 4.2 `floating_panel`, every dialog moved, none builds its own frame | 6, 7 (table of 24 panel builders, structure test) |
-| 4.3 motion, reduced motion | 3 (detection), 6 (`appear`); deviations 1-4 above |
+| 4.2 `floating_panel`, every dialog moved, none builds its own frame | 6, 7 (table of 24 panel builders, one-off grep) |
+| 4.3 motion, reduced motion | 3 (detection), 6 (`appear`); spec notes above |
 | 4.4 contrast test over `bg` and `text` for every built-in theme, failing theme gets higher alpha | 2 |
 | 5.1 rule | 4, 5 (rule), 12 (SPEC); enforcement across the app is P3 |
 | 5.2 `Look`, `PressStyle`, `press_style`, `Pressable`, `toggle`, `dropdown_trigger`, `list_row`, existing widgets rebuilt keeping signatures | 4, 5 |
@@ -2557,6 +2610,6 @@ Not in P1 by the spec: SPEC section 13 keys and the protocol section (Plan P2), 
 
 **Placeholder scan:** no TBD or "similar to" steps; the mechanical edits (the group argument on the `row(` calls, the 5-line frame replacement on 24 panels) are given as an exact rule plus a before and after, a full table, and a one-off grep that lists the sites left.
 
-**Type consistency:** `floating_panel(id, &Theme) -> Stateful<Div>` (Task 6) is the call in Tasks 7 and 10; `appear(&'static str, impl IntoElement)` (Task 6) is called from `modal_shade` and the confirm prompt; `Look` / `PressStyle` / `press_style` / `apply_press` / `Pressable` (Task 4) are the names re-exported in Task 5 and used in Tasks 10 and 11; `Hit.label_ranges`, `search`, `grouped`, `Group`, `NAV`, `Focus::Find`, `find`, `hits`, `searching`, `heading`, `dimmed_tabs`, `clear_find`, `group_of` (Task 9) are the names Tasks 10 and 11 call; `settings_row` takes `(dialog, index, row, divider, hit, typing, theme, cx)` in Tasks 10 and 11 alike; `settings_control` gains `index` in Task 11 and has one caller.
+**Type consistency:** `floating_panel(id, &Theme) -> Stateful<Div>` (Task 6) is the call in Tasks 7 and 10; `appear(&'static str, impl IntoElement)` (Task 6) is called from `modal_shade` and the confirm prompt; `Look` / `PressStyle` / `press_style` / `apply_press` / `Pressable` (Task 4) are the names re-exported in Task 5 and used in Tasks 10 and 11; `segment_in(id, active, enabled, theme)` (Task 5) is the call in Task 11; `Hit.label_ranges`, `search`, `grouped`, `Group`, `NAV`, `Focus::Find`, `find`, `hits() -> Rc<Vec<Hit>>`, `searching`, `heading`, `dimmed_tabs`, `clear_find`, `group_of` (Task 9) are the names Tasks 10 and 11 call; `keyboard_search_shown` (Task 10) is used by the render and the scroll index; `Shell::press_row(index, cx)` (Task 11) is the one row-click handler; `settings_row` takes `(dialog, index, row, divider, hit, typing, theme, cx)` in Tasks 10 and 11 alike; `settings_control` gains `index` in Task 11 and has one caller.
 
 **Review Focus:** items 1-6 each have a named test (Tasks 9, 2, 3); item 7 is covered by Task 4's disabled test plus the manual check; item 8 by the manual check.

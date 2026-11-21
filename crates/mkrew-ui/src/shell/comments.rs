@@ -664,12 +664,16 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap(px(space::S))
+                    .px(px(space::XS))
+                    .rounded(px(radius::SMALL))
                     .text_size(font_size::META)
-                    .cursor_pointer()
                     .when_some(lines, |el, (start, end)| {
-                        el.on_click(cx.listener(move |shell, _, _, cx| {
-                            shell.pick_lines(project_id, context, start, end, false, cx);
-                        }))
+                        el.pressable(Look::Raised, true, theme).on_press(
+                            true,
+                            cx.listener(move |shell, _, _, cx| {
+                                shell.pick_lines(project_id, context, start, end, false, cx);
+                            }),
+                        )
                     })
                     .child(
                         div()

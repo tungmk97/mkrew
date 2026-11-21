@@ -72,35 +72,34 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, quick_open::key(&event.keystroke))
-        else {
+        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
             return;
         };
-        let paste = (key == quick_open::Key::Paste)
+        let paste = (key == palette::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
         let Some(docs) = self.docs.get_mut(&project_id) else {
             return;
         };
         match key {
-            quick_open::Key::Close if !docs.filter.is_empty() => docs.filter.clear(),
-            quick_open::Key::Close | quick_open::Key::Open => {
+            palette::Key::Close if !docs.filter.is_empty() => docs.filter.clear(),
+            palette::Key::Close | palette::Key::Open => {
                 window.focus(&self.focus_handle, cx);
             }
-            quick_open::Key::Move(by) => {
+            palette::Key::Move(by) => {
                 if let Some(path) = docs.step_selection(by as isize) {
                     self.select_doc(project_id, &path, window, cx);
                 }
             }
-            quick_open::Key::Edit(key) => {
+            palette::Key::Edit(key) => {
                 copy_selection(&key, &docs.filter, cx);
                 docs.filter.edit(&key);
             }
-            quick_open::Key::Paste => {
+            palette::Key::Paste => {
                 docs.filter
                     .insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }
-            quick_open::Key::Insert(text) => {
+            palette::Key::Insert(text) => {
                 docs.filter.insert(&text);
             }
         }
@@ -499,7 +498,8 @@ impl Shell {
                     // blocks are highlighted.
                     let this = cx.entity().downgrade();
                     let selection = docs.comments.selection;
-                    let (picked_bg, hover_bg) = (theme.terminal_selection_bg, theme.surface_raised);
+                    let picked_bg = theme.terminal_selection_bg;
+                    let row_theme = theme.clone();
                     let wrap: preview::Wrap = Rc::new(
                         move |index: usize,
                               block: &mkrew_ui::markdown::Block,
@@ -511,9 +511,8 @@ impl Shell {
                                 .id(("doc-block", index))
                                 .px(px(space::XS))
                                 .rounded(px(radius::SMALL))
-                                .cursor_pointer()
                                 .when(picked, |el| el.bg(rgb(picked_bg)))
-                                .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover_bg))))
+                                .pressable_unless(picked, Look::Row, &row_theme)
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     move |event: &MouseDownEvent, _, cx| {
@@ -588,7 +587,6 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
-        let hover = theme.surface_raised;
         div()
             .flex_none()
             .flex()
@@ -613,12 +611,12 @@ impl Shell {
                             .font_weight(FontWeight(weight::MEDIUM))
                     })
                     .when(!active, |el| {
-                        el.cursor_pointer()
-                            .hover(move |style| style.bg(rgb(hover)))
-                            .active(|style| style.opacity(opacity::ACTIVE))
-                            .on_click(cx.listener(move |shell, _, window, cx| {
+                        el.pressable(Look::Chip, true, theme).on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
                                 switch(shell, target, window, cx);
-                            }))
+                            }),
+                        )
                     })
                     .map(|el| match segment.icon {
                         Some(icon) => el.child(icon_svg(icon, theme::ICON_SIZE, fg)),
@@ -650,7 +648,6 @@ pub(crate) fn doc_row(
         Some((folder, name)) => (Some(folder), name),
         None => (None, file.file_path.as_str()),
     };
-    let hover = theme.surface_raised;
     let file_path = file.file_path.clone();
     // `matched` indexes chars of the whole path: split it over the folder and the name.
     let name_from = folder.map_or(0, |folder| folder.chars().count() + 1);
@@ -667,7 +664,7 @@ pub(crate) fn doc_row(
             ..HighlightStyle::default()
         };
         StyledText::new(text.to_owned()).with_highlights(
-            quick_open::match_ranges(text, hits)
+            palette::match_ranges(text, hits)
                 .into_iter()
                 .map(move |range| (range, style)),
         )
@@ -681,10 +678,8 @@ pub(crate) fn doc_row(
         .px(px(space::S))
         .py(px(space::XS))
         .rounded(px(radius::MEDIUM))
-        .cursor_pointer()
         .when(selected, |el| el.bg(rgb(theme.surface_raised)))
-        .when(!selected, |el| el.hover(move |style| style.bg(rgb(hover))))
-        .active(|style| style.opacity(opacity::ACTIVE))
+        .pressable_unless(selected, Look::Row, theme)
         .child(
             div()
                 .flex_1()
@@ -724,7 +719,10 @@ pub(crate) fn doc_row(
                     .child(format!("{} open", file.open_comments)),
             )
         })
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.select_doc(project_id, &file_path, window, cx);
-        }))
+        .on_press(
+            true,
+            cx.listener(move |shell, _, window, cx| {
+                shell.select_doc(project_id, &file_path, window, cx);
+            }),
+        )
 }

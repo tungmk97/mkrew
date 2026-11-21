@@ -64,7 +64,6 @@ impl Shell {
             .sum();
         let room = self.inspector_width - space::M * 2.0 - theme::ICON_BUTTON_SIZE;
         let fits = wanted <= room;
-        let hover = theme.text;
         let tabs = choices
             .into_iter()
             .enumerate()
@@ -95,14 +94,15 @@ impl Shell {
                     .tooltip(tooltip(theme, &tip, ""))
                     .when(active, |el| el.text_color(rgb(theme.text)))
                     .when(!active, |el| {
-                        el.cursor_pointer()
-                            .text_color(rgb(theme.text_muted))
-                            .hover(move |style| style.text_color(rgb(hover)))
-                            .active(|style| style.opacity(opacity::ACTIVE))
-                            .on_click(cx.listener(move |shell, _, window, cx| {
-                                window.focus(&shell.git_focus, cx);
-                                shell.set_git_repo(project_id, repo.clone(), window, cx);
-                            }))
+                        el.text_color(rgb(theme.text_muted))
+                            .pressable(Look::Text, true, theme)
+                            .on_press(
+                                true,
+                                cx.listener(move |shell, _, window, cx| {
+                                    window.focus(&shell.git_focus, cx);
+                                    shell.set_git_repo(project_id, repo.clone(), window, cx);
+                                }),
+                            )
                     })
                     .child(div().min_w_0().truncate().child(label.to_owned()))
                     .when(dirty, |el| el.child(changes_dot(theme)))
@@ -139,7 +139,7 @@ impl Shell {
 
     /// Changed files of repository `repo` (`None` = the workspace folder's) from the title
     /// bar summary; `None` until it loaded.
-    fn repo_changes(&self, repo: Option<&str>) -> Option<usize> {
+    pub(crate) fn repo_changes(&self, repo: Option<&str>) -> Option<usize> {
         let repo = repo.unwrap_or("");
         self.git_summary()?
             .repos
@@ -246,22 +246,21 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, quick_open::key(&event.keystroke))
-        else {
+        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
             return;
         };
-        let paste = (key == quick_open::Key::Paste)
+        let paste = (key == palette::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
         let active = self.git.get(&project_id).and_then(|view| view.repo.clone());
         match key {
-            quick_open::Key::Close if !self.git_repo_query.is_empty() => {
+            palette::Key::Close if !self.git_repo_query.is_empty() => {
                 self.git_repo_query.clear();
             }
-            quick_open::Key::Close => return self.dismiss_menus(window, cx),
+            palette::Key::Close => return self.dismiss_menus(window, cx),
             // The key that opened the menu may still repeat: it must not pick a row.
-            quick_open::Key::Open if event.is_held => return,
-            quick_open::Key::Open => {
+            palette::Key::Open if event.is_held => return,
+            palette::Key::Open => {
                 let rows = self.git_repo_rows(project_id, &active);
                 let action = self
                     .menu_selected
@@ -273,20 +272,20 @@ impl Shell {
                 }
                 return;
             }
-            quick_open::Key::Move(by) => {
+            palette::Key::Move(by) => {
                 let rows = self.git_repo_rows(project_id, &active);
                 self.menu_selected = menu_model::step(&rows, self.menu_selected, by as isize);
                 return cx.notify();
             }
-            quick_open::Key::Edit(edit) => {
+            palette::Key::Edit(edit) => {
                 copy_selection(&edit, &self.git_repo_query, cx);
                 self.git_repo_query.edit(&edit);
             }
-            quick_open::Key::Paste => {
+            palette::Key::Paste => {
                 self.git_repo_query
                     .insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }
-            quick_open::Key::Insert(text) => {
+            palette::Key::Insert(text) => {
                 self.git_repo_query.insert(&text);
             }
         }
@@ -363,20 +362,19 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, quick_open::key(&event.keystroke))
-        else {
+        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
             return;
         };
-        let paste = (key == quick_open::Key::Paste)
+        let paste = (key == palette::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
         let filter = &mut self.git_view(project_id).filter;
         match key {
-            quick_open::Key::Close if !filter.is_empty() => filter.clear(),
-            quick_open::Key::Close | quick_open::Key::Open => {
+            palette::Key::Close if !filter.is_empty() => filter.clear(),
+            palette::Key::Close | palette::Key::Open => {
                 window.focus(&self.git_focus, cx);
             }
-            quick_open::Key::Move(by) => {
+            palette::Key::Move(by) => {
                 let key = if by < 0 {
                     git_view::Key::Up
                 } else {
@@ -384,16 +382,16 @@ impl Shell {
                 };
                 return self.git_key(key, window, cx);
             }
-            quick_open::Key::Edit(edit) => {
+            palette::Key::Edit(edit) => {
                 copy_selection(&edit, filter, cx);
                 if !filter.edit(&edit) {
                     return cx.notify();
                 }
             }
-            quick_open::Key::Paste => {
+            palette::Key::Paste => {
                 filter.insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }
-            quick_open::Key::Insert(text) => {
+            palette::Key::Insert(text) => {
                 filter.insert(&text);
             }
         }

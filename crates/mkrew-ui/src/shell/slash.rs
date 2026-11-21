@@ -181,36 +181,36 @@ impl Shell {
         let plain_tab = event.keystroke.key == "tab"
             && !(modifiers.shift || modifiers.control || modifiers.alt || modifiers.platform);
         let key = if plain_tab {
-            Some(quick_open::Key::Open)
+            Some(palette::Key::Open)
         } else {
-            quick_open::key(&event.keystroke)
+            palette::key(&event.keystroke)
         };
         let Some(key) = key else {
             return;
         };
-        let paste = (key == quick_open::Key::Paste)
+        let paste = (key == palette::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
         let Some(picker) = self.slash_picker.as_mut() else {
             return;
         };
         match key {
-            quick_open::Key::Close => {
+            palette::Key::Close => {
                 let typed = picker.escaped();
                 return self.close_slash_picker(Some(typed), window, cx);
             }
-            quick_open::Key::Open => return self.accept_slash_pick(!plain_tab, window, cx),
-            quick_open::Key::Move(_) => {
+            palette::Key::Open => return self.accept_slash_pick(!plain_tab, window, cx),
+            palette::Key::Move(_) => {
                 picker.apply(key);
                 self.slash_picker_scroll.scroll_to_item(picker.selected);
             }
-            quick_open::Key::Paste => {
+            palette::Key::Paste => {
                 if let Some(text) = paste {
                     picker.insert(&text);
                 }
             }
-            quick_open::Key::Edit(_) | quick_open::Key::Insert(_) => {
-                if let quick_open::Key::Edit(edit) = &key {
+            palette::Key::Edit(_) | palette::Key::Insert(_) => {
+                if let palette::Key::Edit(edit) = &key {
                     copy_selection(edit, picker.query(), cx);
                 }
                 picker.apply(key);
@@ -232,7 +232,6 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let accent = gpui::Hsla::from(rgb(theme.accent));
-        let hover = theme.surface_raised;
         let muted = |text: String| {
             div()
                 .text_size(font_size::META)
@@ -249,17 +248,16 @@ impl Shell {
                 let name = format!("/{}", item.name);
                 // The `/` comes first in the text, so the matched chars move one place.
                 let shifted: Vec<u32> = row.matched.iter().map(|at| at + 1).collect();
-                let highlights =
-                    quick_open::match_ranges(&name, &shifted)
-                        .into_iter()
-                        .map(|range| {
-                            let style = gpui::HighlightStyle {
-                                color: Some(accent),
-                                font_weight: Some(FontWeight(weight::SEMIBOLD)),
-                                ..gpui::HighlightStyle::default()
-                            };
-                            (range, style)
-                        });
+                let highlights = palette::match_ranges(&name, &shifted)
+                    .into_iter()
+                    .map(|range| {
+                        let style = gpui::HighlightStyle {
+                            color: Some(accent),
+                            font_weight: Some(FontWeight(weight::SEMIBOLD)),
+                            ..gpui::HighlightStyle::default()
+                        };
+                        (range, style)
+                    });
                 Some(
                     div()
                         .id(("slash-row", position))
@@ -273,23 +271,24 @@ impl Shell {
                         .overflow_hidden()
                         .text_size(font_size::BODY)
                         .text_color(rgb(theme.text))
-                        // The pick has a focus-colored ring, so it stays visible under hover.
+                        // The pick has a focus-colored ring and its own fill; it does not hover.
                         .border(px(theme::BORDER_WIDTH))
-                        .border_color(rgb(if picked {
-                            theme.pane_focus_border
+                        .border_color(if picked {
+                            gpui::Hsla::from(rgb(theme.pane_focus_border))
                         } else {
-                            theme.surface
-                        }))
+                            gpui::transparent_black()
+                        })
                         .when(picked, |el| el.bg(rgb(theme.surface_raised)))
-                        .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-                        .cursor_pointer()
-                        .active(|style| style.opacity(opacity::ACTIVE))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            if let Some(picker) = shell.slash_picker.as_mut() {
-                                picker.pick(position);
-                            }
-                            shell.accept_slash_pick(false, window, cx);
-                        }))
+                        .pressable_unless(picked, Look::Row, theme)
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                if let Some(picker) = shell.slash_picker.as_mut() {
+                                    picker.pick(position);
+                                }
+                                shell.accept_slash_pick(false, window, cx);
+                            }),
+                        )
                         .child(
                             div()
                                 .min_w_0()
@@ -421,18 +420,12 @@ impl Shell {
             }
         };
         let unreadable = picker.unreadable();
-        let panel = div()
-            .id("slash-picker")
+        let panel = floating_panel("slash-picker", theme)
             .w(px(theme::DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::slash_picker_key_down))
@@ -466,7 +459,7 @@ impl Shell {
                 el.child(
                     div()
                         .id("slash-rows")
-                        .max_h(px(theme::QUICK_OPEN_LIST_HEIGHT))
+                        .max_h(px(theme::PICKER_LIST_HEIGHT))
                         .overflow_y_scroll()
                         .track_scroll(&self.slash_picker_scroll)
                         .flex()

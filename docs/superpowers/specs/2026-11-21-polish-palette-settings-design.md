@@ -46,9 +46,11 @@ New `Theme` fields, set for every built-in theme from its `Palette` (dark and li
 
 | Field | Dark | Light | Use |
 | --- | --- | --- | --- |
-| `glass: u32` (RGBA) | `surface` at alpha 0.88 | `surface` at alpha 0.92 | Fill of every floating panel. |
+| `glass: u32` (RGBA) | `surface` at alpha 0.96 | `surface` at alpha 0.97 | Fill of every floating panel. |
 | `glass_border: u32` (RGBA) | white at 8 % | black at 8 % | 1 px inner border of a floating panel. |
 | `glass_tint: u32` (RGBA) | `accent` at 5 % | `accent` at 4 % | Top of a vertical gradient that fades to transparent over `GLASS_TINT_HEIGHT`. |
+
+Raised from 0.88 / 0.92 after the first smoke run: without blur, lower alpha showed sharp ghost text of the UI behind.
 
 Changed field: `scrim` becomes black at 24 % in dark themes and black at 16 % in light themes (today 35 % in both).
 
@@ -95,7 +97,7 @@ A test computes it for every built-in theme over both `bg` and `text` behind the
 ### 5.1 The rule
 
 Every element with a click or mouse-down handler gets its hover, press, focus and disabled look from `widgets.rs`.
-Only `widgets.rs` and `pressable.rs` call `.hover(` and `.active(` directly after P3; `group_hover` stays allowed anywhere.
+Only `widgets.rs` and `pressable.rs` call `.hover(`, `.active(` and `.cursor_pointer()` directly after P3; `group_hover` stays allowed anywhere.
 The rule is written in SPEC §14, the `mkrew-ui-design` skill and the `ui-reviewer` checklist.
 
 ### 5.2 API (`crates/mkrew-ui/src/pressable.rs`, re-exported by `shell/widgets.rs`)
@@ -106,7 +108,7 @@ Filled controls (the primary button, the switch) dim on hover with `opacity::HOV
 ```rust
 /// How a pressable element looks at rest, hovered and pressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Look {
+pub enum Look {
     /// A list or menu row: hover fill `hover`, no border change.
     Row,
     /// A chip or pill: hover fill `hover`.
@@ -121,7 +123,7 @@ pub(crate) enum Look {
 
 /// The resolved style of a pressable element; pure, so it is tested without a window.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PressStyle {
+pub struct PressStyle {
     pub hover_bg: Option<u32>,
     pub hover_fg: Option<u32>,
     pub underline_on_hover: bool,
@@ -130,9 +132,9 @@ pub(crate) struct PressStyle {
     pub pointer: bool,
 }
 
-pub(crate) fn press_style(look: Look, enabled: bool, theme: &Theme) -> PressStyle;
+pub fn press_style(look: Look, enabled: bool, theme: &Theme) -> PressStyle;
 
-pub(crate) trait Pressable: Sized {
+pub trait Pressable: Sized {
     /// Applies `press_style(look, enabled, theme)`: cursor, hover, active, disabled opacity.
     fn pressable(self, look: Look, enabled: bool, theme: &Theme) -> Self;
     /// Attaches `handler` to clicks only when `enabled`.
@@ -160,8 +162,8 @@ Existing widgets (`button`, `secondary_button`, `quiet_button`, `danger_button`,
 
 ### 5.3 The audit (Plan P3)
 
-Today `crates/mkrew-ui/src` has 327 click or mouse-down handlers in 48 files (294 `.on_click(`, 33 `.on_mouse_down(`), against 76 `.hover(` calls.
-208 already use a shared widget, 71 are hand-built and get converted, 48 are exempt.
+At commit 1b7abb5, before P1, `crates/mkrew-ui/src` had 327 click or mouse-down handlers in 48 files (294 `.on_click(`, 33 `.on_mouse_down(`), against 76 `.hover(` calls; at the start of P3 (after P1 and P2) it has 334 handlers in 49 files (incl. 10 `.on_press(`) and 66 `.hover(` calls.
+At 1b7abb5, 208 already used a shared widget, 71 were hand-built and get converted, 48 are exempt.
 P3 walks them by area: chrome and sidebar; tabs and panes; Board and Jira; Files and Docs; Git; inspector, thread and composer; dialogs; Run, prompts and leftovers.
 Each clickable element moves to a widget or to `.pressable(..)`.
 P3 adds the helpers the audit needs on top of P1: `pressable_unless` (a selected row keeps full opacity), `card_press` (board cards hover by border), `disabled_icon_button`, `grip_hover` and `pick_surface` (resize grips and the diff line pick hover without being buttons), and `row_action` moved from `git_rows.rs` into `widgets.rs`.
@@ -185,8 +187,8 @@ The right side has the page title and a close button.
 
 A search box sits at the top of the navigation; `Ctrl+F` focuses it while Settings is open.
 With a query, the right side lists the matching settings of every page instead of the current page.
-Each result row shows a muted breadcrumb (`Appearance › Font`), the label with the matched characters bold, the help line and the real control, usable in place.
-A setting matches when `palette::fuzzy` scores above zero on its label, its help, its TOML key or its page name; results are ranked by the best of those scores.
+Each result row shows a muted breadcrumb (`Appearance › Font`), the label with the matched characters in accent semibold (the palette's convention), the help line and the real control, usable in place.
+A setting matches when `palette::fuzzy` scores above zero on its label, its help, its TOML key or its page name; results are ranked by the best of those scores, with a fixed bonus on a label match.
 Pages with no match are dimmed in the navigation.
 Esc clears a non-empty query first; Esc on an empty query closes Settings.
 The Keyboard page keeps its own search; the global search does not search shortcuts.
@@ -195,7 +197,9 @@ An empty result shows the empty state "No setting matches “<query>”." with t
 ### 6.3 Groups as cards
 
 `Setting` (`crates/mkrew-core/src/settings_fields.rs`) gets `group: &'static str`, a UI group independent of `section` (which stays the TOML table name).
-A page renders each group as an overline title followed by one card (`radius::LARGE`, `surface` fill) holding its rows, with a faint 1 px divider between rows.
+A page renders each group as an overline title followed by one card (`radius::LARGE`, `surface` fill, 1 px `theme.border` frame) holding its rows, with a faint 1 px divider between rows.
+The first and last row of a card are rounded like the card, so a selected or hovered fill follows its corners (gpui does not clip a child to a rounded parent).
+The Keyboard page has no groups: all its shortcut rows sit in one card without a title.
 A row is the label and the muted help on the left and the control on the right.
 Invariants checked by tests, over the non-hidden settings (hidden settings have no group): every one has a non-empty `group`; rows of one group are contiguous in `SETTINGS` (rows are reordered where needed, e.g. `ui.close_to_tray`, `features.session`); the table still matches the template (existing test).
 Matching help text with `palette::fuzzy` (a subsequence match) is noisy on short queries, so a label match always ranks above a help-only match.
@@ -208,7 +212,7 @@ Every control has hover, press, focus and disabled states through `Pressable`.
 ### 6.5 Footer
 
 Left: `v{CARGO_PKG_VERSION}` in meta text, then the links "settings.toml" and "keymap.toml" (they open the files in Zed, as today).
-Right: "Changes apply at once."
+Right: "Changes apply at once."; on the Prompts page the existing hint "Ctrl+N new · Ctrl+S saves · Esc closes" stays instead.
 
 Storage, `Setting::write` and apply-at-once behavior do not change.
 
@@ -225,7 +229,7 @@ pub enum Scope { All, Commands, Sessions, Files, Search, Branches, Commits }
 `Row` gains `section: Scope`, `detail: Option<String>` (a muted path, short hash or session state) and `age: Option<String>` (from `git_history::age`).
 `Action` gains `OpenFile { path: String }`, `OpenSearchHit { path: String, line: u32 }`, `Checkout { repo: Option<String>, branch: String }` and `ShowCommit { repo: Option<String>, sha: String }`; it becomes `Clone` instead of `Copy`.
 A session's state moves from the shortcut column to `detail`.
-`palette::fuzzy` and `palette::filter` stay as they are.
+`palette::fuzzy` stays as it is; the private flat-list filter becomes the private `layout` that groups the scoped list.
 
 ### 7.2 Sources
 
@@ -343,7 +347,7 @@ pub struct FsSearchResult { pub hits: Vec<SearchHit>, pub truncated: bool }
 - Match: `grep-searcher` + `grep-regex` + `grep-matcher` (new dependencies, all from the ripgrep project; `grep-matcher` gives the match ranges).
   With `regex: false` the query is escaped; smart case: an all-lowercase query is case-insensitive.
 - Skips binary files and files over 2 MB.
-- Stops once `limit` hits are found and sets `truncated`.
+- Stops once `limit` hits are found; `truncated` is set only when a (`limit` + 1)th hit exists, so exactly `limit` hits is not truncated.
 - `path` is relative to the searched folder with `/` separators; `line` is 1-based; `preview` is the matching line trimmed and cut to 200 characters; `ranges` are byte ranges into `preview`.
 - An invalid regex returns an error naming the problem.
 - Concurrency and cancellation: `Daemon::connection` answers each request before reading the next one, so `fs.search` runs beside the read loop (replies on a connection may come out of order; the UI matches replies by id).

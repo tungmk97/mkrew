@@ -72,14 +72,16 @@ impl Shell {
         } else {
             format!("Update to Mkrew {} (you have {CURRENT})", release.version)
         };
-        let button = icon_button_in("update", Icon::CircleArrowUp, theme.accent_text, theme)
-            .tooltip(tooltip(theme, &text, ""))
-            .when(self.updating, |el| el.opacity(opacity::DISABLED))
-            .when(!self.updating, |el| {
-                el.on_click(cx.listener(|shell, _, window, cx| {
+        let button = if self.updating {
+            disabled_icon_button("update", Icon::CircleArrowUp, theme.accent_text, theme)
+        } else {
+            icon_button_in("update", Icon::CircleArrowUp, theme.accent_text, theme).on_click(
+                cx.listener(|shell, _, window, cx| {
                     shell.start_update(window, cx);
-                }))
-            });
+                }),
+            )
+        }
+        .tooltip(tooltip(theme, &text, ""));
         Some(
             div()
                 .flex()

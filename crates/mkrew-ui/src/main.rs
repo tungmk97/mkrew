@@ -31,8 +31,8 @@ use mkrew_protocol::{
     CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
     DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
     FsContent, FsCreateParams, FsCreated, FsEntry, FsIgnoreParams, FsListParams, FsMatch,
-    FsReadParams, FsWriteParams, FsWritten, GitCommitResult, GitMarker, GitMode, GitStatus,
-    GitStatusParams, Outcome, Project, ProjectAddParams, ProjectClonedEvent, ProjectRef,
+    FsReadParams, FsWriteParams, FsWritten, GitCheckoutParams, GitCommitResult, GitMarker, GitMode,
+    GitStatus, GitStatusParams, Outcome, Project, ProjectAddParams, ProjectClonedEvent, ProjectRef,
     ProjectUpdateParams, RemoveWorktreeResult, Request, RunStartParams, RunStarted, RunStopParams,
     Session, SessionAttachResult, SessionFiles, SessionKillParams, SessionKind,
     SessionLinkPlanParams, SessionListParams, SessionLogTail, SessionLogTailParams,
@@ -88,7 +88,7 @@ use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
 use mkrew_ui::machine_notify::MachineNotices;
 use mkrew_ui::machines::{Machine, MachineState, Machines};
 use mkrew_ui::menu::{self as menu_model, Dot, Lead, MenuItem, MenuKey, MenuRow, Tone, Trail};
-use mkrew_ui::palette::{self, Extra, Palette};
+use mkrew_ui::palette::{self, Extra, Palette, Scope};
 use mkrew_ui::pane_text;
 use mkrew_ui::peek::{self, Peek};
 use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, PushSwitch, SetUp, Switch};
@@ -97,7 +97,6 @@ use mkrew_ui::plan_dialog::PlanDialog;
 use mkrew_ui::ports::PortsDialog;
 use mkrew_ui::preview;
 use mkrew_ui::prompt_picker::{self, PromptPicker};
-use mkrew_ui::quick_open::{self, QuickOpen, Results};
 use mkrew_ui::redraw;
 use mkrew_ui::router::{Delivery, Router};
 use mkrew_ui::run::{self, Ports, RowState, RunAction, Summary};
@@ -223,6 +222,8 @@ fn main() {
             cx.bind_keys(bindings);
             cx.set_global(ActiveKeymap(keymap.clone()));
             cx.set_global(MenuAnchors::default());
+            // gpui draws animations in their end state while this is set (ADR 0097).
+            cx.set_reduce_motion(mkrew_ui::desktop::reduce_motion());
             // Which char a shifted digit reports depends on the layout: bind again after a switch
             // (e.g. US ↔ Vietnamese), or Ctrl+Shift+1..5 stop working until a restart.
             cx.on_keyboard_layout_change(|cx| {
@@ -838,14 +839,13 @@ struct Shell {
     doc_dialog: Option<DocDialog>,
     /// The Mermaid diagram of a Markdown preview shown large (modal).
     diagram_dialog: Option<Diagram>,
-    /// The open quick open finder (modal).
-    quick_open: Option<QuickOpen>,
-    /// Keeps the quick open pick in view.
-    quick_open_scroll: ScrollHandle,
     /// The open command palette (modal).
     palette: Option<Palette>,
     /// Keeps the palette pick in view.
     palette_scroll: ScrollHandle,
+    /// The commands run from the palette lately, newest first (UI memory only; All lists
+    /// them while its query is empty).
+    palette_recent: Vec<palette::Action>,
     /// What had the keyboard when the palette opened; a picked command acts on it.
     palette_return: Option<(FocusHandle, Option<Ulid>)>,
     /// The theme mode while the palette is the theme picker (ADR 0078); Esc rebuilds the theme
@@ -901,7 +901,7 @@ struct Shell {
     /// The window the open popover menu / the palette belongs to (spec §4.3).
     menu_host: HostId,
     palette_host: HostId,
-    /// The window the open `/` picker, prompt picker or `@` quick open is drawn in: the one
+    /// The window the open `/` picker, prompt picker or `@` file picker is drawn in: the one
     /// whose composer opened it.
     picker_host: HostId,
     /// Mkrew windows, most recently activated first (drop target order, toast placement).
@@ -1141,12 +1141,6 @@ impl Render for Shell {
                         self.diagram_dialog
                             .as_ref()
                             .map(|diagram| self.render_diagram_dialog(diagram, &theme, cx)),
-                    )
-                    .children(
-                        self.quick_open
-                            .as_ref()
-                            .filter(|_| self.picker_host == HostId::Main)
-                            .map(|open| self.render_quick_open(open, &theme, cx)),
                     )
                     .children(
                         self.palette

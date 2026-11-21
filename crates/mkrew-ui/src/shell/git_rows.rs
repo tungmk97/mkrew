@@ -106,7 +106,7 @@ pub(crate) fn change_letter(kind: ChangeKind, theme: &Theme) -> (&'static str, u
 
 /// The box every row of the changed-file list shares (uniform list: rows are sized from the
 /// first one).
-fn list_row(id: SharedString) -> gpui::Stateful<gpui::Div> {
+fn row_frame(id: SharedString) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .w_full()
@@ -157,7 +157,7 @@ pub(crate) fn git_file_row(
         }
         git_view::ListRow::Hint(hint) => {
             // A dashed box filling the row, the message centered in it.
-            return list_row(SharedString::from("git-staged-hint"))
+            return row_frame(SharedString::from("git-staged-hint"))
                 .child(
                     div()
                         .size_full()
@@ -177,7 +177,7 @@ pub(crate) fn git_file_row(
         }
         git_view::ListRow::Note(note) => {
             // Indented under its commit, like the commit's files.
-            return list_row(SharedString::from(format!("git-note-{note}")))
+            return row_frame(SharedString::from(format!("git-note-{note}")))
                 .when(graph.is_none(), |el| el.child(under_commit()))
                 .when_some(graph, |el, (cell, lanes)| {
                     el.child(graph_column(cell, lanes, theme))
@@ -206,10 +206,9 @@ pub(crate) fn git_file_row(
         Some((dir, name)) => (Some(dir.to_owned()), name.to_owned()),
         None => (None, file.path.clone()),
     };
-    let hover = theme.hover;
     let id = SharedString::from(format!("git-file-{group:?}-{}", file.path));
     let dim = viewed && !picked;
-    list_row(id.clone())
+    row_frame(id.clone())
         .group(id.clone())
         // Indented under its commit inside the full-width row (a margin would overflow it).
         .when(group == git_view::Group::Commit && graph.is_none(), |el| {
@@ -219,14 +218,12 @@ pub(crate) fn git_file_row(
             el.child(graph_column(cell, lanes, theme))
                 .child(under_commit())
         })
-        .cursor_pointer()
         .text_size(font_size::BODY)
         .when(picked, |el| {
             el.bg(rgb(theme.hover))
                 .when(focused, |el| el.border_color(rgb(theme.accent)))
         })
-        .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-        .active(|style| style.opacity(opacity::ACTIVE))
+        .pressable_unless(picked, Look::Row, theme)
         .child(
             div()
                 .id(SharedString::from(format!("{id}-kind")))
@@ -278,9 +275,12 @@ pub(crate) fn git_file_row(
         .when(group != git_view::Group::Commit, |el| {
             let target = target.clone();
             el.child(
-                viewed_box(viewed, theme)
+                div()
                     .id(SharedString::from(format!("{id}-viewed")))
-                    .cursor_pointer()
+                    .flex_none()
+                    .p(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .pressable(Look::Raised, true, theme)
                     .tooltip(tooltip(
                         theme,
                         if viewed {
@@ -290,23 +290,31 @@ pub(crate) fn git_file_row(
                         },
                         "",
                     ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        // Not a click on the row (which would select it).
-                        cx.stop_propagation();
-                        window.focus(&shell.git_focus, cx);
-                        shell.toggle_git_viewed(project_id, target.clone(), window, cx);
-                    })),
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, _, window, cx| {
+                            // Not a click on the row (which would select it).
+                            cx.stop_propagation();
+                            window.focus(&shell.git_focus, cx);
+                            shell.toggle_git_viewed(project_id, target.clone(), window, cx);
+                        }),
+                    )
+                    .child(viewed_box(viewed, theme)),
             )
         })
         // Shown on hover and on the selected file (SPEC §14 progressive disclosure).
         .children(git_view::Stage::of(group).map(|stage| {
             let target = target.clone();
-            icon_button(
+            row_action(
                 SharedString::from(format!("{id}-stage")),
-                match stage {
-                    git_view::Stage::Stage => Icon::Plus,
-                    git_view::Stage::Unstage => Icon::Minus,
-                },
+                icon_svg(
+                    match stage {
+                        git_view::Stage::Stage => Icon::Plus,
+                        git_view::Stage::Unstage => Icon::Minus,
+                    },
+                    theme::ICON_SIZE_SMALL,
+                    theme.text_muted,
+                ),
                 theme,
             )
             .when(!picked, |el| {
@@ -330,9 +338,12 @@ pub(crate) fn git_file_row(
                 }
             }))
         }))
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.select_git_file(project_id, target.clone(), window, cx);
-        }))
+        .on_press(
+            true,
+            cx.listener(move |shell, _, window, cx| {
+                shell.select_git_file(project_id, target.clone(), window, cx);
+            }),
+        )
         .into_any_element()
 }
 
@@ -349,11 +360,9 @@ fn group_header(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let id = SharedString::from(format!("git-group-{group:?}"));
-    let hover = theme.hover;
-    list_row(id.clone())
+    row_frame(id.clone())
         .group(id.clone())
-        .cursor_pointer()
-        .hover(move |style| style.bg(rgb(hover)))
+        .pressable(Look::Row, true, theme)
         .tooltip(tooltip(
             theme,
             if folded {
@@ -363,10 +372,13 @@ fn group_header(
             },
             "",
         ))
-        .on_click(cx.listener(move |shell, _, _, cx| {
-            shell.git_view(project_id).toggle_collapsed(group);
-            cx.notify();
-        }))
+        .on_press(
+            true,
+            cx.listener(move |shell, _, _, cx| {
+                shell.git_view(project_id).toggle_collapsed(group);
+                cx.notify();
+            }),
+        )
         .child(icon_svg(
             if folded {
                 Icon::ChevronRight
@@ -422,7 +434,6 @@ pub(crate) fn git_commit_row(
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
-    let hover = theme.hover;
     let short = git_history::short_hash(&commit.hash);
     let meta = format!("{short} · {}", git_history::age(commit.authored_at, now));
     let message = if commit.body.is_empty() {
@@ -435,15 +446,13 @@ pub(crate) fn git_commit_row(
         commit.author_name, commit.author_email
     );
     let hash = commit.hash.clone();
-    list_row(SharedString::from(format!("git-commit-{}", commit.hash)))
-        .cursor_pointer()
+    row_frame(SharedString::from(format!("git-commit-{}", commit.hash)))
         .text_size(font_size::BODY)
         .when(picked, |el| {
             el.bg(rgb(theme.hover))
                 .when(focused, |el| el.border_color(rgb(theme.accent)))
         })
-        .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-        .active(|style| style.opacity(opacity::ACTIVE))
+        .pressable_unless(picked, Look::Row, theme)
         .tooltip(tooltip(theme, &tip, ""))
         .when_some(graph, |el, (cell, lanes)| {
             el.child(graph_column(cell, lanes, theme))
@@ -474,33 +483,13 @@ pub(crate) fn git_commit_row(
                 .text_color(rgb(theme.text_subtle))
                 .child(meta),
         )
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.select_git_commit(project_id, hash.clone(), window, cx);
-        }))
+        .on_press(
+            true,
+            cx.listener(move |shell, _, window, cx| {
+                shell.select_git_commit(project_id, hash.clone(), window, cx);
+            }),
+        )
         .into_any_element()
-}
-
-/// A small action inside a list row ("Stage" on a file row, "Stage hunk" on a hunk header, or
-/// an [`icon_svg`]): no vertical padding, so the row keeps its height.
-pub(crate) fn row_action(
-    id: SharedString,
-    label: impl IntoElement,
-    theme: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    // One step above the rows' own `hover` / `selected` fill.
-    let hover = theme.border;
-    div()
-        .id(id)
-        .flex_none()
-        .px(px(space::XS))
-        .rounded(px(radius::SMALL))
-        .cursor_pointer()
-        .font_family(theme.ui_font_family.clone())
-        .text_size(font_size::META)
-        .text_color(rgb(theme.text_muted))
-        .hover(move |style| style.bg(rgb(hover)))
-        .active(|style| style.opacity(opacity::ACTIVE))
-        .child(label)
 }
 
 /// Lane colors of the History graph, from the workspace palette (≥ 3:1 on every surface, ADR

@@ -179,11 +179,11 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
 - **Task board** (`Ctrl+Shift+2`): new task `Ctrl+Shift+N`, run it `Ctrl+Enter`.
 - **File tree** (`Ctrl+Shift+3`, in the right panel), **Editor** (`Ctrl+Shift+6`) and **Git**
   (`Ctrl+Shift+4`): browse files, diff against the base
-  branch, stage, commit, comment on diff lines. Quick open `Ctrl+Shift+O`; "Open in Zed"
+  branch, stage, commit, comment on diff lines. Find a file `Ctrl+Shift+O`, search the text of the files `Ctrl+Alt+Shift+F`; "Open in Zed"
   `Ctrl+Shift+Z`.
 - **Docs** (`Ctrl+Shift+5`): review Markdown plans, comment on passages and send the comments
   back to the agent session that wrote them.
-- **Command palette** `Ctrl+Shift+P`: every command, plus actions without a shortcut.
+- **Palette** `Ctrl+Shift+P`: every command, your sessions, files, text in files, branches (switch) and commits, with scope tabs (Tab / Shift+Tab); plus actions without a shortcut.
 - **Prompt boxes** (the composer, `Ctrl+Shift+Enter`, and the New task Prompt):
   type `/` at the start of a line or after a space to pick one of the agent's own commands, skills and plugin commands (Claude Code, Codex, Oh My Pi, Copilot), as its terminal would list them.
   Type `@` to pick a file.

@@ -4,7 +4,7 @@
 use crate::*;
 use mkrew_core::settings_fields::{Kind, Setting};
 use mkrew_ui::prompts_page::Spot;
-use mkrew_ui::settings_dialog::{Effect, Focus, Row, Tab};
+use mkrew_ui::settings_dialog::{Effect, Focus, Hit, Row, Tab};
 
 impl Shell {
     /// Ctrl+, and the palette's "Global: Open settings". Needs no daemon.
@@ -69,14 +69,24 @@ impl Shell {
         }
         cx.stop_propagation();
         let key = task_dialog::dialog_key(&event.keystroke);
-        // Ctrl+N and Ctrl+S of the Prompts page work from a button too.
+        // Ctrl+N and Ctrl+S of the Prompts page work from a button too, and so does Ctrl+F.
+        let find_key = settings_dialog::find_shortcut(&event.keystroke);
         let page_key = settings_dialog::prompts_shortcut(&event.keystroke).is_some();
+        let control = self.dialog_control_focused(window);
         // A button or link has the keyboard: the rows take nothing but Esc / Ctrl+Enter.
-        if self.dialog_control_focused(window)
+        if control
             && !page_key
+            && !find_key
             && !matches!(key, Some(DialogKey::Cancel | DialogKey::Save))
         {
             return;
+        }
+        // These keys move the dialog's own focus (the search box, a prompt's Name): the keyboard
+        // follows, as a click does, or the next key would hit the early return above.
+        let on_prompts = (self.settings_dialog.as_ref())
+            .is_some_and(|d| d.tab == Tab::Prompts && !d.searching());
+        if control && (find_key || (page_key && on_prompts)) {
+            window.focus(&self.dialog_focus, cx);
         }
         let paste = (key == Some(DialogKey::Paste))
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
@@ -98,18 +108,16 @@ impl Shell {
         {
             self.prompts_body_scroll.scroll_to_bottom();
         }
-        // Keep the focused row on screen: the banner and the search box come before the rows.
+        // Keep the focused row on screen: the banner and the Keyboard search box come before
+        // the cards, and a card holds several rows.
         if let Some(dialog) = &self.settings_dialog
             && let Focus::Row(index) = dialog.focus
         {
-            let banner = match (&dialog.settings, dialog.tab) {
-                (Err(_), Tab::Settings(_)) => true,
-                (_, Tab::Keyboard) => keymap::notice(&self.keymap_errors).is_some(),
-                _ => false,
-            };
-            let search = dialog.tab == Tab::Keyboard;
+            let banner = self.settings_notice(dialog).is_some();
+            let search = keyboard_search_shown(dialog);
+            let card = dialog.group_of(index, &self.keymap);
             self.settings_scroll
-                .scroll_to_item(index + usize::from(banner) + usize::from(search));
+                .scroll_to_item(card + usize::from(banner) + usize::from(search));
         }
     }
 
@@ -191,6 +199,11 @@ impl Shell {
     }
 }
 
+/// Whether the Keyboard page's own search box is drawn (a global query hides it).
+fn keyboard_search_shown(dialog: &SettingsDialog) -> bool {
+    dialog.tab == Tab::Keyboard && !dialog.searching()
+}
+
 impl Shell {
     pub(crate) fn render_settings_dialog(
         &self,
@@ -203,28 +216,68 @@ impl Shell {
         // The model's field paints a caret only while the dialog's own text has the keyboard,
         // not while Tab put it on a button or link.
         let typing = self.dialog_focus.is_focused(window);
-        let tabs = Tab::all().into_iter().map(|tab| {
-            let active = tab == dialog.tab;
-            let focused = active && dialog.focus == Focus::Tabs;
+        let dimmed = dialog.dimmed_tabs();
+        let tab_item = |tab: Tab| {
+            let active = tab == dialog.tab && !dialog.searching();
+            let focused = tab == dialog.tab && dialog.focus == Focus::Tabs;
             div()
                 .id(SharedString::from(format!("settings-tab-{}", tab.title())))
                 .px(px(space::S))
                 .py(px(space::XS))
                 .rounded(px(radius::SMALL))
-                .cursor_pointer()
                 .text_size(font_size::BODY)
                 .text_color(rgb(if active { theme.text } else { theme.text_muted }))
-                .when(active, |el| el.bg(rgb(theme.surface_raised)))
+                // The active page keeps its `selected` fill and the pointer; the others hover.
+                .when(active, |el| el.bg(rgb(theme.selected)))
+                .pressable_unless(active, Look::Row, theme)
                 .when(focused, |el| {
                     el.border(px(theme::BORDER_WIDTH))
                         .border_color(rgb(theme.selected_ring))
                 })
-                .hover(|style| style.bg(rgb(theme.surface_raised)))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    shell.settings_do(|d, _| d.set_tab(tab), window, cx);
-                }))
+                // Dimmed, still readable and still clickable.
+                .when(dimmed.contains(&tab), |el| el.opacity(opacity::DIMMED))
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, window, cx| {
+                        shell.settings_do(|d, _| d.set_tab(tab), window, cx);
+                    }),
+                )
                 .child(tab.title())
-        });
+                .into_any_element()
+        };
+        let nav_items: Vec<gpui::AnyElement> = settings_dialog::NAV
+            .iter()
+            .flat_map(|(title, tabs)| {
+                std::iter::once(
+                    overline(title, theme)
+                        .px(px(space::S))
+                        .pt(px(space::S))
+                        .into_any_element(),
+                )
+                .chain(tabs.iter().map(|&tab| tab_item(tab)))
+            })
+            .collect();
+        let find = search_box(
+            caret_field(
+                "settings-find",
+                &dialog.find,
+                "Search",
+                dialog.focus == Focus::Find && typing,
+                theme,
+                cx,
+                |shell, caret| {
+                    if let Some(d) = shell.settings_dialog.as_mut() {
+                        d.find.click(caret.at, caret.extend, caret.clicks);
+                    }
+                },
+            )
+            .on_click(cx.listener(|shell, _, window, cx| {
+                shell.settings_do(|d, keymap| d.click(Focus::Find, keymap), window, cx);
+            })),
+            Some(kbd("Ctrl+F".to_owned(), theme, false).into_any_element()),
+            dialog.focus == Focus::Find,
+            theme,
+        );
         let nav = div()
             .w(px(theme::SETTINGS_NAV_WIDTH))
             .flex_none()
@@ -234,17 +287,13 @@ impl Shell {
             .p(px(space::M))
             .border_r(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))
-            .children(tabs);
+            .child(find)
+            .children(nav_items);
 
-        let banner = match (&dialog.settings, dialog.tab) {
-            (Err(error), Tab::Settings(_)) => {
-                Some(self.settings_banner(error.clone(), true, theme, cx))
-            }
-            (_, Tab::Keyboard) => keymap::notice(&self.keymap_errors)
-                .map(|notice| self.settings_banner(notice, false, theme, cx)),
-            _ => None,
-        };
-        let search = (dialog.tab == Tab::Keyboard).then(|| {
+        let banner = self
+            .settings_notice(dialog)
+            .map(|(text, settings_file)| self.settings_banner(text, settings_file, theme, cx));
+        let search = keyboard_search_shown(dialog).then(|| {
             caret_field(
                 "settings-search",
                 &dialog.search,
@@ -265,10 +314,15 @@ impl Shell {
         let rows = dialog.rows(&self.keymap);
         // The pages edit this computer's `settings.toml`; the daemon behind a machine window
         // reads its own.
-        let daemon_note = (matches!(dialog.tab, Tab::Settings(_)))
+        let results_or_settings = dialog.searching() || matches!(dialog.tab, Tab::Settings(_));
+        let daemon_note = results_or_settings
             .then(|| self.machine_name())
             .flatten()
             .map(|name| meta_line(theme, mkrew_ui::machines::daemon_settings_note(name).into()));
+        // The Keyboard page is one card of pieces: no gap between them, so the lines above it
+        // carry their own.
+        let one_card = dialog.tab == Tab::Keyboard && !dialog.searching();
+        let below = if one_card { space::M } else { 0.0 };
         let body = div()
             .id("settings-rows")
             .flex_1()
@@ -277,79 +331,101 @@ impl Shell {
             .track_scroll(&self.settings_scroll)
             .flex()
             .flex_col()
-            .gap(px(space::XS))
+            .gap(px(if one_card { 0.0 } else { space::M }))
             .p(px(space::M))
-            .children(banner)
-            .children(daemon_note)
+            .children(banner.map(|banner| banner.mb(px(below))))
+            .children(daemon_note.map(|note| note.mb(px(below))))
             .children(
-                (dialog.tab == Tab::Machines)
+                (dialog.tab == Tab::Machines && !dialog.searching())
                     .then(|| self.render_machines_page(dialog, typing, theme, cx))
                     .into_iter()
                     .flatten(),
             )
             .children(
-                (dialog.tab == Tab::Prompts)
+                (dialog.tab == Tab::Prompts && !dialog.searching())
                     .then(|| self.render_prompts_page(dialog, typing, theme, cx))
                     .into_iter()
                     .flatten(),
             )
-            .children(search)
-            .children(
-                rows.iter()
-                    .enumerate()
-                    .map(|(i, row)| self.settings_row(dialog, i, *row, typing, theme, cx)),
-            );
+            .children(search.map(|search| search.mb(px(below))))
+            .children(self.settings_cards(dialog, &rows, typing, theme, cx));
 
-        let footer =
-            div()
-                .flex()
-                .items_center()
-                .gap(px(space::L))
-                .px(px(space::L))
-                .py(px(space::M))
-                .border_t(px(theme::BORDER_WIDTH))
-                .border_color(rgb(theme.divider))
-                .text_size(font_size::META)
-                .child(self.settings_link(
-                    "settings-edit-toml",
-                    "Edit settings.toml in Zed",
-                    theme,
-                    cx,
-                    |shell, cx| {
-                        shell.edit_settings_file(cx);
-                    },
-                ))
-                .child(self.settings_link(
-                    "settings-edit-keymap",
-                    "Edit keymap.toml in Zed",
-                    theme,
-                    cx,
-                    |shell, cx| {
-                        shell.edit_keymap_file(cx);
-                    },
-                ))
-                .child(div().flex_1())
-                .child(div().text_color(rgb(theme.text_muted)).child(
-                    if dialog.tab == Tab::Prompts {
-                        "Ctrl+N new · Ctrl+S saves · Esc closes"
-                    } else {
-                        "Changes apply at once · Esc closes"
-                    },
-                ));
+        let header = div()
+            .flex()
+            .items_center()
+            .px(px(space::L))
+            .py(px(space::M))
+            .border_b(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .child(
+                div()
+                    .flex_1()
+                    .text_size(font_size::CARD_TITLE)
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(dialog.heading()),
+            )
+            .child(
+                icon_button("settings-close", Icon::X, theme)
+                    .tooltip(tooltip(theme, "Close", "Esc"))
+                    .on_press(
+                        true,
+                        cx.listener(|shell, _, window, cx| {
+                            shell.close_settings_dialog(window, cx);
+                        }),
+                    ),
+            );
+        let footer = div()
+            .flex()
+            .items_center()
+            .gap(px(space::L))
+            .px(px(space::L))
+            .py(px(space::M))
+            .border_t(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .text_size(font_size::META)
+            .child(
+                div()
+                    .text_color(rgb(theme.text_muted))
+                    .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
+            )
+            .child(self.settings_link(
+                "settings-edit-toml",
+                "settings.toml",
+                theme,
+                cx,
+                |shell, cx| {
+                    shell.edit_settings_file(cx);
+                },
+            ))
+            .child(self.settings_link(
+                "settings-edit-keymap",
+                "keymap.toml",
+                theme,
+                cx,
+                |shell, cx| {
+                    shell.edit_keymap_file(cx);
+                },
+            ))
+            .child(div().flex_1())
+            .child(div().text_color(rgb(theme.text_muted)).child(
+                // The Prompts page saves by itself, so its own keys stay in the hint.
+                if dialog.tab == Tab::Prompts && !dialog.searching() {
+                    "Ctrl+N new · Ctrl+S saves · Esc closes"
+                } else {
+                    "Changes apply at once."
+                },
+            ));
 
         let max_height = (viewport_height - px(space::XXL * 2.0)).max(px(0.0));
-        let panel = div()
-            .id("settings-dialog")
+        let max_width = (window.viewport_size().width - px(space::XXL * 2.0)).max(px(0.0));
+        let panel = floating_panel("settings-dialog", theme)
             .w(px(theme::SETTINGS_DIALOG_WIDTH))
             .h(px(theme::SETTINGS_DIALOG_HEIGHT))
+            .max_w(max_width)
             .max_h(max_height)
             .flex()
             .flex_col()
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
@@ -359,20 +435,132 @@ impl Shell {
             )
             .relative()
             .child(self.typing(&self.dialog_focus, Self::settings_key_down, cx))
-            .child(
-                div()
-                    .px(px(space::L))
-                    .py(px(space::M))
-                    .border_b(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.divider))
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Settings"),
-            )
+            .child(header)
             .child(div().flex().flex_1().min_h_0().child(nav).child(body))
             .child(footer);
         Self::modal_shade("settings-shade", panel, cx)
+    }
+
+    /// The line above the rows: a broken `settings.toml` on a settings page or above search
+    /// results (they are greyed then), or a keymap problem on the Keyboard page.
+    fn settings_notice(&self, dialog: &SettingsDialog) -> Option<(String, bool)> {
+        match &dialog.settings {
+            Err(error) if dialog.searching() || matches!(dialog.tab, Tab::Settings(_)) => {
+                Some((error.clone(), true))
+            }
+            _ if dialog.tab == Tab::Keyboard && !dialog.searching() => {
+                keymap::notice(&self.keymap_errors).map(|notice| (notice, false))
+            }
+            _ => None,
+        }
+    }
+
+    /// The right side's rows: the empty state for a query without a match, else the cards.
+    fn settings_cards(
+        &self,
+        dialog: &SettingsDialog,
+        rows: &[Row],
+        typing: bool,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let searching = dialog.searching();
+        if searching && rows.is_empty() {
+            return vec![
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(space::M))
+                    .py(px(space::XL))
+                    .child(empty_state(
+                        theme,
+                        None,
+                        None,
+                        format!("No setting matches “{}”.", dialog.find.trim()).into(),
+                        None,
+                    ))
+                    .child(
+                        secondary_button("settings-clear-search", "Clear search (Esc)", theme)
+                            .on_press(
+                                true,
+                                cx.listener(|shell, _, window, cx| {
+                                    shell.settings_do(|d, _| d.clear_find(), window, cx);
+                                }),
+                            ),
+                    )
+                    .into_any_element(),
+            ];
+        }
+        let hits = dialog.hits();
+        let groups = settings_dialog::grouped(rows, searching);
+        let total = groups.len();
+        groups
+            .into_iter()
+            .enumerate()
+            .map(|(at_group, group)| {
+                let flat = group.title.is_empty();
+                // A shortcut: one group per row, but the Keyboard page is one card.
+                let shortcut = flat && !searching;
+                let title = group.title;
+                let count = group.rows.len();
+                let items = group
+                    .rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(at, (index, row))| {
+                        let (first, last) = if shortcut {
+                            (at_group == 0, at_group + 1 == total)
+                        } else {
+                            (at == 0, at + 1 == count)
+                        };
+                        self.settings_row(
+                            dialog,
+                            index,
+                            row,
+                            first,
+                            last,
+                            hits.get(index),
+                            typing,
+                            theme,
+                            cx,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let card = div()
+                    .flex()
+                    .flex_col()
+                    .bg(rgb(theme.surface))
+                    .border_color(rgb(theme.border));
+                if shortcut {
+                    // The Keyboard page stays a flat list inside one card. Each row is a
+                    // piece of it (the page has no gap), so the scroll can still follow a row.
+                    card.border_x(px(theme::BORDER_WIDTH))
+                        .when(at_group == 0, |el| {
+                            el.border_t(px(theme::BORDER_WIDTH))
+                                .rounded_t(px(radius::LARGE))
+                        })
+                        .when(at_group + 1 == total, |el| {
+                            el.border_b(px(theme::BORDER_WIDTH))
+                                .rounded_b(px(radius::LARGE))
+                        })
+                        .children(items)
+                        .into_any_element()
+                } else {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(space::XS))
+                        .children((!flat).then(|| overline(title, theme).px(px(space::S))))
+                        .child(
+                            card.rounded(px(radius::LARGE))
+                                .border(px(theme::BORDER_WIDTH))
+                                .children(items),
+                        )
+                        .into_any_element()
+                }
+            })
+            .collect()
     }
 
     /// The broken-file / keymap-problem line above the rows, with "Fix in Zed".
@@ -420,19 +608,34 @@ impl Shell {
     ) -> gpui::Stateful<gpui::Div> {
         div()
             .id(id)
-            .cursor_pointer()
             .text_color(rgb(theme.accent_text))
-            .hover(|style| style.underline())
-            .on_click(cx.listener(move |shell, _, _, cx| on_click(shell, cx)))
+            .pressable(Look::Text, true, theme)
+            .on_press(
+                true,
+                cx.listener(move |shell, _, _, cx| on_click(shell, cx)),
+            )
             .focus_stop(theme)
             .child(label)
     }
 
+    /// A click on a row, or on its switch or dropdown trigger: the keyboard moves to the row
+    /// and the click acts like Enter (`SettingsDialog::click`).
+    fn press_row(index: usize, cx: &Context<'_, Self>) -> PressHandler {
+        Box::new(cx.listener(move |shell, _, window, cx| {
+            cx.stop_propagation();
+            shell.settings_do(|d, keymap| d.click(Focus::Row(index), keymap), window, cx);
+        }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn settings_row(
         &self,
         dialog: &SettingsDialog,
         index: usize,
         row: Row,
+        first: bool,
+        last: bool,
+        hit: Option<&Hit>,
         typing: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -443,7 +646,7 @@ impl Shell {
             Row::Setting(setting) => (
                 setting.label.into(),
                 (!setting.help.is_empty()).then(|| setting.help.to_owned()),
-                self.settings_control(dialog, setting, focused, typing, theme, cx),
+                self.settings_control(dialog, index, setting, focused, typing, theme, cx),
             ),
             Row::Binding(command) => (
                 palette::title(command).into(),
@@ -459,17 +662,42 @@ impl Shell {
             }),
             Row::Binding(_) => false,
         };
+        // A search result names its place: "Appearance › Fonts".
+        let crumb = hit.map(|hit| format!("{} › {}", hit.setting.page.title(), hit.setting.group));
+        let accent = gpui::Hsla::from(rgb(theme.accent));
+        let label: gpui::AnyElement = match hit {
+            Some(hit) => gpui::StyledText::new(title.clone())
+                .with_highlights(hit.label_ranges.iter().cloned().map(|range| {
+                    (
+                        range,
+                        gpui::HighlightStyle {
+                            color: Some(accent),
+                            font_weight: Some(FontWeight(weight::SEMIBOLD)),
+                            ..gpui::HighlightStyle::default()
+                        },
+                    )
+                }))
+                .into_any_element(),
+            None => title.into_any_element(),
+        };
         div()
             .id(SharedString::from(format!("settings-row-{}", row.id())))
             .flex()
             .flex_col()
             .gap(px(space::XS))
-            .p(px(space::S))
-            .rounded(px(radius::MEDIUM))
-            .when(focused, |el| el.bg(rgb(theme.surface_raised)))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.settings_do(|d, keymap| d.click(Focus::Row(index), keymap), window, cx);
-            }))
+            .p(px(space::M))
+            // The first and last row follow the card's rounded corners: gpui does not clip a
+            // fill to them.
+            .when(first, |el| el.rounded_t(px(radius::LARGE)))
+            .when(last, |el| el.rounded_b(px(radius::LARGE)))
+            .when(!first, |el| {
+                el.border_t(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.divider))
+            })
+            .when(focused, |el| el.bg(rgb(theme.selected)))
+            .pressable_unless(focused, Look::Row, theme)
+            .on_press(true, Self::press_row(index, cx))
+            .children(crumb.map(|crumb| meta_line(theme, crumb.into())))
             .child(
                 div()
                     .flex()
@@ -487,7 +715,7 @@ impl Shell {
                                     .gap(px(space::S))
                                     .text_size(font_size::BODY)
                                     .text_color(rgb(theme.text))
-                                    .child(title)
+                                    .child(label)
                                     .when(is_default, |el| {
                                         el.child(
                                             div()
@@ -518,9 +746,11 @@ impl Shell {
             .into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn settings_control(
         &self,
         dialog: &SettingsDialog,
+        index: usize,
         setting: &'static Setting,
         focused: bool,
         typing: bool,
@@ -535,56 +765,38 @@ impl Shell {
             theme.border
         };
         match setting.kind {
-            Kind::Bool => {
-                let on = shown == "true";
-                let knob = px(theme::SWITCH_HEIGHT - 2.0 * theme::SWITCH_INSET);
-                div()
-                    .id(SharedString::from(format!("switch-{}", setting.id())))
-                    .flex_none()
-                    .w(px(theme::SWITCH_WIDTH))
-                    .h(px(theme::SWITCH_HEIGHT))
-                    .p(px(theme::SWITCH_INSET))
-                    .rounded_full()
-                    .flex()
-                    .when(on, |el| el.justify_end())
-                    .bg(rgb(if on { theme.accent } else { theme.border }))
-                    .when(focused, |el| {
-                        el.border(px(theme::BORDER_WIDTH)).border_color(rgb(ring))
-                    })
-                    .when(read_only, |el| el.opacity(opacity::DISABLED))
-                    .when(!read_only, |el| el.cursor_pointer())
-                    .child(div().size(knob).rounded_full().bg(rgb(theme.surface)))
-                    .into_any_element()
-            }
-            Kind::Choice(choices) => div()
-                .flex()
-                .gap(px(space::XS))
-                .p(px(space::XS))
-                .rounded(px(radius::MEDIUM))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(ring))
-                .when(read_only, |el| el.opacity(opacity::DISABLED))
+            Kind::Bool => toggle(
+                SharedString::from(format!("switch-{}", setting.id())),
+                shown == "true",
+                !read_only,
+                theme,
+            )
+            // Today's focus ring: a 1 px ring while the row has the keyboard.
+            .when(focused, |el| {
+                el.border(px(theme::BORDER_WIDTH)).border_color(rgb(ring))
+            })
+            .on_press(!read_only, Self::press_row(index, cx))
+            .into_any_element(),
+            Kind::Choice(choices) => segmented(theme)
+                .when(focused, |el| el.border_color(rgb(ring)))
                 .children(choices.iter().map(|&choice| {
                     let active = shown == choice;
-                    div()
-                        .id(SharedString::from(format!(
-                            "choice-{}-{choice}",
-                            setting.id()
-                        )))
-                        .px(px(space::S))
-                        .rounded(px(radius::SMALL))
-                        .text_size(font_size::META)
-                        .text_color(rgb(if active { theme.text } else { theme.text_muted }))
-                        .when(active, |el| el.bg(rgb(theme.surface_raised)))
-                        .when(!active && !read_only, |el| {
-                            el.cursor_pointer().on_click(cx.listener(
-                                move |shell, _, window, cx| {
-                                    cx.stop_propagation();
-                                    shell.settings_do(|d, _| d.choose(setting, choice), window, cx);
-                                },
-                            ))
-                        })
-                        .child(choice)
+                    // Read-only: each segment is faded, with no pointer and no hover.
+                    segment_in(
+                        SharedString::from(format!("choice-{}-{choice}", setting.id())),
+                        active,
+                        !read_only,
+                        theme,
+                    )
+                    .text_size(font_size::META)
+                    .on_press(
+                        !active && !read_only,
+                        cx.listener(move |shell, _, window, cx| {
+                            cx.stop_propagation();
+                            shell.settings_do(|d, _| d.choose(setting, choice), window, cx);
+                        }),
+                    )
+                    .child(choice)
                 }))
                 .into_any_element(),
             Kind::Text | Kind::Number => {
@@ -617,25 +829,27 @@ impl Shell {
                     .when(read_only, |el| el.opacity(opacity::DISABLED))
                     .into_any_element()
             }
-            Kind::Font | Kind::List(_) => div()
-                .w_full()
-                .flex()
-                .justify_between()
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::MEDIUM))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(ring))
-                .text_size(font_size::BODY)
-                .text_color(rgb(theme.text))
-                .when(read_only, |el| el.opacity(opacity::DISABLED))
-                .child(if shown.is_empty() {
-                    "Default".to_owned()
-                } else {
-                    shown
-                })
-                .child(div().text_color(rgb(theme.text_muted)).child("▾"))
-                .into_any_element(),
+            Kind::Font | Kind::List(_) => {
+                let open = dialog
+                    .list_pick
+                    .as_ref()
+                    .is_some_and(|pick| pick.setting.id() == setting.id());
+                dropdown_trigger(
+                    SharedString::from(format!("dropdown-{}", setting.id())),
+                    if shown.is_empty() {
+                        "Default".to_owned()
+                    } else {
+                        shown
+                    },
+                    open,
+                    !read_only,
+                    theme,
+                )
+                // Today's focus ring; an open pick keeps the accent frame.
+                .when(focused && !open, |el| el.border_color(rgb(ring)))
+                .on_press(!read_only, Self::press_row(index, cx))
+                .into_any_element()
+            }
         }
     }
 
@@ -665,19 +879,21 @@ impl Shell {
                         .id(SharedString::from(format!("reset-{}", command.name())))
                         .px(px(space::S))
                         .rounded(px(radius::SMALL))
-                        .cursor_pointer()
                         .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
-                        .hover(|style| style.bg(rgb(theme.surface_raised)))
+                        .pressable(Look::Icon, true, theme)
                         .tooltip(tooltip(
                             theme,
                             &format!("Back to {}", keymap::keys_label(&command.default_keys())),
                             "",
                         ))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            cx.stop_propagation();
-                            shell.settings_do(|d, _| d.reset(command), window, cx);
-                        }))
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                cx.stop_propagation();
+                                shell.settings_do(|d, _| d.reset(command), window, cx);
+                            }),
+                        )
                         .focus_stop(theme)
                         .child("Reset"),
                 )
@@ -747,15 +963,18 @@ impl Shell {
                                 };
                                 menu_item(SharedString::from(format!("list-choice-{i}")), theme)
                                     .when(i == selected, |el| el.bg(rgb(theme.surface_raised)))
-                                    .on_click(cx.listener(move |shell, _, window, cx| {
-                                        cx.stop_propagation();
-                                        let font = font.clone();
-                                        shell.settings_do(
-                                            move |d, _| d.choose(setting, &font),
-                                            window,
-                                            cx,
-                                        );
-                                    }))
+                                    .on_press(
+                                        true,
+                                        cx.listener(move |shell, _, window, cx| {
+                                            cx.stop_propagation();
+                                            let font = font.clone();
+                                            shell.settings_do(
+                                                move |d, _| d.choose(setting, &font),
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                    )
                                     .child(label)
                             },
                         )),
@@ -776,3 +995,6 @@ fn context_name(context: &str) -> String {
         first.to_uppercase().chain(chars).collect()
     })
 }
+
+/// A boxed click handler (`Pressable::on_press` takes any `Fn`).
+type PressHandler = Box<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App)>;

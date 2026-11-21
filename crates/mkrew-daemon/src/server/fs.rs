@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use mkrew_protocol::{
     ErrorCode, FsCreateParams, FsCreated, FsFindParams, FsIgnoreParams, FsListParams, FsReadParams,
-    FsWriteParams, Outcome,
+    FsSearchParams, FsWriteParams, Outcome,
 };
 use ulid::Ulid;
 
@@ -17,7 +18,7 @@ use super::doc::read_error;
 use super::target::Target;
 use super::{Daemon, ok};
 use crate::docs::ReadError;
-use crate::{docs, file_ops, files};
+use crate::{docs, file_ops, files, search};
 
 impl Daemon {
     pub(super) async fn fs_list(&self, params: FsListParams) -> Outcome {
@@ -232,6 +233,43 @@ impl Daemon {
             Ok(matches) => ok(&matches),
             Err(e) => Outcome::error(ErrorCode::Internal, format!("fs.find failed: {e}")),
         }
+    }
+
+    /// `fs.search`, started by the connection's read loop (see `Daemon::connection`): the
+    /// target is resolved now, the walk runs on a blocking thread and the caller answers when
+    /// it ends. `generation` is the connection's counter, already bumped to `mine`: a later
+    /// `fs.search` of the connection bumps it again and this walk stops.
+    pub(super) async fn fs_search_start(
+        &self,
+        params: FsSearchParams,
+        generation: Arc<AtomicU64>,
+        mine: u64,
+    ) -> Result<tokio::task::JoinHandle<Outcome>, Outcome> {
+        let target = self
+            .watched_target(params.project_id, params.worktree_task_id, None)
+            .await?;
+        let git = Arc::clone(&self.git);
+        Ok(tokio::task::spawn_blocking(move || {
+            let searched = search::search(
+                &*git,
+                &target.dir,
+                &params.query,
+                params.regex,
+                params.limit as usize,
+                &generation,
+                mine,
+            );
+            match searched {
+                Ok(result) => ok(&result),
+                Err(error @ search::Error::Pattern(_)) => {
+                    Outcome::error(ErrorCode::InvalidRequest, error.to_string())
+                }
+                Err(search::Error::Cancelled) => Outcome::error(
+                    ErrorCode::InvalidState,
+                    "fs.search was replaced by a newer search",
+                ),
+            }
+        }))
     }
 }
 

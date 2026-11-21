@@ -21,6 +21,174 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-21 Pressable audit (P3)
+
+Look changes the audit makes on purpose (spec 5.2); they are not bugs:
+- A chip or icon control turns its label to full text on hover, and a link underlines.
+- Rows that hovered `surface_raised`, `row_hover` or `card` (pickers, history, Jira List row, file row, doc row) now hover with `theme.hover`.
+- A picked row (selected file, doc block, Git row, a followed Share) keeps the pointer but no longer dims while pressed.
+- Pressing a nested control (a card chip, a stage icon, the queue X, the stop square) also dims its parent.
+
+- [ ] **Row actions (dark + light):** hover the X of a tab chip and a stage icon on a Git file row: each shows a fill on its (already hovered) row.
+  Hover a board card next to the selected one: only the unselected card lights its border.
+- [ ] **Palette and conflict badge (dark + light):** open the palette and hover an unselected row (a fill) and the selected row (accent bar; a pointer, no fill change).
+  On a card with a merge conflict hover Dismiss: it shows a fill that differs from the card.
+- [ ] **Sidebar rows (dark + light):** hover an unselected session row, a workspace header, a group label (`RUN 2`), a compact-rail row and the footer Inbox with something waiting: each shows a fill and a pointer.
+  The selected session row and the open workspace header keep the pointer and show no hover fill.
+  Click each: it still acts and does not fade.
+  With the inbox cleared, the Inbox label shows no pointer and no hover, and is not faded.
+- [ ] **Sidebar icons (dark + light):** hover the run action icons of a running Run row, the Restart all / Stop all pair on a RUN group label, the workspace chevron, and the X that clears the sidebar filter: each shows a fill one step above its (already hovered) row, and the chevron's fill has rounded corners.
+  Press and hold one: the icon dims, and so does the row under it (intended).
+  Both return to normal after release.
+- [ ] **Title bar (dark + light):** hover the workspace switcher and the branch pill: a fill, and the tooltip still hides while their dropdown is open.
+  While an update downloads the update icon is faded, shows no pointer and no hover.
+- [ ] **Toasts and menus (dark + light):** hover the X of a toast and the text of an error toast (underline).
+  Hover a row of a context menu and the trailing icon button of a row that has one (open, delete): both are visible, and the button differs from its row.
+- [ ] **Sidebar grip:** hover the right edge of the sidebar: the tint shows, and drag still resizes.
+- [ ] **Chrome look changes (spec 5.2, not bugs):** the switcher and branch pill turn their label to full text on hover.
+  A selected session row, the open workspace header and the live run row no longer dim while pressed.
+  The Stop icon hovers with a neutral fill (the red tint is gone, the glyph stays red).
+  The workspace chevron is new as a pressable.
+- [ ] **Tab chips (dark + light):** hover an inactive tab in the main strip, in a detached window and a file tab: a fill and a pointer.
+  The shown tab shows a pointer and no hover fill; double-click it: it still renames.
+  Hover the X of an active and of an inactive tab chip: the X shows a fill on its chip.
+  Press and hold a tab chip, then drag it: the chip does not stay dimmed after the drop.
+- [ ] **Share and find bar (dark + light):** hover the Share button of a pane; with a followed share it shows a pointer and no fill and still opens its menu.
+  Open the terminal find bar (Ctrl+F in a terminal) and hover its X: the fill is visible on the bar.
+- [ ] **Reading width (dark + light):** with reading width on, hover its icon in the pane header: the hover is visible against the on fill.
+- [ ] **Pane divider:** hover the divider between two panes: the tint shows; drag still resizes.
+- [ ] **Tabs and panes look changes (spec 5.2, not bugs):** the tab chips and Share turn their label to full text on hover.
+  A followed Share no longer dims while pressed.
+  Pressing a tab's X (`row_action`) dims its chip.
+- [ ] **Cards (dark + light, Board and the all-workspaces scope):** hover an unselected task card: its border lights and the pointer shows; the selected card shows no border change.
+  Hover a card, then hover its Edit chip: the chip shows a fill that is visible on the card.
+  Press and hold the Edit chip: the chip dims and so does its card (intended; the click still only edits).
+  Press a card and drag it to another column: the card does not stay dimmed after the drop.
+  Hover the hover-only Undo, Changes and Run with chips of a card: each still shows its fill.
+- [ ] **Jira (dark + light):** hover a List row (a fill) and its fold chevron (a fill one step above the row's), and a Kanban issue card (border light).
+- [ ] **Board and Jira look changes (spec 5.2, not bugs):** the Jira List row now hovers with `theme.hover` (it used `row_hover`).
+  The cards keep their border-light hover and gain a press dim.
+  Pressing a nested chip (a card's Edit, Undo, Changes, Merge back or Run with chip, the fold chevron) dims its card or row.
+- [ ] **Files (dark + light):** hover a file tree row: a fill and a pointer.
+  The row at the cursor and the opened row show a pointer and no fill, and a click on either still opens it.
+  Hover the "Search files..." box and the Ignored chip: a fill.
+  Turn Ignored on: it shows the selected fill and a pointer.
+- [ ] **Docs (dark + light):** hover a doc list row, the inactive Preview / Source / Split segment, and a block in Preview: each shows a fill.
+  The active segment shows no pointer and no fill.
+  Click a block, Shift+click another: both lines are picked as before.
+  Hover a source line in Docs Source: a fill; click and Shift+click still pick.
+- [ ] **Preview extras (dark + light):** hover the Copy chip of a code block and the Expand chip of a diagram: each shows a fill on its block.
+  In the Files preview hover a task checkbox: a fill around the box, and a ticked box keeps its accent fill.
+  Click ticks the source.
+- [ ] **Comments and split grip (dark + light):** hover a comment thread header with lines: a fill, and a click picks them.
+  Hover a thread header without lines: no pointer.
+  Hover the Markdown split grip: the tint shows; drag and double-click still work.
+- [ ] **Files and Docs look changes (spec 5.2, not bugs):** the file row, doc row, doc block and source line now hover with `theme.hover` (they used `card` or `surface_raised`).
+  The Ignored chip, the search box and the mode segment turn their label to full text on hover.
+  The row at the cursor, the opened file, a picked doc block or source line and the Ignored chip while on no longer dim while pressed.
+- [ ] **Git rows (dark + light):** hover an unpicked changed file row, a History commit row and a group header: a fill and a pointer.
+  The picked row keeps its fill and a pointer, and a click on it still selects.
+  Hover a Hint row ("nothing staged") and a commit Note row: no pointer, no hover.
+- [ ] **Git row actions (dark + light):** on a hovered file row hover the stage icon, the "viewed" check box and "Stage all" on a group header: each shows its own fill, one step above the row's.
+  Click the stage icon: the file moves and the row under it was not selected by the click.
+  Press and hold the stage icon or the viewed box: it dims and so does its file row (intended).
+- [ ] **Git Fetch (dark + light):** while a Fetch runs the icon shows no pointer and no hover.
+  While a Push runs the Fetch icon is faded with no pointer and no hover.
+  Idle, it hovers and fetches.
+- [ ] **Git chips and tabs (dark + light):** hover an inactive "Showing" chip, a Repo tab (text turns full color, with an underline) and the Ask dialog's agent chips (they share `chip_row`).
+  The active chip and tab show no look and no pointer.
+- [ ] **Git diff pick (dark + light):** hover a diff line: the border preview shows.
+  Mouse down and Shift+mouse down still pick a range.
+- [ ] **Git look changes (spec 5.2, not bugs):** the "Showing" and agent chips now hover with `theme.hover` (they used `surface`) and their label turns to full text.
+  The Repo tab now underlines on hover as well.
+  The picked file and commit rows no longer dim while pressed.
+  The stage icon is a `row_action` (a smaller hit area than the old square button).
+- [ ] **Row dialogs (dark + light):** open Broadcast and hover a row: a fill and a pointer.
+  While a send is running its rows fade and do nothing.
+  Open the send dialog and hover an unpicked session row: a fill, and no faint outline around it.
+  The picked row keeps its fill and a pointer, and a click on it still acts.
+  While a send runs every row, the picked one too, fades and shows no pointer.
+- [ ] **Task dialog (dark + light):** hover an unselected agent chip: a fill.
+  The selected chip keeps its accent border and a pointer.
+  Open a task with a locked worktree choice: its row is faded with no hover and no pointer.
+  Unlocked, it hovers.
+- [ ] **Ports (dark + light):** hover a port row with a session: a fill, and a click goes to it.
+  Hover a row without a session: no pointer, no fade.
+  Hover the stop square: a fill one step above the row's, and the square stays red.
+  Press and hold the stop square: it dims and so does its port row (intended); the click only asks to stop.
+- [ ] **Dialog look changes (spec 5.2, not bugs):** the Broadcast, send, ports and worktree rows now hover with `theme.hover` (they used `surface_raised` or `hover`).
+  The agent chip label turns to full text on hover.
+  The picked send row and the selected agent chip no longer dim while pressed.
+  The send rows lost their faint 1 px outline.
+  A locked worktree row and every send row while sending now fade.
+- [ ] **Buttons in dialogs (dark + light):** open Discard changes (Git), Remove worktree and an Undo dialog: the red buttons still show their red text, and the focus ring still shows with Tab.
+- [ ] **Intended look changes (dark + light):** these are spec 5.2 changes, not bugs: the picker, history and turns rows now hover with `theme.hover` (they used `surface_raised`).
+  The thread links and the queue X turn their text to full color on hover.
+  The picked picker row and the selected history row no longer dim while pressed.
+  The pick-list rows lost their faint 1 px outline.
+- [ ] **Thread (dark + light):** hover "Earlier turns: Open transcript" and a "+N tool calls" line.
+  Each underlines and turns to full text color.
+- [ ] **Pickers (dark + light):** open the prompt picker and the slash picker and hover an unpicked row.
+  It shows a fill and a pointer, and no faint outline around any row.
+  The keyboard-picked row keeps its ring and fill, and a click on it still picks.
+- [ ] **Queue and history (dark + light):** queue a second message while an agent works and hover its X.
+  It shows a fill, and clicking it does not dim or select the panel.
+  Open History and the turns dialog and hover an unselected row: a fill and a pointer.
+  The selected row keeps a pointer and no fill change.
+  In the turns dialog press and hold Restore or Diff on a row: the button dims and so does its row (intended; the click acts as before).
+- [ ] **Inspector (dark + light):** with the right panel open hover its title bar toggle.
+  The hover is visible against the open fill.
+- [ ] **Run (dark + light):** hover the title bar Run pill idle: a fill, and the label turns to full text.
+  Hover it while something runs: it keeps its green fill, and the label underlines and brightens.
+  A click opens the menu.
+  In Run setup hover a folded command card, the dashed "+ Add command" row and the two checkboxes: each shows a fill.
+  Open the folder picker and hover an unpicked entry: a fill.
+  The entry at the cursor keeps its fill and a pointer.
+- [ ] **Prompts (dark + light):** hover an unopened prompt row: a fill.
+  The open prompt keeps its fill and a pointer.
+- [ ] **Settings and palette (dark + light):** hover a left nav tab: a fill.
+  The open tab keeps its fill and a pointer.
+  Hover a Settings row that is not focused (a fill) and click a read-only one: the keyboard focus moves to it, as before.
+  The focused row keeps its fill and a pointer.
+  Open the command palette and hover a scope pill that is not current: a fill, and the label turns to full text.
+  The current pill (accent outline) shows a pointer and no fill.
+  A click on a pill still switches the scope.
+- [ ] **Run, prompts and Settings look changes (spec 5.2, not bugs):** the idle Run pill label turns to full text on hover and the live pill underlines.
+  The setup checkboxes, the folder picker and the prompts rows now hover with `theme.hover` (they used `surface_raised`).
+  The entry at the cursor, the open prompt and the focused Settings row no longer dim while pressed.
+  The current scope pill no longer hovers.
+- [ ] **Files preview checklist (dark + light):** open a Markdown file with a task list (`- [ ]` and `- [x]`) in the Files preview.
+  Items that can be picked (hover shows a fill) and items that cannot (no fill) line up the same: box, text and indent do not shift between the two.
+
+### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
+
+- [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.
+- [ ] **Palette stays put:** switch scopes All -> Commands -> Branches and check the top of the palette does not move when the list gets shorter or taller.
+- [ ] **All:** an empty query lists sessions (a session that needs input first) and the commands run lately; a query lists sections with at most five rows and "+N more ›", which switches to that scope; Search never has a section; Files, Branches and Commits appear only once they have rows, All never shows "Loading" or an error line (those are in the scope's own tab).
+- [ ] **Files:** `Ctrl+Shift+O` opens on Files, empty query lists files at once, typing fast shows only the last answer, matched letters are accent colored, Enter opens the file in the Editor view; in a task worktree it searches the worktree.
+- [ ] **Search:** `Ctrl+Alt+Shift+F` opens on Search; one character shows "Type 2 characters to search the files."; `(` or `a.c` is searched as text; each hit shows the line with the match colored and `path:line` muted; Enter opens the file with the caret on that line; a repository with many hits stops at 200.
+- [ ] **Branches:** newest first, `current` marked, a remote branch without a local one listed as `origin/x`; Enter on a clean repository switches at once with a toast "Switched to ..."; with changed files, or a live agent in that folder, a question comes first and says which; a refusal by git shows git's own message in a toast.
+- [ ] **Commits:** 500 commits found by message or hash; Enter opens the Git panel on History with that commit expanded, also a commit older than the 50 the History lists by default; leaving History puts the default back.
+- [ ] **`@` in a composer and in the New task prompt:** the palette opens on Files with no tabs and the title "Insert file", Enter types the path (the `composer.file_ref` form), Esc types the `@`; the New task dialog stays open under it.
+- [ ] **No workspace:** Files, Search, Branches and Commits say "Open a workspace to search it."; with the daemon stopped they show its error, not "Loading…" forever.
+- [ ] **Theme picker (`Ctrl+Alt+J`):** no tabs, still previews on Up / Down and restores on Esc; its rows keep the muted "Dark" / "Light" text.
+- [ ] **Detached window:** `Ctrl+Shift+P` there lists what acts in that window; a picked file, search hit, branch or commit is run in the main window (it comes to the front, on the palette's workspace).
+- [ ] **Detached window closed under the `@` palette:** close a detached window while its `@` palette is open; check whether `@` is typed anywhere (decide if that is acceptable).
+- [ ] **`/` and prompt pickers:** their lists keep the old height (`PICKER_LIST_HEIGHT`, 360 px); only the palette list is 480 px.
+
+### To verify - 2026-11-21 Polish P1: glass panels, pressable widgets, Settings
+
+- [ ] **Look (dark + light, then Mkrew Light and one palette theme):** open Settings (Ctrl+,), the Ask AI dialog (palette), a Git discard confirm and the in-app confirm prompt; each is a translucent panel with a thin light border, a faint accent tint at the top and a soft shadow; the text stays easy to read over a bright pane and over a dark pane behind it.
+  (Automatic screenshots were not captured; none saved under `docs/screenshots/2026-11-21-polish-*`.)
+- [ ] **Settings:** the navigation lists App, Integrations and Input; typing in the search box lists settings of every page with `Page › Group`; Esc clears the query, Esc again closes; a query with no match shows "No setting matches" and "Clear search (Esc)"; switches, segmented choices and the font and theme dropdowns react to hover and press; the footer shows the version and both file links.
+- [ ] **Settings, keyboard:** Tab to the `settings.toml` link, press Ctrl+F, type; the text lands in the search box.
+- [ ] **Dialog fade (dark + light):** a dialog fades in and settles without a visible jump.
+- [ ] **Read-only settings.toml:** the Settings Choice controls of a read-only `settings.toml` do not hover.
+- [ ] **Narrow window:** make the window as small as it goes; Settings stays inside it (width and height are capped).
+- [ ] **Reduced motion (Windows):** turn "Animation effects" off in Windows Settings and come back to Mkrew (activating the window rereads it); panels appear at once with no fade.
+  Turn it on again; panels fade in.
+- [ ] **Broken settings.toml:** with a file that does not parse, the switches and dropdowns look faded and do nothing.
+
 ### To verify - 2026-11-14 Git commit box footer on two rows
 
 - [ ] **Look (dark + light):** under the commit message, `Nothing staged` (or `N staged`) sits left and `0 / 72` right on one line; ✦ Generate and the Commit button sit right-aligned on the next line.
@@ -1200,7 +1368,7 @@ by telling the agent.
 ### To verify — 2026-10-12 Files tree on the right (ADR 0050)
 
 - [ ] **Files layout (dark + light):** Restart the daemon first (protocol v39). Tree on the right of the file; the search row shows `⌕ Search
-  files…` with the Quick open shortcut and opens Quick open on click; `Ignored` toggles ignored
+  files…` with the palette's Files shortcut and opens the palette on Files on click; `Ignored` toggles ignored
   files, looks pressed while on, its width never changes; ←/→/↑/↓, right-click, New file… still work.
 
 ### To verify — 2026-10-12 equalize panes, drag pane dividers, sidebar width
@@ -1965,7 +2133,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
      Expected: icons instead of boxes, monospaced Latin text.
   5. Git view: the file list and commit box sit right of the diff, in dark and light themes
      (retake the §14 screenshots).
-  6. Files view: "Search files…" at the top opens quick open, as Ctrl+Shift+O does. With the
+  6. Files view: "Search files…" at the top opens the palette on Files, as Ctrl+Shift+O does. With the
      Files view switched to a task worktree, picks open the worktree's copy.
   7. ✦ in the commit box with claude, codex and omp as the default agent: a Conventional
      Commits message; Commit still needs a click. With an old profile without `oneshot`, the

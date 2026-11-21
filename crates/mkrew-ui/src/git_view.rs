@@ -666,6 +666,9 @@ pub struct GitView {
     /// another was asked for meanwhile.
     logging: bool,
     log_again: bool,
+    /// How many commits the History's `git.log` asks for: [`GitLogParams::DEFAULT_LIMIT`],
+    /// more after [`Self::show_commit`] so the picked commit is listed.
+    log_limit: u32,
 }
 
 impl GitView {
@@ -703,6 +706,7 @@ impl GitView {
             read_again: false,
             logging: false,
             log_again: false,
+            log_limit: GitLogParams::DEFAULT_LIMIT,
         }
     }
 
@@ -988,6 +992,9 @@ impl GitView {
             return Requests::default();
         }
         self.select_none();
+        if section != Section::History {
+            self.log_limit = GitLogParams::DEFAULT_LIMIT;
+        }
         if section == Section::History {
             self.history = Some(History::default());
             return Requests {
@@ -1212,6 +1219,18 @@ impl GitView {
         show
     }
 
+    /// The palette's "Show commit": the History with `hash` expanded. The log is read with
+    /// [`crate::palette::COMMIT_LIMIT`] commits (until the History is left), because the
+    /// default 50 may not list the commit and the selection would jump to the first one.
+    pub fn show_commit(&mut self, hash: String) -> Requests {
+        self.log_limit = crate::palette::COMMIT_LIMIT;
+        let mut requests = self.show(Section::History);
+        // Already in the History: read the longer log now.
+        requests.log = true;
+        requests.show = self.select_commit(hash);
+        requests
+    }
+
     /// The History's `git.log` is about to be sent: its params, or `None` when one is in
     /// flight already (or the History is not shown).
     pub fn begin_log(&mut self) -> Option<GitLogParams> {
@@ -1225,7 +1244,7 @@ impl GitView {
             project_id: self.project_id,
             worktree_task_id: self.worktree_task_id,
             repo: self.repo.clone(),
-            limit: GitLogParams::DEFAULT_LIMIT,
+            limit: self.log_limit,
             path: None,
         })
     }

@@ -244,10 +244,7 @@ pub(crate) fn task_card(
         } else {
             theme.surface_raised
         }))
-        .when(!selected, |el| {
-            el.hover(move |style| style.border_color(rgb(edit_hover)))
-        })
-        .cursor_pointer()
+        .map(|el| card_press(el, selected, theme))
         .group(group.clone())
         .when(selected, |el| {
             el.relative()
@@ -277,14 +274,11 @@ pub(crate) fn task_card(
                         .px(px(space::S))
                         .py(px(space::XS))
                         .rounded(px(radius::SMALL))
-                        .cursor_pointer()
                         .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .opacity(opacity::HIDDEN)
                         .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
-                        // One step above the card's own `surface_raised`.
-                        .hover(move |style| style.bg(rgb(edit_hover)))
-                        .active(|style| style.opacity(opacity::ACTIVE))
+                        .pressable(Look::Raised, true, theme)
                         .tooltip(tooltip(
                             theme,
                             "Edit or delete this task",
@@ -294,13 +288,16 @@ pub(crate) fn task_card(
                                 String::new()
                             },
                         ))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            // Not a click on the card (which would open its terminal).
-                            cx.stop_propagation();
-                            if let Some(task) = shell.board.task(task_id).cloned() {
-                                shell.open_task_dialog(TaskDialog::edit(task), window, cx);
-                            }
-                        }))
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                // Not a click on the card (which would open its terminal).
+                                cx.stop_propagation();
+                                if let Some(task) = shell.board.task(task_id).cloned() {
+                                    shell.open_task_dialog(TaskDialog::edit(task), window, cx);
+                                }
+                            }),
+                        )
                         .child("Edit"),
                 ),
         )

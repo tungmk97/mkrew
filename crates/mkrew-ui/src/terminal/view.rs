@@ -31,6 +31,7 @@ use crate::composer::{attachment, attachment_refusal, typed_paths};
 use crate::field::{caret_mouse, caret_text, copy_selection};
 use crate::icons::{Icon, icon_svg};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
+use crate::pressable::{Look, Pressable};
 use crate::terminal::copy_mode::{CopyKey, copy_key};
 use crate::terminal::emulator::{CopyEnd, Emulator, Grid, Wheel};
 use crate::terminal::find::{FindBar, FindKey, FindStatus, find_key};
@@ -834,19 +835,19 @@ impl TerminalPane {
             FindStatus::Invalid => format!("✕ {}", find.status().label()),
             status => status.label().to_owned(),
         };
-        let hover = theme.border;
         let close = div()
             .id("find-close")
             .flex()
             .items_center()
             .px(px(space::XS))
             .rounded(px(radius::SMALL))
-            .cursor_pointer()
             .text_size(font_size::META)
             .text_color(rgb(theme.text_muted))
-            .hover(move |style| style.bg(rgb(hover)))
-            .active(|style| style.opacity(theme::opacity::ACTIVE))
-            .on_click(cx.listener(|pane, _, window, cx| pane.close_find(window, cx)))
+            .pressable(Look::Raised, true, theme)
+            .on_press(
+                true,
+                cx.listener(|pane, _, window, cx| pane.close_find(window, cx)),
+            )
             .child(icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted));
         Some(
             div()

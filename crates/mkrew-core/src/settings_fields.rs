@@ -59,6 +59,9 @@ pub enum Kind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Setting {
     pub page: Page,
+    /// The card the row sits in on its page (a UI group; `section` stays the TOML table).
+    /// Rows of one group are contiguous in [`SETTINGS`]; hidden rows have none.
+    pub group: &'static str,
     pub section: &'static str,
     pub key: &'static str,
     pub kind: Kind,
@@ -70,6 +73,7 @@ pub struct Setting {
 
 const fn row(
     page: Page,
+    group: &'static str,
     section: &'static str,
     key: &'static str,
     kind: Kind,
@@ -78,6 +82,7 @@ const fn row(
 ) -> Setting {
     Setting {
         page,
+        group,
         section,
         key,
         kind,
@@ -90,6 +95,7 @@ const fn row(
 const fn hidden(section: &'static str, key: &'static str) -> Setting {
     Setting {
         page: Page::Appearance,
+        group: "",
         section,
         key,
         kind: Kind::Number,
@@ -106,6 +112,7 @@ use Page::{Appearance, Features, General, Jira, Notifications, Phone, Voice};
 pub const SETTINGS: &[Setting] = &[
     row(
         General,
+        "System",
         "awake",
         "keep_awake",
         Bool,
@@ -114,30 +121,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         General,
-        "composer",
-        "file_ref",
-        Text,
-        "File reference",
-        "How a picked file is typed in the composer; {path} is the path.",
-    ),
-    row(
-        General,
-        "zed",
-        "follow_debounce_ms",
-        Number,
-        "Follow in Zed wait",
-        "Milliseconds after the agent's last edit before Zed opens the file.",
-    ),
-    row(
-        General,
-        "ui",
-        "reading_width",
-        Bool,
-        "Reading width",
-        "Agent panes start narrow (about 120–140 columns, centered).",
-    ),
-    row(
-        General,
+        "System",
         "ui",
         "close_to_tray",
         Bool,
@@ -146,6 +130,34 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         General,
+        "Workspace",
+        "composer",
+        "file_ref",
+        Text,
+        "File reference",
+        "How a picked file is typed in the composer; {path} is the path.",
+    ),
+    row(
+        General,
+        "Workspace",
+        "zed",
+        "follow_debounce_ms",
+        Number,
+        "Follow in Zed wait",
+        "Milliseconds after the agent's last edit before Zed opens the file.",
+    ),
+    row(
+        General,
+        "Workspace",
+        "ui",
+        "reading_width",
+        Bool,
+        "Reading width",
+        "Agent panes start narrow (about 120–140 columns, centered).",
+    ),
+    row(
+        General,
+        "Workspace",
         "ui",
         "board_all_workspaces",
         Bool,
@@ -154,6 +166,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Appearance,
+        "Theme",
         "ui",
         "theme",
         Choice(&["system", "light", "dark"]),
@@ -162,6 +175,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Appearance,
+        "Theme",
         "ui",
         "light_theme",
         List(THEME_NAMES),
@@ -170,6 +184,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Appearance,
+        "Theme",
         "ui",
         "dark_theme",
         List(THEME_NAMES),
@@ -178,6 +193,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Appearance,
+        "Fonts",
         "ui",
         "font_family",
         Font,
@@ -186,6 +202,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Appearance,
+        "Fonts",
         "ui",
         "font_size",
         Number,
@@ -194,6 +211,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Appearance,
+        "Fonts",
         "terminal",
         "font_family",
         Font,
@@ -202,6 +220,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Appearance,
+        "Fonts",
         "terminal",
         "font_size",
         Number,
@@ -210,6 +229,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Appearance,
+        "Diffs",
         "ui",
         "diff_mode",
         Choice(&["unified", "split"]),
@@ -218,6 +238,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Appearance,
+        "Diffs",
         "ui",
         "diff_wrap",
         Bool,
@@ -226,6 +247,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Appearance,
+        "Markdown",
         "ui",
         "md_mode",
         Choice(&["preview", "split", "source"]),
@@ -239,6 +261,7 @@ pub const SETTINGS: &[Setting] = &[
     hidden("ui", "right_panel"),
     row(
         Notifications,
+        "Alerts",
         "notify",
         "needs_input",
         Bool,
@@ -247,6 +270,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Notifications,
+        "Alerts",
         "notify",
         "done",
         Bool,
@@ -255,6 +279,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Notifications,
+        "Delivery",
         "notify",
         "sound",
         Bool,
@@ -263,6 +288,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Notifications,
+        "Delivery",
         "notify",
         "flash_taskbar",
         Bool,
@@ -271,15 +297,17 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Voice,
+        "Service",
         "voice",
         "base_url",
         Text,
         "API URL",
         "An OpenAI-compatible speech-to-text API.",
     ),
-    row(Voice, "voice", "model", Text, "Model", ""),
+    row(Voice, "Service", "voice", "model", Text, "Model", ""),
     row(
         Voice,
+        "Service",
         "voice",
         "api_key_env",
         Text,
@@ -288,6 +316,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Voice,
+        "Recording",
         "voice",
         "language",
         Text,
@@ -296,6 +325,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Voice,
+        "Recording",
         "voice",
         "prompt",
         Text,
@@ -304,6 +334,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Voice,
+        "Recording",
         "voice",
         "max_seconds",
         Number,
@@ -312,6 +343,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Jira,
+        "Connection",
         "jira",
         "site",
         Text,
@@ -320,6 +352,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Jira,
+        "Connection",
         "jira",
         "email",
         Text,
@@ -328,6 +361,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Jira,
+        "Connection",
         "jira",
         "api_token_env",
         Text,
@@ -336,6 +370,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Jira,
+        "Board",
         "jira",
         "mine",
         Bool,
@@ -344,6 +379,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Jira,
+        "Board",
         "jira",
         "layout",
         Choice(&["list", "kanban"]),
@@ -352,6 +388,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Phone,
+        "Access",
         "web",
         "enabled",
         Bool,
@@ -360,6 +397,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Phone,
+        "Access",
         "web",
         "push",
         Bool,
@@ -368,6 +406,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Features,
+        "Panels",
         "features",
         "docs",
         Bool,
@@ -376,19 +415,21 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Features,
-        "features",
-        "turns",
-        Bool,
-        "Turn snapshots",
-        "The agent's Turns… dialog; applies to sessions started after the change.",
-    ),
-    row(
-        Features,
+        "Panels",
         "features",
         "session",
         Bool,
         "Session tab",
         "The right panel's Session tab (session cards and thread).",
+    ),
+    row(
+        Features,
+        "Sessions",
+        "features",
+        "turns",
+        Bool,
+        "Turn snapshots",
+        "The agent's Turns… dialog; applies to sessions started after the change.",
     ),
 ];
 
@@ -471,6 +512,30 @@ mod tests {
         let unique: BTreeSet<String> = table.iter().cloned().collect();
         assert_eq!(unique.len(), table.len(), "a key is listed twice");
         assert_eq!(unique, template_keys());
+    }
+
+    #[test]
+    fn every_setting_has_a_group_and_a_groups_rows_are_contiguous() {
+        let shown: Vec<&Setting> = SETTINGS.iter().filter(|s| !s.hidden).collect();
+        for s in &shown {
+            assert!(!s.group.is_empty(), "{} has no group", s.id());
+        }
+        let mut closed: Vec<(Page, &str)> = Vec::new();
+        let mut open: Option<(Page, &str)> = None;
+        for s in shown {
+            let key = (s.page, s.group);
+            if open != Some(key) {
+                assert!(
+                    !closed.contains(&key),
+                    "group {:?} of {:?} is split by another group",
+                    s.group,
+                    s.page
+                );
+                if let Some(previous) = open.replace(key) {
+                    closed.push(previous);
+                }
+            }
+        }
     }
 
     #[test]

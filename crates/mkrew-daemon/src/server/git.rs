@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use mkrew_core::viewed::{self, Mark};
 use mkrew_protocol::{
-    ChangedFile, ErrorCode, Event, GitChangedEvent, GitCommitParams, GitCommitResult,
-    GitDiffParams, GitDiscardParams, GitLogParams, GitRemoteParams, GitSetBaseParams,
-    GitSetViewedParams, GitShowParams, GitStageParams, GitStatusParams, HunkTarget, Outcome,
-    Project, ProjectRef, ViewedFile,
+    ChangedFile, ErrorCode, Event, GitBranchesParams, GitChangedEvent, GitCheckoutParams,
+    GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams, GitLogParams,
+    GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams,
+    GitStatusParams, HunkTarget, Outcome, Project, ProjectRef, ViewedFile,
 };
 use mkrew_store::ViewedScope;
 use serde::Serialize;
@@ -24,7 +24,7 @@ use crate::{docs, files};
 impl Daemon {
     pub(super) async fn git_status(&self, params: GitStatusParams) -> Outcome {
         if let Some(since) = &params.since
-            && let Err(reason) = check_ref(since)
+            && let Err(reason) = check_ref("base ref", since)
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
@@ -79,7 +79,7 @@ impl Daemon {
             Err(outcome) => return outcome,
         };
         if let Some(commit) = params.commit.as_ref().or(params.since.as_ref())
-            && let Err(reason) = check_ref(commit)
+            && let Err(reason) = check_ref("commit", commit)
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
@@ -127,7 +127,7 @@ impl Daemon {
     /// whose file no longer changes, is deleted here; marks of other lists are not touched.
     pub(super) async fn git_viewed(&self, params: GitStatusParams) -> Outcome {
         if let Some(since) = &params.since
-            && let Err(reason) = check_ref(since)
+            && let Err(reason) = check_ref("base ref", since)
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
@@ -220,7 +220,7 @@ impl Daemon {
             return Outcome::error(ErrorCode::InvalidRequest, message);
         }
         if let Some(since) = &params.since
-            && let Err(reason) = check_ref(since)
+            && let Err(reason) = check_ref("base ref", since)
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
@@ -400,9 +400,75 @@ impl Daemon {
         view_outcome("git.log", log)
     }
 
+    /// `git.branches`: every local and remote-tracking branch, newest commit first.
+    pub(super) async fn git_branches(&self, params: GitBranchesParams) -> Outcome {
+        let dir = match self
+            .target(
+                params.project_id,
+                params.worktree_task_id,
+                params.repo.as_deref(),
+            )
+            .await
+        {
+            Ok(target) => target.dir,
+            Err(outcome) => return outcome,
+        };
+        let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
+        let branches = tokio::task::spawn_blocking(move || {
+            cache.repo(&*git, &dir)?;
+            git.branches(&dir).map_err(ViewError::from)
+        })
+        .await;
+        view_outcome("git.branches", branches)
+    }
+
+    /// `git.checkout`: `git switch` in the target's folder. Git's refusal comes back as
+    /// `invalid_state` with its own words; a success broadcasts `git.changed` at once (the
+    /// watcher misses a `.git` outside the project folder).
+    pub(super) async fn git_checkout(&self, params: GitCheckoutParams) -> Outcome {
+        if params.branch.is_empty() {
+            return Outcome::error(ErrorCode::InvalidRequest, "git.checkout needs a branch");
+        }
+        if let Err(reason) = check_ref("branch", &params.branch) {
+            return Outcome::error(ErrorCode::InvalidRequest, reason);
+        }
+        let GitCheckoutParams {
+            project_id,
+            worktree_task_id,
+            repo,
+            branch,
+        } = params;
+        let dir = match self
+            .target(project_id, worktree_task_id, repo.as_deref())
+            .await
+        {
+            Ok(target) => target.dir,
+            Err(outcome) => return outcome,
+        };
+        let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
+        let switched = tokio::task::spawn_blocking(move || {
+            cache.repo(&*git, &dir)?;
+            git.checkout(&dir, &branch).map_err(ViewError::from)
+        })
+        .await;
+        match switched {
+            Ok(Ok(())) => {
+                let _ = self.hub.events.send(Event::GitChanged(GitChangedEvent {
+                    project_id,
+                    worktree_task_id,
+                }));
+                ok(&())
+            }
+            Ok(Err(ViewError::Git(error))) => {
+                Outcome::error(ErrorCode::InvalidState, error.to_string())
+            }
+            other => view_outcome("git.checkout", other),
+        }
+    }
+
     /// `git.show`: one commit and the files of the project folder it changed.
     pub(super) async fn git_show(&self, params: GitShowParams) -> Outcome {
-        if let Err(reason) = check_ref(&params.commit) {
+        if let Err(reason) = check_ref("commit", &params.commit) {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
         let target = match self
@@ -482,7 +548,7 @@ impl Daemon {
         let base = params.base_ref.as_deref().map(str::trim);
         let base = base.filter(|b| !b.is_empty());
         if let Some(base) = base
-            && let Err(reason) = check_ref(base)
+            && let Err(reason) = check_ref("base ref", base)
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
@@ -606,13 +672,13 @@ fn prefix_files(repo: Option<&str>, files: &mut [ChangedFile]) {
 
 /// Rejects what can never be a ref and would change a git command line: a leading `-` (read
 /// as an option), whitespace and control characters.
-fn check_ref(base: &str) -> Result<(), String> {
-    if base.starts_with('-') {
-        return Err(format!("invalid base ref {base:?}: starts with '-'"));
+fn check_ref(what: &str, name: &str) -> Result<(), String> {
+    if name.starts_with('-') {
+        return Err(format!("invalid {what} {name:?}: starts with '-'"));
     }
-    if base.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    if name.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(format!(
-            "invalid base ref {base:?}: contains whitespace or control characters"
+            "invalid {what} {name:?}: contains whitespace or control characters"
         ));
     }
     Ok(())
@@ -625,10 +691,10 @@ mod tests {
     #[test]
     fn base_refs_that_git_could_read_as_options_are_rejected() {
         for ok in ["main", "origin/main", "release/1.2", "HEAD~3", "a1b2c3"] {
-            assert_eq!(check_ref(ok), Ok(()), "{ok}");
+            assert_eq!(check_ref("base ref", ok), Ok(()), "{ok}");
         }
         for bad in ["-f", "--force", "a b", "a\tb", "a\nb"] {
-            assert!(check_ref(bad).is_err(), "{bad:?}");
+            assert!(check_ref("base ref", bad).is_err(), "{bad:?}");
         }
     }
 

@@ -332,13 +332,22 @@ impl Shell {
         let running = view.remotes.running;
         let tip = "Fetch from the remotes (refreshes the base)";
         match running {
-            Some(Remote::Fetch) => icon_button("git-fetch", Icon::Ellipsis, theme)
+            // Running: not clickable right now, but not "disabled" either: no hover, no pointer.
+            Some(Remote::Fetch) => div()
+                .id("git-fetch")
+                .flex_none()
+                .size(theme::rems_px(theme::CONTROL_HEIGHT))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(icon_svg(Icon::Ellipsis, theme::ICON_SIZE, theme.text_muted))
                 .tooltip(tooltip(theme, Remote::Fetch.running_label(), ""))
                 .into_any_element(),
-            Some(Remote::Push) => icon_button("git-fetch", Icon::Download, theme)
-                .opacity(opacity::DISABLED)
-                .tooltip(tooltip(theme, tip, ""))
-                .into_any_element(),
+            Some(Remote::Push) => {
+                disabled_icon_button("git-fetch", Icon::Download, theme.text_muted, theme)
+                    .tooltip(tooltip(theme, tip, ""))
+                    .into_any_element()
+            }
             None => icon_button("git-fetch", Icon::Download, theme)
                 .tooltip(tooltip(theme, tip, self.keymap.label(Command::GitFetch)))
                 .on_click(cx.listener(move |shell, _, window, cx| {
@@ -596,7 +605,6 @@ impl Shell {
         on_pick: impl Fn(&mut Self, P, &mut Window, &mut Context<'_, Self>) + Clone + 'static,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
-        let hover = theme.surface;
         let len = chips.len();
         let chips = chips.into_iter().enumerate().map(|(index, chip)| {
             let Chip {
@@ -623,13 +631,14 @@ impl Shell {
                         .text_color(rgb(theme.text))
                 })
                 .when(!active, |el| {
-                    el.cursor_pointer()
-                        .text_color(rgb(theme.text_muted))
-                        .hover(move |style| style.bg(rgb(hover)))
-                        .active(|style| style.opacity(opacity::ACTIVE))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            on_pick(shell, pick.clone(), window, cx);
-                        }))
+                    el.text_color(rgb(theme.text_muted))
+                        .pressable(Look::Chip, true, theme)
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                on_pick(shell, pick.clone(), window, cx);
+                            }),
+                        )
                 })
                 .when(tab_stops, |el| el.focus_stop(theme).chip_arrows(index, len))
                 .child(label)

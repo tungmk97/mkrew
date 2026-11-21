@@ -339,3 +339,82 @@ fn ai_generate_asks_outside_every_project() {
         ErrorCode::InvalidRequest
     );
 }
+
+#[test]
+fn fs_search_finds_text_and_answers_back_to_back_searches_in_either_order() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::create_dir(repo.join("src")).unwrap();
+    std::fs::create_dir(repo.join("out")).unwrap();
+    std::fs::write(repo.join(".gitignore"), "out/\n").unwrap();
+    std::fs::write(
+        repo.join("src/main.rs"),
+        "fn main() {\n    run(Needle);\n}\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("out/gen.rs"), "needle\n").unwrap();
+    for n in 0..200 {
+        let text = "filler needle text\n".repeat(50);
+        std::fs::write(repo.join(format!("bulk{n}.txt")), text).unwrap();
+    }
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+    let search = |query: &str, regex: bool, limit: u32| {
+        Request::FsSearch(FsSearchParams {
+            project_id: id,
+            worktree_task_id: None,
+            query: query.into(),
+            regex,
+            limit,
+        })
+    };
+
+    // Smart case: the capital makes it exact, so only src/main.rs matches.
+    let found: FsSearchResult = client
+        .call(search("Needle", false, 10))
+        .into_result()
+        .unwrap();
+    assert_eq!(found.hits.len(), 1);
+    let hit = &found.hits[0];
+    assert_eq!((hit.path.as_str(), hit.line), ("src/main.rs", 2));
+    assert_eq!(hit.preview, "run(Needle);");
+    assert_eq!(hit.ranges, [(4, 10)]);
+    assert!(!found.truncated);
+    // The ignored folder is not searched.
+    let all: FsSearchResult = client
+        .call(search("needle", false, 1_000_000))
+        .into_result()
+        .unwrap();
+    assert!(all.hits.iter().all(|hit| !hit.path.starts_with("out/")));
+    let cut: FsSearchResult = client
+        .call(search("needle", false, 7))
+        .into_result()
+        .unwrap();
+    assert_eq!((cut.hits.len(), cut.truncated), (7, true));
+    assert_eq!(
+        error_code(client.call(search("(", true, 10))),
+        ErrorCode::InvalidRequest
+    );
+
+    // Back to back on one connection: the read loop reads the second request while the
+    // first walks, so both are answered; the older answer is complete or "replaced".
+    let slow = client.send(search("needle", false, 1_000_000));
+    let quick = client.send(search("Needle", false, 10));
+    let mut answers = HashMap::new();
+    for _ in 0..2 {
+        let (got, outcome) = client.response();
+        answers.insert(got, outcome);
+    }
+    let quick: FsSearchResult = answers.remove(&quick).unwrap().into_result().unwrap();
+    assert_eq!(quick.hits.len(), 1);
+    match answers
+        .remove(&slow)
+        .unwrap()
+        .into_result::<FsSearchResult>()
+    {
+        Ok(done) => assert!(done.hits.len() > 1),
+        Err(ResponseError::Daemon(body)) => assert_eq!(body.code, ErrorCode::InvalidState),
+        Err(other) => panic!("{other:?}"),
+    }
+}

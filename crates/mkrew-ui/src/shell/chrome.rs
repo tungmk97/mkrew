@@ -560,7 +560,6 @@ impl Shell {
         let color = current
             .and_then(|project| project.color.as_deref())
             .and_then(|name| theme.workspace_color(name));
-        let hover = theme.hover;
         let button = div()
             .id("workspace-switch")
             .relative()
@@ -572,12 +571,10 @@ impl Shell {
             .h(theme::rems_px(theme::CONTROL_HEIGHT))
             .px(px(space::S))
             .rounded(px(radius::MEDIUM))
-            .cursor_pointer()
             .text_size(font_size::BODY)
             .font_weight(FontWeight(weight::SEMIBOLD))
             .text_color(rgb(theme.text))
-            .hover(move |style| style.bg(rgb(hover)))
-            .active(|style| style.opacity(opacity::ACTIVE))
+            .pressable(Look::Chip, true, theme)
             // Not while its dropdown is open: the tooltip would cover the rows.
             .when(!self.workspace_switcher, |el| {
                 el.tooltip(tooltip(
@@ -591,9 +588,12 @@ impl Shell {
                 ))
             })
             // An open menu already closed on this mouse down (outside it): the click reopens it.
-            .on_click(cx.listener(|shell, _, window, cx| {
-                shell.open_switcher(window, cx);
-            }))
+            .on_press(
+                true,
+                cx.listener(|shell, _, window, cx| {
+                    shell.open_switcher(window, cx);
+                }),
+            )
             .child(workspace_avatar(name, color, theme))
             .child(
                 div()
@@ -625,11 +625,10 @@ impl Shell {
                     .px(px(space::S))
                     .rounded(px(radius::PILL))
                     .bg(rgb(theme.well))
-                    .cursor_pointer()
                     .whitespace_nowrap()
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
-                    .hover(move |style| style.bg(rgb(hover)))
+                    .pressable(Look::Chip, true, theme)
                     .when(!self.repo_menu, |el| {
                         el.tooltip(tooltip(
                             theme,
@@ -639,13 +638,16 @@ impl Shell {
                     })
                     // An open menu already closed on this mouse down (outside it): the click
                     // reopens it.
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        if many {
-                            shell.open_repo_menu(window, cx);
-                        } else if let Some(id) = shell.workspace {
-                            shell.open_git(id, window, cx);
-                        }
-                    }))
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, _, window, cx| {
+                            if many {
+                                shell.open_repo_menu(window, cx);
+                            } else if let Some(id) = shell.workspace {
+                                shell.open_git(id, window, cx);
+                            }
+                        }),
+                    )
                     .child(icon_svg(
                         Icon::GitBranch,
                         theme::ICON_SIZE_SMALL,

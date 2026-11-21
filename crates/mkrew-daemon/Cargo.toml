@@ -15,6 +15,12 @@ anyhow = "1"
 # Canonical paths without `\\?\`: an 8.3 / case variant of the project folder is still inside
 # it (plan links, hook edits); already in the tree through mkrew-cli.
 dunce = "1.0.5"
+# `fs.search` (Polish spec 2026-11-21 §8.3): ripgrep's own engine over the files `ignore` walks,
+# no index. `grep-matcher` is the `Matcher` trait that `grep-regex` implements (the match ranges
+# of a line); the three are released together.
+grep-matcher = "0.1.9"
+grep-regex = "0.1.14"
+grep-searcher = "0.1.17"
 # `.gitignore` matching for the project file watcher (SPEC §4).
 ignore = "0.4.33"
 interprocess = { version = "2.4.4", features = ["tokio"] }

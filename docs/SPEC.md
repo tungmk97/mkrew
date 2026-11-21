@@ -182,7 +182,8 @@ Rust stable, one Cargo workspace. When adding a crate, check its latest version 
 | Syntax highlighting | `syntect` (pure-Rust regex feature, lazy-loaded) | files & diffs (M7) |
 | Diagrams | `mermaid-rs-renderer` (no default features) | Mermaid in the Docs preview (ADR 0021) |
 | File walking | `ignore` | respects .gitignore (M7) |
-| Fuzzy matching | `nucleo-matcher` | quick open files (M7) |
+| Fuzzy matching | `nucleo-matcher` | palette Files scope (M7) |
+| Content search | `grep-searcher`, `grep-regex`, `grep-matcher` | `fs.search` (ripgrep's engine over the files `ignore` walks) |
 | Diff | `similar` | |
 | Microphone | `cpal` | voice input (§20G); WASAPI on Windows, ALSA on Linux |
 | HTTPS client | `ureq` (rustls) | voice input speech to text (§20G); Jira REST (§20I) |
@@ -611,6 +612,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `fs.create` | `project_id`, `worktree_task_id?`, `dir?` (`/`-separated, `""` = the root), `name` (may hold `/` or `\`: missing folders are made), `folder` | `path` of the new empty file or folder, relative to the root. `already_exists` for an existing entry; `invalid_request` for an empty name, `.`/`..`/drive parts, or a `dir`/`name` outside the root or inside `.git` (checked before anything is created) |
 | `fs.ignore` | `project_id`, `worktree_task_id?`, `path`, `is_dir` | `null` — appends `/path` (`/path/` for a folder) to the root `.gitignore`, creating it, keeping its line endings, not twice. `invalid_request` for a path outside the root or inside `.git` |
 | `fs.find` | `project_id`, `query`, `limit` | fuzzy file matches |
+| `fs.search` | `project_id`, `worktree_task_id?`, `query`, `regex?` (default false), `limit?` (default 200) | `{hits: SearchHit[], truncated}`; a `SearchHit` is `{path, line, preview, ranges: [[start, end]]}` (byte ranges in `preview`, at most 200 chars of the line, trimmed); text files up to 2 MiB under the root, smart case (case-insensitive unless the query has an upper-case letter), `invalid_request` for an invalid regex; runs beside the read loop, and a newer `fs.search` on the same connection stops an older one, which answers `invalid_state` |
 | `git.status` | `project_id`, `mode` (`working`/`base`), `since?` (base mode: compare from this commit instead of the merge-base, e.g. `task.checkpoint`; `merge_base` = it) | `branch?`, `head?`, `upstream?`, `ahead`/`behind`, `base_ref?` + `base_auto`, `merge_base?` (base mode); changed files (`path`, `old_path?`, `kind`, `added?`/`removed?`) in `staged`/`unstaged`/`untracked` (working mode; conflicts are `unstaged`) or `against_base` (base mode) |
 | `git.diff` | `project_id`, `path`, `mode`, `staged?` (working mode: index side), `commit?`, `since?` (base mode, as in `git.status`) | `binary`, `too_large`, `added`/`removed`, `hunks[]` (`old/new_start/lines`, `header`, `lines[]` with `kind`, `text`, `old_line?`/`new_line?`, `no_newline`, `crlf`) |
 | `git.viewed` | the params of `git.status` | `ViewedFile[]` (`path`, `staged`): the files of that list (`working` / `base` / the `since` checkpoint) whose viewed mark still stands (ADR 0065). Re-hashes the marked files through the diff cache and deletes marks whose diff text changed |
@@ -624,9 +626,11 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `git.set_base` | `project_id`, `base_ref` (`null`/blank = auto-detect; trimmed; refused if it starts with `-` or contains whitespace or control characters) | ok — broadcasts `project.updated` (Project carries `base_ref`) |
 | `git.fetch` / `git.push` | `project_id` | ok (push = current branch to its upstream, never force) |
 | `git.repos` | `project_id` | `string[]`: `""` when the project folder is in a git repository, then each direct child folder holding `.git` (folder or file), sorted; hidden folders, `node_modules` and `target` skipped; not filtered by `.gitignore`; read on every call (ADR 0029) |
+| `git.branches` | `project_id`, `worktree_task_id?`, `repo?` (ADR 0029) | `Branch[]`, newest commit first: `{name, remote, current, upstream?, last_commit_at, subject}`; `refs/remotes/*/HEAD` and remote branches that have a local branch are left out; `invalid_state` outside a repository |
+| `git.checkout` | `project_id`, `worktree_task_id?`, `repo?`, `branch` | `null`; `git switch <branch>`, for a remote branch `git switch --track <remote>/<name>`; git's stderr is the `invalid_state` message; broadcasts `git.changed` |
 | `daemon.status/stop` | – | info / ok; `status` carries `web` = `{enabled, running, error?}`: the `mk web` child the daemon supervises while `[web] enabled` (§20.0, ADR 0053); `error` = the child's last stderr line |
 
-`git.status`, `git.diff`, `git.stage`/`git.unstage`, `git.discard`, `git.commit`, `git.log`, `git.show`, `git.fetch`/`git.push`, `git.viewed`, `git.set_viewed` and `ai.generate` accept `repo?`: one folder name from `git.repos`; the request runs in that child repository. Paths in requests and replies stay relative to the project folder (`fe/src/a.ts`); a path outside the repo, a bad name or `repo` together with `worktree_task_id` is `invalid_request`. `git.changed` has no repo: clients refresh the shown repo (ADR 0029).
+`git.status`, `git.diff`, `git.stage`/`git.unstage`, `git.discard`, `git.commit`, `git.log`, `git.show`, `git.fetch`/`git.push`, `git.viewed`, `git.set_viewed`, `git.branches`, `git.checkout` and `ai.generate` accept `repo?`: one folder name from `git.repos`; the request runs in that child repository. Paths in requests and replies stay relative to the project folder (`fe/src/a.ts`); a path outside the repo, a bad name or `repo` together with `worktree_task_id` is `invalid_request`. `git.changed` has no repo: clients refresh the shown repo (ADR 0029).
 
 **Events**
 
@@ -689,6 +693,8 @@ Protocol 51 (port manager, spec 2026-11-01): requests `port.list` and `port.stop
 Protocol 52 (slash picker, spec 2026-11-04): request `slash.list`.
 
 Protocol 53 (ADR 0095): `attachment.save` takes `owner` (`{"session": id}` or `{"project": id}`) instead of `session_id`.
+
+Protocol 54 (Polish spec 2026-11-21 §8): requests `git.branches`, `git.checkout`, `fs.search`.
 
 Protocol 41: `session.move` and `Session.position`.
 
@@ -1241,7 +1247,7 @@ Only edit this file. When done, for EACH comment run:
   from the project folder's repository and from each child repository the listed folder is in
   (all of them when the root is listed). Updates live when agents create/delete/rename files.
 - **Editor view:** listed in the view bar only while a file tab is open. A tree click or Enter,
-  quick open, a terminal link and "New file…" show it (a tree click keeps the keyboard in the
+  the palette, a terminal link and "New file…" show it (a tree click keeps the keyboard in the
   tree); `Ctrl+Shift+6` shows it again. Closing the last tab, or switching to another worktree,
   shows Terminals.
 - **Editor** (the center Editor view; ADR 0028): the opened file with line numbers and syntax highlighting via
@@ -1254,7 +1260,7 @@ Only edit this file. When done, for EACH comment run:
   view is (only when the file is taller than the view): drag its thumb, or press the track to
   jump there.
 - **Tabs** (ADR 0080): every opened file has a tab above the header (pinned tabs first; the
-  strip scrolls sideways). A single click (tree, Enter, quick open, a terminal link) opens a
+  strip scrolls sideways). A single click (tree, Enter, the palette, a terminal link) opens a
   transient tab (italic) that the next one replaces while it is clean; a double click, an edit,
   Pin or "New file…" keeps it. `●` marks unsaved text; ✕ (on the active tab and on hover), a
   middle click, `Ctrl+W` or `Ctrl+Shift+W` closes a tab, asking "Save / Don't save / Cancel"
@@ -1313,9 +1319,8 @@ Only edit this file. When done, for EACH comment run:
   the editor's top line goes to the page's top); scrolling the page moves nothing else. A press
   on the page puts the editor's caret on that block's first line (scrolled into view only when
   it is off screen). The page has its own keyboard focus (selection, Ctrl+C, Ctrl+A); ✎ works as in Preview.
-- **Quick open** (`Ctrl+Shift+O`, or the "Search files…" entry at the top of the tree)
-  fuzzy-finds files of the current workspace, in the folder the tree shows (project or
-  task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
+- **Palette Files scope** (`Ctrl+Shift+O`, or the "Search files…" entry at the top of the tree) fuzzy-finds files of the current workspace, in the folder the tree shows (project or task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
+- **Palette Search scope** (`Ctrl+Alt+Shift+F`) finds text in those files.
 - "Open in Zed" opens the file at the caret's line.
 - **Right-click menu** on tree rows (files and folders) and on the blank part of the tree (the
   folder the tree shows: the project, or the task worktree): "New file…" and "New folder…" (a
@@ -1435,7 +1440,7 @@ it reaches the agent as ^C. Anything sent to the agent clears the selection.
 Plain Ctrl+V pastes in a terminal pane; ^V reaches the program only when the clipboard holds no
 text, image or files (ADR 0026).
 Every text field of the app (task title and prompt, composer, follow-up, commit box, run setup,
-comments, broadcast, peek reply, quick open, command palette, Ask AI, Settings, the filters and
+comments, broadcast, peek reply, the palette, Ask AI, Settings, the filters and
 find bars, the inline rename) edits like a normal text box (ADR 0075): ←/→, Ctrl+←/→ by word,
 Home / End, Ctrl+Home / End, ↑/↓ between lines of a multi-line field, Shift to select; Ctrl+A
 (select all: the next key replaces it), Backspace / Delete, Ctrl+Backspace / Ctrl+Delete (the
@@ -1449,8 +1454,9 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 
 | Group | Action | Default |
 | --- | --- | --- |
-| Global | Command palette | Ctrl+Shift+P |
-| Global | Quick open a file of the active workspace | Ctrl+Shift+O |
+| Global | Command palette (All scope) | Ctrl+Shift+P |
+| Global | Palette on Files: find a file of the active workspace | Ctrl+Shift+O |
+| Global | Palette on Search: find text in the files of the active workspace | Ctrl+Alt+Shift+F |
 | Global | Open settings | Ctrl+, |
 | Global | Toggle theme (System → Light → Dark) | Ctrl+Shift+J |
 | Global | Select theme | Ctrl+Alt+J |
@@ -1566,6 +1572,17 @@ Run setup: Shift+Tab walks back; in its folder picker ↑ / ↓ move, → opens 
 
 Invalid or duplicate bindings: report the error and fall back to defaults for that entry. The
 command palette shows each command's shortcut; tooltips show shortcuts too.
+
+The palette has scope tabs: All, Commands, Sessions, Files, Search, Branches, Commits.
+Tab and Shift+Tab switch scope, Up and Down move, Enter runs, Esc closes, a click on a tab switches to it.
+All lists, for a query, a section per scope except Search (five rows each, then "+N more ›" which switches to that scope); with an empty query it lists the sessions (waiting ones first) and the commands run lately.
+Files asks `fs.find` (debounced 80 ms), Search asks `fs.search` from two characters, spaces at the ends not counted (150 ms, plain text, smart case), Branches asks `git.branches` and Commits asks `git.log` (500 commits) once per opening and both are filtered in the UI.
+A late answer is dropped.
+Branches switches with `git.checkout`; a question comes first when the repository has changed files or a live agent session runs in that folder; git's own error is shown as a toast.
+Commits opens the Git view's History on the commit.
+A search hit opens the file with the caret on its line.
+`@` in a prompt opens the palette on Files in insert mode: Enter types the path as `composer.file_ref`, Esc types the `@`.
+The theme picker (`Ctrl+Alt+J`) is the same palette without tabs.
 
 ---
 
@@ -1692,15 +1709,33 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   and Tailscale about once a second while open (off the UI thread); the title bar icon reads
   `daemon.status` every 5 s. A failed Start / Stop shows in the dialog. The link carries the
   access token: it is never logged and never in a tooltip.
-- Settings (Ctrl+,, palette "Global: Open settings", ADR 0073): a modal dialog (`SETTINGS_DIALOG_WIDTH` ×
-  `SETTINGS_DIALOG_HEIGHT`, never larger than the window minus a margin); page list on the left
-  (General, Appearance, Notifications, Voice, Jira, Phone, Features, Keyboard, Prompts, Machines), rows on the right
-  (label, help, control: switch, segmented choice, text field, list pick (fonts, themes)); Number and Text rows are
+- Settings (Ctrl+,, palette "Global: Open settings", ADR 0073, ADR 0097): a floating glass panel (`SETTINGS_DIALOG_WIDTH` ×
+  `SETTINGS_DIALOG_HEIGHT`, never larger than the window minus a margin). The left navigation (`SETTINGS_NAV_WIDTH`) starts with a
+  search box (Ctrl+F focuses it) and lists the pages under three overlines: App (General, Appearance, Notifications, Voice, Features),
+  Integrations (Jira, Phone, Machines) and Input (Keyboard, Prompts). The right side has the page title and a close button.
+  With a query, the right side lists the matching settings of every page (a muted `Page › Group` breadcrumb, the label with the
+  matched characters in accent and semibold, the help line and the real control); a setting matches when `palette::fuzzy` scores its label,
+  help, TOML key or page name above zero; a label match always ranks above a help-only match, then by score; pages with no match are dimmed; shortcuts are not searched.
+  Esc clears a non-empty query first and closes Settings on an empty one; no match shows "No setting matches “<query>”." with
+  "Clear search (Esc)". Each page shows its settings in cards, one per group (`Setting::group`: an overline title and a card
+  of rows with faint dividers; label and muted help on the left, the control on the right); the Keyboard page is one card of all its shortcut rows. Controls: switch (`toggle`), segmented
+  choice, `dropdown_trigger` (fonts, themes) and text fields for Text and Number; Number and Text rows are
   written on Enter or when the row loses the keyboard, Esc drops the draft. Keyboard rows show a
   chip, an accent dot when changed and Reset; a click or Enter captures the next keystroke, Esc
   cancels. A refused value or duplicate keystroke shows under its row, never as a toast. A file that
-  does not parse shows a banner with "Fix in Zed" and the settings controls do nothing. The footer
-  opens `settings.toml` and `keymap.toml` in Zed.
+  does not parse shows a banner with "Fix in Zed" and the settings controls do nothing (switches, segments and dropdowns are faded, with no hover and no pointer). The footer
+  shows `v<version>`, the links `settings.toml` and `keymap.toml` (they open the files in Zed) and "Changes apply at once."; on the Prompts page the hint stays "Ctrl+N new · Ctrl+S saves · Esc closes".
+- Palette (Ctrl+Shift+P, ADR 0097): a floating glass panel (`floating_panel`, `PALETTE_WIDTH` wide).
+  The panel is anchored at `PALETTE_TOP_OFFSET` from the top, so it does not move when the list height changes.
+  Top: the query field with a search icon, the scope's placeholder and an `esc` key cap (`search_box`).
+  Below it: the scope tabs as pills (`Look::Chip`; the current one has a 1 px accent border and no fill, the others are muted and get the hover fill).
+  The list is at most `PALETTE_LIST_HEIGHT` tall and scrolls.
+  It has section overlines, `list_row` rows (the selected one has the `selected` fill and a `PALETTE_SELECTED_BAR` accent bar) and a muted "+N more ›" row; matched characters are accent and semibold, `detail` is muted after the title, `age` is right-aligned, shortcuts are `kbd` key caps.
+  A scope that waits shows a muted "Loading…" and one that failed a muted error line with an `x` icon, in its own tab only.
+  Footer: "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right.
+  The theme picker and the `@` file picker have no tabs; the theme picker keeps its muted "Dark" / "Light" text instead of key caps.
+  The theme picker footer reads "↑↓ preview · ↵ save" and "esc restore".
+  The `@` footer reads "↑↓ navigate · ↵ type its path" and "esc type @", under the title "Insert file · <workspace>".
 - Settings → Machines (ADR 0089, this computer's window; a machine window shows only "Machines are managed in This computer's window."):
   one row per machine of `<config>/mkrew/machines.toml`: name, host (and the `mk` path), a status dot with its state in words (Connected, Connecting…, Reconnecting…, Not reachable: <reason>, Version differs: <message>, Window closed), **Open** (raises the window, or starts it) and **Remove** (confirms, closes that window, deletes the line).
   **Add machine…** (a bordered button; the filled primary one while the list is empty) opens a card with Name, Host and "mk path (optional)"; a refused value shows under its field, Save writes the file and opens the window.
@@ -1771,6 +1806,28 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 into `docs/screenshots/` (if automatic capture is not possible, list them in `docs/HUMAN_CHECKS.md`)
 and self-review: no hard-coded colors/spacing; hover/focus/disabled states exist; empty states
 exist; body text contrast ≥ 4.5:1; status never conveyed by color alone; run action glyphs ≥ 3:1.
+
+**Floating panels (glass), ADR 0097.**
+The palette, Settings, every modal dialog and the confirm prompt share one frame, `widgets::floating_panel`.
+It is a translucent fill (`glass`: the surface at 0.96 alpha in dark themes and 0.97 in light ones, raised until body text keeps 4.5:1 over a light or a dark page behind it), a 1 px `glass_border`, an accent `glass_tint` gradient over the top `GLASS_TINT_HEIGHT` px, `shadow_float` and `radius::LARGE`.
+There is no real backdrop blur (gpui-pre 0.3.7 cannot blur behind one element).
+The scrim behind a modal is black at 24 % (dark) or 16 % (light).
+A panel fades in and rises 4 px over `motion::FAST` and disappears at once; with the OS "Animation effects" setting off (Windows) it appears at once.
+No dialog builds its own panel frame.
+
+**Pressable states, ADR 0097.**
+Every element with a click or mouse-down handler gets its hover, press and disabled look from `shell/widgets.rs` and `mkrew_ui::pressable` (`Look`, `press_style`, `Pressable`).
+It is either a widget (`button`, `secondary_button`, `quiet_button`, `danger_button`, `icon_button`, `segment`, `menu_item`, `row_action`, `list_row`, `toggle`, `dropdown_trigger`) or `.pressable(look, enabled, theme)` with `.on_press(enabled, handler)`.
+Only `widgets.rs` and `pressable.rs` call `.hover(` and `.active(` or set `.cursor_pointer()` by hand.
+`group_hover(..)`, which reveals hidden row actions, is allowed anywhere.
+The looks are `Row` (list and menu rows), `Chip` (pills, tabs, small labelled controls), `Icon` (icon-only controls), `Text` (links) and `Raised` (a control on a raised surface or inside a row that is itself hovered: menu, toast, card, find bar, code block, a row action).
+Board cards use `card_press`: the border lights on hover and the fill stays, so the chips inside a card keep a visible hover.
+A hover fill is never the selected fill.
+A selected or active element that is still clickable keeps the pointer only (`pressable_unless(picked, look, theme)`).
+A disabled element is faded (`opacity::DISABLED`), has the default cursor and no hover, no press and no click.
+An element that is not clickable right now, but is not disabled, has no look at all.
+Not buttons, so no hover: resize grips (they tint through `grip_hover`), terminal surfaces, drop zones and drag sources, the modal scrim, text fields (they keep their I-beam), editor and text-selection surfaces, window-drag areas, the pane title (it renames on double-click only and shows no pointer), links drawn by `InteractiveText`, and the context-menu mouse down of an element that is already pressable.
+Focus rings stay with `DialogControl`.
 
 ---
 
@@ -1930,7 +1987,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 
 - [ ] Files view: lazy tree, respects `.gitignore`, git markers; viewer/editor with syntax
       highlighting; large/binary files handled.
-- [ ] Quick open fuzzy-finds files in a 10,000-file repo in < 100 ms.
+- [ ] The palette's Files scope fuzzy-finds files in a 10,000-file repo in < 100 ms.
 - [ ] Git view header: branch, upstream, ahead/behind; Working changes grouped Staged/Unstaged/Untracked.
 - [ ] Against base uses `merge-base` correctly; base auto-detects `origin/HEAD` → `main` → `master`
       and is configurable per workspace (UI and `mk project update --base`).
@@ -2189,7 +2246,7 @@ context_window = 200000        # tokens, for the % shown
    terminal or Run task).
    Send = `session.send` with submit; multi-line text already goes as one bracketed paste (§7).
    Typing `@` or `/` at the start of a line or after whitespace opens a picker; in the middle of a word (`a@b.com`, `src/main.rs`) they type as they are.
-   `@` opens the quick-open file picker (§12A); the pick inserts `composer.file_ref` with `{path}` = the project-relative path, `/` separators, quoted with `"` if it contains spaces.
+   `@` opens the palette on its Files scope in insert mode (§13); the pick inserts `composer.file_ref` with `{path}` = the project-relative path, `/` separators, quoted with `"` if it contains spaces.
    `/` opens the agent's command picker (§20B.7).
    Drafts are kept per session in UI memory (lost on UI restart, which is fine).
    ✦ (shown while the composer has the keyboard and the draft is not blank) sends the draft to

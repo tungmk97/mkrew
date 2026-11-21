@@ -151,8 +151,11 @@ impl Shell {
         let earlier = page.truncated.then(|| {
             meta_line(theme, "Earlier turns: Open transcript".into())
                 .id("thread-earlier")
-                .cursor_pointer()
-                .on_click(cx.listener(move |shell, _, _, cx| shell.open_transcript(id, cx)))
+                .pressable(Look::Text, true, theme)
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, _, cx| shell.open_transcript(id, cx)),
+                )
         });
         let turns = page.turns.iter().enumerate().map(|(turn_index, turn)| {
             let turn_key = page.first_turn + turn_index as u64;
@@ -182,23 +185,26 @@ impl Shell {
                                 .id(SharedString::from(format!(
                                     "thread-tools-{turn_key}-{item_index}"
                                 )))
-                                .cursor_pointer()
                                 .text_size(font_size::META)
                                 .text_color(rgb(theme.text_muted))
+                                .pressable(Look::Text, true, theme)
                                 .child(format!(
                                     "{} +{} tool call{}",
                                     if open { "▾" } else { "▸" },
                                     calls.len(),
                                     if calls.len() == 1 { "" } else { "s" }
                                 ))
-                                .on_click(cx.listener(move |shell, _, _, cx| {
-                                    if let Some(watch) = shell.thread.as_mut()
-                                        && !watch.expanded.remove(&(turn_key, item_index))
-                                    {
-                                        watch.expanded.insert((turn_key, item_index));
-                                    }
-                                    cx.notify();
-                                }));
+                                .on_press(
+                                    true,
+                                    cx.listener(move |shell, _, _, cx| {
+                                        if let Some(watch) = shell.thread.as_mut()
+                                            && !watch.expanded.remove(&(turn_key, item_index))
+                                        {
+                                            watch.expanded.insert((turn_key, item_index));
+                                        }
+                                        cx.notify();
+                                    }),
+                                );
                             div()
                                 .flex()
                                 .flex_col()

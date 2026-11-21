@@ -2,7 +2,7 @@
 //! dialog's Prompt lists what typing `/` lists in the agent's own terminal. The daemon builds
 //! the list (`slash.list`); this keeps the latest answer, the filter and the pick. Pure and
 //! tested headlessly; `shell/slash.rs` renders it and reads keys with
-//! [`crate::quick_open::key`].
+//! [`crate::palette::key`].
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -10,8 +10,7 @@ use mkrew_protocol::{Cli, SlashItem, SlashListParams, SlashListResult, SlashSour
 use ulid::Ulid;
 
 use crate::composer::Target;
-use crate::palette::fuzzy;
-use crate::quick_open::Key;
+use crate::palette::{Key, fuzzy};
 use crate::text_box::Input;
 
 /// The name of omp's group row and the prefix of the skills it stands for.

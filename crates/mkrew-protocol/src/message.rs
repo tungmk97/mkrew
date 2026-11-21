@@ -18,9 +18,10 @@ use ulid::Ulid;
 
 use crate::files::{
     AiGenerateParams, AiGeneratedEvent, FsCreateParams, FsFindParams, FsIgnoreParams, FsListParams,
-    FsReadParams, FsWriteParams, GitChangedEvent, GitCommitParams, GitDiffParams, GitDiscardParams,
-    GitLogParams, GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams,
-    GitStageParams, GitStatusParams, ProjectRef, WatchReleaseParams,
+    FsReadParams, FsSearchParams, FsWriteParams, GitBranchesParams, GitChangedEvent,
+    GitCheckoutParams, GitCommitParams, GitDiffParams, GitDiscardParams, GitLogParams,
+    GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams,
+    GitStatusParams, ProjectRef, WatchReleaseParams,
 };
 
 /// One JSON frame.
@@ -238,6 +239,12 @@ pub enum Request {
     /// when the folder itself is in a repository, then each direct child folder holding `.git`.
     #[serde(rename = "git.repos")]
     GitRepos(ProjectRef),
+    /// Returns `Branch[]`, newest commit first (Polish spec 2026-11-21 §8.1).
+    #[serde(rename = "git.branches")]
+    GitBranches(GitBranchesParams),
+    /// Switches branch; returns `null` and broadcasts `git.changed` (§8.2).
+    #[serde(rename = "git.checkout")]
+    GitCheckout(GitCheckoutParams),
     /// One-shot text from an agent CLI (SPEC §6 `oneshot`, §12B, §20B.1). Returns nothing
     /// (`null`) once the run started; the answer follows as `ai.generated`.
     #[serde(rename = "ai.generate")]
@@ -268,6 +275,9 @@ pub enum Request {
     /// Returns `FsMatch[]`, best first.
     #[serde(rename = "fs.find")]
     FsFind(FsFindParams),
+    /// Returns [`FsSearchResult`]: a content search of the target's files (§8.3).
+    #[serde(rename = "fs.search")]
+    FsSearch(FsSearchParams),
     /// Returns [`AttachmentSaveResult`] (SPEC §20B.5).
     #[serde(rename = "attachment.save")]
     AttachmentSave(AttachmentSaveParams),

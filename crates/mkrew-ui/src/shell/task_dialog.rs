@@ -305,7 +305,6 @@ impl Shell {
                     .into_iter()
                     .enumerate()
                     .map(|(index, choice)| {
-                        let hover = theme.surface_raised;
                         let agent = choice.id;
                         div()
                             .id(SharedString::from(format!("task-agent-{agent}")))
@@ -313,7 +312,6 @@ impl Shell {
                             .py(px(space::XS))
                             .rounded(px(radius::SMALL))
                             .border(px(theme::BORDER_WIDTH))
-                            .cursor_pointer()
                             .text_size(font_size::BODY)
                             .when(choice.selected, |el| {
                                 el.border_color(rgb(theme.accent))
@@ -324,16 +322,18 @@ impl Shell {
                             .when(!choice.selected, |el| {
                                 el.border_color(rgb(theme.border))
                                     .text_color(rgb(theme.text_muted))
-                                    .hover(move |style| style.bg(rgb(hover)))
-                                    .active(|style| style.opacity(opacity::ACTIVE))
                                     .child(choice.label)
                             })
-                            .on_click(cx.listener(move |shell, _, _, cx| {
-                                if let Some(dialog) = shell.task_dialog.as_mut() {
-                                    dialog.choose_agent(&agent);
-                                }
-                                cx.notify();
-                            }))
+                            .pressable_unless(choice.selected, Look::Chip, theme)
+                            .on_press(
+                                true,
+                                cx.listener(move |shell, _, _, cx| {
+                                    if let Some(dialog) = shell.task_dialog.as_mut() {
+                                        dialog.choose_agent(&agent);
+                                    }
+                                    cx.notify();
+                                }),
+                            )
                             .focusable_bordered(theme)
                             .chip_arrows(index, len)
                             .into_any_element()
@@ -341,7 +341,6 @@ impl Shell {
                     .collect()
             }
         };
-        let hover = theme.surface_raised;
         let locked = dialog.worktree_locked();
         let worktree = div()
             .id("task-worktree")
@@ -363,18 +362,18 @@ impl Shell {
             ))
             .when(locked, |el| el.text_color(rgb(theme.text_muted)))
             .when(!locked, |el| {
-                el.cursor_pointer()
-                    .text_color(rgb(theme.text))
-                    .hover(move |style| style.bg(rgb(hover)))
-                    .active(|style| style.opacity(opacity::ACTIVE))
-                    .on_click(cx.listener(|shell, _, _, cx| {
-                        if let Some(dialog) = shell.task_dialog.as_mut() {
-                            dialog.toggle_worktree();
-                        }
-                        cx.notify();
-                    }))
-                    .focus_stop(theme)
+                el.text_color(rgb(theme.text)).focus_stop(theme)
             })
+            .pressable(Look::Row, !locked, theme)
+            .on_press(
+                !locked,
+                cx.listener(|shell, _, _, cx| {
+                    if let Some(dialog) = shell.task_dialog.as_mut() {
+                        dialog.toggle_worktree();
+                    }
+                    cx.notify();
+                }),
+            )
             .child(
                 div()
                     .size(px(space::M))
@@ -415,24 +414,18 @@ impl Shell {
             .border(px(theme::BORDER_WIDTH))
             .border_color(ring_border)
             .when(ring, move |el| el.bg(tint));
-        let panel = div()
-            .id("task-dialog")
+        let panel = floating_panel("task-dialog", theme)
             .w(px(theme::DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             // A picker over it (library prompt, `@` file) or Settings (opened from the prompt
             // picker's Manage row) has the keyboard meanwhile.
             .when(
                 self.prompt_picker.is_none()
-                    && self.quick_open.is_none()
+                    && self.palette.is_none()
                     && self.slash_picker.is_none()
                     && self.settings_dialog.is_none(),
                 |el| {

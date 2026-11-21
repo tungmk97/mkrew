@@ -206,6 +206,9 @@ pub mod opacity {
     pub const DISABLED: f32 = 0.5;
     /// A changed-file row marked as viewed (SPEC §12B): dimmed, still readable.
     pub const VIEWED: f32 = 0.6;
+    /// A non-matching item that stays readable and clickable (Settings pages without a search
+    /// match).
+    pub const DIMMED: f32 = 0.6;
     /// The unlit dots of the loading mark.
     pub const STATUS_DOT_DIM: f32 = 0.35;
     /// Hover-revealed actions (SPEC §14 progressive disclosure): hidden, then fully shown.
@@ -289,6 +292,12 @@ pub const SCROLLBAR_MIN_THUMB: f32 = space::XL;
 /// The Files editor highlights its text again this long after the last keystroke.
 pub const REHIGHLIGHT_DELAY: Duration = Duration::from_millis(150);
 
+/// The palette's Files scope asks `fs.find` this long after the last keystroke (spec 7.2).
+pub const PALETTE_FILES_DELAY: Duration = Duration::from_millis(80);
+
+/// The palette's Search scope asks `fs.search` this long after the last keystroke.
+pub const PALETTE_SEARCH_DELAY: Duration = Duration::from_millis(150);
+
 /// Minimum width of a tab title while it is renamed inline.
 pub const TAB_RENAME_MIN_WIDTH: f32 = 120.0;
 
@@ -302,9 +311,9 @@ pub const DROP_INDICATOR_HEIGHT: f32 = 2.0;
 pub const DIALOG_WIDTH: f32 = 520.0;
 
 /// The Settings dialog (ADR 0073): its size, the page list width and the value column.
-pub const SETTINGS_DIALOG_WIDTH: f32 = 760.0;
-pub const SETTINGS_DIALOG_HEIGHT: f32 = 560.0;
-pub const SETTINGS_NAV_WIDTH: f32 = 180.0;
+pub const SETTINGS_DIALOG_WIDTH: f32 = 880.0;
+pub const SETTINGS_DIALOG_HEIGHT: f32 = 640.0;
+pub const SETTINGS_NAV_WIDTH: f32 = 200.0;
 pub const SETTINGS_CONTROL_WIDTH: f32 = 240.0;
 /// Tallest the font pick's list grows (it scrolls past that).
 pub const SETTINGS_FONT_LIST_HEIGHT: f32 = 200.0;
@@ -435,8 +444,27 @@ pub const WORKSPACE_SWATCH_SIZE: f32 = space::L;
 /// Ring around a workspace menu color choice.
 pub const WORKSPACE_SWATCH_BORDER: f32 = 2.0;
 
-/// Height of the quick open match list (it scrolls past that).
-pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;
+/// Floating panels (ADR 0097): how far the accent tint gradient reaches down from the top,
+/// its direction (180 = top to bottom in gpui) and color stops, and how far a panel rises
+/// while it fades in (gpui has no element scale).
+pub const GLASS_TINT_HEIGHT: f32 = 120.0;
+pub const GLASS_TINT_ANGLE: f32 = 180.0;
+pub const GLASS_TINT_FROM: f32 = 0.0;
+pub const GLASS_TINT_TO: f32 = 1.0;
+pub const PANEL_RISE: f32 = space::XS;
+/// Max height of the composer's prompt and slash pickers (they scroll past that).
+pub const PICKER_LIST_HEIGHT: f32 = 360.0;
+/// The scoped palette.
+pub const PALETTE_WIDTH: f32 = 640.0;
+pub const PALETTE_LIST_HEIGHT: f32 = 480.0;
+pub const PALETTE_SELECTED_BAR: f32 = 3.0;
+pub const PALETTE_GROUP_LIMIT: usize = 5;
+/// Distance from the window's top edge to the top of the palette panel (it stays there while
+/// its list grows or shrinks between scopes).
+pub const PALETTE_TOP_OFFSET: f32 = 64.0;
+/// Widest share of a palette row its title may take while a muted detail follows (the title
+/// is cut with `…` past that).
+pub const PALETTE_TITLE_MAX_FRACTION: f32 = 0.6;
 
 /// How much of a `/` picker row's width its command name and its argument hint may take before
 /// they are cut with `…` (the description takes what is left, the source chip never shrinks).
@@ -717,8 +745,17 @@ pub struct Theme {
     pub run_pill_text: u32,
     /// Alpha of a workspace color tint (avatars, [`Theme::tint`]).
     pub tint_alpha: u8,
-    /// The shade behind a modal dialog, RGBA.
+    /// The shade behind a modal dialog, RGBA: black at 24 % (dark) or 16 % (light), set by
+    /// [`Theme::with_glass`].
     pub scrim: u32,
+    /// Fill of every floating panel, RGBA: `surface` at 0.96 (dark) / 0.97 (light) or more, as
+    /// much as body text needs to keep 4.5:1 over a light or dark page behind it.
+    pub glass: u32,
+    /// 1 px inner border of a floating panel, RGBA: white (dark) or black (light) at 8 %.
+    pub glass_border: u32,
+    /// Top of the vertical gradient over the first `GLASS_TINT_HEIGHT` px of a floating panel,
+    /// RGBA: `accent` at 5 % (dark) / 4 % (light).
+    pub glass_tint: u32,
     /// The QR code of Phone access (SPEC §14): dark modules on a light panel in both
     /// appearances, because phone cameras read dark-on-light only; so both are set in
     /// `shared()`, not in `dark()` / `light()`.
@@ -965,7 +1002,8 @@ impl Theme {
             dark: true,
             name: "Mkrew Dark",
             ..Self::shared()
-        };
+        }
+        .with_glass();
         Self {
             classic: Some(std::sync::Arc::new(Self::classic_dark(&theme))),
             ..theme
@@ -1057,7 +1095,8 @@ impl Theme {
             dark: false,
             name: "Mkrew Light",
             ..Self::shared()
-        };
+        }
+        .with_glass();
         Self {
             classic: Some(std::sync::Arc::new(Self::classic_light(&theme))),
             ..theme
@@ -1238,8 +1277,11 @@ impl Theme {
             run_pill_border: 0,
             run_pill_text: 0,
             tint_alpha: 0,
-            // Black at ~35 %, in both appearances.
-            scrim: 0x0000_0059,
+            // Glass and scrim are derived from `surface` / `accent` by `with_glass`.
+            scrim: 0,
+            glass: 0,
+            glass_border: 0,
+            glass_tint: 0,
             // The QR code of Phone access: near-black modules on white, in both appearances.
             qr_dark: 0x101114,
             qr_light: 0xFFFFFF,
@@ -1344,6 +1386,38 @@ pub fn mix(a: u32, b: u32, t: f32) -> u32 {
     })
 }
 
+/// `0xRRGGBB` as `0xRRGGBBAA` at `alpha` (0.0 to 1.0).
+pub fn with_alpha(color: u32, alpha: f32) -> u32 {
+    (color << 8) | (alpha.clamp(0.0, 1.0) * 255.0).round() as u32
+}
+
+/// `alpha` as the 8-bit value an RGBA color stores (so tests and `with_glass` agree).
+fn quantize(alpha: f32) -> f32 {
+    (alpha.clamp(0.0, 1.0) * 255.0).round() / 255.0
+}
+
+/// The color a floating panel shows at its top over `backdrop`: `surface` at `alpha`, then the
+/// accent tint at `tint`.
+pub fn glass_over(surface: u32, accent: u32, alpha: f32, tint: f32, backdrop: u32) -> u32 {
+    mix(mix(backdrop, surface, alpha), accent, tint)
+}
+
+/// The tint gradient of a floating panel: its top color and the same color with no alpha.
+pub fn glass_gradient(theme: &Theme) -> (u32, u32) {
+    (theme.glass_tint, theme.glass_tint & 0xFFFF_FF00)
+}
+
+/// The shadow of a floating panel (palette, Settings, dialogs): two layers, half as strong in
+/// light themes.
+pub fn shadow_float(theme: &Theme) -> Vec<gpui::BoxShadow> {
+    let strength = if theme.dark { 1.0 } else { 0.5 };
+    let black = |alpha: f32| gpui::Hsla::from(gpui::rgba(with_alpha(0x000000, alpha * strength)));
+    vec![
+        gpui::BoxShadow::new(gpui::px(0.0), gpui::px(8.0), black(0.35)).blur_radius(gpui::px(24.0)),
+        gpui::BoxShadow::new(gpui::px(0.0), gpui::px(2.0), black(0.20)).blur_radius(gpui::px(6.0)),
+    ]
+}
+
 /// `color` blended toward `toward` in 5 % steps until it reads at `min` on every ground.
 fn readable(color: u32, toward: u32, grounds: &[u32], min: f32) -> u32 {
     (0..=20)
@@ -1363,6 +1437,39 @@ fn fill(bg: u32, hue: u32, t: f32, fg: u32) -> u32 {
 }
 
 impl Theme {
+    /// Sets `scrim`, `glass`, `glass_border` and `glass_tint` from `surface` and `accent`.
+    /// The fill alpha starts at the spec value and grows by 2 % until `text` keeps 4.5:1 on the
+    /// panel over both `bg` and `text` behind it (the worst light and dark pages).
+    fn with_glass(self) -> Self {
+        let (base, edge, tint, scrim) = if self.dark {
+            (0.96, 0xFFFFFF, 0.05, 0.24)
+        } else {
+            (0.97, 0x000000, 0.04, 0.16)
+        };
+        let tint = quantize(tint);
+        let worst = |alpha: f32| {
+            [self.bg, self.text]
+                .into_iter()
+                .map(|backdrop| {
+                    let fill = glass_over(self.surface, self.accent, alpha, tint, backdrop);
+                    contrast(self.text, fill)
+                })
+                .fold(f32::MAX, f32::min)
+        };
+        let mut alpha = quantize(base);
+        // Ends: at alpha 1.0 the fill is `surface` plus the tint, which text reads on.
+        while worst(alpha) < 4.5 && alpha < 1.0 {
+            alpha = quantize(alpha + 0.02);
+        }
+        Self {
+            scrim: with_alpha(0x000000, scrim),
+            glass: with_alpha(self.surface, alpha),
+            glass_border: with_alpha(edge, 0.08),
+            glass_tint: with_alpha(self.accent, tint),
+            ..self
+        }
+    }
+
     /// A built-in theme from its palette (ADR 0078; token table in the spec). Status, workspace
     /// and QR colors, the classic sidebar palette, fonts and sizes stay the Mkrew base's.
     pub fn from_palette(name: &'static str, p: &Palette) -> Self {
@@ -1463,6 +1570,7 @@ impl Theme {
             dark: p.dark,
             ..base
         }
+        .with_glass()
     }
 }
 
@@ -1855,6 +1963,73 @@ mod tests {
 
     fn all_themes() -> Vec<Theme> {
         THEMES.iter().map(ThemeEntry::build).collect()
+    }
+
+    #[test]
+    fn glass_is_derived_from_surface_and_accent_in_every_theme() {
+        for theme in all_themes() {
+            assert_eq!(theme.glass >> 8, theme.surface, "{}", theme.name);
+            assert_eq!(theme.glass_tint >> 8, theme.accent, "{}", theme.name);
+            let edge = if theme.dark { 0xFFFFFF } else { 0x000000 };
+            assert_eq!(theme.glass_border, with_alpha(edge, 0.08), "{}", theme.name);
+            // The base alphas of the spec; the contrast rule may only raise the fill.
+            let floor = if theme.dark { 0.96_f32 } else { 0.97_f32 };
+            assert!(
+                (theme.glass & 0xFF) >= (floor * 255.0).round() as u32,
+                "{}",
+                theme.name
+            );
+        }
+    }
+
+    #[test]
+    fn the_scrim_is_lighter_than_before_and_lighter_in_light_themes() {
+        let (dark, light) = (Theme::dark(), Theme::light());
+        assert_eq!(dark.scrim, with_alpha(0x000000, 0.24));
+        assert_eq!(light.scrim, with_alpha(0x000000, 0.16));
+        assert!(dark.scrim & 0xFF < 0x59 && light.scrim & 0xFF < dark.scrim & 0xFF);
+    }
+
+    #[test]
+    fn text_on_glass_reads_at_4_5_over_a_light_or_dark_page() {
+        for theme in all_themes() {
+            // Decoded exactly as `with_glass` quantized them.
+            let alpha = (theme.glass & 0xFF) as f32 / 255.0;
+            let tint = (theme.glass_tint & 0xFF) as f32 / 255.0;
+            for backdrop in [theme.bg, theme.text] {
+                let fill = glass_over(theme.surface, theme.accent, alpha, tint, backdrop);
+                let ratio = contrast(theme.text, fill);
+                assert!(
+                    ratio >= 4.5,
+                    "{}: {ratio:.2}:1 over {backdrop:06X}",
+                    theme.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_tint_gradient_fades_to_the_same_color_with_no_alpha() {
+        for theme in all_themes() {
+            let (top, bottom) = glass_gradient(&theme);
+            assert_eq!(top, theme.glass_tint);
+            assert_eq!(bottom & 0xFF, 0);
+            assert_eq!(bottom >> 8, top >> 8);
+        }
+    }
+
+    #[test]
+    fn the_float_shadow_has_two_layers_and_half_the_alpha_in_light_themes() {
+        let (dark, light) = (shadow_float(&Theme::dark()), shadow_float(&Theme::light()));
+        assert_eq!(dark.len(), 2);
+        assert_eq!(light.len(), 2);
+        assert_eq!(dark[0].offset.y, gpui::px(8.0));
+        assert_eq!(dark[0].blur_radius, gpui::px(24.0));
+        assert_eq!(dark[1].offset.y, gpui::px(2.0));
+        assert_eq!(dark[1].blur_radius, gpui::px(6.0));
+        for (d, l) in dark.iter().zip(&light) {
+            assert!((d.color.a / 2.0 - l.color.a).abs() < 0.01);
+        }
     }
 
     #[test]

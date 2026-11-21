@@ -249,7 +249,6 @@ impl Shell {
             self.palette_return = None;
         }
         if picker {
-            self.quick_open = None;
             self.prompt_picker = None;
             self.slash_picker = None;
         }

@@ -273,18 +273,12 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        div()
-            .id(id)
+        floating_panel(id, theme)
             .w(px(width))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
@@ -342,7 +336,6 @@ impl Shell {
                  working). It replies to each with mk comment reply."
             )
         };
-        let hover = theme.surface_raised;
         let rows: Vec<gpui::AnyElement> = choices
             .iter()
             .enumerate()
@@ -359,25 +352,27 @@ impl Shell {
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
                     .text_size(font_size::BODY)
-                    // The pick has a focus-colored ring, so it stays visible under hover.
+                    // The pick has a focus-colored ring: it is the picked row, so it does not hover.
                     .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(if picked {
-                        theme.pane_focus_border
+                    .border_color(if picked {
+                        gpui::Hsla::from(rgb(theme.pane_focus_border))
                     } else {
-                        theme.surface
-                    }))
-                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
-                    .when(!picked && !dialog.busy, |el| {
-                        el.cursor_pointer()
-                            .hover(move |style| style.bg(rgb(hover)))
-                            .active(|style| style.opacity(opacity::ACTIVE))
+                        gpui::transparent_black()
                     })
-                    .on_click(cx.listener(move |shell, _, _, cx| {
-                        if let Some(DocDialog::Send(dialog)) = shell.doc_dialog.as_mut() {
-                            dialog.pick(session_id);
-                            cx.notify();
-                        }
-                    }))
+                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
+                    .when(dialog.busy, |el| el.pressable(Look::Row, false, theme))
+                    .when(!dialog.busy, |el| {
+                        el.pressable_unless(picked, Look::Row, theme)
+                    })
+                    .on_press(
+                        !dialog.busy,
+                        cx.listener(move |shell, _, _, cx| {
+                            if let Some(DocDialog::Send(dialog)) = shell.doc_dialog.as_mut() {
+                                dialog.pick(session_id);
+                                cx.notify();
+                            }
+                        }),
+                    )
                     .child(status_mark(choice.state, theme))
                     .child(
                         div()

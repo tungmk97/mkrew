@@ -375,18 +375,12 @@ impl Shell {
         let hint = confirm.as_ref().err().copied().filter(|_| {
             matches!(dialog.preview, Preview::Loaded(_)) && !dialog.busy && !nothing_changed
         });
-        let panel = div()
-            .id("undo-dialog")
+        let panel = floating_panel("undo-dialog", theme)
             .w(px(theme::UNDO_DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
@@ -478,7 +472,6 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let hover = theme.surface_raised;
         let busy = dialog.busy();
         let rows = dialog.rows.iter().enumerate().map(|(index, row)| {
             let result = row.delivery.as_ref().map(|delivery| {
@@ -513,19 +506,19 @@ impl Shell {
                 .when(dialog.in_list && index == dialog.cursor, |el| {
                     el.border_color(rgb(theme.accent))
                 })
-                .when(busy, |el| el.opacity(opacity::DISABLED))
+                .pressable(Look::Row, !busy, theme)
                 .when(!busy, |el| {
-                    el.cursor_pointer()
-                        .hover(move |style| style.bg(rgb(hover)))
-                        .active(|style| style.opacity(opacity::ACTIVE))
-                        .tooltip(tooltip(theme, "Check or uncheck", "Space"))
+                    el.tooltip(tooltip(theme, "Check or uncheck", "Space"))
                 })
-                .on_click(cx.listener(move |shell, _, _, cx| {
-                    if let Some(dialog) = shell.broadcast.as_mut() {
-                        dialog.toggle(index);
-                    }
-                    cx.notify();
-                }))
+                .on_press(
+                    !busy,
+                    cx.listener(move |shell, _, _, cx| {
+                        if let Some(dialog) = shell.broadcast.as_mut() {
+                            dialog.toggle(index);
+                        }
+                        cx.notify();
+                    }),
+                )
                 .child(
                     div()
                         .size(px(space::M))
@@ -593,18 +586,12 @@ impl Shell {
                     ))
                 })
         };
-        let panel = div()
-            .id("broadcast-dialog")
+        let panel = floating_panel("broadcast-dialog", theme)
             .w(px(theme::DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,

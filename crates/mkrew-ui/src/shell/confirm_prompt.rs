@@ -127,18 +127,12 @@ impl Render for ConfirmPrompt {
                     .into_any_element()
             })
             .collect();
-        let panel = div()
-            .id("confirm-dialog")
+        let panel = floating_panel("confirm-dialog", &theme)
             .w(px(theme::CONFIRM_DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .child(
                 div()
                     .text_size(font_size::CARD_TITLE)
@@ -173,6 +167,6 @@ impl Render for ConfirmPrompt {
             .font_family(theme.ui_font_family.clone())
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
-            .child(panel)
+            .child(super::widgets::appear("confirm-panel", panel, false))
     }
 }

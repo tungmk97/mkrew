@@ -121,9 +121,6 @@ impl Shell {
         }
         if self.picker_host == host {
             overlays.extend(
-                (self.quick_open.as_ref()).map(|open| self.render_quick_open(open, theme, cx)),
-            );
-            overlays.extend(
                 (self.prompt_picker.as_ref())
                     .map(|picker| self.render_prompt_picker(picker, theme, cx)),
             );

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use interprocess::local_socket::tokio::{Listener, Stream, prelude::*};
@@ -179,7 +180,8 @@ impl Daemon {
         }
     }
 
-    /// Requests are answered in order; the first one must be `hello`. Once greeted, the
+    /// The first request must be `hello`. Replies normally follow request order; `fs.search`
+    /// answers from its own task, so match replies by id. Once greeted, the
     /// client also receives every event (`session.state`, `session.exited`, …).
     ///
     /// The read loop is never cancelled (racing a pipe read against events in `select!`
@@ -203,6 +205,35 @@ impl Daemon {
                 let Frame::Message(Message::Request { id, request }) = frame else {
                     anyhow::bail!("client sent a non-request frame");
                 };
+                // A content search runs beside the read loop: the connection's next
+                // `fs.search` has to be read while this one walks, or it could never stop it.
+                // Its reply is sent by its own task, so replies can pass each other (they
+                // carry their request's id).
+                if conn.greeted
+                    && let Request::FsSearch(params) = request
+                {
+                    let mine = conn.search_generation.fetch_add(1, Ordering::SeqCst) + 1;
+                    let generation = Arc::clone(&conn.search_generation);
+                    let started = self.fs_search_start(params, generation, mine).await;
+                    let out = out.clone();
+                    tokio::spawn(async move {
+                        let outcome = match started {
+                            Ok(job) => job.await.unwrap_or_else(|e| {
+                                Outcome::error(
+                                    ErrorCode::Internal,
+                                    format!("fs.search failed: {e}"),
+                                )
+                            }),
+                            Err(outcome) => outcome,
+                        };
+                        if let Ok(bytes) =
+                            encode(&Frame::Message(Message::Response { id, outcome }))
+                        {
+                            let _ = out.send(bytes.into()).await;
+                        }
+                    });
+                    continue;
+                }
                 let (outcome, after) = self.handle(&mut conn, request).await;
                 if conn.greeted && forwarder.is_none() {
                     // Subscribed before the hello reply goes out: no event is missed.
@@ -433,6 +464,8 @@ impl Daemon {
             Request::AiGenerate(params) => (self.ai_generate(params).await, After::Continue),
             Request::GitLog(params) => (self.git_log(params).await, After::Continue),
             Request::GitShow(params) => (self.git_show(params).await, After::Continue),
+            Request::GitBranches(params) => (self.git_branches(params).await, After::Continue),
+            Request::GitCheckout(params) => (self.git_checkout(params).await, After::Continue),
             Request::GitFetch(params) => (self.git_remote(params, false).await, After::Continue),
             Request::GitPush(params) => (self.git_remote(params, true).await, After::Continue),
             Request::FsList(params) => (self.fs_list(params).await, After::Continue),
@@ -1721,6 +1754,16 @@ struct Conn {
     attachments: HashMap<Ulid, Attached>,
     /// Set by `session.attach`; its flusher starts after the reply is queued.
     new_attachment: Option<NewAttachment>,
+    /// Number of the latest `fs.search` read on this connection: a newer one makes the walks
+    /// of older ones stop before they open their next file.
+    search_generation: Arc<AtomicU64>,
+}
+
+impl Drop for Conn {
+    /// A closed connection stops the search it left running.
+    fn drop(&mut self) {
+        self.search_generation.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 struct NewAttachment {

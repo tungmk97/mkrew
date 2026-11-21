@@ -24,6 +24,7 @@ use crate::docs::{Shown, gutter};
 use crate::highlight::{Code, Token};
 use crate::icons::{self, Icon};
 use crate::markdown::{Alert, Align, Block, BlockKind, Item, Row, Run, Style};
+use crate::pressable::{Look, Pressable};
 use crate::preview_select;
 use crate::scrollbar::{self, Source};
 use crate::theme::{self, ActiveTheme, Theme, font_size, radius, space, weight};
@@ -658,7 +659,6 @@ fn list_item(
     let marker = match (item.checked, number) {
         (Some(checked), _) => {
             let check = div()
-                .mt(px(space::XS))
                 .size(px(theme::DOC_TASK_BOX_SIZE))
                 .flex()
                 .items_center()
@@ -677,20 +677,24 @@ fn list_item(
             // The Files preview edits the file: a click ticks the box in the source.
             match pick {
                 Some(_) => {
-                    let (line, accent) = (item.lines.start, theme.accent);
-                    check
+                    let line = item.lines.start;
+                    // The hit target is the box plus XS around it: the hover fill never covers
+                    // the accent fill of a ticked box.
+                    div()
                         .id(("task-box", line as usize))
-                        .cursor_pointer()
-                        .hover(move |style| style.border_color(rgb(accent)))
+                        .p(px(space::XS))
+                        .rounded(px(radius::SMALL))
+                        .pressable(Look::Icon, true, theme)
                         // Not a press on the page (text selection).
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(move |_, window, cx| {
+                        .on_press(true, move |_, window, cx| {
                             cx.stop_propagation();
                             window.dispatch_action(Box::new(ToggleTask(line)), cx);
                         })
+                        .child(check)
                         .into_any_element()
                 }
-                None => check.into_any_element(),
+                None => check.mt(px(space::XS)).into_any_element(),
             }
         }
         (None, Some(number)) => div()
@@ -834,7 +838,6 @@ fn with_copy(element: gpui::Div, text: &str, beside_edit: bool, theme: &Theme) -
     let id = text.as_ptr() as usize;
     let group = SharedString::from(format!("code-{id}"));
     let copied = text.to_owned();
-    let (hover, fg) = (theme.hover, theme.text);
     element.group(group.clone()).relative().child(
         div()
             .id(("code-copy", id))
@@ -850,10 +853,9 @@ fn with_copy(element: gpui::Div, text: &str, beside_edit: bool, theme: &Theme) -
             .bg(rgb(theme.surface))
             .text_size(font_size::META)
             .text_color(rgb(theme.text_muted))
-            .cursor_pointer()
             .opacity(theme::opacity::HIDDEN)
             .group_hover(group, |style| style.opacity(theme::opacity::FULL))
-            .hover(move |style| style.bg(rgb(hover)).text_color(rgb(fg)))
+            .pressable(Look::Raised, true, theme)
             .child(icons::icon_svg(
                 Icon::Copy,
                 theme::ICON_SIZE_SMALL,
@@ -862,7 +864,7 @@ fn with_copy(element: gpui::Div, text: &str, beside_edit: bool, theme: &Theme) -
             .child("Copy")
             // Not a press on the page (text selection) or a pick of the block (Docs).
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, window, cx| {
+            .on_press(true, move |_, window, cx| {
                 cx.stop_propagation();
                 window.dispatch_action(Box::new(CopyCode(copied.clone())), cx);
             }),
@@ -920,7 +922,6 @@ pub struct ExpandDiagram(pub Diagram);
 fn diagram_view(diagram: &Diagram, start: u32, theme: &Theme) -> gpui::Div {
     let group = SharedString::from(format!("diagram-{start}"));
     let expanded = diagram.clone();
-    let (hover, text) = (theme.hover, theme.text);
     div()
         .group(group.clone())
         .relative()
@@ -957,10 +958,9 @@ fn diagram_view(diagram: &Diagram, start: u32, theme: &Theme) -> gpui::Div {
                 .bg(rgb(theme.surface_raised))
                 .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
-                .cursor_pointer()
                 .opacity(theme::opacity::HIDDEN)
                 .group_hover(group, |style| style.opacity(theme::opacity::FULL))
-                .hover(move |style| style.bg(rgb(hover)).text_color(rgb(text)))
+                .pressable(Look::Raised, true, theme)
                 .child(icons::icon_svg(
                     Icon::Maximize2,
                     theme::ICON_SIZE_SMALL,
@@ -969,7 +969,7 @@ fn diagram_view(diagram: &Diagram, start: u32, theme: &Theme) -> gpui::Div {
                 .child("Expand")
                 // Not a press on the page (text selection) or a pick of the block (Docs).
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(move |_, window, cx| {
+                .on_press(true, move |_, window, cx| {
                     cx.stop_propagation();
                     window.dispatch_action(Box::new(ExpandDiagram(expanded.clone())), cx);
                 }),
@@ -1029,22 +1029,23 @@ pub fn source(
     let total = shown.lines.len();
     let (text, muted, selection_bg) = (theme.text, theme.text_muted, theme.terminal_selection_bg);
     let line_height = theme.terminal_font_size * theme.code_line_height;
+    let row_theme = theme.clone();
     uniform_list(id, total, move |range, _, _| {
         range
             .map(|index| {
                 let line = shown.lines.get(index).map(String::as_str).unwrap_or("");
                 let number = u32::try_from(index + 1).unwrap_or(u32::MAX);
                 let on_line = Rc::clone(&on_line);
+                let picked = selected.is_some_and(|s| s.contains(number, number));
                 div()
+                    .id(("src-line", index))
                     .w_full()
                     .h(px(line_height))
                     .flex()
                     .gap(px(space::L))
                     .whitespace_nowrap()
-                    .cursor_pointer()
-                    .when(selected.is_some_and(|s| s.contains(number, number)), |el| {
-                        el.bg(rgb(selection_bg))
-                    })
+                    .when(picked, |el| el.bg(rgb(selection_bg)))
+                    .pressable_unless(picked, Look::Row, &row_theme)
                     .on_mouse_down(
                         MouseButton::Left,
                         move |event: &MouseDownEvent, window, cx| {

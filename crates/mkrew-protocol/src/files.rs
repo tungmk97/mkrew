@@ -574,6 +574,92 @@ pub struct FsMatch {
     pub indices: Vec<u32>,
 }
 
+/// `git.branches`: the repository's local and remote-tracking branches, newest commit first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitBranchesParams {
+    pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
+    /// A direct child folder of the project folder that is its own git repository (ADR 0029);
+    /// `None` = the project folder. Not with `worktree_task_id`.
+    #[serde(default)]
+    pub repo: Option<String>,
+}
+
+/// One `git.branches` row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Branch {
+    /// `main`, or `origin/feature-x` for a remote-tracking branch.
+    pub name: String,
+    pub remote: bool,
+    /// HEAD is on it.
+    pub current: bool,
+    /// The remote-tracking branch a local branch follows (`origin/main`).
+    pub upstream: Option<String>,
+    /// Unix ms of the branch's last commit.
+    pub last_commit_at: i64,
+    /// First line of that commit's message.
+    pub subject: String,
+}
+
+/// `git.checkout`: `git switch <branch>`; a remote-tracking branch with no local namesake
+/// gets a tracking branch (`git switch --track`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitCheckoutParams {
+    pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
+    /// As in [`GitBranchesParams`].
+    #[serde(default)]
+    pub repo: Option<String>,
+    pub branch: String,
+}
+
+/// `fs.search`: the text of the project's files (ripgrep's engine, no index).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsSearchParams {
+    pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
+    pub query: String,
+    /// `false`: the query is plain text. Smart case either way: an all-lowercase query ignores
+    /// case.
+    #[serde(default)]
+    pub regex: bool,
+    /// Hits after which the search stops and sets `truncated`.
+    #[serde(default = "FsSearchParams::default_limit")]
+    pub limit: u32,
+}
+
+impl FsSearchParams {
+    pub const DEFAULT_LIMIT: u32 = 200;
+
+    fn default_limit() -> u32 {
+        Self::DEFAULT_LIMIT
+    }
+}
+
+/// One `fs.search` hit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchHit {
+    /// Relative to the searched folder, `/`-separated.
+    pub path: String,
+    /// 1-based.
+    pub line: u32,
+    /// The matching line, trimmed and cut to 200 characters.
+    pub preview: String,
+    /// Byte ranges (start, end) of the matches in `preview`.
+    pub ranges: Vec<(u32, u32)>,
+}
+
+/// `fs.search` result: hits ordered by path, then line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsSearchResult {
+    pub hits: Vec<SearchHit>,
+    /// More than `limit` hits exist.
+    pub truncated: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,6 +800,17 @@ mod tests {
                 commit: "abc".into(),
             }),
             Request::GitRepos(ProjectRef { project_id }),
+            Request::GitBranches(GitBranchesParams {
+                project_id,
+                worktree_task_id: wt,
+                repo: Some("fe".into()),
+            }),
+            Request::GitCheckout(GitCheckoutParams {
+                project_id,
+                worktree_task_id: None,
+                repo: None,
+                branch: "origin/feature-x".into(),
+            }),
             Request::GitSetBase(GitSetBaseParams {
                 project_id,
                 base_ref: Some("develop".into()),
@@ -753,6 +850,13 @@ mod tests {
                 query: "mai".into(),
                 limit: 20,
             }),
+            Request::FsSearch(FsSearchParams {
+                project_id,
+                worktree_task_id: wt,
+                query: "needle".into(),
+                regex: true,
+                limit: 200,
+            }),
             Request::AiGenerate(AiGenerateParams {
                 generation_id: sid(),
                 project_id: Some(project_id),
@@ -776,6 +880,8 @@ mod tests {
             "git.log",
             "git.show",
             "git.repos",
+            "git.branches",
+            "git.checkout",
             "git.set_base",
             "git.fetch",
             "git.push",
@@ -783,6 +889,7 @@ mod tests {
             "fs.read",
             "fs.write",
             "fs.find",
+            "fs.search",
             "ai.generate",
         ];
         assert_eq!(requests.len(), methods.len());
@@ -846,6 +953,50 @@ mod tests {
         assert_eq!(auto.base_ref, None);
         let missing: GitSetBaseParams = serde_json::from_value(json!({"project_id": id})).unwrap();
         assert_eq!(missing, auto);
+    }
+
+    #[test]
+    fn palette_requests_default_and_keep_their_wire_shapes() {
+        let id = sid().to_string();
+        let branches: GitBranchesParams =
+            serde_json::from_value(json!({"project_id": id})).unwrap();
+        assert_eq!((branches.worktree_task_id, branches.repo), (None, None));
+        let checkout: GitCheckoutParams =
+            serde_json::from_value(json!({"project_id": id, "branch": "main"})).unwrap();
+        assert_eq!((checkout.repo, checkout.branch.as_str()), (None, "main"));
+        let search: FsSearchParams =
+            serde_json::from_value(json!({"project_id": id, "query": "x"})).unwrap();
+        assert_eq!(
+            (search.regex, search.limit, search.worktree_task_id),
+            (false, 200, None)
+        );
+
+        let result = FsSearchResult {
+            hits: vec![SearchHit {
+                path: "src/a.rs".into(),
+                line: 3,
+                preview: "let x = 1;".into(),
+                ranges: vec![(4, 5)],
+            }],
+            truncated: true,
+        };
+        assert_eq!(
+            serde_json::to_value(&result).unwrap(),
+            json!({
+                "hits": [{"path": "src/a.rs", "line": 3, "preview": "let x = 1;", "ranges": [[4, 5]]}],
+                "truncated": true
+            })
+        );
+        let branch = Branch {
+            name: "origin/x".into(),
+            remote: true,
+            current: false,
+            upstream: None,
+            last_commit_at: 1_700_000_000_000,
+            subject: "fix".into(),
+        };
+        let back: Branch = serde_json::from_value(serde_json::to_value(&branch).unwrap()).unwrap();
+        assert_eq!(back, branch);
     }
 
     #[test]

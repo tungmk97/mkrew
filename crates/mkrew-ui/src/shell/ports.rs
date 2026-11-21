@@ -166,7 +166,6 @@ impl Shell {
         let Some(dialog) = &self.ports_dialog else {
             return div().into_any_element();
         };
-        let hover = theme.hover;
         let mut list = div()
             .id("ports-list")
             .flex()
@@ -200,12 +199,15 @@ impl Shell {
                         .rounded(px(radius::SMALL))
                         .text_size(font_size::BODY)
                         .when(selected, |el| el.bg(rgb(theme.surface_raised)))
-                        .when(!selected && clickable, |el| {
-                            el.cursor_pointer().hover(move |style| style.bg(rgb(hover)))
+                        .when(clickable, |el| {
+                            el.pressable_unless(selected, Look::Row, theme)
                         })
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.go_to_port(&go, window, cx);
-                        }))
+                        .on_press(
+                            clickable,
+                            cx.listener(move |shell, _, window, cx| {
+                                shell.go_to_port(&go, window, cx);
+                            }),
+                        )
                         .child(
                             div()
                                 .w(px(space::XXL * 2.0))
@@ -237,14 +239,16 @@ impl Shell {
                                 .id(SharedString::from(format!("port-stop-{index}")))
                                 .px(px(space::XS))
                                 .rounded(px(radius::SMALL))
-                                .cursor_pointer()
                                 .text_color(rgb(theme.danger_text))
-                                .hover(|style| style.bg(rgb(theme.danger_bg)))
+                                .pressable(Look::Raised, true, theme)
                                 .tooltip(tooltip(theme, "Stop", "Delete"))
-                                .on_click(cx.listener(move |shell, _, window, cx| {
-                                    cx.stop_propagation();
-                                    shell.ask_port_stop(stop.clone(), window, cx);
-                                }))
+                                .on_press(
+                                    true,
+                                    cx.listener(move |shell, _, window, cx| {
+                                        cx.stop_propagation();
+                                        shell.ask_port_stop(stop.clone(), window, cx);
+                                    }),
+                                )
                                 .child("■"),
                         ),
                 );
@@ -311,18 +315,12 @@ impl Shell {
                     .on_click(cx.listener(|shell, _, window, cx| shell.close_ports(window, cx))),
             ),
         };
-        let panel = div()
-            .id("ports-dialog")
+        let panel = floating_panel("ports-dialog", theme)
             .w(px(theme::PORTS_DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,

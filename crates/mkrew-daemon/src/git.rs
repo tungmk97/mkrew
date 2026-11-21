@@ -1,6 +1,7 @@
 //! Git access behind a trait (SPEC §12B), so a `gix` backend can replace the CLI later.
 //! Only [`GitBackend::fetch`] and [`GitBackend::push`] touch the network.
 
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -154,6 +155,15 @@ pub trait GitBackend: Send + Sync {
     /// `git branch -d <branch>` (never `-D`); `false` when git keeps it (not merged). A branch
     /// that no longer exists counts as deleted.
     fn delete_branch(&self, dir: &Path, branch: &str) -> io::Result<bool>;
+
+    /// The branches under `refs/heads` and `refs/remotes`, newest commit first.
+    /// `refs/remotes/<remote>/HEAD` and a remote branch whose short name a local branch has
+    /// are left out.
+    fn branches(&self, dir: &Path) -> io::Result<Vec<mkrew_protocol::Branch>>;
+
+    /// `git switch <branch>`, with `--track` for a remote-tracking branch that has no local
+    /// namesake. An error carries git's stderr as is.
+    fn checkout(&self, dir: &Path, branch: &str) -> io::Result<()>;
 }
 
 /// Result of [`GitBackend::merge`].
@@ -759,6 +769,45 @@ impl GitBackend for GitCli {
         }
         Ok(output.status.success())
     }
+
+    fn branches(&self, dir: &Path) -> io::Result<Vec<mkrew_protocol::Branch>> {
+        let mut command = view_git(dir);
+        // The full ref name, because `refname:short` of `origin/HEAD` is just `origin`.
+        // `%00` separates the fields; a subject never holds a NUL.
+        command.args([
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname)%00%(HEAD)%00%(upstream:short)%00%(committerdate:unix)%00%(subject)",
+            "refs/heads",
+            "refs/remotes",
+        ]);
+        Ok(parse_branches(&text(run(command)?)))
+    }
+
+    fn checkout(&self, dir: &Path, branch: &str) -> io::Result<()> {
+        let has = |namespace: &str| -> io::Result<bool> {
+            Ok(view_git(dir)
+                .args(["show-ref", "--verify", "--quiet"])
+                .arg(format!("refs/{namespace}/{branch}"))
+                .status()?
+                .success())
+        };
+        let mut command = git(dir);
+        command.arg("switch");
+        // Local names may hold `/`, so `origin/x` is a remote-tracking branch only when no
+        // local branch has that name.
+        if !has("heads")? && has("remotes")? {
+            command.arg("--track");
+        }
+        command.arg(branch);
+        let output = command.stderr(Stdio::piped()).output()?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(io::Error::other(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ))
+    }
 }
 
 fn nul_joined(paths: &[String]) -> Vec<u8> {
@@ -932,6 +981,56 @@ fn nul_separated(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// The rows of the `for-each-ref` format of [`GitBackend::branches`], in their order.
+fn parse_branches(text: &str) -> Vec<mkrew_protocol::Branch> {
+    struct Row<'a> {
+        full: &'a str,
+        current: bool,
+        upstream: &'a str,
+        at: i64,
+        subject: &'a str,
+    }
+    let rows: Vec<Row<'_>> = text
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(5, '\0');
+            Some(Row {
+                full: fields.next()?,
+                current: fields.next()? == "*",
+                upstream: fields.next()?,
+                at: fields.next()?.parse().unwrap_or(0),
+                subject: fields.next()?,
+            })
+        })
+        .collect();
+    let local: HashSet<&str> = rows
+        .iter()
+        .filter_map(|row| row.full.strip_prefix("refs/heads/"))
+        .collect();
+    rows.iter()
+        .filter_map(|row| {
+            let (name, remote) = match row.full.strip_prefix("refs/heads/") {
+                Some(name) => (name, false),
+                None => (row.full.strip_prefix("refs/remotes/")?, true),
+            };
+            if remote {
+                let (_, short) = name.split_once('/')?;
+                if short == "HEAD" || local.contains(short) {
+                    return None;
+                }
+            }
+            Some(mkrew_protocol::Branch {
+                name: name.to_owned(),
+                remote,
+                current: row.current,
+                upstream: (!row.upstream.is_empty()).then(|| row.upstream.to_owned()),
+                last_commit_at: row.at.saturating_mul(1000),
+                subject: row.subject.to_owned(),
+            })
+        })
+        .collect()
+}
+
 /// Git's output as text without copying it when it is UTF-8 (diffs can be hundreds of MB).
 fn text(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
@@ -971,6 +1070,127 @@ mod tests {
             .unwrap();
         assert!(output.status.success(), "git {args:?} failed");
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// `git commit` of the index with both dates fixed, so branch order does not depend on
+    /// the clock.
+    fn commit_at(dir: &Path, args: &[&str], when: &str) {
+        let output = git(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false", "commit", "-q"])
+            .args(args)
+            .env("GIT_AUTHOR_DATE", when)
+            .env("GIT_COMMITTER_DATE", when)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git commit {args:?} failed");
+    }
+
+    #[test]
+    fn branch_rows_drop_remote_head_and_remote_namesakes() {
+        let text = "refs/heads/topic\x00\x00origin/topic\x00200\x00topic work\n\
+                    refs/remotes/origin/topic\x00\x00\x00200\x00topic work\n\
+                    refs/remotes/origin/HEAD\x00\x00\x00100\x00one\n\
+                    refs/remotes/origin/only-remote\x00\x00\x00150\x00remote work\n\
+                    refs/heads/main\x00*\x00origin/main\x00100\x00one\n\
+                    refs/remotes/origin/main\x00\x00\x00100\x00one\n";
+        let rows: Vec<_> = parse_branches(text)
+            .into_iter()
+            .map(|b| (b.name, b.remote, b.current, b.upstream, b.last_commit_at))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "topic".to_owned(),
+                    false,
+                    false,
+                    Some("origin/topic".to_owned()),
+                    200_000
+                ),
+                ("origin/only-remote".to_owned(), true, false, None, 150_000),
+                (
+                    "main".to_owned(),
+                    false,
+                    true,
+                    Some("origin/main".to_owned()),
+                    100_000
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn branches_lists_newest_first_and_checkout_switches_or_tracks() {
+        let origin = tempfile::tempdir().unwrap();
+        run(origin.path(), &["init", "-q", "--bare"]);
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        run(repo, &["init", "-q", "-b", "main"]);
+        run(repo, &["config", "core.autocrlf", "false"]);
+        std::fs::write(repo.join("a.txt"), "main\n").unwrap();
+        run(repo, &["add", "."]);
+        commit_at(repo, &["-m", "one"], "2026-01-01T00:00:00Z");
+        run(
+            repo,
+            &["remote", "add", "origin", &origin.path().to_string_lossy()],
+        );
+        run(repo, &["push", "-q", "origin", "main"]);
+        run(repo, &["checkout", "-q", "-b", "remote-only"]);
+        commit_at(
+            repo,
+            &["--allow-empty", "-m", "remote work"],
+            "2026-02-01T00:00:00Z",
+        );
+        run(repo, &["push", "-q", "origin", "remote-only"]);
+        run(repo, &["checkout", "-q", "main"]);
+        run(repo, &["branch", "-D", "remote-only"]);
+        run(repo, &["checkout", "-q", "-b", "topic"]);
+        std::fs::write(repo.join("a.txt"), "topic\n").unwrap();
+        commit_at(repo, &["-a", "-m", "topic work"], "2026-03-01T00:00:00Z");
+        run(repo, &["push", "-q", "origin", "topic"]);
+        run(repo, &["checkout", "-q", "main"]);
+        run(
+            repo,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
+
+        let branches = GitCli.branches(repo).unwrap();
+        let names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
+        // origin/HEAD, origin/main and origin/topic are left out.
+        assert_eq!(names, ["topic", "origin/remote-only", "main"]);
+        let current: Vec<bool> = branches.iter().map(|b| b.current).collect();
+        assert_eq!(current, [false, false, true]);
+        assert_eq!(branches[0].subject, "topic work");
+        // 2026-03-01T00:00:00Z.
+        assert_eq!(branches[0].last_commit_at, 1_772_323_200_000);
+        assert!(branches[1].remote && !branches[0].remote);
+
+        GitCli.checkout(repo, "topic").unwrap();
+        assert_eq!(run(repo, &["rev-parse", "--abbrev-ref", "HEAD"]), "topic");
+        // A remote-tracking branch with no local namesake gets a tracking branch.
+        GitCli.checkout(repo, "origin/remote-only").unwrap();
+        assert_eq!(
+            run(repo, &["rev-parse", "--abbrev-ref", "HEAD"]),
+            "remote-only"
+        );
+        assert_eq!(
+            run(repo, &["config", "branch.remote-only.remote"]),
+            "origin"
+        );
+
+        // Git's own words come back, with nothing in front of them.
+        GitCli.checkout(repo, "main").unwrap();
+        std::fs::write(repo.join("a.txt"), "dirty\n").unwrap();
+        let refused = GitCli.checkout(repo, "topic").unwrap_err().to_string();
+        assert!(refused.contains("a.txt"), "{refused}");
+        assert!(!refused.starts_with("git failed"), "{refused}");
+        let missing = GitCli.checkout(repo, "nope").unwrap_err().to_string();
+        assert!(missing.contains("nope"), "{missing}");
     }
 
     #[test]

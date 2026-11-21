@@ -330,7 +330,6 @@ impl Shell {
         } else {
             summary.tooltip()
         };
-        let hover = theme.hover;
         let fg = if live {
             theme.run_pill_text
         } else {
@@ -351,7 +350,6 @@ impl Shell {
             .px(px(space::M))
             .rounded(px(radius::MEDIUM))
             .border(px(theme::BORDER_WIDTH))
-            .cursor_pointer()
             .whitespace_nowrap()
             .text_size(font_size::BODY)
             .text_color(rgb(fg))
@@ -359,18 +357,20 @@ impl Shell {
                 el.bg(rgb(theme.run_pill_bg))
                     .border_color(rgb(theme.run_pill_border))
                     .font_weight(FontWeight(weight::MEDIUM))
-                    .hover(|style| style.opacity(opacity::HOVER))
+                    .pressable(Look::Text, true, theme)
             })
             .when(!live, |el| {
                 el.border_color(rgb(theme.control_border))
-                    .hover(move |style| style.bg(rgb(hover)))
+                    .pressable(Look::Chip, true, theme)
             })
-            .active(|style| style.opacity(opacity::ACTIVE))
             .tooltip(tooltip(theme, &tip, ""))
             // An open menu already closed on this mouse down (outside it): the click reopens it.
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.open_run_menu(project_id, window, cx);
-            }))
+            .on_press(
+                true,
+                cx.listener(move |shell, _, window, cx| {
+                    shell.open_run_menu(project_id, window, cx);
+                }),
+            )
             // ponytail: a steady dot, not a pulse: a pulse re-renders the window for as long as
             // a dev server runs (hours), against the idle CPU budget (SPEC §15).
             .when(live, |el| el.child(status_dot(dot, false)))
@@ -638,7 +638,6 @@ impl Shell {
                      checked: bool,
                      focused: bool,
                      tip: &'static str| {
-            let hover = theme.surface_raised;
             div()
                 .id(id)
                 .flex()
@@ -650,11 +649,9 @@ impl Shell {
                 .border(px(theme::BORDER_WIDTH))
                 .border_color(gpui::transparent_black())
                 .when(focused, |el| el.border_color(rgb(theme.pane_focus_border)))
-                .cursor_pointer()
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text))
-                .hover(move |style| style.bg(rgb(hover)))
-                .active(|style| style.opacity(opacity::ACTIVE))
+                .pressable(Look::Row, true, theme)
                 .tooltip(tooltip(theme, tip, "Space"))
                 .child(
                     div()
@@ -782,21 +779,21 @@ impl Shell {
                 // Folded: number, name, the command and its folder; a click opens it.
                 let command = card.command.as_str().trim();
                 let dir = card.dir.as_str().trim();
-                let hover = theme.hover;
                 cards = cards.child(
                     frame
                         .px(px(space::M))
                         .py(px(space::S))
-                        .cursor_pointer()
-                        .hover(move |style| style.bg(rgb(hover)))
-                        .active(|style| style.opacity(opacity::ACTIVE))
-                        .on_click(cx.listener(move |shell, _, _, cx| {
-                            if let Some(setup) = shell.run_setup.as_mut() {
-                                setup.set_focus(Focus::Field(i, Field::Command));
-                                shell.reveal_run_card();
-                            }
-                            cx.notify();
-                        }))
+                        .pressable(Look::Chip, true, theme)
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, _, cx| {
+                                if let Some(setup) = shell.run_setup.as_mut() {
+                                    setup.set_focus(Focus::Field(i, Field::Command));
+                                    shell.reveal_run_card();
+                                }
+                                cx.notify();
+                            }),
+                        )
                         .child(
                             div()
                                 .flex()
@@ -864,15 +861,18 @@ impl Shell {
                 setup.focus == Focus::Exit(i) && text_focused,
                 "Off: the shell stays open after the command, showing its output",
             )
-            .on_click(cx.listener(move |shell, _, _, cx| {
-                if let Some(setup) = shell.run_setup.as_mut()
-                    && let Some(card) = setup.cards.get_mut(i)
-                {
-                    card.exit_after = !card.exit_after;
-                    setup.set_focus(Focus::Exit(i));
-                }
-                cx.notify();
-            }));
+            .on_press(
+                true,
+                cx.listener(move |shell, _, _, cx| {
+                    if let Some(setup) = shell.run_setup.as_mut()
+                        && let Some(card) = setup.cards.get_mut(i)
+                    {
+                        card.exit_after = !card.exit_after;
+                        setup.set_focus(Focus::Exit(i));
+                    }
+                    cx.notify();
+                }),
+            );
             cards = cards.child(
                 frame
                     .gap(px(space::M))
@@ -910,7 +910,6 @@ impl Shell {
                     .child(exit),
             );
         }
-        let add_hover = theme.hover;
         cards = cards.child(
             div()
                 .id("run-add")
@@ -922,19 +921,20 @@ impl Shell {
                 .rounded(px(radius::MEDIUM))
                 .border(px(theme::BORDER_WIDTH))
                 .border_color(rgb(theme.border))
-                .cursor_pointer()
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
-                .hover(move |style| style.bg(rgb(add_hover)))
-                .active(|style| style.opacity(opacity::ACTIVE))
+                .pressable(Look::Chip, true, theme)
                 .child(icon_text(Icon::Plus, "Add command", theme.text_muted))
-                .on_click(cx.listener(|shell, _, _, cx| {
-                    if let Some(setup) = shell.run_setup.as_mut() {
-                        setup.add_card();
-                        shell.reveal_run_card();
-                    }
-                    cx.notify();
-                }))
+                .on_press(
+                    true,
+                    cx.listener(|shell, _, _, cx| {
+                        if let Some(setup) = shell.run_setup.as_mut() {
+                            setup.add_card();
+                            shell.reveal_run_card();
+                        }
+                        cx.notify();
+                    }),
+                )
                 .focusable_bordered(theme),
         );
         let workspace = (self.sidebar.projects().iter())
@@ -955,26 +955,23 @@ impl Shell {
             setup.focus == Focus::Autostart && text_focused,
             "Start the run commands when the daemon starts",
         )
-        .on_click(cx.listener(|shell, _, _, cx| {
-            if let Some(setup) = shell.run_setup.as_mut() {
-                setup.autostart = !setup.autostart;
-            }
-            cx.notify();
-        }));
+        .on_press(
+            true,
+            cx.listener(|shell, _, _, cx| {
+                if let Some(setup) = shell.run_setup.as_mut() {
+                    setup.autostart = !setup.autostart;
+                }
+                cx.notify();
+            }),
+        );
         let max_height = (window.viewport_size().height - px(space::XXL * 2.0)).max(px(0.0));
-        let panel = div()
-            .id("run-setup")
+        let panel = floating_panel("run-setup", theme)
             .w(px(theme::RUN_SETUP_WIDTH))
             .max_h(max_height)
             .flex()
             .flex_col()
             .gap(px(space::L))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
@@ -1084,7 +1081,6 @@ impl Shell {
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
-        let hover = theme.surface_raised;
         let mut list = div()
             .id("run-picker-list")
             .flex()
@@ -1113,13 +1109,11 @@ impl Shell {
                     .px(px(space::S))
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
-                    .cursor_pointer()
                     .text_size(font_size::BODY)
-                    .hover(move |style| style.bg(rgb(hover)))
                     .when(picker.cursor == Some(index), |el| {
                         el.bg(rgb(theme.surface_raised))
                     })
-                    .active(|style| style.opacity(opacity::ACTIVE))
+                    .pressable_unless(picker.cursor == Some(index), Look::Row, theme)
                     .child(
                         div()
                             .flex_none()
@@ -1146,18 +1140,21 @@ impl Shell {
                             }))
                             .child(entry.name.clone()),
                     )
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        let Some(setup) = shell.run_setup.as_mut() else {
-                            return;
-                        };
-                        if is_dir {
-                            let dir = setup.browse(path.clone());
-                            shell.list_run_picker(dir, window, cx);
-                        } else {
-                            setup.pick(Some(&path));
-                            cx.notify();
-                        }
-                    }))
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, _, window, cx| {
+                            let Some(setup) = shell.run_setup.as_mut() else {
+                                return;
+                            };
+                            if is_dir {
+                                let dir = setup.browse(path.clone());
+                                shell.list_run_picker(dir, window, cx);
+                            } else {
+                                setup.pick(Some(&path));
+                                cx.notify();
+                            }
+                        }),
+                    )
             })),
         };
         let up = if picker.at_root() {
@@ -1186,18 +1183,12 @@ impl Shell {
         } else {
             picker.dir.clone()
         };
-        let panel = div()
-            .id("run-picker")
+        let panel = floating_panel("run-picker", theme)
             .w(px(theme::RUN_SETUP_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,

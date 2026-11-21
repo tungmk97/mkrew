@@ -21,7 +21,6 @@ impl Shell {
             || self.history.is_some()
             || self.doc_dialog.is_some()
             || self.diagram_dialog.is_some()
-            || self.quick_open.is_some()
             || self.palette.is_some()
             || self.prompt_picker.is_some()
             || self.slash_picker.is_some()
@@ -29,9 +28,9 @@ impl Shell {
             || self.settings_dialog.is_some()
     }
 
-    /// The `/` picker, the prompt picker or the `@` quick open is open.
+    /// The `/` picker, the prompt picker or the `@` file picker is open.
     pub(crate) fn picker_open(&self) -> bool {
-        self.quick_open.is_some() || self.prompt_picker.is_some() || self.slash_picker.is_some()
+        self.prompt_picker.is_some() || self.slash_picker.is_some()
     }
 
     /// The window that draws the open palette or picker (they can open in a detached window).
@@ -46,8 +45,7 @@ impl Shell {
     /// A picker or dialog is painted over the task dialog: its Prompt box takes no OS file
     /// drop (the capture-phase drag listeners ignore the cover's occlusion).
     pub(crate) fn prompt_box_covered(&self) -> bool {
-        self.quick_open.is_some()
-            || self.prompt_picker.is_some()
+        self.prompt_picker.is_some()
             || self.slash_picker.is_some()
             || self.palette.is_some()
             || self.settings_dialog.is_some()
@@ -395,12 +393,34 @@ impl Shell {
         panel: impl IntoElement,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        Self::shade(id, panel, None, cx)
+    }
+
+    /// [`Self::modal_shade`] with the panel anchored `top` px below the window's top edge
+    /// (still centered horizontally), so its top stays put while its height changes.
+    pub(crate) fn modal_shade_top(
+        id: &'static str,
+        panel: impl IntoElement,
+        top: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        Self::shade(id, panel, Some(top), cx)
+    }
+
+    /// The shared scrim; the panel is vertically centered unless `top` anchors it.
+    fn shade(
+        id: &'static str,
+        panel: impl IntoElement,
+        top: Option<f32>,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
         div()
             .id(id)
             .absolute()
             .inset_0()
             .flex()
-            .items_center()
+            .when_some(top, |el, top| el.items_start().pt(px(top)))
+            .when(top.is_none(), |el| el.items_center())
             .justify_center()
             .bg(gpui::rgba(cx.theme().scrim))
             .occlude()
@@ -412,7 +432,7 @@ impl Shell {
                     shell.focus_pane(window, cx);
                 }),
             )
-            .child(panel)
+            .child(super::widgets::appear(id, panel, top.is_some()))
             .into_any_element()
     }
 }

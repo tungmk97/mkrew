@@ -35,57 +35,24 @@
   Checked free on 2026-11-21: `keymap.rs` `default_keys` has no `ctrl-alt-shift-*` binding and the keymap tests only use `ctrl-alt-shift-y`.
 - Versions on crates.io on 2026-11-21 (`cargo search`, API `dependencies`): `grep-searcher` 0.1.17, `grep-regex` 0.1.14, `grep-matcher` 0.1.9, all edition 2024 without a `rust-version`; they need `bstr ^1.6.2`, `encoding_rs ^0.8.33`, `memchr ^2.6.3`, `regex-automata ^0.4`, `regex-syntax ^0.8` (the workspace `Cargo.lock` has bstr 1.13.1, encoding_rs 0.8.42, memchr 2.8.3, regex-automata 0.4.18, regex-syntax 0.8.11), plus `encoding_rs_io`, `memmap2` and `log`, which are new to the tree.
 
-## Spec gaps and deviations found while planning (the parent should fix the spec)
+## Spec details this plan adds (the spec is silent or looser)
 
-1. **Section 8.3, cancellation cannot work as written.**
-   `Daemon::connection` awaits `handle(..)` for every request before it decodes the next frame ("Requests are answered in order"), so a second `fs.search` is never read while the first walks.
-   The plan runs `fs.search` beside the read loop (Task 5): the loop bumps the connection's generation when it reads the request, resolves the target, starts the walk on a blocking thread and answers from a spawned task.
-   Replies of one connection can therefore arrive out of order; the UI `Connection` matches replies by id, `mk` never sends `fs.search`.
-   An older search that was replaced answers `invalid_state` ("fs.search was replaced by a newer search").
-2. **Section 8.3, third dependency.**
-   Match ranges need `grep_matcher::Matcher::find_iter`, and `grep-regex` does not re-export that trait, so `grep-matcher` is a third direct dependency (same project, same version line).
-3. **Section 8.3, "hidden files skipped as `fs.find` does".**
-   `fs.find` does not skip hidden files: `files::walker` calls `.hidden(false)`, which keeps them (only `.git`, `node_modules` and `target` are never entered).
-   The plan reuses `files::walker`, so Search sees exactly the files Files lists.
-4. **Section 7.1, `Row` versus `Entry`.**
-   `Row` borrows an `Entry`, so `detail`, `age` and the daemon highlight ranges (`marks`) live on `Entry`; `Row` exposes `section`, `detail` and `age` as the spec says.
+1. **Section 7.1, `Row` versus `Entry`.**
+   `Row` borrows an `Entry`, so `detail`, `age` and the daemon highlight ranges (`marks`) live on `Entry`; `Row` exposes `section`, `detail` and `age` as `&str` borrows.
    `section` is derived from the action (`Action::scope()`), not stored.
-5. **Section 7.1, `Action` loses `Copy`.**
-   `OpenFile { path: String }` and the other new variants hold strings; `Action` derives `Clone` instead, `Palette::picked()` clones.
-6. **Section 7.1, "`palette::fuzzy` and `palette::filter` stay".**
-   There is no public `filter`; it is the private `Palette::filter`, which becomes `Palette::layout`.
-7. **Section 7.2, debounce values are not tokens.**
-   They become `theme::PALETTE_FILES_DELAY` (80 ms) and `theme::PALETTE_SEARCH_DELAY` (150 ms).
-   The Files call carries no delay while the query is empty (opening Files must not wait).
-8. **Section 7.3, "the recently run commands".**
-   No such store exists today.
-   The shell keeps `palette_recent` (the last `PALETTE_GROUP_LIMIT` `Action::Run` picks, newest first, UI memory only, lost on restart).
-9. **Sections 7.2 and 7.3 disagree about Loading rows in All.**
-   7.2 says a waiting scope shows a "Loading..." row in its section; 7.3 says Branches and Commits join All only once loaded.
-   The plan follows both: the Loading row and a failure row show in the scope's own tab (and Files in All shows Loading only while it has no rows); in All, Branches and Commits appear only when `Ready`.
-10. **Section 7.2, repo and worktree.**
-    The daemon refuses `repo` together with `worktree_task_id` (ADR 0029).
-    `Source::new` drops the repo when a worktree is shown.
-11. **Section 7.6, `ShowCommit` for a commit older than the History's 50.**
-    The History's `git.log` asks for 50 commits and moves the selection to the first one when the picked commit is not listed.
-    `GitView::show_commit` raises the log to `palette::COMMIT_LIMIT` (500, the palette's own length) until the History is left (Task 9).
-12. **Section 7.6, "if a live agent session runs in that folder".**
-    `Session` has no folder.
-    The plan counts live agent sessions of the project whose task has no worktree of its own (project folder) or whose `task_id` is the shown worktree's task (`palette::agents_in_folder`).
-    Uncommitted changes of a task worktree are not known to the title bar summary; no question is asked there (git refuses an unsafe switch itself; marked `ponytail:`).
-13. **Section 8.2, "Git's stderr is returned unchanged".**
-    The error code is `invalid_state` and the message is git's trimmed stderr with no prefix (`GitCli::checkout` builds the `io::Error` from it).
-    A success broadcasts `git.changed`.
-    A remote branch is told from a local one by `refs/heads/<branch>` / `refs/remotes/<branch>`, since local names may contain `/`.
-14. **Section 8.3 params.**
-    The spec lists no serde defaults; the plan adds `#[serde(default)]` to `worktree_task_id` and `regex` and a default `limit` of 200, like `fs.find`.
-    The UI never sends `regex: true` (the spec has no toggle).
-15. **Section 7.7, callers of `QUICK_OPEN_LIST_HEIGHT`.**
-    The `/` picker (`slash.rs`) and the prompt picker (`composer.rs`) also use it; they move to `PALETTE_LIST_HEIGHT` (480 instead of 360).
-16. **Section 7.1, session state.**
-    The state of a session row ("working", "needs input") moves from `shortcut` to `detail`; the right-hand `shortcut` is now key caps only (the flat theme picker keeps muted text there).
-17. **Section 11, testing the shell.**
-    There is no headless harness for `Shell` (it needs a GPUI window): "Ctrl+Shift+O opens Files" and "Esc on `@` types the `@`" are pinned at the model level (`Palette::scoped(.., Scope::Files, ..)`, `Palette::insert_into`) and by `docs/HUMAN_CHECKS.md`.
+2. **Section 7.2, repo and worktree.**
+   The daemon refuses `repo` together with `worktree_task_id` (ADR 0029).
+   `Source::new` drops the repo when a worktree is shown.
+3. **Section 7.6, `ShowCommit` for a commit older than the History's 50.**
+   The History's `git.log` asks for 50 commits and moves the selection to the first one when the picked commit is not listed.
+   `GitView::show_commit` raises the log to `palette::COMMIT_LIMIT` (500, the palette's own length) until the History is left (Task 9).
+4. **Section 8.2, error code and remote branches.**
+   The error code is `invalid_state` and the message is git's trimmed stderr with no prefix (`GitCli::checkout` builds the `io::Error` from it).
+   A success broadcasts `git.changed`.
+   A remote branch is told from a local one by `refs/heads/<branch>` / `refs/remotes/<branch>`, since local names may contain `/`.
+   The UI never sends `regex: true` (the spec has no toggle).
+5. **Section 7.7, callers of `QUICK_OPEN_LIST_HEIGHT`.**
+   The `/` picker (`slash.rs`) and the prompt picker (`composer.rs`) also use it; they move to `PALETTE_LIST_HEIGHT` (480 instead of 360).
 
 ## Review Focus
 
@@ -365,7 +332,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(protocol): git.branches, g
 ### Task 2: `GitBackend::branches` and `checkout`
 
 **Files:**
-- Modify: `crates/mkrew-daemon/src/git.rs` (imports line 4-8, trait after `delete_branch` at line 156, `impl GitBackend for GitCli` after `delete_branch` at line 761, a free fn near `nul_separated` at line 927, tests in `mod tests`)
+- Modify: `crates/mkrew-daemon/src/git.rs` (imports line 4-8, trait after `delete_branch` at line 156, `impl GitBackend for GitCli` after `delete_branch` at line 748, a free fn near `nul_separated` at line 927, tests in `mod tests`)
 - Modify: `crates/mkrew-daemon/src/undo.rs` (test stub `BigDiff`, after the `worktree_add` stub at line 332)
 
 **Interfaces:**
@@ -615,7 +582,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(daemon): GitBackend branch
 ### Task 3: `git.branches` and `git.checkout` handlers
 
 **Files:**
-- Modify: `crates/mkrew-daemon/src/server/git.rs:7-12` (imports) and after `git_show` (line 429)
+- Modify: `crates/mkrew-daemon/src/server/git.rs:7-12` (imports) and after `git_show` (line 404)
 - Modify: `crates/mkrew-daemon/src/server.rs` (dispatch, after the `GitShow` arm at line 435)
 - Modify: `crates/mkrew-daemon/tests/daemon/main.rs:14-41` (imports)
 - Modify: `crates/mkrew-daemon/tests/daemon/git.rs` (append a test)
@@ -626,7 +593,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(daemon): GitBackend branch
 
 - [ ] **Step 1: Write the failing test**
 
-In `tests/daemon/main.rs` add `Branch`, `FsSearchParams`, `FsSearchResult`, `GitBranchesParams` and `GitCheckoutParams` to the `use mkrew_protocol::{ .. }` list (Task 5 uses the two `Fs` ones).
+In `tests/daemon/main.rs` add `Branch`, `GitBranchesParams` and `GitCheckoutParams` to the `use mkrew_protocol::{ .. }` list (Task 5 adds `FsSearchParams` and `FsSearchResult`: a name imported before its first use is an `unused_imports` warning in the test target).
 Append to `tests/daemon/git.rs`:
 
 ```rust
@@ -859,6 +826,8 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(daemon): git.branches and 
 - Consumes: `files::{walker, relative, has_nul}`, `docs::MAX_BYTES` (2 MiB, `u64`), `mkrew_protocol::{FsSearchResult, SearchHit}`.
 - Produces: `search::search(root: &Path, query: &str, regex: bool, limit: usize, generation: &AtomicU64, mine: u64) -> Result<FsSearchResult, search::Error>` and `search::Error::{Pattern(String), Cancelled}` (`thiserror`).
   The walk is parallel and stops (`Err(Error::Cancelled)`) as soon as `generation` no longer holds `mine`.
+  Tasks 4 and 5 go to one implementer back to back (two commits, no clippy gate between): until Task 5 calls `search::search`, the Task 4 commit has `dead_code` warnings only, and the clippy gate runs after Task 5.
+  The first build of this task needs the network (`grep-searcher`, `grep-regex`, `grep-matcher` and `encoding_rs_io` are not in `Cargo.lock` or the local registry); the tests do not.
 
 - [ ] **Step 1: Add the dependencies and write the failing tests**
 
@@ -1169,7 +1138,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(daemon): content search on
 **Files:**
 - Modify: `crates/mkrew-daemon/src/server.rs` (imports line 6-7, the read loop at lines 202-206, `Conn` at line 1717)
 - Modify: `crates/mkrew-daemon/src/server/fs.rs` (imports lines 5-20, new method after `fs_find` at line 235)
-- Modify: `crates/mkrew-daemon/tests/daemon/main.rs` (two `Client` helpers after `call`, line 287)
+- Modify: `crates/mkrew-daemon/tests/daemon/main.rs` (imports lines 14-41: add `FsSearchParams`, `FsSearchResult`; two `Client` helpers after `call`, line 287)
 - Modify: `crates/mkrew-daemon/tests/daemon/fs_ai.rs` (append a test)
 
 **Interfaces:**
@@ -1398,6 +1367,7 @@ with
 
 Run: `cargo test -p mkrew-daemon --test daemon fs_search_finds_text`
 Expected: PASS. Also `cargo test -p mkrew-daemon --test daemon fs_list_read_and_find` (the serial path is unchanged).
+Then the gate for Tasks 4 and 5 together: `cargo clippy -p mkrew-daemon --all-targets -- -D warnings` (clean: `search::search` has its caller now).
 
 - [ ] **Step 5: Commit**
 
@@ -1585,8 +1555,9 @@ git -c user.email=tungnv975@gmail.com commit -m "refactor(ui): move the picker k
 ### Task 7a: Scope, the new actions, `Entry` and `Row`
 
 **Files:**
-- Modify: `crates/mkrew-ui/src/palette.rs` (`Action` line 323-340, `Entry` and `Row` lines 359-374, nine `Entry { .. }` literals, `entries` lines 719-796, `Palette::rows`)
+- Modify: `crates/mkrew-ui/src/palette.rs` (`Action` line 323-340, `Entry` and `Row` lines 359-374, the `Entry { .. }` literals (nine become `Entry::new`, the tenth, the session row at line 773, is a struct update), `entries` lines 719-796, `Palette::rows`)
 - Modify: `crates/mkrew-ui/src/palette/tests.rs`
+- Modify: `crates/mkrew-ui/src/shell/navigation.rs` (`run_palette_pick`: one temporary arm, see Step 3)
 
 **Interfaces:**
 - Produces:
@@ -1595,6 +1566,7 @@ git -c user.email=tungnv975@gmail.com commit -m "refactor(ui): move the picker k
   - `Action` (now `Clone`, no longer `Copy`) gains `OpenFile { path: String }`, `OpenSearchHit { path: String, line: u32 }`, `Checkout { repo: Option<String>, branch: String }`, `ShowCommit { repo: Option<String>, sha: String }` and `fn scope(&self) -> Scope`.
   - `Entry { action, title, shortcut, detail: Option<String>, age: Option<String>, marks: Vec<Range<usize>> }` and `Entry::new(action, title, shortcut)`.
   - `Row<'a> { entry: &'a Entry, ranges: Vec<Range<usize>>, section: Scope, detail: Option<&'a str>, age: Option<&'a str> }`.
+  - `shell/navigation.rs` `run_palette_pick` gets one temporary arm for the four new variants (comment "wired in Task 11"; Task 11 replaces it with the real arms), so the bin and every commit compile: its final `match action` has no `_` arm.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1698,7 +1670,7 @@ fn a_row_carries_its_section_detail_and_age() {
 Also in the existing `go_to_workspaces_live_sessions_and_tasks`: replace the two shortcut asserts (lines 1042 and 1054)
 
 ```rust
-    assert_eq!(working.and_then(|e| e.detail.as_deref()), Some("* working"));
+    assert_eq!(working.and_then(|e| e.detail.as_deref()), Some("● working"));
     assert_eq!(working.map(|e| e.shortcut.as_str()), Some(""));
 ```
 
@@ -1707,6 +1679,33 @@ and
 ```rust
     assert_eq!(all[0].detail.as_deref(), Some("? needs input"));
 ```
+
+The two exhaustive matches over `Action` in `palette/tests.rs` get the four new variants, or the lib tests do not compile.
+In `commands()` (line 101) the `=> None` arm becomes
+
+```rust
+            Action::Extra(_)
+            | Action::GoTo(_)
+            | Action::Theme(_)
+            | Action::NewAgentPane(_)
+            | Action::RunCommand(..)
+            | Action::OpenMachine(_)
+            | Action::OpenFile { .. }
+            | Action::OpenSearchHit { .. }
+            | Action::Checkout { .. }
+            | Action::ShowCommit { .. } => None,
+```
+
+and in the `kinds` map (line 748) add
+
+```rust
+            Action::OpenFile { .. }
+            | Action::OpenSearchHit { .. }
+            | Action::Checkout { .. }
+            | Action::ShowCommit { .. } => 7,
+```
+
+The two `(entry.action, ..)` tuples built over `.iter()` (lines 75 and 1011) need `entry.action.clone()` now that `Action` is not `Copy`.
 
 - [ ] **Step 2: Run to see it fail**
 
@@ -1876,7 +1875,7 @@ pub struct Row<'a> {
 }
 ```
 
-The nine `Entry { .. }` literals of `palette.rs` become `Entry::new`:
+The nine `Entry { .. }` literals of `palette.rs` that have no struct update become `Entry::new`:
 
 ```rust
 // keymap_errors
@@ -1972,15 +1971,26 @@ and in the session branch of `entries()` the state moves from `shortcut` to `det
 `palette.rs` needs `Keystroke` (Task 6 imported it). `picked()` returns `Some(self.entries[*index].action.clone())`.
 Any existing test that uses an `Action` after moving it needs `.clone()`; the compiler lists them.
 
+`shell/navigation.rs`: `run_palette_pick`'s final `match action` has no `_` arm, so the four new variants need one now.
+After the `palette::Action::GoTo(palette::Target::Task { .. }) => { .. }` arm (the last one) add
+
+```rust
+            // Wired in Task 11, which replaces this arm; nothing produces these four before then.
+            palette::Action::OpenFile { .. }
+            | palette::Action::OpenSearchHit { .. }
+            | palette::Action::Checkout { .. }
+            | palette::Action::ShowCommit { .. } => {}
+```
+
 - [ ] **Step 4: Run the tests**
 
 Run: `cargo test -p mkrew-ui palette` and `cargo build -p mkrew-ui --bins`
-Expected: PASS; the bin compiles (`run_palette_pick` matches `action` by value, which still works: its patterns bind `Copy` parts).
+Expected: PASS; the bin compiles (`run_palette_pick` matches `action` by value, which still works: its patterns bind `Copy` parts, and the temporary arm covers the new variants).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/mkrew-ui/src/palette.rs crates/mkrew-ui/src/palette
+git add crates/mkrew-ui/src/palette.rs crates/mkrew-ui/src/palette crates/mkrew-ui/src/shell/navigation.rs
 git -c user.email=tungnv975@gmail.com commit -m "feat(ui): palette scopes, new actions and entry detail"
 ```
 
@@ -1990,7 +2000,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): palette scopes, new a
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/palette.rs` (imports; replace `Palette` and `impl Palette`, lines 855-980; helpers after it)
-- Modify: `crates/mkrew-ui/src/theme.rs` (two debounce tokens after `REHIGHLIGHT_DELAY`, line 290)
+- Modify: `crates/mkrew-ui/src/theme.rs` (two debounce tokens after `REHIGHLIGHT_DELAY`, line 293)
 - Modify: `crates/mkrew-ui/src/palette/tests.rs`
 
 **Interfaces:**
@@ -2335,7 +2345,7 @@ fn commits_are_one_log_of_500_found_by_message_or_hash() {
 }
 
 #[test]
-fn all_lists_branches_and_commits_only_once_they_are_loaded() {
+fn all_lists_a_scope_only_once_it_has_rows_and_never_shows_waits() {
     let mut palette = Palette::scoped(vec![command(0)], Some(source()), Scope::All, vec![]);
     palette.insert("t");
     let asked = palette.wanted();
@@ -2343,15 +2353,27 @@ fn all_lists_branches_and_commits_only_once_they_are_loaded() {
         scopes(&asked),
         [Scope::Files, Scope::Branches, Scope::Commits]
     );
-    // Files shows its wait, Branches and Commits are not listed yet.
-    assert_eq!(headers(&palette), ["Commands", "Files"]);
+    // Files, Branches and Commits are still loading: All has no "Loading" lines, only rows.
+    assert_eq!(headers(&palette), ["Commands"]);
     let branches = asked.iter().find(|f| f.scope == Scope::Branches).unwrap();
     palette.answer(
         branches.serial,
         Answer::Branches(Ok(vec![branch("feature-x", false, false, 0)])),
         0,
     );
-    assert_eq!(headers(&palette), ["Commands", "Files", "Branches"]);
+    assert_eq!(headers(&palette), ["Commands", "Branches"]);
+    // A failed scope shows its error in its own tab only.
+    let files = asked.iter().find(|f| f.scope == Scope::Files).unwrap();
+    palette.answer(files.serial, Answer::Files(Err("no such workspace".into())), 0);
+    assert_eq!(headers(&palette), ["Commands", "Branches"]);
+    palette.set_scope(Scope::Files);
+    assert_eq!(
+        palette.lines(),
+        [Line::Note {
+            text: "no such workspace".into(),
+            error: true
+        }]
+    );
 }
 
 #[test]
@@ -2705,8 +2727,8 @@ pub struct Palette {
     scope: Scope,
     /// The scope tabs show and Tab switches them.
     tabs: bool,
-    /// Scopes and daemon sources work. The theme picker and a detached window's palette are
-    /// one flat list instead.
+    /// Scopes and daemon sources work. Only the theme picker is one flat list instead (a
+    /// detached window's palette is scoped too).
     scoped: bool,
     source: Option<Source>,
     /// Opened by `@` in a prompt: Enter on a file types its path there instead of opening it.
@@ -2742,8 +2764,8 @@ impl Palette {
         }
     }
 
-    /// A flat list of `entries` filtered by the query: the theme picker and a detached
-    /// window's palette.
+    /// A flat list of `entries` filtered by the query: the theme picker (every other palette,
+    /// a detached window's included, is [`Self::scoped`]).
     pub fn new(entries: Vec<Entry>) -> Self {
         let mut palette = Self::base(entries, Scope::All);
         palette.layout(false);
@@ -2879,25 +2901,25 @@ impl Palette {
         let query = self.query.as_str().to_owned();
         let all = self.scope == Scope::All;
         let mut fetches = Vec::new();
-        if self.scope == Scope::Files || (all && !query.trim().is_empty()) {
-            if self.files.asked.as_deref() != Some(query.as_str()) {
-                let serial = self.files.start(Some(&query));
-                fetches.push(Fetch {
-                    scope: Scope::Files,
-                    serial,
-                    delay: if query.is_empty() {
-                        Duration::ZERO
-                    } else {
-                        theme::PALETTE_FILES_DELAY
-                    },
-                    call: Call::Files(FsFindParams {
-                        project_id: source.project_id,
-                        worktree_task_id: source.worktree_task_id,
-                        query: query.clone(),
-                        limit: FsFindParams::DEFAULT_LIMIT,
-                    }),
-                });
-            }
+        if (self.scope == Scope::Files || (all && !query.trim().is_empty()))
+            && self.files.asked.as_deref() != Some(query.as_str())
+        {
+            let serial = self.files.start(Some(&query));
+            fetches.push(Fetch {
+                scope: Scope::Files,
+                serial,
+                delay: if query.is_empty() {
+                    Duration::ZERO
+                } else {
+                    theme::PALETTE_FILES_DELAY
+                },
+                call: Call::Files(FsFindParams {
+                    project_id: source.project_id,
+                    worktree_task_id: source.worktree_task_id,
+                    query: query.clone(),
+                    limit: FsFindParams::DEFAULT_LIMIT,
+                }),
+            });
         }
         if self.scope == Scope::Search {
             if query.chars().count() >= SEARCH_MIN_CHARS {
@@ -3188,16 +3210,11 @@ impl Palette {
         }
     }
 
-    /// Whether `scope` has a section in All.
+    /// Whether `scope` can have a section in All: every scope but Search. A scope without
+    /// rows (not loaded yet, failed, no workspace) adds no section: its wait and its failure
+    /// show in its own tab only ([`Self::group`] skips an empty one).
     fn joins_all(&self, scope: Scope) -> bool {
-        match scope {
-            Scope::Commands | Scope::Sessions => true,
-            Scope::Files => self.source.is_some(),
-            // Only once loaded (opening All asks for both in the background).
-            Scope::Branches => self.source.is_some() && self.branches.load == Load::Ready,
-            Scope::Commits => self.source.is_some() && self.commits.load == Load::Ready,
-            Scope::All | Scope::Search => false,
-        }
+        !matches!(scope, Scope::All | Scope::Search)
     }
 
     /// All: with an empty query the sessions (waiting ones lead) and the recent commands;
@@ -3229,14 +3246,9 @@ impl Palette {
     }
 
     /// One section of All: its overline, at most `PALETTE_GROUP_LIMIT` rows and a "+N more"
-    /// row, or the scope's note while it has no row.
+    /// row. A scope without rows is left out: All has no loading or error lines (spec 7.2).
     fn group(&self, slots: &mut Vec<Slot>, title: &'static str, scope: Scope, items: Vec<Slot>) {
-        let note = if items.is_empty() {
-            self.note(scope)
-        } else {
-            None
-        };
-        if items.is_empty() && note.is_none() {
+        if items.is_empty() {
             return;
         }
         slots.push(Slot::Header(title));
@@ -3245,7 +3257,6 @@ impl Palette {
         if hidden > 0 {
             slots.push(Slot::More(scope, hidden));
         }
-        slots.extend(note);
     }
 
     /// The muted line of a daemon scope with no row: the missing workspace, the wait, the
@@ -3406,12 +3417,14 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): scoped palette model 
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/keymap.rs` (enum line 145-146, `all()` line 330, `name()` line 440, `default_keys()` line 563, tests `spec_defaults` line 1186)
-- Modify: `crates/mkrew-ui/src/palette.rs` (`title` line 447, `available` line 522)
+- Modify: `crates/mkrew-ui/src/palette.rs` (`title` line 447, `available` line 522, new `scope_for` after `scope_step`)
+- Modify: `crates/mkrew-ui/src/palette/tests.rs`
 - Modify: `crates/mkrew-ui/src/shell/sessions.rs:487` (the dispatch arm)
 
 **Interfaces:**
 - Produces: `Command::SearchInFiles` (`name` `search_in_files`, default keys `ctrl-alt-shift-f`, label `Ctrl+Alt+Shift+F`, palette title `Files: Search in files`, available with a workspace, no key context).
-  Until Task 11 its dispatch arm opens the palette on All (`open_palette`); Task 11 gives it the Search scope.
+  `palette::scope_for(Command) -> Option<Scope>`: `QuickOpen` -> `Files`, `SearchInFiles` -> `Search`, `CommandPalette` -> `All`, every other command `None`; Task 11 opens the palette on that scope (spec 11: "Ctrl+Shift+O opens Files" is pinned here, not only by HUMAN_CHECKS).
+  Until Task 11 the `SearchInFiles` dispatch arm opens the palette on All (`open_palette`); Task 11 gives it the Search scope.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3440,7 +3453,21 @@ and add a test next to `every_default_parses_and_is_unique`:
     }
 ```
 
-In `palette/tests.rs` `availability_follows_the_view`, in the `lone` / `none` checks nothing changes; add to the `terminals` loop list (the `for command in [..]` at line 252) `Command::SearchInFiles,`, and after the `commands(&none)` equality add `assert!(!commands(&none).contains(&Command::SearchInFiles));`.
+In `palette/tests.rs` `availability_follows_the_view`: add `Command::SearchInFiles,` to the loop that asserts commands are offered (`for command in [..]` at line 239, next to `Command::NewShellTab`), because it is offered whenever a workspace is open (`context(View::Terminals)` has one).
+After the `commands(&none)` equality add `assert!(!commands(&none).contains(&Command::SearchInFiles));`.
+Do not add it to the "not offered" loop at line 252.
+
+Append the test of the opening scope:
+
+```rust
+#[test]
+fn the_open_commands_name_the_scope_they_open_on() {
+    assert_eq!(scope_for(Command::QuickOpen), Some(Scope::Files));
+    assert_eq!(scope_for(Command::SearchInFiles), Some(Scope::Search));
+    assert_eq!(scope_for(Command::CommandPalette), Some(Scope::All));
+    assert_eq!(scope_for(Command::NewShellTab), None);
+}
+```
 
 - [ ] **Step 2: Run to see it fail**
 
@@ -3464,15 +3491,30 @@ Expected: FAIL to compile (`Command::SearchInFiles`).
 
 `shell/sessions.rs` after the `Command::QuickOpen` arm: `Command::SearchInFiles => self.open_palette(window, cx),`.
 
+`palette.rs`, after `scope_step`:
+
+```rust
+/// The scope a palette-opening command opens on (`Ctrl+Shift+O` Files, `Ctrl+Alt+Shift+F`
+/// Search, `Ctrl+Shift+P` All); `None` for every other command.
+pub fn scope_for(command: Command) -> Option<Scope> {
+    match command {
+        Command::QuickOpen => Some(Scope::Files),
+        Command::SearchInFiles => Some(Scope::Search),
+        Command::CommandPalette => Some(Scope::All),
+        _ => None,
+    }
+}
+```
+
 - [ ] **Step 4: Run the tests**
 
 Run: `cargo test -p mkrew-ui` and `cargo build -p mkrew-ui --bins`
-Expected: PASS. The Settings Keyboard page lists every command: a test that counts them (`settings_dialog.rs`) may need its number raised by one.
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/mkrew-ui/src/keymap.rs crates/mkrew-ui/src/palette.rs crates/mkrew-ui/src/palette crates/mkrew-ui/src/shell/sessions.rs crates/mkrew-ui/src/settings_dialog.rs
+git add crates/mkrew-ui/src/keymap.rs crates/mkrew-ui/src/palette.rs crates/mkrew-ui/src/palette crates/mkrew-ui/src/shell/sessions.rs
 git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Command::SearchInFiles on ctrl-alt-shift-f"
 ```
 
@@ -3481,7 +3523,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Command::SearchInFile
 ### Task 9: `GitView::show_commit` (History on a commit older than 50)
 
 **Files:**
-- Modify: `crates/mkrew-ui/src/git_view.rs` (field after `log_again` line 668, `new` line 705, `show` line 986, `begin_log` line 1228, new method after `select_commit` line 1213)
+- Modify: `crates/mkrew-ui/src/git_view.rs` (field after `log_again` line 668, `new` line 705, `show` line 986, `begin_log` line 1217 (its `limit:` line is 1228), new method after `select_commit` line 1207)
 - Modify: `crates/mkrew-ui/src/git_view/tests.rs`
 
 **Interfaces:**
@@ -3777,13 +3819,15 @@ Shell code needs a GPUI window and has no unit test; the model behind it is pinn
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/palette.rs` (`Call::failed`) and `palette/tests.rs`
-- Modify: `crates/mkrew-ui/src/shell/navigation.rs` (lines 6-68, 160-264, 383-539, 615-680, 715-955, 957-1119)
-- Modify: `crates/mkrew-ui/src/main.rs` (import line 100, fields lines 841-844 and 845-848, render lines 1145-1150)
+- Modify: `crates/mkrew-ui/src/shell/navigation.rs` (lines 6-68, 160-264, 383-539, 615-680, 715-955, 957-1113)
+- Modify: `crates/mkrew-ui/src/main.rs` (import line 100, fields lines 843-846 and 850, the doc comment of `picker_host` line 906, render lines 1147-1152)
 - Modify: `crates/mkrew-ui/src/shell/{focus,hosts,connection,detached_render,task_dialog,files_render,sessions,git_menus}.rs`
 
 **Interfaces:**
-- Consumes: everything Tasks 7a to 10 produce, `Shell::{reveal_file, open_file_at, retarget_git, open_git, git_requests, refresh_git, git_view, in_window, prompt_typed, toast_error, toast_info, activate_workspace}`, `Connection::call`.
-- Produces: `Call::failed(&self, error: impl Into<String>) -> Answer`; `Shell::{open_palette_on(scope, window, cx), palette_changed, run_palette_fetches, palette_source, insert_palette_pick, open_palette_file, checkout_branch, show_palette_commit}`; the field `Shell.palette_recent: Vec<palette::Action>`.
+- Consumes: everything Tasks 7a to 10 produce (`palette::scope_for` from Task 8 included), `Shell::{reveal_file, open_file_at, retarget_git, open_git, git_requests, refresh_git, git_view, in_window, prompt_typed, toast_error, toast_info, activate_workspace}`, `Connection::call`.
+- Produces: `Call::failed(&self, error: impl Into<String>) -> Answer`; `Shell::{open_palette_on(scope, window, cx), palette_changed, run_palette_fetches, palette_source, insert_palette_pick, in_main_window, open_palette_file, checkout_branch, show_palette_commit}`; the field `Shell.palette_recent: Vec<palette::Action>`.
+- Replaces Task 7a's temporary `run_palette_pick` arm for `OpenFile`, `OpenSearchHit`, `Checkout` and `ShowCommit` with the real ones.
+- Routing: files, search hits, checkouts and commits picked in a detached window run in the main window (`in_main_window`), after `checkout_branch` activates the palette's workspace so `repo_changes` reads that workspace's summary.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3861,8 +3905,8 @@ Expected: PASS.
 - [ ] **Step 4: The shell fields (`main.rs`)**
 
 Line 100: delete `use mkrew_ui::quick_open::{self, QuickOpen, Results};`.
-Lines 841-844: delete the `quick_open` and `quick_open_scroll` fields with their doc comments.
-After `palette_scroll: ScrollHandle,` (line 848) add:
+Lines 843-846: delete the `quick_open` and `quick_open_scroll` fields with their doc comments.
+After `palette_scroll: ScrollHandle,` (line 850) add:
 
 ```rust
     /// The commands run from the palette lately, newest first (UI memory only; All lists
@@ -3870,11 +3914,13 @@ After `palette_scroll: ScrollHandle,` (line 848) add:
     palette_recent: Vec<palette::Action>,
 ```
 
-Lines 1145-1150: delete the whole `.children(self.quick_open ... render_quick_open ...)` block.
+Lines 1147-1152: delete the whole `.children(self.quick_open ... render_quick_open ...)` block.
 
-`shell/connection.rs`: in the `Shell { .. }` literal (line 475-476) delete `quick_open: None,` and `quick_open_scroll: ScrollHandle::new(),`; after `palette_scroll: ScrollHandle::new(),` add `palette_recent: Vec::new(),`; at line 792 delete `self.quick_open = None;`.
+Line 906: the doc comment "The window the open `/` picker, prompt picker or `@` quick open is drawn in" becomes "... prompt picker or `@` file picker is drawn in".
 
-`shell/focus.rs`: delete line 24 `|| self.quick_open.is_some()`; `picker_open` becomes
+`shell/connection.rs`: in the `Shell { .. }` literal (lines 476-477) delete `quick_open: None,` and `quick_open_scroll: ScrollHandle::new(),`; after `palette_scroll: ScrollHandle::new(),` add `palette_recent: Vec::new(),`; at line 793 delete `self.quick_open = None;`; the doc comment of `close_popups` (line 789) "menus, palette, quick open," becomes "menus, palette,".
+
+`shell/focus.rs`: delete line 24 `|| self.quick_open.is_some()`; the doc comment of `picker_open` (line 32) "or the `@` quick open is open" becomes "or the `@` file picker is open"; `picker_open` becomes
 
 ```rust
     pub(crate) fn picker_open(&self) -> bool {
@@ -3885,10 +3931,19 @@ Lines 1145-1150: delete the whole `.children(self.quick_open ... render_quick_op
 and in `prompt_box_covered` delete `self.quick_open.is_some()` and its `||` (the chain starts at `self.prompt_picker.is_some()`).
 `shell/hosts.rs` line 252: delete `self.quick_open = None;`.
 `shell/detached_render.rs` lines 123-125: delete the `overlays.extend((self.quick_open ...))` statement.
-`shell/task_dialog.rs` line 435: `&& self.quick_open.is_none()` becomes `&& self.palette.is_none()` (the `@` picker is a palette now and has the keyboard over the dialog).
+`shell/task_dialog.rs` line 429: `&& self.quick_open.is_none()` becomes `&& self.palette.is_none()` (the `@` picker is a palette now and has the keyboard over the dialog).
 `shell/git_menus.rs` line 142: `fn repo_changes` becomes `pub(crate) fn repo_changes`.
 `shell/files_render.rs` line 78: `shell.open_quick_open(window, cx)` becomes `shell.open_palette_on(palette::Scope::Files, window, cx)`; update the comment on line 59 to "A button that opens the palette on its Files scope".
-`shell/sessions.rs`: `Command::QuickOpen => self.open_palette_on(palette::Scope::Files, window, cx),` and `Command::SearchInFiles => self.open_palette_on(palette::Scope::Search, window, cx),`.
+`shell/sessions.rs` (the match on `*command`): the `Command::QuickOpen => self.open_quick_open(window, cx),` arm (line 487) becomes
+
+```rust
+            Command::QuickOpen | Command::SearchInFiles => {
+                let scope = palette::scope_for(*command).unwrap_or(palette::Scope::All);
+                self.open_palette_on(scope, window, cx);
+            }
+```
+
+(`scope_for` is Task 8's: `QuickOpen` opens Files, `SearchInFiles` opens Search; the `Command::SearchInFiles => self.open_palette(window, cx),` arm Task 8 added is deleted.)
 
 - [ ] **Step 5: `navigation.rs`: open, close, `@`, keys, fetches**
 
@@ -4175,7 +4230,7 @@ and after the `let Some(action) = ... else { return; };` line add:
         palette::remember(&mut self.palette_recent, &action);
 ```
 
-In the final `match action` (line 715), after the `palette::Action::GoTo(Task { .. })` arm add:
+In the final `match action` (line 715), replace the temporary arm Task 7a added after the `palette::Action::GoTo(Task { .. })` arm (`OpenFile { .. } | OpenSearchHit { .. } | Checkout { .. } | ShowCommit { .. } => {}`) with:
 
 ```rust
             palette::Action::OpenFile { path } => {
@@ -4190,17 +4245,21 @@ In the final `match action` (line 715), after the `palette::Action::GoTo(Task { 
             }
             palette::Action::Checkout { repo, branch } => {
                 if let Some(source) = source {
-                    self.checkout_branch(source, repo, branch, window, cx);
+                    self.in_main_window(window, cx, move |shell, window, cx| {
+                        shell.checkout_branch(source, repo, branch, window, cx);
+                    });
                 }
             }
             palette::Action::ShowCommit { repo, sha } => {
                 if let Some(source) = source {
-                    self.show_palette_commit(source, repo, sha, window, cx);
+                    self.in_main_window(window, cx, move |shell, window, cx| {
+                        shell.show_palette_commit(source, repo, sha, window, cx);
+                    });
                 }
             }
 ```
 
-Add the helpers after `run_palette_pick`, in place of the deleted `render_quick_open` (lines 957-1119):
+Add the helpers after `run_palette_pick`, in place of the deleted `render_quick_open` (lines 957-1113):
 
 ```rust
     /// Enter on an `@` picker: types the picked file as `composer.file_ref` into `target`.
@@ -4227,8 +4286,28 @@ Add the helpers after `run_palette_pick`, in place of the deleted `render_quick_
         cx.notify();
     }
 
+    /// Runs `run` in the main window: at once when the palette was opened there, else after
+    /// activating that window. Files, checkouts and commits all live in the main window (the
+    /// Editor and Git views, the title bar summary), also when a detached window's palette
+    /// picked them.
+    fn in_main_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        run: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) + 'static,
+    ) {
+        if self.host_of(window) == HostId::Main {
+            return run(self, window, cx);
+        }
+        self.in_window(HostId::Main, cx, move |shell, window, cx| {
+            window.activate_window();
+            run(shell, window, cx);
+        });
+    }
+
     /// Files and Search picks: the file in the Editor view (its folders open, the cursor lands
-    /// on it), the caret on `line` for a search hit. A detached window asks the main one.
+    /// on it), the caret on `line` for a search hit. A detached window's pick opens in the
+    /// main one.
     fn open_palette_file(
         &mut self,
         source: palette::Source,
@@ -4237,20 +4316,17 @@ Add the helpers after `run_palette_pick`, in place of the deleted `render_quick_
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.host_of(window) != HostId::Main {
-            return self.in_window(HostId::Main, cx, move |shell, window, cx| {
-                window.activate_window();
-                let (project, target) = (source.project_id, source.worktree_task_id);
-                shell.open_file_at(project, target, path, line, window, cx);
-            });
-        }
         let (project, target) = (source.project_id, source.worktree_task_id);
-        self.open_file_at(project, target, path, line, window, cx);
+        self.in_main_window(window, cx, move |shell, window, cx| {
+            shell.open_file_at(project, target, path, line, window, cx);
+        });
     }
 
     /// A Branches pick: `git.checkout`, after a question when something is at risk (changed
     /// files in the repository, live agents in that folder). A failure is a toast with git's
-    /// own message; a success refreshes the Git view.
+    /// own message; a success refreshes the Git view. Runs in the main window
+    /// ([`Self::in_main_window`]) with the palette's workspace active, so `repo_changes` reads
+    /// that workspace's summary.
     fn checkout_branch(
         &mut self,
         source: palette::Source,
@@ -4262,8 +4338,12 @@ Add the helpers after `run_palette_pick`, in place of the deleted `render_quick_
         let Some(connection) = self.connection.clone() else {
             return;
         };
+        if self.workspace != Some(source.project_id) {
+            self.activate_workspace(source.project_id, window, cx);
+        }
         // ponytail: a task worktree's own changes are not in the title bar summary, so no
-        // question is asked there; git refuses a switch that would overwrite a change.
+        // question is asked there; git refuses a switch that would overwrite a change. The
+        // same for a workspace whose summary has not loaded yet (`repo_changes` is `None`).
         let changes = if source.worktree_task_id.is_none() {
             self.repo_changes(repo.as_deref()).unwrap_or(0)
         } else {
@@ -4363,20 +4443,23 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): the shell drives the 
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/shell/navigation.rs` (`render_palette`, from `/// The command palette: the query field` to the end of the impl)
-- Modify: `crates/mkrew-ui/src/shell/widgets.rs` (remove the `#[allow(dead_code)]` Plan P1 left on `list_row`)
+- Modify: `crates/mkrew-ui/src/shell/widgets.rs` (delete the `#[allow(dead_code)] // used by Plan P2` line Plan P1 left above `list_row`, line 857)
+- Modify: `crates/mkrew-ui/src/theme.rs` (`PALETTE_TITLE_MAX_FRACTION` after `PALETTE_GROUP_LIMIT`, line 455; the comment above the `PALETTE_*` block, line 451)
+- Modify: `crates/mkrew-ui/src/main.rs` (the `palette` import adds `Scope`)
 
 **Interfaces:**
-- Consumes: `widgets::{floating_panel, list_row, kbd, segmented, segment, overline, caret_field}`, `theme::{PALETTE_WIDTH, PALETTE_LIST_HEIGHT}`, `Palette::{lines, tabs, scope, selected, selected_line, insert_into, source}`, `palette::Line`, `Scope::{ORDER, title, placeholder}`.
-- Produces: the new `render_palette(&self, &Palette, &Theme, cx) -> AnyElement` (same signature, so `main.rs` and `detached_render.rs` are unchanged).
+- Consumes: `widgets::{floating_panel, list_row, kbd, search_box, overline, caret_field}` and `widgets::Look` with `Pressable::pressable` (the scope pills), `icons::{Icon, icon_svg}` (the error mark), `theme::{PALETTE_WIDTH, PALETTE_LIST_HEIGHT, BORDER_WIDTH, SEGMENT_HEIGHT}`, `radius::PILL`, `Palette::{lines, tabs, scope, selected, selected_line, insert_into, source}`, `palette::Line`, `Scope::{ORDER, title, placeholder}`.
+- Produces: `theme::PALETTE_TITLE_MAX_FRACTION: f32 = 0.6`; the new `render_palette(&self, &Palette, &Theme, cx) -> AnyElement` (same signature, so `main.rs` and `detached_render.rs` are unchanged).
+  `segmented` and `segment` stay for their other callers; the scope tabs are not segments (spec 7.5 wants accent-outlined pills, `segment` marks the current one with a fill).
 
-Layout, top to bottom: an optional title (theme picker, `@` mode), the scope tabs (only when `Palette::tabs()`), the query field with the scope's placeholder, the list (overline headers, rows, "+N more", muted notes; at most `PALETTE_LIST_HEIGHT` tall, scrolls), the key hints.
+Layout, top to bottom (spec 7.5): an optional title (theme picker, `@` mode), the query field as `widgets::search_box` (search icon, the scope's placeholder, an `esc` key cap), the scope pills (only when `Palette::tabs()`; the current one has a 1 px accent border and no fill), the list (overline headers, rows, "+N more", muted notes; at most `PALETTE_LIST_HEIGHT` tall, scrolls), and the footer: "↑↓ navigate · ↵ run · Tab next scope" on the left, "esc close" on the right.
 
 - [ ] **Step 1: Replace `render_palette`**
 
 ```rust
-    /// The palette: scope tabs, the query field, then the lines of the scope (overlines, rows
-    /// with their matched chars in the accent color, "+N more", notes) and the key hints. A
-    /// click on a tab switches scope; a click on a row runs it.
+    /// The palette: the query field, the scope pills, then the lines of the scope (overlines,
+    /// rows with their matched chars in the accent color, "+N more", notes) and the key hints.
+    /// A click on a pill switches scope; a click on a row runs it.
     pub(crate) fn render_palette(
         &self,
         palette: &Palette,
@@ -4424,7 +4507,11 @@ Layout, top to bottom: an optional title (theme picker, `@` mode), the scope tab
                     .py(px(space::XS))
                     .text_size(font_size::META)
                     .when(error, |el| {
-                        el.child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                        el.child(icon_svg(
+                            Icon::X,
+                            theme::ICON_SIZE_SMALL,
+                            theme.status_exited,
+                        ))
                     })
                     .child(
                         div()
@@ -4465,7 +4552,10 @@ Layout, top to bottom: an optional title (theme picker, `@` mode), the scope tab
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
-                                .when(has_detail, |el| el.flex_none().max_w(relative(0.6)))
+                                .when(has_detail, |el| {
+                                    el.flex_none()
+                                        .max_w(relative(theme::PALETTE_TITLE_MAX_FRACTION))
+                                })
                                 .when(!has_detail, |el| el.flex_1())
                                 .child(title),
                         )
@@ -4508,35 +4598,46 @@ Layout, top to bottom: an optional title (theme picker, `@` mode), the scope tab
         } else {
             None
         };
+        // Pills, not `segment`s: the current scope is outlined in the accent, no fill.
         let tabs = palette.tabs().then(|| {
-            Scope::ORDER
-                .iter()
-                .enumerate()
-                .fold(segmented(theme), |bar, (index, scope)| {
+            div().flex().items_center().gap(px(space::XS)).children(
+                Scope::ORDER.iter().enumerate().map(|(index, scope)| {
                     let scope = *scope;
-                    bar.child(
-                        segment(("palette-scope", index), scope == palette.scope(), theme)
-                            .on_click(cx.listener(move |shell, _, window, cx| {
-                                if let Some(palette) = shell.palette.as_mut() {
-                                    palette.set_scope(scope);
-                                }
-                                shell.palette_changed(window, cx);
-                            }))
-                            .child(scope.title()),
-                    )
-                })
+                    let current = scope == palette.scope();
+                    div()
+                        .id(("palette-scope", index))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .h(theme::rems_px(theme::SEGMENT_HEIGHT))
+                        .px(px(space::M))
+                        .rounded(px(radius::PILL))
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(if current {
+                            gpui::Hsla::from(rgb(theme.accent))
+                        } else {
+                            gpui::transparent_black()
+                        })
+                        .whitespace_nowrap()
+                        .text_size(font_size::BODY)
+                        .text_color(rgb(if current { theme.text } else { theme.text_muted }))
+                        .pressable(Look::Chip, true, theme)
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            if let Some(palette) = shell.palette.as_mut() {
+                                palette.set_scope(scope);
+                            }
+                            shell.palette_changed(window, cx);
+                        }))
+                        .child(scope.title())
+                }),
+            )
         });
-        let hints: &[(&str, &str)] = if picking_theme {
-            &[("↑ ↓", "preview"), ("Enter", "save"), ("Esc", "restore")]
+        let (hint, close): (&str, &str) = if picking_theme {
+            ("↑↓ preview · ↵ save", "esc restore")
         } else if palette.insert_into().is_some() {
-            &[("↑ ↓", "pick"), ("Enter", "type its path"), ("Esc", "type @")]
+            ("↑↓ navigate · ↵ type its path", "esc type @")
         } else {
-            &[
-                ("Tab", "scope"),
-                ("↑ ↓", "pick"),
-                ("Enter", "run"),
-                ("Esc", "close"),
-            ]
+            ("↑↓ navigate · ↵ run · Tab next scope", "esc close")
         };
         let panel = floating_panel("palette", theme)
             .w(px(theme::PALETTE_WIDTH))
@@ -4555,24 +4656,29 @@ Layout, top to bottom: an optional title (theme picker, `@` mode), the scope tab
                     .text_color(rgb(theme.text))
                     .child(title)
             }))
-            .children(tabs)
-            .child(caret_field(
-                "palette-query",
-                palette.query(),
-                if picking_theme {
-                    "Type a theme name"
-                } else {
-                    palette.scope().placeholder()
-                },
+            .child(search_box(
+                caret_field(
+                    "palette-query",
+                    palette.query(),
+                    if picking_theme {
+                        "Type a theme name"
+                    } else {
+                        palette.scope().placeholder()
+                    },
+                    true,
+                    theme,
+                    cx,
+                    |shell, caret| {
+                        if let Some(palette) = shell.palette.as_mut() {
+                            palette.click(caret.at, caret.extend, caret.clicks);
+                        }
+                    },
+                ),
+                Some(kbd("esc".to_owned(), theme, false).into_any_element()),
                 true,
                 theme,
-                cx,
-                |shell, caret| {
-                    if let Some(palette) = shell.palette.as_mut() {
-                        palette.click(caret.at, caret.extend, caret.clicks);
-                    }
-                },
             ))
+            .children(tabs)
             .when(!empty, |el| {
                 el.child(
                     div()
@@ -4598,34 +4704,36 @@ Layout, top to bottom: an optional title (theme picker, `@` mode), the scope tab
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(space::M))
+                    .justify_between()
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
-                    .children(hints.iter().map(|(key, what)| {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(space::XS))
-                            .child(kbd((*key).to_owned(), theme, false))
-                            .child(*what)
-                    })),
+                    .child(hint)
+                    .child(close),
             );
         Self::modal_shade("palette-shade", panel, cx)
     }
 }
 ```
 
-`Scope`, `palette::Line` and the P1 widgets are in scope through `crate::*` / `shell::widgets::*` (add `Scope` to the `use mkrew_ui::palette::{self, Extra, Palette};` line of `main.rs` as `use mkrew_ui::palette::{self, Extra, Palette, Scope};`).
+`Scope`, `palette::Line`, `Look`, `Pressable`, `Icon`, `icon_svg`, `radius` and the P1 widgets are in scope through `crate::*` / `shell::widgets::*` (add `Scope` to the `use mkrew_ui::palette::{self, Extra, Palette};` line of `main.rs` as `use mkrew_ui::palette::{self, Extra, Palette, Scope};`).
 `list_row(..)` already carries the selected fill, the accent bar and the pressed look; the old focus-colored ring is gone on purpose (the bar is the pick marker now).
 If `.flex_none()` on the `Stateful<Div>` that `list_row` returns does not type-check after `.on_click`, move it before `.on_click`.
 
-In `widgets.rs` delete the `#[allow(dead_code)] // used by Task 11 / Plan P2` line above `list_row`.
+In `widgets.rs` delete the `#[allow(dead_code)] // used by Plan P2` line (line 857) above `list_row`.
+
+In `theme.rs` replace the comment above the `PALETTE_*` block (line 451, "The scoped palette (Plan P2 uses these; Plan P1 only defines them).") with `/// The scoped palette.` and add after `PALETTE_GROUP_LIMIT`:
+
+```rust
+/// Widest share of a palette row its title may take while a muted detail follows (the title
+/// is cut with `…` past that).
+pub const PALETTE_TITLE_MAX_FRACTION: f32 = 0.6;
+```
 
 - [ ] **Step 2: Build, lint, test**
 
 Run: `cargo fmt` then `cargo clippy -p mkrew-ui --all-targets -- -D warnings`
 Expected: clean.
-Run: `cargo test -p mkrew-ui --bin mkrew` (Plan P1's structure test that every floating panel uses `floating_panel` now sees the palette on it).
+Run: `cargo test -p mkrew-ui --bin mkrew`
 Expected: PASS.
 
 - [ ] **Step 3: Look at it**
@@ -4636,8 +4744,8 @@ Check against the list Task 14 adds to `docs/HUMAN_CHECKS.md`.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/mkrew-ui/src/shell/navigation.rs crates/mkrew-ui/src/shell/widgets.rs crates/mkrew-ui/src/main.rs
-git -c user.email=tungnv975@gmail.com commit -m "feat(ui): scoped palette layout on floating_panel with tabs, sections and key caps"
+git add crates/mkrew-ui/src/shell/navigation.rs crates/mkrew-ui/src/shell/widgets.rs crates/mkrew-ui/src/theme.rs crates/mkrew-ui/src/main.rs
+git -c user.email=tungnv975@gmail.com commit -m "feat(ui): scoped palette layout on floating_panel with search field, scope pills, sections and key caps"
 ```
 
 ---
@@ -4646,9 +4754,9 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): scoped palette layout
 
 **Files:**
 - Delete: `crates/mkrew-ui/src/quick_open.rs`
-- Modify: `crates/mkrew-ui/src/lib.rs` (line 10 doc, line 80)
-- Modify: `crates/mkrew-ui/src/theme.rs` (lines 438-439)
-- Modify: `crates/mkrew-ui/src/shell/composer.rs:697`, `shell/slash.rs:469`
+- Modify: `crates/mkrew-ui/src/lib.rs` (line 10 doc, line 81)
+- Modify: `crates/mkrew-ui/src/theme.rs` (lines 441-442)
+- Modify: `crates/mkrew-ui/src/shell/composer.rs:691`, `shell/slash.rs:463`
 - Modify: `crates/mkrew-ui/src/palette.rs` (module doc, lines 1-5), `src/keymap.rs` (the `QuickOpen` doc was changed in Task 8)
 
 **Interfaces:**
@@ -4661,9 +4769,9 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): scoped palette layout
 git rm crates/mkrew-ui/src/quick_open.rs
 ```
 
-`lib.rs`: delete line 80 `pub mod quick_open;`; in the crate doc (line 9-10) `its syntax highlighting and quick open, the Git view-model` becomes `its syntax highlighting, the Git view-model`; `the command palette` there becomes `the scoped palette`.
-`theme.rs`: delete lines 438-439 (`/// Height of the quick open match list ...` and `pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;`) and the blank line after them.
-`shell/composer.rs` line 697 and `shell/slash.rs` line 469: `theme::QUICK_OPEN_LIST_HEIGHT` becomes `theme::PALETTE_LIST_HEIGHT`.
+`lib.rs`: delete line 81 `pub mod quick_open;`; in the crate doc (line 9-10) `its syntax highlighting and quick open, the Git view-model` becomes `its syntax highlighting, the Git view-model`; `the command palette` there becomes `the scoped palette`.
+`theme.rs`: delete lines 441-442 (`/// Height of the quick open match list ...` and `pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;`) and nothing else: line 440 is the blank line before them and line 443 is the first line of the `GLASS_TINT_HEIGHT` doc comment, which stays.
+`shell/composer.rs` line 691 and `shell/slash.rs` line 463: `theme::QUICK_OPEN_LIST_HEIGHT` becomes `theme::PALETTE_LIST_HEIGHT`.
 `palette.rs` module doc (lines 1-5) becomes:
 
 ```rust
@@ -4699,12 +4807,13 @@ git -c user.email=tungnv975@gmail.com commit -m "refactor(ui): remove Quick open
 ### Task 14: Docs, human checks and the full verify
 
 **Files:**
-- Modify: `docs/SPEC.md` (dependency table line 185, Editor view and Tabs lines 1244 and 1257, Quick open bullet lines 1316-1318, text fields line 1438, keys table lines 1452-1453, command-palette note line 1568, protocol table after the `fs.find` row at line 613, version notes after line 691, checklist line 1933)
+- Modify: `docs/SPEC.md` (dependency table line 185, Editor view and Tabs lines 1244 and 1257, Quick open bullet lines 1316-1318, text fields line 1438, keys table lines 1452-1453, command-palette note line 1568, protocol table after the `fs.find` row at line 613, version notes after line 691, §14 palette layout bullet after the Settings bullet (line 1710), checklist line 1953)
 - Modify: `README.md` (lines 182 and 186)
 - Modify: `docs/HUMAN_CHECKS.md` (new section before line 24)
 
 **Interfaces:** none (docs).
 Each Markdown sentence goes on its own line; no em dash.
+SPEC line numbers are those of the file before this task; Steps 1 to 3 insert lines, so later steps find their anchors by the quoted text.
 
 - [ ] **Step 1: SPEC section 13 (keys)**
 
@@ -4736,7 +4845,20 @@ The theme picker (`Ctrl+Alt+J`) is the same palette without tabs.
 - Line 185: after the `nucleo-matcher` row add `| Content search | \`grep-searcher\`, \`grep-regex\`, \`grep-matcher\` | \`fs.search\` (ripgrep's engine over the files \`ignore\` walks) |`.
 - Lines 1316-1318: replace the **Quick open** bullet with `- **Palette Files scope** (\`Ctrl+Shift+O\`, or the "Search files..." entry at the top of the tree) fuzzy-finds files of the current workspace, in the folder the tree shows (project or task worktree) (\`ignore\` to walk, \`nucleo-matcher\` to rank).` and one more line for Search: `- **Palette Search scope** (\`Ctrl+Alt+Shift+F\`) finds text in those files.`
 - Lines 1244 and 1257, 1438: `quick open` becomes `the palette`; line 1438 `quick open, command palette,` becomes `the palette,`.
-- Line 1933: `Quick open fuzzy-finds files` becomes `The palette's Files scope fuzzy-finds files`.
+- Line 1953: `Quick open fuzzy-finds files` becomes `The palette's Files scope fuzzy-finds files`.
+- §14 (spec 12): the P1 sections for glass, the pressable rule and Settings are already in `docs/SPEC.md` §14; the palette layout is not.
+  After the last line of the Settings bullet (line 1710, `... the hint stays "Ctrl+N new · Ctrl+S saves · Esc closes".`) and before `- Settings → Machines`, insert:
+
+```markdown
+- Palette (Ctrl+Shift+P, ADR 0097): a floating glass panel (`floating_panel`, `PALETTE_WIDTH` wide).
+  Top: the query field with a search icon, the scope's placeholder and an `esc` key cap (`search_box`).
+  Below it: the scope tabs as pills (`Look::Chip`; the current one has a 1 px accent border and no fill, the others are muted and get the hover fill).
+  The list is at most `PALETTE_LIST_HEIGHT` tall and scrolls.
+  It has section overlines, `list_row` rows (the selected one has the `selected` fill and a `PALETTE_SELECTED_BAR` accent bar) and a muted "+N more ›" row; matched characters are accent and semibold, `detail` is muted after the title, `age` is right-aligned, shortcuts are `kbd` key caps.
+  A scope that waits shows a muted "Loading…" and one that failed a muted error line with an `x` icon, in its own tab only.
+  Footer: "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right.
+  The theme picker and the `@` file picker have no tabs; the theme picker keeps its muted "Dark" / "Light" text instead of key caps.
+```
 
 - [ ] **Step 3: SPEC protocol section**
 
@@ -4775,8 +4897,8 @@ Insert before line 24 of `docs/HUMAN_CHECKS.md` (`PUT <24`):
 
 ```markdown
 ### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
-- [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows seven tabs; Tab / Shift+Tab walk them and wrap; a click on a tab switches; the placeholder changes with the scope; the panel is the glass panel of Plan P1.
-- [ ] **All:** an empty query lists sessions (a session that needs input first) and the commands run lately; a query lists sections with at most five rows and "+N more ›", which switches to that scope; Search never has a section; Branches and Commits appear a moment after opening.
+- [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.
+- [ ] **All:** an empty query lists sessions (a session that needs input first) and the commands run lately; a query lists sections with at most five rows and "+N more ›", which switches to that scope; Search never has a section; Files, Branches and Commits appear only once they have rows, All never shows "Loading" or an error line (those are in the scope's own tab).
 - [ ] **Files:** `Ctrl+Shift+O` opens on Files, empty query lists files at once, typing fast shows only the last answer, matched letters are accent colored, Enter opens the file in the Editor view; in a task worktree it searches the worktree.
 - [ ] **Search:** `Ctrl+Alt+Shift+F` opens on Search; one character shows "Type 2 characters to search the files."; `(` or `a.c` is searched as text; each hit shows the line with the match colored and `path:line` muted; Enter opens the file with the caret on that line; a repository with many hits stops at 200.
 - [ ] **Branches:** newest first, `current` marked, a remote branch without a local one listed as `origin/x`; Enter on a clean repository switches at once with a toast "Switched to ..."; with changed files, or a live agent in that folder, a question comes first and says which; a refusal by git shows git's own message in a toast.
@@ -4784,7 +4906,7 @@ Insert before line 24 of `docs/HUMAN_CHECKS.md` (`PUT <24`):
 - [ ] **`@` in a composer and in the New task prompt:** the palette opens on Files with no tabs and the title "Insert file", Enter types the path (the `composer.file_ref` form), Esc types the `@`; the New task dialog stays open under it.
 - [ ] **No workspace:** Files, Search, Branches and Commits say "Open a workspace to search it."; with the daemon stopped they show its error, not "Loading..." forever.
 - [ ] **Theme picker (`Ctrl+Alt+J`):** no tabs, still previews on Up / Down and restores on Esc; its rows keep the muted "Dark" / "Light" text.
-- [ ] **Detached window:** `Ctrl+Shift+P` there lists what acts in that window; a picked file opens in the main window.
+- [ ] **Detached window:** `Ctrl+Shift+P` there lists what acts in that window; a picked file, search hit, branch or commit is run in the main window (it comes to the front, on the palette's workspace).
 - [ ] **`/` and prompt pickers:** their lists are now as tall as the palette's (480 px).
 ```
 
@@ -4809,17 +4931,18 @@ git -c user.email=tungnv975@gmail.com commit -m "docs: palette scopes, Ctrl+Alt+
 | --- | --- |
 | 7.1 `Scope`, `ORDER`, `Row`, `Action` additions, `fuzzy` stays | 7a (types), 7b (engine) |
 | 7.2 sync sources, async sources, serial drop, 80 and 150 ms debounce, empty and failed states, workspace and repo rule, no workspace | 7b, 11 (`palette_source`, `run_palette_fetches`) |
-| 7.3 All grouping, `PALETTE_GROUP_LIMIT`, "+N more", Search absent, Branches and Commits when loaded | 7b (`grouped`, `group`, `joins_all`) |
-| 7.4 keys: `Ctrl+Shift+P`, `Ctrl+Shift+O`, `Command::SearchInFiles` on `ctrl-alt-shift-f` (verified free), `Ctrl+Alt+J`, Tab / Shift+Tab, click on a tab | 8 (command), 7a (`scope_step`), 11 (dispatch), 12 (tabs) |
+| 7.3 All grouping, `PALETTE_GROUP_LIMIT`, "+N more", Search absent, a scope joins All only with rows (no loading or error lines in All) | 7b (`grouped`, `group`, `joins_all`) |
+| 7.4 keys: `Ctrl+Shift+P`, `Ctrl+Shift+O`, `Command::SearchInFiles` on `ctrl-alt-shift-f` (verified free), `Ctrl+Alt+J`, Tab / Shift+Tab, click on a pill | 8 (command, `scope_for`), 7a (`scope_step`), 11 (dispatch through `scope_for`), 12 (pills) |
 | 7.4 `@` insert mode | 7b (`file_ref`, `insert_into`), 11 (`open_file_ref_picker`, `insert_palette_pick`, `close_palette`) |
-| 7.5 rendering on `floating_panel`, `list_row`, `kbd`, `PALETTE_*` | 12 |
-| 7.6 `OpenFile`, `OpenSearchHit`, `Checkout` with confirm, `ShowCommit` | 7a, 9, 10, 11 |
+| 7.5 rendering on `floating_panel`, `search_box` with the `esc` key cap, accent-outlined pills, `list_row`, `kbd`, footer, `PALETTE_*` | 12 |
+| 7.6 `OpenFile`, `OpenSearchHit`, `Checkout` with confirm, `ShowCommit` (a detached window's pick runs in the main window) | 7a (variants, temporary arm), 9, 10, 11 |
 | 7.7 removal of `quick_open.rs`, `render_quick_open`, `QUICK_OPEN_LIST_HEIGHT`, callers migrated | 6 (keys, `match_ranges`), 11 (shell), 13 (file, constant, pickers) |
 | 8 protocol 54, types, method names, `PROTOCOL_VERSION` | 1 |
 | 8.1, 8.2 daemon handlers on `git()` | 2, 3 |
 | 8.3 `fs.search`, `ignore` walker, new deps, cancellation by a per-connection `AtomicU64` | 4, 5 |
-| 11 testing: protocol, daemon, palette | 1 to 5 (tests), 6 to 10 (palette tests) |
-| 12 docs: SPEC 13, protocol section, HUMAN_CHECKS | 14 |
+| 11 testing: protocol, daemon, palette; "Ctrl+Shift+O opens Files" | 1 to 5 (tests), 6 to 10 (palette tests), 8 (`scope_for`) |
+| 12 docs: SPEC 13, protocol section, SPEC 14 palette layout, HUMAN_CHECKS | 14 |
 
-Placeholder scan: every code step holds the code; the only conditional wording is the compiler hints (`with_animation` style) in Tasks 11 and 12 where the exact gpui type cannot be checked without building.
-Type consistency: `Action` is `Clone` (not `Copy`) from Task 7a on, `Entry::new` replaces every literal, `Palette::selected` indexes selectable lines (rows and "+N more"), `selected_line()` is the child index for scrolling, `Source::new` is the only constructor, `COMMIT_LIMIT` is defined in Task 7b and used in 7b and 9.
+Placeholder scan: every code step holds the code; the only conditional wording is the compiler hints (borrow order, where `.flex_none()` goes) in Tasks 11 and 12 where the exact gpui types cannot be checked without building.
+Type consistency: `Action` is `Clone` (not `Copy`) from Task 7a on and every commit from 7a compiles (the temporary `run_palette_pick` arm and the two test matches get the four new variants), `Entry::new` replaces every literal, `Palette::selected` indexes selectable lines (rows and "+N more"), `selected_line()` is the child index for scrolling, `Source::new` is the only constructor, `COMMIT_LIMIT` is defined in Task 7b and used in 7b and 9, `scope_for` is defined in Task 8 and used in Task 11.
+Commit order of the daemon part: Tasks 4 and 5 go to one implementer back to back, and the clippy gate runs after Task 5.

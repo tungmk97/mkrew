@@ -525,7 +525,6 @@ impl Shell {
                 .child(text)
         };
         let state = self.session_state(dialog.session_id);
-        let hover = theme.surface_raised;
         let list: gpui::AnyElement = match &dialog.listing {
             turns_dialog::Listing::Loading => muted("Loading the turns…".into()).into_any_element(),
             turns_dialog::Listing::Failed(error) => div()
@@ -601,13 +600,16 @@ impl Shell {
                                 .py(px(space::XS))
                                 .rounded(px(radius::SMALL))
                                 .when(selected, |el| el.bg(rgb(theme.surface_raised)))
-                                .when(!selected, |el| el.hover(move |style| style.bg(rgb(hover))))
-                                .on_click(cx.listener(move |shell, _, _, cx| {
-                                    if let Some(dialog) = shell.turns_dialog.as_mut() {
-                                        dialog.selected = index;
-                                        cx.notify();
-                                    }
-                                }))
+                                .pressable_unless(selected, Look::Row, theme)
+                                .on_press(
+                                    true,
+                                    cx.listener(move |shell, _, _, cx| {
+                                        if let Some(dialog) = shell.turns_dialog.as_mut() {
+                                            dialog.selected = index;
+                                            cx.notify();
+                                        }
+                                    }),
+                                )
                                 .child(
                                     div()
                                         .flex_1()
@@ -637,18 +639,12 @@ impl Shell {
                 )
                 .into_any_element(),
         };
-        let panel = div()
-            .id("turns-dialog")
+        let panel = floating_panel("turns-dialog", theme)
             .w(px(theme::TURNS_DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::turns_dialog_key_down))
@@ -695,7 +691,6 @@ impl Shell {
                 .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                 .child(div().text_color(rgb(theme.text)).child(error))
         };
-        let hover = theme.surface_raised;
         let list: Vec<gpui::AnyElement> = match &dialog.listing {
             Listing::Loading => vec![muted("Loading the sessions…".into()).into_any_element()],
             Listing::Failed(error) => {
@@ -716,15 +711,14 @@ impl Shell {
                         .px(px(space::S))
                         .py(px(space::XS))
                         .rounded(px(radius::SMALL))
-                        .cursor_pointer()
                         .when(selected, |el| el.bg(rgb(theme.surface_raised)))
-                        .when(!selected, |el| {
-                            el.hover(move |style| style.bg(rgb(hover)))
-                                .active(|style| style.opacity(opacity::ACTIVE))
-                        })
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.select_history(id, window, cx);
-                        }))
+                        .pressable_unless(selected, Look::Row, theme)
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                shell.select_history(id, window, cx);
+                            }),
+                        )
                         .child(
                             div()
                                 .flex()
@@ -829,19 +823,13 @@ impl Shell {
                     .tooltip(tooltip(theme, reason, "")),
             }
         });
-        let panel = div()
-            .id("history-dialog")
+        let panel = floating_panel("history-dialog", theme)
             .w(relative(theme::HISTORY_DIALOG_FRACTION))
             .h(relative(theme::HISTORY_DIALOG_FRACTION))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::history_key_down))

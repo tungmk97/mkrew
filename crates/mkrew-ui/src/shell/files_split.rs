@@ -122,15 +122,13 @@ impl Shell {
         let source = self.render_shown_file(project_id, shown, window, theme, cx);
         let page = self.render_md_preview(project_id, tab, true, window, theme, cx);
         let divider = theme.divider;
-        let grip = div()
-            .id("md-split-grip")
+        let grip = grip_hover(div().id("md-split-grip"), theme)
             .flex_none()
             .w(px(theme::GRIP_WIDTH))
             .h_full()
             .flex()
             .justify_center()
             .cursor(CursorStyle::ResizeLeftRight)
-            .hover(move |style| style.bg(rgb(divider)))
             .child(div().w(px(theme::BORDER_WIDTH)).h_full().bg(rgb(divider)))
             .tooltip(tooltip(
                 theme,

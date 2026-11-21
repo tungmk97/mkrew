@@ -69,6 +69,7 @@ impl Shell {
         // even one marked unread while it kept the keyboard, and ends the taskbar flash.
         cx.observe_window_activation(window, |shell, window, cx| {
             if window.is_window_active() {
+                cx.set_reduce_motion(mkrew_ui::desktop::reduce_motion());
                 shell.activated(HostId::Main);
                 shell.viewed.activated();
                 shell.desktop.flash(false);
@@ -472,10 +473,9 @@ impl Shell {
             history_pane: None,
             doc_dialog: None,
             diagram_dialog: None,
-            quick_open: None,
-            quick_open_scroll: ScrollHandle::new(),
             palette: None,
             palette_scroll: ScrollHandle::new(),
+            palette_recent: Vec::new(),
             palette_return: None,
             theme_pick: None,
             prompt_picker: None,
@@ -785,11 +785,10 @@ impl Shell {
         }
     }
 
-    /// Closes what is open over the window and acts on the daemon: menus, palette, quick open,
+    /// Closes what is open over the window and acts on the daemon: menus, palette,
     /// the peek and the prompt picker; the keyboard goes back to the window.
     fn close_popups(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.close_menus();
-        self.quick_open = None;
         self.restore_theme_pick(window, cx);
         self.palette = None;
         self.palette_host = HostId::Main;

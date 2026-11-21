@@ -894,3 +894,152 @@ fn git_viewed_marks_are_per_repository_with_project_relative_paths() {
     assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
     client.stop();
 }
+
+#[test]
+fn git_branches_and_checkout_run_in_the_project_repo() {
+    let env = Env::new();
+    let repo = env.repo();
+    let origin = env.dir.path().join("origin.git");
+    std::fs::create_dir_all(&origin).unwrap();
+    git(&origin, &["init", "-q", "--bare"]);
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    // Commits with fixed dates: the order must not depend on the clock.
+    let commit_at = |args: &[&str], when: &str| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false", "commit", "-q"])
+            .args(args)
+            .env("GIT_AUTHOR_DATE", when)
+            .env("GIT_COMMITTER_DATE", when)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git commit {args:?} failed");
+    };
+    std::fs::write(repo.join("a.txt"), "main\n").unwrap();
+    git(&repo, &["add", "."]);
+    commit_at(&["-m", "one"], "2026-01-01T00:00:00Z");
+    git(
+        &repo,
+        &["remote", "add", "origin", &origin.to_string_lossy()],
+    );
+    git(&repo, &["push", "-q", "origin", "main"]);
+    git(&repo, &["checkout", "-q", "-b", "remote-only"]);
+    commit_at(
+        &["--allow-empty", "-m", "remote work"],
+        "2026-02-01T00:00:00Z",
+    );
+    git(&repo, &["push", "-q", "origin", "remote-only"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    git(&repo, &["branch", "-D", "remote-only"]);
+    git(&repo, &["checkout", "-q", "-b", "topic"]);
+    std::fs::write(repo.join("a.txt"), "topic\n").unwrap();
+    commit_at(&["-a", "-m", "topic work"], "2026-03-01T00:00:00Z");
+    git(&repo, &["push", "-q", "origin", "topic"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    git(
+        &repo,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
+    let plain = env.dir.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let outside = client.add_project(&plain);
+    let branches = |project_id| {
+        Request::GitBranches(GitBranchesParams {
+            project_id,
+            worktree_task_id: None,
+            repo: None,
+        })
+    };
+    let checkout = |branch: &str| {
+        Request::GitCheckout(GitCheckoutParams {
+            project_id: project.id,
+            worktree_task_id: None,
+            repo: None,
+            branch: branch.into(),
+        })
+    };
+
+    let listed: Vec<Branch> = client.call(branches(project.id)).into_result().unwrap();
+    let names: Vec<&str> = listed.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names, ["topic", "origin/remote-only", "main"]);
+    assert_eq!(listed.iter().filter(|b| b.current).count(), 1);
+    assert!(listed[2].current && !listed[0].remote && listed[1].remote);
+    assert_eq!(listed[0].subject, "topic work");
+    assert_eq!(
+        error_code(client.call(branches(outside.id))),
+        ErrorCode::InvalidState
+    );
+
+    let _: () = client.call(checkout("topic")).into_result().unwrap();
+    assert_eq!(git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"]), "topic");
+    client.wait_event(&Event::GitChanged(GitChangedEvent {
+        project_id: project.id,
+        worktree_task_id: None,
+    }));
+    let _: () = client
+        .call(checkout("origin/remote-only"))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "remote-only"
+    );
+
+    // Git refuses to overwrite a change: its words, nothing else changes.
+    git(&repo, &["checkout", "-q", "main"]);
+    std::fs::write(repo.join("a.txt"), "dirty\n").unwrap();
+    let Err(ResponseError::Daemon(refused)) = client.call(checkout("topic")).into_result::<()>()
+    else {
+        panic!("a switch over a dirty file must be refused");
+    };
+    assert_eq!(refused.code, ErrorCode::InvalidState);
+    assert!(refused.message.contains("a.txt"), "{}", refused.message);
+    assert!(
+        !refused.message.contains("git failed"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"]), "main");
+    // An empty branch or one git would read as an option never reaches git.
+    for bad in ["", "--detach"] {
+        assert_eq!(
+            error_code(client.call(checkout(bad))),
+            ErrorCode::InvalidRequest,
+            "{bad:?}"
+        );
+    }
+    assert_eq!(
+        error_code(client.call(checkout("nope"))),
+        ErrorCode::InvalidState
+    );
+    // `repo` with a task worktree is refused (ADR 0029), by both handlers.
+    assert_eq!(
+        error_code(client.call(Request::GitBranches(GitBranchesParams {
+            project_id: project.id,
+            worktree_task_id: Some(Ulid::new()),
+            repo: Some("fe".into()),
+        }))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(Request::GitCheckout(GitCheckoutParams {
+            project_id: project.id,
+            worktree_task_id: Some(Ulid::new()),
+            repo: Some("fe".into()),
+            branch: "topic".into(),
+        }))),
+        ErrorCode::InvalidRequest
+    );
+}

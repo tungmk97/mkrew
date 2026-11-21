@@ -194,7 +194,6 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let tab_id = tab.id;
-        let hover = theme.hover;
         // A lone pane's title stands in for a default tab name.
         let label = session_label(tab, self.sidebar.sessions());
         let labeled = tab.single().filter(|_| label.is_some());
@@ -236,7 +235,6 @@ impl Shell {
             // Same box as the rename field, so the bar does not shift while renaming.
             .border(px(theme::BORDER_WIDTH))
             .border_color(gpui::transparent_black())
-            .cursor_pointer()
             .whitespace_nowrap()
             .text_size(font_size::BODY)
             .when(is_active, |el| {
@@ -245,12 +243,11 @@ impl Shell {
                     .font_weight(FontWeight(weight::MEDIUM))
                     .text_color(rgb(theme.text))
             })
-            .when(!is_active, |el| {
-                el.text_color(rgb(theme.text_muted))
-                    .hover(move |style| style.bg(rgb(hover)))
-                    .active(|style| style.opacity(opacity::ACTIVE))
-            })
-            .on_click(
+            .when(!is_active, |el| el.text_color(rgb(theme.text_muted)))
+            // The shown tab is picked, not disabled: the pointer for the double-click rename.
+            .pressable_unless(is_active, Look::Chip, theme)
+            .on_press(
+                true,
                 cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
                     select(shell);
                     shell.sync_panes(window, cx);
@@ -817,17 +814,14 @@ impl Shell {
         .px(px(space::S))
         .py_0()
         .text_size(font_size::META)
-        .active(|style| style.opacity(opacity::ACTIVE))
         .when(following, |el| {
             el.bg(rgb(theme.card))
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text))
         })
-        .when(!following, |el| {
-            let hover = theme.hover;
-            el.text_color(rgb(theme.text_muted))
-                .hover(move |style| style.bg(rgb(hover)))
-        })
+        .when(!following, |el| el.text_color(rgb(theme.text_muted)))
+        // Following is picked, not disabled: it keeps the pointer (it opens the Share menu).
+        .pressable_unless(following, Look::Chip, theme)
         .tooltip(tooltip(
             theme,
             if following {
@@ -837,7 +831,8 @@ impl Shell {
             },
             "",
         ))
-        .on_click(
+        .on_press(
+            true,
             cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
                 shell.open_share_menu(session, event.position(), window, cx);
             }),
@@ -1127,7 +1122,6 @@ fn pane_divider(divider: Divider, theme: &Theme, cx: &mut Context<'_, Shell>) ->
     let at = |start: f64, len: f64| relative((start + len * divider.ratio) as f32);
     let grip = px(theme::GRIP_WIDTH);
     let centre = px(-theme::GRIP_WIDTH / 2.0);
-    let hover = theme.divider;
     // A zero-thick line along the divider; the strip hangs half on each side of it.
     let (line, strip) = match divider.axis {
         Axis::Vertical => (
@@ -1147,11 +1141,9 @@ fn pane_divider(divider: Divider, theme: &Theme, cx: &mut Context<'_, Shell>) ->
     };
     line.absolute()
         .child(
-            strip
-                .id(("pane-divider", divider.index))
+            grip_hover(strip.id(("pane-divider", divider.index)), theme)
                 .absolute()
                 .cursor(divider_cursor(divider.axis))
-                .hover(move |style| style.bg(rgb(hover)))
                 .on_drag(divider, |_, _, _, cx| cx.new(|_| EmptyView))
                 .on_mouse_up(
                     MouseButton::Left,

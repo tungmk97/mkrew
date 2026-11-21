@@ -363,35 +363,34 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, quick_open::key(&event.keystroke))
-        else {
+        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
             return;
         };
         let has_keys = !self.jira_keys_of(project_id).is_empty();
-        let paste = (key == quick_open::Key::Paste)
+        let paste = (key == palette::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
         let view = self.jira.entry(project_id).or_default();
         // The field only has the keyboard while shown: saved keys absent or Edit.
         let field = view.keys_field.get_or_insert_with(Input::default);
         match key {
-            quick_open::Key::Close if !field.is_empty() => field.clear(),
-            quick_open::Key::Close => {
+            palette::Key::Close if !field.is_empty() => field.clear(),
+            palette::Key::Close => {
                 if has_keys {
                     view.keys_field = None;
                     self.focus_pane(window, cx);
                 }
             }
-            quick_open::Key::Open => return self.save_jira_keys(project_id, window, cx),
-            quick_open::Key::Move(_) => {}
-            quick_open::Key::Edit(key) => {
+            palette::Key::Open => return self.save_jira_keys(project_id, window, cx),
+            palette::Key::Move(_) => {}
+            palette::Key::Edit(key) => {
                 copy_selection(&key, field, cx);
                 field.edit(&key);
             }
-            quick_open::Key::Paste => {
+            palette::Key::Paste => {
                 field.insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }
-            quick_open::Key::Insert(text) => {
+            palette::Key::Insert(text) => {
                 field.insert(&text);
             }
         }
@@ -406,26 +405,25 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, quick_open::key(&event.keystroke))
-        else {
+        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
             return;
         };
-        let paste = (key == quick_open::Key::Paste)
+        let paste = (key == palette::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
         let field = &mut self.jira.entry(project_id).or_default().filter;
         match key {
-            quick_open::Key::Close if !field.is_empty() => field.clear(),
-            quick_open::Key::Close => self.focus_pane(window, cx),
-            quick_open::Key::Open | quick_open::Key::Move(_) => {}
-            quick_open::Key::Edit(key) => {
+            palette::Key::Close if !field.is_empty() => field.clear(),
+            palette::Key::Close => self.focus_pane(window, cx),
+            palette::Key::Open | palette::Key::Move(_) => {}
+            palette::Key::Edit(key) => {
                 copy_selection(&key, field, cx);
                 field.edit(&key);
             }
-            quick_open::Key::Paste => {
+            palette::Key::Paste => {
                 field.insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }
-            quick_open::Key::Insert(text) => {
+            palette::Key::Insert(text) => {
                 field.insert(&text);
             }
         }
@@ -843,26 +841,27 @@ impl Shell {
         let (area, title) = split_area(row.summary);
         let fold = if row.has_children {
             let folded = key.clone();
-            let hover = theme.hover;
             div()
                 .id(("jira-fold", index))
                 .flex_none()
                 .rounded(px(radius::SMALL))
-                .cursor_pointer()
-                .hover(move |style| style.bg(rgb(hover)))
+                .pressable(Look::Raised, true, theme)
                 .tooltip(tooltip(
                     theme,
                     if row.collapsed { "Expand" } else { "Collapse" },
                     SharedString::default(),
                 ))
-                .on_click(cx.listener(move |shell, _, _, cx| {
-                    // Not a click on the row (which would open the issue).
-                    cx.stop_propagation();
-                    if let Some(view) = shell.jira.get_mut(&project_id) {
-                        view.toggle_collapsed(&folded);
-                    }
-                    cx.notify();
-                }))
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, _, cx| {
+                        // Not a click on the row (which would open the issue).
+                        cx.stop_propagation();
+                        if let Some(view) = shell.jira.get_mut(&project_id) {
+                            view.toggle_collapsed(&folded);
+                        }
+                        cx.notify();
+                    }),
+                )
                 .child(icon_svg(
                     if row.collapsed {
                         Icon::ChevronRight
@@ -879,7 +878,6 @@ impl Shell {
                 .w(theme::rems_px(theme::ICON_SIZE_SMALL))
                 .into_any_element()
         };
-        let row_hover = theme.row_hover;
         let selected = self
             .jira
             .get(&project_id)
@@ -901,12 +899,14 @@ impl Shell {
             } else {
                 gpui::transparent_black()
             })
-            .cursor_pointer()
             .text_color(rgb(theme.text))
-            .hover(move |style| style.bg(rgb(row_hover)))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.open_issue(project_id, key.clone(), window, cx);
-            }))
+            .pressable(Look::Row, true, theme)
+            .on_press(
+                true,
+                cx.listener(move |shell, _, window, cx| {
+                    shell.open_issue(project_id, key.clone(), window, cx);
+                }),
+            )
             .child(fold)
             .child(kind_icon(row.kind, theme))
             .child(key_label(row.key, theme).w(theme::rems_px(theme::BOARD_KEY_WIDTH)))
@@ -949,7 +949,6 @@ impl Shell {
     ) -> gpui::Stateful<gpui::Div> {
         let key = issue.key.clone();
         let (area, title) = split_area(&issue.summary);
-        let hover = theme.border;
         let selected = self
             .jira
             .get(&project_id)
@@ -971,10 +970,7 @@ impl Shell {
             } else {
                 theme.surface_raised
             }))
-            .when(!selected, |el| {
-                el.hover(move |style| style.border_color(rgb(hover)))
-            })
-            .cursor_pointer()
+            .map(|el| card_press(el, selected, theme))
             .on_click(cx.listener(move |shell, _, window, cx| {
                 shell.open_issue(project_id, key.clone(), window, cx);
             }))
