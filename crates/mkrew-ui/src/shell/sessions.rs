@@ -485,6 +485,7 @@ impl Shell {
                 }
             }
             Command::QuickOpen => self.open_quick_open(window, cx),
+            Command::SearchInFiles => self.open_palette(window, cx),
             Command::CommandPalette => self.open_palette(window, cx),
             Command::OpenSettings => self.open_settings_dialog(window, cx),
             Command::ToggleTheme => self.toggle_theme(window, cx),

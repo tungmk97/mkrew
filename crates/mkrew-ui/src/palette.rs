@@ -405,6 +405,17 @@ pub fn scope_step(keystroke: &Keystroke) -> Option<isize> {
     })
 }
 
+/// The scope a palette-opening command opens on (`Ctrl+Shift+O` Files, `Ctrl+Alt+Shift+F`
+/// Search, `Ctrl+Shift+P` All); `None` for every other command.
+pub fn scope_for(command: Command) -> Option<Scope> {
+    match command {
+        Command::QuickOpen => Some(Scope::Files),
+        Command::SearchInFiles => Some(Scope::Search),
+        Command::CommandPalette => Some(Scope::All),
+        _ => None,
+    }
+}
+
 /// What picking an entry does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -593,6 +604,7 @@ pub fn title(command: Command) -> String {
         Command::ToggleFilePreview => "Editor: Toggle preview / source".into(),
         Command::ToggleFileSplit => "Editor: Toggle split source | preview".into(),
         Command::QuickOpen => "Files: Quick open file".into(),
+        Command::SearchInFiles => "Files: Search in files".into(),
         Command::GitToggleMode => "Git: Toggle Working changes / Against base".into(),
         Command::GitToggleHistory => "Git: Toggle History".into(),
         Command::GitNextHunk => "Git: Next hunk".into(),
@@ -667,6 +679,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ShowTerminals
         | Command::ShowFileTree
         | Command::ShowGitPanel
+        | Command::SearchInFiles
         | Command::QuickOpen
         | Command::ToggleInspector
         | Command::NewTask

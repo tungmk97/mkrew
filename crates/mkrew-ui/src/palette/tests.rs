@@ -244,6 +244,7 @@ fn availability_follows_the_view() {
     let terminals = commands(&context(View::Terminals));
     for command in [
         Command::NewShellTab,
+        Command::SearchInFiles,
         Command::CloseTab,
         Command::ClosePane,
         Command::RenamePane,
@@ -395,6 +396,7 @@ fn availability_follows_the_view() {
             Command::AskAi
         ]
     );
+    assert!(!commands(&none).contains(&Command::SearchInFiles));
     assert_eq!(extras(&none), []);
     assert!(
         entries(&Keymap::defaults(), &none, &[], &[], &[])
@@ -428,6 +430,14 @@ fn phone_access_is_listed_in_every_view_and_without_a_workspace() {
         .expect("listed without a workspace");
     assert_eq!(entry.title, "Global: Phone access…");
     assert_eq!(entry.shortcut, "", "palette-only: no key is bound");
+}
+
+#[test]
+fn the_open_commands_name_the_scope_they_open_on() {
+    assert_eq!(scope_for(Command::QuickOpen), Some(Scope::Files));
+    assert_eq!(scope_for(Command::SearchInFiles), Some(Scope::Search));
+    assert_eq!(scope_for(Command::CommandPalette), Some(Scope::All));
+    assert_eq!(scope_for(Command::NewShellTab), None);
 }
 
 #[test]

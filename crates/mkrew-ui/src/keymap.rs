@@ -142,8 +142,10 @@ pub enum Command {
     GitFetch,
     /// Git only: push the shown repository's branch.
     GitPush,
-    /// Fuzzy-find a file of the active workspace and open it in the Editor view.
+    /// Open the palette on its Files scope: fuzzy-find a file of the active workspace and open it in the Editor view.
     QuickOpen,
+    /// Open the palette on its Search scope: the text of the active workspace's files.
+    SearchInFiles,
     /// Open the new task dialog for the active workspace.
     NewTask,
     /// Board only: run the selected Todo card.
@@ -328,6 +330,7 @@ impl Command {
             Command::GitFetch,
             Command::GitPush,
             Command::QuickOpen,
+            Command::SearchInFiles,
             Command::NewTask,
             Command::RunTask,
             Command::RunStart,
@@ -438,6 +441,7 @@ impl Command {
             Command::GitFetch => "git_fetch".into(),
             Command::GitPush => "git_push".into(),
             Command::QuickOpen => "quick_open".into(),
+            Command::SearchInFiles => "search_in_files".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
             Command::Card(key) => format!("card_{}", key.name()),
@@ -561,6 +565,7 @@ impl Command {
             Command::GitFetch => "f".into(),
             Command::GitPush => "shift-p".into(),
             Command::QuickOpen => "ctrl-shift-o".into(),
+            Command::SearchInFiles => "ctrl-alt-shift-f".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
             Command::Card(key) => match key {
@@ -1104,6 +1109,18 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_alt_shift_f_belongs_to_search_in_files_alone() {
+        let keymap = Keymap::defaults();
+        let taken: Vec<Command> = keymap
+            .bindings()
+            .iter()
+            .filter(|(_, keys)| same_keys(keys, &keystroke("ctrl-alt-shift-f")))
+            .map(|(command, _)| *command)
+            .collect();
+        assert_eq!(taken, [Command::SearchInFiles]);
+    }
+
+    #[test]
     fn ctrl_shift_v_pastes_in_a_terminal_and_toggles_the_preview_in_the_editor() {
         let keymap = Keymap::defaults();
         assert_eq!(keymap.label(Command::Paste), "Ctrl+Shift+V");
@@ -1184,6 +1201,13 @@ mod tests {
         assert_eq!(bound("ctrl-shift-4"), Some(Command::ShowGitPanel));
         assert_eq!(bound("ctrl-shift-7"), Some(Command::ShowDiff));
         assert_eq!(bound("ctrl-shift-o"), Some(Command::QuickOpen));
+        assert_eq!(bound("ctrl-alt-shift-f"), Some(Command::SearchInFiles));
+        assert_eq!(keymap.label(Command::SearchInFiles), "Ctrl+Alt+Shift+F");
+        assert_eq!(Command::SearchInFiles.context(), None);
+        assert_eq!(
+            Command::from_name("search_in_files"),
+            Some(Command::SearchInFiles)
+        );
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
         assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));
         assert_eq!(bound("ctrl-shift-p"), Some(Command::CommandPalette));
