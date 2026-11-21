@@ -79,9 +79,11 @@ After P1 no dialog builds its own panel frame.
 
 ### 4.3 Motion
 
-A floating panel appears with a fade plus a scale from 0.98 to 1 over `motion::FAST`, ease-out.
+A floating panel appears with a fade plus a 4 px rise over `motion::FAST`, ease-out (gpui-pre 0.3.7 has no element transform, so no scale).
 It disappears at once.
-When the OS asks for reduced motion, it only fades.
+The motion is `widgets::appear`, applied by `modal_shade` and the confirm prompt, not inside `floating_panel` (`with_animation` changes the element type callers chain on).
+When reduced motion is on, gpui draws the end state, so the panel appears at once.
+Reduced motion is read on Windows from `SPI_GETCLIENTAREAANIMATION` at startup and on window activation and given to `cx.set_reduce_motion`; on macOS and Linux it stays off (gpui has no read there).
 
 ### 4.4 Contrast check
 
@@ -93,23 +95,28 @@ A test computes it for every built-in theme over both `bg` and `text` behind the
 ### 5.1 The rule
 
 Every element with a click or mouse-down handler gets its hover, press, focus and disabled look from `widgets.rs`.
-Only `widgets.rs` calls `.hover(` and `.active(` directly after P3.
+Only `widgets.rs` and `pressable.rs` call `.hover(` and `.active(` directly after P3; `group_hover` stays allowed anywhere.
 The rule is written in SPEC §14, the `mkrew-ui-design` skill and the `ui-reviewer` checklist.
 
-### 5.2 API (`crates/mkrew-ui/src/shell/widgets.rs`)
+### 5.2 API (`crates/mkrew-ui/src/pressable.rs`, re-exported by `shell/widgets.rs`)
+
+`Look` and `Pressable` live in the lib crate because lib modules (e.g. `preview.rs`) need them; `widgets.rs` is in the bin crate.
+Filled controls (the primary button, the switch) dim on hover with `opacity::HOVER` instead of changing fill.
 
 ```rust
 /// How a pressable element looks at rest, hovered and pressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Look {
-    /// A list or menu row: hover fill `surface_raised`, no border change.
+    /// A list or menu row: hover fill `hover`, no border change.
     Row,
-    /// A chip or pill: hover fill one step above its rest fill.
+    /// A chip or pill: hover fill `hover`.
     Chip,
-    /// An icon-only control: hover fill `surface_raised`, icon to full text color.
+    /// An icon-only control: hover fill `hover`, icon to full text color.
     Icon,
     /// A text link: no fill, hover underline and full text color.
     Text,
+    /// An element on a `surface_raised` fill (menus, toasts, cards, the find bar): hover fill `border`.
+    Raised,
 }
 
 /// The resolved style of a pressable element; pure, so it is tested without a window.
@@ -147,23 +154,26 @@ New widgets built on `Pressable`:
 
 - `toggle(id, on: bool, enabled: bool, theme: &Theme) -> gpui::Stateful<gpui::Div>`: the switch, `SWITCH_WIDTH` x `SWITCH_HEIGHT`, knob inset `SWITCH_INSET`, accent track when on.
 - `dropdown_trigger(id, label: impl IntoElement, open: bool, enabled: bool, theme: &Theme) -> gpui::Stateful<gpui::Div>`: a field frame with the label and a chevron; the frame is accent while `open`.
-- `list_row(id, selected: bool, theme: &Theme) -> gpui::Stateful<gpui::Div>`: a `Look::Row` row; `selected` adds the `surface_raised` fill and the `PALETTE_SELECTED_BAR` accent bar on the left.
+- `list_row(id, selected: bool, theme: &Theme) -> gpui::Stateful<gpui::Div>`: a `Look::Row` row; `selected` adds the `selected` fill and the `PALETTE_SELECTED_BAR` accent bar on the left.
 
 Existing widgets (`button`, `secondary_button`, `quiet_button`, `danger_button`, `disabled_button`, `icon_button_in`, `segment`, `menu_item`) are rebuilt on `pressable`, keeping their signatures.
 
 ### 5.3 The audit (Plan P3)
 
-Today `crates/mkrew-ui/src` has 327 click or mouse-down handlers in 48 files, against 76 `.hover(` calls.
-P3 walks them by area: chrome and sidebar; tabs and panes; Board, Jira and all-workspaces board; Files and Docs; Git; inspector and thread; dialogs.
+Today `crates/mkrew-ui/src` has 327 click or mouse-down handlers in 48 files (294 `.on_click(`, 33 `.on_mouse_down(`), against 76 `.hover(` calls.
+208 already use a shared widget, 71 are hand-built and get converted, 48 are exempt.
+P3 walks them by area: chrome and sidebar; tabs and panes; Board and Jira; Files and Docs; Git; inspector, thread and composer; dialogs; Run, prompts and leftovers.
 Each clickable element moves to a widget or to `.pressable(..)`.
-Areas that are not buttons get no hover and are listed in the plan with the reason: resize grips, terminal surfaces, drop zones, the scrim, text fields (they keep their I-beam).
+P3 adds the helpers the audit needs on top of P1: `pressable_unless` (a selected row keeps full opacity), `card_press` (board cards hover by border), `disabled_icon_button`, `grip_hover` and `pick_surface` (resize grips and the diff line pick hover without being buttons), and `row_action` moved from `git_rows.rs` into `widgets.rs`.
+Areas that are not buttons get no hover and are listed in the plan with the reason: terminal surfaces, drop zones, the scrim, text fields (they keep their I-beam).
+Why not `surface_raised` for hover: in Mkrew Dark and Light it equals `selected`, so a hovered row would look selected, and menus and cards already sit on it.
 
 ## 6. Settings
 
 ### 6.1 Frame
 
 Settings opens in a `floating_panel` of `SETTINGS_DIALOG_WIDTH` x `SETTINGS_DIALOG_HEIGHT`, capped at the viewport minus a margin as today.
-The left navigation is `SETTINGS_NAV_WIDTH` wide and lists the pages under three overlines:
+The left navigation is `SETTINGS_NAV_WIDTH` wide and lists the pages under three overlines, in the order of `settings_dialog::NAV` (the single source of the order; `Page::ALL` keeps the TOML order):
 
 - **App**: General, Appearance, Notifications, Voice, Features.
 - **Integrations**: Jira, Phone, Machines.
@@ -184,10 +194,11 @@ An empty result shows the empty state "No setting matches “<query>”." with t
 
 ### 6.3 Groups as cards
 
-`Setting` (`crates/mkrew-ui/src/settings_dialog.rs`) gets `group: &'static str`, a UI group independent of `section` (which stays the TOML table name).
+`Setting` (`crates/mkrew-core/src/settings_fields.rs`) gets `group: &'static str`, a UI group independent of `section` (which stays the TOML table name).
 A page renders each group as an overline title followed by one card (`radius::LARGE`, `surface` fill) holding its rows, with a faint 1 px divider between rows.
 A row is the label and the muted help on the left and the control on the right.
-Invariants checked by tests: every setting has a non-empty `group`; rows of one group are contiguous in `SETTINGS`; the table still matches the template (existing test).
+Invariants checked by tests, over the non-hidden settings (hidden settings have no group): every one has a non-empty `group`; rows of one group are contiguous in `SETTINGS` (rows are reordered where needed, e.g. `ui.close_to_tray`, `features.session`); the table still matches the template (existing test).
+Matching help text with `palette::fuzzy` (a subsequence match) is noisy on short queries, so a label match always ranks above a help-only match.
 
 ### 6.4 Controls
 
@@ -212,18 +223,19 @@ pub enum Scope { All, Commands, Sessions, Files, Search, Branches, Commits }
 
 `Scope::ORDER` is the order above; Tab moves to the next scope and Shift+Tab to the previous one, wrapping.
 `Row` gains `section: Scope`, `detail: Option<String>` (a muted path, short hash or session state) and `age: Option<String>` (from `git_history::age`).
-`Action` gains `OpenFile { path: String }`, `OpenSearchHit { path: String, line: u32 }`, `Checkout { repo: Option<String>, branch: String }` and `ShowCommit { repo: Option<String>, sha: String }`.
+`Action` gains `OpenFile { path: String }`, `OpenSearchHit { path: String, line: u32 }`, `Checkout { repo: Option<String>, branch: String }` and `ShowCommit { repo: Option<String>, sha: String }`; it becomes `Clone` instead of `Copy`.
+A session's state moves from the shortcut column to `detail`.
 `palette::fuzzy` and `palette::filter` stay as they are.
 
 ### 7.2 Sources
 
 - Synchronous: Commands (commands, extras, agent profiles, Run commands, machines) and Sessions (workspaces, live sessions with waiting ones first, tasks) are filtered locally as today.
 - Asynchronous, each request carries a `serial` and late answers are dropped (the `quick_open.rs` rule):
-  - Files: `fs.find` per keystroke, debounced 80 ms.
-  - Search: `fs.search` per keystroke, debounced 150 ms, only from 2 characters.
+  - Files: `fs.find` per keystroke, debounced `PALETTE_FILES_DELAY` (80 ms).
+  - Search: `fs.search` per keystroke, debounced `PALETTE_SEARCH_DELAY` (150 ms), only from 2 characters.
   - Branches: `git.branches` once per palette opening, when the Branches or All scope is first shown, then filtered locally.
   - Commits: `git.log` with `limit: 500` once per palette opening, when the Commits or All scope is first shown, then filtered locally.
-- A scope waiting for its answer shows a "Loading…" row in its section; a failed request shows the error as a muted row.
+- A scope waiting for its answer shows a "Loading…" row and a failed request a muted error row, in that scope's own tab only; All leaves the scope out until it has rows.
 
 The workspace whose files, branches and commits the palette reads is the active workspace (and its task worktree when a task tab is shown), the same one Quick open reads today.
 The repository is the one the Git view of that workspace has selected (`repo: Option<String>`, ADR 0029: a direct child folder that is its own repository, `None` = the workspace folder).
@@ -231,10 +243,10 @@ With no workspace open, Files, Search, Branches and Commits show the empty state
 
 ### 7.3 The All scope
 
-Empty query: Sessions first (waiting sessions on top), then the recently run commands.
+Empty query: Sessions first (waiting sessions on top), then the recently run commands (kept in memory by the UI for this run, newest first; lost on restart).
 With a query: one section per scope in `Scope::ORDER` except Search, each with at most `PALETTE_GROUP_LIMIT` rows and a trailing "+N more ›" row that switches to that scope.
 Search never runs from All: a content search per keystroke over every scope is too heavy.
-Branches and Commits join All only after they are loaded (opening All asks for both in the background).
+Branches and Commits join All only after they are loaded (opening All asks for both in the background); no loading or error rows in All.
 
 ### 7.4 Keys and entry points
 
@@ -261,7 +273,8 @@ The list is at most `PALETTE_LIST_HEIGHT` tall and scrolls.
 
 - `OpenFile`: opens the file in the Files view (today's Quick open behavior).
 - `OpenSearchHit`: opens the file and puts the caret on `line`.
-- `Checkout`: if the repository has uncommitted changes (from `RepoSummary`), a confirm dialog first; if a live agent session runs in that folder, the confirm says so; then `git.checkout`; a failure is shown as a toast with git's message.
+- `Checkout`: if the repository has uncommitted changes (from `RepoSummary`), a confirm dialog first; if a live agent session runs in that workspace (and the same task worktree, when one is shown), the confirm says so; then `git.checkout`; a failure is shown as a toast with git's message.
+  A task worktree's own uncommitted changes are not checked before the confirm (the title bar summary does not cover them); git refuses a checkout that would lose them, and its message is shown.
 - `ShowCommit`: opens the Git view on that commit.
 
 ### 7.7 Removal
@@ -320,20 +333,21 @@ pub struct FsSearchParams {
     pub worktree_task_id: Option<Ulid>,
     pub query: String,
     pub regex: bool,
-    pub limit: u32,            // the UI sends 200
+    pub limit: u32,            // the UI sends 200; params carry serde defaults like `fs.find`
 }
 pub struct SearchHit { pub path: String, pub line: u32, pub preview: String, pub ranges: Vec<(u32, u32)> }
 pub struct FsSearchResult { pub hits: Vec<SearchHit>, pub truncated: bool }
 ```
 
-- Walk: `ignore::WalkBuilder` (already a dependency), parallel, `.gitignore` respected, hidden files skipped as `fs.find` does.
-- Match: `grep-searcher` + `grep-regex` (new dependencies, both from the ripgrep project).
+- Walk: the `files::walker` that `fs.find` uses (`ignore::WalkBuilder`), so Search sees exactly the files the Files scope lists, `.gitignore` respected.
+- Match: `grep-searcher` + `grep-regex` + `grep-matcher` (new dependencies, all from the ripgrep project; `grep-matcher` gives the match ranges).
   With `regex: false` the query is escaped; smart case: an all-lowercase query is case-insensitive.
 - Skips binary files and files over 2 MB.
 - Stops once `limit` hits are found and sets `truncated`.
 - `path` is relative to the searched folder with `/` separators; `line` is 1-based; `preview` is the matching line trimmed and cut to 200 characters; `ranges` are byte ranges into `preview`.
 - An invalid regex returns an error naming the problem.
-- Cancellation: each connection keeps an `AtomicU64` search generation; a new `fs.search` bumps it and the walkers of older searches stop before opening their next file.
+- Concurrency and cancellation: `Daemon::connection` answers each request before reading the next one, so `fs.search` runs beside the read loop (replies on a connection may come out of order; the UI matches replies by id).
+  Each connection keeps an `AtomicU64` search generation; a new `fs.search` bumps it, the walkers of older searches stop before opening their next file, and the replaced search answers `invalid_state`.
 - The code carries `// ponytail: no index; add a persistent trigram index if search on big repos measurably lags`.
 
 ## 9. Delivery: three plans
@@ -355,11 +369,12 @@ Each plan ends with `scripts/verify.sh` green and screenshots (dark and light) o
 - Checkout with local changes git refuses: the toast shows git's message; nothing else changes.
 - Settings search with a query that matches only hidden settings: hidden settings are never listed; the empty state shows.
 - A dialog taller than the window: `floating_panel` callers keep today's viewport caps.
-- Reduced motion: no scale, fade only.
+- Reduced motion: the panel appears at once.
 
 ## 11. Testing
 
 No test calls a real agent or the network; git tests create temporary repositories.
+There is no headless harness for `Shell`, so shell wiring (Quick open opens Files, Esc in `@` mode) is covered by model tests on `palette` and by `docs/HUMAN_CHECKS.md` lines.
 
 | Area | Behavior tests |
 | --- | --- |
