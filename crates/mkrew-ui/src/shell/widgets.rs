@@ -459,10 +459,6 @@ pub(crate) fn pick_surface(el: gpui::Div, picked: bool, border: u32) -> gpui::Di
 /// A board card (task card, issue card): a pointer, the border lights on hover unless the card
 /// is `selected`, and it dims while pressed. The fill does not change on hover, so a chip
 /// inside the card (Edit, Undo) keeps a hover of its own that is visible.
-#[expect(
-    dead_code,
-    reason = "first caller lands in a later P3 task; delete this attribute then"
-)]
 pub(crate) fn card_press(
     card: gpui::Stateful<gpui::Div>,
     selected: bool,

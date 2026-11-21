@@ -841,26 +841,27 @@ impl Shell {
         let (area, title) = split_area(row.summary);
         let fold = if row.has_children {
             let folded = key.clone();
-            let hover = theme.hover;
             div()
                 .id(("jira-fold", index))
                 .flex_none()
                 .rounded(px(radius::SMALL))
-                .cursor_pointer()
-                .hover(move |style| style.bg(rgb(hover)))
+                .pressable(Look::Raised, true, theme)
                 .tooltip(tooltip(
                     theme,
                     if row.collapsed { "Expand" } else { "Collapse" },
                     SharedString::default(),
                 ))
-                .on_click(cx.listener(move |shell, _, _, cx| {
-                    // Not a click on the row (which would open the issue).
-                    cx.stop_propagation();
-                    if let Some(view) = shell.jira.get_mut(&project_id) {
-                        view.toggle_collapsed(&folded);
-                    }
-                    cx.notify();
-                }))
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, _, cx| {
+                        // Not a click on the row (which would open the issue).
+                        cx.stop_propagation();
+                        if let Some(view) = shell.jira.get_mut(&project_id) {
+                            view.toggle_collapsed(&folded);
+                        }
+                        cx.notify();
+                    }),
+                )
                 .child(icon_svg(
                     if row.collapsed {
                         Icon::ChevronRight
@@ -877,7 +878,6 @@ impl Shell {
                 .w(theme::rems_px(theme::ICON_SIZE_SMALL))
                 .into_any_element()
         };
-        let row_hover = theme.row_hover;
         let selected = self
             .jira
             .get(&project_id)
@@ -899,12 +899,14 @@ impl Shell {
             } else {
                 gpui::transparent_black()
             })
-            .cursor_pointer()
             .text_color(rgb(theme.text))
-            .hover(move |style| style.bg(rgb(row_hover)))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.open_issue(project_id, key.clone(), window, cx);
-            }))
+            .pressable(Look::Row, true, theme)
+            .on_press(
+                true,
+                cx.listener(move |shell, _, window, cx| {
+                    shell.open_issue(project_id, key.clone(), window, cx);
+                }),
+            )
             .child(fold)
             .child(kind_icon(row.kind, theme))
             .child(key_label(row.key, theme).w(theme::rems_px(theme::BOARD_KEY_WIDTH)))
@@ -947,7 +949,6 @@ impl Shell {
     ) -> gpui::Stateful<gpui::Div> {
         let key = issue.key.clone();
         let (area, title) = split_area(&issue.summary);
-        let hover = theme.border;
         let selected = self
             .jira
             .get(&project_id)
@@ -969,10 +970,7 @@ impl Shell {
             } else {
                 theme.surface_raised
             }))
-            .when(!selected, |el| {
-                el.hover(move |style| style.border_color(rgb(hover)))
-            })
-            .cursor_pointer()
+            .map(|el| card_press(el, selected, theme))
             .on_click(cx.listener(move |shell, _, window, cx| {
                 shell.open_issue(project_id, key.clone(), window, cx);
             }))

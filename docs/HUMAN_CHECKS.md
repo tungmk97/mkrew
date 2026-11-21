@@ -60,6 +60,15 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
 - [ ] **Tabs and panes look changes (spec 5.2, not bugs):** the tab chips and Share turn their label to full text on hover.
   A followed Share no longer dims while pressed.
   Pressing a tab's X (`row_action`) dims its chip.
+- [ ] **Cards (dark + light, Board and the all-workspaces scope):** hover an unselected task card: its border lights and the pointer shows; the selected card shows no border change.
+  Hover a card, then hover its Edit chip: the chip shows a fill that is visible on the card.
+  Press and hold the Edit chip: the chip dims and so does its card (intended; the click still only edits).
+  Press a card and drag it to another column: the card does not stay dimmed after the drop.
+  Hover the hover-only Undo, Changes and Run with chips of a card: each still shows its fill.
+- [ ] **Jira (dark + light):** hover a List row (a fill) and its fold chevron (a fill one step above the row's), and a Kanban issue card (border light).
+- [ ] **Board and Jira look changes (spec 5.2, not bugs):** the Jira List row now hovers with `theme.hover` (it used `row_hover`).
+  The cards keep their border-light hover and gain a press dim.
+  Pressing a nested chip (Edit, the fold chevron) dims its card or row.
 
 ### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
 - [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.
