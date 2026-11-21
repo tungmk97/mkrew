@@ -710,8 +710,7 @@ impl SettingsDialog {
         {
             return Effect::Prompts(action);
         }
-        let m = keystroke.modifiers;
-        if keystroke.key == "f" && m.control && !m.shift && !m.alt && !m.platform {
+        if find_shortcut(keystroke) {
             return self.move_focus(Focus::Find, keymap);
         }
         let Some(key) = dialog_key(keystroke) else {
@@ -1058,6 +1057,25 @@ pub fn prompts_shortcut(keystroke: &Keystroke) -> Option<PromptAction> {
         "n" => Some(PromptAction::New),
         "s" => Some(PromptAction::Save),
         _ => None,
+    }
+}
+
+/// Ctrl+F: the keyboard goes to the search box from anywhere in the dialog.
+pub fn find_shortcut(keystroke: &Keystroke) -> bool {
+    let m = keystroke.modifiers;
+    keystroke.key == "f" && m.control && !m.shift && !m.alt && !m.platform
+}
+
+#[cfg(test)]
+mod find_shortcut_tests {
+    use super::*;
+
+    #[test]
+    fn only_plain_ctrl_f_finds() {
+        let key = |keys: &str| Keystroke::parse(keys).unwrap();
+        assert!(find_shortcut(&key("ctrl-f")));
+        assert!(!find_shortcut(&key("ctrl-shift-f")));
+        assert!(!find_shortcut(&key("f")));
     }
 }
 

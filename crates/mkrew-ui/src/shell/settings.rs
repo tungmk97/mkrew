@@ -70,16 +70,22 @@ impl Shell {
         cx.stop_propagation();
         let key = task_dialog::dialog_key(&event.keystroke);
         // Ctrl+N and Ctrl+S of the Prompts page work from a button too, and so does Ctrl+F.
+        let find_key = settings_dialog::find_shortcut(&event.keystroke);
         let page_key = settings_dialog::prompts_shortcut(&event.keystroke).is_some();
-        let m = event.keystroke.modifiers;
-        let find_key = event.keystroke.key == "f" && m.control && !m.shift && !m.alt && !m.platform;
+        let control = self.dialog_control_focused(window);
         // A button or link has the keyboard: the rows take nothing but Esc / Ctrl+Enter.
-        if self.dialog_control_focused(window)
+        if control
             && !page_key
             && !find_key
             && !matches!(key, Some(DialogKey::Cancel | DialogKey::Save))
         {
             return;
+        }
+        // These keys move the dialog's own focus (the search box, a prompt's Name): the keyboard
+        // follows, as a click does, or the next key would hit the early return above.
+        let on_prompts = (self.settings_dialog.as_ref()).is_some_and(|d| d.tab == Tab::Prompts);
+        if control && (find_key || (page_key && on_prompts)) {
+            window.focus(&self.dialog_focus, cx);
         }
         let paste = (key == Some(DialogKey::Paste))
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
