@@ -1326,13 +1326,16 @@ impl Shell {
                         } else {
                             theme.text_muted
                         }))
-                        .pressable(Look::Chip, true, theme)
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            if let Some(palette) = shell.palette.as_mut() {
-                                palette.set_scope(scope);
-                            }
-                            shell.palette_changed(window, cx);
-                        }))
+                        .pressable_unless(current, Look::Chip, theme)
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                if let Some(palette) = shell.palette.as_mut() {
+                                    palette.set_scope(scope);
+                                }
+                                shell.palette_changed(window, cx);
+                            }),
+                        )
                         .child(scope.title())
                 }),
             )

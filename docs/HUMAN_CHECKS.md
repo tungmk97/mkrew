@@ -138,6 +138,25 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
   In the turns dialog press and hold Restore or Diff on a row: the button dims and so does its row (intended; the click acts as before).
 - [ ] **Inspector (dark + light):** with the right panel open hover its title bar toggle.
   The hover is visible against the open fill.
+- [ ] **Run (dark + light):** hover the title bar Run pill idle: a fill, and the label turns to full text.
+  Hover it while something runs: it keeps its green fill, and the label underlines and brightens.
+  A click opens the menu.
+  In Run setup hover a folded command card, the dashed "+ Add command" row and the two checkboxes: each shows a fill.
+  Open the folder picker and hover an unpicked entry: a fill.
+  The entry at the cursor keeps its fill and a pointer.
+- [ ] **Prompts (dark + light):** hover an unopened prompt row: a fill.
+  The open prompt keeps its fill and a pointer.
+- [ ] **Settings and palette (dark + light):** hover a left nav tab: a fill.
+  The open tab keeps its fill and a pointer.
+  Hover a Settings row that is not focused (a fill) and click a read-only one: the keyboard focus moves to it, as before.
+  The focused row keeps its fill and a pointer.
+  Open the command palette and hover a scope pill that is not current: a fill, and the label turns to full text.
+  The current pill (accent outline) shows a pointer and no fill.
+  A click on a pill still switches the scope.
+- [ ] **Run, prompts and Settings look changes (spec 5.2, not bugs):** the idle Run pill label turns to full text on hover and the live pill underlines.
+  The setup checkboxes, the folder picker and the prompts rows now hover with `theme.hover` (they used `surface_raised`).
+  The entry at the cursor, the open prompt and the focused Settings row no longer dim while pressed.
+  The current scope pill no longer hovers.
 
 ### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
 - [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.

@@ -88,29 +88,30 @@ impl Shell {
                 .px(px(space::S))
                 .py(px(space::XS))
                 .rounded(px(radius::SMALL))
-                .cursor_pointer()
                 .border(px(theme::BORDER_WIDTH))
                 .border_color(gpui::transparent_black())
                 .when(active, |el| el.bg(rgb(theme.surface_raised)))
                 .when(focused, |el| el.border_color(rgb(theme.selected_ring)))
-                .hover(|style| style.bg(rgb(theme.surface_raised)))
-                .active(|style| style.opacity(opacity::ACTIVE))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    let name = name.clone();
-                    shell.settings_do(
-                        move |dialog, _| {
-                            dialog.focus = Focus::Prompts(Spot::List);
-                            // The open prompt: Open again would ask to save and could drop edits.
-                            if active {
-                                Effect::None
-                            } else {
-                                Effect::Prompts(PromptAction::Open(name))
-                            }
-                        },
-                        window,
-                        cx,
-                    );
-                }))
+                .pressable_unless(active, Look::Row, theme)
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, window, cx| {
+                        let name = name.clone();
+                        shell.settings_do(
+                            move |dialog, _| {
+                                dialog.focus = Focus::Prompts(Spot::List);
+                                // The open prompt: Open again would ask to save and could drop edits.
+                                if active {
+                                    Effect::None
+                                } else {
+                                    Effect::Prompts(PromptAction::Open(name))
+                                }
+                            },
+                            window,
+                            cx,
+                        );
+                    }),
+                )
                 .child(
                     div()
                         .overflow_hidden()

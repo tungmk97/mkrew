@@ -227,9 +227,9 @@ impl Shell {
                 .rounded(px(radius::SMALL))
                 .text_size(font_size::BODY)
                 .text_color(rgb(if active { theme.text } else { theme.text_muted }))
-                // The active page keeps its `selected` fill on hover; the others hover.
-                .when(active, |el| el.bg(rgb(theme.selected)).cursor_pointer())
-                .when(!active, |el| el.pressable(Look::Row, true, theme))
+                // The active page keeps its `selected` fill and the pointer; the others hover.
+                .when(active, |el| el.bg(rgb(theme.selected)))
+                .pressable_unless(active, Look::Row, theme)
                 .when(focused, |el| {
                     el.border(px(theme::BORDER_WIDTH))
                         .border_color(rgb(theme.selected_ring))
@@ -694,8 +694,8 @@ impl Shell {
                 el.border_t(px(theme::BORDER_WIDTH))
                     .border_color(rgb(theme.divider))
             })
-            .when(focused, |el| el.bg(rgb(theme.selected)).cursor_pointer())
-            .when(!focused, |el| el.pressable(Look::Row, true, theme))
+            .when(focused, |el| el.bg(rgb(theme.selected)))
+            .pressable_unless(focused, Look::Row, theme)
             .on_press(true, Self::press_row(index, cx))
             .children(crumb.map(|crumb| meta_line(theme, crumb.into())))
             .child(
