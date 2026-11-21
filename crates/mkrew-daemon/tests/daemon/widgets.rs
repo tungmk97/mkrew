@@ -94,3 +94,22 @@ fn a_percentage_beyond_the_scale_is_clamped() {
     );
     client.stop();
 }
+
+#[test]
+fn machine_stats_arrive_while_a_client_is_connected() {
+    let env = Env::new();
+    let (_daemon, mut client) = env.start();
+    // Real `sysinfo` on this machine, nothing else: the first reading comes after one
+    // sampling period (2 s).
+    let Event::MachineStats(stats) =
+        client.wait_event_where(|e| matches!(e, Event::MachineStats(_)))
+    else {
+        unreachable!()
+    };
+    assert!((0.0..=100.0).contains(&stats.cpu_percent), "{stats:?}");
+    assert!(
+        stats.ram_total == 0 || stats.ram_used <= stats.ram_total,
+        "{stats:?}"
+    );
+    client.stop();
+}
