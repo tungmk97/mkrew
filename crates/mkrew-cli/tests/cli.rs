@@ -1706,3 +1706,46 @@ fn proxy_uses_a_running_daemon() {
     drop(stdin);
     assert!(proxy.wait().unwrap().success());
 }
+
+/// A command that copies its stdin to stdout, in `cmd` and in `sh`.
+#[cfg(windows)]
+const ECHO_STDIN: &str = r#"findstr "^""#;
+#[cfg(not(windows))]
+const ECHO_STDIN: &str = "cat";
+
+/// Claude Code runs `mk statusline` on every update: the user's own status line still prints
+/// its text, with no daemon running (the report is dropped) and without one saved (nothing
+/// printed), and the exit code is 0 either way.
+#[test]
+fn statusline_chains_the_users_status_line_and_never_fails() {
+    let env = Env::new();
+    let claude = env.dir.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    let payload = r#"{"session_id":"s1","rate_limits":{"five_hour":{"used_percentage":42.5,"resets_at":1778533631}}}"#;
+    let run = || {
+        let mut child = env
+            .command(&["statusline"])
+            .env("CLAUDE_CONFIG_DIR", &claude)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let none = run();
+    assert!(none.status.success(), "{none:?}");
+    assert!(none.stdout.is_empty(), "{none:?}");
+
+    let saved = serde_json::json!({"type": "command", "command": ECHO_STDIN});
+    std::fs::write(claude.join("claude-statusline.json"), saved.to_string()).unwrap();
+    let chained = run();
+    assert!(chained.status.success(), "{chained:?}");
+    assert_eq!(String::from_utf8_lossy(&chained.stdout).trim(), payload);
+}

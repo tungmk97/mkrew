@@ -64,7 +64,6 @@ fn env_dir(key: &str) -> Option<PathBuf> {
 }
 
 /// The file holding the user's own Claude status line, when Claude's config folder is known.
-#[expect(dead_code, reason = "`mk statusline` (a later task) reads it")]
 pub fn saved_statusline_file() -> Option<PathBuf> {
     let settings = config_file(Agent::Claude, env_dir).ok()?;
     Some(settings.with_file_name(SAVED_STATUSLINE))
