@@ -101,15 +101,15 @@ impl Shell {
         let em = cx.global::<theme::Fonts>().ui_size;
         let width = f32::from(window.viewport_size().width);
         let shown = model::fit(model::widget_list(&input, local_offset), width, em);
-        let (left, right): (Vec<_>, Vec<_>) = shown
-            .into_iter()
-            .partition(|widget| widget.id.side() == Side::Left);
-        let left: Vec<_> = (left.into_iter())
-            .map(|widget| self.render_widget(widget, theme, cx))
-            .collect();
-        let right: Vec<_> = (right.into_iter())
-            .map(|widget| self.render_widget(widget, theme, cx))
-            .collect();
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        for widget in shown {
+            let side = widget.id.side();
+            let element = self.render_widget(widget, theme, cx);
+            match side {
+                Side::Left => left.push(element),
+                Side::Right => right.push(element),
+            }
+        }
         let menu = (self.widget_menu.as_ref())
             .filter(|_| !self.modal_open())
             .map(|menu| self.render_widget_menu(menu, theme, cx));
@@ -146,6 +146,9 @@ impl Shell {
                 .child(group().children(left))
                 .child(group().children(right))
                 .children(menu)
+                .when(self.modal_open() || self.reconnecting(), |el| {
+                    el.relative().child(inert_layer())
+                })
                 .into_any_element(),
         )
     }
@@ -161,8 +164,14 @@ impl Shell {
         let (id, click) = (widget.id, widget.click);
         let capped = matches!(id, WidgetId::Folder | WidgetId::Git);
         let parts = widget.parts.into_iter().map(|part| {
+            // The cap and the ellipsis sit on the div that holds the text itself.
             div()
-                .flex_none()
+                .when(capped, |el| {
+                    el.min_w_0()
+                        .max_w(theme::rems_px(theme::WIDGET_BAR_LABEL_MAX_WIDTH))
+                        .truncate()
+                })
+                .when(!capped, |el| el.flex_none())
                 .when(part.level != Level::Muted, |el| {
                     el.text_color(rgb(level_color(part.level, theme)))
                 })
@@ -189,11 +198,6 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap(px(space::XS))
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .when(capped, |el| {
-                        el.max_w(theme::rems_px(theme::WIDGET_BAR_LABEL_MAX_WIDTH))
-                    })
                     .children(parts),
             );
         if click == Click::None {
