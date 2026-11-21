@@ -4,7 +4,58 @@
 
 use crate::*;
 use mkrew_ui::settings_dialog::Badge;
+use mkrew_ui::theme::Palette;
 use mkrew_ui::theme_catalog::{CatalogTheme, FileError};
+use mkrew_ui::theme_file;
+
+impl Shell {
+    /// "New theme from current": writes `<themes>/<name> copy.toml` (`copy 2`, `copy 3` when
+    /// taken) with the palette of the theme shown now and opens it in Zed (spec 3.3). A
+    /// failure toasts it and opens nothing; the poll lists the new file within a second.
+    pub(crate) fn new_theme_from_current(&mut self, cx: &mut Context<'_, Self>) {
+        let shown = cx.theme().clone();
+        let catalog = cx.global::<ThemeCatalog>();
+        let palette = (catalog.find(&shown.name))
+            .map_or_else(|| Palette::from_theme(&shown), |listed| listed.palette);
+        let dir = self.themes_dir.clone();
+        let name = theme_file::copy_name(&shown.name, |candidate| {
+            catalog.find(candidate).is_some() || dir.join(theme_file::file_name(candidate)).exists()
+        });
+        let path = dir.join(theme_file::file_name(&name));
+        let text = theme_file::render(&name, &palette);
+        let written = std::fs::create_dir_all(&dir).and_then(|()| {
+            // `create_new`: a file made since the name was chosen is never overwritten.
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
+            std::io::Write::write_all(&mut file, text.as_bytes())
+        });
+        match written {
+            Err(error) => {
+                tracing::warn!(path = %path.display(), "new theme failed: {error}");
+                self.toast_error(format!("Cannot create {}: {error}", path.display()), cx);
+            }
+            Ok(()) => {
+                if let Err(error) = zed::open(&path, None) {
+                    tracing::warn!(path = %path.display(), "open theme file failed: {error}");
+                    self.toast_error(error.to_string(), cx);
+                }
+            }
+        }
+    }
+
+    /// "Open themes folder": makes the folder when it is missing and opens it in the OS file
+    /// manager, like "Open in File Explorer".
+    pub(crate) fn open_themes_folder(&mut self, cx: &mut Context<'_, Self>) {
+        match std::fs::create_dir_all(&self.themes_dir) {
+            Ok(()) => cx.open_with_system(&self.themes_dir),
+            Err(error) => {
+                self.toast_error(format!("Cannot create the themes folder: {error}"), cx);
+            }
+        }
+    }
+}
 
 impl Shell {
     /// `<config>/themes/` changed: the catalog is read again and the theme shown is rebuilt
@@ -144,10 +195,40 @@ impl Shell {
             .flex_col()
             .gap(px(space::M))
             .child(cards)
-            .child(meta_line(
-                theme,
-                self.themes_dir.display().to_string().into(),
-            ))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::M))
+                    .child(div().flex_1().min_w_0().child(meta_line(
+                        theme,
+                        self.themes_dir.display().to_string().into(),
+                    )))
+                    .child(
+                        quiet_button(
+                            "theme-new-from-current",
+                            "New theme from current",
+                            theme,
+                            theme.hover,
+                        )
+                        .on_press(
+                            true,
+                            cx.listener(|shell, _, _, cx| shell.new_theme_from_current(cx)),
+                        ),
+                    )
+                    .child(
+                        quiet_button(
+                            "theme-open-folder",
+                            "Open themes folder",
+                            theme,
+                            theme.hover,
+                        )
+                        .on_press(
+                            true,
+                            cx.listener(|shell, _, _, cx| shell.open_themes_folder(cx)),
+                        ),
+                    ),
+            )
             .into_any_element()
     }
 

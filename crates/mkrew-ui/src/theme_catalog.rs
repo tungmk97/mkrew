@@ -467,4 +467,20 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         assert!(ThemeCatalog::load(dir.path()).find("Moon").is_none());
     }
+
+    #[test]
+    fn a_written_copy_of_every_theme_loads_back_to_the_same_palette() {
+        let original = ThemeCatalog::builtin();
+        for listed in original.themes() {
+            let name = theme_file::copy_name(&listed.name, |taken| original.find(taken).is_some());
+            let text = theme_file::render(&name, &listed.palette);
+            let copy = ThemeCatalog::from_files(vec![(theme_file::file_name(&name), Ok(text))]);
+            let loaded = copy
+                .find(&name)
+                .unwrap_or_else(|| panic!("{name} did not load"));
+            assert_eq!(loaded.palette, listed.palette, "{name}");
+            assert_eq!(loaded.dark, listed.dark, "{name}");
+            assert!(copy.errors().is_empty(), "{name}: {:?}", copy.errors());
+        }
+    }
 }
