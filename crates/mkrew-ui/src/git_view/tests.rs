@@ -512,6 +512,22 @@ fn a_file_without_hunks_keeps_the_pending_target_and_n_moves_on_again() {
 }
 
 #[test]
+fn n_and_p_pass_a_file_whose_diff_failed_but_wait_for_one_loading() {
+    let mut view = changes(&["a.rs", "b.rs", "c.rs"]);
+    // a.rs is still loading: nothing moves.
+    assert_eq!(view.key(Key::NextHunk), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("a.rs")));
+    view.begin_diff();
+    view.diff_loaded(&unstaged("a.rs"), Err("gone".into()));
+    assert_eq!(view.key(Key::NextHunk).diff, Some(unstaged("b.rs")));
+    view.begin_diff();
+    view.diff_loaded(&unstaged("b.rs"), Err("gone".into()));
+    assert_eq!(view.key(Key::NextHunk).diff, Some(unstaged("c.rs")));
+    show_hunks(&mut view, &unstaged("c.rs"), 1);
+    assert_eq!(view.hunk, Some(0), "its first hunk");
+}
+
+#[test]
 fn p_over_a_file_without_hunks_keeps_the_last_target_until_a_file_with_hunks() {
     let mut view = changes(&["a.rs", "bin.png", "c.rs"]);
     view.select(unstaged("c.rs"));

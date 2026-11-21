@@ -1595,14 +1595,17 @@ impl GitView {
     /// The next / previous hunk of the shown diff (from none: the first / last). Past the last
     /// (first) hunk it goes on to the next (previous) file that is not viewed and, once that
     /// diff is shown, to its first (last) hunk ([`PendingHunk`]); no wrap at the list ends. A
-    /// file without hunks counts as past both ends. On a collapsed (viewed) diff, whose hunks
-    /// are hidden, the keys go straight to the next (previous) file.
+    /// file without hunks, or whose diff failed to load, counts as past both ends (a diff still
+    /// loading waits). On a collapsed (viewed) diff, whose hunks are hidden, the keys go
+    /// straight to the next (previous) file.
     fn step_hunk(&mut self, forward: bool) -> Requests {
         if self.diff_collapsed() {
             return self.step_hunk_file(forward);
         }
-        let Diff::Shown(shown) = &self.diff else {
-            return Requests::default();
+        let shown = match &self.diff {
+            Diff::Shown(shown) => shown,
+            Diff::Failed(_) => return self.step_hunk_file(forward),
+            _ => return Requests::default(),
         };
         let count = shown.diff.hunks.len();
         let next = match (self.hunk, forward) {
