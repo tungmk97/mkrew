@@ -97,7 +97,7 @@ A test computes it for every built-in theme over both `bg` and `text` behind the
 ### 5.1 The rule
 
 Every element with a click or mouse-down handler gets its hover, press, focus and disabled look from `widgets.rs`.
-Only `widgets.rs` and `pressable.rs` call `.hover(` and `.active(` directly after P3; `group_hover` stays allowed anywhere.
+Only `widgets.rs` and `pressable.rs` call `.hover(`, `.active(` and `.cursor_pointer()` directly after P3; `group_hover` stays allowed anywhere.
 The rule is written in SPEC §14, the `mkrew-ui-design` skill and the `ui-reviewer` checklist.
 
 ### 5.2 API (`crates/mkrew-ui/src/pressable.rs`, re-exported by `shell/widgets.rs`)
@@ -162,8 +162,8 @@ Existing widgets (`button`, `secondary_button`, `quiet_button`, `danger_button`,
 
 ### 5.3 The audit (Plan P3)
 
-Today `crates/mkrew-ui/src` has 327 click or mouse-down handlers in 48 files (294 `.on_click(`, 33 `.on_mouse_down(`), against 76 `.hover(` calls.
-208 already use a shared widget, 71 are hand-built and get converted, 48 are exempt.
+At commit 1b7abb5, before P1, `crates/mkrew-ui/src` had 327 click or mouse-down handlers in 48 files (294 `.on_click(`, 33 `.on_mouse_down(`), against 76 `.hover(` calls; at the start of P3 (after P1 and P2) it has 334 handlers in 49 files (incl. 10 `.on_press(`) and 66 `.hover(` calls.
+At 1b7abb5, 208 already used a shared widget, 71 were hand-built and get converted, 48 are exempt.
 P3 walks them by area: chrome and sidebar; tabs and panes; Board and Jira; Files and Docs; Git; inspector, thread and composer; dialogs; Run, prompts and leftovers.
 Each clickable element moves to a widget or to `.pressable(..)`.
 P3 adds the helpers the audit needs on top of P1: `pressable_unless` (a selected row keeps full opacity), `card_press` (board cards hover by border), `disabled_icon_button`, `grip_hover` and `pick_surface` (resize grips and the diff line pick hover without being buttons), and `row_action` moved from `git_rows.rs` into `widgets.rs`.
