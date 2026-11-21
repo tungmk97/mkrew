@@ -46,9 +46,11 @@ New `Theme` fields, set for every built-in theme from its `Palette` (dark and li
 
 | Field | Dark | Light | Use |
 | --- | --- | --- | --- |
-| `glass: u32` (RGBA) | `surface` at alpha 0.88 | `surface` at alpha 0.92 | Fill of every floating panel. |
+| `glass: u32` (RGBA) | `surface` at alpha 0.96 | `surface` at alpha 0.97 | Fill of every floating panel. |
 | `glass_border: u32` (RGBA) | white at 8 % | black at 8 % | 1 px inner border of a floating panel. |
 | `glass_tint: u32` (RGBA) | `accent` at 5 % | `accent` at 4 % | Top of a vertical gradient that fades to transparent over `GLASS_TINT_HEIGHT`. |
+
+Raised from 0.88 / 0.92 after the first smoke run: without blur, lower alpha showed sharp ghost text of the UI behind.
 
 Changed field: `scrim` becomes black at 24 % in dark themes and black at 16 % in light themes (today 35 % in both).
 

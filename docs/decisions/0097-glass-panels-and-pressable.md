@@ -12,7 +12,7 @@ The user liked the crisp feel of Tern's palette, Settings window and hover feedb
 
 ## Decision
 
-- Fake glass, no backdrop blur (gpui-pre 0.3.7 cannot blur behind one element): a translucent `glass` fill, a 1 px `glass_border`, a `glass_tint` gradient over the top `GLASS_TINT_HEIGHT` px, `shadow_float` (two layers) and a lighter `scrim`.
+- Fake glass, no backdrop blur (gpui-pre 0.3.7 cannot blur behind one element): a translucent `glass` fill (surface at alpha 0.96 in dark themes, 0.97 in light ones; first drafted at 0.88 / 0.92, raised after the first smoke run because without blur the lower alpha showed sharp ghost text of the UI behind), a 1 px `glass_border`, a `glass_tint` gradient over the top `GLASS_TINT_HEIGHT` px, `shadow_float` (two layers) and a lighter `scrim`.
 - The three glass colors are derived from each theme's `surface` and `accent` in one function, `Theme::with_glass`, so every built-in theme gets them; the function raises the fill alpha until body text keeps 4.5:1 over a light or a dark page behind the panel.
 - `widgets::floating_panel` is the only panel frame; no dialog builds its own.
   Its entrance (fade and a 4 px rise over `motion::FAST`) is `widgets::appear`, applied by `modal_shade` and the confirm prompt.

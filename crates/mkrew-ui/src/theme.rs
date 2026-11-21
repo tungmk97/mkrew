@@ -736,7 +736,7 @@ pub struct Theme {
     /// The shade behind a modal dialog, RGBA: black at 24 % (dark) or 16 % (light), set by
     /// [`Theme::with_glass`].
     pub scrim: u32,
-    /// Fill of every floating panel, RGBA: `surface` at 0.88 (dark) / 0.92 (light) or more, as
+    /// Fill of every floating panel, RGBA: `surface` at 0.96 (dark) / 0.97 (light) or more, as
     /// much as body text needs to keep 4.5:1 over a light or dark page behind it.
     pub glass: u32,
     /// 1 px inner border of a floating panel, RGBA: white (dark) or black (light) at 8 %.
@@ -1430,9 +1430,9 @@ impl Theme {
     /// panel over both `bg` and `text` behind it (the worst light and dark pages).
     fn with_glass(self) -> Self {
         let (base, edge, tint, scrim) = if self.dark {
-            (0.88, 0xFFFFFF, 0.05, 0.24)
+            (0.96, 0xFFFFFF, 0.05, 0.24)
         } else {
-            (0.92, 0x000000, 0.04, 0.16)
+            (0.97, 0x000000, 0.04, 0.16)
         };
         let tint = quantize(tint);
         let worst = |alpha: f32| {
@@ -1961,7 +1961,7 @@ mod tests {
             let edge = if theme.dark { 0xFFFFFF } else { 0x000000 };
             assert_eq!(theme.glass_border, with_alpha(edge, 0.08), "{}", theme.name);
             // The base alphas of the spec; the contrast rule may only raise the fill.
-            let floor = if theme.dark { 0.88_f32 } else { 0.92_f32 };
+            let floor = if theme.dark { 0.96_f32 } else { 0.97_f32 };
             assert!(
                 (theme.glass & 0xFF) >= (floor * 255.0).round() as u32,
                 "{}",

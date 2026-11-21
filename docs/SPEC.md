@@ -1781,7 +1781,7 @@ exist; body text contrast ≥ 4.5:1; status never conveyed by color alone; run a
 
 **Floating panels (glass), ADR 0097.**
 The palette, Settings, every modal dialog and the confirm prompt share one frame, `widgets::floating_panel`.
-It is a translucent fill (`glass`: the surface at 0.88 alpha in dark themes and 0.92 in light ones, raised until body text keeps 4.5:1 over a light or a dark page behind it), a 1 px `glass_border`, an accent `glass_tint` gradient over the top `GLASS_TINT_HEIGHT` px, `shadow_float` and `radius::LARGE`.
+It is a translucent fill (`glass`: the surface at 0.96 alpha in dark themes and 0.97 in light ones, raised until body text keeps 4.5:1 over a light or a dark page behind it), a 1 px `glass_border`, an accent `glass_tint` gradient over the top `GLASS_TINT_HEIGHT` px, `shadow_float` and `radius::LARGE`.
 There is no real backdrop blur (gpui-pre 0.3.7 cannot blur behind one element).
 The scrim behind a modal is black at 24 % (dark) or 16 % (light).
 A panel fades in and rises 4 px over `motion::FAST` and disappears at once; with the OS "Animation effects" setting off (Windows) it appears at once.

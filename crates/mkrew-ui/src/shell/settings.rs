@@ -264,7 +264,7 @@ impl Shell {
             caret_field(
                 "settings-find",
                 &dialog.find,
-                "Search settings",
+                "Search",
                 dialog.focus == Focus::Find && typing,
                 theme,
                 cx,
@@ -509,6 +509,8 @@ impl Shell {
                     .flex()
                     .flex_col()
                     .rounded(px(radius::LARGE))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.border))
                     .bg(rgb(theme.surface))
                     .children(items);
                 if single_shortcut {
