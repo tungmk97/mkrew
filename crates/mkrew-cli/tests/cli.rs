@@ -1739,7 +1739,16 @@ fn statusline_chains_the_users_status_line_and_never_fails() {
             .unwrap();
         child.wait_with_output().unwrap()
     };
+    // A freshly built `mk` can take seconds on its first start (virus scan): not what is timed.
+    env.ok(&["--help"]);
+    let started = Instant::now();
     let none = run();
+    // The report budget is 300 ms: no daemon must not slow Claude down.
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
     assert!(none.status.success(), "{none:?}");
     assert!(none.stdout.is_empty(), "{none:?}");
 

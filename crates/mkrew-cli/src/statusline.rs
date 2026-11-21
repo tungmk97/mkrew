@@ -5,6 +5,8 @@
 //! Nothing here may fail or slow Claude down: every error means "nothing", the exit code is 0.
 
 use std::io::{Read, Write};
+#[cfg(any(windows, test))]
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -29,7 +31,7 @@ pub fn run() -> ExitCode {
     let saved = crate::integration::saved_statusline_file()
         .and_then(|file| std::fs::read_to_string(file).ok());
     if let Some(command) = saved.as_deref().and_then(saved_command)
-        && let Some(output) = chain(&command, &input, CHAIN_TIMEOUT)
+        && let Some(output) = chain(&command, input, CHAIN_TIMEOUT)
     {
         let mut stdout = std::io::stdout();
         let _ = stdout.write_all(&output);
@@ -95,25 +97,138 @@ fn saved_command(text: &str) -> Option<String> {
     (!command.is_empty()).then(|| command.to_owned())
 }
 
+/// Git for Windows' `bash.exe`, the shell Claude Code runs status lines in: the file
+/// `CLAUDE_CODE_GIT_BASH_PATH` names, else `<git root>/bin/bash.exe` for a `git.exe` in
+/// `<git root>/cmd` or `<git root>/bin` (never `System32\bash.exe`, which is WSL). `None`
+/// means PowerShell, which Claude uses when Git Bash is absent.
+#[cfg(any(windows, test))]
+fn git_bash(
+    env: Option<&str>,
+    git: Option<&Path>,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    let set = env.map(Path::new).filter(|path| exists(path));
+    if let Some(path) = set {
+        return Some(path.to_owned());
+    }
+    let dir = git?.parent()?;
+    let name = dir.file_name()?.to_str()?;
+    if !name.eq_ignore_ascii_case("cmd") && !name.eq_ignore_ascii_case("bin") {
+        return None;
+    }
+    let bash = dir.parent()?.join("bin").join("bash.exe");
+    exists(&bash).then_some(bash)
+}
+
 #[cfg(windows)]
 fn shell(command: &str) -> Command {
-    use std::os::windows::process::CommandExt;
-    let mut shell = Command::new("cmd");
-    // The outer quotes are cmd's: it strips the first and last one.
-    shell.arg("/C").raw_arg(format!("\"{command}\""));
-    shell
+    let env = std::env::var("CLAUDE_CODE_GIT_BASH_PATH").ok();
+    let git = std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("git.exe"))
+            .find(|file| file.is_file())
+    });
+    match git_bash(env.as_deref(), git.as_deref(), Path::is_file) {
+        Some(bash) => {
+            let mut shell = Command::new(bash);
+            shell.arg("-c").arg(command);
+            shell
+        }
+        None => {
+            let mut shell = Command::new("powershell");
+            shell.args(["-NoProfile", "-Command"]).arg(command);
+            shell
+        }
+    }
 }
 
 #[cfg(not(windows))]
 fn shell(command: &str) -> Command {
+    use std::os::unix::process::CommandExt;
     let mut shell = Command::new("sh");
-    shell.arg("-c").arg(command);
+    // Its own group, so a timeout can end the commands it started too.
+    shell.arg("-c").arg(command).process_group(0);
     shell
 }
 
+/// Everything the status line command started, so that a timeout can end all of it.
+#[cfg(not(windows))]
+struct Tree(u32);
+
+#[cfg(not(windows))]
+impl Tree {
+    fn new(child: &std::process::Child) -> Self {
+        Self(child.id())
+    }
+
+    fn kill(self) {
+        use rustix::process::{Pid, Signal, kill_process_group};
+        if let Some(pid) = i32::try_from(self.0).ok().and_then(Pid::from_raw) {
+            let _ = kill_process_group(pid, Signal::KILL);
+        }
+    }
+}
+
+/// A kill-on-close job object holding the command: closing it ends the whole tree.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod tree {
+    use std::os::windows::io::AsRawHandle;
+    use std::process::Child;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+
+    /// `None` when Windows refused the job: then only the shell itself can be killed.
+    pub struct Tree(Option<HANDLE>);
+
+    impl Tree {
+        pub fn new(child: &Child) -> Self {
+            // SAFETY: plain Win32 calls with valid arguments; `info` outlives the call and the
+            // child's handle stays open while `child` lives.
+            unsafe {
+                let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if job.is_null() {
+                    return Self(None);
+                }
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let size = std::mem::size_of_val(&info) as u32;
+                let info_ptr = std::ptr::addr_of!(info).cast();
+                let set =
+                    SetInformationJobObject(job, JobObjectExtendedLimitInformation, info_ptr, size);
+                if set == 0 || AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE) == 0 {
+                    CloseHandle(job);
+                    return Self(None);
+                }
+                Self(Some(job))
+            }
+        }
+
+        pub fn kill(self) {}
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            if let Some(job) = self.0 {
+                // SAFETY: the handle is ours and closed once.
+                unsafe { CloseHandle(job) };
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+use tree::Tree;
+
 /// Runs `command` through the shell with `input` on stdin and returns its stdout; `None` when
-/// it cannot start, exits with an error, or is not done within `timeout` (it is killed then).
-fn chain(command: &str, input: &[u8], timeout: Duration) -> Option<Vec<u8>> {
+/// it cannot start, exits with an error, or is not done within `timeout` (it and what it
+/// started are killed then).
+fn chain(command: &str, input: Vec<u8>, timeout: Duration) -> Option<Vec<u8>> {
     let deadline = Instant::now() + timeout;
     let mut child = shell(command)
         .stdin(Stdio::piped())
@@ -121,9 +236,9 @@ fn chain(command: &str, input: &[u8], timeout: Duration) -> Option<Vec<u8>> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
+    let tree = Tree::new(&child);
     let mut stdin = child.stdin.take()?;
     let mut stdout = child.stdout.take()?;
-    let input = input.to_vec();
     // A command that never reads its stdin closes the pipe under the write: not an error.
     std::thread::spawn(move || {
         let _ = stdin.write_all(&input);
@@ -134,34 +249,33 @@ fn chain(command: &str, input: &[u8], timeout: Duration) -> Option<Vec<u8>> {
         let _ = stdout.read_to_end(&mut out);
         let _ = done.send(out);
     });
-    let out = output.recv_timeout(timeout).ok();
-    loop {
-        match (&out, child.try_wait()) {
-            (Some(out), Ok(Some(status))) => return status.success().then(|| out.clone()),
-            (Some(_), Ok(None)) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
+    if let Ok(out) = output.recv_timeout(timeout) {
+        while Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(status)) => return status.success().then_some(out),
+                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                Err(_) => break,
             }
         }
     }
+    tree.kill();
+    let _ = child.kill();
+    let _ = child.wait();
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A command that copies its stdin to stdout, in `cmd` and in `sh`.
+    /// A command that copies its stdin to stdout, in `bash`, `powershell` and `sh`.
     #[cfg(windows)]
     const ECHO_STDIN: &str = r#"findstr "^""#;
     #[cfg(not(windows))]
     const ECHO_STDIN: &str = "cat";
-    /// Runs for about five seconds, in `cmd` and in `sh`.
+    /// Runs for about five seconds, in `bash`, `powershell` and `sh`.
     #[cfg(windows)]
-    const SLEEP_5S: &str = "ping -n 6 127.0.0.1 >nul";
+    const SLEEP_5S: &str = "ping -n 6 127.0.0.1";
     #[cfg(not(windows))]
     const SLEEP_5S: &str = "sleep 5";
 
@@ -241,22 +355,29 @@ mod tests {
 
     #[test]
     fn the_chained_command_gets_the_same_stdin_and_its_output_is_kept() {
-        let out = chain(ECHO_STDIN, FULL.as_bytes(), Duration::from_secs(5)).unwrap();
+        let out = chain(ECHO_STDIN, FULL.as_bytes().to_vec(), Duration::from_secs(5)).unwrap();
         assert_eq!(String::from_utf8_lossy(&out).trim(), FULL);
     }
 
     #[test]
     fn a_command_that_ignores_its_stdin_still_answers() {
         let big = vec![b'x'; 1024 * 1024];
-        let out = chain("echo hi", &big, Duration::from_secs(5)).unwrap();
+        let out = chain("echo hi", big, Duration::from_secs(5)).unwrap();
         assert_eq!(String::from_utf8_lossy(&out).trim(), "hi");
     }
 
     #[test]
     fn a_failing_or_missing_command_prints_nothing() {
-        assert_eq!(chain("exit 3", b"{}", Duration::from_secs(5)), None);
         assert_eq!(
-            chain("mkrew-no-such-program-xyz", b"{}", Duration::from_secs(5)),
+            chain("exit 3", b"{}".to_vec(), Duration::from_secs(5)),
+            None
+        );
+        assert_eq!(
+            chain(
+                "mkrew-no-such-program-xyz",
+                b"{}".to_vec(),
+                Duration::from_secs(5)
+            ),
             None
         );
     }
@@ -264,11 +385,66 @@ mod tests {
     #[test]
     fn a_command_past_its_timeout_is_stopped() {
         let started = std::time::Instant::now();
-        assert_eq!(chain(SLEEP_5S, b"{}", Duration::from_millis(300)), None);
+        assert_eq!(
+            chain(SLEEP_5S, b"{}".to_vec(), Duration::from_millis(300)),
+            None
+        );
         assert!(
             started.elapsed() < Duration::from_secs(3),
             "{:?}",
             started.elapsed()
         );
+    }
+
+    fn bash_for(env: Option<&str>, git: Option<&str>, files: &[&str]) -> Option<PathBuf> {
+        git_bash(env, git.map(Path::new), |path| {
+            files.iter().any(|file| Path::new(file) == path)
+        })
+    }
+
+    #[test]
+    fn the_shell_is_the_configured_git_bash() {
+        let bash = bash_for(
+            Some("D:/tools/bash.exe"),
+            Some("C:/Git/cmd/git.exe"),
+            &["D:/tools/bash.exe", "C:/Git/bin/bash.exe"],
+        );
+        assert_eq!(bash, Some(PathBuf::from("D:/tools/bash.exe")));
+    }
+
+    #[test]
+    fn a_configured_bash_that_is_missing_falls_back_to_git() {
+        let bash = bash_for(
+            Some("D:/gone/bash.exe"),
+            Some("C:/Git/cmd/git.exe"),
+            &["C:/Git/bin/bash.exe"],
+        );
+        assert_eq!(bash, Some(PathBuf::from("C:/Git/bin/bash.exe")));
+    }
+
+    #[test]
+    fn the_shell_is_found_from_git_in_cmd_or_bin() {
+        let files = ["C:/Git/bin/bash.exe"];
+        for git in [
+            "C:/Git/cmd/git.exe",
+            "C:/Git/bin/git.exe",
+            "C:/Git/CMD/git.exe",
+        ] {
+            assert_eq!(
+                bash_for(None, Some(git), &files),
+                Some(PathBuf::from("C:/Git/bin/bash.exe")),
+                "{git}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_git_bash_the_shell_is_powershell() {
+        let files = ["C:/Git/bin/bash.exe"];
+        // No git, a git outside `cmd`/`bin`, and a git root without bash.
+        assert_eq!(bash_for(None, None, &files), None);
+        assert_eq!(bash_for(None, Some("C:/Git/mingw64/git.exe"), &files), None);
+        assert_eq!(bash_for(None, Some("C:/Other/cmd/git.exe"), &files), None);
+        assert_eq!(bash_for(Some(""), Some("git.exe"), &files), None);
     }
 }
