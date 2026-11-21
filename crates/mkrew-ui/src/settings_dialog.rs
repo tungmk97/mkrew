@@ -929,7 +929,17 @@ impl SettingsDialog {
         Effect::None
     }
 
+    /// A key; when it hides the gallery (a query), the preview ends, so clearing the query
+    /// does not bring a stale one back.
     pub fn key(&mut self, keystroke: &Keystroke, paste: Option<&str>, keymap: &Keymap) -> Effect {
+        let effect = self.key_inner(keystroke, paste, keymap);
+        if self.previewing.is_some() && !self.gallery_shown() {
+            self.end_preview();
+        }
+        effect
+    }
+
+    fn key_inner(&mut self, keystroke: &Keystroke, paste: Option<&str>, keymap: &Keymap) -> Effect {
         if let Some(command) = self.capture.take() {
             if keystroke.key == "escape" && keystroke.modifiers == Default::default() {
                 return Effect::None;
@@ -1694,6 +1704,24 @@ mod tests {
             previewing(&d),
             None,
             "a timer that fired while hidden did nothing"
+        );
+    }
+
+    #[test]
+    fn typing_a_query_ends_the_preview_for_good() {
+        let keymap = Keymap::defaults();
+        let mut d = gallery_dialog();
+        let serial = d.gallery_hover("Dracula");
+        d.gallery_hover_due(serial);
+        assert!(previewing(&d).is_some());
+        d.key(&key("ctrl-f"), None, &keymap);
+        type_text(&mut d, "f", &keymap);
+        assert!(!d.gallery_shown());
+        d.find = Input::default();
+        assert_eq!(
+            previewing(&d),
+            None,
+            "clearing the query shows no stale preview"
         );
     }
 

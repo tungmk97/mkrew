@@ -111,19 +111,25 @@ impl Shell {
         {
             self.prompts_body_scroll.scroll_to_bottom();
         }
-        // Keep the focused row on screen: the banner, the Keyboard search box and the theme
-        // gallery come before the cards, and a card holds several rows.
+        // Keep the focused row on screen: the banner, the machine's daemon note, the Keyboard
+        // search box and the theme gallery come before the cards, and a card holds several
+        // rows. A gallery card is one of many in a child taller than the dialog, so it
+        // scrolls itself into view.
         if let Some(dialog) = &self.settings_dialog {
-            let banner = usize::from(self.settings_notice(dialog).is_some());
             match dialog.focus {
                 Focus::Row(index) => {
+                    let banner = usize::from(self.settings_notice(dialog).is_some());
+                    let note = usize::from(
+                        (dialog.searching() || matches!(dialog.tab, Tab::Settings(_)))
+                            && self.machine_name().is_some(),
+                    );
                     let search = usize::from(keyboard_search_shown(dialog));
                     let gallery = usize::from(dialog.gallery_shown());
                     let card = dialog.group_of(index, &self.keymap);
                     self.settings_scroll
-                        .scroll_to_item(card + banner + search + gallery);
+                        .scroll_to_item(card + banner + note + search + gallery);
                 }
-                Focus::Gallery(_) => self.settings_scroll.scroll_to_item(banner),
+                Focus::Gallery(_) => self.gallery_anchor.scroll_to(window, cx),
                 _ => {}
             }
         }

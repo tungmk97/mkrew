@@ -102,7 +102,9 @@ impl Shell {
             .flex()
             .flex_col()
             .gap(px(space::M))
-            // Leaving the whole gallery (not one card) puts the kept theme back.
+            // Leaving the whole gallery (not one card) puts the kept theme back. A key press
+            // is not leaving: the pointer may rest here while the keyboard previews.
+            .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
             .on_hover(cx.listener(|shell, hovered: &bool, window, cx| {
                 if !*hovered {
                     shell.gallery_leave(window, cx);
@@ -164,11 +166,11 @@ impl Shell {
             .any(|badge| matches!(badge, Badge::DarkMode | Badge::LightMode));
         let focused = dialog.focused_card().is_some_and(|c| c.name == card.name);
         let ring = if focused {
-            theme.selected_ring
+            theme.focus_ring
         } else if kept {
-            theme.pane_focus_border
+            theme.selected_ring
         } else {
-            theme.border
+            theme.divider
         };
         let hover_name = name.clone();
         let press_name = name.clone();
@@ -200,10 +202,15 @@ impl Shell {
             .p(px(space::S))
             .rounded(px(radius::MEDIUM))
             .bg(rgb(theme.surface))
-            // Always bordered, so a ring shifts nothing.
+            // Always bordered, so a ring shifts nothing; at rest the divider, so the hover
+            // border of `card_press` shows.
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(ring))
             .map(|el| card_press(el, kept || focused, theme))
+            // The keyboard card scrolls itself into view (see `settings_key_down`).
+            .when(focused, |el| {
+                el.anchor_scroll(Some(self.gallery_anchor.clone()))
+            })
             .on_hover(cx.listener(move |shell, hovered: &bool, window, cx| {
                 if *hovered {
                     shell.gallery_hover(hover_name.clone(), window, cx);
