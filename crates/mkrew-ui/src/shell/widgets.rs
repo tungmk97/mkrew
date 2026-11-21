@@ -371,12 +371,12 @@ pub(crate) fn icon_button(
     icon_button_in(id, glyph, theme.text_muted, theme)
 }
 
-/// An [`icon_button`] whose icon is drawn in `color`: a state (the phone icon is accent while
-/// phone access is on).
-pub(crate) fn icon_button_in(
+/// The frame of [`icon_button_in`] and [`disabled_icon_button`].
+fn icon_frame(
     id: impl Into<gpui::ElementId>,
     glyph: Icon,
     color: u32,
+    enabled: bool,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     div()
@@ -388,8 +388,100 @@ pub(crate) fn icon_button_in(
         .justify_center()
         .rounded(px(radius::MEDIUM))
         .text_color(rgb(theme.text_muted))
-        .pressable(Look::Icon, true, theme)
+        .pressable(Look::Icon, enabled, theme)
         .child(icon_svg(glyph, theme::ICON_SIZE, color))
+}
+
+/// An [`icon_button`] whose icon is drawn in `color`: a state (the phone icon is accent while
+/// phone access is on).
+pub(crate) fn icon_button_in(
+    id: impl Into<gpui::ElementId>,
+    glyph: Icon,
+    color: u32,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    icon_frame(id, glyph, color, true, theme)
+}
+
+/// An icon button that cannot be used right now (the update button while it downloads, Fetch
+/// while Push runs): faded, no hover, no pointer. Attach no click to it.
+#[expect(
+    dead_code,
+    reason = "first caller lands in a later P3 task; delete this attribute then"
+)]
+pub(crate) fn disabled_icon_button(
+    id: impl Into<gpui::ElementId>,
+    glyph: Icon,
+    color: u32,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    icon_frame(id, glyph, color, false, theme)
+}
+
+/// A small action inside a list row ("Stage" on a file row, "Stage hunk" on a hunk header, a
+/// tab's X, or an [`icon_svg`]): no vertical padding, so the row keeps its height. It sits on a
+/// row that is hovered or selected itself, so it hovers one step above them (`Look::Raised`).
+pub(crate) fn row_action(
+    id: SharedString,
+    label: impl IntoElement,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .px(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .font_family(theme.ui_font_family.clone())
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text_muted))
+        .pressable(Look::Raised, true, theme)
+        .child(label)
+}
+
+/// The hover tint of a resize grip (sidebar, pane divider, Markdown split). The caller sets the
+/// cursor and the drag handlers; a grip is not a button, so it has no `Look`.
+#[expect(
+    dead_code,
+    reason = "first caller lands in a later P3 task; delete this attribute then"
+)]
+pub(crate) fn grip_hover(
+    grip: gpui::Stateful<gpui::Div>,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let tint = theme.divider;
+    grip.hover(move |style| style.bg(rgb(tint)))
+}
+
+/// A surface you pick lines from with a mouse down (a diff line): a pointer and, unless it is
+/// already `picked`, a border preview of the pick bar. Not a button, so no `Look`.
+#[expect(
+    dead_code,
+    reason = "first caller lands in a later P3 task; delete this attribute then"
+)]
+pub(crate) fn pick_surface(el: gpui::Div, picked: bool, border: u32) -> gpui::Div {
+    el.cursor_pointer().when(!picked, |el| {
+        el.hover(move |style| style.border_color(rgb(border)))
+    })
+}
+
+/// A board card (task card, issue card): a pointer, the border lights on hover unless the card
+/// is `selected`, and it dims while pressed. The fill does not change on hover, so a chip
+/// inside the card (Edit, Undo) keeps a hover of its own that is visible.
+#[expect(
+    dead_code,
+    reason = "first caller lands in a later P3 task; delete this attribute then"
+)]
+pub(crate) fn card_press(
+    card: gpui::Stateful<gpui::Div>,
+    selected: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let border = theme.border;
+    card.cursor_pointer()
+        .when(!selected, |el| {
+            el.hover(move |style| style.border_color(rgb(border)))
+        })
+        .active(|style| style.opacity(opacity::ACTIVE))
 }
 
 /// A segmented control's container (title bar views, sidebar filter, Board, Git): `chrome` with
@@ -871,8 +963,7 @@ pub(crate) fn list_row(
         .text_size(font_size::BODY)
         .text_color(rgb(theme.text))
         .when(selected, |el| {
-            // A selected row keeps its `selected` fill on hover (no hover fill) and the pointer.
-            el.bg(rgb(theme.selected)).cursor_pointer().child(
+            el.bg(rgb(theme.selected)).child(
                 div()
                     .absolute()
                     .left_0()
@@ -883,7 +974,8 @@ pub(crate) fn list_row(
                     .bg(rgb(theme.accent)),
             )
         })
-        .when(!selected, |el| el.pressable(Look::Row, true, theme))
+        // A selected row keeps its `selected` fill and the pointer, with no hover fill.
+        .pressable_unless(selected, Look::Row, theme)
 }
 
 /// The one frame of every floating panel (palette, Settings, dialogs; ADR 0097): the glass
@@ -1014,7 +1106,6 @@ pub(crate) fn conflict_badge(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     let group = SharedString::from(format!("conflict-{id}"));
-    let hover = theme.border;
     div()
         .id(group.clone())
         .group(group.clone())
@@ -1047,23 +1138,24 @@ pub(crate) fn conflict_badge(
                 .px(px(space::S))
                 .py(px(space::XS))
                 .rounded(px(radius::SMALL))
-                .cursor_pointer()
                 .text_color(rgb(theme.text_muted))
                 .opacity(opacity::HIDDEN)
                 .group_hover(group, |style| style.opacity(opacity::FULL))
-                .hover(move |style| style.bg(rgb(hover)))
-                .active(|style| style.opacity(opacity::ACTIVE))
+                .pressable(Look::Raised, true, theme)
                 .tooltip(tooltip(
                     theme,
                     "Hide this warning on every card and pane",
                     "",
                 ))
-                .on_click(cx.listener(move |shell, _, _, cx| {
-                    // Not a click on the card (which would open its terminal).
-                    cx.stop_propagation();
-                    dismiss(shell);
-                    cx.notify();
-                }))
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, _, cx| {
+                        // Not a click on the card (which would open its terminal).
+                        cx.stop_propagation();
+                        dismiss(shell);
+                        cx.notify();
+                    }),
+                )
                 .child("Dismiss"),
         )
 }

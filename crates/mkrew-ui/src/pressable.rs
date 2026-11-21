@@ -36,6 +36,9 @@ pub struct PressStyle {
     pub pointer: bool,
 }
 
+/// What `look` gives an element in this state: the hover fill and label color, the underline, the
+/// pressed and rest opacity and the pointer, resolved from `theme`. Pure, so it is tested
+/// without a window.
 pub fn press_style(look: Look, enabled: bool, theme: &Theme) -> PressStyle {
     if !enabled {
         return PressStyle {
@@ -101,6 +104,10 @@ pub fn apply_press(el: Stateful<Div>, style: PressStyle) -> Stateful<Div> {
 pub trait Pressable: Sized {
     /// Applies `press_style(look, enabled, theme)`: cursor, hover, active, disabled opacity.
     fn pressable(self, look: Look, enabled: bool, theme: &Theme) -> Self;
+    /// An element that may be picked (selected, active) but stays clickable: the pointer only
+    /// while picked (no hover fill, no press dim), else `pressable(look, true, theme)`.
+    /// `pressable(look, false, ..)` would fade it instead.
+    fn pressable_unless(self, picked: bool, look: Look, theme: &Theme) -> Self;
     /// Attaches `handler` to clicks only when `enabled`.
     fn on_press(
         self,
@@ -112,6 +119,14 @@ pub trait Pressable: Sized {
 impl Pressable for Stateful<Div> {
     fn pressable(self, look: Look, enabled: bool, theme: &Theme) -> Self {
         apply_press(self, press_style(look, enabled, theme))
+    }
+
+    fn pressable_unless(self, picked: bool, look: Look, theme: &Theme) -> Self {
+        if picked {
+            self.cursor_pointer()
+        } else {
+            self.pressable(look, true, theme)
+        }
     }
 
     fn on_press(

@@ -480,29 +480,6 @@ pub(crate) fn git_commit_row(
         .into_any_element()
 }
 
-/// A small action inside a list row ("Stage" on a file row, "Stage hunk" on a hunk header, or
-/// an [`icon_svg`]): no vertical padding, so the row keeps its height.
-pub(crate) fn row_action(
-    id: SharedString,
-    label: impl IntoElement,
-    theme: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    // One step above the rows' own `hover` / `selected` fill.
-    let hover = theme.border;
-    div()
-        .id(id)
-        .flex_none()
-        .px(px(space::XS))
-        .rounded(px(radius::SMALL))
-        .cursor_pointer()
-        .font_family(theme.ui_font_family.clone())
-        .text_size(font_size::META)
-        .text_color(rgb(theme.text_muted))
-        .hover(move |style| style.bg(rgb(hover)))
-        .active(|style| style.opacity(opacity::ACTIVE))
-        .child(label)
-}
-
 /// Lane colors of the History graph, from the workspace palette (≥ 3:1 on every surface, ADR
 /// 0020); red and yellow are left to deletions and warnings.
 const LANE_COLORS: [&str; 6] = ["blue", "purple", "teal", "orange", "pink", "green"];

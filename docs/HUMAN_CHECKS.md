@@ -21,6 +21,19 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-21 Pressable audit (P3)
+
+Look changes the audit makes on purpose (spec 5.2); they are not bugs:
+- A chip or icon control turns its label to full text on hover, and a link underlines.
+- Rows that hovered `surface_raised`, `row_hover` or `card` (pickers, history, Jira List row, file row, doc row) now hover with `theme.hover`.
+- A picked row (selected file, doc block, Git row, a followed Share) keeps the pointer but no longer dims while pressed.
+- Pressing a nested control (a card chip, a stage icon, the queue X, the stop square) also dims its parent.
+
+- [ ] **Row actions (dark + light):** hover the X of a tab chip and a stage icon on a Git file row: each shows a fill on its (already hovered) row.
+  Hover a board card next to the selected one: only the unselected card lights its border.
+- [ ] **Palette and conflict badge (dark + light):** open the palette and hover an unselected row (a fill) and the selected row (accent bar; a pointer, no fill change).
+  On a card with a merge conflict hover Dismiss: it shows a fill that differs from the card.
+
 ### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
 - [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.
 - [ ] **Palette stays put:** switch scopes All -> Commands -> Branches and check the top of the palette does not move when the list gets shorter or taller.
