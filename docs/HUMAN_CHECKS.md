@@ -26,7 +26,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Gallery layout (dark + light):** open Settings > Appearance: "Themes" overline, a "Dark" group and a "Light" group of cards, three per row at the default size, then the themes folder line with "New theme from current" and "Open themes folder".
   Each card has its picture, name and the right badges ("Dark mode" / "Light mode" on the kept themes).
 - [ ] **A card picture against its theme (dark + light):** open the theme picker (`Ctrl+Alt+J`) on a few themes and compare the app with that theme's card: the strip colors, the text bars, the accent pill and the six dots match.
-  Check Nord, Solarized Dark, Tokyo Night Day and Ayu Light in particular (their colors were changed for contrast, ADR 0101).
+  Check Solarized Dark, GitHub Dark, Everforest Light and Tokyo Night Day in particular (their colors were changed for contrast, ADR 0101).
 - [ ] **Hover preview without flashing (dark + light):** sweep the pointer across several cards: nothing changes until it rests about a tenth of a second on one; the whole app then shows that theme; leaving the gallery, pressing Esc and closing Settings each bring the kept theme back.
   A click keeps the card for its own slot (the badge moves) and does not change the mode; with the other appearance shown, the app keeps its own theme.
 - [ ] **Keyboard:** Tab reaches the gallery as one stop, arrows move between cards in reading order across Dark and Light, the focused card previews at once, Enter keeps it.

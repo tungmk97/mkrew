@@ -1660,6 +1660,23 @@ mod tests {
     }
 
     #[test]
+    fn a_reload_keeps_the_last_card_by_name_while_focus_is_elsewhere() {
+        let mut d = gallery_dialog();
+        d.focus = Focus::Find;
+        let last = card_names(&d).len() - 1;
+        d.gallery_at = last;
+        let name = card_names(&d)[last].clone();
+        d.set_catalog(ThemeCatalog::from_files(vec![
+            file_theme("Aurora", true),
+            file_theme("Dawn", false),
+            file_theme("Zenith", true),
+        ]));
+        assert_eq!(d.focus, Focus::Find, "focus is not moved to the gallery");
+        assert_eq!(card_names(&d)[d.gallery_at], name);
+        assert_eq!(d.gallery_at, last + 1, "a card was added before it");
+    }
+
+    #[test]
     fn a_reload_keeps_the_keyboard_and_its_preview_on_the_same_card() {
         let keymap = Keymap::defaults();
         let mut d = gallery_dialog();
