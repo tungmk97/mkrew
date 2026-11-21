@@ -292,6 +292,12 @@ pub const SCROLLBAR_MIN_THUMB: f32 = space::XL;
 /// The Files editor highlights its text again this long after the last keystroke.
 pub const REHIGHLIGHT_DELAY: Duration = Duration::from_millis(150);
 
+/// The palette's Files scope asks `fs.find` this long after the last keystroke (spec 7.2).
+pub const PALETTE_FILES_DELAY: Duration = Duration::from_millis(80);
+
+/// The palette's Search scope asks `fs.search` this long after the last keystroke.
+pub const PALETTE_SEARCH_DELAY: Duration = Duration::from_millis(150);
+
 /// Minimum width of a tab title while it is renamed inline.
 pub const TAB_RENAME_MIN_WIDTH: f32 = 120.0;
 

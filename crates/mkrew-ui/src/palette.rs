@@ -5,10 +5,15 @@
 //! ranked by word starts and runs; Enter picks. Pure and tested headlessly; `main.rs` renders it and runs the pick.
 
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use gpui::Keystroke;
 use mkrew_core::settings::FeatureSettings;
-use mkrew_protocol::{Project, Session, SessionState, Task};
+use mkrew_protocol::{
+    Branch, Commit, FsFindParams, FsMatch, FsSearchParams, FsSearchResult, GitBranchesParams,
+    GitLogParams, Project, SearchHit, Session, SessionState, Task,
+};
 use ulid::Ulid;
 
 use crate::board::CardKey;
@@ -18,6 +23,7 @@ use crate::keymap::{Command, Keymap, KeymapError};
 use crate::split::Direction;
 use crate::task_dialog::{DialogKey, dialog_key};
 use crate::text_box::Input;
+use crate::theme;
 
 /// What the window looks like when the palette opens; decides which commands are listed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1045,38 +1051,297 @@ pub fn match_ranges(path: &str, indices: &[u32]) -> Vec<Range<usize>> {
     ranges
 }
 
+/// The commits the Commits scope lists (one `git.log` per opening, filtered here), and how
+/// many the History reads after a "Show commit" pick so the commit is listed there too.
+pub const COMMIT_LIMIT: u32 = 500;
+
+/// The Search scope asks the daemon from this many characters on.
+pub const SEARCH_MIN_CHARS: usize = 2;
+
+/// What Files, Search, Branches and Commits say without a workspace.
+const NO_WORKSPACE: &str = "Open a workspace to search it.";
+
+/// The folder the daemon scopes read (spec 7.2): the active workspace, the task worktree its
+/// Files view shows (what Quick open read) and, outside a worktree, the repository its Git
+/// view shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Source {
+    pub project_id: Ulid,
+    pub worktree_task_id: Option<Ulid>,
+    pub repo: Option<String>,
+}
+
+impl Source {
+    /// The daemon refuses `repo` together with a worktree (ADR 0029), so a worktree drops it.
+    pub fn new(project_id: Ulid, worktree_task_id: Option<Ulid>, repo: Option<String>) -> Self {
+        Self {
+            project_id,
+            repo: if worktree_task_id.is_some() {
+                None
+            } else {
+                repo
+            },
+            worktree_task_id,
+        }
+    }
+}
+
+/// What a daemon scope holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Load {
+    /// Nothing asked yet.
+    Idle,
+    Loading,
+    Ready,
+    Failed(String),
+}
+
+/// A daemon call the palette wants made now. The shell sends it after `delay` (when the
+/// palette still wants it, see [`Palette::is_current`]) and gives the answer back to
+/// [`Palette::answer`] with the same `serial`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fetch {
+    pub scope: Scope,
+    pub serial: u64,
+    pub delay: Duration,
+    pub call: Call,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Call {
+    Files(FsFindParams),
+    Search(FsSearchParams),
+    Branches(GitBranchesParams),
+    Commits(GitLogParams),
+}
+
+/// The daemon's answer to a [`Call`]; an error is its message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    Files(Result<Vec<FsMatch>, String>),
+    Search(Result<FsSearchResult, String>),
+    Branches(Result<Vec<Branch>, String>),
+    Commits(Result<Vec<Commit>, String>),
+}
+
+/// One drawn line of the list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Line<'a> {
+    /// A section overline (All).
+    Header(&'static str),
+    /// A row; `pick` is its place among the selectable lines (for a click).
+    Row { row: Row<'a>, pick: usize },
+    /// "+N more": picking it switches to `scope`.
+    More {
+        scope: Scope,
+        hidden: usize,
+        pick: usize,
+    },
+    /// A muted line: a wait, a failure, a missing workspace.
+    Note { text: String, error: bool },
+}
+
+/// Where a shown item's entry lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Store {
+    Local,
+    Files,
+    Search,
+    Branches,
+    Commits,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Slot {
+    Header(&'static str),
+    Item {
+        store: Store,
+        index: usize,
+        ranges: Vec<Range<usize>>,
+    },
+    More(Scope, usize),
+    Note(String, bool),
+}
+
+impl Slot {
+    fn selectable(&self) -> bool {
+        matches!(self, Slot::Item { .. } | Slot::More(..))
+    }
+}
+
+/// One daemon scope: its rows, what it is doing, and the number of the last call, so an
+/// older answer is dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Remote {
+    load: Load,
+    rows: Vec<Entry>,
+    /// The query the last call carried (Files, Search).
+    asked: Option<String>,
+    serial: u64,
+}
+
+impl Remote {
+    fn new() -> Self {
+        Self {
+            load: Load::Idle,
+            rows: Vec::new(),
+            asked: None,
+            serial: 0,
+        }
+    }
+
+    /// A call is about to be sent: the scope waits for it, under a number no other call of
+    /// any palette has.
+    fn start(&mut self, query: Option<&str>) -> u64 {
+        self.load = Load::Loading;
+        self.asked = query.map(str::to_owned);
+        self.serial = next_serial();
+        self.serial
+    }
+}
+
+/// Unique across palettes, so an answer meant for a closed one never lands in the next.
+fn next_serial() -> u64 {
+    static SENT: AtomicU64 = AtomicU64::new(0);
+    SENT.fetch_add(1, Ordering::Relaxed) + 1
+}
+
 /// The open palette.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Palette {
+    /// Commands and Sessions, listed by the shell when the palette opened.
     entries: Vec<Entry>,
-    /// Private: every edit must filter again ([`Self::key`], [`Self::insert`]).
+    /// Private: every edit must lay out again ([`Self::key`], [`Self::insert`]).
     query: Input,
-    /// Indices into `entries` of the matches, best first, with their matched char indices.
-    shown: Vec<(usize, Vec<u32>)>,
-    /// Index into the shown rows of the picked one.
+    scope: Scope,
+    /// The scope tabs show and Tab switches them.
+    tabs: bool,
+    /// Scopes and daemon sources work. Only the theme picker is one flat list instead (a
+    /// detached window's palette is scoped too).
+    scoped: bool,
+    source: Option<Source>,
+    /// Opened by `@` in a prompt: Enter on a file types its path there instead of opening it.
+    insert_into: Option<crate::composer::Target>,
+    /// The commands run from the palette lately, newest first.
+    recent: Vec<Action>,
+    files: Remote,
+    hits: Remote,
+    branches: Remote,
+    commits: Remote,
+    shown: Vec<Slot>,
+    /// Index among the selectable lines (rows and "+N more") of the picked one.
     pub selected: usize,
 }
 
 impl Palette {
-    pub fn new(entries: Vec<Entry>) -> Self {
-        let mut palette = Self {
+    fn base(entries: Vec<Entry>, scope: Scope) -> Self {
+        Self {
             entries,
             query: Input::default(),
+            scope,
+            tabs: false,
+            scoped: false,
+            source: None,
+            insert_into: None,
+            recent: Vec::new(),
+            files: Remote::new(),
+            hits: Remote::new(),
+            branches: Remote::new(),
+            commits: Remote::new(),
             shown: Vec::new(),
             selected: 0,
-        };
-        palette.filter();
+        }
+    }
+
+    /// A flat list of `entries` filtered by the query: the theme picker (every other palette,
+    /// a detached window's included, is [`Self::scoped`]).
+    pub fn new(entries: Vec<Entry>) -> Self {
+        let mut palette = Self::base(entries, Scope::All);
+        palette.layout(false);
         palette
+    }
+
+    /// The scoped palette on `scope`. `source` is what Files, Search, Branches and Commits
+    /// read (`None`: they ask for a workspace), `recent` the commands run from it lately.
+    pub fn scoped(
+        entries: Vec<Entry>,
+        source: Option<Source>,
+        scope: Scope,
+        recent: Vec<Action>,
+    ) -> Self {
+        let mut palette = Self {
+            tabs: true,
+            scoped: true,
+            source,
+            recent,
+            ..Self::base(entries, scope)
+        };
+        palette.layout(false);
+        palette
+    }
+
+    /// The `@` picker of a prompt: Files only, no tabs; Enter hands the path to `target`.
+    pub fn file_ref(source: Source, target: crate::composer::Target) -> Self {
+        let mut palette = Self {
+            scoped: true,
+            source: Some(source),
+            insert_into: Some(target),
+            ..Self::base(Vec::new(), Scope::Files)
+        };
+        palette.layout(false);
+        palette
+    }
+
+    pub fn scope(&self) -> Scope {
+        self.scope
+    }
+
+    /// The scope tabs show (and Tab switches them).
+    pub fn tabs(&self) -> bool {
+        self.tabs
+    }
+
+    pub fn source(&self) -> Option<&Source> {
+        self.source.as_ref()
+    }
+
+    /// The prompt an `@` pick types its path into.
+    pub fn insert_into(&self) -> Option<crate::composer::Target> {
+        self.insert_into
+    }
+
+    /// Shows `scope`, the pick on its first row.
+    pub fn set_scope(&mut self, scope: Scope) {
+        if self.scope != scope {
+            self.scope = scope;
+            self.layout(false);
+        }
+    }
+
+    /// Tab (`by` > 0) or Shift+Tab: the next or previous scope, wrapping; nothing in a list
+    /// without tabs.
+    pub fn step_scope(&mut self, by: isize) {
+        if self.tabs {
+            let scope = if by < 0 {
+                self.scope.prev()
+            } else {
+                self.scope.next()
+            };
+            self.set_scope(scope);
+        }
     }
 
     /// Picks the row showing entry `entry_index` (the theme picker opens on the current theme).
     pub fn pick_entry(&mut self, entry_index: usize) {
-        if let Some(row) = self
+        let at = self
             .shown
             .iter()
-            .position(|(index, _)| *index == entry_index)
-        {
-            self.selected = row;
+            .filter(|slot| slot.selectable())
+            .position(|slot| {
+                matches!(slot, Slot::Item { store: Store::Local, index, .. } if *index == entry_index)
+            });
+        if let Some(at) = at {
+            self.selected = at;
         }
     }
 
@@ -1097,7 +1362,7 @@ impl Palette {
             Key::Move(by) => self.step(by),
             Key::Edit(key) => {
                 if self.query.edit(&key) {
-                    self.filter();
+                    self.layout(false);
                 }
             }
             Key::Insert(text) => self.insert(&text),
@@ -1105,37 +1370,233 @@ impl Palette {
         }
     }
 
-    /// Appends typed or pasted text (line breaks dropped) and filters again.
+    /// Appends typed or pasted text (line breaks dropped) and lays the list out again.
     pub fn insert(&mut self, text: &str) {
         let line: String = text.chars().filter(|c| *c != '\r' && *c != '\n').collect();
         if self.query.insert(&line) {
-            self.filter();
+            self.layout(false);
         }
     }
 
-    /// Keeps the entries matching the query, best score first (ties keep entry order), and
-    /// picks the best one.
-    fn filter(&mut self) {
-        let mut scored: Vec<(i64, usize, Vec<u32>)> = self
-            .entries
-            .iter()
-            .enumerate()
-            .filter_map(|(index, entry)| {
-                let (score, indices) = fuzzy(&self.query, &entry.title)?;
-                Some((score, index, indices))
-            })
-            .collect();
-        scored.sort_by_key(|(score, ..)| std::cmp::Reverse(*score));
-        self.shown = scored
-            .into_iter()
-            .map(|(_, index, indices)| (index, indices))
-            .collect();
-        self.selected = 0;
+    /// The daemon calls the palette wants now, after it opened, a key or a scope switch:
+    /// Files per query (no wait while the query is empty), Search per query from
+    /// [`SEARCH_MIN_CHARS`] characters (only on its own scope), Branches and Commits once per
+    /// opening, when their scope or All is first shown. Asking the same thing twice returns
+    /// nothing. Too short a query for Search empties its hits.
+    pub fn wanted(&mut self) -> Vec<Fetch> {
+        let Some(source) = self.source.clone() else {
+            return Vec::new();
+        };
+        let query = self.query.as_str().to_owned();
+        let all = self.scope == Scope::All;
+        let mut fetches = Vec::new();
+        if (self.scope == Scope::Files || (all && !query.trim().is_empty()))
+            && self.files.asked.as_deref() != Some(query.as_str())
+        {
+            let serial = self.files.start(Some(&query));
+            fetches.push(Fetch {
+                scope: Scope::Files,
+                serial,
+                delay: if query.is_empty() {
+                    Duration::ZERO
+                } else {
+                    theme::PALETTE_FILES_DELAY
+                },
+                call: Call::Files(FsFindParams {
+                    project_id: source.project_id,
+                    worktree_task_id: source.worktree_task_id,
+                    query: query.clone(),
+                    limit: FsFindParams::DEFAULT_LIMIT,
+                }),
+            });
+        }
+        if self.scope == Scope::Search {
+            let long_enough = query.chars().count() >= SEARCH_MIN_CHARS;
+            if long_enough && self.hits.asked.as_deref() != Some(query.as_str()) {
+                let serial = self.hits.start(Some(&query));
+                fetches.push(Fetch {
+                    scope: Scope::Search,
+                    serial,
+                    delay: theme::PALETTE_SEARCH_DELAY,
+                    call: Call::Search(FsSearchParams {
+                        project_id: source.project_id,
+                        worktree_task_id: source.worktree_task_id,
+                        query: query.clone(),
+                        regex: false,
+                        limit: FsSearchParams::DEFAULT_LIMIT,
+                    }),
+                });
+            } else if !long_enough && self.hits.asked.is_some() {
+                // Too short to search: the old hits go, and their late answer is dropped by
+                // its number (a fresh `Remote` has number 0).
+                self.hits = Remote::new();
+                self.layout(false);
+            }
+        }
+        if (self.scope == Scope::Branches || all) && self.branches.load == Load::Idle {
+            let serial = self.branches.start(None);
+            fetches.push(Fetch {
+                scope: Scope::Branches,
+                serial,
+                delay: Duration::ZERO,
+                call: Call::Branches(GitBranchesParams {
+                    project_id: source.project_id,
+                    worktree_task_id: source.worktree_task_id,
+                    repo: source.repo.clone(),
+                }),
+            });
+        }
+        if (self.scope == Scope::Commits || all) && self.commits.load == Load::Idle {
+            let serial = self.commits.start(None);
+            fetches.push(Fetch {
+                scope: Scope::Commits,
+                serial,
+                delay: Duration::ZERO,
+                call: Call::Commits(GitLogParams {
+                    project_id: source.project_id,
+                    worktree_task_id: source.worktree_task_id,
+                    repo: source.repo.clone(),
+                    limit: COMMIT_LIMIT,
+                    path: None,
+                }),
+            });
+        }
+        if !fetches.is_empty() {
+            self.layout(true);
+        }
+        fetches
     }
 
-    /// Moves the pick by `by`, wrapping around the list.
+    /// Whether call number `serial` of `scope` is still the latest (the shell checks after a
+    /// debounce, before it sends).
+    pub fn is_current(&self, scope: Scope, serial: u64) -> bool {
+        match scope {
+            Scope::Files => self.files.serial == serial,
+            Scope::Search => self.hits.serial == serial,
+            Scope::Branches => self.branches.serial == serial,
+            Scope::Commits => self.commits.serial == serial,
+            Scope::All | Scope::Commands | Scope::Sessions => false,
+        }
+    }
+
+    /// The answer to call number `serial`; kept only if no newer call of that scope was sent
+    /// (the previous rows stay on screen until then). `now_ms` dates the ages. Returns `true`
+    /// when the answer was kept. A Files or Search answer puts the pick on the best row; a
+    /// background Branches or Commits answer keeps the pick where it was.
+    pub fn answer(&mut self, serial: u64, answer: Answer, now_ms: i64) -> bool {
+        let repo = self.source.as_ref().and_then(|source| source.repo.clone());
+        let repo = repo.as_deref();
+        let background = matches!(answer, Answer::Branches(_) | Answer::Commits(_));
+        let (remote, rows) = match answer {
+            Answer::Files(found) => (
+                &mut self.files,
+                found.map(|matches| matches.into_iter().map(file_entry).collect()),
+            ),
+            Answer::Search(found) => (
+                &mut self.hits,
+                found.map(|result| result.hits.into_iter().map(hit_entry).collect()),
+            ),
+            Answer::Branches(found) => (
+                &mut self.branches,
+                found.map(|branches| {
+                    (branches.into_iter())
+                        .map(|branch| branch_entry(branch, repo, now_ms))
+                        .collect()
+                }),
+            ),
+            Answer::Commits(found) => (
+                &mut self.commits,
+                found.map(|commits| {
+                    (commits.into_iter())
+                        .map(|commit| commit_entry(commit, repo, now_ms))
+                        .collect()
+                }),
+            ),
+        };
+        if serial != remote.serial {
+            return false;
+        }
+        match rows {
+            Ok(rows) => {
+                remote.rows = rows;
+                remote.load = Load::Ready;
+            }
+            Err(error) => {
+                remote.rows.clear();
+                remote.load = Load::Failed(error);
+            }
+        }
+        self.layout(background);
+        true
+    }
+
+    /// The list as it is drawn: overlines, rows, "+N more" and notes.
+    pub fn lines(&self) -> Vec<Line<'_>> {
+        let mut pick = 0;
+        let mut lines = Vec::with_capacity(self.shown.len());
+        for slot in &self.shown {
+            match slot {
+                Slot::Header(title) => lines.push(Line::Header(title)),
+                Slot::Note(text, error) => lines.push(Line::Note {
+                    text: text.clone(),
+                    error: *error,
+                }),
+                Slot::Item {
+                    store,
+                    index,
+                    ranges,
+                } => {
+                    if let Some(entry) = self.entry(*store, *index) {
+                        lines.push(Line::Row {
+                            row: Row {
+                                entry,
+                                ranges: ranges.clone(),
+                                section: entry.action.scope(),
+                                detail: entry.detail.as_deref(),
+                                age: entry.age.as_deref(),
+                            },
+                            pick,
+                        });
+                    }
+                    pick += 1;
+                }
+                Slot::More(scope, hidden) => {
+                    lines.push(Line::More {
+                        scope: *scope,
+                        hidden: *hidden,
+                        pick,
+                    });
+                    pick += 1;
+                }
+            }
+        }
+        lines
+    }
+
+    /// The shown rows, best match first ("+N more" and notes left out).
+    pub fn rows(&self) -> Vec<Row<'_>> {
+        self.lines()
+            .into_iter()
+            .filter_map(|line| match line {
+                Line::Row { row, .. } => Some(row),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The index in [`Self::lines`] of the picked line (what to scroll into view).
+    pub fn selected_line(&self) -> usize {
+        self.shown
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| slot.selectable())
+            .nth(self.selected)
+            .map_or(0, |(line, _)| line)
+    }
+
+    /// Moves the pick by `by`, wrapping around the selectable lines.
     pub fn step(&mut self, by: i32) {
-        let count = self.shown.len();
+        let count = self.shown.iter().filter(|slot| slot.selectable()).count();
         if count == 0 {
             return;
         }
@@ -1144,34 +1605,291 @@ impl Palette {
         self.selected = usize::try_from((at + i64::from(by)).rem_euclid(count)).unwrap_or(0);
     }
 
-    /// Picks row `index` (a click).
+    /// Picks selectable line `index` (a click).
     pub fn pick(&mut self, index: usize) {
-        if index < self.shown.len() {
+        if index < self.shown.iter().filter(|slot| slot.selectable()).count() {
             self.selected = index;
         }
     }
 
-    /// The shown rows, best match first.
-    pub fn rows(&self) -> Vec<Row<'_>> {
-        self.shown
-            .iter()
-            .map(|(index, indices)| {
-                let entry = &self.entries[*index];
-                Row {
-                    entry,
-                    ranges: match_ranges(&entry.title, indices),
-                    section: entry.action.scope(),
-                    detail: entry.detail.as_deref(),
-                    age: entry.age.as_deref(),
-                }
-            })
-            .collect()
+    /// What the picked row does; `None` on "+N more" or with nothing shown.
+    pub fn picked(&self) -> Option<Action> {
+        match self.picked_slot()? {
+            Slot::Item { store, index, .. } => {
+                self.entry(*store, *index).map(|entry| entry.action.clone())
+            }
+            _ => None,
+        }
     }
 
-    /// What the picked row does.
-    pub fn picked(&self) -> Option<Action> {
-        let (index, _) = self.shown.get(self.selected)?;
-        Some(self.entries[*index].action.clone())
+    /// The scope of the picked "+N more" row, if that is the pick.
+    pub fn picked_more(&self) -> Option<Scope> {
+        match self.picked_slot()? {
+            Slot::More(scope, _) => Some(*scope),
+            _ => None,
+        }
+    }
+
+    fn picked_slot(&self) -> Option<&Slot> {
+        self.shown
+            .iter()
+            .filter(|slot| slot.selectable())
+            .nth(self.selected)
+    }
+
+    fn entry(&self, store: Store, index: usize) -> Option<&Entry> {
+        match store {
+            Store::Local => self.entries.get(index),
+            Store::Files => self.files.rows.get(index),
+            Store::Search => self.hits.rows.get(index),
+            Store::Branches => self.branches.rows.get(index),
+            Store::Commits => self.commits.rows.get(index),
+        }
+    }
+
+    /// Lays the list out again and picks its first row, or, with `keep`, the row of the
+    /// action that was picked (a background answer must not move the pick).
+    fn layout(&mut self, keep: bool) {
+        let before = if keep { self.picked() } else { None };
+        self.shown = self.slots();
+        self.selected = 0;
+        if let Some(action) = before {
+            let at = self
+                .shown
+                .iter()
+                .filter(|slot| slot.selectable())
+                .position(|slot| {
+                    matches!(slot, Slot::Item { store, index, .. }
+                        if self.entry(*store, *index).is_some_and(|entry| entry.action == action))
+                });
+            if let Some(at) = at {
+                self.selected = at;
+            }
+        }
+    }
+
+    fn slots(&self) -> Vec<Slot> {
+        if !self.scoped {
+            return ranked(Store::Local, &self.entries, &self.query, None);
+        }
+        if self.scope == Scope::All {
+            return self.grouped();
+        }
+        let items = self.matches(self.scope);
+        match self.note(self.scope) {
+            Some(note) if items.is_empty() => vec![note],
+            _ => items,
+        }
+    }
+
+    /// The items of one scope for the query, best first.
+    fn matches(&self, scope: Scope) -> Vec<Slot> {
+        let query = self.query.as_str();
+        match scope {
+            // Ranked by the daemon: kept in its order, highlighted by its ranges.
+            Scope::Files => ordered(Store::Files, &self.files.rows),
+            Scope::Search => ordered(Store::Search, &self.hits.rows),
+            Scope::Commands | Scope::Sessions => {
+                ranked(Store::Local, &self.entries, query, Some(scope))
+            }
+            Scope::Branches => ranked(Store::Branches, &self.branches.rows, query, None),
+            Scope::Commits => ranked(Store::Commits, &self.commits.rows, query, None),
+            Scope::All => Vec::new(),
+        }
+    }
+
+    /// Whether `scope` can have a section in All: every scope but Search. A scope without
+    /// rows (not loaded yet, failed, no workspace) adds no section: its wait and its failure
+    /// show in its own tab only ([`Self::group`] skips an empty one).
+    fn joins_all(&self, scope: Scope) -> bool {
+        !matches!(scope, Scope::All | Scope::Search)
+    }
+
+    /// All: with an empty query the sessions (waiting ones lead) and the recent commands;
+    /// with a query one section per scope in [`Scope::ORDER`] except Search, each capped.
+    fn grouped(&self) -> Vec<Slot> {
+        let mut slots = Vec::new();
+        if self.query.trim().is_empty() {
+            let sessions = self.matches(Scope::Sessions);
+            self.group(
+                &mut slots,
+                Scope::Sessions.title(),
+                Scope::Sessions,
+                sessions,
+            );
+            let recent: Vec<Slot> = self
+                .recent
+                .iter()
+                .filter_map(|action| {
+                    let index = self.entries.iter().position(|e| e.action == *action)?;
+                    Some(Slot::Item {
+                        store: Store::Local,
+                        index,
+                        ranges: Vec::new(),
+                    })
+                })
+                .collect();
+            self.group(&mut slots, "Recent", Scope::Commands, recent);
+        } else {
+            for scope in Scope::ORDER.into_iter().filter(|s| self.joins_all(*s)) {
+                self.group(&mut slots, scope.title(), scope, self.matches(scope));
+            }
+        }
+        slots
+    }
+
+    /// One section of All: its overline, at most `PALETTE_GROUP_LIMIT` rows and a "+N more"
+    /// row. A scope without rows is left out: All has no loading or error lines (spec 7.2).
+    fn group(&self, slots: &mut Vec<Slot>, title: &'static str, scope: Scope, items: Vec<Slot>) {
+        if items.is_empty() {
+            return;
+        }
+        slots.push(Slot::Header(title));
+        let hidden = items.len().saturating_sub(theme::PALETTE_GROUP_LIMIT);
+        slots.extend(items.into_iter().take(theme::PALETTE_GROUP_LIMIT));
+        if hidden > 0 {
+            slots.push(Slot::More(scope, hidden));
+        }
+    }
+
+    /// The muted line of a daemon scope with no row: the missing workspace, the wait, the
+    /// failure, or (Search) how to start.
+    fn note(&self, scope: Scope) -> Option<Slot> {
+        let remote = match scope {
+            Scope::Files => &self.files,
+            Scope::Search => &self.hits,
+            Scope::Branches => &self.branches,
+            Scope::Commits => &self.commits,
+            Scope::All | Scope::Commands | Scope::Sessions => return None,
+        };
+        if self.source.is_none() {
+            return Some(Slot::Note(NO_WORKSPACE.into(), false));
+        }
+        match &remote.load {
+            Load::Loading => Some(Slot::Note("Loading…".into(), false)),
+            Load::Failed(error) => Some(Slot::Note(error.clone(), true)),
+            Load::Idle if scope == Scope::Search => Some(Slot::Note(
+                format!("Type {SEARCH_MIN_CHARS} characters to search the files."),
+                false,
+            )),
+            Load::Idle | Load::Ready => None,
+        }
+    }
+}
+
+/// `rows` in their order with the daemon's highlight ranges.
+fn ordered(store: Store, rows: &[Entry]) -> Vec<Slot> {
+    rows.iter()
+        .enumerate()
+        .map(|(index, entry)| Slot::Item {
+            store,
+            index,
+            ranges: entry.marks.clone(),
+        })
+        .collect()
+}
+
+/// The `rows` of `section` (all when `None`) that `query` matches, best score first, ties in
+/// their order. A commit is found by its short hash too.
+fn ranked(store: Store, rows: &[Entry], query: &str, section: Option<Scope>) -> Vec<Slot> {
+    let mut scored: Vec<(i64, usize, Vec<u32>)> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| section.is_none_or(|section| entry.action.scope() == section))
+        .filter_map(|(index, entry)| {
+            let title = fuzzy(query, &entry.title);
+            let detail = (store == Store::Commits)
+                .then(|| {
+                    entry
+                        .detail
+                        .as_deref()
+                        .and_then(|detail| fuzzy(query, detail))
+                })
+                .flatten();
+            let (score, indices) = match (title, detail) {
+                (Some(title), Some(detail)) if detail.0 > title.0 => (detail.0, Vec::new()),
+                (Some(title), _) => title,
+                (None, Some(detail)) => (detail.0, Vec::new()),
+                (None, None) => return None,
+            };
+            Some((score, index, indices))
+        })
+        .collect();
+    scored.sort_by_key(|(score, ..)| std::cmp::Reverse(*score));
+    scored
+        .into_iter()
+        .map(|(_, index, indices)| Slot::Item {
+            store,
+            index,
+            ranges: match_ranges(&rows[index].title, &indices),
+        })
+        .collect()
+}
+
+fn file_entry(found: FsMatch) -> Entry {
+    let marks = match_ranges(&found.path, &found.indices);
+    Entry {
+        marks,
+        ..Entry::new(
+            Action::OpenFile {
+                path: found.path.clone(),
+            },
+            found.path,
+            "",
+        )
+    }
+}
+
+fn hit_entry(hit: SearchHit) -> Entry {
+    let marks = (hit.ranges.iter())
+        .map(|&(start, end)| start as usize..end as usize)
+        .collect();
+    Entry {
+        detail: Some(format!("{}:{}", hit.path, hit.line)),
+        marks,
+        ..Entry::new(
+            Action::OpenSearchHit {
+                path: hit.path,
+                line: hit.line,
+            },
+            hit.preview,
+            "",
+        )
+    }
+}
+
+fn branch_entry(branch: Branch, repo: Option<&str>, now_ms: i64) -> Entry {
+    let detail = if branch.current {
+        format!("current · {}", branch.subject)
+    } else {
+        branch.subject
+    };
+    Entry {
+        detail: Some(detail),
+        age: Some(crate::git_history::age(branch.last_commit_at, now_ms)),
+        ..Entry::new(
+            Action::Checkout {
+                repo: repo.map(str::to_owned),
+                branch: branch.name.clone(),
+            },
+            branch.name,
+            "",
+        )
+    }
+}
+
+fn commit_entry(commit: Commit, repo: Option<&str>, now_ms: i64) -> Entry {
+    Entry {
+        detail: Some(crate::git_history::short_hash(&commit.hash).to_owned()),
+        age: Some(crate::git_history::age(commit.authored_at, now_ms)),
+        ..Entry::new(
+            Action::ShowCommit {
+                repo: repo.map(str::to_owned),
+                sha: commit.hash,
+            },
+            commit.summary,
+            "",
+        )
     }
 }
 

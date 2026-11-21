@@ -1,4 +1,6 @@
-use mkrew_protocol::{SessionKind, StateSource, TaskStatus};
+use mkrew_protocol::{
+    Branch, Commit, FsMatch, FsSearchResult, SearchHit, SessionKind, StateSource, TaskStatus,
+};
 
 use super::*;
 use crate::split::Preset;
@@ -1389,4 +1391,540 @@ fn a_row_carries_its_section_detail_and_age() {
     assert_eq!(rows[0].section, Scope::Commits);
     assert_eq!(rows[0].detail, Some("abc1234"));
     assert_eq!(rows[0].age, Some("3d"));
+}
+
+fn source() -> Source {
+    Source::new(Ulid::new(), None, None)
+}
+
+fn command(n: usize) -> Entry {
+    Entry::new(Action::Theme(n), format!("Theme {n}"), "")
+}
+
+fn session_entry(n: usize) -> Entry {
+    Entry::new(
+        Action::GoTo(Target::Session(Ulid::new())),
+        format!("Go to session: s{n}"),
+        "",
+    )
+}
+
+fn matches_of(paths: &[&str]) -> Vec<FsMatch> {
+    paths
+        .iter()
+        .map(|path| FsMatch {
+            path: (*path).to_owned(),
+            score: 1,
+            indices: vec![],
+        })
+        .collect()
+}
+
+fn branch(name: &str, remote: bool, current: bool, at: i64) -> Branch {
+    Branch {
+        name: name.into(),
+        remote,
+        current,
+        upstream: None,
+        last_commit_at: at,
+        subject: "work".into(),
+    }
+}
+
+fn log_commit(hash: &str, summary: &str, at: i64) -> Commit {
+    Commit {
+        hash: hash.into(),
+        parents: vec![],
+        author_name: "t".into(),
+        author_email: "t@t".into(),
+        authored_at: at,
+        summary: summary.into(),
+        body: String::new(),
+    }
+}
+
+fn headers(palette: &Palette) -> Vec<&'static str> {
+    palette
+        .lines()
+        .into_iter()
+        .filter_map(|line| match line {
+            Line::Header(title) => Some(title),
+            _ => None,
+        })
+        .collect()
+}
+
+fn scopes(fetches: &[Fetch]) -> Vec<Scope> {
+    fetches.iter().map(|fetch| fetch.scope).collect()
+}
+
+#[test]
+fn a_worktree_never_carries_a_repo() {
+    let (project, task) = (Ulid::new(), Ulid::new());
+    assert_eq!(
+        Source::new(project, Some(task), Some("fe".into())).repo,
+        None
+    );
+    assert_eq!(
+        Source::new(project, None, Some("fe".into()))
+            .repo
+            .as_deref(),
+        Some("fe")
+    );
+}
+
+#[test]
+fn all_caps_each_section_and_adds_a_more_row() {
+    let entries: Vec<Entry> = (0..8)
+        .map(command)
+        .chain((0..7).map(session_entry))
+        .collect();
+    let mut palette = Palette::scoped(entries, None, Scope::All, vec![]);
+    palette.insert("e");
+    assert_eq!(headers(&palette), ["Commands", "Sessions"]);
+    let lines = palette.lines();
+    let rows = lines
+        .iter()
+        .filter(|line| matches!(line, Line::Row { .. }))
+        .count();
+    assert_eq!(rows, 2 * theme::PALETTE_GROUP_LIMIT);
+    let more: Vec<(Scope, usize)> = lines
+        .iter()
+        .filter_map(|line| match line {
+            Line::More { scope, hidden, .. } => Some((*scope, *hidden)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(more, [(Scope::Commands, 3), (Scope::Sessions, 2)]);
+}
+
+#[test]
+fn the_more_row_switches_to_its_scope() {
+    let entries: Vec<Entry> = (0..8).map(command).collect();
+    let mut palette = Palette::scoped(entries, None, Scope::All, vec![]);
+    palette.insert("e");
+    let pick = palette
+        .lines()
+        .into_iter()
+        .find_map(|line| match line {
+            Line::More { pick, .. } => Some(pick),
+            _ => None,
+        })
+        .unwrap();
+    palette.pick(pick);
+    assert_eq!(palette.picked(), None);
+    assert_eq!(palette.picked_more(), Some(Scope::Commands));
+    palette.set_scope(Scope::Commands);
+    assert_eq!(palette.rows().len(), 8);
+}
+
+#[test]
+fn a_flat_palette_has_no_scopes() {
+    let mut palette = Palette::new(vec![command(0)]);
+    palette.step_scope(1);
+    assert_eq!(palette.scope(), Scope::All);
+    assert!(!palette.tabs());
+    let mut scoped = Palette::scoped(vec![], None, Scope::All, vec![]);
+    scoped.step_scope(1);
+    assert_eq!(scoped.scope(), Scope::Commands);
+    scoped.step_scope(-1);
+    assert_eq!(scoped.scope(), Scope::All);
+}
+
+#[test]
+fn search_never_runs_or_shows_in_all() {
+    let mut palette = Palette::scoped(vec![], Some(source()), Scope::All, vec![]);
+    palette.insert("needle");
+    let asked = palette.wanted();
+    assert_eq!(
+        scopes(&asked),
+        [Scope::Files, Scope::Branches, Scope::Commits]
+    );
+    assert!(!headers(&palette).contains(&"Search"));
+}
+
+#[test]
+fn files_are_asked_on_open_debounced_and_late_answers_are_dropped() {
+    let mut palette = Palette::scoped(vec![], Some(source()), Scope::Files, vec![]);
+    let first = palette.wanted().remove(0);
+    // Opening Files does not wait.
+    assert_eq!(first.delay, Duration::ZERO);
+    let Call::Files(params) = &first.call else {
+        panic!("{:?}", first.call)
+    };
+    assert_eq!(
+        (params.query.as_str(), params.limit),
+        ("", FsFindParams::DEFAULT_LIMIT)
+    );
+    assert_eq!(palette.wanted(), [], "nothing new to ask");
+    assert!(palette.answer(
+        first.serial,
+        Answer::Files(Ok(matches_of(&["README.md"]))),
+        0
+    ));
+
+    palette.insert("ma");
+    let second = palette.wanted().remove(0);
+    assert_eq!(second.delay, theme::PALETTE_FILES_DELAY);
+    assert!(palette.is_current(Scope::Files, second.serial));
+    assert!(!palette.is_current(Scope::Files, first.serial));
+    // The previous matches stay on screen while the new answer is awaited.
+    assert_eq!(palette.rows().len(), 1);
+    // The first query's answer arrives late: dropped.
+    assert!(!palette.answer(first.serial, Answer::Files(Ok(matches_of(&["old.rs"]))), 0));
+    assert!(palette.answer(
+        second.serial,
+        Answer::Files(Ok(matches_of(&["src/main.rs", "Makefile"]))),
+        0
+    ));
+    assert_eq!(
+        palette.picked(),
+        Some(Action::OpenFile {
+            path: "src/main.rs".into()
+        })
+    );
+    palette.step(1);
+    assert_eq!(
+        palette.picked(),
+        Some(Action::OpenFile {
+            path: "Makefile".into()
+        })
+    );
+    palette.step(1);
+    assert_eq!(palette.selected, 0, "down from the bottom wraps");
+}
+
+/// An `@` picker closed and opened again: the old palette's late answer has another number,
+/// so it never shows in the new one.
+#[test]
+fn a_closed_palettes_answer_never_lands_in_the_next() {
+    let mut closed = Palette::scoped(vec![], Some(source()), Scope::Files, vec![]);
+    closed.wanted();
+    closed.insert("a");
+    let late = closed.wanted().remove(0);
+    let mut open = Palette::scoped(vec![], Some(source()), Scope::Files, vec![]);
+    let current = open.wanted().remove(0);
+    assert_ne!(late.serial, current.serial);
+    assert!(!open.answer(late.serial, Answer::Files(Ok(matches_of(&["stale.rs"]))), 0));
+    assert!(open.rows().is_empty());
+    assert_eq!(
+        open.lines(),
+        [Line::Note {
+            text: "Loading…".into(),
+            error: false
+        }]
+    );
+}
+
+#[test]
+fn search_waits_for_two_chars_debounces_and_clears_short_queries() {
+    let mut palette = Palette::scoped(vec![], Some(source()), Scope::Search, vec![]);
+    assert_eq!(palette.wanted(), []);
+    palette.insert("a");
+    assert_eq!(palette.wanted(), [], "one char is not searched");
+    palette.insert("b");
+    let asked = palette.wanted().remove(0);
+    assert_eq!(asked.delay, theme::PALETTE_SEARCH_DELAY);
+    let Call::Search(params) = &asked.call else {
+        panic!("{:?}", asked.call)
+    };
+    assert_eq!(
+        (params.query.as_str(), params.regex, params.limit),
+        ("ab", false, 200)
+    );
+    let hit = SearchHit {
+        path: "src/a.rs".into(),
+        line: 3,
+        preview: "let ab = 1;".into(),
+        ranges: vec![(4, 6)],
+    };
+    let result = FsSearchResult {
+        hits: vec![hit],
+        truncated: false,
+    };
+    assert!(palette.answer(asked.serial, Answer::Search(Ok(result.clone())), 0));
+    assert_eq!(
+        palette.picked(),
+        Some(Action::OpenSearchHit {
+            path: "src/a.rs".into(),
+            line: 3
+        })
+    );
+    let rows = palette.rows();
+    let marked = 4..6;
+    assert_eq!(rows[0].ranges, [marked]);
+    assert_eq!(rows[0].detail, Some("src/a.rs:3"));
+    // Back to one char: the hits go, and a late answer for them is dropped.
+    palette.key(Key::Edit(DialogKey::Backspace));
+    palette.wanted();
+    assert!(palette.rows().is_empty());
+    assert!(!palette.answer(asked.serial, Answer::Search(Ok(result)), 0));
+}
+
+#[test]
+fn branches_are_asked_once_and_filtered_here() {
+    let mut palette = Palette::scoped(vec![], Some(source()), Scope::Branches, vec![]);
+    let asked = palette.wanted();
+    assert_eq!(scopes(&asked), [Scope::Branches]);
+    let Call::Branches(params) = &asked[0].call else {
+        panic!("{:?}", asked[0].call)
+    };
+    assert_eq!(params.repo, None);
+    let listed = vec![
+        branch("main", false, true, 1_000),
+        branch("feature-x", false, false, 500),
+        branch("origin/feature-y", true, false, 400),
+    ];
+    assert!(palette.answer(asked[0].serial, Answer::Branches(Ok(listed)), 60_000_000));
+    palette.insert("fe");
+    assert_eq!(palette.wanted(), [], "filtered here, never asked again");
+    let rows = palette.rows();
+    let titles: Vec<&str> = rows.iter().map(|row| row.entry.title.as_str()).collect();
+    assert!(titles.contains(&"feature-x") && titles.contains(&"origin/feature-y"));
+    assert!(!titles.contains(&"main"));
+    assert!(rows.iter().all(|row| row.age.is_some()));
+    assert_eq!(
+        palette.picked(),
+        Some(Action::Checkout {
+            repo: None,
+            branch: "feature-x".into()
+        })
+    );
+}
+
+#[test]
+fn commits_are_one_log_of_500_found_by_message_or_hash() {
+    let mut palette = Palette::scoped(vec![], Some(source()), Scope::Commits, vec![]);
+    let asked = palette.wanted().remove(0);
+    let Call::Commits(params) = &asked.call else {
+        panic!("{:?}", asked.call)
+    };
+    assert_eq!((params.limit, params.path.clone()), (COMMIT_LIMIT, None));
+    let log = vec![
+        log_commit("abcdef0123456789", "fix login", 0),
+        log_commit("1234567890abcdef", "add tests", 0),
+    ];
+    assert!(palette.answer(asked.serial, Answer::Commits(Ok(log)), 0));
+    palette.insert("abcd");
+    assert_eq!(palette.rows().len(), 1, "found by its hash");
+    assert_eq!(
+        palette.picked(),
+        Some(Action::ShowCommit {
+            repo: None,
+            sha: "abcdef0123456789".into()
+        })
+    );
+    assert_eq!(palette.rows()[0].detail, Some("abcdef0"));
+    palette.key(Key::Edit(DialogKey::SelectAll));
+    palette.insert("tests");
+    assert_eq!(palette.rows()[0].entry.title, "add tests");
+}
+
+#[test]
+fn all_lists_a_scope_only_once_it_has_rows_and_never_shows_waits() {
+    let mut palette = Palette::scoped(vec![command(0)], Some(source()), Scope::All, vec![]);
+    palette.insert("t");
+    let asked = palette.wanted();
+    assert_eq!(
+        scopes(&asked),
+        [Scope::Files, Scope::Branches, Scope::Commits]
+    );
+    // Files, Branches and Commits are still loading: All has no "Loading" lines, only rows.
+    assert_eq!(headers(&palette), ["Commands"]);
+    let branches = asked.iter().find(|f| f.scope == Scope::Branches).unwrap();
+    palette.answer(
+        branches.serial,
+        Answer::Branches(Ok(vec![branch("feature-x", false, false, 0)])),
+        0,
+    );
+    assert_eq!(headers(&palette), ["Commands", "Branches"]);
+    // A failed scope shows its error in its own tab only.
+    let files = asked.iter().find(|f| f.scope == Scope::Files).unwrap();
+    palette.answer(
+        files.serial,
+        Answer::Files(Err("no such workspace".into())),
+        0,
+    );
+    assert_eq!(headers(&palette), ["Commands", "Branches"]);
+    palette.set_scope(Scope::Files);
+    assert_eq!(
+        palette.lines(),
+        [Line::Note {
+            text: "no such workspace".into(),
+            error: true
+        }]
+    );
+}
+
+#[test]
+fn a_background_answer_keeps_the_pick() {
+    let entries: Vec<Entry> = (0..3).map(command).collect();
+    let mut palette = Palette::scoped(entries, Some(source()), Scope::All, vec![]);
+    palette.insert("t");
+    let asked = palette.wanted();
+    palette.step(1);
+    let before = palette.picked();
+    assert!(before.is_some());
+    let branches = asked.iter().find(|f| f.scope == Scope::Branches).unwrap();
+    palette.answer(
+        branches.serial,
+        Answer::Branches(Ok(vec![branch("t1", false, false, 0)])),
+        0,
+    );
+    assert_eq!(palette.picked(), before);
+}
+
+#[test]
+fn a_waiting_or_failed_scope_says_so() {
+    let mut palette = Palette::scoped(vec![], Some(source()), Scope::Files, vec![]);
+    let asked = palette.wanted().remove(0);
+    assert_eq!(
+        palette.lines(),
+        [Line::Note {
+            text: "Loading…".into(),
+            error: false
+        }]
+    );
+    palette.answer(
+        asked.serial,
+        Answer::Files(Err("no such workspace".into())),
+        0,
+    );
+    assert_eq!(
+        palette.lines(),
+        [Line::Note {
+            text: "no such workspace".into(),
+            error: true
+        }]
+    );
+    assert_eq!(palette.picked(), None);
+}
+
+#[test]
+fn without_a_workspace_the_daemon_scopes_ask_for_one() {
+    for scope in [Scope::Files, Scope::Search, Scope::Branches, Scope::Commits] {
+        let mut palette = Palette::scoped(vec![], None, scope, vec![]);
+        assert_eq!(palette.wanted(), []);
+        assert_eq!(
+            palette.lines(),
+            [Line::Note {
+                text: "Open a workspace to search it.".into(),
+                error: false
+            }],
+            "{scope:?}"
+        );
+    }
+}
+
+#[test]
+fn the_at_picker_lists_files_and_hands_the_path_to_its_prompt() {
+    let target = crate::composer::Target::TaskDialog;
+    let mut palette = Palette::file_ref(source(), target);
+    assert_eq!(palette.insert_into(), Some(target));
+    assert_eq!((palette.scope(), palette.tabs()), (Scope::Files, false));
+    let asked = palette.wanted();
+    assert_eq!(scopes(&asked), [Scope::Files]);
+    palette.answer(
+        asked[0].serial,
+        Answer::Files(Ok(matches_of(&["src/a.rs"]))),
+        0,
+    );
+    assert_eq!(
+        palette.picked(),
+        Some(Action::OpenFile {
+            path: "src/a.rs".into()
+        })
+    );
+    assert_eq!(Palette::new(vec![]).insert_into(), None);
+}
+
+#[test]
+fn an_empty_all_lists_sessions_then_the_recent_commands() {
+    let entries = vec![
+        command(0),
+        command(1),
+        command(2),
+        session_entry(0),
+        session_entry(1),
+    ];
+    let recent = vec![Action::Theme(2), Action::Theme(0)];
+    let palette = Palette::scoped(entries, None, Scope::All, recent);
+    assert_eq!(headers(&palette), ["Sessions", "Recent"]);
+    let titles: Vec<String> = palette
+        .rows()
+        .iter()
+        .map(|row| row.entry.title.clone())
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            "Go to session: s0",
+            "Go to session: s1",
+            "Theme 2",
+            "Theme 0"
+        ]
+    );
+}
+
+#[test]
+fn every_row_kind_yields_its_action() {
+    let one = |scope: Scope, answer: Answer| {
+        let mut palette = Palette::scoped(vec![], Some(source()), scope, vec![]);
+        palette.insert("ab");
+        let serial = palette.wanted().remove(0).serial;
+        assert!(palette.answer(serial, answer, 0));
+        palette.picked()
+    };
+    assert_eq!(
+        one(Scope::Files, Answer::Files(Ok(matches_of(&["ab.rs"])))),
+        Some(Action::OpenFile {
+            path: "ab.rs".into()
+        })
+    );
+    let hit = SearchHit {
+        path: "ab.rs".into(),
+        line: 7,
+        preview: "ab".into(),
+        ranges: vec![],
+    };
+    let result = FsSearchResult {
+        hits: vec![hit],
+        truncated: false,
+    };
+    assert_eq!(
+        one(Scope::Search, Answer::Search(Ok(result))),
+        Some(Action::OpenSearchHit {
+            path: "ab.rs".into(),
+            line: 7
+        })
+    );
+    assert_eq!(
+        one(
+            Scope::Branches,
+            Answer::Branches(Ok(vec![branch("ab", false, false, 0)]))
+        ),
+        Some(Action::Checkout {
+            repo: None,
+            branch: "ab".into()
+        })
+    );
+    assert_eq!(
+        one(
+            Scope::Commits,
+            Answer::Commits(Ok(vec![log_commit("ab12", "ab", 0)]))
+        ),
+        Some(Action::ShowCommit {
+            repo: None,
+            sha: "ab12".into()
+        })
+    );
+    let mut commands = Palette::scoped(vec![command(4)], None, Scope::Commands, vec![]);
+    commands.insert("theme");
+    assert_eq!(commands.picked(), Some(Action::Theme(4)));
+    let mut sessions = Palette::scoped(vec![session_entry(1)], None, Scope::Sessions, vec![]);
+    sessions.insert("s1");
+    assert!(matches!(
+        sessions.picked(),
+        Some(Action::GoTo(Target::Session(_)))
+    ));
 }
