@@ -324,6 +324,23 @@ pub const SETTINGS_FONT_LIST_HEIGHT: f32 = 200.0;
 pub const SETTINGS_PROMPTS_LIST_WIDTH: f32 = 200.0;
 pub const SETTINGS_PROMPTS_LIST_HEIGHT: f32 = 360.0;
 pub const SETTINGS_PROMPT_BODY_HEIGHT: f32 = 240.0;
+/// The theme gallery of Settings → Appearance (ADR 0101): a card is this wide (three fit a
+/// row at the default Settings width), the picture of a window in the card's own colors is
+/// this tall, and its parts: the top strip, the left strip, the two text bars, the accent
+/// pill and the six ANSI dots.
+pub const THEME_CARD_WIDTH: f32 = 200.0;
+pub const THEME_PICTURE_HEIGHT: f32 = 96.0;
+pub const THEME_PICTURE_CHROME: f32 = 12.0;
+pub const THEME_PICTURE_SIDEBAR: f32 = 36.0;
+pub const THEME_BAR_HEIGHT: f32 = 6.0;
+pub const THEME_BAR_LONG: f32 = 72.0;
+pub const THEME_BAR_SHORT: f32 = 48.0;
+pub const THEME_PILL_HEIGHT: f32 = 10.0;
+pub const THEME_PILL_WIDTH: f32 = 28.0;
+pub const THEME_DOT: f32 = 8.0;
+/// How long the pointer rests on a gallery card before the app shows that theme, so moving
+/// across the cards does not flash.
+pub const THEME_PREVIEW_DELAY: Duration = Duration::from_millis(120);
 /// An on/off switch: track size and the knob's inset.
 pub const SWITCH_WIDTH: f32 = 32.0;
 pub const SWITCH_HEIGHT: f32 = 18.0;

@@ -34,6 +34,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.restore_theme_pick(window, cx);
         self.settings_dialog = None;
         if std::mem::take(&mut self.settings_from_composer)
             && self.composer_session(window).is_some()
@@ -110,16 +111,21 @@ impl Shell {
         {
             self.prompts_body_scroll.scroll_to_bottom();
         }
-        // Keep the focused row on screen: the banner and the Keyboard search box come before
-        // the cards, and a card holds several rows.
-        if let Some(dialog) = &self.settings_dialog
-            && let Focus::Row(index) = dialog.focus
-        {
-            let banner = self.settings_notice(dialog).is_some();
-            let search = keyboard_search_shown(dialog);
-            let card = dialog.group_of(index, &self.keymap);
-            self.settings_scroll
-                .scroll_to_item(card + usize::from(banner) + usize::from(search));
+        // Keep the focused row on screen: the banner, the Keyboard search box and the theme
+        // gallery come before the cards, and a card holds several rows.
+        if let Some(dialog) = &self.settings_dialog {
+            let banner = usize::from(self.settings_notice(dialog).is_some());
+            match dialog.focus {
+                Focus::Row(index) => {
+                    let search = usize::from(keyboard_search_shown(dialog));
+                    let gallery = usize::from(dialog.gallery_shown());
+                    let card = dialog.group_of(index, &self.keymap);
+                    self.settings_scroll
+                        .scroll_to_item(card + banner + search + gallery);
+                }
+                Focus::Gallery(_) => self.settings_scroll.scroll_to_item(banner),
+                _ => {}
+            }
         }
     }
 
@@ -183,6 +189,8 @@ impl Shell {
             Effect::AddMachine(machine) => self.add_machine(machine, cx),
             Effect::Prompts(action) => self.prompts_action(action, window, cx),
         }
+        // A hover, a keyboard move or Esc changed what the gallery previews.
+        self.sync_theme_preview(window, cx);
         // The Prompts page reads its folder when it opens and after every write.
         self.sync_prompts();
         cx.notify();
@@ -351,6 +359,11 @@ impl Shell {
                     .flatten(),
             )
             .children(search.map(|search| search.mb(px(below))))
+            .children(
+                dialog
+                    .gallery_shown()
+                    .then(|| self.render_theme_gallery(dialog, theme, cx)),
+            )
             .children(self.settings_cards(dialog, &rows, typing, theme, cx));
 
         let header = div()

@@ -549,10 +549,16 @@ impl Shell {
         cx.notify();
     }
 
-    /// Back to the current theme for the mode the picker opened on (Esc, or anything replacing
-    /// it); rebuilt, so an OS appearance or settings change meanwhile is kept.
+    /// Back to the current theme for the mode the picker or a gallery preview started on (Esc,
+    /// or anything replacing it); rebuilt, so an OS appearance or settings change meanwhile
+    /// is kept.
     pub(crate) fn restore_theme_pick(&mut self, window: &Window, cx: &mut Context<'_, Self>) {
-        if let Some(mode) = self.theme_pick.take() {
+        let picked = self.theme_pick.take();
+        let previewed = self.gallery_preview.take();
+        if let Some(dialog) = self.settings_dialog.as_mut() {
+            dialog.end_preview();
+        }
+        if let Some(mode) = picked.or(previewed.map(|(mode, _)| mode)) {
             theme::refresh(mode, window, cx);
             cx.refresh_windows();
         }
@@ -608,6 +614,7 @@ impl Shell {
             names.light = name.into();
         }
         cx.set_global(names);
+        self.gallery_preview = None;
         theme::refresh(mode, window, cx);
         cx.refresh_windows();
         let value = theme::toml_string(name);

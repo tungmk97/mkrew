@@ -858,6 +858,8 @@ struct Shell {
     /// The theme mode while the palette is the theme picker (ADR 0078); Esc rebuilds the theme
     /// for it from the current settings. `Some` while the palette is the theme picker.
     theme_pick: Option<mkrew_core::settings::ThemeMode>,
+    /// The theme shown for a gallery card (mode it had, name), while one is previewed.
+    gallery_preview: Option<(mkrew_core::settings::ThemeMode, SharedString)>,
     /// The open prompt picker (modal; over the task dialog when it types into it).
     prompt_picker: Option<PromptPicker>,
     /// Keeps the prompt picker's pick in view.
