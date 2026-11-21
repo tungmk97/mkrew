@@ -229,7 +229,7 @@ pub enum Scope { All, Commands, Sessions, Files, Search, Branches, Commits }
 `Row` gains `section: Scope`, `detail: Option<String>` (a muted path, short hash or session state) and `age: Option<String>` (from `git_history::age`).
 `Action` gains `OpenFile { path: String }`, `OpenSearchHit { path: String, line: u32 }`, `Checkout { repo: Option<String>, branch: String }` and `ShowCommit { repo: Option<String>, sha: String }`; it becomes `Clone` instead of `Copy`.
 A session's state moves from the shortcut column to `detail`.
-`palette::fuzzy` and `palette::filter` stay as they are.
+`palette::fuzzy` stays as it is; the private flat-list filter becomes the private `layout` that groups the scoped list.
 
 ### 7.2 Sources
 
@@ -347,7 +347,7 @@ pub struct FsSearchResult { pub hits: Vec<SearchHit>, pub truncated: bool }
 - Match: `grep-searcher` + `grep-regex` + `grep-matcher` (new dependencies, all from the ripgrep project; `grep-matcher` gives the match ranges).
   With `regex: false` the query is escaped; smart case: an all-lowercase query is case-insensitive.
 - Skips binary files and files over 2 MB.
-- Stops once `limit` hits are found and sets `truncated`.
+- Stops once `limit` hits are found; `truncated` is set only when a (`limit` + 1)th hit exists, so exactly `limit` hits is not truncated.
 - `path` is relative to the searched folder with `/` separators; `line` is 1-based; `preview` is the matching line trimmed and cut to 200 characters; `ranges` are byte ranges into `preview`.
 - An invalid regex returns an error naming the problem.
 - Concurrency and cancellation: `Daemon::connection` answers each request before reading the next one, so `fs.search` runs beside the read loop (replies on a connection may come out of order; the UI matches replies by id).
