@@ -884,6 +884,46 @@ fn integration_install_status_uninstall() {
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{");
 }
 
+/// A status line of the user's own is saved before Mkrew's replaces it, and uninstall puts it back.
+#[test]
+fn integration_keeps_and_restores_a_users_status_line() {
+    let env = Env::new();
+    let claude = env.dir.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    let settings = claude.join("settings.json");
+    let original = "{\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"line.sh\"\n  }\n}\n";
+    std::fs::write(&settings, original).unwrap();
+    let integration = |args: &[&str]| {
+        env.command(args)
+            .env("CLAUDE_CONFIG_DIR", &claude)
+            .output()
+            .unwrap()
+    };
+    let install = integration(&["integration", "install", "claude"]);
+    assert!(install.status.success(), "{install:?}");
+    let saved: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(claude.join("claude-statusline.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["command"], "line.sh");
+    let installed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert!(
+        installed["statusLine"]["command"]
+            .as_str()
+            .unwrap()
+            .ends_with(" statusline"),
+        "{installed}"
+    );
+    let status = integration(&["integration", "status", "claude"]);
+    assert!(status.status.success(), "{status:?}");
+
+    let uninstall = integration(&["integration", "uninstall", "claude"]);
+    assert!(uninstall.status.success(), "{uninstall:?}");
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), original);
+    assert!(!claude.join("claude-statusline.json").exists());
+}
+
 /// The fake agent's `hook` steps drive the session (screen detection would not see the prompt),
 /// and `mk hook` understands Claude's stdin and Codex's argument JSON.
 #[test]
