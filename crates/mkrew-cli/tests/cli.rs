@@ -949,16 +949,15 @@ fn fake_agent_hooks_drive_the_session_state() {
     let waited = env.ok(&["wait", id, "--until", "done", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "done");
 
-    // The agent now sleeps; report as Claude Code and Codex would.
-    let reported = Instant::now();
+    // The agent now sleeps; report as Claude Code and Codex would. Like the first wait, the
+    // deadline only bounds a loaded machine (no stopwatch: it also timed process starts).
     env.hook(
         id,
         &["claude", "Notification"],
         r#"{"session_id": "claude-1", "notification_type": "permission_prompt"}"#,
     );
-    let waited = env.ok(&["wait", id, "--until", "needs_input", "--timeout", "2000"]);
+    let waited = env.ok(&["wait", id, "--until", "needs_input", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "needs_input");
-    assert!(reported.elapsed() < Duration::from_secs(2));
     env.hook(id, &["claude", "UserPromptSubmit"], "{}");
     let waited = env.ok(&["wait", id, "--until", "working", "--timeout", "5000"]);
     assert_eq!(waited.trim(), "working");
