@@ -3,52 +3,14 @@
 //! ranks with `nucleo-matcher`); only the answer to the latest query is shown. Enter opens the
 //! picked file in the Files view. Pure and tested headlessly; `main.rs` renders it.
 
-use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gpui::Keystroke;
 use mkrew_protocol::{FsFindParams, FsMatch};
 use ulid::Ulid;
 
 use crate::composer::Target;
-use crate::task_dialog::{DialogKey, dialog_key};
+use crate::palette::Key;
 use crate::text_box::Input;
-
-/// What a key press in the finder means.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Key {
-    /// Esc.
-    Close,
-    /// ↑ / ↓ (-1 / +1).
-    Move(i32),
-    /// Enter (or Ctrl+Enter).
-    Open,
-    /// Ctrl+V: the caller inserts the clipboard text.
-    Paste,
-    Insert(String),
-    /// An editing or caret key for [`Input::edit`] (Backspace, Ctrl+A, ← →, Ctrl+Z…). On
-    /// Copy / Cut the caller puts the selection on the clipboard first.
-    Edit(DialogKey),
-}
-
-/// The finder meaning of `keystroke`; `None` = ignored.
-pub fn key(keystroke: &Keystroke) -> Option<Key> {
-    if !keystroke.modifiers.modified() {
-        match keystroke.key.as_str() {
-            "up" => return Some(Key::Move(-1)),
-            "down" => return Some(Key::Move(1)),
-            _ => {}
-        }
-    }
-    match dialog_key(keystroke)? {
-        DialogKey::Cancel => Some(Key::Close),
-        DialogKey::Enter | DialogKey::Save => Some(Key::Open),
-        DialogKey::Paste => Some(Key::Paste),
-        DialogKey::Insert(text) => Some(Key::Insert(text)),
-        DialogKey::SwitchField => None,
-        key => Some(Key::Edit(key)),
-    }
-}
 
 /// The matches of the latest query.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,27 +133,10 @@ impl QuickOpen {
     }
 }
 
-/// The byte ranges of `path` to highlight for the matched char `indices` (as `fs.find`
-/// returns them), adjacent chars merged; indices past the end are ignored.
-pub fn match_ranges(path: &str, indices: &[u32]) -> Vec<Range<usize>> {
-    let mut ranges: Vec<Range<usize>> = Vec::new();
-    for (index, (start, c)) in path.char_indices().enumerate() {
-        let matched = u32::try_from(index).is_ok_and(|index| indices.contains(&index));
-        if !matched {
-            continue;
-        }
-        let end = start + c.len_utf8();
-        match ranges.last_mut() {
-            Some(last) if last.end == start => last.end = end,
-            _ => ranges.push(start..end),
-        }
-    }
-    ranges
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task_dialog::DialogKey;
 
     fn found(paths: &[&str]) -> Vec<FsMatch> {
         paths
@@ -309,36 +254,5 @@ mod tests {
             "Ctrl+Z brings it back"
         );
         assert_eq!(open.query, "lib");
-    }
-
-    #[test]
-    fn keys() {
-        let parse = |text: &str| key(&Keystroke::parse(text).unwrap());
-        assert_eq!(parse("up"), Some(Key::Move(-1)));
-        assert_eq!(parse("down"), Some(Key::Move(1)));
-        assert_eq!(parse("escape"), Some(Key::Close));
-        assert_eq!(parse("enter"), Some(Key::Open));
-        assert_eq!(parse("ctrl-enter"), Some(Key::Open));
-        assert_eq!(parse("backspace"), Some(Key::Edit(DialogKey::Backspace)));
-        assert_eq!(parse("ctrl-v"), Some(Key::Paste));
-        assert_eq!(
-            parse("ctrl-backspace"),
-            Some(Key::Edit(DialogKey::DeleteWord))
-        );
-        assert_eq!(parse("ctrl-a"), Some(Key::Edit(DialogKey::SelectAll)));
-        assert_eq!(parse("tab"), None);
-        assert_eq!(parse("ctrl-up"), None);
-        assert_eq!(parse("ctrl-x"), Some(Key::Edit(DialogKey::Cut)));
-    }
-
-    #[test]
-    fn matched_chars_become_merged_byte_ranges() {
-        assert_eq!(
-            match_ranges("src/main.rs", &[4, 5, 6, 9]),
-            vec![4..7, 9..10]
-        );
-        // Multi-byte chars: indices are chars, ranges are bytes.
-        assert_eq!(match_ranges("é/ab", &[0, 1, 3]), vec![0..3, 4..5]);
-        assert_eq!(match_ranges("ab", &[5]), Vec::<Range<usize>>::new());
     }
 }

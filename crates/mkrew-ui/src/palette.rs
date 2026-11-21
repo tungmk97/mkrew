@@ -6,6 +6,7 @@
 
 use std::ops::Range;
 
+use gpui::Keystroke;
 use mkrew_core::settings::FeatureSettings;
 use mkrew_protocol::{Project, Session, SessionState, Task};
 use ulid::Ulid;
@@ -14,8 +15,8 @@ use crate::board::CardKey;
 use crate::board::View;
 use crate::history;
 use crate::keymap::{Command, Keymap, KeymapError};
-use crate::quick_open::{Key, match_ranges};
 use crate::split::Direction;
+use crate::task_dialog::{DialogKey, dialog_key};
 use crate::text_box::Input;
 
 /// What the window looks like when the palette opens; decides which commands are listed.
@@ -850,6 +851,61 @@ fn word_start(chars: &[char], at: usize) -> bool {
         return true;
     };
     !previous.is_alphanumeric() || (previous.is_lowercase() && chars[at].is_uppercase())
+}
+
+/// What a key press in a picker's query field means: the palette, the prompt and `/` pickers
+/// and the filters of the Docs, Git and Jira lists share this map.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Key {
+    /// Esc.
+    Close,
+    /// ↑ / ↓ (-1 / +1).
+    Move(i32),
+    /// Enter (or Ctrl+Enter).
+    Open,
+    /// Ctrl+V: the caller inserts the clipboard text.
+    Paste,
+    Insert(String),
+    /// An editing or caret key for [`Input::edit`] (Backspace, Ctrl+A, ← →, Ctrl+Z…). On
+    /// Copy / Cut the caller puts the selection on the clipboard first.
+    Edit(DialogKey),
+}
+
+/// The picker meaning of `keystroke`; `None` = ignored.
+pub fn key(keystroke: &Keystroke) -> Option<Key> {
+    if !keystroke.modifiers.modified() {
+        match keystroke.key.as_str() {
+            "up" => return Some(Key::Move(-1)),
+            "down" => return Some(Key::Move(1)),
+            _ => {}
+        }
+    }
+    match dialog_key(keystroke)? {
+        DialogKey::Cancel => Some(Key::Close),
+        DialogKey::Enter | DialogKey::Save => Some(Key::Open),
+        DialogKey::Paste => Some(Key::Paste),
+        DialogKey::Insert(text) => Some(Key::Insert(text)),
+        DialogKey::SwitchField => None,
+        key => Some(Key::Edit(key)),
+    }
+}
+
+/// The byte ranges of `path` to highlight for the matched char `indices` (as `fs.find`
+/// returns them), adjacent chars merged; indices past the end are ignored.
+pub fn match_ranges(path: &str, indices: &[u32]) -> Vec<Range<usize>> {
+    let mut ranges: Vec<Range<usize>> = Vec::new();
+    for (index, (start, c)) in path.char_indices().enumerate() {
+        let matched = u32::try_from(index).is_ok_and(|index| indices.contains(&index));
+        if !matched {
+            continue;
+        }
+        let end = start + c.len_utf8();
+        match ranges.last_mut() {
+            Some(last) if last.end == start => last.end = end,
+            _ => ranges.push(start..end),
+        }
+    }
+    ranges
 }
 
 /// The open palette.

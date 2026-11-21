@@ -181,36 +181,36 @@ impl Shell {
         let plain_tab = event.keystroke.key == "tab"
             && !(modifiers.shift || modifiers.control || modifiers.alt || modifiers.platform);
         let key = if plain_tab {
-            Some(quick_open::Key::Open)
+            Some(palette::Key::Open)
         } else {
-            quick_open::key(&event.keystroke)
+            palette::key(&event.keystroke)
         };
         let Some(key) = key else {
             return;
         };
-        let paste = (key == quick_open::Key::Paste)
+        let paste = (key == palette::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
         let Some(picker) = self.slash_picker.as_mut() else {
             return;
         };
         match key {
-            quick_open::Key::Close => {
+            palette::Key::Close => {
                 let typed = picker.escaped();
                 return self.close_slash_picker(Some(typed), window, cx);
             }
-            quick_open::Key::Open => return self.accept_slash_pick(!plain_tab, window, cx),
-            quick_open::Key::Move(_) => {
+            palette::Key::Open => return self.accept_slash_pick(!plain_tab, window, cx),
+            palette::Key::Move(_) => {
                 picker.apply(key);
                 self.slash_picker_scroll.scroll_to_item(picker.selected);
             }
-            quick_open::Key::Paste => {
+            palette::Key::Paste => {
                 if let Some(text) = paste {
                     picker.insert(&text);
                 }
             }
-            quick_open::Key::Edit(_) | quick_open::Key::Insert(_) => {
-                if let quick_open::Key::Edit(edit) = &key {
+            palette::Key::Edit(_) | palette::Key::Insert(_) => {
+                if let palette::Key::Edit(edit) = &key {
                     copy_selection(edit, picker.query(), cx);
                 }
                 picker.apply(key);
@@ -249,17 +249,16 @@ impl Shell {
                 let name = format!("/{}", item.name);
                 // The `/` comes first in the text, so the matched chars move one place.
                 let shifted: Vec<u32> = row.matched.iter().map(|at| at + 1).collect();
-                let highlights =
-                    quick_open::match_ranges(&name, &shifted)
-                        .into_iter()
-                        .map(|range| {
-                            let style = gpui::HighlightStyle {
-                                color: Some(accent),
-                                font_weight: Some(FontWeight(weight::SEMIBOLD)),
-                                ..gpui::HighlightStyle::default()
-                            };
-                            (range, style)
-                        });
+                let highlights = palette::match_ranges(&name, &shifted)
+                    .into_iter()
+                    .map(|range| {
+                        let style = gpui::HighlightStyle {
+                            color: Some(accent),
+                            font_weight: Some(FontWeight(weight::SEMIBOLD)),
+                            ..gpui::HighlightStyle::default()
+                        };
+                        (range, style)
+                    });
                 Some(
                     div()
                         .id(("slash-row", position))

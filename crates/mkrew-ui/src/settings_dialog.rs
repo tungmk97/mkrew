@@ -15,9 +15,8 @@ use mkrew_core::settings_fields::{Kind, Page, SETTINGS, Setting};
 use crate::editor::Motion;
 use crate::keymap::{Command, Keymap, KeymapError, keys_label};
 use crate::machines::{Field, Invalid, Machine};
-use crate::palette;
+use crate::palette::{self, match_ranges};
 use crate::prompts_page::{PromptAction, PromptsPage, Spot, Written};
-use crate::quick_open::match_ranges;
 use crate::task_dialog::{DialogKey, dialog_key};
 use crate::text_box::Input;
 

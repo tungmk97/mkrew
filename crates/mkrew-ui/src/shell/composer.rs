@@ -460,21 +460,21 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let Some(key) = quick_open::key(&event.keystroke) else {
+        let Some(key) = palette::key(&event.keystroke) else {
             return;
         };
         let Some(picker) = self.prompt_picker.as_mut() else {
             return;
         };
         match key {
-            quick_open::Key::Close => self.close_prompt_picker(None, window, cx),
-            quick_open::Key::Open => self.insert_prompt_pick(window, cx),
-            quick_open::Key::Move(by) => {
+            palette::Key::Close => self.close_prompt_picker(None, window, cx),
+            palette::Key::Open => self.insert_prompt_pick(window, cx),
+            palette::Key::Move(by) => {
                 picker.step(by);
                 self.prompt_picker_scroll.scroll_to_item(picker.selected);
                 cx.notify();
             }
-            quick_open::Key::Paste | quick_open::Key::Insert(_) | quick_open::Key::Edit(_) => {}
+            palette::Key::Paste | palette::Key::Insert(_) | palette::Key::Edit(_) => {}
         }
     }
 

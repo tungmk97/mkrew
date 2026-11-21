@@ -72,35 +72,34 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, quick_open::key(&event.keystroke))
-        else {
+        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
             return;
         };
-        let paste = (key == quick_open::Key::Paste)
+        let paste = (key == palette::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
         let Some(docs) = self.docs.get_mut(&project_id) else {
             return;
         };
         match key {
-            quick_open::Key::Close if !docs.filter.is_empty() => docs.filter.clear(),
-            quick_open::Key::Close | quick_open::Key::Open => {
+            palette::Key::Close if !docs.filter.is_empty() => docs.filter.clear(),
+            palette::Key::Close | palette::Key::Open => {
                 window.focus(&self.focus_handle, cx);
             }
-            quick_open::Key::Move(by) => {
+            palette::Key::Move(by) => {
                 if let Some(path) = docs.step_selection(by as isize) {
                     self.select_doc(project_id, &path, window, cx);
                 }
             }
-            quick_open::Key::Edit(key) => {
+            palette::Key::Edit(key) => {
                 copy_selection(&key, &docs.filter, cx);
                 docs.filter.edit(&key);
             }
-            quick_open::Key::Paste => {
+            palette::Key::Paste => {
                 docs.filter
                     .insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }
-            quick_open::Key::Insert(text) => {
+            palette::Key::Insert(text) => {
                 docs.filter.insert(&text);
             }
         }
@@ -667,7 +666,7 @@ pub(crate) fn doc_row(
             ..HighlightStyle::default()
         };
         StyledText::new(text.to_owned()).with_highlights(
-            quick_open::match_ranges(text, hits)
+            palette::match_ranges(text, hits)
                 .into_iter()
                 .map(move |range| (range, style)),
         )

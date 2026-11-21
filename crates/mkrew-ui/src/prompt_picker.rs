@@ -3,7 +3,7 @@
 //! that opens Settings → Prompts. Opened from
 //! the palette ("Insert prompt…"), the composer ("Prompts") and the task dialog ("From
 //! prompt…"); the pick is typed into the composer or the task prompt. Pure and tested
-//! headlessly; `main.rs` renders it and reads keys with [`crate::quick_open::key`].
+//! headlessly; `main.rs` renders it and reads keys with [`crate::palette::key`].
 
 use mkrew_core::prompt::{self, PromptLibrary, PromptVars, Rendered};
 

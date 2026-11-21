@@ -197,29 +197,29 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let Some(key) = quick_open::key(&event.keystroke) else {
+        let Some(key) = palette::key(&event.keystroke) else {
             return;
         };
-        let paste = (key == quick_open::Key::Paste)
+        let paste = (key == palette::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
         let Some(open) = self.quick_open.as_mut() else {
             return;
         };
         match key {
-            quick_open::Key::Close => return self.close_quick_open(window, cx),
-            quick_open::Key::Open => return self.open_quick_pick(window, cx),
-            quick_open::Key::Move(_) => {
+            palette::Key::Close => return self.close_quick_open(window, cx),
+            palette::Key::Open => return self.open_quick_pick(window, cx),
+            palette::Key::Move(_) => {
                 open.key(key);
                 self.quick_open_scroll.scroll_to_item(open.selected);
             }
-            quick_open::Key::Paste => {
+            palette::Key::Paste => {
                 if paste.is_some_and(|text| open.insert(&text)) {
                     self.find_files(window, cx);
                 }
             }
-            quick_open::Key::Edit(_) | quick_open::Key::Insert(_) => {
-                if let quick_open::Key::Edit(edit) = &key {
+            palette::Key::Edit(_) | palette::Key::Insert(_) => {
+                if let palette::Key::Edit(edit) = &key {
                     copy_selection(edit, &open.query, cx);
                 }
                 if open.key(key) {
@@ -638,25 +638,25 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let Some(key) = quick_open::key(&event.keystroke) else {
+        let Some(key) = palette::key(&event.keystroke) else {
             return;
         };
-        let paste = (key == quick_open::Key::Paste)
+        let paste = (key == palette::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
         let Some(palette) = self.palette.as_mut() else {
             return;
         };
         match key {
-            quick_open::Key::Close => return self.close_palette(window, cx),
-            quick_open::Key::Open => return self.run_palette_pick(window, cx),
-            quick_open::Key::Paste => {
+            palette::Key::Close => return self.close_palette(window, cx),
+            palette::Key::Open => return self.run_palette_pick(window, cx),
+            palette::Key::Paste => {
                 if let Some(text) = paste {
                     palette.insert(&text);
                 }
             }
-            quick_open::Key::Move(_) | quick_open::Key::Edit(_) | quick_open::Key::Insert(_) => {
-                if let quick_open::Key::Edit(edit) = &key {
+            palette::Key::Move(_) | palette::Key::Edit(_) | palette::Key::Insert(_) => {
+                if let palette::Key::Edit(edit) = &key {
                     copy_selection(edit, palette.query(), cx);
                 }
                 palette.key(key);
@@ -987,7 +987,7 @@ impl Shell {
             .enumerate()
             .map(|(index, found)| {
                 let picked = index == open.selected;
-                let highlights = quick_open::match_ranges(&found.path, &found.indices)
+                let highlights = palette::match_ranges(&found.path, &found.indices)
                     .into_iter()
                     .map(|range| {
                         let style = gpui::HighlightStyle {

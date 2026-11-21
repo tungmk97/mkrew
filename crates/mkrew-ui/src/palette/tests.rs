@@ -1256,3 +1256,34 @@ fn a_detached_window_lists_only_what_acts_there() {
         assert!(!acts_in_detached_window(&action), "{action:?}");
     }
 }
+
+#[test]
+fn the_picker_keys() {
+    let parse = |text: &str| key(&Keystroke::parse(text).unwrap());
+    assert_eq!(parse("up"), Some(Key::Move(-1)));
+    assert_eq!(parse("down"), Some(Key::Move(1)));
+    assert_eq!(parse("escape"), Some(Key::Close));
+    assert_eq!(parse("enter"), Some(Key::Open));
+    assert_eq!(parse("ctrl-enter"), Some(Key::Open));
+    assert_eq!(parse("backspace"), Some(Key::Edit(DialogKey::Backspace)));
+    assert_eq!(parse("ctrl-v"), Some(Key::Paste));
+    assert_eq!(
+        parse("ctrl-backspace"),
+        Some(Key::Edit(DialogKey::DeleteWord))
+    );
+    assert_eq!(parse("ctrl-a"), Some(Key::Edit(DialogKey::SelectAll)));
+    assert_eq!(parse("tab"), None);
+    assert_eq!(parse("ctrl-up"), None);
+    assert_eq!(parse("ctrl-x"), Some(Key::Edit(DialogKey::Cut)));
+}
+
+#[test]
+fn matched_chars_become_merged_byte_ranges() {
+    assert_eq!(
+        match_ranges("src/main.rs", &[4, 5, 6, 9]),
+        vec![4..7, 9..10]
+    );
+    // Multi-byte chars: indices are chars, ranges are bytes.
+    assert_eq!(match_ranges("é/ab", &[0, 1, 3]), vec![0..3, 4..5]);
+    assert_eq!(match_ranges("ab", &[5]), Vec::<Range<usize>>::new());
+}
