@@ -83,6 +83,10 @@ pub trait GitBackend: Send + Sync {
     /// Working copies of the tracked `paths` back to their index version.
     fn discard(&self, dir: &Path, paths: &[String]) -> io::Result<()>;
 
+    /// `git apply -R` of `patch` (its paths relative to `dir`) on the working tree only: the
+    /// index is kept. Fails with git's reason when the patch no longer matches the file.
+    fn discard_hunk(&self, dir: &Path, repo: &Repo, patch: &str) -> io::Result<()>;
+
     /// Commits the index (never amends); returns the new commit.
     fn commit(&self, dir: &Path, message: &str) -> io::Result<String>;
 
@@ -486,18 +490,16 @@ impl GitBackend for GitCli {
     }
 
     fn apply_cached(&self, dir: &Path, repo: &Repo, patch: &str, reverse: bool) -> io::Result<()> {
-        let mut command = git(dir);
-        command.args(["apply", "--cached"]);
-        if reverse {
-            command.arg("-R");
-        }
-        // Patch paths are read from the repo root.
-        let prefix = repo.prefix.trim_end_matches('/');
-        if !prefix.is_empty() {
-            command.arg(format!("--directory={prefix}"));
-        }
-        command.arg("-");
-        run_with_input(command, patch.as_bytes()).map(drop)
+        let flags: &[&str] = if reverse {
+            &["--cached", "-R"]
+        } else {
+            &["--cached"]
+        };
+        apply_patch(dir, repo, flags, patch)
+    }
+
+    fn discard_hunk(&self, dir: &Path, repo: &Repo, patch: &str) -> io::Result<()> {
+        apply_patch(dir, repo, &["-R"], patch)
     }
 
     fn discard(&self, dir: &Path, paths: &[String]) -> io::Result<()> {
@@ -880,6 +882,19 @@ pub fn clone(parent: &Path, url: &str, name: &str) -> io::Result<()> {
 fn run_with_paths(mut command: Command, paths: &[String]) -> io::Result<()> {
     command.args(["--pathspec-from-file=-", "--pathspec-file-nul"]);
     run_with_input(command, &nul_joined(paths)).map(drop)
+}
+
+/// `git apply <flags> -` of `patch`. Patch paths are read from the repo root, so a project
+/// that is a subfolder of the repo gets `--directory`.
+fn apply_patch(dir: &Path, repo: &Repo, flags: &[&str], patch: &str) -> io::Result<()> {
+    let mut command = git(dir);
+    command.arg("apply").args(flags);
+    let prefix = repo.prefix.trim_end_matches('/');
+    if !prefix.is_empty() {
+        command.arg(format!("--directory={prefix}"));
+    }
+    command.arg("-");
+    run_with_input(command, patch.as_bytes()).map(drop)
 }
 
 /// [`run`] with `input` written to stdin. Git reads all of it before writing much, so writing
@@ -1371,6 +1386,50 @@ mod tests {
         // Nothing staged: git's explanation is on stdout.
         let error = GitCli.commit(&dir, "three").unwrap_err().to_string();
         assert!(error.len() > "git failed: ".len(), "{error}");
+    }
+
+    /// One hunk goes back to the index text in the working tree only; the other hunk, the
+    /// index and the CRLF line endings stay; a hunk that no longer matches is refused with
+    /// git's reason.
+    #[test]
+    fn discard_hunk_reverses_one_unstaged_hunk_in_a_subfolder() {
+        let repo = tempfile::tempdir().unwrap();
+        let root = repo.path();
+        let dir = root.join("app");
+        std::fs::create_dir(&dir).unwrap();
+        run(root, &["init", "-q"]);
+        run(root, &["config", "core.autocrlf", "false"]);
+        run(root, &["config", "user.name", "t"]);
+        run(root, &["config", "user.email", "t@t"]);
+        run(root, &["config", "commit.gpgsign", "false"]);
+        let lines: Vec<String> = (1..=20).map(|n| format!("line {n}\r\n")).collect();
+        std::fs::write(dir.join("a b.txt"), lines.concat()).unwrap();
+        GitCli.stage(&dir, &["a b.txt".to_owned()]).unwrap();
+        GitCli.commit(&dir, "one").unwrap();
+        let mut changed = lines.clone();
+        changed[1] = "line two\r\n".into();
+        changed[18] = "line nineteen\r\n".into();
+        std::fs::write(dir.join("a b.txt"), changed.concat()).unwrap();
+        let unstaged = hunks(&dir, "a b.txt", Side::Unstaged);
+        assert_eq!(unstaged.len(), 2);
+        let repo_info = GitCli.repo(&dir).unwrap().unwrap();
+
+        let patch = mkrew_core::git::hunk_patch("a b.txt", &unstaged[0]);
+        GitCli.discard_hunk(&dir, &repo_info, &patch).unwrap();
+        let mut expected = lines.clone();
+        expected[18] = "line nineteen\r\n".into();
+        assert_eq!(
+            std::fs::read(dir.join("a b.txt")).unwrap(),
+            expected.concat().into_bytes()
+        );
+        assert_eq!(run(root, &["diff", "--cached", "--name-only"]), "");
+        assert_eq!(hunks(&dir, "a b.txt", Side::Unstaged).len(), 1);
+
+        let error = GitCli
+            .discard_hunk(&dir, &repo_info, &patch)
+            .unwrap_err()
+            .to_string();
+        assert!(error.starts_with("git failed: "), "{error}");
     }
 
     /// The index's text, not the working tree's or HEAD's, also when the project is a
