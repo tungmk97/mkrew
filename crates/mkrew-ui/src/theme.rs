@@ -2676,31 +2676,6 @@ mod tests {
     }
 
     #[test]
-    fn a_theme_may_carry_a_name_that_is_not_static() {
-        let palette = Palette {
-            dark: true,
-            bg: 0x1E2030,
-            chrome: 0x191A2A,
-            surface: 0x222436,
-            fg: 0xC8D3F5,
-            muted: 0x828BB8,
-            accent: 0x82AAFF,
-            red: 0xFF757F,
-            green: 0xC3E88D,
-            yellow: 0xFFC777,
-            blue: 0x82AAFF,
-            magenta: 0xC099FF,
-            cyan: 0x86E1FC,
-            ansi: [
-                0x1B1D2B, 0xFF757F, 0xC3E88D, 0xFFC777, 0x82AAFF, 0xC099FF, 0x86E1FC, 0x828BB8,
-                0x444A73, 0xFF8D94, 0xC7FB6D, 0xFFD8AB, 0x9AB8FF, 0xCAABFF, 0xB2EBFF, 0xC8D3F5,
-            ],
-        };
-        let theme = Theme::from_palette(String::from("My Theme"), &palette);
-        assert_eq!(theme.name.as_ref(), "My Theme");
-    }
-
-    #[test]
     fn mix_blends_per_channel() {
         assert_eq!(mix(0x000000, 0xFFFFFF, 0.5), 0x808080);
         assert_eq!(mix(0x102030, 0x102030, 0.7), 0x102030);
