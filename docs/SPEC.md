@@ -617,8 +617,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `git.diff` | `project_id`, `path`, `mode`, `staged?` (working mode: index side), `commit?`, `since?` (base mode, as in `git.status`) | `binary`, `too_large`, `added`/`removed`, `hunks[]` (`old/new_start/lines`, `header`, `lines[]` with `kind`, `text`, `old_line?`/`new_line?`, `no_newline`, `crlf`) |
 | `git.viewed` | the params of `git.status` | `ViewedFile[]` (`path`, `staged`): the files of that list (`working` / `base` / the `since` checkpoint) whose viewed mark still stands (ADR 0065). Re-hashes the marked files through the diff cache and deletes marks whose diff text changed |
 | `git.set_viewed` | the params of `git.diff` (no `commit`), `viewed` (bool) | `null`; hashes the file's diff now and stores (`viewed: true`) or removes the mark; `invalid_state` for a file with no diff, `invalid_request` with `commit` |
-| `git.stage` / `git.unstage` | `paths[]` or `hunk` | ok |
-| `git.discard` | `paths[]` (empty with a hunk) or `hunk` (a `HunkTarget` of the unstaged diff), `confirm: true` | ok (destructive; UI always confirms first). A hunk is reversed in the working tree only (`git apply -R`, the index stays); `invalid_request` for `paths` together with a hunk or for an untracked file; a hunk that no longer applies fails with git's text |
+| `git.stage` / `git.unstage` | `paths[]` or `hunk` | ok; `invalid_request` for a hunk line holding a line feed (it would add sections to the patch) |
+| `git.discard` | `paths[]` (empty with a hunk) or `hunk` (a `HunkTarget` of the unstaged diff), `confirm: true` | ok (destructive; UI always confirms first). A hunk is reversed in the working tree only (`git apply -R`, the index stays); `invalid_request` for `paths` together with a hunk, for an untracked file or for a hunk line holding a line feed; a hunk that no longer applies fails with git's text |
 | `git.commit` | `message` | new commit hash |
 | `git.log` | `limit`, `path?` | Commit[] |
 | `git.show` | `commit` | commit info + changed files |
