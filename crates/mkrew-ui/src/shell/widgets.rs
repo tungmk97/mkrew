@@ -789,7 +789,6 @@ pub(crate) fn menu_panel(
 
 /// The on / off switch: `SWITCH_WIDTH` x `SWITCH_HEIGHT`, knob inset `SWITCH_INSET`, accent
 /// track while `on`. A disabled switch is faded and takes no press.
-#[allow(dead_code)] // used by Task 11
 pub(crate) fn toggle(
     id: impl Into<gpui::ElementId>,
     on: bool,
@@ -815,7 +814,6 @@ pub(crate) fn toggle(
 }
 
 /// A field frame with `label` and a chevron; the frame is accent while `open`.
-#[allow(dead_code)] // used by Task 11
 pub(crate) fn dropdown_trigger(
     id: impl Into<gpui::ElementId>,
     label: impl IntoElement,

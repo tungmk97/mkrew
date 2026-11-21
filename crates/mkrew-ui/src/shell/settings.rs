@@ -582,15 +582,23 @@ impl Shell {
             .child(label)
     }
 
-    // Task 11 draws the divider and the hit's match marks.
+    /// A click on a row, or on its switch or dropdown trigger: the keyboard moves to the row
+    /// and the click acts like Enter (`SettingsDialog::click`).
+    fn press_row(index: usize, cx: &Context<'_, Self>) -> PressHandler {
+        Box::new(cx.listener(move |shell, _, window, cx| {
+            cx.stop_propagation();
+            shell.settings_do(|d, keymap| d.click(Focus::Row(index), keymap), window, cx);
+        }))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn settings_row(
         &self,
         dialog: &SettingsDialog,
         index: usize,
         row: Row,
-        _divider: bool,
-        _hit: Option<&Hit>,
+        divider: bool,
+        hit: Option<&Hit>,
         typing: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -601,7 +609,7 @@ impl Shell {
             Row::Setting(setting) => (
                 setting.label.into(),
                 (!setting.help.is_empty()).then(|| setting.help.to_owned()),
-                self.settings_control(dialog, setting, focused, typing, theme, cx),
+                self.settings_control(dialog, index, setting, focused, typing, theme, cx),
             ),
             Row::Binding(command) => (
                 palette::title(command).into(),
@@ -617,17 +625,38 @@ impl Shell {
             }),
             Row::Binding(_) => false,
         };
+        // A search result names its place: "Appearance › Fonts".
+        let crumb = hit.map(|hit| format!("{} › {}", hit.setting.page.title(), hit.setting.group));
+        let accent = gpui::Hsla::from(rgb(theme.accent));
+        let label: gpui::AnyElement = match hit {
+            Some(hit) => gpui::StyledText::new(title.clone())
+                .with_highlights(hit.label_ranges.iter().cloned().map(|range| {
+                    (
+                        range,
+                        gpui::HighlightStyle {
+                            color: Some(accent),
+                            font_weight: Some(FontWeight(weight::SEMIBOLD)),
+                            ..gpui::HighlightStyle::default()
+                        },
+                    )
+                }))
+                .into_any_element(),
+            None => title.into_any_element(),
+        };
         div()
             .id(SharedString::from(format!("settings-row-{}", row.id())))
             .flex()
             .flex_col()
             .gap(px(space::XS))
-            .p(px(space::S))
-            .rounded(px(radius::MEDIUM))
-            .when(focused, |el| el.bg(rgb(theme.surface_raised)))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.settings_do(|d, keymap| d.click(Focus::Row(index), keymap), window, cx);
-            }))
+            .p(px(space::M))
+            .when(divider, |el| {
+                el.border_t(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.divider))
+            })
+            .when(focused, |el| el.bg(rgb(theme.selected)).cursor_pointer())
+            .when(!focused, |el| el.pressable(Look::Row, true, theme))
+            .on_press(true, Self::press_row(index, cx))
+            .children(crumb.map(|crumb| meta_line(theme, crumb.into())))
             .child(
                 div()
                     .flex()
@@ -645,7 +674,7 @@ impl Shell {
                                     .gap(px(space::S))
                                     .text_size(font_size::BODY)
                                     .text_color(rgb(theme.text))
-                                    .child(title)
+                                    .child(label)
                                     .when(is_default, |el| {
                                         el.child(
                                             div()
@@ -676,9 +705,11 @@ impl Shell {
             .into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn settings_control(
         &self,
         dialog: &SettingsDialog,
+        index: usize,
         setting: &'static Setting,
         focused: bool,
         typing: bool,
@@ -693,56 +724,38 @@ impl Shell {
             theme.border
         };
         match setting.kind {
-            Kind::Bool => {
-                let on = shown == "true";
-                let knob = px(theme::SWITCH_HEIGHT - 2.0 * theme::SWITCH_INSET);
-                div()
-                    .id(SharedString::from(format!("switch-{}", setting.id())))
-                    .flex_none()
-                    .w(px(theme::SWITCH_WIDTH))
-                    .h(px(theme::SWITCH_HEIGHT))
-                    .p(px(theme::SWITCH_INSET))
-                    .rounded_full()
-                    .flex()
-                    .when(on, |el| el.justify_end())
-                    .bg(rgb(if on { theme.accent } else { theme.border }))
-                    .when(focused, |el| {
-                        el.border(px(theme::BORDER_WIDTH)).border_color(rgb(ring))
-                    })
-                    .when(read_only, |el| el.opacity(opacity::DISABLED))
-                    .when(!read_only, |el| el.cursor_pointer())
-                    .child(div().size(knob).rounded_full().bg(rgb(theme.surface)))
-                    .into_any_element()
-            }
-            Kind::Choice(choices) => div()
-                .flex()
-                .gap(px(space::XS))
-                .p(px(space::XS))
-                .rounded(px(radius::MEDIUM))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(ring))
-                .when(read_only, |el| el.opacity(opacity::DISABLED))
+            Kind::Bool => toggle(
+                SharedString::from(format!("switch-{}", setting.id())),
+                shown == "true",
+                !read_only,
+                theme,
+            )
+            // Today's focus ring: a 1 px ring while the row has the keyboard.
+            .when(focused, |el| {
+                el.border(px(theme::BORDER_WIDTH)).border_color(rgb(ring))
+            })
+            .on_press(!read_only, Self::press_row(index, cx))
+            .into_any_element(),
+            Kind::Choice(choices) => segmented(theme)
+                .when(focused, |el| el.border_color(rgb(ring)))
                 .children(choices.iter().map(|&choice| {
                     let active = shown == choice;
-                    div()
-                        .id(SharedString::from(format!(
-                            "choice-{}-{choice}",
-                            setting.id()
-                        )))
-                        .px(px(space::S))
-                        .rounded(px(radius::SMALL))
-                        .text_size(font_size::META)
-                        .text_color(rgb(if active { theme.text } else { theme.text_muted }))
-                        .when(active, |el| el.bg(rgb(theme.surface_raised)))
-                        .when(!active && !read_only, |el| {
-                            el.cursor_pointer().on_click(cx.listener(
-                                move |shell, _, window, cx| {
-                                    cx.stop_propagation();
-                                    shell.settings_do(|d, _| d.choose(setting, choice), window, cx);
-                                },
-                            ))
-                        })
-                        .child(choice)
+                    // Read-only: each segment is faded, with no pointer and no hover.
+                    segment_in(
+                        SharedString::from(format!("choice-{}-{choice}", setting.id())),
+                        active,
+                        !read_only,
+                        theme,
+                    )
+                    .text_size(font_size::META)
+                    .on_press(
+                        !active && !read_only,
+                        cx.listener(move |shell, _, window, cx| {
+                            cx.stop_propagation();
+                            shell.settings_do(|d, _| d.choose(setting, choice), window, cx);
+                        }),
+                    )
+                    .child(choice)
                 }))
                 .into_any_element(),
             Kind::Text | Kind::Number => {
@@ -775,25 +788,27 @@ impl Shell {
                     .when(read_only, |el| el.opacity(opacity::DISABLED))
                     .into_any_element()
             }
-            Kind::Font | Kind::List(_) => div()
-                .w_full()
-                .flex()
-                .justify_between()
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::MEDIUM))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(ring))
-                .text_size(font_size::BODY)
-                .text_color(rgb(theme.text))
-                .when(read_only, |el| el.opacity(opacity::DISABLED))
-                .child(if shown.is_empty() {
-                    "Default".to_owned()
-                } else {
-                    shown
-                })
-                .child(div().text_color(rgb(theme.text_muted)).child("▾"))
-                .into_any_element(),
+            Kind::Font | Kind::List(_) => {
+                let open = dialog
+                    .list_pick
+                    .as_ref()
+                    .is_some_and(|pick| pick.setting.id() == setting.id());
+                dropdown_trigger(
+                    SharedString::from(format!("dropdown-{}", setting.id())),
+                    if shown.is_empty() {
+                        "Default".to_owned()
+                    } else {
+                        shown
+                    },
+                    open,
+                    !read_only,
+                    theme,
+                )
+                // Today's focus ring; an open pick keeps the accent frame.
+                .when(focused && !open, |el| el.border_color(rgb(ring)))
+                .on_press(!read_only, Self::press_row(index, cx))
+                .into_any_element()
+            }
         }
     }
 
@@ -823,19 +838,21 @@ impl Shell {
                         .id(SharedString::from(format!("reset-{}", command.name())))
                         .px(px(space::S))
                         .rounded(px(radius::SMALL))
-                        .cursor_pointer()
                         .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
-                        .hover(|style| style.bg(rgb(theme.surface_raised)))
+                        .pressable(Look::Icon, true, theme)
                         .tooltip(tooltip(
                             theme,
                             &format!("Back to {}", keymap::keys_label(&command.default_keys())),
                             "",
                         ))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            cx.stop_propagation();
-                            shell.settings_do(|d, _| d.reset(command), window, cx);
-                        }))
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                cx.stop_propagation();
+                                shell.settings_do(|d, _| d.reset(command), window, cx);
+                            }),
+                        )
                         .focus_stop(theme)
                         .child("Reset"),
                 )
@@ -905,15 +922,18 @@ impl Shell {
                                 };
                                 menu_item(SharedString::from(format!("list-choice-{i}")), theme)
                                     .when(i == selected, |el| el.bg(rgb(theme.surface_raised)))
-                                    .on_click(cx.listener(move |shell, _, window, cx| {
-                                        cx.stop_propagation();
-                                        let font = font.clone();
-                                        shell.settings_do(
-                                            move |d, _| d.choose(setting, &font),
-                                            window,
-                                            cx,
-                                        );
-                                    }))
+                                    .on_press(
+                                        true,
+                                        cx.listener(move |shell, _, window, cx| {
+                                            cx.stop_propagation();
+                                            let font = font.clone();
+                                            shell.settings_do(
+                                                move |d, _| d.choose(setting, &font),
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                    )
                                     .child(label)
                             },
                         )),
@@ -934,3 +954,6 @@ fn context_name(context: &str) -> String {
         first.to_uppercase().chain(chars).collect()
     })
 }
+
+/// A boxed click handler (`Pressable::on_press` takes any `Fn`).
+type PressHandler = Box<dyn Fn(&gpui::ClickEvent, &mut Window, &mut App)>;
