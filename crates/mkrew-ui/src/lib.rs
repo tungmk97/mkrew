@@ -73,6 +73,7 @@ pub mod pick;
 pub mod plan;
 pub mod plan_dialog;
 pub mod ports;
+pub mod pressable;
 pub mod preview;
 pub mod preview_select;
 pub mod prompt_picker;
