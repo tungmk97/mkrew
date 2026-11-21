@@ -15,7 +15,9 @@ impl Shell {
         let mut fonts: Vec<String> = cx.text_system().all_font_names();
         fonts.sort_unstable_by_key(|font| font.to_lowercase());
         fonts.dedup();
-        self.settings_dialog = Some(SettingsDialog::new(settings, fonts));
+        let mut dialog = SettingsDialog::new(settings, fonts);
+        dialog.set_catalog(cx.global::<ThemeCatalog>().clone());
+        self.settings_dialog = Some(dialog);
         self.settings_from_composer =
             self.composer_session(window).is_some() && self.composer_focus.is_focused(window);
         // The task dialog under it stays the open dialog: its late replies (the image save,

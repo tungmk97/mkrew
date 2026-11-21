@@ -1202,7 +1202,7 @@ fn mark_unread_is_listed_only_for_a_session_that_can_be_marked() {
 
 #[test]
 fn theme_entries_list_every_theme_with_its_appearance_and_mark_the_current() {
-    let entries = theme_entries("Dracula");
+    let entries = theme_entries(&crate::theme_catalog::ThemeCatalog::builtin(), "Dracula");
     assert_eq!(entries.len(), crate::theme::THEMES.len());
     assert_eq!(entries[0].action, Action::Theme(0));
     assert_eq!(entries[0].title, "Mkrew Dark");
@@ -1214,7 +1214,10 @@ fn theme_entries_list_every_theme_with_its_appearance_and_mark_the_current() {
 
 #[test]
 fn the_picker_starts_on_the_current_theme_and_moves_from_there() {
-    let mut palette = Palette::new(theme_entries("Dracula"));
+    let mut palette = Palette::new(theme_entries(
+        &crate::theme_catalog::ThemeCatalog::builtin(),
+        "Dracula",
+    ));
     palette.pick_entry(2);
     assert_eq!(palette.picked(), Some(Action::Theme(2)));
     palette.step(1);

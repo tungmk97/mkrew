@@ -439,7 +439,7 @@ pub enum Action {
     Run(Command),
     Extra(Extra),
     GoTo(Target),
-    /// The theme picker's row for `theme::THEMES[i]` (ADR 0078).
+    /// The theme picker's row for the theme at this index of the theme catalog (ADR 0101).
     Theme(usize),
     /// "Agent: New <Profile> pane": a new pane with the profile at this position of the
     /// shell's profile list (see [`agent_entries`]).
@@ -811,18 +811,19 @@ pub fn settings_error(keymap: &Keymap, error: Option<&str>) -> Vec<Entry> {
         .collect()
 }
 
-/// The theme picker's rows (ADR 0078): every built-in theme, its appearance on the right, the
-/// shown one marked.
-pub fn theme_entries(current: &str) -> Vec<Entry> {
-    crate::theme::THEMES
+/// The theme picker's rows (ADR 0078, ADR 0101): every theme of the catalog, its appearance
+/// on the right, the shown one marked. `Action::Theme(i)` is the index into the catalog.
+pub fn theme_entries(catalog: &crate::theme_catalog::ThemeCatalog, current: &str) -> Vec<Entry> {
+    catalog
+        .themes()
         .iter()
         .enumerate()
-        .map(|(index, entry)| {
-            let look = if entry.dark { "Dark" } else { "Light" };
+        .map(|(index, listed)| {
+            let look = if listed.dark { "Dark" } else { "Light" };
             Entry::new(
                 Action::Theme(index),
-                entry.name,
-                if entry.name == current {
+                listed.name.to_string(),
+                if &*listed.name == current {
                     format!("✓ {look}")
                 } else {
                     look.into()

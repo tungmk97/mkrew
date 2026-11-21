@@ -19,6 +19,7 @@ use crate::palette::{self, match_ranges};
 use crate::prompts_page::{PromptAction, PromptsPage, Spot, Written};
 use crate::task_dialog::{DialogKey, dialog_key};
 use crate::text_box::Input;
+use crate::theme_catalog::ThemeCatalog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -293,6 +294,9 @@ pub struct SettingsDialog {
     pub add: Option<AddForm>,
     /// The Prompts page (spec 2026-11-04 section 7.2); its draft outlives a switch of page.
     pub prompts: PromptsPage,
+    /// The themes the slot lists pick from (ADR 0101); the shell hands over every new
+    /// catalog with [`SettingsDialog::set_catalog`].
+    pub catalog: ThemeCatalog,
 }
 
 impl SettingsDialog {
@@ -311,11 +315,17 @@ impl SettingsDialog {
             list_pick: None,
             add: None,
             prompts: PromptsPage::default(),
+            catalog: ThemeCatalog::builtin(),
         }
     }
 
     pub fn read_only(&self) -> bool {
         self.settings.is_err()
+    }
+
+    /// A rebuilt catalog (the themes folder changed).
+    pub fn set_catalog(&mut self, catalog: ThemeCatalog) {
+        self.catalog = catalog;
     }
 
     pub fn rows(&self, keymap: &Keymap) -> Vec<Row> {
@@ -566,11 +576,14 @@ impl SettingsDialog {
         let query = pick.query.trim().to_lowercase();
         let matches = |name: &str| name.to_lowercase().contains(&query);
         if let Kind::List(names) = pick.setting.kind {
-            return names
-                .iter()
-                .filter(|name| matches(name))
-                .map(|name| (*name).to_owned())
-                .collect();
+            // The theme slots offer the catalog (every built-in and the files of their own
+            // appearance); any other list is its fixed table.
+            let all: Vec<String> = match pick.setting.id().as_str() {
+                "ui.dark_theme" => self.catalog.slot_names(true),
+                "ui.light_theme" => self.catalog.slot_names(false),
+                _ => names.iter().map(|name| (*name).to_owned()).collect(),
+            };
+            return all.into_iter().filter(|name| matches(name)).collect();
         }
         let mut choices = Vec::new();
         if query.is_empty() {
@@ -1083,6 +1096,8 @@ mod find_shortcut_tests {
 mod tests {
     use super::*;
     use crate::prompts_page::Write;
+    use crate::theme::{Palette, Theme};
+    use crate::theme_catalog::ThemeCatalog;
     use mkrew_core::prompt::{NameError, Prompt, PromptError};
     use mkrew_core::settings::Settings;
 
@@ -1123,6 +1138,36 @@ mod tests {
             d.key(&key("down"), None, keymap);
         }
         assert_eq!(d.focus, Focus::Row(index));
+    }
+
+    /// A theme file for a copy of Mkrew Dark (`dark`) or Mkrew Light named `name`.
+    fn file_theme(name: &str, dark: bool) -> (String, Result<String, String>) {
+        let base = if dark { Theme::dark() } else { Theme::light() };
+        (
+            format!("{name}.toml"),
+            Ok(crate::theme_file::render(name, &Palette::from_theme(&base))),
+        )
+    }
+
+    #[test]
+    fn the_theme_slot_lists_add_the_files_of_their_appearance() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_catalog(ThemeCatalog::from_files(vec![
+            file_theme("Aurora", true),
+            file_theme("Dawn", false),
+        ]));
+        focus_on(&mut d, "ui.dark_theme", &keymap);
+        d.key(&key("enter"), None, &keymap);
+        let dark = d.list_choices();
+        assert!(dark.contains(&"Aurora".to_owned()) && !dark.contains(&"Dawn".to_owned()));
+        assert!(dark.contains(&"Dracula".to_owned()), "every built-in stays");
+        d.key(&key("escape"), None, &keymap);
+        focus_on(&mut d, "ui.light_theme", &keymap);
+        d.key(&key("enter"), None, &keymap);
+        let light = d.list_choices();
+        assert!(light.contains(&"Dawn".to_owned()) && !light.contains(&"Aurora".to_owned()));
+        assert!(light.contains(&"Dracula".to_owned()));
     }
 
     #[test]

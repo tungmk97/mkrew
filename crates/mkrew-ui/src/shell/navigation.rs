@@ -524,15 +524,13 @@ impl Shell {
         }
     }
 
-    /// The theme picker (ADR 0078): the palette listing `theme::THEMES`, on the current one.
+    /// The theme picker (ADR 0078): the palette listing the theme catalog, on the current one.
     pub(crate) fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.restore_theme_pick(window, cx);
         let current = cx.theme().clone();
-        let mut palette = Palette::new(palette::theme_entries(&current.name));
-        if let Some(index) = theme::THEMES
-            .iter()
-            .position(|e| e.name == current.name.as_ref())
-        {
+        let catalog = cx.global::<ThemeCatalog>();
+        let mut palette = Palette::new(palette::theme_entries(catalog, &current.name));
+        if let Some(index) = catalog.index_of(&current.name) {
             palette.pick_entry(index);
         }
         self.workspace_menu = None;
@@ -570,20 +568,39 @@ impl Shell {
             return;
         };
         let fonts = cx.global::<theme::Fonts>().clone();
+        let Some(listed) = cx.global::<ThemeCatalog>().themes().get(index) else {
+            return;
+        };
         let shown = Theme {
             mode,
-            ..theme::THEMES[index].build()
+            ..listed.theme.clone()
         };
         cx.set_global(shown.with_fonts(&fonts));
         cx.refresh_windows();
     }
 
-    /// Saves theme `index` to the slot shown and shows it (Enter or a click in the picker). A
-    /// failed write keeps it for this session and says so, like the title bar toggle.
+    /// Saves theme `index` to the slot shown and shows it (Enter or a click in the picker).
     fn choose_theme(&mut self, index: usize, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let name = theme::THEMES[index].name;
+        // The catalog may have been rebuilt since the picker listed it.
+        let Some(name) = (cx.global::<ThemeCatalog>().themes().get(index)).map(|t| t.name.clone())
+        else {
+            return;
+        };
+        let dark = theme::slot_is_dark(cx.theme().mode, theme::os_dark(window));
+        self.keep_theme(&name, dark, window, cx);
+    }
+
+    /// Saves `name` to the slot of `dark` and shows the kept theme of the slot that is shown
+    /// (a theme of the other appearance changes the other slot only). A failed write keeps
+    /// the choice for this session and says so, like the title bar toggle.
+    pub(crate) fn keep_theme(
+        &mut self,
+        name: &str,
+        dark: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let mode = cx.theme().mode;
-        let dark = theme::slot_is_dark(mode, theme::os_dark(window));
         let mut names = cx.global::<theme::ThemeNames>().clone();
         if dark {
             names.dark = name.into();
@@ -593,7 +610,7 @@ impl Shell {
         cx.set_global(names);
         theme::refresh(mode, window, cx);
         cx.refresh_windows();
-        let value = format!("\"{name}\"");
+        let value = theme::toml_string(name);
         if let Err(error) =
             mkrew_core::settings::write_ui_value(&self.settings_file, theme::slot_key(dark), &value)
         {

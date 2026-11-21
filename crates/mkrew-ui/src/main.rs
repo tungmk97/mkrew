@@ -120,6 +120,7 @@ use mkrew_ui::terminal::view::{
 use mkrew_ui::text_box::{self, Input};
 use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
+use mkrew_ui::theme_catalog::ThemeCatalog;
 use mkrew_ui::toast::{self, Toasts};
 use mkrew_ui::turn::Turns;
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
@@ -242,6 +243,8 @@ fn main() {
                 &cx.text_system().all_font_names(),
             ));
             cx.set_global(theme::ThemeNames::from_settings(&settings));
+            // Theme files are read once here (the status tick reads them again when they change).
+            cx.set_global(ThemeCatalog::load(&paths.themes_dir()));
             // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
             cx.set_prompt_builder(shell::confirm_prompt::build);
             let options = WindowOptions {

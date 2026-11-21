@@ -9,6 +9,8 @@ use mkrew_core::settings::Settings;
 pub use mkrew_core::settings::ThemeMode;
 use mkrew_protocol::WORKSPACE_COLORS;
 
+use crate::theme_catalog::ThemeCatalog;
+
 /// Spacing scale in px: 4 · 8 · 12 · 16 · 24 · 32.
 pub mod space {
     pub const XS: f32 = 4.0;
@@ -668,6 +670,12 @@ pub fn slot_key(dark: bool) -> &'static str {
     if dark { "dark_theme" } else { "light_theme" }
 }
 
+/// `text` as a TOML string literal (quoted and escaped): the value `write_ui_value` takes,
+/// so a theme name with a quote or a backslash cannot break `settings.toml`.
+pub fn toml_string(text: &str) -> String {
+    toml::Value::String(text.to_owned()).to_string()
+}
+
 /// Whether the OS shows `window` dark.
 pub fn os_dark(window: &Window) -> bool {
     matches!(
@@ -867,12 +875,18 @@ pub struct Theme {
 impl gpui::Global for Theme {}
 
 impl Theme {
-    /// The theme of `mode`'s slot (SPEC §14, ADR 0078); an unknown name is that slot's Mkrew theme.
-    pub fn resolve(mode: ThemeMode, os_dark: bool, names: &ThemeNames) -> Self {
+    /// The theme of `mode`'s slot (SPEC §14, ADR 0078, ADR 0101); a name the catalog does
+    /// not know (a removed file) is that slot's Mkrew theme.
+    pub fn resolve(
+        mode: ThemeMode,
+        os_dark: bool,
+        names: &ThemeNames,
+        catalog: &ThemeCatalog,
+    ) -> Self {
         let dark = slot_is_dark(mode, os_dark);
-        let theme = find_theme(names.slot(dark)).map_or_else(
+        let theme = catalog.find(names.slot(dark)).map_or_else(
             || if dark { Self::dark() } else { Self::light() },
-            ThemeEntry::build,
+            |listed| listed.theme.clone(),
         );
         Self { mode, ..theme }
     }
@@ -1625,11 +1639,6 @@ impl ThemeEntry {
     }
 }
 
-/// The theme named `name` (exact match).
-pub fn find_theme(name: &str) -> Option<&'static ThemeEntry> {
-    THEMES.iter().find(|entry| entry.name == name)
-}
-
 const fn dark_entry(name: &'static str, palette: Palette) -> ThemeEntry {
     ThemeEntry {
         name,
@@ -1891,13 +1900,14 @@ impl ActiveTheme for App {
     }
 }
 
-/// Rebuilds the theme global from `mode`, the window's OS appearance, the `ThemeNames` and
-/// `Fonts` globals. Called at startup, on OS appearance changes, on a settings reload and by
-/// the toggle.
+/// Rebuilds the theme global from `mode`, the window's OS appearance, the `ThemeNames`,
+/// `ThemeCatalog` and `Fonts` globals. Called at startup, on OS appearance changes, on a
+/// settings or themes folder reload and by the toggle.
 pub fn refresh(mode: ThemeMode, window: &Window, cx: &mut App) {
     let fonts = cx.global::<Fonts>().clone();
     let names = cx.global::<ThemeNames>().clone();
-    cx.set_global(Theme::resolve(mode, os_dark(window), &names).with_fonts(&fonts));
+    let theme = Theme::resolve(mode, os_dark(window), &names, cx.global::<ThemeCatalog>());
+    cx.set_global(theme.with_fonts(&fonts));
 }
 
 /// System → Light → Dark → System (the title bar toggle, `ToggleTheme`).
@@ -2356,15 +2366,16 @@ mod tests {
             assert_eq!(theme.dark, entry.dark, "{}", entry.name);
             assert_eq!(theme.name.as_ref(), entry.name);
         }
+        let catalog = catalog();
         assert_eq!(
-            find_theme("Mkrew Dark").map(ThemeEntry::build),
+            catalog.find("Mkrew Dark").map(|t| t.theme.clone()),
             Some(Theme::dark())
         );
         assert_eq!(
-            find_theme("Mkrew Light").map(ThemeEntry::build),
+            catalog.find("Mkrew Light").map(|t| t.theme.clone()),
             Some(Theme::light())
         );
-        assert!(find_theme("dracula").is_none(), "exact names only");
+        assert!(catalog.find("dracula").is_none(), "exact names only");
     }
 
     #[test]
@@ -2581,6 +2592,10 @@ mod tests {
         assert_eq!(next_mode(ThemeMode::Dark), ThemeMode::System);
     }
 
+    fn catalog() -> ThemeCatalog {
+        ThemeCatalog::builtin()
+    }
+
     fn names(light: &str, dark: &str) -> ThemeNames {
         ThemeNames {
             light: light.into(),
@@ -2591,12 +2606,12 @@ mod tests {
     #[test]
     fn mode_resolves_against_the_os() {
         let n = ThemeNames::from_settings(&Settings::default());
-        assert!(Theme::resolve(ThemeMode::System, true, &n).dark);
-        assert!(!Theme::resolve(ThemeMode::System, false, &n).dark);
-        assert!(!Theme::resolve(ThemeMode::Light, true, &n).dark);
-        assert!(Theme::resolve(ThemeMode::Dark, false, &n).dark);
+        assert!(Theme::resolve(ThemeMode::System, true, &n, &catalog()).dark);
+        assert!(!Theme::resolve(ThemeMode::System, false, &n, &catalog()).dark);
+        assert!(!Theme::resolve(ThemeMode::Light, true, &n, &catalog()).dark);
+        assert!(Theme::resolve(ThemeMode::Dark, false, &n, &catalog()).dark);
         assert_eq!(
-            Theme::resolve(ThemeMode::Dark, false, &n).mode,
+            Theme::resolve(ThemeMode::Dark, false, &n, &catalog()).mode,
             ThemeMode::Dark
         );
     }
@@ -2604,39 +2619,76 @@ mod tests {
     #[test]
     fn default_names_resolve_to_exactly_today() {
         let n = ThemeNames::from_settings(&Settings::default());
-        assert_eq!(Theme::resolve(ThemeMode::System, true, &n), Theme::dark());
-        assert_eq!(Theme::resolve(ThemeMode::System, false, &n), Theme::light());
+        assert_eq!(
+            Theme::resolve(ThemeMode::System, true, &n, &catalog()),
+            Theme::dark()
+        );
+        assert_eq!(
+            Theme::resolve(ThemeMode::System, false, &n, &catalog()),
+            Theme::light()
+        );
     }
 
     #[test]
     fn unknown_names_fall_back_to_mkrew() {
         let n = names("nope", "dracula");
-        assert_eq!(Theme::resolve(ThemeMode::System, true, &n), Theme::dark());
-        assert_eq!(Theme::resolve(ThemeMode::System, false, &n), Theme::light());
+        assert_eq!(
+            Theme::resolve(ThemeMode::System, true, &n, &catalog()),
+            Theme::dark()
+        );
+        assert_eq!(
+            Theme::resolve(ThemeMode::System, false, &n, &catalog()),
+            Theme::light()
+        );
     }
 
     #[test]
     fn each_slot_picks_its_name() {
         let n = names("Solarized Light", "Dracula");
-        assert_eq!(
-            Theme::resolve(ThemeMode::Dark, false, &n).name.as_ref(),
-            "Dracula"
-        );
-        assert_eq!(
-            Theme::resolve(ThemeMode::Light, true, &n).name.as_ref(),
-            "Solarized Light"
-        );
-        assert_eq!(
-            Theme::resolve(ThemeMode::System, true, &n).name.as_ref(),
-            "Dracula"
-        );
+        let name = |mode, os_dark| {
+            Theme::resolve(mode, os_dark, &n, &catalog())
+                .name
+                .to_string()
+        };
+        assert_eq!(name(ThemeMode::Dark, false), "Dracula");
+        assert_eq!(name(ThemeMode::Light, true), "Solarized Light");
+        assert_eq!(name(ThemeMode::System, true), "Dracula");
     }
 
     #[test]
     fn a_slot_may_hold_the_other_appearance() {
         let n = names("Mkrew Light", "GitHub Light");
-        let theme = Theme::resolve(ThemeMode::Dark, false, &n);
+        let theme = Theme::resolve(ThemeMode::Dark, false, &n, &catalog());
         assert_eq!((theme.name.as_ref(), theme.dark), ("GitHub Light", false));
+    }
+
+    #[test]
+    fn a_file_theme_resolves_until_its_file_goes() {
+        let file = (
+            "aurora.toml".to_owned(),
+            Ok(crate::theme_file::render(
+                "Aurora",
+                &Palette::from_theme(&Theme::dark()),
+            )),
+        );
+        let with = ThemeCatalog::from_files(vec![file]);
+        let n = names("Mkrew Light", "Aurora");
+        let shown = Theme::resolve(ThemeMode::System, true, &n, &with);
+        assert_eq!(shown.name.as_ref(), "Aurora");
+        assert_eq!(
+            Theme::resolve(ThemeMode::System, true, &n, &catalog()),
+            Theme::dark(),
+            "the file is gone: the slot's Mkrew theme, like an unknown name"
+        );
+    }
+
+    #[test]
+    fn a_theme_name_is_saved_as_a_valid_toml_string() {
+        for name in ["Plain", "Rosé Pine", "He said \"hi\"", "back\\slash"] {
+            let text = format!("theme = {}", toml_string(name));
+            let table: toml::Table = text.parse().unwrap();
+            assert_eq!(table["theme"].as_str(), Some(name), "{text}");
+        }
     }
 
     #[test]
