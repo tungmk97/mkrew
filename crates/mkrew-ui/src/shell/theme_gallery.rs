@@ -5,8 +5,8 @@
 use crate::*;
 use mkrew_ui::settings_dialog::Badge;
 use mkrew_ui::theme::Palette;
+use mkrew_ui::theme_catalog::write_theme_copy;
 use mkrew_ui::theme_catalog::{CatalogTheme, FileError};
-use mkrew_ui::theme_file;
 
 impl Shell {
     /// "New theme from current": writes `<themes>/<name> copy.toml` (`copy 2`, `copy 3` when
@@ -17,26 +17,12 @@ impl Shell {
         let catalog = cx.global::<ThemeCatalog>();
         let palette = (catalog.find(&shown.name))
             .map_or_else(|| Palette::from_theme(&shown), |listed| listed.palette);
-        let dir = self.themes_dir.clone();
-        let name = theme_file::copy_name(&shown.name, |candidate| {
-            catalog.find(candidate).is_some() || dir.join(theme_file::file_name(candidate)).exists()
-        });
-        let path = dir.join(theme_file::file_name(&name));
-        let text = theme_file::render(&name, &palette);
-        let written = std::fs::create_dir_all(&dir).and_then(|()| {
-            // `create_new`: a file made since the name was chosen is never overwritten.
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)?;
-            std::io::Write::write_all(&mut file, text.as_bytes())
-        });
-        match written {
+        match write_theme_copy(&self.themes_dir, catalog, &shown.name, &palette) {
             Err(error) => {
-                tracing::warn!(path = %path.display(), "new theme failed: {error}");
-                self.toast_error(format!("Cannot create {}: {error}", path.display()), cx);
+                tracing::warn!("new theme failed: {error}");
+                self.toast_error(error, cx);
             }
-            Ok(()) => {
+            Ok(path) => {
                 if let Err(error) = zed::open(&path, None) {
                     tracing::warn!(path = %path.display(), "open theme file failed: {error}");
                     self.toast_error(error.to_string(), cx);

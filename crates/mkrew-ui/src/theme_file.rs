@@ -174,21 +174,26 @@ pub fn file_name(theme_name: &str) -> String {
     }
 }
 
+/// The most numbers [`copy_name`] tries.
+const MAX_COPIES: u32 = 1000;
+/// The longest base [`copy_name`] keeps, in characters: with " copy 1000" (10) it fits the
+/// 100 characters [`file_name`] keeps, so every number is a different file.
+const MAX_COPY_BASE_CHARS: usize = 90;
+
 /// The name of a copy of `name`: "<name> copy", then "<name> copy 2", "<name> copy 3", ...
-/// the first one `taken` does not know.
-pub fn copy_name(name: &str, taken: impl Fn(&str) -> bool) -> String {
-    let mut number = 1;
-    loop {
-        let candidate = if number == 1 {
-            format!("{name} copy")
-        } else {
-            format!("{name} copy {number}")
-        };
-        if !taken(&candidate) {
-            return candidate;
-        }
-        number += 1;
-    }
+/// the first one `taken` does not know; `None` when the first [`MAX_COPIES`] are all taken.
+/// A name over [`MAX_COPY_BASE_CHARS`] characters is cut first.
+pub fn copy_name(name: &str, taken: impl Fn(&str) -> bool) -> Option<String> {
+    let base = name
+        .char_indices()
+        .nth(MAX_COPY_BASE_CHARS)
+        .map_or(name, |(end, _)| &name[..end]);
+    (1..=MAX_COPIES)
+        .map(|number| match number {
+            1 => format!("{base} copy"),
+            _ => format!("{base} copy {number}"),
+        })
+        .find(|candidate| !taken(candidate))
 }
 
 #[cfg(test)]
@@ -334,17 +339,29 @@ ansi = ["#1b1d2b", "#ff757f", "#c3e88d", "#ffc777", "#82aaff", "#c099ff", "#86e1
     }
 
     #[test]
+    fn a_long_name_still_gets_a_new_distinct_file_name() {
+        let name = "n".repeat(150);
+        let mut used = vec![];
+        for _ in 0..3 {
+            let copy = copy_name(&name, |c| used.contains(&file_name(c))).unwrap();
+            let file = file_name(&copy);
+            assert!(!used.contains(&file));
+            used.push(file);
+        }
+    }
+
+    #[test]
+    fn a_copy_gives_up_when_every_number_is_taken() {
+        assert_eq!(copy_name("Nord", |_| true), None);
+    }
+
+    #[test]
     fn a_copy_takes_the_first_free_number() {
         let taken = |names: &'static [&'static str]| move |n: &str| names.contains(&n);
-        assert_eq!(copy_name("Nord", taken(&[])), "Nord copy");
-        assert_eq!(copy_name("Nord", taken(&["Nord copy"])), "Nord copy 2");
-        assert_eq!(
-            copy_name("Nord", taken(&["Nord copy", "Nord copy 2"])),
-            "Nord copy 3"
-        );
-        assert_eq!(
-            copy_name("Nord copy", taken(&["Nord copy copy"])),
-            "Nord copy copy 2"
-        );
+        let copy = |name, names| copy_name(name, taken(names)).unwrap();
+        assert_eq!(copy("Nord", &[]), "Nord copy");
+        assert_eq!(copy("Nord", &["Nord copy"]), "Nord copy 2");
+        assert_eq!(copy("Nord", &["Nord copy", "Nord copy 2"]), "Nord copy 3");
+        assert_eq!(copy("Nord copy", &["Nord copy copy"]), "Nord copy copy 2");
     }
 }

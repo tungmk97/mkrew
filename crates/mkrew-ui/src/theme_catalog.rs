@@ -2,7 +2,7 @@
 //! valid files of `<config>/themes/` by name, plus one error entry per file that is not
 //! loaded. A GPUI global; everything that lists or finds a theme reads it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use gpui::SharedString;
@@ -153,6 +153,42 @@ impl ThemeCatalog {
             .map(|t| t.name.to_string())
             .collect()
     }
+}
+
+/// "New theme from current": writes `<name> copy.toml` (`copy 2`, `copy 3` when taken, names
+/// compared ignoring ASCII case like the loader) into `dir` with `palette`, making `dir`
+/// when it is missing, and returns the path. A file that exists is never overwritten, and a
+/// write that fails leaves no partial file.
+pub fn write_theme_copy(
+    dir: &Path,
+    catalog: &ThemeCatalog,
+    base: &str,
+    palette: &Palette,
+) -> Result<PathBuf, String> {
+    let name = theme_file::copy_name(base, |candidate| {
+        catalog
+            .themes()
+            .iter()
+            .any(|t| t.name.eq_ignore_ascii_case(candidate))
+            || dir.join(theme_file::file_name(candidate)).exists()
+    })
+    .ok_or_else(|| format!("Every copy name of \"{base}\" is taken"))?;
+    let path = dir.join(theme_file::file_name(&name));
+    let text = theme_file::render(&name, palette);
+    let cannot = |error: std::io::Error| format!("Cannot create {}: {error}", path.display());
+    std::fs::create_dir_all(dir).map_err(cannot)?;
+    // `create_new`: a file made since the name was chosen is never overwritten.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(cannot)?;
+    std::io::Write::write_all(&mut file, text.as_bytes()).map_err(|error| {
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        cannot(error)
+    })?;
+    Ok(path)
 }
 
 fn is_theme_file(path: &Path) -> bool {
@@ -472,7 +508,8 @@ mod tests {
     fn a_written_copy_of_every_theme_loads_back_to_the_same_palette() {
         let original = ThemeCatalog::builtin();
         for listed in original.themes() {
-            let name = theme_file::copy_name(&listed.name, |taken| original.find(taken).is_some());
+            let name = theme_file::copy_name(&listed.name, |taken| original.find(taken).is_some())
+                .unwrap();
             let text = theme_file::render(&name, &listed.palette);
             let copy = ThemeCatalog::from_files(vec![(theme_file::file_name(&name), Ok(text))]);
             let loaded = copy
@@ -482,5 +519,26 @@ mod tests {
             assert_eq!(loaded.dark, listed.dark, "{name}");
             assert!(copy.errors().is_empty(), "{name}: {:?}", copy.errors());
         }
+    }
+
+    #[test]
+    fn a_new_copy_never_overwrites_and_skips_names_taken_in_any_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let themes = dir.path().join("themes");
+        let palette = Palette::from_theme(&Theme::dark());
+        let catalog = ThemeCatalog::builtin();
+
+        let first = write_theme_copy(&themes, &catalog, "Moon", &palette).unwrap();
+        assert_eq!(first, themes.join("Moon copy.toml"));
+        let second = write_theme_copy(&themes, &catalog, "Moon", &palette).unwrap();
+        assert_eq!(second, themes.join("Moon copy 2.toml"));
+        let kept = std::fs::read_to_string(&first).unwrap();
+        assert!(kept.contains("Moon copy\""), "{kept}");
+
+        let loaded = ThemeCatalog::load(&themes);
+        assert!(loaded.errors().is_empty(), "{:?}", loaded.errors());
+        let third = write_theme_copy(&themes, &loaded, "moon", &palette).unwrap();
+        assert_eq!(third, themes.join("moon copy 3.toml"));
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), kept);
     }
 }
