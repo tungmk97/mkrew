@@ -83,7 +83,8 @@ impl Shell {
         }
         // These keys move the dialog's own focus (the search box, a prompt's Name): the keyboard
         // follows, as a click does, or the next key would hit the early return above.
-        let on_prompts = (self.settings_dialog.as_ref()).is_some_and(|d| d.tab == Tab::Prompts);
+        let on_prompts = (self.settings_dialog.as_ref())
+            .is_some_and(|d| d.tab == Tab::Prompts && !d.searching());
         if control && (find_key || (page_key && on_prompts)) {
             window.focus(&self.dialog_focus, cx);
         }
@@ -112,11 +113,7 @@ impl Shell {
         if let Some(dialog) = &self.settings_dialog
             && let Focus::Row(index) = dialog.focus
         {
-            let banner = match (&dialog.settings, dialog.tab) {
-                (Err(_), Tab::Settings(_)) => true,
-                (_, Tab::Keyboard) => keymap::notice(&self.keymap_errors).is_some(),
-                _ => false,
-            };
+            let banner = self.settings_notice(dialog).is_some();
             let search = keyboard_search_shown(dialog);
             let card = dialog.group_of(index, &self.keymap);
             self.settings_scroll
@@ -293,14 +290,9 @@ impl Shell {
             .child(find)
             .children(nav_items);
 
-        let banner = match (&dialog.settings, dialog.tab) {
-            (Err(error), Tab::Settings(_)) => {
-                Some(self.settings_banner(error.clone(), true, theme, cx))
-            }
-            (_, Tab::Keyboard) => keymap::notice(&self.keymap_errors)
-                .map(|notice| self.settings_banner(notice, false, theme, cx)),
-            _ => None,
-        };
+        let banner = self
+            .settings_notice(dialog)
+            .map(|(text, settings_file)| self.settings_banner(text, settings_file, theme, cx));
         let search = keyboard_search_shown(dialog).then(|| {
             caret_field(
                 "settings-search",
@@ -322,10 +314,15 @@ impl Shell {
         let rows = dialog.rows(&self.keymap);
         // The pages edit this computer's `settings.toml`; the daemon behind a machine window
         // reads its own.
-        let daemon_note = (matches!(dialog.tab, Tab::Settings(_)))
+        let results_or_settings = dialog.searching() || matches!(dialog.tab, Tab::Settings(_));
+        let daemon_note = results_or_settings
             .then(|| self.machine_name())
             .flatten()
             .map(|name| meta_line(theme, mkrew_ui::machines::daemon_settings_note(name).into()));
+        // The Keyboard page is one card of pieces: no gap between them, so the lines above it
+        // carry their own.
+        let one_card = dialog.tab == Tab::Keyboard && !dialog.searching();
+        let below = if one_card { space::M } else { 0.0 };
         let body = div()
             .id("settings-rows")
             .flex_1()
@@ -334,10 +331,10 @@ impl Shell {
             .track_scroll(&self.settings_scroll)
             .flex()
             .flex_col()
-            .gap(px(space::M))
+            .gap(px(if one_card { 0.0 } else { space::M }))
             .p(px(space::M))
-            .children(banner)
-            .children(daemon_note)
+            .children(banner.map(|banner| banner.mb(px(below))))
+            .children(daemon_note.map(|note| note.mb(px(below))))
             .children(
                 (dialog.tab == Tab::Machines && !dialog.searching())
                     .then(|| self.render_machines_page(dialog, typing, theme, cx))
@@ -350,7 +347,7 @@ impl Shell {
                     .into_iter()
                     .flatten(),
             )
-            .children(search)
+            .children(search.map(|search| search.mb(px(below))))
             .children(self.settings_cards(dialog, &rows, typing, theme, cx));
 
         let header = div()
@@ -444,6 +441,20 @@ impl Shell {
         Self::modal_shade("settings-shade", panel, cx)
     }
 
+    /// The line above the rows: a broken `settings.toml` on a settings page or above search
+    /// results (they are greyed then), or a keymap problem on the Keyboard page.
+    fn settings_notice(&self, dialog: &SettingsDialog) -> Option<(String, bool)> {
+        match &dialog.settings {
+            Err(error) if dialog.searching() || matches!(dialog.tab, Tab::Settings(_)) => {
+                Some((error.clone(), true))
+            }
+            _ if dialog.tab == Tab::Keyboard && !dialog.searching() => {
+                keymap::notice(&self.keymap_errors).map(|notice| (notice, false))
+            }
+            _ => None,
+        }
+    }
+
     /// The right side's rows: the empty state for a query without a match, else the cards.
     fn settings_cards(
         &self,
@@ -482,22 +493,33 @@ impl Shell {
             ];
         }
         let hits = dialog.hits();
-        settings_dialog::grouped(rows, searching)
+        let groups = settings_dialog::grouped(rows, searching);
+        let total = groups.len();
+        groups
             .into_iter()
-            .map(|group| {
+            .enumerate()
+            .map(|(at_group, group)| {
                 let flat = group.title.is_empty();
-                let single_shortcut = flat && !searching;
+                // A shortcut: one group per row, but the Keyboard page is one card.
+                let shortcut = flat && !searching;
                 let title = group.title;
+                let count = group.rows.len();
                 let items = group
                     .rows
                     .into_iter()
                     .enumerate()
                     .map(|(at, (index, row))| {
+                        let (first, last) = if shortcut {
+                            (at_group == 0, at_group + 1 == total)
+                        } else {
+                            (at == 0, at + 1 == count)
+                        };
                         self.settings_row(
                             dialog,
                             index,
                             row,
-                            at > 0,
+                            first,
+                            last,
                             hits.get(index),
                             typing,
                             theme,
@@ -508,21 +530,33 @@ impl Shell {
                 let card = div()
                     .flex()
                     .flex_col()
-                    .rounded(px(radius::LARGE))
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.border))
                     .bg(rgb(theme.surface))
-                    .children(items);
-                if single_shortcut {
-                    // A shortcut row: no title (the Keyboard page stays a flat list).
-                    card.into_any_element()
+                    .border_color(rgb(theme.border));
+                if shortcut {
+                    // The Keyboard page stays a flat list inside one card. Each row is a
+                    // piece of it (the page has no gap), so the scroll can still follow a row.
+                    card.border_x(px(theme::BORDER_WIDTH))
+                        .when(at_group == 0, |el| {
+                            el.border_t(px(theme::BORDER_WIDTH))
+                                .rounded_t(px(radius::LARGE))
+                        })
+                        .when(at_group + 1 == total, |el| {
+                            el.border_b(px(theme::BORDER_WIDTH))
+                                .rounded_b(px(radius::LARGE))
+                        })
+                        .children(items)
+                        .into_any_element()
                 } else {
                     div()
                         .flex()
                         .flex_col()
                         .gap(px(space::XS))
                         .children((!flat).then(|| overline(title, theme).px(px(space::S))))
-                        .child(card)
+                        .child(
+                            card.rounded(px(radius::LARGE))
+                                .border(px(theme::BORDER_WIDTH))
+                                .children(items),
+                        )
                         .into_any_element()
                 }
             })
@@ -599,7 +633,8 @@ impl Shell {
         dialog: &SettingsDialog,
         index: usize,
         row: Row,
-        divider: bool,
+        first: bool,
+        last: bool,
         hit: Option<&Hit>,
         typing: bool,
         theme: &Theme,
@@ -651,7 +686,11 @@ impl Shell {
             .flex_col()
             .gap(px(space::XS))
             .p(px(space::M))
-            .when(divider, |el| {
+            // The first and last row follow the card's rounded corners: gpui does not clip a
+            // fill to them.
+            .when(first, |el| el.rounded_t(px(radius::LARGE)))
+            .when(last, |el| el.rounded_b(px(radius::LARGE)))
+            .when(!first, |el| {
                 el.border_t(px(theme::BORDER_WIDTH))
                     .border_color(rgb(theme.divider))
             })

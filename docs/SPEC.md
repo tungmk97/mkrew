@@ -1701,7 +1701,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   help, TOML key or page name above zero; a label match always ranks above a help-only match, then by score; pages with no match are dimmed; shortcuts are not searched.
   Esc clears a non-empty query first and closes Settings on an empty one; no match shows "No setting matches “<query>”." with
   "Clear search (Esc)". Each page shows its settings in cards, one per group (`Setting::group`: an overline title and a card
-  of rows with faint dividers; label and muted help on the left, the control on the right). Controls: switch (`toggle`), segmented
+  of rows with faint dividers; label and muted help on the left, the control on the right); the Keyboard page is one card of all its shortcut rows. Controls: switch (`toggle`), segmented
   choice, `dropdown_trigger` (fonts, themes) and text fields for Text and Number; Number and Text rows are
   written on Enter or when the row loses the keyboard, Esc drops the draft. Keyboard rows show a
   chip, an accent dot when changed and Reset; a click or Enter captures the next keystroke, Esc

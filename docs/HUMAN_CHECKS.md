@@ -23,13 +23,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 ### To verify - 2026-11-21 Polish P1: glass panels, pressable widgets, Settings
 
-- [ ] **Look (dark + light, then Mkrew Light and one palette theme):** open Settings (Ctrl+,), the Ask AI dialog (palette), a Git discard confirm and the in-app confirm prompt; each is a translucent panel with a thin light border, a faint accent tint at the top and a soft shadow; the text stays easy to read over a bright pane and over a dark pane behind it. (Automatic screenshots were not captured; none saved under `docs/screenshots/2026-11-21-polish-*`.)
+- [ ] **Look (dark + light, then Mkrew Light and one palette theme):** open Settings (Ctrl+,), the Ask AI dialog (palette), a Git discard confirm and the in-app confirm prompt; each is a translucent panel with a thin light border, a faint accent tint at the top and a soft shadow; the text stays easy to read over a bright pane and over a dark pane behind it.
+  (Automatic screenshots were not captured; none saved under `docs/screenshots/2026-11-21-polish-*`.)
 - [ ] **Settings:** the navigation lists App, Integrations and Input; typing in the search box lists settings of every page with `Page › Group`; Esc clears the query, Esc again closes; a query with no match shows "No setting matches" and "Clear search (Esc)"; switches, segmented choices and the font and theme dropdowns react to hover and press; the footer shows the version and both file links.
 - [ ] **Settings, keyboard:** Tab to the `settings.toml` link, press Ctrl+F, type; the text lands in the search box.
 - [ ] **Dialog fade (dark + light):** a dialog fades in and settles without a visible jump.
 - [ ] **Read-only settings.toml:** the Settings Choice controls of a read-only `settings.toml` do not hover.
 - [ ] **Narrow window:** make the window as small as it goes; Settings stays inside it (width and height are capped).
-- [ ] **Reduced motion (Windows):** turn "Animation effects" off in Windows Settings and come back to Mkrew (activating the window rereads it); panels appear at once with no fade. Turn it on again; panels fade in.
+- [ ] **Reduced motion (Windows):** turn "Animation effects" off in Windows Settings and come back to Mkrew (activating the window rereads it); panels appear at once with no fade.
+  Turn it on again; panels fade in.
 - [ ] **Broken settings.toml:** with a file that does not parse, the switches and dropdowns look faded and do nothing.
 
 ### To verify - 2026-11-14 Git commit box footer on two rows

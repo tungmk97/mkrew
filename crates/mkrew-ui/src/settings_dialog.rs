@@ -704,8 +704,9 @@ impl SettingsDialog {
                 keys: Some(keystroke.unparse()),
             };
         }
-        // Ctrl+N and Ctrl+S are not text keys, so `dialog_key` has no meaning for them.
+        // The page is hidden while a query shows results, so they do nothing then.
         if self.tab == Tab::Prompts
+            && !self.searching()
             && let Some(action) = prompts_shortcut(keystroke)
         {
             return Effect::Prompts(action);
@@ -1542,6 +1543,16 @@ mod tests {
         assert_eq!(d.key(&key("alt-s"), None, &keymap), Effect::None);
         assert_eq!(prompts_shortcut(&key("ctrl-n")), Some(PromptAction::New));
         assert_eq!(prompts_shortcut(&key("n")), None);
+    }
+
+    #[test]
+    fn ctrl_n_does_nothing_on_the_prompts_page_while_a_query_is_shown() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Prompts);
+        d.find = Input::from("font");
+        assert_eq!(d.key(&key("ctrl-n"), None, &keymap), Effect::None);
+        assert!(d.prompts.draft.is_none());
     }
 
     #[test]

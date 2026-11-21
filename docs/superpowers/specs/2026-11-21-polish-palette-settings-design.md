@@ -197,7 +197,9 @@ An empty result shows the empty state "No setting matches “<query>”." with t
 ### 6.3 Groups as cards
 
 `Setting` (`crates/mkrew-core/src/settings_fields.rs`) gets `group: &'static str`, a UI group independent of `section` (which stays the TOML table name).
-A page renders each group as an overline title followed by one card (`radius::LARGE`, `surface` fill) holding its rows, with a faint 1 px divider between rows.
+A page renders each group as an overline title followed by one card (`radius::LARGE`, `surface` fill, 1 px `theme.border` frame) holding its rows, with a faint 1 px divider between rows.
+The first and last row of a card are rounded like the card, so a selected or hovered fill follows its corners (gpui does not clip a child to a rounded parent).
+The Keyboard page has no groups: all its shortcut rows sit in one card without a title.
 A row is the label and the muted help on the left and the control on the right.
 Invariants checked by tests, over the non-hidden settings (hidden settings have no group): every one has a non-empty `group`; rows of one group are contiguous in `SETTINGS` (rows are reordered where needed, e.g. `ui.close_to_tray`, `features.session`); the table still matches the template (existing test).
 Matching help text with `palette::fuzzy` (a subsequence match) is noisy on short queries, so a label match always ranks above a help-only match.

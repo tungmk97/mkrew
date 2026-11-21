@@ -938,7 +938,11 @@ pub(crate) fn appear(
         .with_animation(
             id,
             gpui::Animation::new(theme::motion::FAST).with_easing(gpui::ease_out_quint()),
-            |el, delta| el.opacity(delta).mt(px(theme::PANEL_RISE * (1.0 - delta))),
+            |el, delta| {
+                el.opacity(delta)
+                    .relative()
+                    .top(px(theme::PANEL_RISE * (1.0 - delta)))
+            },
         )
 }
 
