@@ -859,4 +859,23 @@ mod tests {
         data.clear();
         assert_eq!((data.limits().len(), data.machine()), (0, None));
     }
+
+    #[test]
+    fn every_widget_has_a_menu_row_state_and_a_title() {
+        let hidden = vec!["machine".to_owned(), "clock".to_owned()];
+        let rows: Vec<(&str, bool)> = WidgetId::ALL
+            .into_iter()
+            .map(|id| (id.title(), !is_hidden(&hidden, id)))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("Folder", true),
+                ("Git branch", true),
+                ("Agent limits", true),
+                ("CPU and RAM", false),
+                ("Version", true)
+            ]
+        );
+    }
 }

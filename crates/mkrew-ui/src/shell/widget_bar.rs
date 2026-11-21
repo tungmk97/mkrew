@@ -110,6 +110,9 @@ impl Shell {
         let right: Vec<_> = (right.into_iter())
             .map(|widget| self.render_widget(widget, theme, cx))
             .collect();
+        let menu = (self.widget_menu.as_ref())
+            .filter(|_| !self.modal_open())
+            .map(|menu| self.render_widget_menu(menu, theme, cx));
         let group = || {
             div()
                 .min_w_0()
@@ -133,8 +136,16 @@ impl Shell {
                 .border_color(rgb(theme.border))
                 .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|shell, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        shell.open_widget_menu(event.position, window, cx);
+                    }),
+                )
                 .child(group().children(left))
                 .child(group().children(right))
+                .children(menu)
                 .into_any_element(),
         )
     }
@@ -229,5 +240,74 @@ impl Shell {
             }
             Click::CheckUpdate => self.check_updates(true, window, cx),
         }
+    }
+}
+
+impl Shell {
+    /// Right-click anywhere on the bar.
+    pub(crate) fn open_widget_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.begin_menu(window, cx);
+        self.widget_menu = Some(WidgetMenu { position });
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
+    }
+
+    /// Hides or shows one widget and saves `[ui] widgets_hidden`; ids this build does not know
+    /// stay in the list. The menu stays open (a multi-select row).
+    pub(crate) fn toggle_widget(&mut self, id: WidgetId, cx: &mut Context<'_, Self>) {
+        self.widgets_hidden = model::toggled(&self.widgets_hidden, id);
+        if let Err(error) =
+            mkrew_core::settings::write_widgets_hidden(&self.settings_file, &self.widgets_hidden)
+        {
+            self.settings_write_failed("the widget bar", error, cx);
+        }
+        cx.notify();
+    }
+
+    /// One checkable row per widget, then "Hide widget bar".
+    pub(crate) fn widget_menu_rows(&self) -> Rows {
+        let mut rows: Rows = WidgetId::ALL
+            .into_iter()
+            .map(|id| {
+                MenuItem::new(
+                    id.title(),
+                    act(move |shell, _, cx| shell.toggle_widget(id, cx)),
+                )
+                .checked(!model::is_hidden(&self.widgets_hidden, id))
+                .toggle()
+                .row()
+            })
+            .collect();
+        rows.push(MenuRow::Separator);
+        rows.push(
+            MenuItem::new(
+                "Hide widget bar",
+                act(|shell, _, cx| shell.set_widget_bar(false, cx)),
+            )
+            .keys(self.keymap.label(Command::ToggleWidgetBar))
+            .row(),
+        );
+        rows
+    }
+
+    pub(crate) fn render_widget_menu(
+        &self,
+        menu: &WidgetMenu,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        render_menu(
+            self.menu_state(),
+            "widget-menu",
+            self.widget_menu_rows(),
+            None,
+            Place::At(menu.position),
+            theme,
+            cx,
+        )
     }
 }

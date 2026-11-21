@@ -336,6 +336,7 @@ impl Shell {
             workspace_menu: None,
             file_menu: None,
             file_tab_menu: None,
+            widget_menu: None,
             tab_menu: None,
             card_menu: None,
             menu_focus: cx.focus_handle(),
