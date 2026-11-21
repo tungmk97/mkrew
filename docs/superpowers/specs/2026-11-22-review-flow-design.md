@@ -107,7 +107,7 @@ Success means:
 
 - Hunk stepping across files uses its own `step_hunk_file`, which skips viewed files and never leaves the selected commit in History; `step_file` is unchanged.
 - Viewed-then-next runs only when the marked file is the selected one; a checkbox on another row only marks it.
-- A viewed file's collapsed diff is skipped by `n` / `p`, and `x` on it discards the file, not a hidden hunk.
+- `n` / `p` on a viewed file's collapsed diff go to the next / previous file that is not viewed (its hidden hunks are not stepped); `x` on it still discards the file, not a hidden hunk.
 - The daemon refuses a hunk discard on an untracked file (`invalid_request`); any other hunk goes to `git apply -R`, so a stale hunk fails with git's error as section 7 says.
 - `paths` stays required on the wire: a hunk-only request sends `"paths": []`.
 - Send selection picks by Files mode: Preview asks the page first; Split asks the editor's real selection, then the page; Source is unchanged; a page older than the editor text is not used.

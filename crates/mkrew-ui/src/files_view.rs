@@ -1251,7 +1251,8 @@ impl FileTab {
     pub fn picked_lines(&self) -> Option<(String, u32, u32, String)> {
         let editor = &self.shown()?.editor;
         let from_page = self.previewing() || (self.splitting() && editor.selection().is_none());
-        if let Some((first, last, text)) = self.preview_lines().filter(|_| from_page) {
+        let page = from_page.then(|| self.preview_lines()).flatten();
+        if let Some((first, last, text)) = page {
             return Some((self.path.clone(), first, last, text));
         }
         // The selected lines, else the caret's line.
@@ -1278,9 +1279,8 @@ impl FileTab {
             .is_some_and(|page| Some(page.stamp) == self.stamp());
         let page = self.preview().filter(|_| current)?;
         let lines = preview_select::source_lines(page, self.preview_selection.as_ref()?)?;
-        let from = usize::try_from(lines.start).ok()?.checked_sub(1)?;
-        let to = usize::try_from(lines.end).ok()?;
-        Some((lines.start, lines.end, page.lines.get(from..to)?.join("\n")))
+        let text = docs::source_text(&page.lines, lines.start, lines.end)?;
+        Some((lines.start, lines.end, text))
     }
 
     /// Esc: `true` when there was a selection.

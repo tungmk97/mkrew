@@ -242,7 +242,8 @@ pub struct GitStageParams {
     pub hunk: Option<HunkTarget>,
 }
 
-/// A hunk as shown by `git.diff`; the daemon builds the patch for `git apply` (`--cached [-R]` to stage / unstage, `-R` on the working tree to discard).
+/// A hunk as shown by `git.diff`; the daemon builds the patch for `git apply` from it:
+/// `--cached` to stage, `--cached -R` to unstage, `-R` on the working tree to discard.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HunkTarget {
     pub path: String,

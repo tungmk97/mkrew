@@ -13,7 +13,7 @@ pub use frame::{Frame, FrameDecoder, KIND_JSON, KIND_OUTPUT, MAX_FRAME_LEN, enco
 pub use message::*;
 
 /// Bumped on any incompatible change; `hello` with another value gets `version_mismatch`.
-/// 55 belongs to the unmerged Widget bar branch; this one skips to 56 (rebase the number if the merge order changes).
+/// 56 follows 55 (the Widget bar's).
 pub const PROTOCOL_VERSION: u32 = 56;
 
 /// Errors from encoding or decoding frames.

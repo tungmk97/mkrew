@@ -1033,19 +1033,43 @@ fn in_split_the_editors_selection_wins_over_the_page() {
     tab.set_mode(MdMode::Split);
     tab.preview_click(point(1, 0), false, 1);
     tab.preview_drag(point(1, 3));
-    let picked = tab.picked_lines().unwrap();
     assert_eq!(
-        (picked.1, picked.2),
-        (3, 3),
+        tab.picked_lines(),
+        Some(("README.md".into(), 3, 3, "old para".into())),
         "the page selects, the editor does not"
     );
     if let Content::Shown(shown) = &mut tab.content {
         shown.editor.select_all();
     }
-    let picked = tab.picked_lines().unwrap();
     assert_eq!(
-        picked.1, 1,
-        "the editor's selection starts at the first line"
+        tab.picked_lines(),
+        Some((
+            "README.md".into(),
+            1,
+            5,
+            "# Title\n\nold para\n\nend".into()
+        )),
+        "the editor's selection, from the first line"
+    );
+}
+
+#[test]
+fn in_split_a_page_of_older_text_gives_way_to_the_editor() {
+    let mut view = previewed("# Title\n\nold para\n\nend\n");
+    let tab = tab_mut(&mut view);
+    tab.set_mode(MdMode::Split);
+    tab.preview_click(point(1, 0), false, 1);
+    tab.preview_drag(point(1, 3));
+    assert_eq!(
+        tab.picked_lines(),
+        Some(("README.md".into(), 3, 3, "old para".into()))
+    );
+    // The text changed and the page is not rebuilt yet: its line numbers may have moved.
+    view.editor_mut().unwrap().insert("x");
+    assert_eq!(
+        tab_mut(&mut view).picked_lines(),
+        Some(("README.md".into(), 1, 1, "x# Title".into())),
+        "the caret's line, not the page's"
     );
 }
 

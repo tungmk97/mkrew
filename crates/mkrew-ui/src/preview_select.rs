@@ -477,4 +477,20 @@ mod tests {
             Some((1, 11))
         );
     }
+
+    #[test]
+    fn source_lines_count_after_front_matter_and_with_crlf_endings() {
+        let page = shown("---\r\ntitle: x\r\n---\r\n\r\nfirst para\r\n\r\nsecond para\r\n");
+        let lines = |anchor: Point, head: Point| {
+            source_lines(&page, &Selection { anchor, head }).map(|l| (l.start, l.end))
+        };
+        // Block 0 is the front matter; the paragraphs follow it on lines 5 and 7.
+        assert_eq!(lines(at(1, 0, 2), at(1, 0, 5)), Some((5, 5)));
+        assert_eq!(lines(at(1, 0, 2), at(2, 0, 3)), Some((5, 7)));
+        assert_eq!(
+            crate::docs::source_text(&page.lines, 5, 7).as_deref(),
+            Some("first para\n\nsecond para"),
+            "the Markdown source, without the carriage returns"
+        );
+    }
 }

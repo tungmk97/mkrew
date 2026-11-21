@@ -350,9 +350,7 @@ impl Docs {
         else {
             return None;
         };
-        let from = usize::try_from(pick.start).ok()?.checked_sub(1)?;
-        let to = usize::try_from(pick.end).ok()?;
-        let text = shown.lines.get(from..to)?.join("\n");
+        let text = source_text(&shown.lines, pick.start, pick.end)?;
         Some((path.clone(), pick.start, pick.end, text))
     }
 }
@@ -364,6 +362,14 @@ pub fn source_lines(content: &str) -> Vec<String> {
         .lines()
         .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
         .collect()
+}
+
+/// Lines `start..=end` (1-based, as comment anchors count) of `lines`, joined with `\n`;
+/// `None` when they reach outside the file.
+pub fn source_text(lines: &[String], start: u32, end: u32) -> Option<String> {
+    let from = usize::try_from(start).ok()?.checked_sub(1)?;
+    let to = usize::try_from(end).ok()?;
+    Some(lines.get(from..to)?.join("\n"))
 }
 
 /// Line number `n` right-aligned to the width of the largest one (`total`), for a monospaced

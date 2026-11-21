@@ -532,11 +532,6 @@ impl Discard {
     /// What confirming does, in one sentence.
     pub fn sentence(&self) -> String {
         let path = &self.target.path;
-        if self.hunk.is_some() {
-            return format!(
-                "This hunk of “{path}” is discarded and cannot be recovered. Its other changes and its staged changes stay."
-            );
-        }
         if self.target.group == Group::Untracked {
             return format!(
                 "“{path}” is deleted. It was never committed, so it cannot be recovered."
@@ -547,6 +542,11 @@ impl Discard {
         } else {
             ""
         };
+        if self.hunk.is_some() {
+            return format!(
+                "This hunk of “{path}” is discarded and cannot be recovered. Its other changes stay.{staged}"
+            );
+        }
         format!(
             "The unstaged changes to “{path}” below are discarded and cannot be recovered.{staged}"
         )
@@ -1595,14 +1595,15 @@ impl GitView {
     /// The next / previous hunk of the shown diff (from none: the first / last). Past the last
     /// (first) hunk it goes on to the next (previous) file that is not viewed and, once that
     /// diff is shown, to its first (last) hunk ([`PendingHunk`]); no wrap at the list ends. A
-    /// file without hunks counts as past both ends. A collapsed (viewed) diff ignores the keys.
+    /// file without hunks counts as past both ends. On a collapsed (viewed) diff, whose hunks
+    /// are hidden, the keys go straight to the next (previous) file.
     fn step_hunk(&mut self, forward: bool) -> Requests {
+        if self.diff_collapsed() {
+            return self.step_hunk_file(forward);
+        }
         let Diff::Shown(shown) = &self.diff else {
             return Requests::default();
         };
-        if self.diff_collapsed() {
-            return Requests::default();
-        }
         let count = shown.diff.hunks.len();
         let next = match (self.hunk, forward) {
             _ if count == 0 => None,
@@ -1982,6 +1983,15 @@ impl GitView {
             Diff::Shown(shown) if self.selected.as_ref() == Some(target) => Some(Rc::clone(shown)),
             _ => None,
         }
+    }
+
+    /// `dialog`'s confirm may go ahead: its file still has these changes, their diff is shown
+    /// and, for a hunk, still has it at its place (the diff reloads while the dialog is open).
+    pub fn discard_ready(&self, dialog: &Discard) -> bool {
+        self.file(&dialog.target).is_some()
+            && self
+                .shown_diff(&dialog.target)
+                .is_some_and(|shown| dialog.hunk_is_current(&shown))
     }
 
     /// The selected file's diff comments start over when it is another file: returns its path

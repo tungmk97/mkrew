@@ -73,7 +73,16 @@ impl Shell {
             return;
         };
         let serial = self.dialog_serial;
-        let Some(dialog) = self.git_discard.as_mut().filter(|dialog| !dialog.busy) else {
+        // The diff reloads while the dialog is open: what it lists must still be what is
+        // shown, as the (then disabled) confirm button says.
+        let ready = self.git_discard.as_ref().is_some_and(|dialog| {
+            !dialog.busy
+                && self
+                    .git
+                    .get(&dialog.project_id)
+                    .is_some_and(|view| view.discard_ready(dialog))
+        });
+        let Some(dialog) = self.git_discard.as_mut().filter(|_| ready) else {
             return;
         };
         dialog.busy = true;
@@ -108,6 +117,8 @@ impl Shell {
                             shell.toast_error(format!("Discard failed: {error}"), cx);
                         }
                         cx.notify();
+                        // A hunk that no longer applies: read the diff again (spec 7).
+                        shell.refresh_git(project_id, window, cx);
                     }
                 }
             });
@@ -344,7 +355,7 @@ impl Shell {
             }
             (None, None) => muted("Loading the changes…".into()).into_any_element(),
         };
-        let ready = shown.is_some() && !gone && !stale && !dialog.busy;
+        let ready = !dialog.busy && view.is_some_and(|view| view.discard_ready(dialog));
         let panel = floating_panel("git-discard-dialog", theme)
             .w(px(theme::UNDO_DIALOG_WIDTH))
             .flex()

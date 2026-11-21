@@ -530,7 +530,8 @@ impl Shell {
                     });
                     again
                 });
-                if let Some(row) = reveal {
+                // Another workspace's reply must not move the scroll of the one on screen.
+                if let Some(row) = reveal.filter(|_| shell.workspace == Some(project_id)) {
                     shell.scroll_diff_to(row);
                 }
                 if let Some(target) = again {
