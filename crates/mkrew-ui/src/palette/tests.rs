@@ -1,5 +1,6 @@
 use mkrew_protocol::{
-    Branch, Commit, FsMatch, FsSearchResult, SearchHit, SessionKind, StateSource, TaskStatus,
+    Branch, Commit, FsMatch, FsSearchParams, FsSearchResult, GitBranchesParams, SearchHit,
+    SessionKind, StateSource, TaskStatus,
 };
 
 use super::*;
@@ -2089,4 +2090,41 @@ fn the_recent_commands_are_the_last_five_distinct_runs() {
             Action::Run(Command::NewTask),
         ]
     );
+}
+
+#[test]
+fn a_call_without_a_daemon_fails_in_its_own_scope() {
+    let mut palette = Palette::scoped(vec![], Some(source()), Scope::Files, vec![]);
+    let fetch = palette.wanted().remove(0);
+    let failed = fetch.call.failed("Not connected to the daemon.");
+    assert!(matches!(failed, Answer::Files(Err(_))));
+    assert!(palette.answer(fetch.serial, failed, 0));
+    assert_eq!(
+        palette.lines(),
+        [Line::Note {
+            text: "Not connected to the daemon.".into(),
+            error: true
+        }]
+    );
+    for call in [
+        Call::Search(FsSearchParams {
+            project_id: Ulid::new(),
+            worktree_task_id: None,
+            query: "ab".into(),
+            regex: false,
+            limit: 200,
+        }),
+        Call::Branches(GitBranchesParams {
+            project_id: Ulid::new(),
+            worktree_task_id: None,
+            repo: None,
+        }),
+    ] {
+        let kind = std::mem::discriminant(&call.failed("x"));
+        let wanted = match call {
+            Call::Search(_) => Answer::Search(Err(String::new())),
+            _ => Answer::Branches(Err(String::new())),
+        };
+        assert_eq!(kind, std::mem::discriminant(&wanted));
+    }
 }

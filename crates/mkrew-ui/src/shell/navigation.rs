@@ -1,40 +1,11 @@
-//! Quick open, links, file reveal and the command palette.
+//! Links, file reveal and the palette.
 
 use crate::*;
 
 impl Shell {
-    /// Quick open (Ctrl+Shift+O): a fuzzy finder over the active workspace's files.
-    pub(crate) fn open_quick_open(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(project_id) = self.workspace.filter(|_| self.connection.is_some()) else {
-            return;
-        };
-        self.workspace_menu = None;
-        let target = self
-            .files
-            .get(&project_id)
-            .and_then(|view| view.worktree_task_id);
-        self.quick_open = Some(QuickOpen::new(project_id, target));
-        self.picker_host = self.host_of(window);
-        self.dialog_serial += 1;
-        window.focus(&self.dialog_focus, cx);
-        self.find_files(window, cx);
-        cx.notify();
-    }
-
-    pub(crate) fn close_quick_open(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let open = self.quick_open.take();
-        self.picker_host = HostId::Main;
-        // Esc on an `@` picker types the `@` it replaced (an e-mail, a handle).
-        match open.and_then(|open| open.insert_into) {
-            Some(target) => self.prompt_typed(target, "@", window, cx),
-            None => self.focus_pane(window, cx),
-        }
-        cx.notify();
-    }
-
-    /// `@` in a prompt (a composer, the task dialog): quick open over its workspace's files;
-    /// the pick is typed as `composer.file_ref` (§20B.1). Without a daemon the `@` is typed
-    /// as is.
+    /// `@` in a prompt (a composer, the task dialog): the palette on Files in insert mode, over
+    /// its workspace's files; the pick is typed as `composer.file_ref` (§20B.1). Without a
+    /// daemon the `@` is typed as is.
     pub(crate) fn open_file_ref_picker(
         &mut self,
         target: composer::Target,
@@ -53,18 +24,19 @@ impl Shell {
             return;
         };
         // Project-relative paths for the prompt, whatever the tree shows.
-        let mut open = QuickOpen::new(project_id, None);
-        open.insert_into = Some(target);
-        self.quick_open = Some(open);
-        self.picker_host = self.host_of(window);
+        let source = palette::Source::new(project_id, None, None);
+        self.restore_theme_pick(window, cx);
+        self.palette = Some(Palette::file_ref(source, target));
+        self.palette_return = None;
+        self.palette_host = self.host_of(window);
         // The task dialog under it stays the open dialog: its late replies (the agent list)
         // still land.
         if target != composer::Target::TaskDialog {
             self.dialog_serial += 1;
         }
+        self.palette_scroll.scroll_to_item(0);
         window.focus(&self.dialog_focus, cx);
-        self.find_files(window, cx);
-        cx.notify();
+        self.palette_changed(window, cx);
     }
 
     /// What an OS file drop types (§20B.5), or `None` after a toast: in a machine window these
@@ -155,112 +127,6 @@ impl Shell {
             self.focus_pane(window, cx);
         }
         cx.notify();
-    }
-
-    /// `fs.find` for the finder's query; a reply to an older query or finder is dropped.
-    pub(crate) fn find_files(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
-            return;
-        };
-        let dialog = self.dialog_serial;
-        let Some(open) = self.quick_open.as_mut() else {
-            return;
-        };
-        let (serial, params) = open.search();
-        let project_id = params.project_id;
-        let found = connection.call::<Vec<FsMatch>>(Request::FsFind(params));
-        cx.spawn_in(window, async move |this, cx| {
-            let found = found.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update(cx, |shell, cx| {
-                if let Err(error) = &found {
-                    tracing::warn!(%project_id, "fs.find failed: {error}");
-                }
-                if shell.dialog_serial != dialog {
-                    return;
-                }
-                if let Some(open) = shell.quick_open.as_mut()
-                    && open.found(serial, found)
-                {
-                    shell.quick_open_scroll.scroll_to_item(0);
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    /// Typing searches again, ↑ / ↓ move the pick (kept in view), Enter opens it, Esc closes.
-    pub(crate) fn quick_open_key_down(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        cx.stop_propagation();
-        let Some(key) = palette::key(&event.keystroke) else {
-            return;
-        };
-        let paste = (key == palette::Key::Paste)
-            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
-            .flatten();
-        let Some(open) = self.quick_open.as_mut() else {
-            return;
-        };
-        match key {
-            palette::Key::Close => return self.close_quick_open(window, cx),
-            palette::Key::Open => return self.open_quick_pick(window, cx),
-            palette::Key::Move(_) => {
-                open.key(key);
-                self.quick_open_scroll.scroll_to_item(open.selected);
-            }
-            palette::Key::Paste => {
-                if paste.is_some_and(|text| open.insert(&text)) {
-                    self.find_files(window, cx);
-                }
-            }
-            palette::Key::Edit(_) | palette::Key::Insert(_) => {
-                if let palette::Key::Edit(edit) = &key {
-                    copy_selection(edit, &open.query, cx);
-                }
-                if open.key(key) {
-                    self.find_files(window, cx);
-                }
-            }
-        }
-        cx.notify();
-    }
-
-    /// Opens the picked file in the Editor view (its folders open, the cursor lands on it).
-    pub(crate) fn open_quick_pick(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(open) = self.quick_open.take() else {
-            return;
-        };
-        let Some(path) = open.picked().map(str::to_owned) else {
-            self.quick_open = Some(open);
-            return;
-        };
-        self.picker_host = HostId::Main;
-        if let Some(target) = open.insert_into {
-            // A missing or broken settings file types the default form (the daemon reports it).
-            let template = mkrew_core::settings::load(&self.settings_file)
-                .unwrap_or_default()
-                .composer
-                .file_ref;
-            let text = composer::file_ref(&template, &path);
-            self.prompt_typed(target, &text, window, cx);
-            cx.notify();
-            return;
-        }
-        let project_id = open.project_id;
-        self.reveal_file(
-            project_id,
-            open.worktree_task_id,
-            path,
-            None,
-            Open::Transient,
-            window,
-            cx,
-        );
     }
 
     /// Where links typed in `session`'s terminal point: its project, the task worktree its
@@ -380,9 +246,19 @@ impl Shell {
         self.show_view(View::Editor, window, cx);
     }
 
-    /// The command palette (Ctrl+Shift+P): the commands that can act where the keyboard is,
-    /// palette-only actions and "Go to" items.
+    /// The command palette (Ctrl+Shift+P) on All: the commands that can act where the keyboard
+    /// is, palette-only actions, "Go to" items and the workspace's files, branches and commits.
     pub(crate) fn open_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.open_palette_on(palette::Scope::All, window, cx);
+    }
+
+    /// The palette on `scope` (Quick open is Files, Search in files is Search).
+    pub(crate) fn open_palette_on(
+        &mut self,
+        scope: palette::Scope,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         // The workspace of the window's tab: the shown one in the main window, the tab's own
         // in a detached one.
         let window_key = self.detached_key(window);
@@ -530,12 +406,122 @@ impl Shell {
         self.restore_theme_pick(window, cx);
         self.workspace_menu = None;
         self.palette_host = self.host_of(window);
-        self.palette = Some(Palette::new(entries));
+        let source = workspace.map(|project_id| self.palette_source(project_id));
+        self.palette = Some(Palette::scoped(
+            entries,
+            source,
+            scope,
+            self.palette_recent.clone(),
+        ));
         self.palette_return = window.focused(cx).map(|focus| (focus, terminal));
         self.palette_scroll.scroll_to_item(0);
         self.dialog_serial += 1;
         window.focus(&self.dialog_focus, cx);
+        self.palette_changed(window, cx);
+    }
+
+    /// What the palette's Files, Search, Branches and Commits read for `project_id`: the task
+    /// worktree its Files view shows (what Quick open read), and the repository its Git view
+    /// shows while that view is on the same worktree (`Source::new` drops the repo of a
+    /// worktree anyway).
+    fn palette_source(&self, project_id: Ulid) -> palette::Source {
+        let worktree = (self.files.get(&project_id)).and_then(|view| view.worktree_task_id);
+        let repo = (self.git.get(&project_id))
+            .filter(|view| view.worktree_task_id == worktree)
+            .and_then(|view| view.repo.clone());
+        palette::Source::new(project_id, worktree, repo)
+    }
+
+    /// After any change of the palette: sends the calls it now wants, keeps the pick in view
+    /// (the list's children are its lines), previews a picked theme and redraws.
+    pub(crate) fn palette_changed(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let fetches = (self.palette.as_mut()).map_or_else(Vec::new, Palette::wanted);
+        self.run_palette_fetches(fetches, window, cx);
+        if let Some(palette) = self.palette.as_ref() {
+            self.palette_scroll.scroll_to_item(palette.selected_line());
+        }
+        self.preview_theme_pick(cx);
         cx.notify();
+    }
+
+    /// Sends the daemon calls of the open palette. A call with a delay waits, then checks it
+    /// is still the palette's latest (a newer keystroke made it stale); an answer goes back by
+    /// its serial, so an old one, or one for a palette that closed, is dropped there.
+    fn run_palette_fetches(
+        &mut self,
+        fetches: Vec<palette::Fetch>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if fetches.is_empty() {
+            return;
+        }
+        let Some(connection) = self.connection.clone() else {
+            if let Some(palette) = self.palette.as_mut() {
+                for fetch in fetches {
+                    let failed = fetch.call.failed("Not connected to the daemon.");
+                    palette.answer(fetch.serial, failed, status::now_ms());
+                }
+            }
+            return;
+        };
+        for fetch in fetches {
+            let palette::Fetch {
+                scope,
+                serial,
+                delay,
+                call,
+            } = fetch;
+            let connection = connection.clone();
+            cx.spawn_in(window, async move |this, cx| {
+                if !delay.is_zero() {
+                    cx.background_executor().timer(delay).await;
+                    let current = this.update(cx, |shell, _| {
+                        (shell.palette.as_ref())
+                            .is_some_and(|palette| palette.is_current(scope, serial))
+                    });
+                    if !current.unwrap_or(false) {
+                        return;
+                    }
+                }
+                let answer = match call {
+                    palette::Call::Files(params) => palette::Answer::Files(
+                        (connection
+                            .call::<Vec<FsMatch>>(Request::FsFind(params))
+                            .await)
+                            .map_err(|error| format!("{error:#}")),
+                    ),
+                    palette::Call::Search(params) => palette::Answer::Search(
+                        (connection
+                            .call::<mkrew_protocol::FsSearchResult>(Request::FsSearch(params))
+                            .await)
+                            .map_err(|error| format!("{error:#}")),
+                    ),
+                    palette::Call::Branches(params) => palette::Answer::Branches(
+                        (connection
+                            .call::<Vec<mkrew_protocol::Branch>>(Request::GitBranches(params))
+                            .await)
+                            .map_err(|error| format!("{error:#}")),
+                    ),
+                    palette::Call::Commits(params) => palette::Answer::Commits(
+                        (connection
+                            .call::<Vec<Commit>>(Request::GitLog(params))
+                            .await)
+                            .map_err(|error| format!("{error:#}")),
+                    ),
+                };
+                let _ = this.update(cx, |shell, cx| {
+                    if let Some(palette) = shell.palette.as_mut()
+                        && palette.answer(serial, answer, status::now_ms())
+                    {
+                        let line = palette.selected_line();
+                        shell.palette_scroll.scroll_to_item(line);
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
     }
 
     /// The theme picker (ADR 0078): the palette listing `theme::THEMES`, on the current one.
@@ -617,8 +603,18 @@ impl Shell {
     pub(crate) fn close_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         // Esc from the theme picker: back to the theme it opened on.
         self.restore_theme_pick(window, cx);
-        self.palette = None;
+        let insert_into = self
+            .palette
+            .take()
+            .and_then(|palette| palette.insert_into());
         self.palette_host = HostId::Main;
+        // Esc on an `@` picker types the `@` it replaced (an e-mail, a handle).
+        if let Some(target) = insert_into {
+            self.palette_return = None;
+            self.prompt_typed(target, "@", window, cx);
+            cx.notify();
+            return;
+        }
         match self.palette_return.take() {
             Some((focus, session))
                 if session.is_none_or(|session| self.panes.contains_key(&session)) =>
@@ -630,7 +626,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// Typing filters, ↑ / ↓ move the pick (kept in view), Enter runs it, Esc closes.
+    /// Typing filters, Tab / Shift+Tab switch the scope, ↑ / ↓ move the pick (kept in view),
+    /// Enter runs it, Esc closes.
     pub(crate) fn palette_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -638,6 +635,12 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
+        if let Some(by) = palette::scope_step(&event.keystroke) {
+            if let Some(palette) = self.palette.as_mut() {
+                palette.step_scope(by);
+            }
+            return self.palette_changed(window, cx);
+        }
         let Some(key) = palette::key(&event.keystroke) else {
             return;
         };
@@ -662,17 +665,28 @@ impl Shell {
                 palette.key(key);
             }
         }
-        self.palette_scroll.scroll_to_item(palette.selected);
-        self.preview_theme_pick(cx);
-        cx.notify();
+        self.palette_changed(window, cx);
     }
 
     /// Runs the palette's pick. A command goes through the shell's `run` from where the
     /// keyboard was (terminal commands reach their pane; Git ones need the Git list).
     pub(crate) fn run_palette_pick(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        // "+N more": the scope of that section.
+        if let Some(scope) = self.palette.as_ref().and_then(Palette::picked_more) {
+            if let Some(palette) = self.palette.as_mut() {
+                palette.set_scope(scope);
+            }
+            return self.palette_changed(window, cx);
+        }
+        // `@` in a prompt: the path is typed there, nothing is opened.
+        if let Some(target) = self.palette.as_ref().and_then(Palette::insert_into) {
+            return self.insert_palette_pick(target, window, cx);
+        }
         let Some(action) = self.palette.as_ref().and_then(Palette::picked) else {
             return;
         };
+        let source = (self.palette.as_ref()).and_then(|palette| palette.source().cloned());
+        palette::remember(&mut self.palette_recent, &action);
         if let palette::Action::Theme(index) = action {
             // Chosen: closing must not restore the old theme.
             self.theme_pick = None;
@@ -951,170 +965,186 @@ impl Shell {
                 self.show_view(View::Board, window, cx);
                 cx.notify();
             }
-            // Wired in Task 11, which replaces this arm; nothing produces these four before then.
-            palette::Action::OpenFile { .. }
-            | palette::Action::OpenSearchHit { .. }
-            | palette::Action::Checkout { .. }
-            | palette::Action::ShowCommit { .. } => {}
+            palette::Action::OpenFile { path } => {
+                if let Some(source) = source {
+                    self.open_palette_file(source, path, None, window, cx);
+                }
+            }
+            palette::Action::OpenSearchHit { path, line } => {
+                if let Some(source) = source {
+                    self.open_palette_file(source, path, Some(line), window, cx);
+                }
+            }
+            palette::Action::Checkout { repo, branch } => {
+                if let Some(source) = source {
+                    self.in_main_window(window, cx, move |shell, window, cx| {
+                        shell.checkout_branch(source, repo, branch, window, cx);
+                    });
+                }
+            }
+            palette::Action::ShowCommit { repo, sha } => {
+                if let Some(source) = source {
+                    self.in_main_window(window, cx, move |shell, window, cx| {
+                        shell.show_palette_commit(source, repo, sha, window, cx);
+                    });
+                }
+            }
         }
     }
 
-    /// Quick open: the query field over the best matches (matched chars in the accent color,
-    /// the pick ringed); a click or Enter opens one in the Editor view.
-    pub(crate) fn render_quick_open(
-        &self,
-        open: &QuickOpen,
-        theme: &Theme,
+    /// Enter on an `@` picker: types the picked file as `composer.file_ref` into `target`.
+    fn insert_palette_pick(
+        &mut self,
+        target: composer::Target,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
-        let workspace = self
-            .sidebar
-            .projects()
-            .iter()
-            .find(|project| project.id == open.project_id)
-            .map_or_else(String::new, |project| format!(" · {}", project.name));
-        let note = match &open.results {
-            Results::Loading => Some("Searching…".to_owned()),
-            Results::Loaded(matches) if matches.is_empty() && open.query.trim().is_empty() => {
-                Some("This workspace has no files yet.".to_owned())
-            }
-            Results::Loaded(matches) if matches.is_empty() => {
-                Some(format!("No file matches “{}”.", open.query.trim()))
-            }
-            Results::Loaded(_) => None,
-            Results::Failed(error) => Some(format!("Cannot search the files: {error}")),
+    ) {
+        let Some(palette::Action::OpenFile { path }) =
+            self.palette.as_ref().and_then(Palette::picked)
+        else {
+            return;
         };
-        let accent = gpui::Hsla::from(rgb(theme.accent));
-        let hover = theme.surface_raised;
-        let rows: Vec<gpui::AnyElement> = open
-            .matches()
-            .iter()
-            .enumerate()
-            .map(|(index, found)| {
-                let picked = index == open.selected;
-                let highlights = palette::match_ranges(&found.path, &found.indices)
-                    .into_iter()
-                    .map(|range| {
-                        let style = gpui::HighlightStyle {
-                            color: Some(accent),
-                            font_weight: Some(FontWeight(weight::SEMIBOLD)),
-                            ..gpui::HighlightStyle::default()
-                        };
-                        (range, style)
-                    });
-                div()
-                    .id(("quick-open-match", index))
-                    .flex_none()
-                    .px(px(space::S))
-                    .py(px(space::XS))
-                    .rounded(px(radius::SMALL))
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    // The pick has a focus-colored ring, so it stays visible under hover.
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(if picked {
-                        theme.pane_focus_border
-                    } else {
-                        theme.surface
-                    }))
-                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
-                    .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-                    .cursor_pointer()
-                    .active(|style| style.opacity(opacity::ACTIVE))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        if let Some(open) = shell.quick_open.as_mut() {
-                            open.pick(index);
-                            shell.open_quick_pick(window, cx);
-                        }
-                    }))
-                    .child(gpui::StyledText::new(found.path.clone()).with_highlights(highlights))
-                    .into_any_element()
-            })
-            .collect();
-        let panel = floating_panel("quick-open", theme)
-            .w(px(theme::DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::quick_open_key_down))
-            .relative()
-            .child(self.typing(&self.dialog_focus, Self::quick_open_key_down, cx))
-            .child(
-                div()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(if open.insert_into.is_some() {
-                        format!("Insert file{workspace}")
-                    } else {
-                        format!("Open file{workspace}")
-                    }),
-            )
-            .child(caret_field(
-                "quick-open-query",
-                &open.query,
-                "Type part of a file name or path",
-                true,
-                theme,
-                cx,
-                |shell, caret| {
-                    if let Some(open) = shell.quick_open.as_mut() {
-                        open.query.click(caret.at, caret.extend, caret.clicks);
-                    }
-                },
-            ))
-            .when(!rows.is_empty(), |el| {
-                el.child(
-                    div()
-                        .id("quick-open-matches")
-                        .max_h(px(theme::QUICK_OPEN_LIST_HEIGHT))
-                        .overflow_y_scroll()
-                        .track_scroll(&self.quick_open_scroll)
-                        .flex()
-                        .flex_col()
-                        .gap(px(space::XS))
-                        .children(rows),
+        self.palette = None;
+        self.palette_host = HostId::Main;
+        // A missing or broken settings file types the default form (the daemon reports it).
+        let template = mkrew_core::settings::load(&self.settings_file)
+            .unwrap_or_default()
+            .composer
+            .file_ref;
+        let text = composer::file_ref(&template, &path);
+        self.prompt_typed(target, &text, window, cx);
+        cx.notify();
+    }
+
+    /// Runs `run` in the main window: at once when the palette was opened there, else after
+    /// activating that window. Files, checkouts and commits all live in the main window (the
+    /// Editor and Git views, the title bar summary), also when a detached window's palette
+    /// picked them.
+    fn in_main_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        run: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) + 'static,
+    ) {
+        if self.host_of(window) == HostId::Main {
+            return run(self, window, cx);
+        }
+        self.in_window(HostId::Main, cx, move |shell, window, cx| {
+            window.activate_window();
+            run(shell, window, cx);
+        });
+    }
+
+    /// Files and Search picks: the file in the Editor view (its folders open, the cursor lands
+    /// on it), the caret on `line` for a search hit. A detached window's pick opens in the
+    /// main one.
+    fn open_palette_file(
+        &mut self,
+        source: palette::Source,
+        path: String,
+        line: Option<u32>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (project, target) = (source.project_id, source.worktree_task_id);
+        self.in_main_window(window, cx, move |shell, window, cx| {
+            shell.open_file_at(project, target, path, line, window, cx);
+        });
+    }
+
+    /// A Branches pick: `git.checkout`, after a question when something is at risk (changed
+    /// files in the repository, live agents in that folder). A failure is a toast with git's
+    /// own message; a success refreshes the Git view. Runs in the main window
+    /// ([`Self::in_main_window`]) with the palette's workspace active, so `repo_changes` reads
+    /// that workspace's summary.
+    fn checkout_branch(
+        &mut self,
+        source: palette::Source,
+        repo: Option<String>,
+        branch: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        if self.workspace != Some(source.project_id) {
+            self.activate_workspace(source.project_id, window, cx);
+        }
+        // ponytail: a task worktree's own changes are not in the title bar summary, so no
+        // question is asked there; git refuses a switch that would overwrite a change. The
+        // same for a workspace whose summary has not loaded yet (`repo_changes` is `None`).
+        let changes = if source.worktree_task_id.is_none() {
+            self.repo_changes(repo.as_deref()).unwrap_or(0)
+        } else {
+            0
+        };
+        let has_worktree =
+            |task: Ulid| (self.board.task(task)).is_some_and(|task| task.worktree_path.is_some());
+        let agents = palette::agents_in_folder(
+            self.sidebar.sessions(),
+            source.project_id,
+            source.worktree_task_id,
+            has_worktree,
+        );
+        let answer =
+            palette::checkout_question(&branch, changes, agents).map(|(message, detail)| {
+                window.prompt(
+                    PromptLevel::Warning,
+                    &message,
+                    Some(detail.as_str()),
+                    &palette::CHECKOUT_ANSWERS,
+                    cx,
                 )
-            })
-            .children(note.map(|note| {
-                let failed = matches!(open.results, Results::Failed(_));
-                div()
-                    .flex()
-                    .gap(px(space::XS))
-                    .text_size(font_size::META)
-                    .when(failed, |el| {
-                        el.child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                    })
-                    .child(
-                        div()
-                            .text_color(rgb(if failed { theme.text } else { theme.text_muted }))
-                            .child(note),
-                    )
-            }))
-            .child(
-                div()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child(match open.insert_into {
-                        Some(composer::Target::Composer(_)) => {
-                            "↑ ↓ to pick · Enter types its path in the composer · Esc types @"
-                        }
-                        Some(composer::Target::TaskDialog) => {
-                            "↑ ↓ to pick · Enter types its path in the task prompt · Esc types @"
-                        }
-                        None => "↑ ↓ to pick · Enter opens it in Files · Esc closes",
-                    }),
-            );
-        Self::modal_shade("quick-open-shade", panel, cx)
+            });
+        let params = GitCheckoutParams {
+            project_id: source.project_id,
+            worktree_task_id: source.worktree_task_id,
+            repo,
+            branch,
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            if let Some(answer) = answer
+                && !palette::confirms_checkout(answer.await.ok())
+            {
+                return;
+            }
+            let project_id = params.project_id;
+            let branch = params.branch.clone();
+            let done = connection.call::<()>(Request::GitCheckout(params)).await;
+            let _ = this.update_in(cx, |shell, window, cx| match done {
+                Ok(()) => {
+                    shell.toast_info(format!("Switched to {branch}"), cx);
+                    if shell.git.contains_key(&project_id) {
+                        shell.refresh_git(project_id, window, cx);
+                    }
+                }
+                Err(error) => shell.toast_error(format!("{error:#}"), cx),
+            });
+        })
+        .detach();
+    }
+
+    /// A Commits pick: the Git view's History on that commit (its log is read long enough to
+    /// list it, see `GitView::show_commit`).
+    fn show_palette_commit(
+        &mut self,
+        source: palette::Source,
+        repo: Option<String>,
+        sha: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let project_id = source.project_id;
+        if self.workspace != Some(project_id) {
+            self.activate_workspace(project_id, window, cx);
+        }
+        self.retarget_git(project_id, source.worktree_task_id, repo);
+        let requests = self.git_view(project_id).show_commit(sha);
+        self.open_git(project_id, window, cx);
+        // A second `git.log` while the first is in flight is coalesced by `begin_log`.
+        self.git_requests(project_id, requests, window, cx);
+        cx.notify();
     }
 
     /// The command palette: the query field over the matching entries (matched chars in the

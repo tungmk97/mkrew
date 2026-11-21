@@ -21,7 +21,6 @@ impl Shell {
             || self.history.is_some()
             || self.doc_dialog.is_some()
             || self.diagram_dialog.is_some()
-            || self.quick_open.is_some()
             || self.palette.is_some()
             || self.prompt_picker.is_some()
             || self.slash_picker.is_some()
@@ -29,9 +28,9 @@ impl Shell {
             || self.settings_dialog.is_some()
     }
 
-    /// The `/` picker, the prompt picker or the `@` quick open is open.
+    /// The `/` picker, the prompt picker or the `@` file picker is open.
     pub(crate) fn picker_open(&self) -> bool {
-        self.quick_open.is_some() || self.prompt_picker.is_some() || self.slash_picker.is_some()
+        self.prompt_picker.is_some() || self.slash_picker.is_some()
     }
 
     /// The window that draws the open palette or picker (they can open in a detached window).
@@ -46,8 +45,7 @@ impl Shell {
     /// A picker or dialog is painted over the task dialog: its Prompt box takes no OS file
     /// drop (the capture-phase drag listeners ignore the cover's occlusion).
     pub(crate) fn prompt_box_covered(&self) -> bool {
-        self.quick_open.is_some()
-            || self.prompt_picker.is_some()
+        self.prompt_picker.is_some()
             || self.slash_picker.is_some()
             || self.palette.is_some()
             || self.settings_dialog.is_some()

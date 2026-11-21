@@ -139,7 +139,7 @@ impl Shell {
 
     /// Changed files of repository `repo` (`None` = the workspace folder's) from the title
     /// bar summary; `None` until it loaded.
-    fn repo_changes(&self, repo: Option<&str>) -> Option<usize> {
+    pub(crate) fn repo_changes(&self, repo: Option<&str>) -> Option<usize> {
         let repo = repo.unwrap_or("");
         self.git_summary()?
             .repos

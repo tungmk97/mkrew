@@ -56,8 +56,8 @@ impl Shell {
             "Show git-ignored files"
         };
         let search_keys = self.keymap.label(Command::QuickOpen);
-        // A button that opens quick open, framed like a text input. The shortcut is in the
-        // tooltip: the narrow panel has no room to show it beside "Ignored".
+        // A button that opens the palette on its Files scope, framed like a text input. The
+        // shortcut is in the tooltip: the narrow panel has no room to show it beside "Ignored".
         let search = search_box(
             div()
                 .id("files-search-label")
@@ -75,7 +75,9 @@ impl Shell {
         .cursor_pointer()
         .active(|style| style.opacity(opacity::ACTIVE))
         .tooltip(tooltip(theme, "Find a file of this workspace", search_keys))
-        .on_click(cx.listener(|shell, _, window, cx| shell.open_quick_open(window, cx)));
+        .on_click(cx.listener(|shell, _, window, cx| {
+            shell.open_palette_on(palette::Scope::Files, window, cx);
+        }));
         let ignored = button_frame("files-ignored", "Ignored")
             .flex_none()
             .cursor_pointer()

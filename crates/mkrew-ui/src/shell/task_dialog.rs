@@ -426,7 +426,7 @@ impl Shell {
             // picker's Manage row) has the keyboard meanwhile.
             .when(
                 self.prompt_picker.is_none()
-                    && self.quick_open.is_none()
+                    && self.palette.is_none()
                     && self.slash_picker.is_none()
                     && self.settings_dialog.is_none(),
                 |el| {

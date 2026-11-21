@@ -1195,6 +1195,20 @@ pub enum Call {
     Commits(GitLogParams),
 }
 
+impl Call {
+    /// The answer for this call when it could not be sent (no daemon): the same kind as the
+    /// real answer, carrying `error`, so the scope shows it as its muted failure row.
+    pub fn failed(&self, error: impl Into<String>) -> Answer {
+        let error = error.into();
+        match self {
+            Call::Files(_) => Answer::Files(Err(error)),
+            Call::Search(_) => Answer::Search(Err(error)),
+            Call::Branches(_) => Answer::Branches(Err(error)),
+            Call::Commits(_) => Answer::Commits(Err(error)),
+        }
+    }
+}
+
 /// The daemon's answer to a [`Call`]; an error is its message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {

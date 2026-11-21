@@ -484,8 +484,10 @@ impl Shell {
                     self.show_view(View::Diff, window, cx);
                 }
             }
-            Command::QuickOpen => self.open_quick_open(window, cx),
-            Command::SearchInFiles => self.open_palette(window, cx),
+            Command::QuickOpen | Command::SearchInFiles => {
+                let scope = palette::scope_for(*command).unwrap_or(palette::Scope::All);
+                self.open_palette_on(scope, window, cx);
+            }
             Command::CommandPalette => self.open_palette(window, cx),
             Command::OpenSettings => self.open_settings_dialog(window, cx),
             Command::ToggleTheme => self.toggle_theme(window, cx),
