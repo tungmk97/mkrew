@@ -4,7 +4,7 @@
 use crate::*;
 use mkrew_core::settings_fields::{Kind, Setting};
 use mkrew_ui::prompts_page::Spot;
-use mkrew_ui::settings_dialog::{Effect, Focus, Row, Tab};
+use mkrew_ui::settings_dialog::{Effect, Focus, Hit, Row, Tab};
 
 impl Shell {
     /// Ctrl+, and the palette's "Global: Open settings". Needs no daemon.
@@ -69,11 +69,14 @@ impl Shell {
         }
         cx.stop_propagation();
         let key = task_dialog::dialog_key(&event.keystroke);
-        // Ctrl+N and Ctrl+S of the Prompts page work from a button too.
+        // Ctrl+N and Ctrl+S of the Prompts page work from a button too, and so does Ctrl+F.
         let page_key = settings_dialog::prompts_shortcut(&event.keystroke).is_some();
+        let m = event.keystroke.modifiers;
+        let find_key = event.keystroke.key == "f" && m.control && !m.shift && !m.alt && !m.platform;
         // A button or link has the keyboard: the rows take nothing but Esc / Ctrl+Enter.
         if self.dialog_control_focused(window)
             && !page_key
+            && !find_key
             && !matches!(key, Some(DialogKey::Cancel | DialogKey::Save))
         {
             return;
@@ -98,7 +101,8 @@ impl Shell {
         {
             self.prompts_body_scroll.scroll_to_bottom();
         }
-        // Keep the focused row on screen: the banner and the search box come before the rows.
+        // Keep the focused row on screen: the banner and the Keyboard search box come before
+        // the cards, and a card holds several rows.
         if let Some(dialog) = &self.settings_dialog
             && let Focus::Row(index) = dialog.focus
         {
@@ -107,9 +111,10 @@ impl Shell {
                 (_, Tab::Keyboard) => keymap::notice(&self.keymap_errors).is_some(),
                 _ => false,
             };
-            let search = dialog.tab == Tab::Keyboard;
+            let search = keyboard_search_shown(dialog);
+            let card = dialog.group_of(index, &self.keymap);
             self.settings_scroll
-                .scroll_to_item(index + usize::from(banner) + usize::from(search));
+                .scroll_to_item(card + usize::from(banner) + usize::from(search));
         }
     }
 
@@ -191,6 +196,11 @@ impl Shell {
     }
 }
 
+/// Whether the Keyboard page's own search box is drawn (a global query hides it).
+fn keyboard_search_shown(dialog: &SettingsDialog) -> bool {
+    dialog.tab == Tab::Keyboard && !dialog.searching()
+}
+
 impl Shell {
     pub(crate) fn render_settings_dialog(
         &self,
@@ -203,28 +213,68 @@ impl Shell {
         // The model's field paints a caret only while the dialog's own text has the keyboard,
         // not while Tab put it on a button or link.
         let typing = self.dialog_focus.is_focused(window);
-        let tabs = Tab::all().into_iter().map(|tab| {
-            let active = tab == dialog.tab;
-            let focused = active && dialog.focus == Focus::Tabs;
+        let dimmed = dialog.dimmed_tabs();
+        let tab_item = |tab: Tab| {
+            let active = tab == dialog.tab && !dialog.searching();
+            let focused = tab == dialog.tab && dialog.focus == Focus::Tabs;
             div()
                 .id(SharedString::from(format!("settings-tab-{}", tab.title())))
                 .px(px(space::S))
                 .py(px(space::XS))
                 .rounded(px(radius::SMALL))
-                .cursor_pointer()
                 .text_size(font_size::BODY)
                 .text_color(rgb(if active { theme.text } else { theme.text_muted }))
-                .when(active, |el| el.bg(rgb(theme.surface_raised)))
+                // The active page keeps its `selected` fill on hover; the others hover.
+                .when(active, |el| el.bg(rgb(theme.selected)).cursor_pointer())
+                .when(!active, |el| el.pressable(Look::Row, true, theme))
                 .when(focused, |el| {
                     el.border(px(theme::BORDER_WIDTH))
                         .border_color(rgb(theme.selected_ring))
                 })
-                .hover(|style| style.bg(rgb(theme.surface_raised)))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    shell.settings_do(|d, _| d.set_tab(tab), window, cx);
-                }))
+                // Dimmed, still readable and still clickable.
+                .when(dimmed.contains(&tab), |el| el.opacity(opacity::DIMMED))
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, window, cx| {
+                        shell.settings_do(|d, _| d.set_tab(tab), window, cx);
+                    }),
+                )
                 .child(tab.title())
-        });
+                .into_any_element()
+        };
+        let nav_items: Vec<gpui::AnyElement> = settings_dialog::NAV
+            .iter()
+            .flat_map(|(title, tabs)| {
+                std::iter::once(
+                    overline(title, theme)
+                        .px(px(space::S))
+                        .pt(px(space::S))
+                        .into_any_element(),
+                )
+                .chain(tabs.iter().map(|&tab| tab_item(tab)))
+            })
+            .collect();
+        let find = search_box(
+            caret_field(
+                "settings-find",
+                &dialog.find,
+                "Search settings",
+                dialog.focus == Focus::Find && typing,
+                theme,
+                cx,
+                |shell, caret| {
+                    if let Some(d) = shell.settings_dialog.as_mut() {
+                        d.find.click(caret.at, caret.extend, caret.clicks);
+                    }
+                },
+            )
+            .on_click(cx.listener(|shell, _, window, cx| {
+                shell.settings_do(|d, keymap| d.click(Focus::Find, keymap), window, cx);
+            })),
+            Some(kbd("Ctrl+F".to_owned(), theme, false).into_any_element()),
+            dialog.focus == Focus::Find,
+            theme,
+        );
         let nav = div()
             .w(px(theme::SETTINGS_NAV_WIDTH))
             .flex_none()
@@ -234,7 +284,8 @@ impl Shell {
             .p(px(space::M))
             .border_r(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))
-            .children(tabs);
+            .child(find)
+            .children(nav_items);
 
         let banner = match (&dialog.settings, dialog.tab) {
             (Err(error), Tab::Settings(_)) => {
@@ -244,7 +295,7 @@ impl Shell {
                 .map(|notice| self.settings_banner(notice, false, theme, cx)),
             _ => None,
         };
-        let search = (dialog.tab == Tab::Keyboard).then(|| {
+        let search = keyboard_search_shown(dialog).then(|| {
             caret_field(
                 "settings-search",
                 &dialog.search,
@@ -277,70 +328,98 @@ impl Shell {
             .track_scroll(&self.settings_scroll)
             .flex()
             .flex_col()
-            .gap(px(space::XS))
+            .gap(px(space::M))
             .p(px(space::M))
             .children(banner)
             .children(daemon_note)
             .children(
-                (dialog.tab == Tab::Machines)
+                (dialog.tab == Tab::Machines && !dialog.searching())
                     .then(|| self.render_machines_page(dialog, typing, theme, cx))
                     .into_iter()
                     .flatten(),
             )
             .children(
-                (dialog.tab == Tab::Prompts)
+                (dialog.tab == Tab::Prompts && !dialog.searching())
                     .then(|| self.render_prompts_page(dialog, typing, theme, cx))
                     .into_iter()
                     .flatten(),
             )
             .children(search)
-            .children(
-                rows.iter()
-                    .enumerate()
-                    .map(|(i, row)| self.settings_row(dialog, i, *row, typing, theme, cx)),
-            );
+            .children(self.settings_cards(dialog, &rows, typing, theme, cx));
 
-        let footer =
-            div()
-                .flex()
-                .items_center()
-                .gap(px(space::L))
-                .px(px(space::L))
-                .py(px(space::M))
-                .border_t(px(theme::BORDER_WIDTH))
-                .border_color(rgb(theme.divider))
-                .text_size(font_size::META)
-                .child(self.settings_link(
-                    "settings-edit-toml",
-                    "Edit settings.toml in Zed",
-                    theme,
-                    cx,
-                    |shell, cx| {
-                        shell.edit_settings_file(cx);
-                    },
-                ))
-                .child(self.settings_link(
-                    "settings-edit-keymap",
-                    "Edit keymap.toml in Zed",
-                    theme,
-                    cx,
-                    |shell, cx| {
-                        shell.edit_keymap_file(cx);
-                    },
-                ))
-                .child(div().flex_1())
-                .child(div().text_color(rgb(theme.text_muted)).child(
-                    if dialog.tab == Tab::Prompts {
-                        "Ctrl+N new · Ctrl+S saves · Esc closes"
-                    } else {
-                        "Changes apply at once · Esc closes"
-                    },
-                ));
+        let header = div()
+            .flex()
+            .items_center()
+            .px(px(space::L))
+            .py(px(space::M))
+            .border_b(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .child(
+                div()
+                    .flex_1()
+                    .text_size(font_size::CARD_TITLE)
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(dialog.heading()),
+            )
+            .child(
+                icon_button("settings-close", Icon::X, theme)
+                    .tooltip(tooltip(theme, "Close", "Esc"))
+                    .on_press(
+                        true,
+                        cx.listener(|shell, _, window, cx| {
+                            shell.close_settings_dialog(window, cx);
+                        }),
+                    ),
+            );
+        let footer = div()
+            .flex()
+            .items_center()
+            .gap(px(space::L))
+            .px(px(space::L))
+            .py(px(space::M))
+            .border_t(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .text_size(font_size::META)
+            .child(
+                div()
+                    .text_color(rgb(theme.text_muted))
+                    .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
+            )
+            .child(self.settings_link(
+                "settings-edit-toml",
+                "settings.toml",
+                theme,
+                cx,
+                |shell, cx| {
+                    shell.edit_settings_file(cx);
+                },
+            ))
+            .child(self.settings_link(
+                "settings-edit-keymap",
+                "keymap.toml",
+                theme,
+                cx,
+                |shell, cx| {
+                    shell.edit_keymap_file(cx);
+                },
+            ))
+            .child(div().flex_1())
+            .child(div().text_color(rgb(theme.text_muted)).child(
+                // The Prompts page saves by itself, so its own keys stay in the hint.
+                if dialog.tab == Tab::Prompts && !dialog.searching() {
+                    "Ctrl+N new · Ctrl+S saves · Esc closes"
+                } else {
+                    "Changes apply at once."
+                },
+            ));
 
         let max_height = (viewport_height - px(space::XXL * 2.0)).max(px(0.0));
+        let max_width = (window.viewport_size().width - px(space::XXL * 2.0)).max(px(0.0));
         let panel = floating_panel("settings-dialog", theme)
             .w(px(theme::SETTINGS_DIALOG_WIDTH))
             .h(px(theme::SETTINGS_DIALOG_HEIGHT))
+            .max_w(max_width)
             .max_h(max_height)
             .flex()
             .flex_col()
@@ -353,20 +432,93 @@ impl Shell {
             )
             .relative()
             .child(self.typing(&self.dialog_focus, Self::settings_key_down, cx))
-            .child(
-                div()
-                    .px(px(space::L))
-                    .py(px(space::M))
-                    .border_b(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.divider))
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Settings"),
-            )
+            .child(header)
             .child(div().flex().flex_1().min_h_0().child(nav).child(body))
             .child(footer);
         Self::modal_shade("settings-shade", panel, cx)
+    }
+
+    /// The right side's rows: the empty state for a query without a match, else the cards.
+    fn settings_cards(
+        &self,
+        dialog: &SettingsDialog,
+        rows: &[Row],
+        typing: bool,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let searching = dialog.searching();
+        if searching && rows.is_empty() {
+            return vec![
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(space::M))
+                    .py(px(space::XL))
+                    .child(empty_state(
+                        theme,
+                        None,
+                        None,
+                        format!("No setting matches “{}”.", dialog.find.trim()).into(),
+                        None,
+                    ))
+                    .child(
+                        secondary_button("settings-clear-search", "Clear search (Esc)", theme)
+                            .on_press(
+                                true,
+                                cx.listener(|shell, _, window, cx| {
+                                    shell.settings_do(|d, _| d.clear_find(), window, cx);
+                                }),
+                            ),
+                    )
+                    .into_any_element(),
+            ];
+        }
+        let hits = dialog.hits();
+        settings_dialog::grouped(rows, searching)
+            .into_iter()
+            .map(|group| {
+                let flat = group.title.is_empty();
+                let single_shortcut = flat && !searching;
+                let title = group.title;
+                let items = group
+                    .rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(at, (index, row))| {
+                        self.settings_row(
+                            dialog,
+                            index,
+                            row,
+                            at > 0,
+                            hits.get(index),
+                            typing,
+                            theme,
+                            cx,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let card = div()
+                    .flex()
+                    .flex_col()
+                    .rounded(px(radius::LARGE))
+                    .bg(rgb(theme.surface))
+                    .children(items);
+                if single_shortcut {
+                    // A shortcut row: no title (the Keyboard page stays a flat list).
+                    card.into_any_element()
+                } else {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(space::XS))
+                        .children((!flat).then(|| overline(title, theme).px(px(space::S))))
+                        .child(card)
+                        .into_any_element()
+                }
+            })
+            .collect()
     }
 
     /// The broken-file / keymap-problem line above the rows, with "Fix in Zed".
@@ -414,19 +566,25 @@ impl Shell {
     ) -> gpui::Stateful<gpui::Div> {
         div()
             .id(id)
-            .cursor_pointer()
             .text_color(rgb(theme.accent_text))
-            .hover(|style| style.underline())
-            .on_click(cx.listener(move |shell, _, _, cx| on_click(shell, cx)))
+            .pressable(Look::Text, true, theme)
+            .on_press(
+                true,
+                cx.listener(move |shell, _, _, cx| on_click(shell, cx)),
+            )
             .focus_stop(theme)
             .child(label)
     }
 
+    // Task 11 draws the divider and the hit's match marks.
+    #[allow(clippy::too_many_arguments)]
     fn settings_row(
         &self,
         dialog: &SettingsDialog,
         index: usize,
         row: Row,
+        _divider: bool,
+        _hit: Option<&Hit>,
         typing: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
