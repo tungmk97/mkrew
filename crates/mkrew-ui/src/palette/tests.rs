@@ -301,6 +301,9 @@ fn availability_follows_the_view() {
     assert!(git.contains(&Command::AddComment));
     assert!(git.contains(&Command::PickUp));
     assert!(git.contains(&Command::SendSelection));
+
+    let docs = commands(&context(View::Docs));
+    assert!(docs.contains(&Command::SendSelection));
     assert!(
         !git.contains(&Command::ClosePane),
         "panes are not on screen"

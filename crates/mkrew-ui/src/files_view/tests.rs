@@ -1002,6 +1002,54 @@ fn a_drag_in_the_preview_copies_the_rendered_text() {
 }
 
 #[test]
+fn send_selection_from_the_preview_is_the_source_of_the_blocks_touched() {
+    let mut view = previewed("# Title\n\nold para\n\nend\n");
+    let tab = tab_mut(&mut view);
+    // Nothing selected on the page: the editor's caret line, as before.
+    assert_eq!(
+        tab.picked_lines(),
+        Some(("README.md".into(), 1, 1, "# Title".into()))
+    );
+    tab.preview_click(point(1, 0), false, 1);
+    tab.preview_drag(point(2, 3));
+    assert_eq!(
+        tab.picked_lines(),
+        Some(("README.md".into(), 3, 5, "old para\n\nend".into())),
+        "the Markdown source of both blocks, blank line included"
+    );
+    // One block: its whole range, whatever part is selected.
+    tab.preview_click(point(1, 1), false, 1);
+    tab.preview_drag(point(1, 3));
+    assert_eq!(
+        tab.picked_lines(),
+        Some(("README.md".into(), 3, 3, "old para".into()))
+    );
+}
+
+#[test]
+fn in_split_the_editors_selection_wins_over_the_page() {
+    let mut view = previewed("# Title\n\nold para\n\nend\n");
+    let tab = tab_mut(&mut view);
+    tab.set_mode(MdMode::Split);
+    tab.preview_click(point(1, 0), false, 1);
+    tab.preview_drag(point(1, 3));
+    let picked = tab.picked_lines().unwrap();
+    assert_eq!(
+        (picked.1, picked.2),
+        (3, 3),
+        "the page selects, the editor does not"
+    );
+    if let Content::Shown(shown) = &mut tab.content {
+        shown.editor.select_all();
+    }
+    let picked = tab.picked_lines().unwrap();
+    assert_eq!(
+        picked.1, 1,
+        "the editor's selection starts at the first line"
+    );
+}
+
+#[test]
 fn edit_keys_do_nothing_while_previewing() {
     let mut view = previewed("a\n");
     let tab = tab_mut(&mut view);

@@ -733,7 +733,10 @@ pub fn available(command: Command, context: &Context) -> bool {
         }
         Command::OpenComposer => on_panes && context.agent_pane,
         Command::SendSelection => {
-            in_view(View::Editor) || in_view(View::Diff) || (on_panes && context.terminal)
+            in_view(View::Editor)
+                || in_view(View::Diff)
+                || in_view(View::Docs)
+                || (on_panes && context.terminal)
         }
         Command::RunTask => in_view(View::Board),
         Command::ApproveCard => in_view(View::Board) && context.approve_card,

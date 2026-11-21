@@ -345,31 +345,16 @@ impl Shell {
         }
     }
 
-    /// The lines picked in `project_id`'s Editor view (one line, §12A) or Git diff (new side):
-    /// the file, first and last line, and their text (§20B.4).
+    /// The lines picked in `project_id`'s Editor view (a Markdown preview's selection, or the
+    /// editor's lines, §12A), Docs view (its comment selection) or Git diff (new side): the
+    /// file, first and last line, and their text (§20B.4).
     pub(crate) fn picked_lines(
         &self,
         project_id: Ulid,
         view: View,
     ) -> Option<(String, u32, u32, String)> {
         match view {
-            View::Editor => {
-                let files = self.files.get(&project_id)?;
-                let (Some(path), Some(shown)) = (files.file(), files.shown()) else {
-                    return None;
-                };
-                // The selected lines, else the caret's line.
-                let editor = &shown.editor;
-                let (first, last) = match editor.selection() {
-                    // A selection ending at a line's start does not include that line.
-                    Some(range) if range.end.col == 0 => (range.start.line, range.end.line - 1),
-                    Some(range) => (range.start.line, range.end.line),
-                    None => (editor.cursor().line, editor.cursor().line),
-                };
-                let text = editor.lines().get(first..=last)?.join("\n");
-                let line = |index: usize| u32::try_from(index + 1).ok();
-                Some((path.to_owned(), line(first)?, line(last)?, text))
-            }
+            View::Editor => self.files.get(&project_id)?.tab()?.picked_lines(),
             View::Diff => {
                 let git = self.git.get(&project_id)?;
                 let (Some(target), Some(selection), git_view::Diff::Shown(shown)) =
@@ -380,6 +365,7 @@ impl Shell {
                 let text = shown.new_side_text(selection)?;
                 Some((target.path.clone(), selection.start, selection.end, text))
             }
+            View::Docs => self.docs.get(&project_id)?.picked_lines(),
             _ => None,
         }
     }
