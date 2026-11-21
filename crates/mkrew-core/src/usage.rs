@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use mkrew_protocol::{AgentLimits, Cli, LimitWindow};
 use serde_json::Value;
 
 use crate::profile::UsageFormat;
@@ -56,6 +57,7 @@ pub struct UsageReader {
     /// The model of the newest message that names one (Codex: the newest `turn_context`).
     /// Not in `usage`: Codex names it on another line than the counts. [`Self::usage`] joins them.
     model: Option<String>,
+    limits: Option<AgentLimits>,
     /// Claude repeats one API message's usage on every content-block line: the counts last
     /// added per `message.id` + `requestId` (`[input, cache write, cache read, output]`),
     /// replaced (not added) on a repeat. Kept for the whole session, not just the last key,
@@ -82,6 +84,7 @@ impl UsageReader {
             partial: Vec::new(),
             usage: None,
             model: None,
+            limits: None,
             seen: HashMap::new(),
             warning: None,
             warned: false,
@@ -100,6 +103,12 @@ impl UsageReader {
             model: self.model.clone(),
             ..usage
         })
+    }
+
+    /// The newest limits a Codex transcript named (its `token_count` lines carry them, also
+    /// while `info` is null); `None` for the other formats and until a line names them.
+    pub fn limits(&self) -> Option<&AgentLimits> {
+        self.limits.as_ref()
     }
 
     /// The warning about an unrecognised line, at most once per reader.
@@ -220,6 +229,10 @@ impl UsageReader {
         if value["type"] != "event_msg" || payload["type"] != "token_count" {
             return Line::Other;
         }
+        // Before the `info` check: the first answer carries them with `info: null`.
+        if let Some(limits) = codex_limits(value) {
+            self.limits = Some(limits);
+        }
         let info = &payload["info"];
         if info.is_null() {
             return Line::Other;
@@ -289,6 +302,70 @@ enum Line {
     Broken(&'static str),
 }
 
+/// `payload.rate_limits` of a Codex `token_count` line: `primary` and `secondary` are told
+/// apart by `window_minutes` (300 = 5 hours, 10080 = a week); another length is ignored. `None`
+/// when the line has no limits (`null`) or only unknown windows, so the last ones stay.
+fn codex_limits(value: &Value) -> Option<AgentLimits> {
+    let rate = &value["payload"]["rate_limits"];
+    let (mut five_hour, mut weekly) = (None, None);
+    for key in ["primary", "secondary"] {
+        let window = &rate[key];
+        let (Some(used), Some(minutes)) = (
+            window["used_percent"].as_f64(),
+            window["window_minutes"].as_u64(),
+        ) else {
+            continue;
+        };
+        let parsed = LimitWindow {
+            used_percent: used as f32,
+            resets_at: window["resets_at"].as_i64(),
+        };
+        match minutes {
+            300 => five_hour = Some(parsed),
+            10_080 => weekly = Some(parsed),
+            _ => {}
+        }
+    }
+    (five_hour.is_some() || weekly.is_some()).then(|| AgentLimits {
+        agent: Cli::Codex,
+        five_hour,
+        weekly,
+        observed_at: value["timestamp"]
+            .as_str()
+            .and_then(utc_seconds)
+            .unwrap_or(0),
+    })
+}
+
+/// `2026-05-11T17:05:53.772Z` (what Codex writes) as Unix seconds; any other form is `None`.
+fn utc_seconds(stamp: &str) -> Option<i64> {
+    let (date, time) = stamp.strip_suffix('Z')?.split_once('T')?;
+    let mut d = date.split('-').map(|p| p.parse::<i64>().ok());
+    let (year, month, day) = (d.next()??, d.next()??, d.next()??);
+    let mut t = time
+        .split('.')
+        .next()?
+        .split(':')
+        .map(|p| p.parse::<i64>().ok());
+    let (hour, minute, second) = (t.next()??, t.next()??, t.next()??);
+    let valid = (1..=12).contains(&month)
+        && (1..=31).contains(&day)
+        && (0..24).contains(&hour)
+        && (0..60).contains(&minute)
+        && (0..61).contains(&second);
+    valid.then(|| days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second)
+}
+
+/// Days from 1970-01-01 to the given proleptic Gregorian date (Howard Hinnant's algorithm).
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,6 +427,79 @@ mod tests {
 
     fn reader(format: &UsageFormat) -> UsageReader {
         UsageReader::new(format).unwrap()
+    }
+
+    fn codex_limits() -> AgentLimits {
+        AgentLimits {
+            agent: Cli::Codex,
+            five_hour: Some(LimitWindow {
+                used_percent: 23.0,
+                resets_at: Some(1_778_533_631),
+            }),
+            weekly: Some(LimitWindow {
+                used_percent: 46.0,
+                resets_at: Some(1_778_571_719),
+            }),
+            // 2026-05-11T17:05:53.772Z, the timestamp of the line that carries them.
+            observed_at: 1_778_519_153,
+        }
+    }
+
+    /// The fixture's only non-null `rate_limits` sits on a `token_count` line whose `info` is
+    /// null; the later lines carry `"rate_limits": null` and keep them.
+    #[test]
+    fn codex_limits_come_from_the_rate_limits_of_a_token_count_line() {
+        let mut r = reader(&UsageFormat::CodexJsonl);
+        assert_eq!(r.limits(), None);
+        r.feed(CODEX);
+        assert_eq!(r.limits(), Some(&codex_limits()));
+        let mut chunked = reader(&UsageFormat::CodexJsonl);
+        for chunk in CODEX.chunks(7) {
+            chunked.feed(chunk);
+        }
+        assert_eq!(chunked.limits(), Some(&codex_limits()));
+    }
+
+    #[test]
+    fn windows_of_another_length_are_ignored_and_the_rest_still_read() {
+        let line = br#"{"timestamp":"2026-05-11T17:05:53Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":9.0,"window_minutes":60,"resets_at":1},"secondary":{"used_percent":4.0,"window_minutes":300,"resets_at":2}}}}
+"#;
+        let mut r = reader(&UsageFormat::CodexJsonl);
+        r.feed(line);
+        let limits = r.limits().unwrap();
+        assert_eq!(limits.weekly, None);
+        assert_eq!(limits.five_hour.map(|w| w.used_percent), Some(4.0));
+        let only_unknown = br#"{"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":9.0,"window_minutes":60}}}}
+"#;
+        let mut none = reader(&UsageFormat::CodexJsonl);
+        none.feed(only_unknown);
+        assert_eq!(none.limits(), None);
+    }
+
+    #[test]
+    fn transcripts_without_limits_still_give_their_usage() {
+        for (format, bytes, expected) in fixtures() {
+            let mut r = reader(&format);
+            assert_eq!(r.feed(bytes), Some(expected), "{format:?}");
+            if format != UsageFormat::CodexJsonl {
+                assert_eq!(r.limits(), None, "{format:?}");
+            }
+        }
+        let no_limits = br#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":5,"output_tokens":2},"last_token_usage":{"total_tokens":7}}}}
+"#;
+        let mut r = reader(&UsageFormat::CodexJsonl);
+        assert!(r.feed(no_limits).is_some());
+        assert_eq!(r.limits(), None);
+    }
+
+    #[test]
+    fn utc_stamps_become_unix_seconds() {
+        assert_eq!(utc_seconds("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(utc_seconds("2024-02-29T00:00:00Z"), Some(1_709_164_800));
+        assert_eq!(utc_seconds("2026-05-11T17:05:53.772Z"), Some(1_778_519_153));
+        assert_eq!(utc_seconds("2026-05-11T17:05:53+07:00"), None);
+        assert_eq!(utc_seconds("yesterday"), None);
+        assert_eq!(utc_seconds("2026-13-01T00:00:00Z"), None);
     }
 
     #[test]
