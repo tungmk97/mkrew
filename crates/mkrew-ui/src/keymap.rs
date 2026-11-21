@@ -136,7 +136,7 @@ pub enum Command {
     GitStageAll,
     /// Git only: unstage every Staged file.
     GitUnstageAll,
-    /// Git only: open the discard confirmation of the selected file.
+    /// Git only: open the discard confirmation of the current hunk, else of the selected file.
     GitDiscard,
     /// Git only: fetch the shown repository.
     GitFetch,

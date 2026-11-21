@@ -1963,3 +1963,101 @@ fn marking_another_row_or_a_history_file_moves_nothing() {
     let _ = view.show(Section::History);
     assert_eq!(view.next_unviewed(&unstaged("a.rs")), Requests::default());
 }
+
+#[test]
+fn a_hunk_of_a_modified_changes_file_can_be_discarded_alone() {
+    let mut view = changes(&["a.rs", "b.rs"]);
+    // Diff still loading: no hunk to name.
+    assert!(!view.hunks_discardable());
+    assert_eq!(view.hunk_discard(0), None);
+    show_hunks(&mut view, &unstaged("a.rs"), 2);
+    assert!(view.hunks_discardable());
+    let discard = view.hunk_discard(1).unwrap();
+    assert_eq!(
+        discard
+            .hunk
+            .as_ref()
+            .map(|(index, hunk)| (*index, hunk.old_start)),
+        Some((1, 11))
+    );
+    assert_eq!(discard.title(), "Discard this hunk?");
+    assert_eq!(discard.confirm_label(), "Discard hunk");
+    assert!(discard.sentence().contains("This hunk of “a.rs”"));
+    let params = discard.params();
+    assert!(params.confirm && params.paths.is_empty());
+    let named = params.hunk.unwrap();
+    assert_eq!((named.path.as_str(), named.hunk.old_start), ("a.rs", 11));
+    assert_eq!(view.hunk_discard(2), None, "no such hunk");
+    // The file's own confirmation is unchanged.
+    let file = view.discard(&unstaged("a.rs")).unwrap();
+    assert_eq!(file.title(), "Discard changes?");
+    assert_eq!(file.params().paths, ["a.rs"]);
+    assert_eq!(file.params().hunk, None);
+}
+
+#[test]
+fn x_takes_the_current_hunk_else_the_file() {
+    let mut view = changes(&["a.rs"]);
+    show_hunks(&mut view, &unstaged("a.rs"), 2);
+    assert_eq!(view.discard_key().unwrap().hunk, None, "no current hunk");
+    view.key(Key::PreviousHunk);
+    assert_eq!(
+        view.discard_key().unwrap().hunk.map(|(index, _)| index),
+        Some(1)
+    );
+    // A viewed file's diff is folded: its hidden hunk is not discarded blind.
+    mark_viewed(&mut view, &["a.rs"]);
+    assert!(view.diff_collapsed());
+    assert_eq!(view.discard_key().unwrap().hunk, None);
+}
+
+#[test]
+fn staged_untracked_and_deleted_files_have_no_hunk_discard() {
+    let mut view = loaded();
+    let staged = target(Group::Staged, "a.rs");
+    show_hunks(&mut view, &staged, 1);
+    assert!(!view.hunks_discardable(), "staged");
+    assert_eq!(view.discard_key(), None, "staged files have no discard");
+    let gone = unstaged("b.rs");
+    view.select(gone.clone());
+    show_hunks(&mut view, &gone, 1);
+    assert!(!view.hunks_discardable(), "deleted");
+    assert_eq!(view.hunk_discard(0), None);
+    assert_eq!(
+        view.discard_key().unwrap().hunk,
+        None,
+        "the file goes by path"
+    );
+    let new = target(Group::Untracked, "new.txt");
+    view.select(new.clone());
+    show_hunks(&mut view, &new, 1);
+    assert_eq!(view.hunk_discard(0), None, "untracked");
+    assert_eq!(view.discard_key().unwrap().hunk, None);
+}
+
+#[test]
+fn the_hunk_dialog_lists_only_its_rows_and_stops_when_the_hunk_changed() {
+    let mut view = changes(&["a.rs"]);
+    let a = unstaged("a.rs");
+    view.begin_diff();
+    view.diff_loaded(&a, Ok(two_hunks()));
+    let shown = view.shown_diff(&a).unwrap();
+    // Rows: Hunk(0) + 4 lines, Gap, Hunk(1) + 2 lines.
+    assert_eq!(shown.rows.len(), 9);
+    let second = view.hunk_discard(1).unwrap();
+    assert_eq!(second.preview_rows(&shown), (6..9, 0));
+    let first = view.hunk_discard(0).unwrap();
+    assert_eq!(first.preview_rows(&shown), (0..5, 0));
+    let file = view.discard(&a).unwrap();
+    assert_eq!(file.preview_rows(&shown), (0..9, 0));
+    assert!(second.hunk_is_current(&shown));
+    // The diff reloads (an agent edited the file): the dialog's hunk is no longer there.
+    view.begin_diff();
+    view.diff_loaded(&a, Ok(laid_out(vec![hunk(1, 1, 1, 1)])));
+    let reloaded = view.shown_diff(&a).unwrap();
+    assert!(!second.hunk_is_current(&reloaded));
+    assert!(
+        file.hunk_is_current(&reloaded),
+        "a file discard has no hunk"
+    );
+}

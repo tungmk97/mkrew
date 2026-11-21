@@ -696,13 +696,20 @@ impl Shell {
         }
     }
 
-    /// `x`: the discard confirmation of the selected file (nothing for a file that cannot be
-    /// discarded: `open_git_discard` checks).
+    /// `x`: the confirmation of the current hunk when there is one that can go by hunk, else
+    /// of the selected file (nothing for a file that cannot be discarded: `open_git_discard`
+    /// checks).
     pub(crate) fn git_discard_selected(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(project_id) = self.workspace else {
             return;
         };
-        let target = (self.git.get(&project_id)).and_then(|view| view.selected.clone());
+        let Some(view) = self.git.get(&project_id) else {
+            return;
+        };
+        let target = view.selected.clone();
+        if let Some(discard) = view.discard_key().filter(|discard| discard.hunk.is_some()) {
+            return self.show_git_discard(discard, window, cx);
+        }
         if let Some(target) = target {
             self.open_git_discard(project_id, target, window, cx);
         }

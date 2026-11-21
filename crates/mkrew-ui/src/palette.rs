@@ -636,7 +636,7 @@ pub fn title(command: Command) -> String {
         Command::GitToggleViewed => "Git: Mark file as viewed / not viewed".into(),
         Command::GitStageAll => "Git: Stage all (selected group, else every change)".into(),
         Command::GitUnstageAll => "Git: Unstage all".into(),
-        Command::GitDiscard => "Git: Discard changes to selected file…".into(),
+        Command::GitDiscard => "Git: Discard changes to selected file or hunk…".into(),
         Command::GitFetch => "Git: Fetch".into(),
         Command::GitPush => "Git: Push".into(),
         Command::NewTask => "Task: New task".into(),

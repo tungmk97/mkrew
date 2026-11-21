@@ -16,7 +16,7 @@ use mkrew_core::settings::DiffMode;
 use mkrew_protocol::{
     ChangeKind, ChangedFile, CommentContext, Commit, CommitDetail, DiffLine, DiffLineKind, Event,
     FileDiff, GitDiffParams, GitDiscardParams, GitLogParams, GitMode, GitSetViewedParams,
-    GitShowParams, GitStageParams, GitStatus, GitStatusParams, HunkTarget, Request, Session,
+    GitShowParams, GitStageParams, GitStatus, GitStatusParams, Hunk, HunkTarget, Request, Session,
     SessionFiles, SessionFilesParams, SessionState, ViewedFile,
 };
 use ulid::Ulid;
@@ -492,8 +492,9 @@ impl StageRequest {
     }
 }
 
-/// The discard confirmation of one Unstaged / Untracked file; the dialog shows the file's diff
-/// (the view's shown diff once the file is selected) as what is lost.
+/// The discard confirmation of one Unstaged / Untracked file, or of one hunk of an Unstaged
+/// file; the dialog shows the file's diff (the view's shown diff once the file is selected),
+/// or that hunk, as what is lost.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discard {
     pub project_id: Ulid,
@@ -504,12 +505,38 @@ pub struct Discard {
     pub also_staged: bool,
     pub busy: bool,
     pub error: Option<String>,
+    /// One hunk of the file instead of the whole file: its index in the shown diff and the
+    /// hunk itself (what the dialog lists and the daemon reverses).
+    pub hunk: Option<(usize, Hunk)>,
 }
 
 impl Discard {
+    /// The dialog's title.
+    pub fn title(&self) -> &'static str {
+        if self.hunk.is_some() {
+            "Discard this hunk?"
+        } else {
+            "Discard changes?"
+        }
+    }
+
+    /// The danger button's label.
+    pub fn confirm_label(&self) -> &'static str {
+        if self.hunk.is_some() {
+            "Discard hunk"
+        } else {
+            "Discard changes"
+        }
+    }
+
     /// What confirming does, in one sentence.
     pub fn sentence(&self) -> String {
         let path = &self.target.path;
+        if self.hunk.is_some() {
+            return format!(
+                "This hunk of “{path}” is discarded and cannot be recovered. Its other changes and its staged changes stay."
+            );
+        }
         if self.target.group == Group::Untracked {
             return format!(
                 "“{path}” is deleted. It was never committed, so it cannot be recovered."
@@ -525,16 +552,56 @@ impl Discard {
         )
     }
 
-    /// The `git.discard` to send (only ever after the user confirmed).
+    /// The `git.discard` to send (only ever after the user confirmed): the file, or with a
+    /// hunk only that hunk (`paths` is empty then).
     pub fn params(&self) -> GitDiscardParams {
+        let hunk = self.hunk.as_ref().map(|(_, hunk)| HunkTarget {
+            path: self.target.path.clone(),
+            hunk: hunk.clone(),
+        });
         GitDiscardParams {
             project_id: self.project_id,
             worktree_task_id: self.worktree_task_id,
             repo: self.repo.clone(),
-            paths: vec![self.target.path.clone()],
-            hunk: None,
+            paths: if hunk.is_some() {
+                vec![]
+            } else {
+                vec![self.target.path.clone()]
+            },
+            hunk,
             confirm: true,
         }
+    }
+
+    /// The rows of `shown` the dialog lists (at most [`DISCARD_PREVIEW_ROWS`]) and how many
+    /// more there are: the whole diff, or the rows of the one hunk.
+    pub fn preview_rows(&self, shown: &Shown) -> (Range<usize>, usize) {
+        let Some((index, _)) = &self.hunk else {
+            let listed = shown.rows.len().min(DISCARD_PREVIEW_ROWS);
+            return (0..listed, shown.rows.len() - listed);
+        };
+        let Some(start) = shown
+            .rows
+            .iter()
+            .position(|row| *row == DiffRow::Hunk(*index))
+        else {
+            return (0..0, 0);
+        };
+        let lines = shown.rows[start + 1..]
+            .iter()
+            .take_while(|row| matches!(row, DiffRow::Line(_)))
+            .count();
+        let end = start + 1 + lines;
+        let stop = end.min(start + DISCARD_PREVIEW_ROWS);
+        (start..stop, end - stop)
+    }
+
+    /// `shown` (the diff reloads while the dialog is open) still has this hunk at its place:
+    /// confirming then discards what the dialog lists. A file discard has no hunk to check.
+    pub fn hunk_is_current(&self, shown: &Shown) -> bool {
+        self.hunk
+            .as_ref()
+            .is_none_or(|(index, hunk)| shown.diff.hunks.get(*index) == Some(hunk))
     }
 }
 
@@ -1864,7 +1931,48 @@ impl GitView {
             also_staged: also_staged.is_some(),
             busy: false,
             error: None,
+            hunk: None,
         })
+    }
+
+    /// Hunk headers offer "Discard hunk": the selected file is a modified one of the Changes
+    /// group and its diff is shown. (Only modified files go by hunk: the patch has no
+    /// file-mode headers. Cheap: the render asks it every frame.)
+    pub fn hunks_discardable(&self) -> bool {
+        self.selected
+            .as_ref()
+            .filter(|selected| selected.group == Group::Unstaged)
+            .is_some_and(|selected| {
+                matches!(self.diff, Diff::Shown(_))
+                    && self
+                        .file(selected)
+                        .is_some_and(|file| file.kind == ChangeKind::Modified)
+            })
+    }
+
+    /// The discard confirmation of hunk `hunk` of the shown diff.
+    pub fn hunk_discard(&self, hunk: usize) -> Option<Discard> {
+        if !self.hunks_discardable() {
+            return None;
+        }
+        let Diff::Shown(shown) = &self.diff else {
+            return None;
+        };
+        let target = shown.diff.hunks.get(hunk)?.clone();
+        Some(Discard {
+            hunk: Some((hunk, target)),
+            ..self.discard(self.selected.as_ref()?)?
+        })
+    }
+
+    /// `x`: the current hunk's confirmation when there is one that can go by hunk (a folded
+    /// diff hides its hunks), else the selected file's.
+    pub fn discard_key(&self) -> Option<Discard> {
+        let hunk = self
+            .hunk
+            .filter(|_| !self.diff_collapsed())
+            .and_then(|hunk| self.hunk_discard(hunk));
+        hunk.or_else(|| self.discard(self.selected.as_ref()?))
     }
 
     /// The shown diff of `target`, if it is the selected file and its diff is loaded (what a
