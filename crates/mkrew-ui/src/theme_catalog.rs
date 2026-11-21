@@ -248,9 +248,15 @@ pub fn read_folder(dir: &Path) -> Vec<(String, Result<String, String>)> {
 pub struct ThemesStamp(Vec<(String, Option<SystemTime>, u64)>);
 
 impl ThemesStamp {
+    /// A missing folder reads as no files; one that cannot be read is a stamp of its own
+    /// (its error), so the poll reloads the catalog and the error card shows.
     pub fn read(dir: &Path) -> Self {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return Self::default();
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Self::default();
+            }
+            Err(error) => return Self(vec![(format!("cannot read the folder: {error}"), None, 0)]),
         };
         let mut files: Vec<(String, Option<SystemTime>, u64)> = entries
             .flatten()
@@ -384,16 +390,6 @@ mod tests {
     }
 
     #[test]
-    fn a_removed_file_leaves_the_catalog() {
-        let with = ThemeCatalog::from_files(vec![file("Aurora", true)]);
-        assert!(with.find("Aurora").is_some());
-        assert_eq!(
-            ThemeCatalog::from_files(Vec::new()),
-            ThemeCatalog::builtin()
-        );
-    }
-
-    #[test]
     fn a_low_contrast_file_loads_with_its_problems() {
         let mut palette = Palette::from_theme(&Theme::dark());
         palette.fg = palette.bg;
@@ -480,6 +476,17 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_that_cannot_be_read_changes_the_stamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty = ThemesStamp::read(dir.path());
+        // A file where the folder should be: not a missing folder, an unreadable one.
+        let file = dir.path().join("themes");
+        std::fs::write(&file, "x").unwrap();
+        assert_ne!(ThemesStamp::read(&file), empty);
+        assert_eq!(ThemesStamp::read(&file), ThemesStamp::read(&file));
+    }
+
+    #[test]
     fn the_catalog_follows_the_folder() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("moon.toml");
@@ -518,6 +525,11 @@ mod tests {
             assert_eq!(loaded.palette, listed.palette, "{name}");
             assert_eq!(loaded.dark, listed.dark, "{name}");
             assert!(copy.errors().is_empty(), "{name}: {:?}", copy.errors());
+            assert!(
+                loaded.problems.is_empty(),
+                "{name}: {:?}",
+                loaded.problems.first()
+            );
         }
     }
 

@@ -5,8 +5,7 @@
 use crate::*;
 use mkrew_ui::settings_dialog::Badge;
 use mkrew_ui::theme::Palette;
-use mkrew_ui::theme_catalog::write_theme_copy;
-use mkrew_ui::theme_catalog::{CatalogTheme, FileError};
+use mkrew_ui::theme_catalog::{CatalogTheme, FileError, write_theme_copy};
 
 impl Shell {
     /// "New theme from current": writes `<themes>/<name> copy.toml` (`copy 2`, `copy 3` when
@@ -39,6 +38,17 @@ impl Shell {
             Err(error) => {
                 self.toast_error(format!("Cannot create the themes folder: {error}"), cx);
             }
+        }
+    }
+}
+
+impl Shell {
+    /// Forgets a gallery preview before something else rebuilds the theme shown (the OS
+    /// appearance changed, Settings opened again): the kept theme is what that rebuild shows.
+    pub(crate) fn drop_gallery_preview(&mut self) {
+        self.gallery_preview = None;
+        if let Some(dialog) = &mut self.settings_dialog {
+            dialog.end_preview();
         }
     }
 }
@@ -134,6 +144,8 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        // The badges follow the themes on screen (`settings.toml` may be unreadable).
+        let shown = cx.global::<theme::ThemeNames>().clone();
         let mut cards = div()
             .id("theme-gallery")
             .flex()
@@ -155,7 +167,7 @@ impl Shell {
             }
             let row: Vec<gpui::AnyElement> = listed
                 .into_iter()
-                .map(|card| self.theme_card(dialog, card, theme, cx))
+                .map(|card| self.theme_card(dialog, card, &shown, theme, cx))
                 .collect();
             cards = cards.child(
                 div()
@@ -203,6 +215,12 @@ impl Shell {
                                 theme,
                                 theme.hover,
                             )
+                            .focus_stop(theme)
+                            .tooltip(tooltip(
+                                theme,
+                                "Save the theme shown as a file and edit it",
+                                "",
+                            ))
                             .on_press(
                                 true,
                                 cx.listener(|shell, _, _, cx| shell.new_theme_from_current(cx)),
@@ -217,6 +235,12 @@ impl Shell {
                                 theme,
                                 theme.hover,
                             )
+                            .focus_stop(theme)
+                            .tooltip(tooltip(
+                                theme,
+                                "Show the themes folder in the file manager",
+                                "",
+                            ))
                             .on_press(
                                 true,
                                 cx.listener(|shell, _, _, cx| shell.open_themes_folder(cx)),
@@ -232,11 +256,12 @@ impl Shell {
         &self,
         dialog: &SettingsDialog,
         card: &CatalogTheme,
+        shown: &theme::ThemeNames,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let name = card.name.clone();
-        let badges = SettingsDialog::card_badges(card, dialog.kept_names());
+        let badges = SettingsDialog::card_badges(card, (&shown.dark, &shown.light));
         let kept = badges
             .clone()
             .any(|badge| matches!(badge, Badge::DarkMode | Badge::LightMode));
@@ -254,7 +279,8 @@ impl Shell {
             let color = match badge {
                 Badge::DarkMode | Badge::LightMode => theme.accent_text,
                 Badge::File => theme.text_muted,
-                Badge::LowContrast => theme.diff_mod_text,
+                // `text` reads 4.5:1 on a card's `surface` (a `problems()` rule).
+                Badge::LowContrast => theme.text,
             };
             let text = div()
                 .text_size(font_size::META)

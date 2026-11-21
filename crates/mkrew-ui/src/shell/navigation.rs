@@ -618,10 +618,24 @@ impl Shell {
         theme::refresh(mode, window, cx);
         cx.refresh_windows();
         let value = theme::toml_string(name);
-        if let Err(error) =
-            mkrew_core::settings::write_ui_value(&self.settings_file, theme::slot_key(dark), &value)
-        {
-            self.settings_write_failed("the theme", error, cx);
+        match mkrew_core::settings::write_ui_value(
+            &self.settings_file,
+            theme::slot_key(dark),
+            &value,
+        ) {
+            Err(error) => self.settings_write_failed("the theme", error, cx),
+            Ok(()) => {
+                // Now, not at the next mtime poll: the dialog's rows show the new value.
+                self.settings_modified = std::fs::metadata(&self.settings_file)
+                    .and_then(|m| m.modified())
+                    .ok();
+                if let Some(dialog) = &mut self.settings_dialog {
+                    dialog.reload(
+                        mkrew_core::settings::load(&self.settings_file)
+                            .map_err(|error| error.to_string()),
+                    );
+                }
+            }
         }
     }
 
@@ -785,6 +799,8 @@ impl Shell {
             palette::Action::Extra(Extra::PhoneAccess) => self.open_phone_access(window, cx),
             palette::Action::Extra(Extra::Ports) => self.open_ports(window, cx),
             palette::Action::Extra(Extra::ManagePrompts) => self.open_prompts_settings(window, cx),
+            palette::Action::Extra(Extra::NewThemeFromCurrent) => self.new_theme_from_current(cx),
+            palette::Action::Extra(Extra::OpenThemesFolder) => self.open_themes_folder(cx),
             palette::Action::Extra(Extra::CheckUpdates) => self.check_updates(true, window, cx),
             palette::Action::Extra(Extra::CopyLastError) => self.copy_last_error(cx),
             palette::Action::Extra(Extra::DismissToasts) => {
@@ -972,6 +988,8 @@ impl Shell {
                     Extra::AddMachine => self.open_machine_add(window, cx),
                     // Handled above: it needs no workspace.
                     Extra::ManagePrompts => self.open_prompts_settings(window, cx),
+                    // Handled above: they need no workspace.
+                    Extra::NewThemeFromCurrent | Extra::OpenThemesFolder => {}
                     Extra::CheckUpdates => self.check_updates(true, window, cx),
                 }
             }

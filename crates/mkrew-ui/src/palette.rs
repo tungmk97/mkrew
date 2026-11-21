@@ -155,10 +155,13 @@ pub enum Extra {
     History,
     InstallUpdate,
     AddMachine,
+    /// The Appearance gallery's two buttons (ADR 0101), for the keyboard.
+    NewThemeFromCurrent,
+    OpenThemesFolder,
 }
 
 impl Extra {
-    pub const ALL: [Self; 47] = [
+    pub const ALL: [Self; 49] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -206,6 +209,8 @@ impl Extra {
         Self::History,
         Self::InstallUpdate,
         Self::AddMachine,
+        Self::NewThemeFromCurrent,
+        Self::OpenThemesFolder,
     ];
 
     pub fn title(self) -> &'static str {
@@ -257,6 +262,8 @@ impl Extra {
             Self::History => "Global: History…",
             Self::InstallUpdate => "Global: Install update",
             Self::AddMachine => "Machine: Add…",
+            Self::NewThemeFromCurrent => "Theme: New theme from current",
+            Self::OpenThemesFolder => "Theme: Open themes folder",
         }
     }
 
@@ -307,7 +314,10 @@ impl Extra {
             }
             Self::AgentImprove => in_view(View::Terminals) && context.composer_open,
             Self::PhoneAccess | Self::CheckUpdates | Self::AddMachine => !context.machine,
-            Self::Ports | Self::ManagePrompts => true,
+            Self::Ports
+            | Self::ManagePrompts
+            | Self::NewThemeFromCurrent
+            | Self::OpenThemesFolder => true,
             Self::GitChangeBase => context.workspace && context.git && context.git_base,
             Self::GitSwitchRepo => context.workspace && context.git && context.git_repos,
             // The switch heads the Tasks side of the Board.

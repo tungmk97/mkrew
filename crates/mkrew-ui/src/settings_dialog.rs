@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use gpui::{Keystroke, SharedString};
 use mkrew_core::prompt::PromptLibrary;
-use mkrew_core::settings::{DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, Settings};
+use mkrew_core::settings::Settings;
 use mkrew_core::settings_fields::{Kind, Page, SETTINGS, Setting};
 
 use crate::editor::Motion;
@@ -428,17 +428,8 @@ impl SettingsDialog {
             .nth(at)
     }
 
-    /// The names `[ui] dark_theme` and `light_theme` hold now (the defaults while the file does
-    /// not parse).
-    pub fn kept_names(&self) -> (&str, &str) {
-        match &self.settings {
-            Ok(settings) => (&settings.ui.dark_theme, &settings.ui.light_theme),
-            Err(_) => (DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME),
-        }
-    }
-
-    /// The badges of `card` (`kept` is [`Self::kept_names`], read once per render): its slots
-    /// first, then its origin and its contrast.
+    /// The badges of `card` (`shown` is the dark and light theme names on screen, read once per
+    /// render): its slots first, then its origin and its contrast.
     pub fn card_badges(
         card: &CatalogTheme,
         (dark, light): (&str, &str),
@@ -1028,6 +1019,11 @@ impl SettingsDialog {
                     }
                     Focus::Row(i) => {
                         let last = self.rows(keymap).len().saturating_sub(1);
+                        // Up from the first row goes back to the last gallery card.
+                        if up && i == 0 && self.gallery_shown() {
+                            let cards = self.gallery_cards().len();
+                            return self.move_focus(Focus::Gallery(cards - 1), keymap);
+                        }
                         let next = if up {
                             i.saturating_sub(1)
                         } else {
@@ -1616,6 +1612,19 @@ mod tests {
     }
 
     #[test]
+    fn up_from_the_first_row_returns_to_the_last_card() {
+        let keymap = Keymap::defaults();
+        let mut d = gallery_dialog();
+        to_gallery(&mut d, &keymap);
+        let last = card_names(&d).len() - 1;
+        d.focus = Focus::Gallery(last);
+        d.key(&key("down"), None, &keymap);
+        assert_eq!(d.focus, Focus::Row(0));
+        d.key(&key("up"), None, &keymap);
+        assert_eq!(d.focus, Focus::Gallery(last));
+    }
+
+    #[test]
     fn a_broken_settings_file_lets_cards_preview_but_never_writes() {
         let keymap = Keymap::defaults();
         let mut d = SettingsDialog::new(Err("settings.toml:2:1: oops".into()), Vec::new());
@@ -1750,24 +1759,23 @@ mod tests {
             "dim.toml".into(),
             Ok(crate::theme_file::render("Dim", &dim)),
         )]));
-        let badges = |d: &SettingsDialog, name: &str| {
-            SettingsDialog::card_badges(d.catalog.find(name).unwrap(), d.kept_names())
-                .collect::<Vec<_>>()
+        // The names on screen: the kept theme of each slot.
+        let (dark, light) = ("Mkrew Dark", "Mkrew Light");
+        let badges = |d: &SettingsDialog, name: &str, shown: (&str, &str)| {
+            SettingsDialog::card_badges(d.catalog.find(name).unwrap(), shown).collect::<Vec<_>>()
         };
-        assert_eq!(badges(&d, "Mkrew Dark"), [Badge::DarkMode]);
-        assert_eq!(badges(&d, "Mkrew Light"), [Badge::LightMode]);
-        assert_eq!(badges(&d, "Dracula"), []);
-        assert_eq!(badges(&d, "Dim"), [Badge::File, Badge::LowContrast]);
-        let mut settings = Settings::default();
-        settings.ui.dark_theme = "Dim".into();
-        d.reload(Ok(settings));
+        let shown = (dark, light);
+        assert_eq!(badges(&d, "Mkrew Dark", shown), [Badge::DarkMode]);
+        assert_eq!(badges(&d, "Mkrew Light", shown), [Badge::LightMode]);
+        assert_eq!(badges(&d, "Dracula", shown), []);
+        assert_eq!(badges(&d, "Dim", shown), [Badge::File, Badge::LowContrast]);
+        let shown = ("Dim", light);
         assert_eq!(
-            badges(&d, "Dim"),
+            badges(&d, "Dim", shown),
             [Badge::DarkMode, Badge::File, Badge::LowContrast]
         );
-        assert_eq!(badges(&d, "Mkrew Dark"), []);
+        assert_eq!(badges(&d, "Mkrew Dark", shown), []);
         assert_eq!(Badge::LowContrast.label(), "Low contrast");
-        assert_eq!(d.kept_names(), ("Dim", "Mkrew Light"));
     }
 
     #[test]

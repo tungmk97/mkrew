@@ -17,6 +17,12 @@ impl Shell {
         fonts.dedup();
         let mut dialog = SettingsDialog::new(settings, fonts);
         dialog.set_catalog(cx.global::<ThemeCatalog>().clone());
+        // The dialog this one replaces may have been previewing a card: the kept theme comes
+        // back (the new dialog starts with no preview).
+        if let Some((mode, _)) = self.gallery_preview.take() {
+            theme::refresh(mode, window, cx);
+            cx.refresh_windows();
+        }
         self.settings_dialog = Some(dialog);
         self.settings_from_composer =
             self.composer_session(window).is_some() && self.composer_focus.is_focused(window);

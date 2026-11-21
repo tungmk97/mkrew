@@ -54,7 +54,9 @@ impl Shell {
         let config_dir = paths.config_dir.clone();
         let main_window = window.window_handle();
         // System mode follows the OS live (ADR 0027).
-        cx.observe_window_appearance(window, |_, window, cx| {
+        cx.observe_window_appearance(window, |shell, window, cx| {
+            // A preview was built for the old appearance; the kept theme is rebuilt now.
+            shell.drop_gallery_preview();
             theme::refresh(cx.theme().mode, window, cx);
             cx.notify();
         })
@@ -327,9 +329,8 @@ impl Shell {
             keymap_errors: keymap_errors.to_vec(),
             keymap_file,
             settings_modified: None,
-            // The first tick reloads once if the folder changed since the startup load (an empty
-            // or missing folder reads as the default stamp, so no extra load).
-            themes_stamp: ThemesStamp::default(),
+            // The folder as the startup load saw it: the poll reloads only on a change.
+            themes_stamp: ThemesStamp::read(&themes_dir),
             themes_dir,
             settings_error: None,
             settings_file,
