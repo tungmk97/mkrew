@@ -1379,6 +1379,31 @@ pub struct Palette {
     pub ansi: [u32; 16],
 }
 
+impl Palette {
+    /// The palette a theme can be written back as (the two Mkrew themes have none of their
+    /// own): its own background, chrome, surface, text, muted text, accent and ANSI colors,
+    /// with the six hues taken from ANSI red to cyan.
+    pub fn from_theme(theme: &Theme) -> Self {
+        let a = theme.ansi;
+        Self {
+            dark: theme.dark,
+            bg: theme.bg,
+            chrome: theme.chrome,
+            surface: theme.surface,
+            fg: theme.text,
+            muted: theme.text_muted,
+            accent: theme.accent,
+            red: a[1],
+            green: a[2],
+            yellow: a[3],
+            blue: a[4],
+            magenta: a[5],
+            cyan: a[6],
+            ansi: a,
+        }
+    }
+}
+
 /// `a` blended toward `b` by `t` (0 = `a`, 1 = `b`), per RGB channel.
 pub fn mix(a: u32, b: u32, t: f32) -> u32 {
     [16, 8, 0].into_iter().fold(0, |out, shift| {
