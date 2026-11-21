@@ -2,7 +2,10 @@
 //! `mkrew_core::settings_fields::SETTINGS`, and a Keyboard page of every command. Pure: the
 //! shell turns an [`Effect`] into a file write and feeds the result back.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
+use std::rc::Rc;
 
 use gpui::Keystroke;
 use mkrew_core::prompt::PromptLibrary;
@@ -14,6 +17,7 @@ use crate::keymap::{Command, Keymap, KeymapError, keys_label};
 use crate::machines::{Field, Invalid, Machine};
 use crate::palette;
 use crate::prompts_page::{PromptAction, PromptsPage, Spot, Written};
+use crate::quick_open::match_ranges;
 use crate::task_dialog::{DialogKey, dialog_key};
 use crate::text_box::Input;
 
@@ -25,13 +29,34 @@ pub enum Tab {
     Prompts,
 }
 
+/// The page list, by overline (spec 6.1): the single order of the navigation.
+pub const NAV: [(&str, &[Tab]); 3] = [
+    (
+        "App",
+        &[
+            Tab::Settings(Page::General),
+            Tab::Settings(Page::Appearance),
+            Tab::Settings(Page::Notifications),
+            Tab::Settings(Page::Voice),
+            Tab::Settings(Page::Features),
+        ],
+    ),
+    (
+        "Integrations",
+        &[
+            Tab::Settings(Page::Jira),
+            Tab::Settings(Page::Phone),
+            Tab::Machines,
+        ],
+    ),
+    ("Input", &[Tab::Keyboard, Tab::Prompts]),
+];
+
 impl Tab {
     pub fn all() -> Vec<Tab> {
-        let mut all: Vec<Tab> = Page::ALL.into_iter().map(Tab::Settings).collect();
-        all.push(Tab::Keyboard);
-        all.push(Tab::Prompts);
-        all.push(Tab::Machines);
-        all
+        NAV.iter()
+            .flat_map(|(_, tabs)| tabs.iter().copied())
+            .collect()
     }
 
     pub fn title(self) -> &'static str {
@@ -93,6 +118,8 @@ fn bindable(command: Command, keystroke: &Keystroke) -> bool {
 pub enum Focus {
     /// The page list on the left.
     Tabs,
+    /// The search box at the top of the page list.
+    Find,
     /// The Keyboard page's search box.
     Search,
     Row(usize),
@@ -166,6 +193,83 @@ impl AddForm {
     }
 }
 
+/// A setting that matches the global search.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hit {
+    pub setting: &'static Setting,
+    /// The best of the label, help, key and page scores (always above zero).
+    pub score: i64,
+    /// Byte ranges of the label the query matched (accented in the row).
+    pub label_ranges: Vec<Range<usize>>,
+}
+
+/// Every visible setting whose label, help, `section.key` or page name `palette::fuzzy` scores
+/// above zero for `query`, best first (ties keep the table order). Hidden settings never match.
+pub fn search(query: &str) -> Vec<Hit> {
+    let mut hits: Vec<Hit> = SETTINGS
+        .iter()
+        .filter(|setting| !setting.hidden)
+        .filter_map(|setting| {
+            let scores = [
+                palette::fuzzy(query, setting.label),
+                palette::fuzzy(query, setting.help),
+                palette::fuzzy(query, &setting.id()),
+                palette::fuzzy(query, setting.page.title()),
+            ];
+            let label_ranges = scores[0]
+                .as_ref()
+                .map(|(_, at)| match_ranges(setting.label, at))
+                .unwrap_or_default();
+            let score = scores
+                .iter()
+                .flatten()
+                .map(|(score, _)| *score)
+                .max()
+                .filter(|score| *score > 0)?;
+            Some(Hit {
+                setting,
+                score,
+                label_ranges,
+            })
+        })
+        .collect();
+    // A label match always ranks above a help-only match; the best score orders within each.
+    hits.sort_by(|a, b| {
+        let (a_label, b_label) = (!a.label_ranges.is_empty(), !b.label_ranges.is_empty());
+        b_label.cmp(&a_label).then(b.score.cmp(&a.score))
+    });
+    hits
+}
+
+/// One card of a page: its overline title and its rows with their index in `rows()`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Group {
+    pub title: &'static str,
+    pub rows: Vec<(usize, Row)>,
+}
+
+/// `rows` as cards: consecutive settings of one group share a card. A shortcut, and every
+/// search result (`searching`), is a card of its own with an empty title.
+pub fn grouped(rows: &[Row], searching: bool) -> Vec<Group> {
+    let mut groups: Vec<Group> = Vec::new();
+    for (index, row) in rows.iter().copied().enumerate() {
+        match row {
+            Row::Setting(setting) if !searching => match groups.last_mut() {
+                Some(last) if last.title == setting.group => last.rows.push((index, row)),
+                _ => groups.push(Group {
+                    title: setting.group,
+                    rows: vec![(index, row)],
+                }),
+            },
+            _ => groups.push(Group {
+                title: "",
+                rows: vec![(index, row)],
+            }),
+        }
+    }
+    groups
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsDialog {
     pub tab: Tab,
@@ -179,6 +283,10 @@ pub struct SettingsDialog {
     /// Per row id: why its last write failed.
     pub errors: HashMap<String, String>,
     pub search: Input,
+    /// The global search over every page (Ctrl+F).
+    pub find: Input,
+    /// The last search, keyed by its query text (see [`SettingsDialog::hits`]).
+    hit_cache: RefCell<Option<(String, Rc<Vec<Hit>>)>>,
     /// The command waiting for its new keystroke.
     pub capture: Option<Command>,
     pub list_pick: Option<ListPick>,
@@ -198,6 +306,8 @@ impl SettingsDialog {
             draft: None,
             errors: HashMap::new(),
             search: Input::default(),
+            find: Input::default(),
+            hit_cache: RefCell::new(None),
             capture: None,
             list_pick: None,
             add: None,
@@ -210,6 +320,13 @@ impl SettingsDialog {
     }
 
     pub fn rows(&self, keymap: &Keymap) -> Vec<Row> {
+        if self.searching() {
+            return self
+                .hits()
+                .iter()
+                .map(|hit| Row::Setting(hit.setting))
+                .collect();
+        }
         match self.tab {
             Tab::Settings(page) => SETTINGS
                 .iter()
@@ -230,6 +347,72 @@ impl SettingsDialog {
                     .collect()
             }
         }
+    }
+
+    /// A non-blank query is typed in the search box: the right side lists matches of every page.
+    pub fn searching(&self) -> bool {
+        !self.find.trim().is_empty()
+    }
+
+    /// The matches of the query, in the order of [`Self::rows`] (empty without a query). The
+    /// result is cached under the query text it was computed for, so a render or key press
+    /// computes the search once, and an edit of `find` by any path just misses the cache.
+    pub fn hits(&self) -> Rc<Vec<Hit>> {
+        let query = self.find.trim();
+        if query.is_empty() {
+            return Rc::default();
+        }
+        let mut cache = self.hit_cache.borrow_mut();
+        match cache.as_ref() {
+            Some((cached, hits)) if cached == query => hits.clone(),
+            _ => {
+                let hits = Rc::new(search(query));
+                *cache = Some((query.to_owned(), hits.clone()));
+                hits
+            }
+        }
+    }
+
+    /// The title of the right side: "Search results", else the page.
+    pub fn heading(&self) -> String {
+        if self.searching() {
+            "Search results".to_owned()
+        } else {
+            self.tab.title().to_owned()
+        }
+    }
+
+    /// The pages to dim in the navigation: while a query is typed, those without a match (the
+    /// shortcut, machine and prompt pages are never searched).
+    pub fn dimmed_tabs(&self) -> Vec<Tab> {
+        if !self.searching() {
+            return Vec::new();
+        }
+        let pages: HashSet<Page> = self.hits().iter().map(|hit| hit.setting.page).collect();
+        Tab::all()
+            .into_iter()
+            .filter(|tab| match tab {
+                Tab::Settings(page) => !pages.contains(page),
+                _ => true,
+            })
+            .collect()
+    }
+
+    /// Esc, or the empty state's "Clear search": the query goes, the keyboard stays in the box.
+    pub fn clear_find(&mut self) -> Effect {
+        let effect = self.commit_draft();
+        self.find = Input::default();
+        self.focus = Focus::Find;
+        effect
+    }
+
+    /// The index of the card (see [`grouped`]) that holds row `index`: the scroll position.
+    pub fn group_of(&self, index: usize, keymap: &Keymap) -> usize {
+        let rows = self.rows(keymap);
+        grouped(&rows, self.searching())
+            .iter()
+            .position(|group| group.rows.iter().any(|(i, _)| *i == index))
+            .unwrap_or(0)
     }
 
     /// The value the file holds (the defaults when the file is broken).
@@ -283,6 +466,7 @@ impl SettingsDialog {
     pub fn set_tab(&mut self, tab: Tab) -> Effect {
         let effect = self.commit_draft();
         self.tab = tab;
+        self.find = Input::default();
         if tab == Tab::Prompts {
             // The folder is read when the page opens (spec 2026-11-04 section 7.2).
             self.prompts.stale = true;
@@ -398,18 +582,20 @@ impl SettingsDialog {
     }
 
     fn step_focus(&mut self, back: bool, keymap: &Keymap) -> Effect {
-        let mut order = vec![Focus::Tabs];
-        if self.tab == Tab::Keyboard {
-            order.push(Focus::Search);
-        }
-        if self.tab == Tab::Prompts {
-            order.push(Focus::Prompts(Spot::List));
-            if self.prompts.draft.is_some() {
-                order.extend([Spot::Name, Spot::Body].map(Focus::Prompts));
+        let mut order = vec![Focus::Tabs, Focus::Find];
+        if !self.searching() {
+            if self.tab == Tab::Keyboard {
+                order.push(Focus::Search);
             }
-        }
-        if self.add.is_some() {
-            order.extend([Field::Name, Field::Host, Field::Mk].map(Focus::Add));
+            if self.tab == Tab::Prompts {
+                order.push(Focus::Prompts(Spot::List));
+                if self.prompts.draft.is_some() {
+                    order.extend([Spot::Name, Spot::Body].map(Focus::Prompts));
+                }
+            }
+            if self.add.is_some() {
+                order.extend([Field::Name, Field::Host, Field::Mk].map(Focus::Add));
+            }
         }
         order.extend((0..self.rows(keymap).len()).map(Focus::Row));
         let at = order.iter().position(|f| *f == self.focus).unwrap_or(0);
@@ -432,17 +618,18 @@ impl SettingsDialog {
             return self.focus == Focus::Tabs;
         }
         let rows = self.rows(keymap).len();
+        let plain_page = !self.searching()
+            && self.tab != Tab::Keyboard
+            && self.tab != Tab::Prompts
+            && self.add.is_none();
         match self.focus {
             Focus::Row(i) => i + 1 >= rows,
+            Focus::Find => rows == 0 && (self.searching() || plain_page),
             Focus::Search => rows == 0,
             Focus::Add(field) => field == Field::Mk,
             Focus::Prompts(spot) => spot == self.prompts_last_spot(),
-            Focus::Tabs => {
-                self.tab != Tab::Keyboard
-                    && self.tab != Tab::Prompts
-                    && rows == 0
-                    && self.add.is_none()
-            }
+            // The search box always follows the page list.
+            Focus::Tabs => false,
         }
     }
 
@@ -455,10 +642,11 @@ impl SettingsDialog {
     /// last row.
     pub fn enter(&mut self, forward: bool, keymap: &Keymap) {
         let last = match self.rows(keymap).len() {
+            0 if self.searching() => Focus::Find,
             0 if self.tab == Tab::Keyboard => Focus::Search,
             0 if self.add.is_some() => Focus::Add(Field::Mk),
             0 if self.tab == Tab::Prompts => Focus::Prompts(self.prompts_last_spot()),
-            0 => Focus::Tabs,
+            0 => Focus::Find,
             count => Focus::Row(count - 1),
         };
         // `leave` already wrote any draft, so there is no effect to apply.
@@ -522,6 +710,10 @@ impl SettingsDialog {
         {
             return Effect::Prompts(action);
         }
+        let m = keystroke.modifiers;
+        if keystroke.key == "f" && m.control && !m.shift && !m.alt && !m.platform {
+            return self.move_focus(Focus::Find, keymap);
+        }
         let Some(key) = dialog_key(keystroke) else {
             return Effect::None;
         };
@@ -546,6 +738,9 @@ impl SettingsDialog {
                 if self.add.is_some() {
                     self.close_add();
                     return Effect::None;
+                }
+                if !self.find.is_empty() {
+                    return self.clear_find();
                 }
                 if self.focus == Focus::Search && !self.search.is_empty() {
                     self.search = Input::default();
@@ -579,14 +774,17 @@ impl SettingsDialog {
                         };
                         self.move_focus(Focus::Row(next), keymap)
                     }
-                    Focus::Search | Focus::Add(_) | Focus::Prompts(_) => Effect::None,
+                    Focus::Find if !up && !self.rows(keymap).is_empty() => {
+                        self.move_focus(Focus::Row(0), keymap)
+                    }
+                    Focus::Find | Focus::Search | Focus::Add(_) | Focus::Prompts(_) => Effect::None,
                 }
             }
             DialogKey::Enter | DialogKey::Save => self.activate(keymap),
             DialogKey::Insert(text)
                 if text == " "
                     && self.draft.is_none()
-                    && !matches!(self.focus, Focus::Search | Focus::Add(_)) =>
+                    && !matches!(self.focus, Focus::Search | Focus::Find | Focus::Add(_)) =>
             {
                 self.activate(keymap)
             }
@@ -615,7 +813,9 @@ impl SettingsDialog {
 
     /// Applies `edit` to the text that has the keyboard: the search box or the draft.
     fn edit_text(&mut self, edit: impl FnOnce(&mut Input)) {
-        if self.focus == Focus::Search {
+        if self.focus == Focus::Find {
+            edit(&mut self.find);
+        } else if self.focus == Focus::Search {
             edit(&mut self.search);
         } else if let Focus::Add(field) = self.focus
             && let Some(form) = &mut self.add
@@ -635,6 +835,8 @@ impl SettingsDialog {
             None
         } else if let Some(pick) = &self.list_pick {
             Some(&pick.query)
+        } else if self.focus == Focus::Find {
+            Some(&self.find)
         } else if self.focus == Focus::Search {
             Some(&self.search)
         } else if let Focus::Add(field) = self.focus {
@@ -898,6 +1100,7 @@ mod tests {
             .position(|row| matches!(row, Row::Setting(s) if s.id() == id))
             .unwrap();
         d.key(&key("tab"), None, keymap);
+        d.key(&key("tab"), None, keymap);
         for _ in 0..index {
             d.key(&key("down"), None, keymap);
         }
@@ -1157,7 +1360,7 @@ mod tests {
         );
         assert!(!d.chain_edge(false, &keymap));
         let last = d.rows(&keymap).len() - 1;
-        for _ in 0..=last {
+        for _ in 0..=last + 1 {
             d.key(&key("tab"), None, &keymap);
         }
         assert_eq!(d.focus, Focus::Row(last));
@@ -1251,6 +1454,7 @@ mod tests {
         let keymap = Keymap::defaults();
         let mut d = dialog();
         d.set_tab(Tab::Machines);
+        d.key(&key("tab"), None, &keymap);
         assert!(
             d.chain_edge(false, &keymap),
             "no rows and no form: Tab leaves at once"
@@ -1328,6 +1532,7 @@ mod tests {
         let mut d = dialog();
         d.set_tab(Tab::Prompts);
         d.prompts_loaded(library(&["a", "b"]));
+        d.key(&key("tab"), None, &keymap);
         d.key(&key("tab"), None, &keymap);
         assert_eq!(d.focus, Focus::Prompts(Spot::List));
         assert!(
@@ -1510,15 +1715,184 @@ mod tests {
     }
 
     #[test]
-    fn the_page_list_has_prompts_before_machines_and_up_down_reaches_it() {
-        let keymap = Keymap::defaults();
+    fn the_page_list_follows_the_navigation_groups() {
         let all = Tab::all();
-        let prompts = all.iter().position(|t| *t == Tab::Prompts).unwrap();
-        let machines = all.iter().position(|t| *t == Tab::Machines).unwrap();
-        assert_eq!(prompts + 1, machines);
+        let flat: Vec<Tab> = NAV
+            .iter()
+            .flat_map(|(_, tabs)| tabs.iter().copied())
+            .collect();
+        assert_eq!(all, flat);
+        let titles: Vec<&str> = all.iter().map(|t| t.title()).collect();
+        assert_eq!(
+            titles,
+            [
+                "General",
+                "Appearance",
+                "Notifications",
+                "Voice",
+                "Features",
+                "Jira",
+                "Phone",
+                "Machines",
+                "Keyboard",
+                "Prompts"
+            ]
+        );
+        assert_eq!(
+            NAV.map(|(title, _)| title),
+            ["App", "Integrations", "Input"]
+        );
+        let keymap = Keymap::defaults();
         let mut d = dialog();
         d.set_tab(Tab::Keyboard);
         d.key(&key("down"), None, &keymap);
         assert_eq!(d.tab, Tab::Prompts, "Down from Keyboard");
+    }
+
+    #[test]
+    fn search_matches_label_help_key_and_page() {
+        let ids = |q: &str| -> Vec<String> { search(q).iter().map(|h| h.setting.id()).collect() };
+        assert!(
+            ids("keep the pc").contains(&"awake.keep_awake".to_owned()),
+            "label"
+        );
+        assert!(
+            ids("tailnet").contains(&"web.enabled".to_owned()),
+            "help only"
+        );
+        assert!(
+            ids("follow_debounce").contains(&"zed.follow_debounce_ms".to_owned()),
+            "key"
+        );
+        let jira = ids("jira");
+        for s in SETTINGS.iter().filter(|s| s.page == Page::Jira) {
+            assert!(jira.contains(&s.id()), "page name finds {}", s.id());
+        }
+    }
+
+    #[test]
+    fn a_label_match_ranks_above_a_help_only_match() {
+        for query in ["theme", "font", "notif", "size", "wrap", "zed", "api"] {
+            let hits = search(query);
+            assert!(!hits.is_empty(), "{query}");
+            let first_help_only = hits.iter().position(|h| h.label_ranges.is_empty());
+            if let Some(at) = first_help_only {
+                assert!(
+                    hits[at..].iter().all(|h| h.label_ranges.is_empty()),
+                    "{query}: a label match follows a help-only match"
+                );
+            }
+            assert!(
+                !hits[0].label_ranges.is_empty(),
+                "{query}: the matched chars are marked"
+            );
+        }
+    }
+
+    #[test]
+    fn hidden_settings_are_never_listed_and_no_match_is_empty() {
+        for query in ["sidebar", "inspector_width", "right_panel", "md_split"] {
+            assert!(search(query).iter().all(|h| !h.setting.hidden), "{query}");
+        }
+        assert!(search("zzzzqq").is_empty());
+    }
+
+    #[test]
+    fn a_blank_query_shows_the_page_rows() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        let page = d.rows(&keymap);
+        d.find = Input::from("   ".to_owned());
+        assert_eq!(d.rows(&keymap), page);
+        assert!(d.hits().is_empty());
+        assert!(
+            d.dimmed_tabs().is_empty(),
+            "nothing is dimmed without a query"
+        );
+        assert_eq!(d.heading(), "General");
+    }
+
+    #[test]
+    fn a_query_lists_matches_of_every_page_and_dims_the_pages_without_one() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.key(&key("ctrl-f"), None, &keymap);
+        assert_eq!(d.focus, Focus::Find);
+        type_text(&mut d, "keepthepc", &keymap);
+        let rows = d.rows(&keymap);
+        assert!(rows.iter().any(|r| r.id() == "awake.keep_awake"));
+        assert_eq!(d.heading(), "Search results");
+        let dimmed = d.dimmed_tabs();
+        for never_searched in [Tab::Keyboard, Tab::Machines, Tab::Prompts] {
+            assert!(dimmed.contains(&never_searched));
+        }
+        assert!(!dimmed.contains(&Tab::Settings(Page::General)));
+    }
+
+    #[test]
+    fn esc_restores_a_draft_then_clears_the_search_then_closes() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.key(&key("ctrl-f"), None, &keymap);
+        type_text(&mut d, "followinzed", &keymap);
+        d.key(&key("down"), None, &keymap);
+        assert!(matches!(d.focus, Focus::Row(0)));
+        d.key(&typed("9"), None, &keymap);
+        assert_eq!(
+            d.key(&key("escape"), None, &keymap),
+            Effect::None,
+            "draft restored"
+        );
+        assert!(!d.find.is_empty());
+        assert_eq!(
+            d.key(&key("escape"), None, &keymap),
+            Effect::None,
+            "search cleared"
+        );
+        assert!(d.find.is_empty());
+        assert_eq!(d.key(&key("escape"), None, &keymap), Effect::Close);
+    }
+
+    #[test]
+    fn tab_visits_the_search_box_between_the_page_list_and_the_rows() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.key(&key("tab"), None, &keymap);
+        assert_eq!(d.focus, Focus::Find);
+        d.key(&key("tab"), None, &keymap);
+        assert_eq!(d.focus, Focus::Row(0));
+        assert!(!d.chain_edge(true, &keymap));
+        d.set_tab(Tab::Machines);
+        d.key(&key("tab"), None, &keymap);
+        assert_eq!(d.focus, Focus::Find);
+        assert!(
+            d.chain_edge(false, &keymap),
+            "Machines has no rows after the box"
+        );
+    }
+
+    #[test]
+    fn rows_group_into_cards_and_each_result_is_its_own_card() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Settings(Page::Appearance));
+        let rows = d.rows(&keymap);
+        let groups = grouped(&rows, false);
+        let titles: Vec<&str> = groups.iter().map(|g| g.title).collect();
+        assert_eq!(titles, ["Theme", "Fonts", "Diffs", "Markdown"]);
+        let indices: Vec<usize> = groups
+            .iter()
+            .flat_map(|g| g.rows.iter().map(|(i, _)| *i))
+            .collect();
+        assert_eq!(indices, (0..rows.len()).collect::<Vec<_>>());
+        assert_eq!(grouped(&rows, true).len(), rows.len());
+        d.set_tab(Tab::Keyboard);
+        let keys = d.rows(&keymap);
+        assert_eq!(
+            grouped(&keys, false).len(),
+            keys.len(),
+            "shortcuts stay flat"
+        );
+        assert_eq!(d.group_of(0, &keymap), 0);
     }
 }
