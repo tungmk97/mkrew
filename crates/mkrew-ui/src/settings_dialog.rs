@@ -20,6 +20,7 @@ use crate::prompts_page::{PromptAction, PromptsPage, Spot, Written};
 use crate::task_dialog::{DialogKey, dialog_key};
 use crate::text_box::Input;
 use crate::theme_catalog::{CatalogTheme, Origin, ThemeCatalog};
+use mkrew_core::settings::{DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -373,15 +374,21 @@ impl SettingsDialog {
     /// A rebuilt catalog (the themes folder changed): a hover or a preview of a card that is
     /// gone ends, and the keyboard stays on a card that exists.
     pub fn set_catalog(&mut self, catalog: ThemeCatalog) {
+        // The keyboard follows its card by name: a file added or removed shifts the indexes.
+        let focused = self.focused_card().map(|card| card.name.clone());
+        let keyboard_previews = focused.is_some() && self.previewing == focused;
         self.catalog = catalog;
-        let cards = self.gallery_cards().len();
-        self.gallery_at = self.gallery_at.min(cards.saturating_sub(1));
-        if let Focus::Gallery(at) = self.focus {
-            self.focus = if cards == 0 {
-                Focus::Find
-            } else {
-                Focus::Gallery(at.min(cards - 1))
-            };
+        let cards = self.gallery_cards();
+        let last = cards.len() - 1;
+        let found = focused
+            .and_then(|name| cards.iter().position(|card| card.name == name))
+            .or(match self.focus {
+                Focus::Gallery(at) => Some(at.min(last)),
+                _ => None,
+            });
+        self.gallery_at = found.unwrap_or(self.gallery_at.min(last));
+        if let Some(at) = found {
+            self.focus = Focus::Gallery(at);
         }
         let gone = |name: &Option<SharedString>| {
             name.as_ref()
@@ -393,6 +400,9 @@ impl SettingsDialog {
         }
         if preview_gone {
             self.previewing = None;
+        }
+        if keyboard_previews {
+            self.previewing = self.focus_preview();
         }
     }
 
@@ -414,48 +424,40 @@ impl SettingsDialog {
         let Focus::Gallery(at) = self.focus else {
             return None;
         };
-        self.gallery_cards().get(at).copied()
+        (self.catalog.group(true))
+            .chain(self.catalog.group(false))
+            .nth(at)
     }
 
     /// The names `[ui] dark_theme` and `light_theme` hold now (the defaults while the file does
     /// not parse).
-    pub fn kept_names(&self) -> (String, String) {
-        let defaults;
-        let settings = match &self.settings {
-            Ok(settings) => settings,
-            Err(_) => {
-                defaults = Settings::default();
-                &defaults
-            }
-        };
-        (
-            settings.ui.dark_theme.clone(),
-            settings.ui.light_theme.clone(),
-        )
+    pub fn kept_names(&self) -> (&str, &str) {
+        match &self.settings {
+            Ok(settings) => (&settings.ui.dark_theme, &settings.ui.light_theme),
+            Err(_) => (DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME),
+        }
     }
 
-    /// The badges of `card`: its slots first, then its origin and its contrast.
-    pub fn card_badges(&self, card: &CatalogTheme) -> Vec<Badge> {
-        let (dark, light) = self.kept_names();
-        let mut badges = Vec::new();
-        if *card.name == *dark {
-            badges.push(Badge::DarkMode);
-        }
-        if *card.name == *light {
-            badges.push(Badge::LightMode);
-        }
-        if matches!(card.origin, Origin::File(_)) {
-            badges.push(Badge::File);
-        }
-        if !card.problems.is_empty() {
-            badges.push(Badge::LowContrast);
-        }
-        badges
+    /// The badges of `card` (`kept` is [`Self::kept_names`], read once per render): its slots
+    /// first, then its origin and its contrast.
+    pub fn card_badges(
+        card: &CatalogTheme,
+        (dark, light): (&str, &str),
+    ) -> impl Iterator<Item = Badge> + Clone {
+        [
+            (*card.name == *dark).then_some(Badge::DarkMode),
+            (*card.name == *light).then_some(Badge::LightMode),
+            matches!(card.origin, Origin::File(_)).then_some(Badge::File),
+            (!card.problems.is_empty()).then_some(Badge::LowContrast),
+        ]
+        .into_iter()
+        .flatten()
     }
 
-    /// The theme the app should show now instead of the kept one.
+    /// The theme the app should show now instead of the kept one (only while the gallery is
+    /// drawn).
     pub fn previewing(&self) -> Option<&SharedString> {
-        self.previewing.as_ref()
+        self.previewing.as_ref().filter(|_| self.gallery_shown())
     }
 
     /// The pointer entered card `name`; the shell waits the preview delay and then calls
@@ -467,9 +469,10 @@ impl SettingsDialog {
         self.hover_serial
     }
 
-    /// The delay of hover `serial` is over: it previews when it is still the latest hover.
+    /// The delay of hover `serial` is over: it previews when it is still the latest hover and
+    /// the gallery is still drawn.
     pub fn gallery_hover_due(&mut self, serial: u64) {
-        if serial == self.hover_serial && self.hovered.is_some() {
+        if serial == self.hover_serial && self.hovered.is_some() && self.gallery_shown() {
             self.previewing.clone_from(&self.hovered);
         }
     }
@@ -521,7 +524,7 @@ impl SettingsDialog {
     /// through the cards in reading order, across the two groups; Up from the first card goes
     /// to the search box and Down from the last one to the first row.
     fn gallery_move(&self, at: usize, motion: Motion, keymap: &Keymap) -> Option<Focus> {
-        let last = self.gallery_cards().len().checked_sub(1)?;
+        let last = self.gallery_cards().len() - 1;
         match motion {
             Motion::Left => Some(Focus::Gallery(at.saturating_sub(1))),
             Motion::Right => Some(Focus::Gallery((at + 1).min(last))),
@@ -537,7 +540,7 @@ impl SettingsDialog {
 
     /// Where Down from the search box goes: the gallery when it is drawn, else the first row.
     fn after_find(&self, keymap: &Keymap) -> Option<Focus> {
-        if self.gallery_shown() && !self.gallery_cards().is_empty() {
+        if self.gallery_shown() {
             return Some(Focus::Gallery(self.gallery_at));
         }
         (!self.rows(keymap).is_empty()).then_some(Focus::Row(0))
@@ -819,7 +822,7 @@ impl SettingsDialog {
 
     fn step_focus(&mut self, back: bool, keymap: &Keymap) -> Effect {
         let mut order = vec![Focus::Tabs, Focus::Find];
-        if self.gallery_shown() && !self.gallery_cards().is_empty() {
+        if self.gallery_shown() {
             order.push(Focus::Gallery(self.gallery_at));
         }
         if !self.searching() {
@@ -1645,13 +1648,52 @@ mod tests {
         let built_in = crate::theme::THEMES.len();
         d.set_catalog(ThemeCatalog::builtin());
         assert_eq!(d.focus, Focus::Gallery(built_in - 1));
-        d.set_catalog(ThemeCatalog::from_files(vec![file_theme("Aurora", true)]));
-        d.set_tab(Tab::Settings(Page::General));
-        d.set_catalog(ThemeCatalog::builtin());
+    }
+
+    #[test]
+    fn a_reload_keeps_the_keyboard_and_its_preview_on_the_same_card() {
+        let keymap = Keymap::defaults();
+        let mut d = gallery_dialog();
+        to_gallery(&mut d, &keymap);
+        let light = card_names(&d)
+            .iter()
+            .position(|n| n == "Mkrew Light")
+            .unwrap();
+        d.move_focus(Focus::Gallery(light), &keymap);
+        assert_eq!(previewing(&d).as_deref(), Some("Mkrew Light"));
+        d.set_catalog(ThemeCatalog::from_files(vec![file_theme("Dawn", false)]));
         assert_eq!(
             d.focus,
-            Focus::Tabs,
-            "off the page the focus is the page list"
+            Focus::Gallery(light - 1),
+            "a dark file went: the card moved up by one"
+        );
+        assert_eq!(d.focused_card().map(|c| &*c.name), Some("Mkrew Light"));
+        assert_eq!(previewing(&d).as_deref(), Some("Mkrew Light"));
+        // The focused card itself goes: the keyboard lands on a card and previews it.
+        let dawn = card_names(&d).iter().position(|n| n == "Dawn").unwrap();
+        d.move_focus(Focus::Gallery(dawn), &keymap);
+        d.set_catalog(ThemeCatalog::builtin());
+        let name = d.focused_card().map(|c| c.name.to_string());
+        assert!(name.is_some());
+        assert_eq!(previewing(&d), name);
+    }
+
+    #[test]
+    fn a_preview_does_not_outlive_the_gallery() {
+        let mut d = gallery_dialog();
+        let serial = d.gallery_hover("Dracula");
+        d.gallery_hover_due(serial);
+        d.find = Input::from("font");
+        assert_eq!(previewing(&d), None, "a query hides the gallery");
+        let mut d = gallery_dialog();
+        d.find = Input::from("font");
+        let serial = d.gallery_hover("Dracula");
+        d.gallery_hover_due(serial);
+        d.find = Input::default();
+        assert_eq!(
+            previewing(&d),
+            None,
+            "a timer that fired while hidden did nothing"
         );
     }
 
@@ -1664,7 +1706,10 @@ mod tests {
             "dim.toml".into(),
             Ok(crate::theme_file::render("Dim", &dim)),
         )]));
-        let badges = |d: &SettingsDialog, name: &str| d.card_badges(d.catalog.find(name).unwrap());
+        let badges = |d: &SettingsDialog, name: &str| {
+            SettingsDialog::card_badges(d.catalog.find(name).unwrap(), d.kept_names())
+                .collect::<Vec<_>>()
+        };
         assert_eq!(badges(&d, "Mkrew Dark"), [Badge::DarkMode]);
         assert_eq!(badges(&d, "Mkrew Light"), [Badge::LightMode]);
         assert_eq!(badges(&d, "Dracula"), []);
@@ -1678,7 +1723,7 @@ mod tests {
         );
         assert_eq!(badges(&d, "Mkrew Dark"), []);
         assert_eq!(Badge::LowContrast.label(), "Low contrast");
-        assert_eq!(d.kept_names(), ("Dim".to_owned(), "Mkrew Light".to_owned()));
+        assert_eq!(d.kept_names(), ("Dim", "Mkrew Light"));
     }
 
     #[test]

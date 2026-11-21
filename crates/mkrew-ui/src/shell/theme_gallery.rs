@@ -158,9 +158,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let name = card.name.clone();
-        let badges = dialog.card_badges(card);
+        let badges = SettingsDialog::card_badges(card, dialog.kept_names());
         let kept = badges
-            .iter()
+            .clone()
             .any(|badge| matches!(badge, Badge::DarkMode | Badge::LightMode));
         let focused = dialog.focused_card().is_some_and(|c| c.name == card.name);
         let ring = if focused {
