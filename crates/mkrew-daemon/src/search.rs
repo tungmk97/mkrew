@@ -166,7 +166,11 @@ mod tests {
     }
 
     fn places(result: &FsSearchResult) -> Vec<(&str, u32)> {
-        result.hits.iter().map(|h| (h.path.as_str(), h.line)).collect()
+        result
+            .hits
+            .iter()
+            .map(|h| (h.path.as_str(), h.line))
+            .collect()
     }
 
     #[test]
@@ -235,10 +239,7 @@ mod tests {
     #[test]
     fn previews_are_trimmed_cut_and_carry_byte_ranges() {
         let long = format!("needle {}", "é".repeat(300));
-        let dir = repo(&[
-            ("a.rs", "    let needle = 1;\r\n"),
-            ("b.rs", long.as_str()),
-        ]);
+        let dir = repo(&[("a.rs", "    let needle = 1;\r\n"), ("b.rs", long.as_str())]);
         let result = run(dir.path(), "needle", false, 10).unwrap();
         assert_eq!(result.hits[0].preview, "let needle = 1;");
         assert_eq!(result.hits[0].ranges, [(4, 10)]);
