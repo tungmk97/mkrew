@@ -21,6 +21,8 @@ base64 = "0.22"
 futures-lite = "2"
 # Incoming events/output for the GPUI side; 2.x is already in the tree via gpui.
 async-channel = "2"
+# The widget bar's reset times in local time (Task 11); already in the tree through gpui.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # Microphone capture for voice input (SPEC §20G, ADR 0045): WASAPI on Windows, ALSA on Linux.
 cpal = "0.18.2"
 # gpui snapshot pinned by gpui-component 0.7 (ADR 0001); the platform crate provides `application()`.
