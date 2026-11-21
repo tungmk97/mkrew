@@ -1,4 +1,4 @@
-# 0097 - Glass floating panels and Pressable as the only place for hover and active
+# 0097 - Glass floating panels, and hover and active only in widgets.rs and pressable.rs
 
 - Date: 2026-11-21
 - Status: accepted (amends SPEC section 14)

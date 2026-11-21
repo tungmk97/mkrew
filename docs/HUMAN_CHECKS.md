@@ -68,7 +68,7 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
 - [ ] **Jira (dark + light):** hover a List row (a fill) and its fold chevron (a fill one step above the row's), and a Kanban issue card (border light).
 - [ ] **Board and Jira look changes (spec 5.2, not bugs):** the Jira List row now hovers with `theme.hover` (it used `row_hover`).
   The cards keep their border-light hover and gain a press dim.
-  Pressing a nested chip (Edit, the fold chevron) dims its card or row.
+  Pressing a nested chip (a card's Edit, Undo, Changes, Merge back or Run with chip, the fold chevron) dims its card or row.
 - [ ] **Files (dark + light):** hover a file tree row: a fill and a pointer.
   The row at the cursor and the opened row show a pointer and no fill, and a click on either still opens it.
   Hover the "Search files..." box and the Ignored chip: a fill.

@@ -352,7 +352,7 @@ impl Shell {
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
                     .text_size(font_size::BODY)
-                    // The pick has a focus-colored ring, so it stays visible under hover.
+                    // The pick has a focus-colored ring: it is the picked row, so it does not hover.
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(if picked {
                         gpui::Hsla::from(rgb(theme.pane_focus_border))
