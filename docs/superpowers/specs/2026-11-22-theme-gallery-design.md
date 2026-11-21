@@ -117,14 +117,15 @@ The tests call it for every built-in and assert it is empty; the loader calls it
 - `ThemeCatalog` (a GPUI global, `crates/mkrew-ui/src/theme.rs` or a new `theme_catalog.rs`) holds the built-ins followed by the file themes, plus the error entries.
 - Everything that lists or finds themes uses it: `Theme::resolve`, the theme picker (`palette::theme_entries`), the Settings slot lists, the gallery.
 - `Theme::name` becomes an owned `SharedString` (file names are not `'static`).
-- `THEMES` stays the compiled table; `mkrew_core::settings::THEME_NAMES` stays the built-in list for the settings template and its test; the Settings "Light mode theme" / "Dark mode theme" rows read their options from the catalog (built-ins plus valid files of that kind).
-- Core needs no change: `[ui] light_theme` / `dark_theme` already accept any string, and an unknown name falls back in the UI.
+- `THEMES` stays the compiled table; `mkrew_core::settings::THEME_NAMES` stays the built-in list for the settings template and its test; the Settings "Light mode theme" / "Dark mode theme" rows read their options from the catalog: every built-in (a slot may hold the other appearance, as today) plus the file themes of that slot's own appearance.
+- Core changes only by `Paths::themes_dir()` and the longer `THEME_NAMES`: `[ui] light_theme` / `dark_theme` already accept any string, and an unknown name falls back in the UI.
 
 ## 6. New built-in themes
 
-Each palette comes from the theme project's own published colors; the plan cites the source URL in a comment next to each entry, as the existing entries do.
+Each palette comes from the theme project's own published colors; the plan cites the source URL in a comment next to each new entry (the existing entries cite none).
 Each one must pass `problems()` with no entry; where a published UI color fails, the derivation's `readable` blending applies as for the existing themes, and ADR 0101 lists any palette change made for contrast (as ADR 0078 does).
-`THEME_NAMES` and `THEMES` grow to 22 in the same order (the existing name-table test).
+`THEME_NAMES` and `THEMES` grow to 22 in the same order, dark themes first, then light ones (the six new dark themes after Gruvbox Dark, so Mkrew Light moves to index 12; tests that pin index 6 follow).
+When a published color fails a rule, the smallest change that passes is made and listed in ADR 0101.
 
 ## 7. Error handling
 
@@ -156,6 +157,14 @@ Visual checks (dark and light) go to `docs/HUMAN_CHECKS.md`: the gallery layout,
 - SPEC §14 theme bullet (gallery, preview, files), §20.0 `[ui]` notes (themes folder), §13 unchanged (no new keys).
 - README: one line on theme files.
 - `docs/HUMAN_CHECKS.md`: the visual checks above.
+
+## 9a. Details settled while planning
+
+- `problems()` covers every contrast rule the theme tests check today, so a file theme is held to the same bar as a built-in.
+- An editor that saves in two steps can be caught half-written for one poll: the card shows an error and the kept theme falls back to the slot's Mkrew theme until the next poll; no debounce.
+- Arrow keys: Left / Up move to the previous card, Right / Down to the next, in reading order across both groups; no column-aware movement.
+- A broken `settings.toml`: previews still work; a click writes nothing and shows the existing settings-error notice.
+- Safety: a theme name is non-empty and has no control characters; a `*.toml` over 64 KB is an error card; a slot value is written as an escaped TOML string; "New theme from current" creates its file with `create_new`, so it never overwrites.
 
 ## 10. Out of scope
 
