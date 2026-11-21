@@ -248,8 +248,10 @@ impl Daemon {
         let target = self
             .watched_target(params.project_id, params.worktree_task_id, None)
             .await?;
+        let git = Arc::clone(&self.git);
         Ok(tokio::task::spawn_blocking(move || {
             let searched = search::search(
+                &*git,
                 &target.dir,
                 &params.query,
                 params.regex,

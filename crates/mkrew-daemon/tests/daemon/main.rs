@@ -261,30 +261,10 @@ impl Client {
     }
 
     fn call(&mut self, request: Request) -> Outcome {
-        let id = self.next_id;
-        self.next_id += 1;
-        let frame = Frame::Message(Message::Request { id, request });
-        self.stream.write_all(&encode(&frame).unwrap()).unwrap();
-        let mut buf = [0u8; 4096];
-        loop {
-            // One read can carry several frames (events before the response).
-            while let Some(frame) = self.decoder.next_frame().unwrap() {
-                match frame {
-                    Frame::Message(Message::Response { id: got, outcome }) => {
-                        assert_eq!(got, id);
-                        return outcome;
-                    }
-                    Frame::Message(Message::Event(event)) => self.events.push(event),
-                    Frame::Output { session_id, data } => {
-                        self.output.entry(session_id).or_default().extend(data);
-                    }
-                    other => panic!("unexpected frame {other:?}"),
-                }
-            }
-            let n = self.stream.read(&mut buf).unwrap();
-            assert!(n > 0, "daemon closed the connection");
-            self.decoder.push(&buf[..n]);
-        }
+        let id = self.send(request);
+        let (got, outcome) = self.response();
+        assert_eq!(got, id);
+        outcome
     }
 
     /// Sends `request` without waiting for its answer; [`Client::response`] reads answers in

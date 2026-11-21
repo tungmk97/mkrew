@@ -91,6 +91,20 @@ pub fn walk_files(git: &dyn GitBackend, root: &Path) -> Vec<String> {
         .filter(|entry| entry.file_type().is_some_and(|t| t.is_file()))
         .filter_map(|entry| relative(root, entry.path()))
         .collect();
+    let extras = tracked_extras(git, root, |path| files.contains(path));
+    files.extend(extras);
+    let mut files: Vec<String> = files.into_iter().collect();
+    files.sort();
+    files
+}
+
+/// The tracked files on disk that the walk of [`walker`] does not list (`walked` says which it
+/// listed): the ones `.gitignore` matches, from the root's repository and each child one.
+pub(crate) fn tracked_extras(
+    git: &dyn GitBackend,
+    root: &Path,
+    walked: impl Fn(&str) -> bool,
+) -> Vec<String> {
     let child = |repo: String| {
         let tracked = git.tracked_files(&root.join(&repo)).unwrap_or_default();
         tracked
@@ -99,16 +113,15 @@ pub fn walk_files(git: &dyn GitBackend, root: &Path) -> Vec<String> {
     };
     // Outside a repository `ls-files` fails: the walk's answer stands.
     let tracked = git.tracked_files(root).unwrap_or_default().into_iter();
+    let mut extras = Vec::new();
     for path in tracked.chain(child_repos(root).into_iter().flat_map(child)) {
         let always = path.split('/').any(|part| ALWAYS_IGNORED.contains(&part));
         // Deleted from disk but still in the index: nothing to open.
-        if !always && !files.contains(&path) && root.join(&path).is_file() {
-            files.insert(path);
+        if !always && !walked(&path) && root.join(&path).is_file() {
+            extras.push(path);
         }
     }
-    let mut files: Vec<String> = files.into_iter().collect();
-    files.sort();
-    files
+    extras
 }
 
 pub(crate) fn relative(root: &Path, path: &Path) -> Option<String> {

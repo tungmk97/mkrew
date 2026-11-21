@@ -341,7 +341,7 @@ fn ai_generate_asks_outside_every_project() {
 }
 
 #[test]
-fn fs_search_finds_text_and_a_newer_search_never_waits_for_an_older_one() {
+fn fs_search_finds_text_and_answers_back_to_back_searches_in_either_order() {
     let env = Env::new();
     let repo = env.repo();
     git(&repo, &["init", "-q", "-b", "main"]);

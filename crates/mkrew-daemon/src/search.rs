@@ -7,6 +7,7 @@
 //! connection bumped the generation.
 // ponytail: no index; add a persistent trigram index if search on big repos measurably lags
 
+use std::collections::HashSet;
 use std::io::Read as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -14,13 +15,14 @@ use std::sync::{Mutex, PoisonError};
 
 use grep_matcher::Matcher as _;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
-use grep_searcher::SearcherBuilder;
 use grep_searcher::sinks::Lossy;
+use grep_searcher::{Searcher, SearcherBuilder};
 use ignore::WalkState;
 use mkrew_protocol::{FsSearchResult, SearchHit};
 
 use crate::docs::MAX_BYTES;
-use crate::files::{has_nul, relative, walker};
+use crate::files::{has_nul, relative, tracked_extras, walker};
+use crate::git::GitBackend;
 
 /// Longest preview line, in characters.
 const PREVIEW_CHARS: usize = 200;
@@ -35,11 +37,13 @@ pub enum Error {
     Cancelled,
 }
 
-/// The hits of `query` in the files under `root`, ordered by path then line, at most `limit`
-/// (`truncated` when more exist). `regex: false` makes the query plain text; either way an
-/// all-lowercase query ignores case. Returns [`Error::Cancelled`] once `generation` is no
-/// longer `mine`.
+/// The hits of `query` in the files `fs.find` lists under `root` (the walk plus the tracked
+/// files `.gitignore` matches), ordered by path then line, at most `limit` (`truncated` when
+/// more exist; then which `limit` hits are kept is not stable between runs, the walk is
+/// parallel). `regex: false` makes the query plain text; either way an all-lowercase query
+/// ignores case. Returns [`Error::Cancelled`] once `generation` is no longer `mine`.
 pub fn search(
+    git: &dyn GitBackend,
     root: &Path,
     query: &str,
     regex: bool,
@@ -53,13 +57,37 @@ pub fn search(
         .build(query)
         .map_err(|error| Error::Pattern(error.to_string()))?;
     let hits = Mutex::new(Vec::new());
+    let walked = Mutex::new(HashSet::new());
     let found = AtomicUsize::new(0);
     let truncated = AtomicBool::new(false);
     // Copy: every worker's visitor takes its own.
     let cancelled = move || generation.load(Ordering::Relaxed) != mine;
+    // Searches one file into `hits`; false once the limit is hit.
+    let scan = |searcher: &mut Searcher, path: &str, file: &Path| {
+        let Some(bytes) = read_text(file) else {
+            return true;
+        };
+        let mut local = Vec::new();
+        let sink = Lossy(|line, text| {
+            // The (limit + 1)th hit proves there are more.
+            if found.fetch_add(1, Ordering::Relaxed) >= limit {
+                truncated.store(true, Ordering::Relaxed);
+                return Ok(false);
+            }
+            local.push(hit(path, line, text, &matcher));
+            Ok(true)
+        });
+        // A file that cannot be searched is skipped, never fatal.
+        let _ = searcher.search_slice(&matcher, &bytes, sink);
+        hits.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(local);
+        !truncated.load(Ordering::Relaxed)
+    };
+    let new_searcher = || SearcherBuilder::new().line_number(true).build();
     walker(root).build_parallel().run(|| {
-        let mut searcher = SearcherBuilder::new().line_number(true).build();
-        let (matcher, hits, found, truncated) = (&matcher, &hits, &found, &truncated);
+        let mut searcher = new_searcher();
+        let (scan, walked, truncated) = (&scan, &walked, &truncated);
         Box::new(move |entry| {
             if cancelled() || truncated.load(Ordering::Relaxed) {
                 return WalkState::Quit;
@@ -73,27 +101,23 @@ pub fn search(
             let Some(path) = relative(root, entry.path()) else {
                 return WalkState::Continue;
             };
-            let Some(bytes) = read_text(entry.path()) else {
-                return WalkState::Continue;
-            };
-            let mut local = Vec::new();
-            let sink = Lossy(|line, text| {
-                // The (limit + 1)th hit proves there are more.
-                if found.fetch_add(1, Ordering::Relaxed) >= limit {
-                    truncated.store(true, Ordering::Relaxed);
-                    return Ok(false);
-                }
-                local.push(hit(&path, line, text, matcher));
-                Ok(true)
-            });
-            // A file that cannot be searched is skipped, never fatal.
-            let _ = searcher.search_slice(matcher, &bytes, sink);
-            hits.lock()
+            scan(&mut searcher, &path, entry.path());
+            walked
+                .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .extend(local);
+                .insert(path);
             WalkState::Continue
         })
     });
+    if !cancelled() && !truncated.load(Ordering::Relaxed) {
+        let walked = walked.into_inner().unwrap_or_else(PoisonError::into_inner);
+        let mut searcher = new_searcher();
+        for path in tracked_extras(git, root, |path| walked.contains(path)) {
+            if cancelled() || !scan(&mut searcher, &path, &root.join(&path)) {
+                break;
+            }
+        }
+    }
     if cancelled() {
         return Err(Error::Cancelled);
     }
@@ -144,6 +168,7 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     use super::*;
+    use crate::git::GitCli;
 
     fn write(root: &Path, path: &str, bytes: &[u8]) {
         let file = root.join(path);
@@ -162,7 +187,7 @@ mod tests {
     }
 
     fn run(root: &Path, query: &str, regex: bool, limit: usize) -> Result<FsSearchResult, Error> {
-        search(root, query, regex, limit, &AtomicU64::new(1), 1)
+        search(&GitCli, root, query, regex, limit, &AtomicU64::new(1), 1)
     }
 
     fn places(result: &FsSearchResult) -> Vec<(&str, u32)> {
@@ -251,8 +276,31 @@ mod tests {
     fn a_newer_search_stops_this_one() {
         let dir = repo(&[("a.txt", "needle\n")]);
         let generation = AtomicU64::new(2);
-        let stopped = search(dir.path(), "needle", false, 10, &generation, 1);
+        let stopped = search(&GitCli, dir.path(), "needle", false, 10, &generation, 1);
         assert!(matches!(stopped, Err(Error::Cancelled)));
-        assert!(search(dir.path(), "needle", false, 10, &generation, 2).is_ok());
+        assert!(search(&GitCli, dir.path(), "needle", false, 10, &generation, 2).is_ok());
+    }
+
+    #[test]
+    fn tracked_files_that_gitignore_matches_are_searched_like_fs_find_lists_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        write(root, ".gitignore", b"*.log\n");
+        write(root, "keep.log", b"needle tracked\n");
+        write(root, "run.log", b"needle untracked\n");
+        write(root, "a.txt", b"needle\n");
+        git(&["add", "-f", ".gitignore", "keep.log", "a.txt"]);
+        let result = run(root, "needle", false, 10).unwrap();
+        assert_eq!(places(&result), [("a.txt", 1), ("keep.log", 1)]);
     }
 }
