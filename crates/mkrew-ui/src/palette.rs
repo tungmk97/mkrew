@@ -1079,7 +1079,7 @@ pub const SEARCH_MIN_CHARS: usize = 2;
 const NO_WORKSPACE: &str = "Open a workspace to search it.";
 
 /// The folder the daemon scopes read (spec 7.2): the active workspace, the task worktree its
-/// Files view shows (what Quick open read) and, outside a worktree, the repository its Git
+/// Files view shows (the folder `fs.find` lists) and, outside a worktree, the repository its Git
 /// view shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Source {

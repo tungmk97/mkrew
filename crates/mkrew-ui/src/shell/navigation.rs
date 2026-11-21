@@ -421,7 +421,7 @@ impl Shell {
     }
 
     /// What the palette's Files, Search, Branches and Commits read for `project_id`: the task
-    /// worktree its Files view shows (what Quick open read), and the repository its Git view
+    /// worktree its Files view shows (the folder `fs.find` lists), and the repository its Git view
     /// shows while that view is on the same worktree (`Source::new` drops the repo of a
     /// worktree anyway).
     fn palette_source(&self, project_id: Ulid) -> palette::Source {

@@ -688,7 +688,7 @@ impl Shell {
             .child(
                 div()
                     .id("prompt-entries")
-                    .max_h(px(theme::PALETTE_LIST_HEIGHT))
+                    .max_h(px(theme::PICKER_LIST_HEIGHT))
                     .overflow_y_scroll()
                     .track_scroll(&self.prompt_picker_scroll)
                     .flex()

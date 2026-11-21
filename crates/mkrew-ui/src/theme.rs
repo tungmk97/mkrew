@@ -452,6 +452,8 @@ pub const GLASS_TINT_ANGLE: f32 = 180.0;
 pub const GLASS_TINT_FROM: f32 = 0.0;
 pub const GLASS_TINT_TO: f32 = 1.0;
 pub const PANEL_RISE: f32 = space::XS;
+/// Max height of the composer's prompt and slash pickers (they scroll past that).
+pub const PICKER_LIST_HEIGHT: f32 = 360.0;
 /// The scoped palette.
 pub const PALETTE_WIDTH: f32 = 640.0;
 pub const PALETTE_LIST_HEIGHT: f32 = 480.0;
