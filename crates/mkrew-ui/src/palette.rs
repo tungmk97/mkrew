@@ -1,8 +1,12 @@
-//! Command palette (Ctrl+Shift+P, SPEC §13): every keymap command that can act in the current
-//! view, with its title and shortcut, palette-only actions that have no key (task "View changes",
-//! "Merge back…", "Remove worktree…", fan-out, broadcast, insert prompt), plus "Go to" workspace /
-//! session / task items (the §13 quick open of those). Typing filters with a fuzzy subsequence match
-//! ranked by word starts and runs; Enter picks. Pure and tested headlessly; `main.rs` renders it and runs the pick.
+//! The palette (Ctrl+Shift+P, SPEC §13): one list with scope tabs (All, Commands, Sessions,
+//! Files, Search, Branches, Commits). Commands are every keymap command that can act in the
+//! current view plus palette-only actions that have no key; Sessions are "Go to" workspace /
+//! session / task items; Files, Search, Branches and Commits are asked of the daemon
+//! (`fs.find`, `fs.search`, `git.branches`, `git.log`), each call numbered so an old answer
+//! is dropped. Typing filters with a fuzzy subsequence match ranked by word starts and runs;
+//! Enter picks. `Ctrl+Shift+O` opens it on Files, `Ctrl+Alt+Shift+F` on Search, `@` in a
+//! prompt on Files in insert mode. Pure and tested headlessly; `main.rs` renders it and runs
+//! the pick.
 
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};

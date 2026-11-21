@@ -444,8 +444,6 @@ pub const WORKSPACE_SWATCH_SIZE: f32 = space::L;
 /// Ring around a workspace menu color choice.
 pub const WORKSPACE_SWATCH_BORDER: f32 = 2.0;
 
-/// Height of the quick open match list (it scrolls past that).
-pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;
 /// Floating panels (ADR 0097): how far the accent tint gradient reaches down from the top,
 /// its direction (180 = top to bottom in gpui) and color stops, and how far a panel rises
 /// while it fades in (gpui has no element scale).

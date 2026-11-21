@@ -459,7 +459,7 @@ impl Shell {
                 el.child(
                     div()
                         .id("slash-rows")
-                        .max_h(px(theme::QUICK_OPEN_LIST_HEIGHT))
+                        .max_h(px(theme::PALETTE_LIST_HEIGHT))
                         .overflow_y_scroll()
                         .track_scroll(&self.slash_picker_scroll)
                         .flex()
