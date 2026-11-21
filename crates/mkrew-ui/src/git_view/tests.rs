@@ -1725,3 +1725,29 @@ fn a_new_side_line_has_a_row_in_both_layouts() {
     assert_eq!(shown.line_row(11, DiffMode::Split), Some(7));
     assert_eq!(shown.line_row(5, DiffMode::Unified), None);
 }
+
+#[test]
+fn show_commit_opens_the_history_on_a_commit_older_than_the_default_log() {
+    let mut view = GitView::new(Ulid::new(), None);
+    let requests = view.show_commit("old".into());
+    assert_eq!(view.section(), Section::History);
+    assert!(requests.log);
+    assert_eq!(requests.show.as_deref(), Some("old"));
+    assert_eq!(
+        view.begin_log().map(|params| params.limit),
+        Some(crate::palette::COMMIT_LIMIT)
+    );
+    // The log lists it: the selection stays and its files are not read twice.
+    let requests = view.logged(Ok(vec![commit("new"), commit("old")]));
+    assert_eq!(requests.show, None);
+    assert_eq!(
+        view.history
+            .as_ref()
+            .and_then(|history| history.selected.as_deref()),
+        Some("old")
+    );
+    // Leaving the History puts the default length back.
+    view.show(Section::Working);
+    view.toggle_history();
+    assert_eq!(view.begin_log().map(|params| params.limit), Some(50));
+}
