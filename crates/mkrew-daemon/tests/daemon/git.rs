@@ -446,11 +446,86 @@ fn git_discard_one_hunk_leaves_the_other_and_refuses_the_rest() {
     assert_eq!(left[0].lines, hunks[1].lines);
     assert_eq!(git(&repo, &["diff", "--cached", "--name-only"]), "");
     // The same hunk again no longer applies: git's reason, nothing changes.
-    assert_eq!(
-        error_code(client.call(discard("a.txt", &[], &hunks[0], true))),
-        ErrorCode::Internal
-    );
+    match client
+        .call(discard("a.txt", &[], &hunks[0], true))
+        .into_result::<serde_json::Value>()
+    {
+        Err(ResponseError::Daemon(body)) => {
+            assert_eq!(body.code, ErrorCode::Internal);
+            assert!(
+                body.message.starts_with("git.discard failed: git failed: "),
+                "{}",
+                body.message
+            );
+        }
+        other => panic!("expected a daemon error, got {other:?}"),
+    }
     assert_eq!(read(), expected.concat());
+    client.stop();
+}
+
+/// A hunk line holding a line break could add sections to the patch: stage and discard
+/// refuse it and change nothing.
+#[test]
+fn git_stage_and_discard_refuse_a_hunk_line_with_a_line_break() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "user.email", "t@t"]);
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("a.txt"), "two\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+    let request = Request::GitDiff(GitDiffParams {
+        project_id: id,
+        worktree_task_id: None,
+        repo: None,
+        path: "a.txt".into(),
+        mode: GitMode::Working,
+        staged: false,
+        commit: None,
+        since: None,
+    });
+    let mut hunk = client
+        .call(request)
+        .into_result::<FileDiff>()
+        .unwrap()
+        .hunks
+        .remove(0);
+    hunk.lines[0].text.push_str("\ndiff --git a/b.txt b/b.txt");
+    let target = || {
+        Some(HunkTarget {
+            path: "a.txt".into(),
+            hunk: hunk.clone(),
+        })
+    };
+    let stage = Request::GitStage(GitStageParams {
+        project_id: id,
+        worktree_task_id: None,
+        repo: None,
+        paths: vec![],
+        hunk: target(),
+    });
+    let discard = Request::GitDiscard(GitDiscardParams {
+        project_id: id,
+        worktree_task_id: None,
+        repo: None,
+        paths: vec![],
+        hunk: target(),
+        confirm: true,
+    });
+    for bad in [stage, discard] {
+        assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
+    }
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+        "two\n"
+    );
+    assert_eq!(git(&repo, &["diff", "--cached", "--name-only"]), "");
     client.stop();
 }
 

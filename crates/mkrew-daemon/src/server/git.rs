@@ -8,7 +8,7 @@ use mkrew_protocol::{
     ChangedFile, ErrorCode, Event, GitBranchesParams, GitChangedEvent, GitCheckoutParams,
     GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams, GitLogParams,
     GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams,
-    GitStatusParams, HunkTarget, Outcome, Project, ProjectRef, ViewedFile,
+    GitStatusParams, Hunk, HunkTarget, Outcome, Project, ProjectRef, ViewedFile,
 };
 use mkrew_store::ViewedScope;
 use serde::Serialize;
@@ -296,8 +296,8 @@ impl Daemon {
         };
         let hunk = match params.hunk {
             Some(HunkTarget { path, hunk }) if paths.is_empty() => {
-                match project_path(params.repo.as_deref(), &path) {
-                    Ok(path) => Some((path, hunk)),
+                match hunk_target(params.repo.as_deref(), path, hunk) {
+                    Ok(target) => Some(target),
                     Err(outcome) => return outcome,
                 }
             }
@@ -339,8 +339,8 @@ impl Daemon {
         };
         let hunk = match params.hunk {
             Some(HunkTarget { path, hunk }) if paths.is_empty() => {
-                match project_path(params.repo.as_deref(), &path) {
-                    Ok(path) => Some((path, hunk)),
+                match hunk_target(params.repo.as_deref(), path, hunk) {
+                    Ok(target) => Some(target),
                     Err(outcome) => return outcome,
                 }
             }
@@ -635,6 +635,20 @@ fn view_outcome<T: Serialize>(
         }
         Err(e) => Outcome::error(ErrorCode::Internal, format!("{method} failed: {e}")),
     }
+}
+
+/// A hunk's repo-relative path and the hunk itself, refused (`invalid_request`) when a line
+/// holds a line break: it would add sections to the patch built from it.
+fn hunk_target(repo: Option<&str>, path: String, hunk: Hunk) -> Result<(String, Hunk), Outcome> {
+    if hunk
+        .lines
+        .iter()
+        .any(|line| line.text.contains(['\n', '\r']))
+    {
+        let message = "hunk line holds a line break";
+        return Err(Outcome::error(ErrorCode::InvalidRequest, message));
+    }
+    Ok((project_path(repo, &path)?, hunk))
 }
 
 /// The project-relative, `/`-separated form of `path`; `invalid_request` for an absolute
