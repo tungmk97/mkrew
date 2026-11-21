@@ -18,7 +18,8 @@ The user liked the crisp feel of Tern's palette, Settings window and hover feedb
   Its entrance (fade and a 4 px rise over `motion::FAST`) is `widgets::appear`, applied by `modal_shade` and the confirm prompt.
   gpui has no element scale, and under reduced motion gpui draws the end state, so the panel then appears at once.
 - Reduced motion is read from Windows (`SPI_GETCLIENTAREAANIMATION`) at start and on window activation and stored with `App::set_reduce_motion`.
-- `mkrew_ui::pressable` (`Look`, `PressStyle`, `press_style`, `Pressable`) is the only place that calls `.hover(` and `.active(` for a clickable element; `widgets.rs` and the lib code both use it.
+- `mkrew_ui::pressable` (`Look`, `PressStyle`, `press_style`, `Pressable`) and `shell/widgets.rs` are the only files that call `.hover(` and `.active(` or set `.cursor_pointer()` for a clickable element; `group_hover` is allowed anywhere.
+  Every other element is a widget or takes its look from `.pressable(look, enabled, theme)`.
   A disabled element is faded with `opacity::DISABLED`, has the default cursor and no hover, no active and no click.
 - Settings: groups are a UI concept (`Setting::group`), independent of the TOML `section`.
 
@@ -33,3 +34,20 @@ The user liked the crisp feel of Tern's palette, Settings window and hover feedb
 - Every theme added later gets glass for free and is checked by the contrast test.
 - A new clickable element uses a widget or `.pressable(..)`; Plan P3 of this work enforces it across `crates/mkrew-ui/src`.
 - macOS and Linux do not detect reduced motion until gpui exposes it.
+
+## Audit (Plan P3, 2026-11-21)
+
+At 1b7abb5, before P1, `crates/mkrew-ui/src` had 327 click or mouse-down handlers in 48 files and 76 `.hover(` calls.
+Of those handlers, 208 were already on a shared widget, 71 were hand-built and moved to a `Look` or a helper, and 48 are exempt.
+At the start of P3 (after P1 and P2) the counts were 334 handlers (including 10 `.on_press(`) in 49 files and 66 `.hover(` calls.
+After the audit only `shell/widgets.rs` and `pressable.rs` call `.hover(` and `.active(` or set `.cursor_pointer()`.
+
+The audit added around the P1 contract:
+
+- `Pressable::pressable_unless` for a selected element that stays clickable.
+- `row_action` (moved into `widgets.rs`), `grip_hover`, `pick_surface`, `card_press` and `disabled_icon_button`.
+
+`Look::Row`, `Look::Chip` and `Look::Icon` hover with `theme.hover` and `Look::Raised` with `theme.border` (P1 Task 4, with tests over every built-in theme), because `surface_raised` equals `selected` in Mkrew Dark and Mkrew Light.
+An icon inside a row that hovers `theme.hover` uses `Look::Raised`, so its own hover shows.
+
+Exempt, with no hover: resize grips, terminal surfaces, drop zones and drag sources, the modal scrim, text fields (they keep their I-beam), editor and text-selection surfaces, window-drag areas, context-menu mouse downs on an element that is already pressable, and links drawn by `InteractiveText`.

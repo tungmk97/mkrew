@@ -20,6 +20,11 @@ Feel: simple, calm, soft, never rigid — Linear / Zed / Raycast. The terminal i
 8. Both themes (dark/light) must work; follow the OS setting.
 9. Text contrast ≥ 4.5:1 for body text.
 10. Tooltips show keyboard shortcuts; the command palette lists every action.
+11. Every element with `.on_click(` or `.on_mouse_down(` is a widget from `shell/widgets.rs` or uses `.pressable(look, enabled, theme)` plus `.on_press(enabled, handler)`.
+    Never call `.hover(`, `.active(` or `.cursor_pointer()` on a component outside `shell/widgets.rs` and `pressable.rs`.
+    Looks: `Row`, `Chip`, `Icon`, `Text`, `Raised` (on a raised surface), `card_press` (board cards).
+    A selected row uses `.pressable_unless(picked, look, theme)`, never `enabled = false` (that fades it).
+    Exempt, no hover: resize grips (`grip_hover`), the terminal, drop zones, the scrim, text fields, text-selection surfaces.
 
 ## Before committing UI work
 
@@ -28,3 +33,4 @@ Feel: simple, calm, soft, never rigid — Linear / Zed / Raycast. The terminal i
   `docs/HUMAN_CHECKS.md` → "To verify".
 - Ask the `ui-reviewer` subagent (if available) to check the diff against this list.
 - grep your diff for hex colors or raw numeric pixel values outside `theme.rs`; fix any hit.
+- grep your diff for `.hover(`, `.active(|` and `.cursor_pointer()` outside `shell/widgets.rs` and `pressable.rs`; a hit is a bug: convert it to a widget or `.pressable(..)`.

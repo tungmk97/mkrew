@@ -1814,8 +1814,17 @@ A panel fades in and rises 4 px over `motion::FAST` and disappears at once; with
 No dialog builds its own panel frame.
 
 **Pressable states, ADR 0097.**
-Every element with a click handler gets its hover, press and disabled look from `mkrew_ui::pressable` (`Look`, `press_style`, `Pressable`) or from a widget in `widgets.rs` built on it.
+Every element with a click or mouse-down handler gets its hover, press and disabled look from `shell/widgets.rs` and `mkrew_ui::pressable` (`Look`, `press_style`, `Pressable`).
+It is either a widget (`button`, `secondary_button`, `quiet_button`, `danger_button`, `icon_button`, `segment`, `menu_item`, `row_action`, `list_row`, `toggle`, `dropdown_trigger`) or `.pressable(look, enabled, theme)` with `.on_press(enabled, handler)`.
+Only `widgets.rs` and `pressable.rs` call `.hover(` and `.active(` or set `.cursor_pointer()` by hand.
+`group_hover(..)`, which reveals hidden row actions, is allowed anywhere.
+The looks are `Row` (list and menu rows), `Chip` (pills, tabs, small labelled controls), `Icon` (icon-only controls), `Text` (links) and `Raised` (a control on a raised surface or inside a row that is itself hovered: menu, toast, card, find bar, code block, a row action).
+Board cards use `card_press`: the border lights on hover and the fill stays, so the chips inside a card keep a visible hover.
+A hover fill is never the selected fill.
+A selected or active element that is still clickable keeps the pointer only (`pressable_unless(picked, look, theme)`).
 A disabled element is faded (`opacity::DISABLED`), has the default cursor and no hover, no press and no click.
+An element that is not clickable right now, but is not disabled, has no look at all.
+Not buttons, so no hover: resize grips (they tint through `grip_hover`), terminal surfaces, drop zones, the modal scrim, text fields (they keep their I-beam), editor and text-selection surfaces, window-drag areas, and the context-menu mouse down of an element that is already pressable.
 Focus rings stay with `DialogControl`.
 
 ---
