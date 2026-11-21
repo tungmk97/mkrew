@@ -2,10 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Every clickable element in `crates/mkrew-ui/src` takes its hover, press and disabled look from `shell/widgets.rs` (through the `Pressable` trait of Plan P1), so that after this plan only `widgets.rs` and `pressable.rs` call `.hover(` and `.active(`.
+**Goal:** Every clickable element in `crates/mkrew-ui/src` takes its hover, press and disabled look from `shell/widgets.rs` (through the `Pressable` trait of Plan P1), so that after this plan only `widgets.rs` and `pressable.rs` call `.hover(` and `.active(` or set `.cursor_pointer()` by hand.
 
 **Architecture:** Plan P1 gives `Look`, `press_style`, `Pressable::pressable` and `Pressable::on_press`, and rebuilds the shared buttons on them.
-P3 first adds the few helpers the audit found missing around that contract (Task 1), then walks the 48 files by area, one commit per area (Tasks 2 to 9).
+P3 first adds the few helpers the audit found missing around that contract (Task 1), then walks the files by area (48 at 1b7abb5, 49 at HEAD), one commit per area (Tasks 2 to 9).
 An element that is already a widget keeps its `.on_click` (its look comes from the widget).
 A hand-built element moves to `.pressable(look, enabled, theme)` plus `.on_press(enabled, handler)`, or to a shared helper.
 A short list of elements is exempt (grips, terminal, drop zones, scrim, text fields and a few more), each with its reason.
@@ -36,10 +36,14 @@ Plan P2 may land before or after this plan (spec §9).
 - Names from P1 used verbatim: `Look { Row, Chip, Icon, Text, Raised }`, `PressStyle { hover_bg, hover_fg, underline_on_hover, active_opacity, opacity, pointer }`, `press_style(Look, bool, &Theme) -> PressStyle`, `Pressable::pressable(Look, bool, &Theme)`, `Pressable::on_press(bool, handler)`, `widgets::{button, secondary_button, quiet_button, danger_button, disabled_button, icon_button, icon_button_in, segment, menu_item, toggle, dropdown_trigger, list_row}`.
   P1 puts `Look`, `PressStyle`, `press_style` and `Pressable` in `crates/mkrew-ui/src/pressable.rs` (the lib crate, because `preview.rs` is in the lib) and re-exports them from `shell/widgets.rs`.
   If P1 chose another path, only the `use` lines in this plan change.
-- Line numbers in this plan were read at commit `1b7abb5` (before P1 and P2).
-  P1 and P2 shift lines in `widgets.rs`, the dialog files, `settings.rs` and `navigation.rs`.
-  Find an element by its function name and element id (the tables give both); re-run the inventory command of the task to get fresh numbers.
-  Edit each file from the bottom up so earlier line numbers stay valid.
+- Line numbers in the Inventory and exempt tables are at commit `1b7abb5` (before P1 and P2).
+  The task tables and each task's "Lines at HEAD" line were re-read at HEAD `f4dae3c` (after P1 and P2); where prose still quotes an older number, trust the function name and the element id.
+  Re-run the inventory command of the task to get fresh numbers, and edit each file from the bottom up so earlier line numbers stay valid.
+- Run the tasks strictly one after another, 1 to 11, never in parallel: Tasks 2 to 9 use the helpers of Task 1, Tasks 1 and 6 both edit `git_rows.rs`, and every task appends to `docs/HUMAN_CHECKS.md`.
+- No click element sets `.cursor_pointer()` by hand outside `shell/widgets.rs` and `pressable.rs`: a picked element takes `pressable_unless`, an element that is not clickable right now takes no look.
+  The two pointers P1 hand-set (Share, the Ignored chip) are deleted in Tasks 3 and 5.
+- Each task deletes the `let hover` locals it leaves unused: `-D warnings` fails on an unused variable.
+  Imports cannot go unused, because every shell file uses `use crate::*`.
 
 ## Review Focus
 
@@ -50,24 +54,66 @@ Plan P2 may land before or after this plan (spec §9).
    Pinned by P1 Task 4's data-driven `press_style` tests over every built-in theme (Row, Chip and Icon hover with `theme.hover`, Raised with `theme.border`); this plan only consumes them.
 3. A second `.hover(` on one element panics at paint, and nothing at compile time catches it.
    Pinned by the "open the view: it paints" step of every area task, and by the sweep in Task 11 that must find `.hover(` only in `widgets.rs` and `pressable.rs`.
-4. A handler must not change behavior: `on_press(false, ..)` attaches nothing, where the old code kept the click while busy (Broadcast row, send row) or for a row with nothing to go to (port row without a session).
-   Pinned by Task 8 steps that read the three handlers first (`go_to_port` must return early without a session) and by the Task 8 visual check.
+4. A handler must not change behavior: `on_press(false, ..)` attaches nothing, so the handler it replaces must already do nothing in that state.
+   They do: the Broadcast toggle and the send pick return while busy (`broadcast.rs:170-173`, `doc_dialog.rs:176-177`), and `go_to_port` returns for a port with no session (`ports.rs:111-114`).
+   Pinned by Task 8 Step 2, which reads the three handlers first, and by the Task 8 visual check.
 5. Pressing a nested control (the Edit chip on a card, a stage icon on a row, the queue X) also dims its pressed parent through `.active`, and a drag source (card, tab) must not stay dimmed after a drag.
    Pinned by the visual bullets of Tasks 2, 3, 4 and 6; fallback written in each: drop the parent's press look (`card_press` has no `.active` line in its fallback form).
 
 ---
 
-## Inventory (baseline at commit 1b7abb5)
+## Inventory (baseline at commit 1b7abb5, before P1 and P2; recount at HEAD f4dae3c below)
 
 Command (run it with the grep tool or Git Bash from the repo root; this is how the numbers below were taken):
 
 ```bash
-grep -rnE '\.on_click\(|\.on_mouse_down\(|\.hover\(|\.active\(\|' crates/mkrew-ui/src --include='*.rs'
+grep -rnE '\.on_click\(|\.on_mouse_down\(|\.on_press\(|\.hover\(|\.active\(\|' crates/mkrew-ui/src --include='*.rs'
 ```
 
-Totals today: `.on_click(` 294, `.on_mouse_down(` 33, together 327 handlers in 48 files; `.hover(` 76 (10 of them in `widgets.rs`; of the other 66, one is a comment in `sidebar.rs` and 3 are on resize grips); `.active(|` style closures 44 outside tests (8 of them in `widgets.rs`).
+Totals at 1b7abb5: `.on_click(` 294, `.on_mouse_down(` 33, together 327 handlers in 48 files; `.hover(` 76 (10 of them in `widgets.rs`; of the other 66, one is a comment in `sidebar.rs` and 3 are on resize grips); `.active(|` style closures 44 outside tests (8 of them in `widgets.rs`).
 On Windows `grep -r` prints paths with backslashes: filter with `grep -v 'widgets.rs'`, not `grep -v 'shell/widgets.rs'`.
 `.active(` also matches `tabs.active()`, `detached.active(key)` and the like: `tabs.rs` 358/405/707, `hosts.rs` 79/81, `detached_actions.rs` 291, `focus.rs` 187, `pane_render.rs` 19/22/112, `detached_render.rs` 272, `history.rs` 445 and the tests. They are not styles; ignore them.
+
+### Recount at HEAD f4dae3c (after P1 and P2)
+
+The tables further down keep the 1b7abb5 numbers.
+At HEAD the other 44 rows of the per-file table still match for `.on_click(`, `.on_mouse_down(` and `.hover(`; only the rows below changed.
+
+| pattern | at 1b7abb5 | at HEAD | delta |
+| --- | --- | --- | --- |
+| `.on_click(` | 294 | 291 | -3 (`settings.rs` -5, `navigation.rs` +1, `pressable.rs` +1) |
+| `.on_mouse_down(` | 33 | 33 | 0 |
+| `.on_press(` (new in P1) | 0 | 10 (all in `shell/settings.rs`) | +10 |
+| click or mouse-down handlers | 327 | 334 (291 + 33 + 10) | +7 |
+| files with a handler | 48 | 49 (`pressable.rs:116`, the `on_click` inside `on_press`, is the new one) | +1 |
+| `.hover(` | 76 | 66 | -10 (`widgets.rs` 10 to 4, `settings.rs` 3 to 0, `navigation.rs` 2 to 0, `pressable.rs` +1) |
+| `.active(\|` outside tests | 44 | 35 | -9 |
+| `.cursor_pointer()` | not counted | 68 lines in 30 files | |
+
+Changed rows (click / down / hover / on_press at HEAD):
+
+| file | at 1b7abb5 | at HEAD | what changed |
+| --- | --- | --- | --- |
+| `shell/widgets.rs` | 2 / 0 / 10 | 2 / 0 / 4 / 0 | P1 rebuilt the buttons on `Pressable`. The 4 hovers left are `filled_press` :19, `window_control` :357, `color_swatch` :980 and the `conflict_badge` Dismiss :1054; the two clicks are `color_swatch` and Dismiss. |
+| `shell/navigation.rs` | 2 / 0 / 2 | 3 / 0 / 0 / 0 | P2 removed `render_quick_open` and the hand-built palette rows. New: "+N more" `list_row` :1229, palette row `list_row` :1244, scope pill :1330 (`.pressable(Look::Chip, ..)` at :1329, still with `.on_click`). |
+| `shell/settings.rs` | 7 / 0 / 3 | 2 / 0 / 0 / 10 | P1 rewrite. `.on_click` is now only on two text fields (`settings-find` :274, `settings-search` :310). The `.on_press(` calls are at 239, 371, 485, 613, 699, 778, 792, 850, 890 and 966. Two hand-set `cursor_pointer` lines remain, at :231 and :697. |
+| `pressable.rs` | none | 1 / 0 / 1 / 0 | New file: `apply_press` holds the hover (:80) and `on_press` the click (:116). |
+| `quick_open.rs` | 0 handlers | deleted | P2 removed it (spec 7.7), with `render_quick_open` and `QUICK_OPEN_LIST_HEIGHT`. |
+| `shell/focus.rs` | 0 / 1 / 0 | 0 / 1 / 0 / 0 | The scrim mouse down moved from :408 to the private `shade` (:411-441, handler :428), shared by `modal_shade` (:391) and `modal_shade_top` (:401, caller `navigation.rs:1418`). |
+
+Handlers added by P1 and P2 (`.on_press(` counts as a handler from here on):
+
+| site | element | class at HEAD | P3 action |
+| --- | --- | --- | --- |
+| `navigation.rs:1229`, `:1244` | "+N more ›" row, palette row | W (`list_row`) | none |
+| `navigation.rs:1306-1336` | scope pill | P, converted (`.pressable(Look::Chip, true, ..)` :1329) | `.on_click` :1330 becomes `.on_press(true, ..)` and `pressable_unless(current, ..)` (Task 9) |
+| `settings.rs:239` | nav tab | P: `.when(active, bg + pointer)` / `.when(!active, pressable Row)` (:231-232) | `pressable_unless(active, ..)` (Task 9) |
+| `settings.rs:274` | Settings search field | EXEMPT (text field) | in the exempt table |
+| `settings.rs:371`, `:485`, `:778`, `:792`, `:850` | close `icon_button`, "Clear search", `toggle`, `segment_in` choice, `dropdown_trigger` | W | none |
+| `settings.rs:613` | `settings_link` | P, converted (`Look::Text` :612) | none |
+| `settings.rs:699` | Settings row | P: `.when(focused, bg + pointer)` / `.when(!focused, pressable Row)` (:697-698) | `pressable_unless(focused, ..)` (Task 9); `on_press(true, ..)` stays (P1 R12) |
+| `settings.rs:890` | shortcut Reset | P, converted (`Look::Icon` :884) | none |
+| `settings.rs:966` | list pick choice | W (`menu_item`) with a selected `surface_raised` fill | none: `menu_item` has its own hover, so `pressable_unless` would be a second hover |
 
 Classes used below:
 
@@ -150,7 +196,8 @@ Classes used below:
 ### Exempt elements and why
 
 These keep their handlers and get no hover.
-The 48 rows are the `.on_click(`/`.on_mouse_down(` sites; the drag, drop and move handlers below the table are not counted in the 327.
+The 48 rows are the `.on_click(`/`.on_mouse_down(` sites at 1b7abb5 (49 at HEAD: P1 added the `settings.rs:274` text field); their line numbers are those of 1b7abb5, except the `focus.rs` and `settings.rs` rows, which are at HEAD (P1 and P2 moved the others by a few lines: each task's "Lines at HEAD" line has the current numbers).
+The drag, drop and move handlers below the table are not counted in the 327.
 
 | file:line | kind | reason |
 | --- | --- | --- |
@@ -178,7 +225,7 @@ The 48 rows are the `.on_click(`/`.on_mouse_down(` sites; the drag, drop and mov
 | `shell/files_render.rs:889` | editor surface | the blank area below the last line focuses the editor |
 | `shell/files_render.rs:1088` | right-click | file menu; the row is pressable |
 | `shell/files_split.rs:154` | resize grip | double-click resets the split; the grip hover moves to `grip_hover` |
-| `shell/focus.rs:408` | scrim | `modal_shade`: swallows the click outside a dialog, no look |
+| `shell/focus.rs:428` | scrim | `shade`, shared by `modal_shade` and `modal_shade_top`: swallows the click outside a dialog, no look (at HEAD; was :408) |
 | `shell/git_diff.rs:1211` | text selection | mouse down on a diff line picks it (reads Shift); its hover preview moves into `pick_surface`, not a button look |
 | `shell/git_menus.rs:223` | text field | repository search field |
 | `shell/git_menus.rs:349` | text field | file filter field |
@@ -194,7 +241,8 @@ The 48 rows are the `.on_click(`/`.on_mouse_down(` sites; the drag, drop and mov
 | `shell/peek.rs:546` | text field | peek reply field |
 | `shell/prompts_render.rs:226` | text field | prompt name field |
 | `shell/prompts_render.rs:252` | text field | prompt body field |
-| `shell/settings.rs:261` | text field | Keyboard page search field |
+| `shell/settings.rs:274` | text field | Settings search field (`settings-find`, P1; at HEAD) |
+| `shell/settings.rs:310` | text field | Keyboard page search field (`settings-search`; was :261; at HEAD) |
 | `shell/sidebar.rs:204` | right-click | opens the pane menu; the row is pressable (live run row) |
 | `shell/sidebar.rs:1206` | right-click | workspace menu; the row is pressable |
 | `shell/sidebar.rs:1400` | right-click | pane menu; the row is pressable |
@@ -215,154 +263,108 @@ Only the three resize grips (`sidebar.rs:808`, `pane_render.rs:1154`, `files_spl
 
 P1 Task 4 owns the looks and their colors: `Look { Row, Chip, Icon, Text, Raised }`, where `Row`, `Chip` and `Icon` hover with `theme.hover` and `Raised` hovers with `theme.border`, with data-driven tests over every built-in theme.
 This task changes none of that.
-It adds only what the audit found missing around it: a picked-but-clickable helper, `card_press`, `disabled_icon_button`, `grip_hover`, `pick_surface`, and `row_action` moved into `widgets.rs` (11 callers in 7 files, hand-built today with its own `.hover(`).
+It adds only what the audit found missing around it: a picked-but-clickable helper that also replaces three hand copies of the same pattern, `card_press`, `disabled_icon_button`, `grip_hover`, `pick_surface`, and `row_action` moved into `widgets.rs` (11 callers in 7 files, hand-built today with its own `.hover(`).
+Task 1 runs first and alone: Tasks 2 to 9 use these helpers, and Task 6 edits `git_rows.rs` too.
 
 **Files:**
-- Modify: `crates/mkrew-ui/src/pressable.rs` (`pressable_unless` and its pure helper `unless_look`; tests in the same module's test block, next to P1's `press_style` tests)
-- Modify: `crates/mkrew-ui/src/shell/widgets.rs` (`row_action`, `grip_hover`, `pick_surface`, `card_hover_border`, `card_press`, `icon_frame`, `disabled_icon_button`, the dismiss button of `conflict_badge`)
+- Modify: `crates/mkrew-ui/src/pressable.rs` (`pressable_unless`; one doc line on `press_style`)
+- Modify: `crates/mkrew-ui/src/shell/widgets.rs` (`list_row` folded into `pressable_unless`; `icon_button_in` replaced in place by `icon_frame`, `icon_button_in` and `disabled_icon_button`; `row_action`, `grip_hover`, `pick_surface`, `card_press`; the Dismiss button of `conflict_badge`)
 - Modify: `crates/mkrew-ui/src/shell/git_rows.rs` (delete the `row_action` definition at 483-504)
 - Modify: `docs/HUMAN_CHECKS.md` (creates the section the area tasks append to)
 
+Lines at HEAD (f4dae3c): `pressable.rs` `press_style` at 39; `widgets.rs` `icon_button_in` 374-393, `list_row` 855-887, `conflict_badge` 1009-1069 (`let hover` 1017, `.cursor_pointer()` 1050, `.group_hover` 1053, `.hover` 1054, `.active` 1055, `.on_click` 1061); `git_rows.rs` `row_action` 483-504.
+
 **Interfaces:**
-- Consumes (P1 Task 4): `Look { Row, Chip, Icon, Text, Raised }`, `PressStyle`, `press_style(Look, bool, &Theme) -> PressStyle`, `trait Pressable { fn pressable(self, Look, bool, &Theme) -> Self; fn on_press(self, bool, handler) -> Self }` for `gpui::Stateful<gpui::Div>`, `widgets::icon_button_in`.
+- Consumes (P1 Task 4): `Look { Row, Chip, Icon, Text, Raised }`, `PressStyle`, `press_style(Look, bool, &Theme) -> PressStyle`, `trait Pressable { fn pressable(self, Look, bool, &Theme) -> Self; fn on_press(self, bool, handler) -> Self }` for `gpui::Stateful<gpui::Div>`, `widgets::icon_button_in`, `widgets::list_row`.
 - Produces:
-  - `pressable::unless_look(picked: bool, look: Look) -> Option<Look>`: `None` when `picked`, else `Some(look)` (pure, tested).
-  - `Pressable::pressable_unless(self, picked: bool, look: Look, theme: &Theme) -> Self`: a picked element gets the pointer only, else `pressable(look, true, theme)`.
+  - `Pressable::pressable_unless(self, picked: bool, look: Look, theme: &Theme) -> Self`: a picked element gets the pointer only (no hover fill, no press dim, no fade), else `pressable(look, true, theme)`.
   - `widgets::row_action(id: SharedString, label: impl IntoElement, theme: &Theme) -> gpui::Stateful<gpui::Div>` (moved from `git_rows.rs`, same signature).
   - `widgets::grip_hover(grip: gpui::Stateful<gpui::Div>, theme: &Theme) -> gpui::Stateful<gpui::Div>`.
   - `widgets::pick_surface(el: gpui::Div, picked: bool, border: u32) -> gpui::Div`.
-  - `widgets::card_hover_border(selected: bool, theme: &Theme) -> Option<u32>` (pure, tested) and `widgets::card_press(card: gpui::Stateful<gpui::Div>, selected: bool, theme: &Theme) -> gpui::Stateful<gpui::Div>`.
+  - `widgets::card_press(card: gpui::Stateful<gpui::Div>, selected: bool, theme: &Theme) -> gpui::Stateful<gpui::Div>`.
   - `widgets::disabled_icon_button(id: impl Into<gpui::ElementId>, glyph: Icon, color: u32, theme: &Theme) -> gpui::Stateful<gpui::Div>`.
 
-- [ ] **Step 1: Write the failing tests.**
-In `pressable.rs`'s test block:
+No new unit test: an element's style cannot be read without a window, and `pressable_unless` and `card_press` are two-line branches over GPUI style calls.
+The colors they use are already pinned by P1 Task 4's `press_style` tests over every built-in theme; the "picked keeps its pointer" and "only the unselected card lights its border" rules are pinned by the HUMAN_CHECKS bullets of Steps 8 and of Tasks 2 to 9.
+
+- [ ] **Step 1: Add `pressable_unless` and the `press_style` doc line** to `pressable.rs`.
+
+Insert this doc comment right above `pub fn press_style` (line 39; P1 left it without one):
 
 ```rust
-#[test]
-fn a_picked_element_gets_no_look() {
-    for look in [Look::Row, Look::Chip, Look::Icon, Look::Text, Look::Raised] {
-        assert_eq!(unless_look(true, look), None);
-        assert_eq!(unless_look(false, look), Some(look));
-    }
-}
+/// What `look` gives an element in this state: the hover fill and label color, the underline, the
+/// pressed and rest opacity and the pointer, resolved from `theme`. Pure, so it is tested
+/// without a window.
 ```
 
-In a `#[cfg(test)] mod tests` at the end of `widgets.rs` (create it if P1 has not; start it with `use super::*;`):
+Add to the `Pressable` trait:
 
 ```rust
-#[test]
-fn a_selected_card_does_not_light_its_border() {
-    for entry in crate::theme::THEMES {
-        let theme = entry.build();
-        assert_eq!(card_hover_border(true, &theme), None, "{}", theme.name);
-        assert_eq!(card_hover_border(false, &theme), Some(theme.border), "{}", theme.name);
-        // The card's own fill is `surface_raised`: the lit border must differ from it.
-        assert_ne!(theme.border, theme.surface_raised, "{}", theme.name);
-    }
-}
+    /// An element that may be picked (selected, active) but stays clickable: the pointer only
+    /// while picked (no hover fill, no press dim), else `pressable(look, true, theme)`.
+    /// `pressable(look, false, ..)` would fade it instead.
+    fn pressable_unless(self, picked: bool, look: Look, theme: &Theme) -> Self;
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `cargo test -p mkrew-ui -- a_picked_element_gets_no_look a_selected_card_does_not_light`
-Expected: FAIL to compile ("cannot find function `unless_look`", "`card_hover_border`").
-
-- [ ] **Step 3: Add `unless_look` and `pressable_unless`** to `pressable.rs`:
-
-```rust
-/// The look of an element that may be picked (selected, active) but stays clickable: none while
-/// picked, so it keeps the pointer only. `pressable(look, false, ..)` would fade it instead.
-pub(crate) fn unless_look(picked: bool, look: Look) -> Option<Look> {
-    (!picked).then_some(look)
-}
-```
-
-Add to the `Pressable` trait `fn pressable_unless(self, picked: bool, look: Look, theme: &Theme) -> Self;` and to its impl for `gpui::Stateful<gpui::Div>`:
+and to its impl for `Stateful<Div>`:
 
 ```rust
     fn pressable_unless(self, picked: bool, look: Look, theme: &Theme) -> Self {
-        match unless_look(picked, look) {
-            Some(look) => self.pressable(look, true, theme),
-            None => self.cursor_pointer(),
+        if picked {
+            self.cursor_pointer()
+        } else {
+            self.pressable(look, true, theme)
         }
     }
 ```
 
-In `widgets.rs` add the pure border helper and make `card_press` (below) use it:
+- [ ] **Step 2: Fold `list_row` into it** (`widgets.rs:855-887`; finding 11 of P1's final review: "selected fill, else pressable Row" was copied here and in two `settings.rs` sites, which Task 9 folds).
+
+Before:
 
 ```rust
-/// The border a board card lights on hover: none while it is `selected`.
-pub(crate) fn card_hover_border(selected: bool, theme: &Theme) -> Option<u32> {
-    (!selected).then_some(theme.border)
-}
-```
-
-- [ ] **Step 4: Run the tests (after Steps 5-7 the whole crate builds; this runs the two new tests only) to verify they pass**
-
-Run: `cargo test -p mkrew-ui -- a_picked_element_gets_no_look a_selected_card_does_not_light`
-Expected: PASS.
-
-- [ ] **Step 5: Move `row_action` into `widgets.rs` on `Look::Raised`.**
-Delete `row_action` and its doc comment at `git_rows.rs:483-504`; add this to `widgets.rs` (all callers reach it through `use shell::widgets::*` in `main.rs`, so no call site changes):
-
-```rust
-/// A small action inside a list row ("Stage" on a file row, "Stage hunk" on a hunk header, a
-/// tab's X, or an [`icon_svg`]): no vertical padding, so the row keeps its height. It sits on a
-/// row that is hovered or selected itself, so it hovers one step above them (`Look::Raised`).
-pub(crate) fn row_action(
-    id: SharedString,
-    label: impl IntoElement,
-    theme: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .flex_none()
-        .px(px(space::XS))
-        .rounded(px(radius::SMALL))
-        .font_family(theme.ui_font_family.clone())
-        .text_size(font_size::META)
-        .text_color(rgb(theme.text_muted))
-        .pressable(Look::Raised, true, theme)
-        .child(label)
-}
-```
-
-- [ ] **Step 6: Add the other helpers to `widgets.rs`:**
-
-```rust
-/// The hover tint of a resize grip (sidebar, pane divider, Markdown split). The caller sets the
-/// cursor and the drag handlers; a grip is not a button, so it has no `Look`.
-pub(crate) fn grip_hover(
-    grip: gpui::Stateful<gpui::Div>,
-    theme: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    let tint = theme.divider;
-    grip.hover(move |style| style.bg(rgb(tint)))
-}
-
-/// A surface you pick lines from with a mouse down (a diff line): a pointer and, unless it is
-/// already `picked`, a border preview of the pick bar. Not a button, so no `Look`.
-pub(crate) fn pick_surface(el: gpui::Div, picked: bool, border: u32) -> gpui::Div {
-    el.cursor_pointer().when(!picked, |el| {
-        el.hover(move |style| style.border_color(rgb(border)))
-    })
-}
-
-/// A board card (task card, issue card): a pointer, the border lights on hover unless the card
-/// is `selected`, and it dims while pressed. The fill does not change on hover, so a chip
-/// inside the card (Edit, Undo) keeps a hover of its own that is visible.
-pub(crate) fn card_press(
-    card: gpui::Stateful<gpui::Div>,
-    selected: bool,
-    theme: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    card.cursor_pointer()
-        .when_some(card_hover_border(selected, theme), |el, border| {
-            el.hover(move |style| style.border_color(rgb(border)))
+        .when(selected, |el| {
+            // A selected row keeps its `selected` fill on hover (no hover fill) and the pointer.
+            el.bg(rgb(theme.selected)).cursor_pointer().child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px(space::XS))
+                    .bottom(px(space::XS))
+                    .w(px(theme::PALETTE_SELECTED_BAR))
+                    .rounded_full()
+                    .bg(rgb(theme.accent)),
+            )
         })
-        .active(|style| style.opacity(opacity::ACTIVE))
-}
+        .when(!selected, |el| el.pressable(Look::Row, true, theme))
+```
 
+After:
+
+```rust
+        .when(selected, |el| {
+            el.bg(rgb(theme.selected)).child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px(space::XS))
+                    .bottom(px(space::XS))
+                    .w(px(theme::PALETTE_SELECTED_BAR))
+                    .rounded_full()
+                    .bg(rgb(theme.accent)),
+            )
+        })
+        // A selected row keeps its `selected` fill and the pointer, with no hover fill.
+        .pressable_unless(selected, Look::Row, theme)
+```
+
+- [ ] **Step 3: Replace `icon_button_in` in place.**
+At HEAD `icon_button_in` (`widgets.rs:374-393`, doc comment included) is exactly the frame the disabled twin needs, with `.pressable(Look::Icon, true, theme)`.
+Replace it with the three functions below.
+Do not paste them below it: that defines `icon_button_in` twice (E0428).
+`icon_button` (line 366) keeps calling `icon_button_in` and does not change.
+
+```rust
 /// The frame of [`icon_button_in`] and [`disabled_icon_button`].
 fn icon_frame(
     id: impl Into<gpui::ElementId>,
@@ -395,8 +397,8 @@ pub(crate) fn icon_button_in(
     icon_frame(id, glyph, color, true, theme)
 }
 
-/// An icon button that cannot be used right now (the update button while it downloads):
-/// faded, no hover, no pointer. Attach no click to it.
+/// An icon button that cannot be used right now (the update button while it downloads, Fetch
+/// while Push runs): faded, no hover, no pointer. Attach no click to it.
 pub(crate) fn disabled_icon_button(
     id: impl Into<gpui::ElementId>,
     glyph: Icon,
@@ -407,18 +409,82 @@ pub(crate) fn disabled_icon_button(
 }
 ```
 
-Read `icon_button_in` as P1 left it first: `icon_frame` replaces its body, so keep any change P1 made to the frame (size, radius, text color) and only keep the `enabled` argument of `.pressable(Look::Icon, enabled, theme)`.
-Read `button_frame` as P1 left it: it must still set no hover and no `.pressable(..)` (its doc comment says so), because Share (Task 3) and the Ignored chip (Task 5) build on it and add their own look; if P1 made it pressable, stop and tell the user.
+`button_frame` (`widgets.rs:101-117`) sets neither a hover nor a pointer at HEAD; Share (Task 3) and the Ignored chip (Task 5) build on it and add their own look.
+Do not change it.
 
-- [ ] **Step 7: Give `conflict_badge`'s Dismiss the `Raised` look** (it sits on a raised card; it stays in `widgets.rs`).
-Delete `let hover = theme.border;` (line 828) and the three lines `.cursor_pointer()` (861), `.hover(..)` (865) and `.active(..)` (866).
-Add this line after the `.group_hover(group, ..)` line (864):
+- [ ] **Step 4: Move `row_action` into `widgets.rs` on `Look::Raised`.**
+Delete `row_action` and its doc comment at `git_rows.rs:483-504`; add this to `widgets.rs` (all callers reach it through `use shell::widgets::*` in `main.rs`, so no call site changes):
+
+```rust
+/// A small action inside a list row ("Stage" on a file row, "Stage hunk" on a hunk header, a
+/// tab's X, or an [`icon_svg`]): no vertical padding, so the row keeps its height. It sits on a
+/// row that is hovered or selected itself, so it hovers one step above them (`Look::Raised`).
+pub(crate) fn row_action(
+    id: SharedString,
+    label: impl IntoElement,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .px(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .font_family(theme.ui_font_family.clone())
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text_muted))
+        .pressable(Look::Raised, true, theme)
+        .child(label)
+}
+```
+
+- [ ] **Step 5: Add the other helpers to `widgets.rs`:**
+
+```rust
+/// The hover tint of a resize grip (sidebar, pane divider, Markdown split). The caller sets the
+/// cursor and the drag handlers; a grip is not a button, so it has no `Look`.
+pub(crate) fn grip_hover(
+    grip: gpui::Stateful<gpui::Div>,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let tint = theme.divider;
+    grip.hover(move |style| style.bg(rgb(tint)))
+}
+
+/// A surface you pick lines from with a mouse down (a diff line): a pointer and, unless it is
+/// already `picked`, a border preview of the pick bar. Not a button, so no `Look`.
+pub(crate) fn pick_surface(el: gpui::Div, picked: bool, border: u32) -> gpui::Div {
+    el.cursor_pointer().when(!picked, |el| {
+        el.hover(move |style| style.border_color(rgb(border)))
+    })
+}
+
+/// A board card (task card, issue card): a pointer, the border lights on hover unless the card
+/// is `selected`, and it dims while pressed. The fill does not change on hover, so a chip
+/// inside the card (Edit, Undo) keeps a hover of its own that is visible.
+pub(crate) fn card_press(
+    card: gpui::Stateful<gpui::Div>,
+    selected: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let border = theme.border;
+    card.cursor_pointer()
+        .when(!selected, |el| {
+            el.hover(move |style| style.border_color(rgb(border)))
+        })
+        .active(|style| style.opacity(opacity::ACTIVE))
+}
+```
+
+- [ ] **Step 6: Give `conflict_badge`'s Dismiss the `Raised` look** (it sits on a raised card; it stays in `widgets.rs`).
+Delete `let hover = theme.border;` (line 1017) and the three lines `.cursor_pointer()` (1050), `.hover(..)` (1054) and `.active(..)` (1055).
+Add this line after the `.group_hover(group, ..)` line (1053):
 
 ```rust
                 .pressable(Look::Raised, true, theme)
 ```
 
-Keep the tooltip, and turn the `.on_click(` at 872 into:
+`Raised` hovers `theme.border`, the same as the old `let hover`, and `opacity::HIDDEN` at rest survives because `apply_press` only sets an opacity when it is below 1.0.
+Keep the tooltip, and turn the `.on_click(` at 1061 into:
 
 ```rust
                 .on_press(
@@ -434,40 +500,51 @@ Keep the tooltip, and turn the `.on_click(` at 872 into:
 
 `color_swatch` (its hover fades the circle with `opacity::HOVER`) and `window_control` (the OS owns its click) stay as they are: both are inside `widgets.rs`.
 
-- [ ] **Step 8: Build, lint, test**
+- [ ] **Step 7: Build, lint, test**
 
 Run: `cargo clippy -p mkrew-ui --all-targets -- -D warnings`
-Expected: clean (an unused `hover` or `opacity` import means a leftover to delete).
+Expected: clean (an unused `hover` is a leftover to delete; `row_action`'s old import in `git_rows.rs` needs no change because the shell files use `use crate::*`).
 Run: `cargo test -p mkrew-ui`
-Expected: PASS.
+Expected: PASS (P1's `press_style` tests are untouched).
 
-- [ ] **Step 9: Create the HUMAN_CHECKS section.**
-In `docs/HUMAN_CHECKS.md`, under `## To verify (non-blocking)`, above the first `### To verify - 2026-11-14` heading, add:
+- [ ] **Step 8: Create the HUMAN_CHECKS section.**
+In `docs/HUMAN_CHECKS.md`, under `## To verify (non-blocking)` (line 19), above the first dated section (`### To verify - 2026-11-21 Scoped palette and protocol 54`, line 24), add:
 
 ```markdown
 ### To verify - 2026-11-21 Pressable audit (P3)
 
+Look changes the audit makes on purpose (spec 5.2); they are not bugs:
+- A chip or icon control turns its label to full text on hover, and a link underlines.
+- Rows that hovered `surface_raised`, `row_hover` or `card` (pickers, history, Jira List row, file row, doc row) now hover with `theme.hover`.
+- A picked row (selected file, doc block, Git row, a followed Share) keeps the pointer but no longer dims while pressed.
+- Pressing a nested control (a card chip, a stage icon, the queue X, the stop square) also dims its parent.
+
 - [ ] **Row actions (dark + light):** hover the X of a tab chip and a stage icon on a Git file row: each shows a fill on its (already hovered) row.
   Hover a board card next to the selected one: only the unselected card lights its border.
+- [ ] **Palette and conflict badge (dark + light):** open the palette and hover an unselected row (a fill) and the selected row (accent bar; a pointer, no fill change).
+  On a card with a merge conflict hover Dismiss: it shows a fill that differs from the card.
 ```
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add crates/mkrew-ui/src/pressable.rs crates/mkrew-ui/src/shell/widgets.rs crates/mkrew-ui/src/shell/git_rows.rs docs/HUMAN_CHECKS.md
 git -c user.email=tungnv975@gmail.com commit -m "feat(ui): pressable_unless, card_press and the shared helpers the audit needs"
 ```
 
-**Review Focus pins (Task 1):** item 1 (`a_picked_element_gets_no_look`), item 5 (`a_selected_card_does_not_light_its_border`).
+**Review Focus pins (Task 1):** items 1 and 5 have no unit test (an element's style cannot be read without a window): they are pinned by the HUMAN_CHECKS bullets of Step 8 and of Tasks 2 to 9.
 
 ---
 
 ### Task 2: Chrome, sidebar, menus and toasts
 
 **Files:**
-- Modify: `crates/mkrew-ui/src/shell/chrome.rs`, `crates/mkrew-ui/src/shell/sidebar.rs`, `crates/mkrew-ui/src/shell/update.rs`, `crates/mkrew-ui/src/shell/toasts.rs`, `crates/mkrew-ui/src/shell/menu_render.rs`
+- Modify: `crates/mkrew-ui/src/shell/chrome.rs`, `crates/mkrew-ui/src/shell/sidebar.rs`, `crates/mkrew-ui/src/shell/update.rs`, `crates/mkrew-ui/src/shell/toasts.rs`, `crates/mkrew-ui/src/shell/menu_render.rs`, `crates/mkrew-ui/src/run.rs` (drop `ActionColors::tint`, `run.rs:20-35`, and its test lines `:491` and `:500-503`)
 - Read only (every handler is W): `crates/mkrew-ui/src/shell/connection.rs`
 - Modify: `docs/HUMAN_CHECKS.md`
+
+Lines at HEAD (f4dae3c): the sidebar, chrome, toasts, menu and update lines below are unchanged; `connection.rs` is 1 lower (1433, 1444).
+The lib file `run.rs` (not under `shell/`) loses `ActionColors::tint` (Step 5).
 
 **Interfaces:**
 - Consumes: `Look`, `Pressable::{pressable, pressable_unless, on_press}`, `grip_hover`, `disabled_icon_button`, `icon_button_in` (Task 1 and P1), all through `use shell::widgets::*`.
@@ -480,14 +557,14 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): pressable_unless, car
 | `shell/chrome.rs:594` | `render_workspace_switcher` | workspace-switch trigger | `Chip` | enabled=true | 563 (`let hover`, shared with 642), 575, 579, 580 | Keep the tooltip hidden while the dropdown is open. |
 | `shell/chrome.rs:642` | `render_workspace_switcher` | title-branch pill | `Chip` | enabled=true | 628, 632 | The pill keeps `bg(theme.well)`. |
 | `shell/menu_render.rs:99` | `item_row` | trailing icon button inside a menu row | `Icon` | enabled=true | 91, 92, 93, and `tint` in the tuple at 77-81 | Keep `stop_propagation`. The per-tone tint (`danger_bg`) is lost; `fg` stays. |
-| `shell/sidebar.rs:119` | `render_run_group` | RUN group "Restart all" / "Stop all" icons | `Icon` | enabled=true | 115, 116, 117 | Keep `cx.stop_propagation()`. The per-action tint is lost (neutral fill). |
-| `shell/sidebar.rs:164` | `render_run_group` | run row action icons (restart, stop, run) | `Icon` | enabled=true | 149 (comment), 159, 160, 161 | Delete the comment: `row_action` is no longer a reason to hand-build. Tint is lost. |
+| `shell/sidebar.rs:119` | `render_run_group` | RUN group "Restart all" / "Stop all" icons | `Raised` | enabled=true | 115, 116, 117 | Keep `cx.stop_propagation()`. The per-action tint is lost (neutral fill); the group label hovers `theme.hover`, so `Icon` would show nothing. |
+| `shell/sidebar.rs:164` | `render_run_group` | run row action icons (restart, stop, run) | `Raised` | enabled=true | 149 (comment), 159, 160, 161 | Delete the comment: `row_action` is no longer a reason to hand-build. Tint is lost. The row hovers `theme.hover`, so `Icon` would show nothing. |
 | `shell/sidebar.rs:201` | `render_run_group` | live run row opens its terminal | `Row` | `pressable_unless(selected, ..)`, only inside `when_some(live)` | 73 (`let hover`), 199, 200 | A stopped row has no click and gets no look; keep it so. |
 | `shell/sidebar.rs:324` | `render_empty_workspaces` | "N empty workspaces" line | `Row` | enabled=true | 310 (`let hover`), 320, 323 |  |
 | `shell/sidebar.rs:1004` | `render_sidebar_footer` | footer Inbox "N need you" | `Row` | enabled=true, inside `when(waiting > 0)` | 969 (`let hover`), 995, 996 | NOT `enabled=false` when clear: a cleared inbox is a plain label, not a disabled control. |
 | `shell/sidebar.rs:1112` | `group_label` | group label (`RUN 2`) folds the group | `Row` | enabled=true | 1087 (`let hover`), 1098, 1099 | `.group(id)` stays: the run-all `group_hover` reveal needs it. |
 | `shell/sidebar.rs:1203` | `workspace_row` | workspace header row | `Row` | `pressable_unless(active, ..)` | 1156 (`let hover`), 1195, 1197 | `active` is the flag that gives the row `bg(theme.selected)`. |
-| `shell/sidebar.rs:1220` | `workspace_row` | workspace chevron (fold) | `Icon` | enabled=true | none (adds a look) | Today a click with no pointer or hover; this is a new affordance. Add `.pressable(Look::Icon, true, theme)` before `.on_click` becomes `.on_press`. |
+| `shell/sidebar.rs:1220` | `workspace_row` | workspace chevron (fold) | `Raised` | enabled=true | none (adds a look) | Today a click with no pointer or hover; this is a new affordance. Add `.rounded(px(radius::SMALL))` and `.pressable(Look::Raised, true, theme)` before `.on_click` becomes `.on_press`. |
 | `shell/sidebar.rs:1397` | `session_row` | session row | `Row` | `pressable_unless(selected, ..)` | 1372 (`let hover`), 1391, 1392 | Right-click (1400) and `on_hover` stay. |
 | `shell/sidebar.rs:1541` | `compact_workspace_row` | compact rail workspace row | `Row` | `pressable_unless(<its selected flag>, ..)` | 1514 (`let hover`), 1533, 1535 | Right-click (1544) stays. |
 | `shell/sidebar.rs:1603` | `compact_session_row` | compact rail session row | `Row` | `pressable_unless(<its selected flag>, ..)` | 1581 (`let hover`), 1590, 1597 | Right-click (1606) stays. |
@@ -497,13 +574,13 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): pressable_unless, car
 **W elements (keep `.on_click(`; 20 sites, the look comes from the widget):**
 
 - `shell/chrome.rs`: 181, 405, 418, 539, 735
-- `shell/connection.rs`: 1434, 1445
+- `shell/connection.rs`: 1433, 1444
 - `shell/menu_render.rs`: 161
 - `shell/sidebar.rs`: 409, 426, 510, 534, 542, 558, 622, 889, 1027, 1277, 1496
 - `shell/update.rs`: 79
 
 `update.rs:79` is W but needs the disabled twin (Step 4).
-`widgets.rs:793` (`color_swatch`) stays in `widgets.rs` (Task 1).
+`widgets.rs:980` (`color_swatch`) stays in `widgets.rs` (Task 1).
 
 **EXEMPT in these files** (see the exempt table): `chrome.rs:344`, `sidebar.rs:204, 1206, 1400, 1544, 1606`, and the grip of `sidebar.rs:808` (its `.hover(` moves to `grip_hover`).
 
@@ -515,6 +592,7 @@ grep -nE '\.on_click\(|\.on_mouse_down\(|\.hover\(|\.active\(\||cursor_pointer' 
 
 Every `.hover(`, `.active(|` and `.cursor_pointer()` line must belong to a row of the P table (its "lines to delete" column) or sit in a W widget.
 A line that belongs to neither is an element added since the tables were written: classify it with the Look chooser and convert it too.
+Delete the `let hover` locals the tables name, or `-D warnings` fails on an unused variable: `chrome.rs` 563; `sidebar.rs` 73, 310, 799 (`let divider`), 969, 1087, 1156, 1372, 1514, 1581; `toasts.rs` 69.
 
 - [ ] **Step 2: Convert the sidebar rows (`sidebar.rs`).**
 Example, `session_row` (1372-1411): a selected row is picked, not disabled, so it keeps the pointer and takes no hover fill.
@@ -630,7 +708,7 @@ After:
                         )
 ```
 
-The run action icons (164, and the run-all pair at 119) become `Look::Icon` and lose their tint.
+The run action icons (164, and the run-all pair at 119) become `Look::Raised` and lose their tint: they sit in a row (or a group label) that already hovers `theme.hover`, so `Look::Icon` (the same fill) would show nothing.
 Before (150-168 shape):
 
 ```rust
@@ -667,7 +745,7 @@ After (the comment line is deleted; `colors.fg` still colors the icon):
                     .items_center()
                     .p(px(space::XS))
                     .rounded(px(radius::SMALL))
-                    .pressable(Look::Icon, true, theme)
+                    .pressable(Look::Raised, true, theme)
                     .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, colors.fg))
                     .tooltip(tooltip(theme, tip, ""))
                     .on_press(
@@ -680,7 +758,8 @@ After (the comment line is deleted; `colors.fg` still colors the icon):
 ```
 
 The run-all pair (106-123) takes the same edit; its parent keeps `.opacity(opacity::HIDDEN).group_hover(..)`.
-The `workspace-chevron` (1220) has a click but no pointer or hover today: add `.pressable(Look::Icon, true, theme)` and turn its `.on_click(` into `.on_press(true, ..)`.
+The `workspace-chevron` (1220) has a click but no pointer or hover today: add `.rounded(px(radius::SMALL))` (it has no radius, so its new fill would have no shape) and `.pressable(Look::Raised, true, theme)`, and turn its `.on_click(` into `.on_press(true, ..)`.
+The chevron sits in the workspace row, which hovers `theme.hover`, so it is `Look::Raised` like the run icons.
 The group label (1112), the empty-workspaces line (324) are `Look::Row`, enabled, with no `pressable_unless` (they are never "picked").
 Convert the remaining rows of the table the same way, then run `cargo check -p mkrew-ui` after each file: a leftover `let hover` shows as an unused variable.
 
@@ -701,7 +780,7 @@ Before (799-808):
             .hover(move |style| style.bg(rgb(divider)))
 ```
 
-After (keep `let divider` only if clippy reports it still used further down):
+After (delete `let divider` at 799: grip_hover takes the tint from the theme and nothing else in the function reads it):
 
 ```rust
         let grip = grip_hover(div().id("sidebar-grip"), theme)
@@ -870,31 +949,100 @@ Delete `.cursor_pointer()` (91), `.hover(..)` (92) and `.active(..)` (93), add `
 This hover is the weakest in the plan (a `theme.hover` fill on a `theme.border` row): the visual step checks it in both themes.
 
 
-- [ ] **Step 5: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and Task 1's helper tests.
+- [ ] **Step 5: Drop `ActionColors::tint` (`crates/mkrew-ui/src/run.rs`).**
+After Steps 2 and 4 nothing reads `ActionColors::tint` any more (its only readers were `sidebar.rs:116` and `:160`; `fg` stays).
+Left in place it is a dead `pub` field that a test still asserts on, so delete it together with those test lines.
+
+Before (`run.rs:20-35`):
+
+```rust
+/// The glyph color of a Run control and the faint fill it shows on hover, in the Run pill's
+/// menu: Start and Restart gray (color is for status only), Stop red (it ends processes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActionColors {
+    pub fg: u32,
+    pub tint: u32,
+}
+
+pub fn action_colors(action: RunAction, theme: &Theme) -> ActionColors {
+    let (fg, tint) = match action {
+        // `border`: one step above the menu panel's `surface_raised`, like a menu item hover.
+        RunAction::Start | RunAction::Restart => (theme.text_muted, theme.border),
+        RunAction::Stop => (theme.status_exited, theme.danger_bg),
+    };
+    ActionColors { fg, tint }
+}
+```
+
+After:
+
+```rust
+/// The glyph color of a Run control (the sidebar's run icons and the Run pill's menu): Start
+/// and Restart gray (color is for status only), Stop red (it ends processes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActionColors {
+    pub fg: u32,
+}
+
+pub fn action_colors(action: RunAction, theme: &Theme) -> ActionColors {
+    let fg = match action {
+        RunAction::Start | RunAction::Restart => theme.text_muted,
+        RunAction::Stop => theme.status_exited,
+    };
+    ActionColors { fg }
+}
+```
+
+The test `run_action_colors_are_visible_in_both_themes` (`run.rs:483-505`) keeps its glyph contrast check, which is a rule a user sees; only the tint lines go (the background list at 491 and the second loop at 500-503):
+
+```rust
+    /// The glyph stays visible on every surface it sits on (title bar, menu panel, a hovered
+    /// row).
+    #[test]
+    fn run_action_colors_are_visible_in_both_themes() {
+        use crate::theme::contrast;
+        for theme in [Theme::dark(), Theme::light()] {
+            for action in [RunAction::Start, RunAction::Restart, RunAction::Stop] {
+                let colors = action_colors(action, &theme);
+                for bg in [theme.bg, theme.hover, theme.surface_raised] {
+                    let ratio = contrast(colors.fg, bg);
+                    assert!(
+                        ratio >= 3.0,
+                        "{action:?} {:06X} on {bg:06X}: {ratio:.2}",
+                        colors.fg
+                    );
+                }
+            }
+        }
+    }
+```
+
+- [ ] **Step 6: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and the HUMAN_CHECKS bullets.
 
 Run: `cargo clippy -p mkrew-ui --all-targets -- -D warnings`
-Expected: clean. An "unused variable: `hover`" or "unused import" is a leftover to delete.
+Expected: clean. An "unused variable: `hover`" is a leftover to delete (imports cannot go unused: every shell file uses `use crate::*`).
 Run: `cargo test -p mkrew-ui`
 Expected: PASS.
 
-- [ ] **Step 6: Visual check, dark then light.** Run the app on Windows and switch the theme with the title bar toggle.
+- [ ] **Step 7: Visual check, dark then light.** Run the app on Windows and switch the theme with the title bar toggle.
 Every view of this area must paint without a panic (a second `.hover(` on one element panics at paint).
 - **Rows (dark + light):** hover an unselected session row, a workspace header, a group label (`RUN 2`), a compact-rail row and the footer Inbox with something waiting: each shows a fill and a pointer.
   The selected session row and the open workspace header keep the pointer and show no hover fill; click each: it still acts and does not fade.
   With the inbox cleared, the Inbox label shows no pointer and no hover, and is not faded.
-- **Icons (dark + light):** hover the run action icons of a running Run row, the Restart all / Stop all pair on a RUN group label, the workspace chevron, and the X that clears the sidebar filter: each shows a neutral fill.
-  Press and hold one: the icon dims, and the row under it does not stay dimmed after release.
+- **Icons (dark + light):** hover the run action icons of a running Run row, the Restart all / Stop all pair on a RUN group label, the workspace chevron, and the X that clears the sidebar filter: each shows a fill one step above its (already hovered) row, and the chevron's fill has rounded corners.
+  Press and hold one: the icon dims, and so does the row under it (intended); both return to normal after release.
 - **Title bar (dark + light):** hover the workspace switcher and the branch pill: a fill, and the tooltip still hides while their dropdown is open.
   While an update downloads the update icon is faded, shows no pointer and no hover.
 - **Toasts and menus (dark + light):** hover the X of a toast and the text of an error toast (underline); hover a row of a context menu and the trailing icon button of a row that has one (open, delete): both are visible, and the button differs from its row.
 - **Sidebar grip:** hover the right edge of the sidebar: the tint shows, drag still resizes.
+- **Intended look changes (spec 5.2, not bugs):** the switcher and branch pill turn their label to full text on hover; a selected session row, the open workspace header and the live run row no longer dim while pressed; the Stop icon hovers with a neutral fill (the red `danger_bg` tint is gone, the glyph stays red); the workspace chevron is new as a pressable (it had no look); pressing a run icon, the chevron or a toast X dims the row or toast under it.
 Capture one screenshot per theme with the pointer on a converted element into `docs/screenshots/2026-11-21-pressable-chrome-sidebar-dark.png` and `docs/screenshots/2026-11-21-pressable-chrome-sidebar-light.png` if you can capture automatically.
 Append the bullets above to the section `### To verify - 2026-11-21 Pressable audit (P3)` of `docs/HUMAN_CHECKS.md`, each as a `- [ ] **<name> (dark + light):** ...` line with its sentences on separate lines.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add crates/mkrew-ui/src/shell/chrome.rs crates/mkrew-ui/src/shell/sidebar.rs crates/mkrew-ui/src/shell/update.rs crates/mkrew-ui/src/shell/toasts.rs crates/mkrew-ui/src/shell/menu_render.rs docs/HUMAN_CHECKS.md
+git add crates/mkrew-ui/src/shell/chrome.rs crates/mkrew-ui/src/shell/sidebar.rs crates/mkrew-ui/src/shell/update.rs crates/mkrew-ui/src/shell/toasts.rs crates/mkrew-ui/src/shell/menu_render.rs crates/mkrew-ui/src/run.rs docs/HUMAN_CHECKS.md
 git -c user.email=tungnv975@gmail.com commit -m "feat(ui): chrome, sidebar, menus and toasts take their press look from widgets"
 ```
 
@@ -906,6 +1054,9 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): chrome, sidebar, menu
 - Modify: `crates/mkrew-ui/src/shell/pane_render.rs`, `crates/mkrew-ui/src/shell/file_tabs_render.rs`, `crates/mkrew-ui/src/terminal/view.rs`
 - Read only (every handler is W or EXEMPT): `crates/mkrew-ui/src/shell/detached_render.rs`, `crates/mkrew-ui/src/shell/focus.rs`, `crates/mkrew-ui/src/shell/pane_drop.rs`, `crates/mkrew-ui/src/shell/reorder.rs`
 - Modify: `docs/HUMAN_CHECKS.md`
+
+Lines at HEAD (f4dae3c): `pane_render.rs` tab chip 197, 239, 250, 251; Share 816, 821, 828, 830 and `on_click` 841; divider 1131, 1155; `file_tabs_render.rs` 35, 86, 97, 98 and 106; `terminal/view.rs` 837, 844, 847, 848 and 849.
+`detached_render.rs` and `focus.rs` are read only: no file of theirs is staged.
 
 **Interfaces:**
 - Consumes: `Look`, `Pressable::{pressable, pressable_unless, on_press}`, `grip_hover`, `row_action` (Task 1).
@@ -920,7 +1071,7 @@ The detached tab chips are drawn by `tab_chip` (`pane_render.rs`), so they follo
 | --- | --- | --- | --- | --- | --- | --- |
 | `shell/file_tabs_render.rs:106` | `render_file_tabs` | file tab chip | `Chip` | `pressable_unless(is_active, ..)` | 35 (`let hover`), 86, 97, 98 |  |
 | `shell/pane_render.rs:253` | `tab_chip` | tab chip (select; double-click renames) | `Chip` | `pressable_unless(is_active, ..)` | 197 (`let hover`), 239, 250, 251 | The shown tab keeps the pointer: its double-click renames. |
-| `shell/pane_render.rs:840` | `pane_controls` | Share button | `Chip` | `pressable_unless(following, ..)` | 827 (`let hover`), 820, 829 | `button_frame` sets no hover, so there is no double hover. |
+| `shell/pane_render.rs:841` | `pane_controls` | Share button | `Chip` | `pressable_unless(following, ..)` | 816 (the R1 pointer), 821 (`.active`), 828 (`let hover`), 830 (`.hover`) | `button_frame` sets neither a pointer nor a hover, so there is no double hover. |
 | `terminal/view.rs:849` | `render_find_bar` | find bar close X | `Raised` | enabled=true | 837 (`let hover`), 844, 847, 848 | The bar is `surface_raised`. Add `use crate::pressable::{Look, Pressable};`. `theme::opacity::ACTIVE` is no longer used there. |
 
 **W elements (keep `.on_click(`; 12 sites):**
@@ -932,7 +1083,7 @@ The detached tab chips are drawn by `tab_chip` (`pane_render.rs`), so they follo
 `pane_render.rs:320` and `file_tabs_render.rs:174` are the tab X: `row_action`, `Look::Raised` (P1 Task 4) and moved to `widgets.rs` by Task 1; their `group_hover` reveal stays.
 `pane_render.rs:803` (reading width) fills with `surface_raised` when on; the `Look::Icon` hover is `theme.hover`, so the hover stays visible (pinned by P1 Task 4's theme tests).
 
-**EXEMPT in these files:** `pane_render.rs:266, 545, 867, 884, 933`, `file_tabs_render.rs:116, 123`, `detached_render.rs:182`, `focus.rs:408`, `terminal/view.rs:875, 1032`; the pane divider grip (`pane_render.rs:1154`) keeps its handlers and moves its `.hover(` to `grip_hover`.
+**EXEMPT in these files:** `pane_render.rs:266, 545, 868, 885, 934`, `file_tabs_render.rs:116, 123`, `detached_render.rs:182`, `focus.rs:428` (the scrim, in the private `shade` that `modal_shade` and `modal_shade_top` share), `terminal/view.rs:875, 1032`; the pane divider grip (`pane_render.rs:1155`) keeps its handlers and moves its `.hover(` to `grip_hover`.
 
 - [ ] **Step 1: Re-run the inventory for this area and match it to the tables above.**
 
@@ -942,6 +1093,7 @@ grep -nE '\.on_click\(|\.on_mouse_down\(|\.hover\(|\.active\(\||cursor_pointer' 
 
 Every `.hover(`, `.active(|` and `.cursor_pointer()` line must belong to a row of the P table (its "lines to delete" column) or sit in a W widget.
 A line that belongs to neither is an element added since the tables were written: classify it with the Look chooser and convert it too.
+Delete the `let hover` locals the tables name (`pane_render.rs` 197, 828 and 1131, `file_tabs_render.rs` 35, `terminal/view.rs` 837): `-D warnings` fails on an unused variable.
 
 - [ ] **Step 2: Convert the tab chips (`pane_render.rs` `tab_chip`, `file_tabs_render.rs`).**
 The shown tab is picked, not disabled: it keeps the pointer (its double-click renames) and takes no hover fill.
@@ -1011,13 +1163,19 @@ After:
 
 The right-click (`on_mouse_down(MouseButton::Right, ..)` at 266) and the middle-click of `file_tabs_render.rs:116` stay after `on_press`.
 
-- [ ] **Step 3: Convert the Share button (`pane_render.rs` 804-844).**
-`button_frame` sets a pointer and no hover, so `pressable` adds the only hover.
-Delete `let hover` (827 inside the `.when(!following, ..)` closure, and any other `let hover` feeding 829), `.active(..)` (820) and `.hover(..)` (829).
+- [ ] **Step 3: Convert the Share button (`pane_render.rs` 804-845).**
+`button_frame` sets neither a pointer nor a hover (`widgets.rs:101-117`), so `pressable_unless` adds the only ones.
+P1 ruling R1 hand-set a `.cursor_pointer()` on Share (816): delete it, because no pointer is set by hand outside `widgets.rs` and `pressable.rs`.
+Delete `.cursor_pointer()` (816), `.active(..)` (821), the `let hover` inside the `.when(!following, ..)` closure (828) and `.hover(..)` (830).
 
 Before:
 
 ```rust
+        .cursor_pointer()
+        .flex_none()
+        .px(px(space::S))
+        .py_0()
+        .text_size(font_size::META)
         .active(|style| style.opacity(opacity::ACTIVE))
         .when(following, |el| {
             el.bg(rgb(theme.card))
@@ -1034,6 +1192,10 @@ Before:
 After:
 
 ```rust
+        .flex_none()
+        .px(px(space::S))
+        .py_0()
+        .text_size(font_size::META)
         .when(following, |el| {
             el.bg(rgb(theme.card))
                 .font_weight(FontWeight(weight::MEDIUM))
@@ -1044,7 +1206,7 @@ After:
         .pressable_unless(following, Look::Chip, theme)
 ```
 
-and turn its `.on_click(` (840) into `.on_press(true, ..)` (the closure body is unchanged).
+and turn its `.on_click(` (841) into `.on_press(true, ..)` (the closure body is unchanged).
 
 - [ ] **Step 4: The terminal find bar X and the pane divider.**
 `terminal/view.rs` (837-850): the find bar is `surface_raised`, so the X is `Look::Raised`.
@@ -1084,8 +1246,8 @@ After:
             .child(icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted));
 ```
 
-`pane_divider` (`pane_render.rs` 1125-1166): the grip keeps its drag and mouse-up handlers; only the hover moves.
-Delete the `let hover = ..;` that feeds line 1154 (find it with `grep -n "let hover" crates/mkrew-ui/src/shell/pane_render.rs` inside `pane_divider`).
+`pane_divider` (`pane_render.rs` 1126-1167): the grip keeps its drag and mouse-up handlers; only the hover moves.
+Delete the `let hover = ..;` at 1131 that feeds line 1155 (find it with `grep -n "let hover" crates/mkrew-ui/src/shell/pane_render.rs` inside `pane_divider`).
 
 Before:
 
@@ -1110,10 +1272,10 @@ After:
 ```
 
 
-- [ ] **Step 5: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and Task 1's helper tests.
+- [ ] **Step 5: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and the HUMAN_CHECKS bullets.
 
 Run: `cargo clippy -p mkrew-ui --all-targets -- -D warnings`
-Expected: clean. An "unused variable: `hover`" or "unused import" is a leftover to delete.
+Expected: clean. An "unused variable: `hover`" is a leftover to delete.
 Run: `cargo test -p mkrew-ui`
 Expected: PASS.
 
@@ -1127,13 +1289,14 @@ Every view of this area must paint without a panic (a second `.hover(` on one el
   Open the terminal find bar (Ctrl+F in a terminal) and hover its X: the fill is visible on the bar.
 - **Reading width (dark + light):** with reading width on, hover its icon in the pane header: the hover is visible against the on fill.
 - **Pane divider:** hover the divider between two panes: the tint shows; drag still resizes.
+- **Intended look changes (spec 5.2, not bugs):** the tab chips and Share turn their label to full text on hover; a followed Share no longer dims while pressed; pressing a tab's X (`row_action`) dims its chip.
 Capture one screenshot per theme with the pointer on a converted element into `docs/screenshots/2026-11-21-pressable-tabs-panes-dark.png` and `docs/screenshots/2026-11-21-pressable-tabs-panes-light.png` if you can capture automatically.
 Append the bullets above to the section `### To verify - 2026-11-21 Pressable audit (P3)` of `docs/HUMAN_CHECKS.md`, each as a `- [ ] **<name> (dark + light):** ...` line with its sentences on separate lines.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/mkrew-ui/src/shell/pane_render.rs crates/mkrew-ui/src/shell/file_tabs_render.rs crates/mkrew-ui/src/shell/detached_render.rs crates/mkrew-ui/src/terminal/view.rs docs/HUMAN_CHECKS.md
+git add crates/mkrew-ui/src/shell/pane_render.rs crates/mkrew-ui/src/shell/file_tabs_render.rs crates/mkrew-ui/src/terminal/view.rs docs/HUMAN_CHECKS.md
 git -c user.email=tungnv975@gmail.com commit -m "feat(ui): tab chips, Share and the find bar take their press look from widgets"
 ```
 
@@ -1143,11 +1306,13 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): tab chips, Share and 
 
 The all-workspaces board is the same `render_board` as the single-workspace board (`shell/board.rs:718-838`, scope in `board_scope`); it draws the same `task_card`s plus a workspace avatar row, and the scope switch is the `board_toggle("board-scope")` segment (`jira.rs:465`, W).
 So the elements below cover both scopes.
-`shell/board.rs`, `board.rs`, `board/tests.rs` and `jira_board.rs` have no handlers.
+`shell/board.rs`, `board.rs` and `board/tests.rs` have no handlers (there is no `jira_board.rs`).
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/shell/cards.rs`, `crates/mkrew-ui/src/shell/jira.rs`
 - Modify: `docs/HUMAN_CHECKS.md`
+
+Lines at HEAD (f4dae3c): `cards.rs` 247-250 and 280-297 (unchanged); `jira.rs` chevron 844-856, List row 880-905 and issue card 950-976 (2 lower than the older plan numbers).
 
 **Interfaces:**
 - Consumes: `card_press`, `Look`, `Pressable::{pressable, on_press}` (Task 1); `FluentBuilder::map` from `gpui::prelude::*` (already imported by `use crate::*`).
@@ -1159,9 +1324,9 @@ So the elements below cover both scopes.
 | --- | --- | --- | --- | --- | --- | --- |
 | `shell/cards.rs:219` | `task_card` | task card (select, open terminal, drag source) | `card_press` | `card_press(card, selected, theme)` | 247-249, 250 | Keeps today's border-light hover (no fill change) so the Edit chip inside stays visible. |
 | `shell/cards.rs:297` | `task_card` | card "Edit" chip | `Raised` | enabled=true | 280, 285-287 | Keep `group_hover` (284), the tooltip and `stop_propagation`. `edit_hover` stays: the `quiet_button`s still take it. |
-| `shell/jira.rs:858` | `issue_row` | fold chevron on a List row | `Icon` | enabled=true | 846 (`let hover`), 851, 852 | Keep `stop_propagation`. |
-| `shell/jira.rs:907` | `issue_row` | Jira List row (opens the issue) | `Row` | enabled=true (selected is a border only, so no `pressable_unless`) | 882 (`let row_hover`), 904, 906 | `theme.row_hover` is still used by `widgets.rs`. |
-| `shell/jira.rs:978` | `issue_card` | Kanban issue card | `card_press` | `card_press(card, selected, theme)` | 952 (`let hover`), 974-977 |  |
+| `shell/jira.rs:856` | `issue_row` | fold chevron on a List row | `Raised` | enabled=true | 844 (`let hover`), 849, 850 | It sits on a row that hovers `theme.hover`, so `Icon` would show nothing. Keep `stop_propagation`. |
+| `shell/jira.rs:905` | `issue_row` | Jira List row (opens the issue) | `Row` | enabled=true (selected is a border only, so no `pressable_unless`) | 880 (`let row_hover`), 902, 904 | `theme.row_hover` is still used by `widgets.rs`. |
+| `shell/jira.rs:976` | `issue_card` | Kanban issue card | `card_press` | `card_press(card, selected, theme)` | 950 (`let hover`), 972-975 |  |
 
 **W elements (keep `.on_click(`; 13 sites):**
 
@@ -1182,6 +1347,7 @@ grep -nE '\.on_click\(|\.on_mouse_down\(|\.hover\(|\.active\(\||cursor_pointer' 
 
 Every `.hover(`, `.active(|` and `.cursor_pointer()` line must belong to a row of the P table (its "lines to delete" column) or sit in a W widget.
 A line that belongs to neither is an element added since the tables were written: classify it with the Look chooser and convert it too.
+Delete the `let hover` locals the tables name (`jira.rs` 844, 880 and 950); `cards.rs` keeps `edit_hover`: `-D warnings` fails on an unused variable.
 
 - [ ] **Step 2: Convert the task card (`cards.rs` 217-251).**
 `card_press` goes mid-chain with `.map(..)`; it replaces the `.when(!selected, hover)` and the `.cursor_pointer()` lines.
@@ -1249,10 +1415,11 @@ and turn its `.on_click(` (297) into `.on_press(true, ..)` with the same closure
 `pressable(.., true, ..)` sets no base opacity, so the `HIDDEN` / `FULL` reveal still works.
 
 - [ ] **Step 3: Convert Jira (`jira.rs`).**
-The fold chevron (844-875) is `Look::Icon`, the List row (882-909) is `Look::Row`, the Kanban issue card (952-980) is `card_press`.
+The fold chevron (844-873) is `Look::Raised`, the List row (880-905) is `Look::Row`, the Kanban issue card (950-976) is `card_press`.
+The chevron sits on a List row that hovers `theme.hover`, so `Look::Icon` (the same fill) would show nothing: `Raised` hovers `theme.border`.
 The List row's selected state is a border only and a selected row stays clickable, so no `pressable_unless`.
 
-Before (fold, 846-852):
+Before (fold, 844-850):
 
 ```rust
             let folded = key.clone();
@@ -1273,12 +1440,12 @@ After:
                 .id(("jira-fold", index))
                 .flex_none()
                 .rounded(px(radius::SMALL))
-                .pressable(Look::Icon, true, theme)
+                .pressable(Look::Raised, true, theme)
 ```
 
-Its `.on_click(` (858) becomes `.on_press(true, ..)`; keep its `cx.stop_propagation()`.
+Its `.on_click(` (856) becomes `.on_press(true, ..)`; keep its `cx.stop_propagation()`.
 
-Before (row, 882 and 903-909):
+Before (row, 880 and 902-905):
 
 ```rust
         let row_hover = theme.row_hover;
@@ -1305,13 +1472,13 @@ After (`theme.row_hover` is still used by `widgets.rs`, leave the token):
             )
 ```
 
-`issue_card` (974-980): delete `let hover` (952), the `.when(!selected, hover)` block (974-976) and `.cursor_pointer()` (977), add `.map(|el| card_press(el, selected, theme))` in their place; its `.on_click(` (978) stays.
+`issue_card` (972-976): delete `let hover` (950), the `.when(!selected, hover)` block (972-974) and `.cursor_pointer()` (975), add `.map(|el| card_press(el, selected, theme))` in their place; its `.on_click(` (976) stays.
 
 
-- [ ] **Step 4: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and Task 1's helper tests.
+- [ ] **Step 4: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and the HUMAN_CHECKS bullets.
 
 Run: `cargo clippy -p mkrew-ui --all-targets -- -D warnings`
-Expected: clean. An "unused variable: `hover`" or "unused import" is a leftover to delete.
+Expected: clean. An "unused variable: `hover`" is a leftover to delete.
 Run: `cargo test -p mkrew-ui`
 Expected: PASS.
 
@@ -1319,9 +1486,11 @@ Expected: PASS.
 Every view of this area must paint without a panic (a second `.hover(` on one element panics at paint).
 - **Cards (dark + light, Board and the all-workspaces scope):** hover an unselected task card: its border lights and the pointer shows; the selected card shows no border change.
   Hover a card, then hover its Edit chip: the chip shows a fill that is visible on the card.
+  Press and hold the Edit chip: the chip dims and so does its card (intended; the click still only edits).
   Press a card and drag it to another column: the card does not stay dimmed after the drop.
   Hover the hover-only Undo, Changes and Run with chips of a card: each still shows its fill.
-- **Jira (dark + light):** hover a List row (a fill) and its fold chevron (a fill that differs from the row's), and a Kanban issue card (border light).
+- **Jira (dark + light):** hover a List row (a fill) and its fold chevron (a fill one step above the row's), and a Kanban issue card (border light).
+- **Intended look changes (spec 5.2, not bugs):** the Jira List row now hovers with `theme.hover` (it used `row_hover`); the cards keep their border-light hover and gain a press dim; pressing a nested chip (Edit, the fold chevron) dims its card or row.
 Capture one screenshot per theme with the pointer on a converted element into `docs/screenshots/2026-11-21-pressable-board-jira-dark.png` and `docs/screenshots/2026-11-21-pressable-board-jira-light.png` if you can capture automatically.
 Append the bullets above to the section `### To verify - 2026-11-21 Pressable audit (P3)` of `docs/HUMAN_CHECKS.md`, each as a `- [ ] **<name> (dark + light):** ...` line with its sentences on separate lines.
 
@@ -1341,6 +1510,9 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): board cards and Jira 
 - Read only (every handler is W or EXEMPT): `crates/mkrew-ui/src/shell/files_preview.rs`, `crates/mkrew-ui/src/field.rs`, `crates/mkrew-ui/src/shell/files.rs`, `crates/mkrew-ui/src/files_view.rs`
 - Modify: `docs/HUMAN_CHECKS.md`
 
+Lines at HEAD (f4dae3c): `files_render.rs` 72-101 (including the R1 pointer at 83), 971-1015 and 1081; `files_split.rs` 133; `docs.rs` 501-516, 590-618, 652-726; `comments.rs` 668-673; `preview.rs` unchanged (661, 680-690, 837-865, 923-972, 1030-1048).
+The tables below carry these numbers.
+
 **Interfaces:**
 - Consumes: `Look`, `Pressable::{pressable, pressable_unless, on_press}`, `grip_hover` (Task 1).
   `preview.rs` is in the lib crate and has no `use crate::*`: add `use crate::pressable::{Look, Pressable};` next to its other `use crate::` lines.
@@ -1355,21 +1527,21 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): board cards and Jira 
 | `preview.rs:972` | `diagram_view` | diagram "Expand" chip | `Raised` | enabled=true | 923 (`(hover, text)` tuple), 960, 963 | Same shape as 865. |
 | `preview.rs:1048` | `source` | source line in Docs Source (pick on mouse down) | `Row` | `pressable_unless(picked, ..)`; keeps `.on_mouse_down` | 1044 | The line needs `.id(("src-line", index))` and a cloned `theme` in the `move` closure. |
 | `shell/comments.rs:670` | `comment_thread` | thread header anchor (picks the lines) | `Raised` | enabled=true, only inside `when_some(lines)` | 668 | Add `.px(px(space::XS)).rounded(px(radius::SMALL))` so the fill has padding. An anchor with no lines loses its pointer (it did nothing). |
-| `shell/docs.rs:517` | `render_doc` | doc block in Preview (pick lines on mouse down) | `Row` | `pressable_unless(picked, ..)`; keeps `.on_mouse_down` (Shift extends) | 502 (`hover_bg` in the tuple), 514, 516 | The `wrap` closure is `move`: clone `theme` into it first. |
-| `shell/docs.rs:619` | `mode_toggle` | Preview/Source/Split segment (inactive one) | `Chip` | `pressable_unless(active, ..)`; click only when inactive | 591 (`let hover`), 616-618 | The `segment` widget does not fit (height, fill). |
-| `shell/docs.rs:727` | `doc_row` | doc list row | `Row` | `pressable_unless(selected, ..)` | 653 (`let hover`), 684, 686, 687 |  |
-| `shell/files_render.rs:78` | `render_file_tree` | "Search files..." box (opens quick open) | `Chip` | enabled=true | 75, 76 | Built on `search_box(..).id(..)`; it has no hover today. |
-| `shell/files_render.rs:95` | `render_file_tree` | "Ignored" toggle chip | `Chip` | `pressable_unless(showing_ignored, ..)` | 85, 90 (`let hover`), 92 | Built on `button_frame`, which sets no hover. |
-| `shell/files_render.rs:1078` | `file_row` | file tree row | `Row` | `pressable_unless(at_cursor \|\| opened, ..)` | 968 (`let hover`), 1002, 1005-1007, 1012 | `on_press` stays unconditional. Right-click (1088) and `on_drag` (1062) stay. |
+| `shell/docs.rs:516` | `render_doc` | doc block in Preview (pick lines on mouse down) | `Row` | `pressable_unless(picked, ..)`; keeps `.on_mouse_down` (Shift extends) | 501 (`hover_bg` in the tuple), 513, 515 | The `wrap` closure is `move`: clone `theme` into it first. |
+| `shell/docs.rs:618` | `mode_toggle` | Preview/Source/Split segment (inactive one), also drawn at `files_render.rs:357` | `Chip` | `.when(!active, ..)`: `pressable(Look::Chip, true, ..)` plus `on_press` | 590 (`let hover`), 615-617 | The active segment has no handler, so it gets no look and no pointer. The `segment` widget does not fit (height, fill). |
+| `shell/docs.rs:726` | `doc_row` | doc list row | `Row` | `pressable_unless(selected, ..)` | 652 (`let hover`), 683, 685, 686 |  |
+| `shell/files_render.rs:78` | `render_file_tree` | "Search files..." box (opens the palette on Files) | `Chip` | enabled=true | 75, 76 | Built on `search_box(..).id(..)`; it has no hover today. Keeps `open_palette_on(palette::Scope::Files, ..)`. |
+| `shell/files_render.rs:98` | `render_file_tree` | "Ignored" toggle chip | `Chip` | `pressable_unless(showing_ignored, ..)` | 83 (the R1 pointer), 88, 93 (`let hover`), 95 | Built on `button_frame`, which sets no hover and no pointer. |
+| `shell/files_render.rs:1081` | `file_row` | file tree row | `Row` | `pressable_unless(at_cursor \|\| opened, ..)` | 971 (`let hover`), 1005, 1008-1010, 1015 | `on_press` stays unconditional. Right-click (1091) and `on_drag` (1065) stay. |
 
 **W elements (keep `.on_click(`; 26 sites):**
 
 - `shell/comments.rs`: 389, 434, 505, 610, 624, 641
-- `shell/docs.rs`: 231, 252, 430, 446
+- `shell/docs.rs`: 230, 251, 429, 445
 - `shell/files_preview.rs`: 197
-- `shell/files_render.rs`: 113, 131, 394, 446, 468, 489, 521, 570, 578, 586, 637, 645, 670, 729, 744
+- `shell/files_render.rs`: 116, 134, 397, 449, 471, 492, 524, 573, 581, 589, 640, 648, 673, 732, 747
 
-**EXEMPT in these files:** `files_render.rs:180, 234, 555, 623, 844, 889, 1088`, `files_preview.rs:52, 343`, `files_split.rs:154` (its grip `.hover(` at 133 moves to `grip_hover`), `docs.rs:295`, `comments.rs:745`, `preview.rs:247, 254, 686, 864, 971`, `field.rs:120`.
+**EXEMPT in these files:** `files_render.rs:183, 237, 558, 626, 847, 892, 1091`, `files_preview.rs:52, 343`, `files_split.rs:154` (its grip `.hover(` at 133 moves to `grip_hover`), `docs.rs:294`, `comments.rs:745`, `preview.rs:247, 254, 686, 864, 971`, `field.rs:120`.
 A Markdown link (`preview.rs:254`, `InteractiveText`) has its underline as a text range, so `Look::Text` cannot apply: it keeps its current look.
 
 - [ ] **Step 1: Re-run the inventory for this area and match it to the tables above.**
@@ -1380,10 +1552,11 @@ grep -nE '\.on_click\(|\.on_mouse_down\(|\.hover\(|\.active\(\||cursor_pointer' 
 
 Every `.hover(`, `.active(|` and `.cursor_pointer()` line must belong to a row of the P table (its "lines to delete" column) or sit in a W widget.
 A line that belongs to neither is an element added since the tables were written: classify it with the Look chooser and convert it too.
+Delete the `let hover` locals the tables name (`files_render.rs` 93 and 971, `docs.rs` 590 and 652): `-D warnings` fails on an unused variable.
 
-- [ ] **Step 2: Convert the file tree row (`files_render.rs` 968-1012, 1078).**
+- [ ] **Step 2: Convert the file tree row (`files_render.rs` 971-1015, 1081).**
 A row at the cursor or opened is picked: pointer, no hover fill.
-Delete `let hover = theme.card;` (968), `.cursor_pointer()` (1002), the `.when(!at_cursor && !opened, hover)` block (1005-1007) and `.active(..)` (1012).
+Delete `let hover = theme.card;` (971), `.cursor_pointer()` (1005), the `.when(!at_cursor && !opened, hover)` block (1008-1010) and `.active(..)` (1015).
 
 Before:
 
@@ -1413,12 +1586,15 @@ After:
         })
 ```
 
-and turn `.on_click(` (1078) into `.on_press(true, ..)` with the same closure (the right-click at 1088 and `.on_drag(` at 1062 stay).
+and turn `.on_click(` (1081) into `.on_press(true, ..)` with the same closure (the right-click at 1091 and `.on_drag(` at 1065 stay).
 Hover fill goes from `theme.card` to `theme.hover`.
 
-- [ ] **Step 3: Convert the tree header (`files_render.rs` 59-98).**
+- [ ] **Step 3: Convert the tree header (`files_render.rs` 59-101).**
 The search box looks like an input but is a button: `Look::Chip`.
-The Ignored chip is built on `button_frame`; when on it is picked.
+The Ignored chip is built on `button_frame`, which sets no hover and no pointer; when on it is picked.
+P1 ruling R1 hand-set a `.cursor_pointer()` on the chip (83): delete it, because no pointer is set by hand outside `widgets.rs` and `pressable.rs`.
+The search click keeps the body P2 gave it, `open_palette_on(palette::Scope::Files, ..)` (`open_quick_open` no longer exists).
+Delete `.cursor_pointer()` (75) and `.active(..)` (76) of the search box, and `.cursor_pointer()` (83), `.active(..)` (88), `let hover` (93) and `.hover(..)` (95) of the chip.
 
 Before:
 
@@ -1429,9 +1605,12 @@ Before:
         .cursor_pointer()
         .active(|style| style.opacity(opacity::ACTIVE))
         .tooltip(tooltip(theme, "Find a file of this workspace", search_keys))
-        .on_click(cx.listener(|shell, _, window, cx| shell.open_quick_open(window, cx)));
+        .on_click(cx.listener(|shell, _, window, cx| {
+            shell.open_palette_on(palette::Scope::Files, window, cx);
+        }));
         let ignored = button_frame("files-ignored", "Ignored")
             .flex_none()
+            .cursor_pointer()
             .h(theme::rems_px(theme::INPUT_HEIGHT))
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.border))
@@ -1459,7 +1638,9 @@ After:
         .tooltip(tooltip(theme, "Find a file of this workspace", search_keys))
         .on_press(
             true,
-            cx.listener(|shell, _, window, cx| shell.open_quick_open(window, cx)),
+            cx.listener(|shell, _, window, cx| {
+                shell.open_palette_on(palette::Scope::Files, window, cx);
+            }),
         );
         let ignored = button_frame("files-ignored", "Ignored")
             .flex_none()
@@ -1476,11 +1657,11 @@ After:
             .on_press(true, cx.listener(move |shell, _, window, cx| {
 ```
 
-(the closure body and its closing `}));` are unchanged; run `cargo fmt` on the file afterwards.)
-`open_quick_open` is P2's to rename; keep whatever name exists when you run this task.
+The closure body of the Ignored chip is unchanged; its closing `}));` becomes `}),` followed by a line holding `);`; run `cargo fmt` on the file afterwards.
 
 - [ ] **Step 4: Convert Docs (`docs.rs`).**
-The mode toggle segment (591-622) is `Look::Chip`, only on the inactive segment.
+The mode toggle segment (590-621; `mode_toggle` also draws the toggle at `files_render.rs:357`, so this task owns both) is `Look::Chip`, only on the inactive segment.
+The active segment has no handler, so it gets no look and no pointer: the look sits inside `.when(!active, ..)`, not in `pressable_unless` (that would give the active segment a pointer with nothing behind it).
 
 Before:
 
@@ -1498,7 +1679,7 @@ Before:
                     })
 ```
 
-After (and delete `let hover` at 591):
+After (and delete `let hover` at 590):
 
 ```rust
                     .when(!active, |el| {
@@ -1764,10 +1945,10 @@ After (`divider` is still used by the child line):
 ```
 
 
-- [ ] **Step 7: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and Task 1's helper tests.
+- [ ] **Step 7: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and the HUMAN_CHECKS bullets.
 
 Run: `cargo clippy -p mkrew-ui --all-targets -- -D warnings`
-Expected: clean. An "unused variable: `hover`" or "unused import" is a leftover to delete.
+Expected: clean. An "unused variable: `hover`" is a leftover to delete (imports cannot go unused in the shell files; `preview.rs` gets its one new `use` in Step 5).
 Run: `cargo test -p mkrew-ui`
 Expected: PASS.
 
@@ -1775,12 +1956,13 @@ Expected: PASS.
 Every view of this area must paint without a panic (a second `.hover(` on one element panics at paint).
 - **Files (dark + light):** hover a file tree row: a fill and a pointer; the row at the cursor and the opened row show a pointer and no fill, and a click on either still opens it.
   Hover the "Search files..." box and the Ignored chip (fill); turn Ignored on: it shows the selected fill and a pointer.
-- **Docs (dark + light):** hover a doc list row, the inactive Preview / Source / Split segment, and a block in Preview: each shows a fill; click a block, Shift+click another: both lines are picked as before.
+- **Docs (dark + light):** hover a doc list row, the inactive Preview / Source / Split segment, and a block in Preview: each shows a fill; the active segment shows no pointer and no fill; click a block, Shift+click another: both lines are picked as before.
   Hover a source line in Docs Source: a fill; click and Shift+click still pick.
 - **Preview extras (dark + light):** hover the Copy chip of a code block and the Expand chip of a diagram: each shows a fill on its block.
   In the Files preview hover a task checkbox: a fill around the box, and a ticked box keeps its accent fill; click ticks the source.
 - **Comments and split:** hover a comment thread header with lines (fill, click picks them) and one without lines (no pointer).
   Hover the Markdown split grip: the tint shows; drag and double-click still work.
+- **Intended look changes (spec 5.2, not bugs):** the file row, doc row, doc block and source line now hover with `theme.hover` (they used `card` or `surface_raised`); the Ignored chip, the search box and the mode segment turn their label to full text on hover; the row at the cursor, the opened file, a picked doc block or source line and the Ignored chip while on no longer dim while pressed.
 Capture one screenshot per theme with the pointer on a converted element into `docs/screenshots/2026-11-21-pressable-files-docs-dark.png` and `docs/screenshots/2026-11-21-pressable-files-docs-light.png` if you can capture automatically.
 Append the bullets above to the section `### To verify - 2026-11-21 Pressable audit (P3)` of `docs/HUMAN_CHECKS.md`, each as a `- [ ] **<name> (dark + light):** ...` line with its sentences on separate lines.
 
@@ -1800,31 +1982,37 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): files, docs, preview 
 - Read only (every handler is W): `crates/mkrew-ui/src/shell/git_dialogs.rs`; `shell/git.rs`, `shell/git_viewed.rs` and `src/git_view/` have no handlers.
 - Modify: `docs/HUMAN_CHECKS.md`
 
+Lines at HEAD (f4dae3c): `git_render.rs` chip 599 and 625-633, Fetch 335-341; `git_diff.rs` 1207-1210; `git_menus.rs` 67 and 97-105; `git_rows.rs` rename at 109, 160, 180, 212, 353, 438, rows 209-229, 280-299, 302-331, 352-356, 425-446.
+Task 1 deletes `row_action` from `git_rows.rs` (483-501); Task 6 runs after it.
+
 **Interfaces:**
-- Consumes: `Look`, `Pressable::{pressable, pressable_unless, on_press}`, `pick_surface`, `row_action` (Task 1).
+- Consumes: `Look`, `Pressable::{pressable, pressable_unless, on_press}`, `pick_surface`, `row_action`, `disabled_icon_button` (Task 1).
 - Produces: nothing later tasks use.
 
-**P elements (6, convert these):**
+**P elements (7 with a handler, 2 inert Fetch icons; convert these):**
 
 | file:line | fn | element | Look | pattern | lines to delete | notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `shell/git_menus.rs:102` | `git_repo_strip` | Repo tab (inactive) | `Text` | `pressable_unless(active, ..)` | 67 (`let hover`), 98, 100, 101 | `Text`, not `Row`: today the hover only turns the label to full text colour. The active tab (accent `border_b`) has no handler, so the underline never doubles the bar. |
-| `shell/git_render.rs:630` | `chip_row` | "Showing" chip (`chip_row`, shared with ask_dialog) | `Chip` | `pressable_unless(active, ..)`; click only when inactive | 599 (`let hover`), 626, 628, 629 |  |
-| `shell/git_rows.rs:293` | `git_file_row` | "viewed" check box on a file row | `Icon` | enabled=true, on a new wrapper | 283 | `viewed_box` stays a pure visual (git_diff uses it too). Keep `stop_propagation`. |
+| `shell/git_menus.rs:102` | `git_repo_strip` | Repo tab (inactive) | `Text` | `.when(!active, ..)`: `pressable(Look::Text, true, ..)` plus `on_press` | 67 (`let hover`), 98, 100, 101 | `Text`, not `Row`: today the hover only turns the label to full text colour. The active tab (accent `border_b`) has no handler, so it gets no look and no pointer. |
+| `shell/git_render.rs:630` | `chip_row` | "Showing" chip (`chip_row`, shared with ask_dialog) | `Chip` | `.when(!active, ..)`: `pressable(Look::Chip, true, ..)` plus `on_press` | 599 (`let hover`), 626, 628, 629 | The active chip has no handler, so it gets no look and no pointer. |
+| `shell/git_rows.rs:293` | `git_file_row` | "viewed" check box on a file row | `Raised` | enabled=true, on a new wrapper | 283 | It sits on a row that hovers `theme.hover`. `viewed_box` stays a pure visual (git_diff uses it too). Keep `stop_propagation`. |
+| `shell/git_rows.rs:324` | `git_file_row` | stage icon on a file row | `Raised` | `row_action(id, icon_svg(..), theme)` instead of `icon_button` | the `icon_button(..)` call | Same row, same reason. Keeps its reveal, tooltip and `.on_click(`. |
 | `shell/git_rows.rs:333` | `git_file_row` | changed file row | `Row` | `pressable_unless(picked, ..)` | 209 (`let hover`), 222, 228, 229 | Hint (160) and Note (180) rows share `row_frame` and stay hover-free. |
 | `shell/git_rows.rs:366` | `group_header` | group header (fold) | `Row` | enabled=true | 352 (`let hover`), 355, 356 | Gains a press look (it had none). |
 | `shell/git_rows.rs:477` | `git_commit_row` | History commit row | `Row` | `pressable_unless(picked, ..)` | 425 (`let hover`), 439, 445, 446 |  |
+| `shell/git_render.rs:335` | `git_fetch_button` | Fetch icon while Fetch runs (no handler) | none | plain icon frame, no `pressable` | the `icon_button` call | Not clickable right now and not disabled: no look (Look chooser). |
+| `shell/git_render.rs:338` | `git_fetch_button` | Fetch icon while Push runs (no handler) | disabled | `disabled_icon_button(..)` | the `icon_button` call and its `.opacity(DISABLED)` | Faded, no hover, no pointer (P1 Task 5 minor). |
 
 **W elements (keep `.on_click(`; 43 sites; 4 of them are `row_action`, which is `Look::Raised` (Task 1 moved it to `widgets.rs`), and 1 is `hunk_stage_button`, built on it):**
 
-- `shell/git_dialogs.rs`: 309, 368, 376, 479, 494, 504
+- `shell/git_dialogs.rs`: 309, 362, 370, 467, 482, 492
 - `shell/git_diff.rs`: 65, 88, 108, 199, 223, 343, 375, 393, 409, 438, 483, 505, 728, 738, 818
-- `shell/git_menus.rs`: 129, 450
+- `shell/git_menus.rs`: 129, 448
 - `shell/git_render.rs`: 49, 66, 89, 101, 110, 129, 344, 398, 434, 509, 521, 705, 733, 746, 807, 819, 870, 896
-- `shell/git_rows.rs`: 324, 397
+- `shell/git_rows.rs`: 324 (the stage icon, now a `row_action`), 397
 
-**EXEMPT in these files:** `git_render.rs:936`, `git_menus.rs:223, 349` (text fields) and `git_diff.rs:1211` (the diff line pick: a mouse down that reads Shift, whose hover preview moves into `pick_surface`).
-The inert Fetch icons at `git_render.rs:335, 338` and the hand-built disabled Push at `git_render.rs:375` have no handler and are not part of this audit.
+**EXEMPT in these files:** `git_render.rs:936`, `git_menus.rs:223, 348` (text fields) and `git_diff.rs:1211` (the diff line pick: a mouse down that reads Shift, whose hover preview moves into `pick_surface`).
+The hand-built disabled Push at `git_render.rs:375` has no handler and sets no hover: it stays as it is.
 
 - [ ] **Step 1: Re-run the inventory for this area and match it to the tables above.**
 
@@ -1834,6 +2022,7 @@ grep -nE '\.on_click\(|\.on_mouse_down\(|\.hover\(|\.active\(\||cursor_pointer' 
 
 Every `.hover(`, `.active(|` and `.cursor_pointer()` line must belong to a row of the P table (its "lines to delete" column) or sit in a W widget.
 A line that belongs to neither is an element added since the tables were written: classify it with the Look chooser and convert it too.
+Delete the `let hover` locals the tables name (`git_render.rs` 599, `git_menus.rs` 67, `git_rows.rs` 209, 352 and 425): `-D warnings` fails on an unused variable.
 
 - [ ] **Step 2: Rename the local `list_row` of `git_rows.rs`.**
 `git_rows.rs:109` defines a private `fn list_row(id: SharedString)`, the plain frame of every row.
@@ -1937,7 +2126,7 @@ After:
                     .flex_none()
                     .p(px(space::XS))
                     .rounded(px(radius::SMALL))
-                    .pressable(Look::Icon, true, theme)
+                    .pressable(Look::Raised, true, theme)
                     .tooltip(tooltip(
                         theme,
                         if viewed {
@@ -1961,6 +2150,43 @@ After:
 ```
 
 The wrapper adds 8 px of width; the row height (34 px) does not change.
+The wrapper is `Look::Raised`: the file row hovers `theme.hover`, so `Look::Icon` (the same fill) would show nothing on a hovered row.
+Pressing the box also dims its file row, because both are pressed (intended; the handler stops the click from selecting the row).
+
+The stage icon (302-331) is the same case: it sits on the hovered row, so it is a `row_action` (`Look::Raised`, moved to `widgets.rs` by Task 1), not an `icon_button` (`Look::Icon`).
+Only its constructor changes; its reveal, tooltip and `.on_click(` stay.
+
+Before:
+
+```rust
+            icon_button(
+                SharedString::from(format!("{id}-stage")),
+                match stage {
+                    git_view::Stage::Stage => Icon::Plus,
+                    git_view::Stage::Unstage => Icon::Minus,
+                },
+                theme,
+            )
+            .when(!picked, |el| {
+```
+
+After:
+
+```rust
+            row_action(
+                SharedString::from(format!("{id}-stage")),
+                icon_svg(
+                    match stage {
+                        git_view::Stage::Stage => Icon::Plus,
+                        git_view::Stage::Unstage => Icon::Minus,
+                    },
+                    theme::ICON_SIZE_SMALL,
+                    theme.text_muted,
+                ),
+                theme,
+            )
+            .when(!picked, |el| {
+```
 
 - [ ] **Step 4: Convert the chips and the repo tab.**
 The chip row (`git_render.rs` 599-636) is shared with `ask_dialog.rs` (agent and web chips): the active chip is picked and has no handler today.
@@ -2030,7 +2256,48 @@ After (and delete `let hover = theme.text;` at 67):
                     })
 ```
 
-- [ ] **Step 5: Move the diff line pick's hover into `pick_surface` (`git_diff.rs` 1199-1217).**
+- [ ] **Step 5: The Fetch icon while it cannot be used (`git_render.rs` 325-349).**
+P1 left two states of the Fetch icon with a hover and a pointer but no handler (P1 Task 5 minor, `git_render.rs:339`).
+While Push runs it is faded but still hovers: `disabled_icon_button` (Task 1) is its faded twin with no hover and no pointer.
+While Fetch itself runs it is "not clickable right now" and not disabled: no look at all, so a plain icon frame without `.pressable(..)` (`icon_frame` is private to `widgets.rs`, so it is built here).
+The idle arm (`None`) stays an `icon_button` with its click.
+
+Before:
+
+```rust
+            Some(Remote::Fetch) => icon_button("git-fetch", Icon::Ellipsis, theme)
+                .tooltip(tooltip(theme, Remote::Fetch.running_label(), ""))
+                .into_any_element(),
+            Some(Remote::Push) => icon_button("git-fetch", Icon::Download, theme)
+                .opacity(opacity::DISABLED)
+                .tooltip(tooltip(theme, tip, ""))
+                .into_any_element(),
+```
+
+After:
+
+```rust
+            // Running: not clickable right now, but not "disabled" either: no hover, no pointer.
+            Some(Remote::Fetch) => div()
+                .id("git-fetch")
+                .flex_none()
+                .size(theme::rems_px(theme::CONTROL_HEIGHT))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(icon_svg(Icon::Ellipsis, theme::ICON_SIZE, theme.text_muted))
+                .tooltip(tooltip(theme, Remote::Fetch.running_label(), ""))
+                .into_any_element(),
+            Some(Remote::Push) => {
+                disabled_icon_button("git-fetch", Icon::Download, theme.text_muted, theme)
+                    .tooltip(tooltip(theme, tip, ""))
+                    .into_any_element()
+            }
+```
+
+The Push button (`git_render.rs:375`) stays as it is: it has no handler and sets no hover.
+
+- [ ] **Step 6: Move the diff line pick's hover into `pick_surface` (`git_diff.rs` 1199-1217).**
 
 Before:
 
@@ -2056,25 +2323,28 @@ After:
 The mouse-down handler (it reads `event.modifiers.shift` at the press) stays unchanged.
 
 
-- [ ] **Step 6: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and Task 1's helper tests.
+- [ ] **Step 7: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and the HUMAN_CHECKS bullets.
 
 Run: `cargo clippy -p mkrew-ui --all-targets -- -D warnings`
-Expected: clean. An "unused variable: `hover`" or "unused import" is a leftover to delete.
+Expected: clean. An "unused variable: `hover`" is a leftover to delete.
 Run: `cargo test -p mkrew-ui`
 Expected: PASS.
 
-- [ ] **Step 7: Visual check, dark then light.** Run the app on Windows and switch the theme with the title bar toggle.
+- [ ] **Step 8: Visual check, dark then light.** Run the app on Windows and switch the theme with the title bar toggle.
 Every view of this area must paint without a panic (a second `.hover(` on one element panics at paint).
 - **Rows (dark + light):** hover an unpicked changed file row, a History commit row and a group header: a fill and a pointer; the picked row keeps its fill and a pointer, and a click on it still selects.
   Hover a Hint row ("nothing staged") and a commit Note row: no pointer, no hover.
-- **Row actions (dark + light):** on a hovered file row hover the stage icon, the "viewed" check box and "Stage all" on a group header: each shows its own fill on the hovered row.
+- **Row actions (dark + light):** on a hovered file row hover the stage icon, the "viewed" check box and "Stage all" on a group header: each shows its own fill, one step above the row's.
   Click the stage icon: the file moves and the row under it was not selected by the click.
-- **Chips and tabs (dark + light):** hover an inactive "Showing" chip, a Repo tab (text turns full color, with an underline) and the Ask dialog's agent chips (they share `chip_row`); the active chip and tab show no look.
+  Press and hold the stage icon or the viewed box: it dims and so does its file row (intended).
+- **Fetch (dark + light):** while a Fetch runs the icon shows no pointer and no hover; while a Push runs the Fetch icon is faded with no pointer and no hover; idle, it hovers and fetches.
+- **Chips and tabs (dark + light):** hover an inactive "Showing" chip, a Repo tab (text turns full color, with an underline) and the Ask dialog's agent chips (they share `chip_row`); the active chip and tab show no look and no pointer.
 - **Diff pick (dark + light):** hover a diff line: the border preview shows; mouse down and Shift+mouse down still pick a range.
+- **Intended look changes (spec 5.2, not bugs):** the "Showing" and agent chips now hover with `theme.hover` (they used `surface`) and their label turns to full text; the Repo tab now underlines on hover as well; the picked file and commit rows no longer dim while pressed; the stage icon is a `row_action` (a smaller hit area than the old square button).
 Capture one screenshot per theme with the pointer on a converted element into `docs/screenshots/2026-11-21-pressable-git-dark.png` and `docs/screenshots/2026-11-21-pressable-git-light.png` if you can capture automatically.
 Append the bullets above to the section `### To verify - 2026-11-21 Pressable audit (P3)` of `docs/HUMAN_CHECKS.md`, each as a `- [ ] **<name> (dark + light):** ...` line with its sentences on separate lines.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add crates/mkrew-ui/src/shell/git_render.rs crates/mkrew-ui/src/shell/git_diff.rs crates/mkrew-ui/src/shell/git_menus.rs crates/mkrew-ui/src/shell/git_rows.rs docs/HUMAN_CHECKS.md
@@ -2090,6 +2360,9 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): git rows, chips and t
 - Read only (every handler is W or EXEMPT): `crates/mkrew-ui/src/shell/inspector.rs`, `crates/mkrew-ui/src/shell/peek.rs`, `crates/mkrew-ui/src/shell/path_field.rs`
 - Modify: `docs/HUMAN_CHECKS.md`
 
+Lines at HEAD (f4dae3c): `composer.rs` 534, 551-558, 568, 596 and the queue X 788-829; `slash.rs` 235, 279-286; `history.rs` 528, 604-605 and 692-719; `thread_panel.rs` as in the tables.
+Below about line 600 the composer and history numbers in this plan are up to 6 higher than HEAD (the `floating_panel` move): find an element by function and id.
+
 **Interfaces:**
 - Consumes: `Look`, `Pressable::{pressable, pressable_unless, on_press}` (Task 1 and P1).
 - Produces: nothing later tasks use.
@@ -2098,30 +2371,30 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): git rows, chips and t
 
 | file:line | fn | element | Look | pattern | lines to delete | notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `shell/composer.rs:568` | `render_prompt_picker` | prompt picker row | `Row` | `pressable_unless(picked, ..)` inside `frame` | 534 (`let hover`), 556, 557, 558 | One edit inside the `frame` closure covers 568 and 596. |
+| `shell/composer.rs:568` | `render_prompt_picker` | prompt picker row | `Row` | `pressable_unless(picked, ..)` inside `frame` | 534 (`let hover`), 556, 557, 558; border 550-554 becomes transparent | One edit inside the `frame` closure covers 568 and 596. |
 | `shell/composer.rs:596` | `render_prompt_picker` | "Manage prompts..." row | `Row` | same `frame` | (same lines) |  |
-| `shell/composer.rs:835` | `composer_panel` | queued message X | `Icon` | enabled=true | 794 (`let hover`), 830, 832, 833 | Keep `stop_propagation`: the panel has a mouse-down at 851. |
-| `shell/history.rs:605` | `render_turns_dialog` | turns dialog row (selects it) | `Row` | `pressable_unless(selected, ..)` | 528 (`let hover`), 604 | Gains a pointer and a press look (it had neither). |
-| `shell/history.rs:725` | `render_history` | history list row | `Row` | `pressable_unless(selected, ..)` | 698 (`let hover`), 719, 722, 723 |  |
-| `shell/slash.rs:287` | `render_slash_picker` | slash command row | `Row` | `pressable_unless(picked, ..)` | 235 (`let hover`), 284, 285, 286 |  |
+| `shell/composer.rs:829` | `composer_panel` | queued message X | `Icon` | enabled=true | 788 (`let hover`), 824, 826, 827 | Keep `stop_propagation`: the panel has a mouse down at 845. |
+| `shell/history.rs:605` | `render_turns_dialog` | turns dialog row (selects it) | `Row` | `pressable_unless(selected, ..)` | 528 (`let hover`), 604 | Gains a pointer and a press look (it had neither). Its Restore and Diff buttons (`history.rs:572, 587`) press inside it and dim it. |
+| `shell/history.rs:719` | `render_history` | history list row | `Row` | `pressable_unless(selected, ..)` | 692 (`let hover`), 713, 716, 717 |  |
+| `shell/slash.rs:286` | `render_slash_picker` | slash command row | `Row` | `pressable_unless(picked, ..)` | 235 (`let hover`), 283, 284, 285; border 279-282 becomes transparent |  |
 | `shell/thread_panel.rs:155` | `render_thread_section` | "Earlier turns: Open transcript" line | `Text` | enabled=true | 154 | `meta_line(..)` is a `Div`; `.id(..)` makes it `Stateful`. |
 | `shell/thread_panel.rs:194` | `render_thread_section` | "+3 tool calls" disclosure | `Text` | enabled=true | 185 |  |
 
 **W elements (keep `.on_click(`; 22 sites):**
 
-- `shell/composer.rs`: 686, 917, 949
-- `shell/history.rs`: 572, 587, 667, 825, 869
+- `shell/composer.rs`: 680, 911, 943
+- `shell/history.rs`: 572, 587, 661, 819, 857
 - `shell/inspector.rs`: 228, 247, 321, 452, 527, 538, 550, 593, 616
 - `shell/path_field.rs`: 192, 206
 - `shell/peek.rs`: 521
-- `shell/slash.rs`: 371, 408
+- `shell/slash.rs`: 370, 407
 
 `inspector.rs:452` is W through `row_action` (`Look::Raised`, moved to `widgets.rs` by Task 1).
 `inspector.rs:228` (the right panel toggle) fills with `surface_raised` while open; the `Look::Icon` hover is `theme.hover`, which differs (pinned by P1 Task 4's theme tests), so no edit is needed.
 `inspector.rs:527, 538` call `quiet_button(.., theme.hover)`: the fourth argument must keep working (P1 keeps the signature).
 The inspector grip (`inspector.rs:269-287`) has no hover and stays.
 
-**EXEMPT in these files:** `composer.rs:851` (panel-wide mouse down that focuses the composer), `peek.rs:546` (text field); `peek.rs:590` (mouse down out) and `peek.rs:648` (hover listener) are behavior, not styles.
+**EXEMPT in these files:** `composer.rs:845` (panel-wide mouse down that focuses the composer), `peek.rs:546` (text field); `peek.rs:590` (mouse down out) and `peek.rs:648` (hover listener) are behavior, not styles.
 
 - [ ] **Step 1: Re-run the inventory for this area and match it to the tables above.**
 
@@ -2131,15 +2404,23 @@ grep -nE '\.on_click\(|\.on_mouse_down\(|\.hover\(|\.active\(\||cursor_pointer' 
 
 Every `.hover(`, `.active(|` and `.cursor_pointer()` line must belong to a row of the P table (its "lines to delete" column) or sit in a W widget.
 A line that belongs to neither is an element added since the tables were written: classify it with the Look chooser and convert it too.
+Delete the `let hover` locals the tables name (`composer.rs` 534 and 788, `slash.rs` 235, `history.rs` 528 and 692): `-D warnings` fails on an unused variable.
 
-- [ ] **Step 2: Convert the prompt picker rows (`composer.rs` 534-559) and the slash picker (`slash.rs` 235, 263-287).**
+- [ ] **Step 2: Convert the prompt picker rows (`composer.rs` 534-559) and the slash picker (`slash.rs` 235, 263-286).**
 One `frame` closure draws every picker row, so one edit covers `composer.rs:568` and `:596`.
-The picked row is the keyboard's choice and has a focus ring; it stays clickable.
+The picked row is the keyboard's choice and has a focus ring; it stays clickable, so it keeps the pointer only.
 Delete `let hover = theme.surface_raised;` (534) and the `.when(!picked, hover)`, `.cursor_pointer()` and `.active(..)` lines (556-558).
+The unpicked border (550-554) is a 1 px `theme.surface` outline: on the glass panel it draws a faint box around every row (P1 final review finding 6), so it becomes transparent, like `dialogs.rs:504`.
 
 Before:
 
 ```rust
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(if picked {
+                    theme.pane_focus_border
+                } else {
+                    theme.surface
+                }))
                 .when(picked, |el| el.bg(rgb(theme.surface_raised)))
                 .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
                 .cursor_pointer()
@@ -2150,17 +2431,67 @@ Before:
 After:
 
 ```rust
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(if picked {
+                    gpui::Hsla::from(rgb(theme.pane_focus_border))
+                } else {
+                    gpui::transparent_black()
+                })
                 .when(picked, |el| el.bg(rgb(theme.surface_raised)))
                 .pressable_unless(picked, Look::Row, theme)
         };
 ```
 
 At the two call sites (568, 596) turn `.on_click(cx.listener(..))` into `.on_press(true, cx.listener(..))`; the listener bodies do not change.
-`slash.rs` 283-287 takes the same edit: delete `let hover` (235) and lines 284-286, add `.pressable_unless(picked, Look::Row, theme)` after `.when(picked, ..bg..)`, and turn `.on_click(` (287) into `.on_press(true, ..)`.
 
-- [ ] **Step 3: Convert the queue X (`composer.rs` 822-840).**
-`Look::Icon`; the click keeps `cx.stop_propagation()` because the panel has a mouse down at 851.
-Delete `let hover = theme.border;` (794), `.cursor_pointer()` (830), `.hover(..)` (832) and `.active(..)` (833).
+The slash row (`slash.rs` 263-286) takes the same edit: delete `let hover` (235) and lines 283-285, make the border transparent (279-282), add `.pressable_unless(picked, Look::Row, theme)` after `.when(picked, ..bg..)`, and turn `.on_click(` (286) into `.on_press(true, ..)`.
+
+Before:
+
+```rust
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(rgb(if picked {
+                            theme.pane_focus_border
+                        } else {
+                            theme.surface
+                        }))
+                        .when(picked, |el| el.bg(rgb(theme.surface_raised)))
+                        .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
+                        .cursor_pointer()
+                        .active(|style| style.opacity(opacity::ACTIVE))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            if let Some(picker) = shell.slash_picker.as_mut() {
+                                picker.pick(position);
+                            }
+                            shell.accept_slash_pick(false, window, cx);
+                        }))
+```
+
+After:
+
+```rust
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(if picked {
+                            gpui::Hsla::from(rgb(theme.pane_focus_border))
+                        } else {
+                            gpui::transparent_black()
+                        })
+                        .when(picked, |el| el.bg(rgb(theme.surface_raised)))
+                        .pressable_unless(picked, Look::Row, theme)
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                if let Some(picker) = shell.slash_picker.as_mut() {
+                                    picker.pick(position);
+                                }
+                                shell.accept_slash_pick(false, window, cx);
+                            }),
+                        )
+```
+
+- [ ] **Step 3: Convert the queue X (`composer.rs` 788-834).**
+`Look::Icon`; the click keeps `cx.stop_propagation()` because the panel has a mouse down at 845.
+Delete `let hover = theme.border;` (788), `.cursor_pointer()` (824), `.hover(..)` (826) and `.active(..)` (827).
 
 Before:
 
@@ -2194,8 +2525,8 @@ After:
 ```
 
 - [ ] **Step 4: Convert the history rows (`history.rs`).**
-The history list row (712-727) and the turns dialog row (596-610) are picked when selected.
-Delete `let hover` (698 / 528), `.cursor_pointer()` (719), the `.when(!selected, hover..)` blocks (722-723 / 604).
+The history list row (HEAD 692-719) and the turns dialog row (528-605) are picked when selected.
+Delete `let hover` (692 / 528), `.cursor_pointer()` (713), the `.when(!selected, hover..)` blocks (716-717 / 604).
 The turns row had no pointer and no press look before; it gains both.
 
 Before (history list row):
@@ -2270,19 +2601,21 @@ Before (181-201, the tool call disclosure):
 After: delete the `.cursor_pointer()` line, add `.pressable(Look::Text, true, theme)` after `.text_color(..)`, and turn `.on_click(` into `.on_press(true, ..)` (the closure body is unchanged, wrap it as in the block above).
 
 
-- [ ] **Step 6: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and Task 1's helper tests.
+- [ ] **Step 6: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and the HUMAN_CHECKS bullets.
 
 Run: `cargo clippy -p mkrew-ui --all-targets -- -D warnings`
-Expected: clean. An "unused variable: `hover`" or "unused import" is a leftover to delete.
+Expected: clean. An "unused variable: `hover`" is a leftover to delete.
 Run: `cargo test -p mkrew-ui`
 Expected: PASS.
 
 - [ ] **Step 7: Visual check, dark then light.** Run the app on Windows and switch the theme with the title bar toggle.
 Every view of this area must paint without a panic (a second `.hover(` on one element panics at paint).
 - **Thread (dark + light):** hover "Earlier turns: Open transcript" and a "+N tool calls" line: each underlines and turns to full text color.
-- **Pickers (dark + light):** open the prompt picker and the slash picker: hover an unpicked row (a fill and a pointer); the keyboard-picked row keeps its ring and fill, and a click on it still picks.
+- **Pickers (dark + light):** open the prompt picker and the slash picker: hover an unpicked row (a fill and a pointer, and no faint outline around any row); the keyboard-picked row keeps its ring and fill, and a click on it still picks.
 - **Queue and history (dark + light):** queue a second message while an agent works and hover its X (a fill; clicking it does not dim or select the panel); open History and the turns dialog and hover an unselected row (a fill and a pointer); the selected row keeps a pointer and no fill change.
+  In the turns dialog press and hold Restore or Diff on a row: the button dims and so does its row (intended; the click acts as before).
 - **Inspector:** with the right panel open hover its title bar toggle: the hover is visible against the open fill.
+- **Intended look changes (spec 5.2, not bugs):** the picker, history and turns rows now hover with `theme.hover` (they used `surface_raised`); the thread links and the queue X turn their text to full color on hover; the picked picker row and the selected history row no longer dim while pressed; the pick-list rows lost their faint 1 px outline.
 Capture one screenshot per theme with the pointer on a converted element into `docs/screenshots/2026-11-21-pressable-inspector-thread-dark.png` and `docs/screenshots/2026-11-21-pressable-inspector-thread-light.png` if you can capture automatically.
 Append the bullets above to the section `### To verify - 2026-11-21 Pressable audit (P3)` of `docs/HUMAN_CHECKS.md`, each as a `- [ ] **<name> (dark + light):** ...` line with its sentences on separate lines.
 
@@ -2298,12 +2631,15 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): thread, composer, pic
 ### Task 8: Dialogs
 
 P1 moved every dialog panel to `floating_panel`, so the dialog files have shifted: find each element by its function name and id.
-The scrim of every dialog is `modal_shade` (`focus.rs:408`, EXEMPT); no dialog file has a handler of its own on it.
+The scrim of every dialog is `modal_shade` and `modal_shade_top` (`focus.rs`, both through the private `shade`, mouse down at `:428`, EXEMPT); no dialog file has a handler of its own on it.
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/shell/dialogs.rs`, `crates/mkrew-ui/src/shell/send_dialog.rs`, `crates/mkrew-ui/src/shell/task_dialog.rs`, `crates/mkrew-ui/src/shell/ports.rs`
 - Read only (every handler is W; they keep `.on_click(`): `ask_dialog.rs`, `confirm_prompt.rs`, `diagram_dialog.rs`, `worktrees.rs`, `workspace_actions.rs`, `phone_access.rs`
 - Modify: `docs/HUMAN_CHECKS.md`
+
+Lines at HEAD (f4dae3c): `dialogs.rs` 475, 510-523; `send_dialog.rs` 339, 357-374; `task_dialog.rs` 308-336, 344-377; `ports.rs` 169, 203-208, 240-247.
+The tables below carry these numbers; the plan's older numbers (1b7abb5) differ by up to 6 in the dialog files, so find an element by function and id.
 
 **Interfaces:**
 - Consumes: `Look`, `Pressable::{pressable, pressable_unless, on_press}` (Task 1 and P1); `DialogControl::{focus_stop, focusable_bordered, chip_arrows}` (existing, return `Self`).
@@ -2313,12 +2649,12 @@ The scrim of every dialog is `modal_shade` (`focus.rs:408`, EXEMPT); no dialog f
 
 | file:line | fn | element | Look | pattern | lines to delete | notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `shell/dialogs.rs:523` | `render_broadcast` | Broadcast checkbox row | `Row` | enabled=`!busy` | 481 (`let hover`), 516-522 | The tooltip moves into `.when(!busy, ..)`. While busy the click does nothing (it toggled mid-send before). |
-| `shell/ports.rs:206` | `render_ports` | port row (go to its session) | `Row` | `.when(!selected && clickable, pressable Row)`, `.when(selected && clickable, cursor_pointer)`; `on_press(clickable, ..)` | 169 (`let hover`), 203-205 | A row with no session is not "disabled": no `pressable`, no fade. |
-| `shell/ports.rs:244` | `render_ports` | stop square in a port row | `Icon` | enabled=true | 240, 242 | The `danger_bg` hover tint is lost; the text stays `danger_text`. Keep `stop_propagation`. |
-| `shell/send_dialog.rs:375` | `render_send_dialog` | session pick row | `Row` | `.when(!picked, \|el\| el.pressable(Look::Row, !dialog.busy, theme))` + `.when(picked, cursor_pointer)`; `on_press(!dialog.busy, ..)` | 345 (`let hover`), 370-374 | Rows fade while sending (new); the picked row keeps its own fill. |
+| `shell/dialogs.rs:517` | `render_broadcast` | Broadcast checkbox row | `Row` | enabled=`!busy` | 475 (`let hover`), 510-516 | The tooltip moves into `.when(!busy, ..)`. The toggle already returns while busy, so `on_press(!busy, ..)` changes no behavior. |
+| `shell/ports.rs:206` | `render_ports` | port row (go to its session) | `Row` | `.when(clickable, \|el\| el.pressable_unless(selected, Look::Row, theme))`; `on_press(clickable, ..)` | 169 (`let hover`), 203-205 | A row with no session is not "disabled": no look, no fade, no pointer. `go_to_port` already returns without a session. |
+| `shell/ports.rs:244` | `render_ports` | stop square in a port row | `Raised` | enabled=true | 240, 242 | It sits in a row that hovers `theme.hover`, so `Icon` would show nothing. The `danger_bg` hover tint is lost; the text stays `danger_text`. Keep `stop_propagation`. |
+| `shell/send_dialog.rs:369` | `render_send_dialog` | session pick row | `Row` | `.when(dialog.busy, \|el\| el.pressable(Look::Row, false, theme))` + `.when(!dialog.busy, \|el\| el.pressable_unless(picked, Look::Row, theme))`; `on_press(!dialog.busy, ..)` | 339 (`let hover`), 364-368; the 1 px `theme.surface` border 357-362 becomes transparent | Every row fades while sending, a picked row too (new); the picked row keeps its own fill and no hand pointer. |
 | `shell/task_dialog.rs:331` | `render_task_dialog` | agent chip | `Chip` | `pressable_unless(choice.selected, ..)` | 308 (`let hover`), 316, 327, 328 | `focusable_bordered` and `chip_arrows` stay after `on_press`. |
-| `shell/task_dialog.rs:370` | `render_task_dialog` | "Run in a worktree" row | `Row` | enabled=`!locked` | 344 (`let hover`), 365-369 | `focus_stop` stays conditional on `!locked`. A locked row now fades (new). |
+| `shell/task_dialog.rs:370` | `render_task_dialog` | "Run in a worktree" row | `Row` | enabled=`!locked` | 344 (`let hover`), 366, 368, 369 | `focus_stop` stays conditional on `!locked`. A locked row now fades (new). |
 
 **W elements (keep `.on_click(`; 53 sites; every one is a `button`, `danger_button`, `quiet_button`, `secondary_button` or `icon_button` that also carries `.focus_stop(theme)` or `.focusable_bordered(theme)`):**
 
@@ -2344,17 +2680,16 @@ grep -nE '\.on_click\(|\.on_mouse_down\(|\.hover\(|\.active\(\||cursor_pointer' 
 
 Every `.hover(`, `.active(|` and `.cursor_pointer()` line must belong to a row of the P table (its "lines to delete" column) or sit in a W widget.
 A line that belongs to neither is an element added since the tables were written: classify it with the Look chooser and convert it too.
+Delete the `let hover` locals the tables name (`dialogs.rs` 475, `send_dialog.rs` 339, `task_dialog.rs` 308 and 344, `ports.rs` 169): `-D warnings` fails on an unused variable.
 
-- [ ] **Step 2: Read the three handlers whose behavior changes (Review Focus 4).**
-`on_press(false, ..)` attaches nothing, where today the click stays attached while the row only looks inert.
-Read `toggle` of the Broadcast dialog (`dialog.toggle(index)`), the send dialog's pick handler and `Shell::go_to_port`.
-Broadcast and send already stop being useful while busy (a toggle or pick during a send is a bug today), so blocking them is the intended result.
-`go_to_port` must return without effect for a port with no session: confirm it does (`grep -n "fn go_to_port" -A 12 crates/mkrew-ui/src/shell/ports.rs`).
-If it does not, give the port row `on_press(true, ..)` and keep `pressable` only inside `.when(!selected && clickable, ..)`.
+- [ ] **Step 2: Read the three handlers behind `on_press(false, ..)` (Review Focus 4).**
+`on_press(false, ..)` attaches nothing, so each of these handlers must already do nothing in the state that disables its row.
+They do: the Broadcast toggle returns while busy (`broadcast.rs:170-173`), the send pick returns while busy (`doc_dialog.rs:176-177`) and `Shell::go_to_port` returns for a port with no session (`ports.rs:111-114`).
+Read the three spots to confirm; no behavior changes, only the look and the attached handler.
 
-- [ ] **Step 3: Convert the Broadcast row (`dialogs.rs` 481, 501-528).**
+- [ ] **Step 3: Convert the Broadcast row (`dialogs.rs` 475, 495-523).**
 While busy the row is really disabled (it fades, no hover, no click); the tooltip only shows when it is usable.
-Delete `let hover = theme.surface_raised;` (481), the `.when(busy, opacity)` line (516) and the `.when(!busy, ..)` block (517-522).
+Delete `let hover = theme.surface_raised;` (475), the `.when(busy, opacity)` line (510) and the `.when(!busy, ..)` block (511-516).
 
 Before:
 
@@ -2392,35 +2727,57 @@ After:
                 )
 ```
 
-- [ ] **Step 4: Convert the send dialog pick row (`send_dialog.rs` 345, 369-375).**
-A picked row is not disabled; while the dialog is busy every row fades.
-Delete `let hover` (345) and the `.when(!picked && !dialog.busy, ..)` block (370-374).
+- [ ] **Step 4: Convert the send dialog pick row (`send_dialog.rs` 339, 357-374).**
+A picked row is not disabled; while the dialog is busy every row, the picked one too, fades and shows no pointer.
+No pointer is set by hand: an idle picked row takes `pressable_unless`, which gives it the pointer only.
+Delete `let hover` (339) and the `.when(!picked && !dialog.busy, ..)` block (364-368).
+The 1 px `theme.surface` border of the unpicked row is a leftover from before the glass panels: it draws a faint box around every row (P1 final review finding 6), so the unpicked border becomes transparent, like `dialogs.rs:504`.
 
 Before:
 
 ```rust
-            .when(!picked && !dialog.busy, |el| {
-                el.cursor_pointer()
-                    .hover(move |style| style.bg(rgb(hover)))
-                    .active(|style| style.opacity(opacity::ACTIVE))
-            })
-            .on_click(cx.listener(move |shell, _, _, cx| {
+                    // The pick has a focus-colored ring, so it stays visible under hover.
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(if picked {
+                        theme.pane_focus_border
+                    } else {
+                        theme.surface
+                    }))
+                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
+                    .when(!picked && !dialog.busy, |el| {
+                        el.cursor_pointer()
+                            .hover(move |style| style.bg(rgb(hover)))
+                            .active(|style| style.opacity(opacity::ACTIVE))
+                    })
+                    .on_click(cx.listener(move |shell, _, _, cx| {
 ```
 
 After:
 
 ```rust
-            .when(!picked, |el| el.pressable(Look::Row, !dialog.busy, theme))
-            .when(picked, |el| el.cursor_pointer())
-            .on_press(!dialog.busy, cx.listener(move |shell, _, _, cx| {
+                    // The pick has a focus-colored ring, so it stays visible under hover.
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(if picked {
+                        gpui::Hsla::from(rgb(theme.pane_focus_border))
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
+                    .when(dialog.busy, |el| el.pressable(Look::Row, false, theme))
+                    .when(!dialog.busy, |el| {
+                        el.pressable_unless(picked, Look::Row, theme)
+                    })
+                    .on_press(
+                        !dialog.busy,
+                        cx.listener(move |shell, _, _, cx| {
 ```
 
-(the closure body and its closing are unchanged; run `cargo fmt`).
+The closure body is unchanged; its closing `}))` becomes `}),` followed by a line holding `)`; run `cargo fmt`.
 The picked row keeps its `bg(surface_raised)` and its focus border.
 
 - [ ] **Step 5: Convert the task dialog (`task_dialog.rs`).**
 The agent chip (307-340) is picked when selected; the worktree row (344, 363-377) is disabled while `locked`, and `focus_stop` stays conditional on `!locked`.
-Delete `let hover` (308, 344), `.cursor_pointer()` (316), the `.hover(..)` and `.active(..)` lines (327-328) and the hover block of the worktree row (365-369).
+Delete `let hover` (308, 344), `.cursor_pointer()` (316) and the `.hover(..)` and `.active(..)` lines (327-328) of the chip; the worktree row's hover lines are named below.
 
 Before (agent chip):
 
@@ -2494,13 +2851,15 @@ After:
                             .chip_arrows(index, len)
 ```
 
-The "Run in a worktree" row: `.pressable(Look::Row, !locked, theme)` replaces the hover block, `.on_press(!locked, ..)` replaces `.on_click(`, and `.focus_stop(theme)` stays inside `.when(!locked, ..)`.
+The "Run in a worktree" row: `.pressable(Look::Row, !locked, theme)` replaces the hover block (`.cursor_pointer()`, `.hover(..)` and `.active(..)` at 366, 368, 369; the `.text_color(..)` at 367 stays), `.on_press(!locked, ..)` replaces `.on_click(` (370), and `.focus_stop(theme)` stays inside `.when(!locked, ..)`.
 A locked row now fades (new; it had muted text only).
 
 - [ ] **Step 6: Convert the ports dialog (`ports.rs` 169, 203-208, 235-248).**
-A port row with no session is not "disabled": no `pressable`, no fade, and `on_press(clickable, ..)` attaches nothing.
-The stop square loses its `danger_bg` hover tint (`Look::Icon` is neutral) and keeps `danger_text`.
-Delete `let hover = theme.hover;` (169), `.cursor_pointer()` and `.hover(..)` of the row (203-205) and `.cursor_pointer()` (240) and `.hover(..)` (242) of the stop button.
+A port row with no session is not "disabled": no look, no fade, no pointer, and `on_press(clickable, ..)` attaches nothing.
+A selected row with a session keeps the pointer only (`pressable_unless`), so no pointer is set by hand.
+The stop square sits in a row that hovers `theme.hover`, so `Look::Icon` (the same fill) would show nothing: it is `Look::Raised`, which hovers `theme.border` and leaves the text color alone, so the square stays `danger_text` red.
+Its `danger_bg` hover tint is lost.
+Delete `let hover = theme.hover;` (169), `.cursor_pointer().hover(..)` of the row (203-205), and `.cursor_pointer()` (240) and `.hover(..)` (242) of the stop button.
 
 Before:
 
@@ -2527,10 +2886,9 @@ Before:
 After:
 
 ```rust
-                        .when(!selected && clickable, |el| {
-                            el.pressable(Look::Row, true, theme)
+                        .when(clickable, |el| {
+                            el.pressable_unless(selected, Look::Row, theme)
                         })
-                        .when(selected && clickable, |el| el.cursor_pointer())
                         .on_press(
                             clickable,
                             cx.listener(move |shell, _, window, cx| {
@@ -2541,7 +2899,7 @@ After:
 ```rust
                                 .rounded(px(radius::SMALL))
                                 .text_color(rgb(theme.danger_text))
-                                .pressable(Look::Icon, true, theme)
+                                .pressable(Look::Raised, true, theme)
                                 .tooltip(tooltip(theme, "Stop", "Delete"))
                                 .on_press(
                                     true,
@@ -2552,23 +2910,25 @@ After:
                                 )
 ```
 
-After the edits `opacity` may be unused in `dialogs.rs`, `send_dialog.rs` and `ports.rs`: clippy says so; `task_dialog.rs` still uses `opacity::SECONDARY` and `opacity::DISABLED`.
+Imports come from `use crate::*`, so none can go unused here: only the `let hover` locals can.
 
 
-- [ ] **Step 7: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and Task 1's helper tests.
+- [ ] **Step 7: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and the HUMAN_CHECKS bullets.
 
 Run: `cargo clippy -p mkrew-ui --all-targets -- -D warnings`
-Expected: clean. An "unused variable: `hover`" or "unused import" is a leftover to delete.
+Expected: clean. An "unused variable: `hover`" is a leftover to delete.
 Run: `cargo test -p mkrew-ui`
 Expected: PASS.
 
 - [ ] **Step 8: Visual check, dark then light.** Run the app on Windows and switch the theme with the title bar toggle.
 Every view of this area must paint without a panic (a second `.hover(` on one element panics at paint).
 - **Row dialogs (dark + light):** open Broadcast: hover a row (a fill and a pointer); while a send is running the rows fade and do nothing.
-  Open the send dialog: hover an unpicked session row (a fill); the picked row keeps its fill and a pointer; click it: still acts.
+  Open the send dialog: hover an unpicked session row (a fill, no faint outline around it); the picked row keeps its fill and a pointer; click it: still acts; while a send runs every row, the picked one too, fades and shows no pointer.
 - **Task dialog (dark + light):** hover an unselected agent chip (a fill); the selected one keeps its accent border and a pointer.
   Open a task with a locked worktree choice: its row is faded with no hover and no pointer; unlocked, it hovers.
-- **Ports (dark + light):** hover a port row with a session (a fill, click goes to it) and one without (no pointer, no fade); hover the stop square: a neutral fill, the square stays red.
+- **Ports (dark + light):** hover a port row with a session (a fill, click goes to it) and one without (no pointer, no fade); hover the stop square: a fill one step above the row's, and the square stays red.
+  Press and hold the stop square: it dims and so does its port row (intended); the click only asks to stop.
+- **Intended look changes (spec 5.2, not bugs):** the Broadcast, send, ports and worktree rows now hover with `theme.hover` (they used `surface_raised` or `hover`); the agent chip label turns to full text on hover; the picked send row and the selected agent chip no longer dim while pressed; the send rows lost their faint 1 px outline; a locked worktree row and every send row while sending now fade.
 - **Buttons in dialogs (dark + light):** open Discard changes (Git), Remove worktree and an Undo dialog: the red buttons still show their red text and the focus ring still shows with Tab.
 Capture one screenshot per theme with the pointer on a converted element into `docs/screenshots/2026-11-21-pressable-dialogs-dark.png` and `docs/screenshots/2026-11-21-pressable-dialogs-light.png` if you can capture automatically.
 Append the bullets above to the section `### To verify - 2026-11-21 Pressable audit (P3)` of `docs/HUMAN_CHECKS.md`, each as a `- [ ] **<name> (dark + light):** ...` line with its sentences on separate lines.
@@ -2582,60 +2942,63 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): dialog rows and chips
 
 ---
 
-### Task 9: Run, prompts, and what is left of Settings and the palette
+### Task 9: Run, prompts, and the Settings and palette remainders
 
-Settings (`settings.rs`) is rewritten by P1 (spec §6) and the palette rows (`navigation.rs`) by P2 (spec §7).
-This task runs after P1 (spec §9); P2 may land before or after it.
-It converts only what still hand-builds a look.
-If P2 has not landed, the two `navigation.rs` rows are converted here and P2 later replaces them by `list_row`.
+P1 rebuilt `settings.rs` on `Pressable` and P2 replaced the hand-built palette rows with `list_row`, so most of what this task once held is done.
+At HEAD it converts what still hand-builds a look: the Run pill, the Run setup page and its folder picker, the prompts list, and two Settings sites that copy "selected fill, else pressable Row".
+It also moves the palette scope pill from `.on_click` to `.on_press`.
+It keeps P1 ruling R12: every Settings row takes `.on_press(true, ..)`, because a click on a read-only row still moves the keyboard focus to it.
 
 **Files:**
-- Modify: `crates/mkrew-ui/src/shell/run.rs`, `crates/mkrew-ui/src/shell/prompts_render.rs`
-- Modify only if the inventory still shows a hand-built look: `crates/mkrew-ui/src/shell/settings.rs`, `crates/mkrew-ui/src/shell/navigation.rs`
+- Modify: `crates/mkrew-ui/src/shell/run.rs`, `crates/mkrew-ui/src/shell/prompts_render.rs`, `crates/mkrew-ui/src/shell/settings.rs`, `crates/mkrew-ui/src/shell/navigation.rs`
 - Read only (every handler is W or EXEMPT): `crates/mkrew-ui/src/shell/machines.rs`
 - Modify: `docs/HUMAN_CHECKS.md`
 
+Lines at HEAD (f4dae3c): `run.rs` 333-371, 641-657, 785-793, 867, 913-931, 958 and the folder picker 1081-1143 (the old plan numbers below 962 are 6 too high); `prompts_render.rs` 91-98; `settings.rs` 231-232 and 697-698 (optional: the `PressHandler` alias at 999-1000); `navigation.rs` 1329-1330.
+
 **Interfaces:**
-- Consumes: `Look`, `Pressable::{pressable, pressable_unless, on_press}`, `toggle`, `dropdown_trigger`, `list_row` (P1), Task 1 helpers.
+- Consumes: `Look`, `Pressable::{pressable, pressable_unless, on_press}` (P1 and Task 1).
 - Produces: nothing later tasks use.
 
-**P elements (14, convert these; the 7 `settings.rs` and `navigation.rs` rows only if still hand-built after P1 and P2):**
+**P elements (10, convert these):**
 
 | file:line | fn | element | Look | pattern | lines to delete | notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `shell/navigation.rs:1022` | `render_quick_open` | quick-open result row (P2 owns, P2 deletes it) | `Row` | `pressable_unless(picked, ..)` | 983 (`let hover`), 1019-1021 | Only if P2 has not removed it. |
-| `shell/navigation.rs:1167` | `render_palette` | palette row (P2 owns) | `Row` | `pressable_unless(picked, ..)` | 1130 (`let hover`), 1164-1166 | Only if P2 still draws rows by hand (it should use `list_row`). |
-| `shell/prompts_render.rs:98` | `prompts_list` | prompt list row | `Row` | `pressable_unless(picked, ..)` | 91 (`let hover`), 96, 97 |  |
+| `shell/prompts_render.rs:98` | `prompts_list` | prompt list row | `Row` | `pressable_unless(active, ..)` | 91, 96, 97 (and a `let hover` if the function declares one) | The open prompt is picked and stays clickable. |
 | `shell/run.rs:371` | `render_run_button` | title bar Run pill | `Chip (idle) / Text (live)` | `.when(live, Look::Text)` and `.when(!live, Look::Chip)`, enabled=true | 333 (`let hover`), 354, 362, 366, 368 | A live pill keeps its green fill: a fill hover would turn it grey, so it underlines and brightens its text instead. |
 | `shell/run.rs:793` | `render_run_setup` | folded Run command card | `Chip` | enabled=true | 785 (`let hover`), 790, 791, 792 | Nested Duplicate/Remove (`card_action`, W) keep `stop_propagation`. |
 | `shell/run.rs:867` | `render_run_setup` | checkbox "Close the pane when it ends" | `Row` | look moves into the `check` closure; caller uses `.on_press(true, ..)` | 641 (`let hover`, inside `check`), 653, 656, 657 |  |
 | `shell/run.rs:931` | `render_run_setup` | dashed "+ Add command" row | `Chip` | enabled=true | 913 (`let add_hover`), 925, 928, 929 | `focusable_bordered` stays. |
 | `shell/run.rs:958` | `render_run_setup` | checkbox "Start with the daemon" | `Row` | same `check` closure as 867 | (same lines) |  |
-| `shell/run.rs:1149` | `render_run_picker` | Run folder picker entry | `Row` | `pressable_unless(picked, ..)`, `picked = picker.cursor == Some(index)` | 1087 (`let hover`), 1116, 1118, 1122 |  |
-| `shell/settings.rs:223` | `render_settings_dialog` | Settings nav tab (P1 owns) | `Row` | `pressable_unless(active, ..)` | 214, 222 |  |
-| `shell/settings.rs:426` | `settings_link` | `settings_link` (P1 owns) | `Text` | enabled=true | 423, 425 | Keep the `accent_text` colour; `Look::Text` must only underline an accent link. |
-| `shell/settings.rs:470` | `settings_row` | Settings row (P1 owns) | `Row` | `pressable_unless(focused, ..)`, only for rows whose click acts (`!row.click_focuses_only()`) | none |  |
-| `shell/settings.rs:580` | `settings_control` | choice segment (P1 owns) | `Chip` | enabled=`!read_only` | 555-ish `cursor_pointer` | Drop the container fade when read-only: `pressable(.., false)` fades each segment. |
-| `shell/settings.rs:677` | `binding_control` | shortcut "Reset" (P1 owns) | `Chip` | enabled=true | 668, 671 | Keep `stop_propagation` and `focus_stop`. |
+| `shell/run.rs:1143` | `render_run_picker` | Run folder picker entry | `Row` | `pressable_unless(picked, ..)`, `picked = picker.cursor == Some(index)` | 1081 (`let hover`), 1110, 1112, 1116 |  |
+| `shell/settings.rs:231-232` | `render_settings_dialog` | Settings nav tab | `Row` | `pressable_unless(active, ..)` replaces the `.when(active, bg+pointer)` / `.when(!active, pressable)` pair | none | `on_press` at :239 stays. Replaces a hand copy of the `list_row` pattern. |
+| `shell/settings.rs:697-698` | `settings_row` | Settings row | `Row` | `pressable_unless(focused, ..)` replaces the same pair | none | `on_press(true, Self::press_row(..))` at :699 stays for every row (P1 R12). |
+| `shell/navigation.rs:1329` | `render_palette` | scope pill | `Chip` | `pressable_unless(current, Look::Chip, ..)` and `.on_press(true, ..)` instead of `.on_click` | none | The current pill (accent outline) hovered before; now it keeps the pointer only. |
 
-**W elements (keep `.on_click(`; 18 sites):**
+**Already done by P1 and P2 (nothing to convert):**
+
+- The quick-open row and the palette rows: P2 deleted `render_quick_open` and `quick_open.rs`, and its rows are `list_row` (`navigation.rs:1229` "+N more ›", `:1244` palette row).
+- `settings_link` (`Look::Text`, `settings.rs:612`), the shortcut Reset (`Look::Icon`, `:884`), the choice segments (`segment_in(.., !read_only, ..)` with `on_press(!active && !read_only, ..)`, `:780-800`), the Bool `toggle` and the `dropdown_trigger`.
+
+**W elements (keep `.on_click(` or `.on_press(`; 24 sites):**
 
 - `shell/machines.rs`: 297, 392, 400, 488, 495
 - `shell/prompts_render.rs`: 74, 270, 280, 289
-- `shell/run.rs`: 625, 748, 761, 1052, 1062, 1179, 1259, 1271
-- `shell/settings.rs`: 750
+- `shell/run.rs`: 625, 748, 761, 1046, 1056, 1173, 1247, 1259
+- `shell/settings.rs` (`.on_press(` on a widget): 371 (close `icon_button`), 485 ("Clear search"), 778 (`toggle`), 792 (`segment_in`), 850 (`dropdown_trigger`), 966 (list pick `menu_item` with a selected fill; `menu_item` has its own hover, so `pressable_unless` cannot go on it)
+- `shell/navigation.rs`: 1229, 1244 (`list_row`)
 
-**EXEMPT in these files:** `machines.rs:464`, `prompts_render.rs:226, 252`, `settings.rs:261` (text fields).
-The Settings Bool switch (`switch-..`, 541-557) and the Font and List faux dropdown (612-638) have no handler of their own; P1 replaces them by `toggle` and `dropdown_trigger`.
+**EXEMPT in these files:** `machines.rs:464`, `prompts_render.rs:226, 252`, `settings.rs:274` (`settings-find`) and `settings.rs:310` (`settings-search`) (text fields).
 
 - [ ] **Step 1: Re-run the inventory for this area and match it to the tables above.**
 
 ```bash
-grep -nE '\.on_click\(|\.on_mouse_down\(|\.hover\(|\.active\(\||cursor_pointer' crates/mkrew-ui/src/shell/run.rs crates/mkrew-ui/src/shell/machines.rs crates/mkrew-ui/src/shell/prompts_render.rs crates/mkrew-ui/src/shell/settings.rs crates/mkrew-ui/src/shell/navigation.rs
+grep -nE '\.on_click\(|\.on_mouse_down\(|\.on_press\(|\.hover\(|\.active\(\||cursor_pointer' crates/mkrew-ui/src/shell/run.rs crates/mkrew-ui/src/shell/machines.rs crates/mkrew-ui/src/shell/prompts_render.rs crates/mkrew-ui/src/shell/settings.rs crates/mkrew-ui/src/shell/navigation.rs
 ```
 
-Every `.hover(`, `.active(|` and `.cursor_pointer()` line must belong to a row of the P table (its "lines to delete" column) or sit in a W widget.
-A line that belongs to neither is an element added since the tables were written: classify it with the Look chooser and convert it too.
+Every `.hover(`, `.active(|` and `.cursor_pointer()` line must belong to a row of the P table (its "lines to delete" column), sit in a W widget, or be one of the two `settings.rs` pairs of Step 5.
+A line that belongs to none is an element added since the tables were written: classify it with the Look chooser and convert it too.
+Delete the `let hover` locals named in the tables (`run.rs` 333, 641, 785, 913, 1081; a `let hover` in `prompts_render.rs` if any): `-D warnings` fails on an unused variable.
 
 - [ ] **Step 2: Convert the Run pill (`run.rs` 333-373).**
 The idle pill hovers with a fill; a live pill keeps its green fill and hovers with an underline and brighter text (a fill would turn it grey).
@@ -2777,7 +3140,7 @@ into
 
 and the same change at 958 for its own closure body.
 The folded command card (785, 790-793) and the dashed "+ Add command" row (913, 925-931) are `Look::Chip`: delete `let hover` / `let add_hover`, `.cursor_pointer()`, `.hover(..)`, `.active(..)`, add `.pressable(Look::Chip, true, theme)` and turn the `.on_click(` into `.on_press(true, ..)`; `.focusable_bordered(theme)` on the Add row stays after it.
-The folder picker entry (1087, 1108-1160) is picked at the cursor: its hover fill equals the picked fill today, so a hover on the cursor row showed nothing.
+The folder picker entry (1081, 1110-1143) is picked at the cursor: its hover fill equals the picked fill today, so a hover on the cursor row showed nothing.
 
 Before:
 
@@ -2792,7 +3155,7 @@ Before:
                     .active(|style| style.opacity(opacity::ACTIVE))
 ```
 
-After (and delete `let hover = theme.surface_raised;` at 1087):
+After (and delete `let hover = theme.surface_raised;` at 1081):
 
 ```rust
                     .rounded(px(radius::SMALL))
@@ -2803,7 +3166,7 @@ After (and delete `let hover = theme.surface_raised;` at 1087):
                     .pressable_unless(picker.cursor == Some(index), Look::Row, theme)
 ```
 
-and `.on_click(` (1149) becomes `.on_press(true, ..)`.
+and `.on_click(` (1143) becomes `.on_press(true, ..)`.
 
 - [ ] **Step 4: Convert the prompts list row (`prompts_render.rs` 79-113).**
 The open prompt (`active`) is picked and stays clickable (the handler already skips re-opening it).
@@ -2837,98 +3200,83 @@ After:
 
 (the closure body and its closing are unchanged; run `cargo fmt`).
 
-- [ ] **Step 5: Settings and the palette: convert what P1 and P2 left.**
-Run the inventory of Step 1 on `settings.rs` and `navigation.rs`.
-For each remaining `.hover(`, `.active(|` or `.cursor_pointer()`, use the P table row (`settings.rs` 223, 426, 470, 580, 677; `navigation.rs` 1022, 1167) and these shapes.
+- [ ] **Step 5: Convert the two Settings sites and the scope pill.**
+Two Settings elements still hand-copy "selected fill with the pointer, else pressable Row" (P1 final review finding 11; `list_row` was folded in Task 1).
+Both become `pressable_unless`.
+P1 ruling R12 stays: the row keeps `.on_press(true, ..)` for every row, read-only ones included, because the click moves the keyboard focus to the row and a read-only row's own control is already faded.
+Do not make the row `enabled = false`: that would drop the click and fade the whole row.
 
-A picker row (quick-open row, palette row; `let hover` at 983 / 1130, lines 1019-1021 / 1164-1166):
-
+The nav tab (`render_settings_dialog`, `settings.rs:230-232`).
 Before:
 
 ```rust
-            .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-            .cursor_pointer()
-            .active(|style| style.opacity(opacity::ACTIVE))
-            .on_click(cx.listener(move |shell, _, window, cx| {
+                // The active page keeps its `selected` fill on hover; the others hover.
+                .when(active, |el| el.bg(rgb(theme.selected)).cursor_pointer())
+                .when(!active, |el| el.pressable(Look::Row, true, theme))
 ```
 
 After:
 
 ```rust
-            .pressable_unless(picked, Look::Row, theme)
-            .on_press(true, cx.listener(move |shell, _, window, cx| {
+                // The active page keeps its `selected` fill and the pointer; the others hover.
+                .when(active, |el| el.bg(rgb(theme.selected)))
+                .pressable_unless(active, Look::Row, theme)
 ```
 
-A choice segment of a Settings row (`settings.rs` 559-588): not `segment()` (its height and padding would resize the compact control).
-When read only, `pressable(.., false, ..)` fades each inactive segment, so the container's own fade goes (it would fade twice).
-
+The Settings row (`settings_row`, `settings.rs:697-699`).
 Before:
 
 ```rust
-                .when(read_only, |el| el.opacity(opacity::DISABLED))
-                .children(choices.iter().map(|&choice| {
-                    let active = shown == choice;
-                    div()
-                        .id(SharedString::from(format!(
-                            "choice-{}-{choice}",
-                            setting.id()
-                        )))
-                        .px(px(space::S))
-                        .rounded(px(radius::SMALL))
-                        .text_size(font_size::META)
-                        .text_color(rgb(if active { theme.text } else { theme.text_muted }))
-                        .when(active, |el| el.bg(rgb(theme.surface_raised)))
-                        .when(!active && !read_only, |el| {
-                            el.cursor_pointer().on_click(cx.listener(
-                                move |shell, _, window, cx| {
-                                    cx.stop_propagation();
-                                    shell.settings_do(|d, _| d.choose(setting, choice), window, cx);
-                                },
-                            ))
-                        })
-                        .child(choice)
-                }))
+            .when(focused, |el| el.bg(rgb(theme.selected)).cursor_pointer())
+            .when(!focused, |el| el.pressable(Look::Row, true, theme))
+            .on_press(true, Self::press_row(index, cx))
 ```
 
 After:
 
 ```rust
-                .children(choices.iter().map(|&choice| {
-                    let active = shown == choice;
-                    div()
-                        .id(SharedString::from(format!(
-                            "choice-{}-{choice}",
-                            setting.id()
-                        )))
-                        .px(px(space::S))
-                        .rounded(px(radius::SMALL))
-                        .text_size(font_size::META)
-                        .text_color(rgb(if active { theme.text } else { theme.text_muted }))
-                        .when(active, |el| {
-                            el.bg(rgb(theme.surface_raised))
-                                .when(read_only, |el| el.opacity(opacity::DISABLED))
-                        })
-                        .when(!active, |el| {
-                            el.pressable(Look::Chip, !read_only, theme).on_press(
-                                !read_only,
-                                cx.listener(move |shell, _, window, cx| {
-                                    cx.stop_propagation();
-                                    shell.settings_do(|d, _| d.choose(setting, choice), window, cx);
-                                }),
-                            )
-                        })
-                        .child(choice)
-                }))
+            .when(focused, |el| el.bg(rgb(theme.selected)))
+            .pressable_unless(focused, Look::Row, theme)
+            .on_press(true, Self::press_row(index, cx))
 ```
 
-The other Settings rows: the left nav tab is `pressable_unless(active, Look::Row, theme)`; `settings_link` is `.pressable(Look::Text, true, theme)` and keeps its `accent_text` color; the shortcut Reset is `.pressable(Look::Chip, true, theme)` and keeps `stop_propagation` and `focus_stop`; the whole Settings row (470) is `pressable_unless(focused, Look::Row, theme)` only for rows whose click acts (`!row.click_focuses_only()`: Bool, Font, List and Binding rows), with `enabled` false only for a `Row::Setting` while `dialog.read_only()` (a binding row is not read only).
-The Bool switch and the dropdown trigger are P1's `toggle(id, on, !read_only, theme)` and `dropdown_trigger(..)`; drop their own `opacity(DISABLED)` and `cursor_pointer` lines if they are still there.
+The palette scope pill (`render_palette`, `navigation.rs:1329-1335`) is outlined in the accent when current and already hovers, but it uses `.on_click` where the convention is `.on_press`.
+The current pill keeps the pointer only, like every picked element.
+Before:
 
+```rust
+                        .pressable(Look::Chip, true, theme)
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            if let Some(palette) = shell.palette.as_mut() {
+                                palette.set_scope(scope);
+                            }
+                            shell.palette_changed(window, cx);
+                        }))
+```
 
-- [ ] **Step 6: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and Task 1's helper tests.
+After:
+
+```rust
+                        .pressable_unless(current, Look::Chip, theme)
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                if let Some(palette) = shell.palette.as_mut() {
+                                    palette.set_scope(scope);
+                                }
+                                shell.palette_changed(window, cx);
+                            }),
+                        )
+```
+
+Optional, same file: the alias `type PressHandler` (with its doc line, `settings.rs:999-1000`) sits 370 lines below `press_row` (`:623`), its only producer.
+An alias cannot live inside an `impl`, so move the two lines to just above the `impl Shell {` at `:207` that holds `press_row`.
+Skip it if the diff gets noisy: nothing depends on it.
+
+- [ ] **Step 6: Build, lint and test.** No new test: these are styling changes, and their behavior is pinned by P1 Task 4's `press_style` tests and the HUMAN_CHECKS bullets.
 
 Run: `cargo clippy -p mkrew-ui --all-targets -- -D warnings`
-Expected: clean. An "unused variable: `hover`" or "unused import" is a leftover to delete.
+Expected: clean. An "unused variable: `hover`" is a leftover to delete (imports come from `use crate::*` and cannot go unused).
 Run: `cargo test -p mkrew-ui`
 Expected: PASS.
 
@@ -2937,8 +3285,10 @@ Every view of this area must paint without a panic (a second `.hover(` on one el
 - **Run (dark + light):** hover the title bar Run pill idle (a fill) and while something runs (it keeps its green fill; the label underlines and brightens); click opens the menu.
   In Run setup hover a folded command card, the dashed "+ Add command" row and the two checkboxes: each shows a fill; open the folder picker and hover an unpicked entry (a fill); the entry at the cursor keeps its fill and a pointer.
 - **Prompts (dark + light):** hover an unopened prompt row (a fill); the open prompt keeps its fill and a pointer.
-- **Settings and palette remainders (dark + light):** hover a left nav tab, a link in the footer (underline, accent color stays), a Choice segment, a changed shortcut's Reset and a Settings row that acts on click: each shows its look; with `settings.toml` unparsable the choice segments are faded and do nothing.
-  Open the command palette and hover an unpicked row: a fill; the picked row keeps its ring and a pointer.
+- **Settings and palette (dark + light):** hover a left nav tab: a fill; the open tab keeps its fill and a pointer.
+  Hover a Settings row that is not focused (a fill) and click a read-only one: the keyboard focus moves to it, as before; the focused row keeps its fill and a pointer.
+  Open the command palette and hover a scope pill that is not current: a fill and the label turns to full text; the current pill (accent outline) shows a pointer and no fill; a click on a pill still switches the scope.
+- **Intended look changes (spec 5.2, not bugs):** the idle Run pill label turns to full text on hover and the live pill underlines; the setup checkboxes, the folder picker and the prompts rows now hover with `theme.hover` (they used `surface_raised`); the entry at the cursor, the open prompt and the focused Settings row no longer dim while pressed; the current scope pill no longer hovers.
 Capture one screenshot per theme with the pointer on a converted element into `docs/screenshots/2026-11-21-pressable-run-prompts-settings-dark.png` and `docs/screenshots/2026-11-21-pressable-run-prompts-settings-light.png` if you can capture automatically.
 Append the bullets above to the section `### To verify - 2026-11-21 Pressable audit (P3)` of `docs/HUMAN_CHECKS.md`, each as a `- [ ] **<name> (dark + light):** ...` line with its sentences on separate lines.
 
@@ -2946,7 +3296,7 @@ Append the bullets above to the section `### To verify - 2026-11-21 Pressable au
 
 ```bash
 git add crates/mkrew-ui/src/shell/run.rs crates/mkrew-ui/src/shell/prompts_render.rs crates/mkrew-ui/src/shell/settings.rs crates/mkrew-ui/src/shell/navigation.rs docs/HUMAN_CHECKS.md
-git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Run, prompts and the leftover Settings and palette rows take their press look from widgets"
+git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Run, prompts, Settings and palette pills take their press look from widgets"
 ```
 
 ---
@@ -2954,7 +3304,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Run, prompts and the 
 ### Task 10: Write the rule into SPEC §14, the skill and the reviewer
 
 **Files:**
-- Modify: `docs/SPEC.md` (§14, after the "Shared controls" bullet, about line 1648)
+- Modify: `docs/SPEC.md` (§14: replace the four lines of the existing "Pressable states, ADR 0097" paragraph, about line 1816; no new bullet)
 - Modify: `.claude/skills/mkrew-ui-design/SKILL.md`
 - Modify: `.claude/agents/ui-reviewer.md`
 - Modify: `docs/decisions/0097-glass-panels-and-pressable.md` (written by P1; this task appends a section)
@@ -2965,27 +3315,32 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Run, prompts and the 
 
 No code changes, so no test; the check is that the three files carry the same names as the code (`Look`, `Raised`, `pressable_unless`, `card_press`, `grip_hover`, `row_action`).
 
-- [ ] **Step 1: Add the rule to SPEC §14.**
-Find the bullet that starts "Shared controls (`shell/widgets.rs`): segmented control" (it ends "key hint.") and insert this bullet right after it, each sentence on its own line:
+- [ ] **Step 1: Extend the rule in SPEC §14.**
+P1 already wrote the paragraph "**Pressable states, ADR 0097.**" (`docs/SPEC.md:1816-1819`).
+Replace those four lines with the text below.
+Do not add a second bullet near "Shared controls" (`docs/SPEC.md:1664`): two rule texts would drift.
+Each sentence stays on its own line:
 
 ```markdown
-- Pressable elements (ADR 0097): every element with a click or mouse-down handler gets its hover, press, focus and disabled look from `shell/widgets.rs` and its `Pressable` trait (`pressable.rs`).
-  It is either a widget (`button`, `secondary_button`, `quiet_button`, `danger_button`, `icon_button`, `segment`, `menu_item`, `row_action`, `list_row`, `toggle`, `dropdown_trigger`) or `.pressable(look, enabled, theme)` with `.on_press(enabled, handler)`.
-  Only `widgets.rs` and `pressable.rs` call `.hover(` and `.active(`.
-  `group_hover(..)`, which reveals hidden row actions, is allowed anywhere.
-  The looks are `Row` (list and menu rows), `Chip` (pills, tabs, small labelled controls), `Icon` (icon-only controls), `Text` (links) and `Raised` (a control on a raised surface: menu, toast, card, find bar, code block).
-  Board cards use `card_press`: the border lights on hover and the fill stays, so the chips inside a card keep a visible hover.
-  A hover fill is never the selected fill.
-  A selected or active element that is still clickable keeps the pointer only (`pressable_unless(picked, look, theme)`).
-  Disabled means `opacity::DISABLED`, the default cursor, no hover, no press and no click.
-  An element that is not clickable right now, but is not disabled, has no look at all.
-  Not buttons, so no hover: resize grips (they tint through `grip_hover`), terminal surfaces, drop zones, the modal scrim, text fields (they keep their I-beam), editor and text-selection surfaces, window-drag areas, and the context-menu mouse down of an element that is already pressable.
+**Pressable states, ADR 0097.**
+Every element with a click or mouse-down handler gets its hover, press and disabled look from `shell/widgets.rs` and `mkrew_ui::pressable` (`Look`, `press_style`, `Pressable`).
+It is either a widget (`button`, `secondary_button`, `quiet_button`, `danger_button`, `icon_button`, `segment`, `menu_item`, `row_action`, `list_row`, `toggle`, `dropdown_trigger`) or `.pressable(look, enabled, theme)` with `.on_press(enabled, handler)`.
+Only `widgets.rs` and `pressable.rs` call `.hover(` and `.active(` or set `.cursor_pointer()` by hand.
+`group_hover(..)`, which reveals hidden row actions, is allowed anywhere.
+The looks are `Row` (list and menu rows), `Chip` (pills, tabs, small labelled controls), `Icon` (icon-only controls), `Text` (links) and `Raised` (a control on a raised surface or inside a row that is itself hovered: menu, toast, card, find bar, code block, a row action).
+Board cards use `card_press`: the border lights on hover and the fill stays, so the chips inside a card keep a visible hover.
+A hover fill is never the selected fill.
+A selected or active element that is still clickable keeps the pointer only (`pressable_unless(picked, look, theme)`).
+A disabled element is faded (`opacity::DISABLED`), has the default cursor and no hover, no press and no click.
+An element that is not clickable right now, but is not disabled, has no look at all.
+Not buttons, so no hover: resize grips (they tint through `grip_hover`), terminal surfaces, drop zones, the modal scrim, text fields (they keep their I-beam), editor and text-selection surfaces, window-drag areas, and the context-menu mouse down of an element that is already pressable.
+Focus rings stay with `DialogControl`.
 ```
 
-Check: `grep -n "Pressable elements (ADR 0097)" docs/SPEC.md` prints one line.
+Check: `grep -n "Pressable states, ADR 0097" docs/SPEC.md` prints one line, and `grep -n "Pressable elements" docs/SPEC.md` prints nothing.
 
 - [ ] **Step 2: Add the rule to the skill.**
-In `.claude/skills/mkrew-ui-design/SKILL.md`, after hard rule 10 add:
+In `.claude/skills/mkrew-ui-design/SKILL.md`, after hard rule 10 (line 22) add:
 
 ```markdown
 11. Every element with `.on_click(` or `.on_mouse_down(` is a widget from `shell/widgets.rs` or uses `.pressable(look, enabled, theme)` plus `.on_press(enabled, handler)`.
@@ -3002,7 +3357,7 @@ and at the end of "Before committing UI work" add:
 ```
 
 - [ ] **Step 3: Add the rule to the reviewer.**
-In `.claude/agents/ui-reviewer.md` change check 3 to read `3. Interactive elements have hover, focus ring, active, disabled states, and get them from widgets (check 9).` and add after check 8:
+In `.claude/agents/ui-reviewer.md` change check 3 (line 15) to read `3. Interactive elements have hover, focus ring, active, disabled states, and get them from widgets (check 9).` and add after check 8 (line 20):
 
 ```markdown
 9. Pressable rule (SPEC §14, ADR 0097): run `git diff -U0 -- crates/mkrew-ui | grep -nE '^\+.*(\.hover\(|\.active\(\||\.cursor_pointer\(\))'`; a hit outside `shell/widgets.rs` and `pressable.rs` is a BLOCKER.
@@ -3012,15 +3367,23 @@ In `.claude/agents/ui-reviewer.md` change check 3 to read `3. Interactive elemen
    Exempt: resize grips, terminal surfaces, drop zones, the scrim, text fields, text-selection surfaces.
 ```
 
-- [ ] **Step 4: Append the audit result to ADR 0097.**
-Append to `docs/decisions/0097-glass-panels-and-pressable.md`:
+- [ ] **Step 4: Fix and extend ADR 0097.**
+In `docs/decisions/0097-glass-panels-and-pressable.md` replace line 21, which says `mkrew_ui::pressable` is "the only place" and that "the lib code" uses it (spec 5.1 also allows `widgets.rs`, which calls `.hover(` itself), with:
+
+```markdown
+- `mkrew_ui::pressable` (`Look`, `PressStyle`, `press_style`, `Pressable`) and `shell/widgets.rs` are the only files that call `.hover(` and `.active(` or set `.cursor_pointer()` for a clickable element.
+  Every other element is a widget or takes its look from `.pressable(look, enabled, theme)`.
+```
+
+Then append:
 
 ```markdown
 ## Audit (Plan P3, 2026-11-21)
 
-Before the audit `crates/mkrew-ui/src` had 327 click or mouse-down handlers in 48 files and 76 `.hover(` calls.
-Of the handlers, 208 were already on a shared widget, 71 were hand-built and moved to a `Look` or a helper, and 48 are exempt.
-After it only `shell/widgets.rs` and `pressable.rs` call `.hover(` and `.active(`.
+At 1b7abb5, before P1, `crates/mkrew-ui/src` had 327 click or mouse-down handlers in 48 files and 76 `.hover(` calls.
+Of those handlers, 208 were already on a shared widget, 71 were hand-built and moved to a `Look` or a helper, and 48 are exempt.
+At the start of P3 (after P1 and P2) the counts were 334 handlers (including 10 `.on_press(`) in 49 files and 66 `.hover(` calls.
+After the audit only `shell/widgets.rs` and `pressable.rs` call `.hover(` and `.active(` or set `.cursor_pointer()`.
 
 The audit added around the P1 contract:
 
@@ -3028,6 +3391,7 @@ The audit added around the P1 contract:
 - `row_action` (moved into `widgets.rs`), `grip_hover`, `pick_surface`, `card_press` and `disabled_icon_button`.
 
 `Look::Row`, `Look::Chip` and `Look::Icon` hover with `theme.hover` and `Look::Raised` with `theme.border` (P1 Task 4, with tests over every built-in theme), because `surface_raised` equals `selected` in Mkrew Dark and Mkrew Light.
+An icon inside a row that hovers `theme.hover` uses `Look::Raised`, so its own hover shows.
 
 Exempt, with no hover: resize grips, terminal surfaces, drop zones and drag sources, the modal scrim, text fields (they keep their I-beam), editor and text-selection surfaces, window-drag areas, context-menu mouse downs on an element that is already pressable, and links drawn by `InteractiveText`.
 ```
@@ -3064,15 +3428,15 @@ A hit anywhere else is an element the tables missed: classify it with the Look c
 grep -rnE '\.cursor_pointer\(\)' crates/mkrew-ui/src --include='*.rs'
 ```
 
-Expected: hits only in `shell\widgets.rs` and `pressable.rs`.
-A pointer set by hand elsewhere is a click without a look: convert it, or add it to the exempt table with its reason.
+Expected: hits only in `shell\widgets.rs` and `pressable.rs` (`apply_press` and `pressable_unless`).
+A pointer set by hand elsewhere (the R1 pointers of Share and the Ignored chip were two) is a click without a look: convert it, or add it to the exempt table with its reason.
 
 ```bash
-grep -rnE '\.on_click\(|\.on_mouse_down\(' crates/mkrew-ui/src --include='*.rs'
+grep -rnE '\.on_click\(|\.on_mouse_down\(|\.on_press\(' crates/mkrew-ui/src --include='*.rs'
 ```
 
-Expected: every hit is (a) on a chain that starts at a W widget, (b) a row of the exempt table, (c) a `card_press` card, or (d) the kept mouse down of `docs.rs` (doc block) and `preview.rs` (source line).
-Any other hit is a hand-built element that kept `.on_click(`: convert it.
+Expected: every hit is (a) on a chain that starts at a W widget, (b) on a chain with `.pressable(..)`, `.pressable_unless(..)` or `card_press`, (c) a row of the exempt table (text fields such as `settings-find` and `settings-search`, the scrim of `focus.rs:428` in `shade`, right-clicks, window drags), (d) the kept mouse down of `docs.rs` (doc block) and `preview.rs` (source line), or (e) `pressable.rs` itself (`on_press` calls `.on_click`).
+Any other hit is a hand-built element that kept `.on_click(` or `.on_mouse_down(`: convert it.
 
 This is an inventory for the person running the plan; it is not a test, and no test reads source text.
 
@@ -3083,8 +3447,8 @@ Expected: fmt check, clippy `-D warnings` and tests all green.
 If the test build crashes rustc (STATUS_STACK_BUFFER_OVERRUN), run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, then `cargo test --workspace -j 4`.
 
 - [ ] **Step 3: Walk the visual checks once more across both themes.**
-Open `docs/HUMAN_CHECKS.md`, section `### To verify - 2026-11-21 Pressable audit (P3)`: it must hold the bullets of Tasks 1 to 9.
-Run the app and walk every bullet in dark and light, with attention to the five Review Focus items: a selected element still clicks, a hover is visible everywhere, no view panics at paint, the three busy or locked rows do nothing, and no card or chip stays dimmed after a press or a drag.
+Open `docs/HUMAN_CHECKS.md`, section `### To verify - 2026-11-21 Pressable audit (P3)`: it must hold the bullets of Tasks 1 to 9, including their "Intended look changes" bullets.
+Run the app and walk every bullet in dark and light, with attention to the five Review Focus items: a selected element still clicks, a hover is visible everywhere, no view panics at paint, the busy or locked rows do nothing, and no card or chip stays dimmed after a press or a drag.
 Screenshots of each area (`docs/screenshots/2026-11-21-pressable-<area>-dark.png` and `-light.png`) go in if they were captured; otherwise the bullets are the record.
 
 - [ ] **Step 4: Commit anything the sweep changed.**
@@ -3103,8 +3467,28 @@ If the sweep changed nothing, there is nothing to commit.
 
 | Spec | Where |
 | --- | --- |
-| §5.1 the rule: every click or mouse-down element gets its look from `widgets.rs`; only `widgets.rs` calls `.hover(`/`.active(` | Tasks 1 to 9 convert; Task 11 checks; Task 10 writes it |
-| §5.1 the rule written in SPEC §14, the skill and the reviewer checklist | Task 10 |
-| §5.3 walk 327 handlers in 48 files by area: chrome and sidebar; tabs and panes; Board, Jira and all-workspaces board; Files and Docs; Git; inspector and thread; dialogs | Tasks 2 to 8, leftovers in Task 9; the Inventory tables assign every file |
+| §5.1 the rule: every click or mouse-down element gets its look from `widgets.rs`; only `widgets.rs` and `pressable.rs` call `.hover(`/`.active(` or set `.cursor_pointer()` by hand (S:100, amended) | Tasks 1 to 9 convert; Task 11 checks; Task 10 writes it |
+| §5.1 the rule written in SPEC §14 (one extended paragraph, not a second bullet), the skill and the reviewer checklist | Task 10 |
+| §5.3 walk the handlers by area (327 in 48 files at 1b7abb5; 334 in 49 files at HEAD f4dae3c): chrome and sidebar; tabs and panes; Board, Jira and all-workspaces board; Files and Docs; Git; inspector and thread; dialogs | Tasks 2 to 8, leftovers in Task 9; the Inventory tables assign every file, and "Handlers added by P1 and P2" assigns every site those plans added |
 | §5.3 non-buttons get no hover and are listed with the reason | The exempt table above |
 | §9 P3 ends with `scripts/verify.sh` green and screenshots or HUMAN_CHECKS lines, dark and light | Each area task (screenshot step and bullets), Task 11 |
+| P1 and P2 deferred minors that belong to P3 (the picked-or-pressable copy in `list_row` and two Settings sites, the Fetch icon fade, the 1 px `theme.surface` border on pick-list rows, the `press_style` doc line, the `PressHandler` placement, the R1 pointers) | Tasks 1, 3, 5, 6, 7, 8, 9 |
+
+## Pre-flight rulings
+
+The pre-flight against HEAD f4dae3c (after P1 and P2) ruled on twelve points; each is folded into the task named here.
+
+| Ruling | Where |
+| --- | --- |
+| R1 corrected file lists and HEAD lines; tasks strictly in order; HUMAN_CHECKS under "To verify (non-blocking)" above the P2 section | Global Constraints, the "Lines at HEAD" line of each task, Task 1 Step 8 |
+| R2 `icon_button_in` replaced in place; `list_row` folded into `pressable_unless`; no test for one-line wrappers; `press_style` doc line | Task 1 Steps 1 to 4 |
+| R3 `Look::Raised` for an icon inside a hovered row | Task 2 (run icons, chevron), Task 4 (Jira chevron), Task 6 (viewed box, stage icon), Task 8 (stop square) |
+| R4 no hand-set `.cursor_pointer()` outside `widgets.rs` and `pressable.rs` | Task 3 Step 3, Task 5 Step 3, Task 8 Steps 4 and 6, Task 11 |
+| R5 `open_palette_on(Scope::Files, ..)` kept | Task 5 Step 3 |
+| R6 every task deletes the `let hover` it leaves unused; `ActionColors::tint` removed | Step 1 of Tasks 2 to 9, Task 2 Step 5 |
+| R7 Task 9 rewritten to HEAD | Task 9 |
+| R8 tables follow the steps; no false "toggled mid-send" claim | Task 5 and 6 tables, Review Focus 4, Task 8 Steps 2 and 6 |
+| R9 Fetch icons while Push runs and while Fetch runs | Task 6 Step 5 |
+| R10 no 1 px `theme.surface` border on pick-list rows | Task 7 Step 2, Task 8 Step 4 |
+| R11 SPEC paragraph extended, ADR 0097 line 21 fixed, counts dated, sweep also greps `.on_press(` | Task 10, Task 11 |
+| R12 intended look changes named in HUMAN_CHECKS | Task 1 Step 8 and the "Intended look changes" bullet of Tasks 2 to 9 |
