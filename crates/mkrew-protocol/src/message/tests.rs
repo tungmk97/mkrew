@@ -1314,3 +1314,8 @@ fn an_attachment_owner_is_named_by_its_kind_on_the_wire() {
     let old = serde_json::json!({ "session_id": id.to_string(), "ext": "png", "data": "AA==" });
     assert!(serde_json::from_value::<AttachmentSaveParams>(old).is_err());
 }
+
+#[test]
+fn the_palette_protocol_is_version_54() {
+    assert_eq!(crate::PROTOCOL_VERSION, 54);
+}
