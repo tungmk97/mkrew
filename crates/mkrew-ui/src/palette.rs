@@ -1424,7 +1424,7 @@ impl Palette {
             });
         }
         if self.scope == Scope::Search {
-            let long_enough = query.chars().count() >= SEARCH_MIN_CHARS;
+            let long_enough = query.trim().chars().count() >= SEARCH_MIN_CHARS;
             if long_enough && self.hits.asked.as_deref() != Some(query.as_str()) {
                 let serial = self.hits.start(Some(&query));
                 fetches.push(Fetch {
@@ -1494,12 +1494,20 @@ impl Palette {
 
     /// The answer to call number `serial`; kept only if no newer call of that scope was sent
     /// (the previous rows stay on screen until then). `now_ms` dates the ages. Returns `true`
-    /// when the answer was kept. A Files or Search answer puts the pick on the best row; a
-    /// background Branches or Commits answer keeps the pick where it was.
+    /// when the answer was kept. An answer for the scope on screen puts the pick on its best
+    /// row; any other answer keeps the pick where it was.
     pub fn answer(&mut self, serial: u64, answer: Answer, now_ms: i64) -> bool {
+        let (scope, current) = match &answer {
+            Answer::Files(_) => (Scope::Files, self.files.serial),
+            Answer::Search(_) => (Scope::Search, self.hits.serial),
+            Answer::Branches(_) => (Scope::Branches, self.branches.serial),
+            Answer::Commits(_) => (Scope::Commits, self.commits.serial),
+        };
+        if serial != current {
+            return false;
+        }
         let repo = self.source.as_ref().and_then(|source| source.repo.clone());
         let repo = repo.as_deref();
-        let background = matches!(answer, Answer::Branches(_) | Answer::Commits(_));
         let (remote, rows) = match answer {
             Answer::Files(found) => (
                 &mut self.files,
@@ -1526,9 +1534,6 @@ impl Palette {
                 }),
             ),
         };
-        if serial != remote.serial {
-            return false;
-        }
         match rows {
             Ok(rows) => {
                 remote.rows = rows;
@@ -1539,7 +1544,7 @@ impl Palette {
                 remote.load = Load::Failed(error);
             }
         }
-        self.layout(background);
+        self.layout(self.scope != scope);
         true
     }
 
@@ -1660,24 +1665,42 @@ impl Palette {
         }
     }
 
-    /// Lays the list out again and picks its first row, or, with `keep`, the row of the
-    /// action that was picked (a background answer must not move the pick).
+    /// Lays the list out again and picks its first row, or, with `keep`, the line that was
+    /// picked: a row by its action, a "+N more" by its scope (an answer must not move a pick
+    /// that is not about it).
     fn layout(&mut self, keep: bool) {
-        let before = if keep { self.picked() } else { None };
+        let before = if keep {
+            self.picked_slot().cloned()
+        } else {
+            None
+        };
+        let before = before.map(|slot| match slot {
+            Slot::Item { store, index, .. } => (
+                self.entry(store, index).map(|entry| entry.action.clone()),
+                None,
+            ),
+            Slot::More(scope, _) => (None, Some(scope)),
+            Slot::Header(_) | Slot::Note(..) => (None, None),
+        });
         self.shown = self.slots();
         self.selected = 0;
-        if let Some(action) = before {
-            let at = self
-                .shown
-                .iter()
-                .filter(|slot| slot.selectable())
-                .position(|slot| {
-                    matches!(slot, Slot::Item { store, index, .. }
-                        if self.entry(*store, *index).is_some_and(|entry| entry.action == action))
-                });
-            if let Some(at) = at {
-                self.selected = at;
-            }
+        let Some((action, more)) = before else {
+            return;
+        };
+        let at = self
+            .shown
+            .iter()
+            .filter(|slot| slot.selectable())
+            .position(|slot| match slot {
+                Slot::Item { store, index, .. } => action.as_ref().is_some_and(|action| {
+                    self.entry(*store, *index)
+                        .is_some_and(|entry| entry.action == *action)
+                }),
+                Slot::More(scope, _) => more == Some(*scope),
+                Slot::Header(_) | Slot::Note(..) => false,
+            });
+        if let Some(at) = at {
+            self.selected = at;
         }
     }
 

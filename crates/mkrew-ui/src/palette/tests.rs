@@ -1785,6 +1785,71 @@ fn a_background_answer_keeps_the_pick() {
 }
 
 #[test]
+fn an_answer_for_another_scope_keeps_the_pick() {
+    let entries: Vec<Entry> = (0..3).map(command).collect();
+    let mut palette = Palette::scoped(entries, Some(source()), Scope::All, vec![]);
+    palette.insert("t");
+    let asked = palette.wanted();
+    let files = asked.iter().find(|f| f.scope == Scope::Files).unwrap();
+    palette.step(1);
+    let before = palette.picked();
+    assert!(before.is_some());
+    assert!(palette.answer(files.serial, Answer::Files(Ok(matches_of(&["t.rs"]))), 0));
+    assert_eq!(palette.picked(), before, "Files is not on screen in All");
+
+    // Tab to Branches: a late Files answer does not move its pick either.
+    let mut palette = Palette::scoped(vec![], Some(source()), Scope::All, vec![]);
+    palette.insert("t");
+    let asked = palette.wanted();
+    let files = asked.iter().find(|f| f.scope == Scope::Files).unwrap();
+    palette.set_scope(Scope::Branches);
+    let branches = asked.iter().find(|f| f.scope == Scope::Branches).unwrap();
+    let listed = vec![branch("t1", false, false, 0), branch("t2", false, false, 0)];
+    assert!(palette.answer(branches.serial, Answer::Branches(Ok(listed)), 0));
+    palette.step(1);
+    let before = palette.picked();
+    assert!(before.is_some());
+    assert!(palette.answer(files.serial, Answer::Files(Ok(matches_of(&["t.rs"]))), 0));
+    assert_eq!(palette.picked(), before);
+}
+
+#[test]
+fn a_background_answer_keeps_a_picked_more_row() {
+    let entries: Vec<Entry> = (0..8).map(command).collect();
+    let mut palette = Palette::scoped(entries, Some(source()), Scope::All, vec![]);
+    palette.insert("e");
+    let asked = palette.wanted();
+    let pick = palette
+        .lines()
+        .into_iter()
+        .find_map(|line| match line {
+            Line::More { pick, .. } => Some(pick),
+            _ => None,
+        })
+        .unwrap();
+    palette.pick(pick);
+    assert_eq!(palette.picked_more(), Some(Scope::Commands));
+    let branches = asked.iter().find(|f| f.scope == Scope::Branches).unwrap();
+    palette.answer(
+        branches.serial,
+        Answer::Branches(Ok(vec![branch("e1", false, false, 0)])),
+        0,
+    );
+    assert_eq!(palette.picked_more(), Some(Scope::Commands));
+}
+
+#[test]
+fn search_counts_trimmed_characters() {
+    let mut palette = Palette::scoped(vec![], Some(source()), Scope::Search, vec![]);
+    palette.insert("a ");
+    assert_eq!(
+        palette.wanted(),
+        [],
+        "one character and a space is not searched"
+    );
+}
+
+#[test]
 fn a_waiting_or_failed_scope_says_so() {
     let mut palette = Palette::scoped(vec![], Some(source()), Scope::Files, vec![]);
     let asked = palette.wanted().remove(0);
