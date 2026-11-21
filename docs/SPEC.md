@@ -630,7 +630,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `git.checkout` | `project_id`, `worktree_task_id?`, `repo?`, `branch` | `null`; `git switch <branch>`, for a remote branch `git switch --track <remote>/<name>`; git's stderr is the `invalid_state` message; broadcasts `git.changed` |
 | `daemon.status/stop` | – | info / ok; `status` carries `web` = `{enabled, running, error?}`: the `mk web` child the daemon supervises while `[web] enabled` (§20.0, ADR 0053); `error` = the child's last stderr line |
 
-`git.status`, `git.diff`, `git.stage`/`git.unstage`, `git.discard`, `git.commit`, `git.log`, `git.show`, `git.fetch`/`git.push`, `git.viewed`, `git.set_viewed` and `ai.generate` accept `repo?`: one folder name from `git.repos`; the request runs in that child repository. Paths in requests and replies stay relative to the project folder (`fe/src/a.ts`); a path outside the repo, a bad name or `repo` together with `worktree_task_id` is `invalid_request`. `git.changed` has no repo: clients refresh the shown repo (ADR 0029).
+`git.status`, `git.diff`, `git.stage`/`git.unstage`, `git.discard`, `git.commit`, `git.log`, `git.show`, `git.fetch`/`git.push`, `git.viewed`, `git.set_viewed`, `git.branches`, `git.checkout` and `ai.generate` accept `repo?`: one folder name from `git.repos`; the request runs in that child repository. Paths in requests and replies stay relative to the project folder (`fe/src/a.ts`); a path outside the repo, a bad name or `repo` together with `worktree_task_id` is `invalid_request`. `git.changed` has no repo: clients refresh the shown repo (ADR 0029).
 
 **Events**
 
@@ -1734,6 +1734,8 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   A scope that waits shows a muted "Loading…" and one that failed a muted error line with an `x` icon, in its own tab only.
   Footer: "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right.
   The theme picker and the `@` file picker have no tabs; the theme picker keeps its muted "Dark" / "Light" text instead of key caps.
+  The theme picker footer reads "↑↓ preview · ↵ save" and "esc restore".
+  The `@` footer reads "↑↓ navigate · ↵ type its path" and "esc type @", under the title "Insert file · <workspace>".
 - Settings → Machines (ADR 0089, this computer's window; a machine window shows only "Machines are managed in This computer's window."):
   one row per machine of `<config>/mkrew/machines.toml`: name, host (and the `mk` path), a status dot with its state in words (Connected, Connecting…, Reconnecting…, Not reachable: <reason>, Version differs: <message>, Window closed), **Open** (raises the window, or starts it) and **Remove** (confirms, closes that window, deletes the line).
   **Add machine…** (a bordered button; the filled primary one while the list is empty) opens a card with Name, Host and "mk path (optional)"; a refused value shows under its field, Save writes the file and opens the window.
@@ -1824,7 +1826,7 @@ A hover fill is never the selected fill.
 A selected or active element that is still clickable keeps the pointer only (`pressable_unless(picked, look, theme)`).
 A disabled element is faded (`opacity::DISABLED`), has the default cursor and no hover, no press and no click.
 An element that is not clickable right now, but is not disabled, has no look at all.
-Not buttons, so no hover: resize grips (they tint through `grip_hover`), terminal surfaces, drop zones, the modal scrim, text fields (they keep their I-beam), editor and text-selection surfaces, window-drag areas, and the context-menu mouse down of an element that is already pressable.
+Not buttons, so no hover: resize grips (they tint through `grip_hover`), terminal surfaces, drop zones and drag sources, the modal scrim, text fields (they keep their I-beam), editor and text-selection surfaces, window-drag areas, the pane title (it renames on double-click only and shows no pointer), links drawn by `InteractiveText`, and the context-menu mouse down of an element that is already pressable.
 Focus rings stay with `DialogControl`.
 
 ---
@@ -2244,7 +2246,7 @@ context_window = 200000        # tokens, for the % shown
    terminal or Run task).
    Send = `session.send` with submit; multi-line text already goes as one bracketed paste (§7).
    Typing `@` or `/` at the start of a line or after whitespace opens a picker; in the middle of a word (`a@b.com`, `src/main.rs`) they type as they are.
-   `@` opens the quick-open file picker (§12A); the pick inserts `composer.file_ref` with `{path}` = the project-relative path, `/` separators, quoted with `"` if it contains spaces.
+   `@` opens the palette on its Files scope in insert mode (§13); the pick inserts `composer.file_ref` with `{path}` = the project-relative path, `/` separators, quoted with `"` if it contains spaces.
    `/` opens the agent's command picker (§20B.7).
    Drafts are kept per session in UI memory (lost on UI restart, which is fine).
    ✦ (shown while the composer has the keyboard and the draft is not blank) sends the draft to

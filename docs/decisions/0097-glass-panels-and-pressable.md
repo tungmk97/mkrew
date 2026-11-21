@@ -50,4 +50,4 @@ The audit added around the P1 contract:
 `Look::Row`, `Look::Chip` and `Look::Icon` hover with `theme.hover` and `Look::Raised` with `theme.border` (P1 Task 4, with tests over every built-in theme), because `surface_raised` equals `selected` in Mkrew Dark and Mkrew Light.
 An icon inside a row that hovers `theme.hover` uses `Look::Raised`, so its own hover shows.
 
-Exempt, with no hover: resize grips, terminal surfaces, drop zones and drag sources, the modal scrim, text fields (they keep their I-beam), editor and text-selection surfaces, window-drag areas, context-menu mouse downs on an element that is already pressable, and links drawn by `InteractiveText`.
+Exempt, with no hover: resize grips (they tint through `grip_hover`), terminal surfaces, drop zones and drag sources, the modal scrim, text fields (they keep their I-beam), editor and text-selection surfaces, window-drag areas, the pane title (it renames on double-click only and shows no pointer), links drawn by `InteractiveText`, and the context-menu mouse down of an element that is already pressable.

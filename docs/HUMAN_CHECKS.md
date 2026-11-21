@@ -157,8 +157,11 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
   The setup checkboxes, the folder picker and the prompts rows now hover with `theme.hover` (they used `surface_raised`).
   The entry at the cursor, the open prompt and the focused Settings row no longer dim while pressed.
   The current scope pill no longer hovers.
+- [ ] **Files preview checklist (dark + light):** open a Markdown file with a task list (`- [ ]` and `- [x]`) in the Files preview.
+  Items that can be picked (hover shows a fill) and items that cannot (no fill) line up the same: box, text and indent do not shift between the two.
 
 ### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
+
 - [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.
 - [ ] **Palette stays put:** switch scopes All -> Commands -> Branches and check the top of the palette does not move when the list gets shorter or taller.
 - [ ] **All:** an empty query lists sessions (a session that needs input first) and the commands run lately; a query lists sections with at most five rows and "+N more ›", which switches to that scope; Search never has a section; Files, Branches and Commits appear only once they have rows, All never shows "Loading" or an error line (those are in the scope's own tab).
@@ -171,7 +174,7 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
 - [ ] **Theme picker (`Ctrl+Alt+J`):** no tabs, still previews on Up / Down and restores on Esc; its rows keep the muted "Dark" / "Light" text.
 - [ ] **Detached window:** `Ctrl+Shift+P` there lists what acts in that window; a picked file, search hit, branch or commit is run in the main window (it comes to the front, on the palette's workspace).
 - [ ] **Detached window closed under the `@` palette:** close a detached window while its `@` palette is open; check whether `@` is typed anywhere (decide if that is acceptable).
-- [ ] **`/` and prompt pickers:** their lists are now as tall as the palette's (480 px).
+- [ ] **`/` and prompt pickers:** their lists keep the old height (`PICKER_LIST_HEIGHT`, 360 px); only the palette list is 480 px.
 
 ### To verify - 2026-11-21 Polish P1: glass panels, pressable widgets, Settings
 
@@ -1365,7 +1368,7 @@ by telling the agent.
 ### To verify — 2026-10-12 Files tree on the right (ADR 0050)
 
 - [ ] **Files layout (dark + light):** Restart the daemon first (protocol v39). Tree on the right of the file; the search row shows `⌕ Search
-  files…` with the Quick open shortcut and opens Quick open on click; `Ignored` toggles ignored
+  files…` with the palette's Files shortcut and opens the palette on Files on click; `Ignored` toggles ignored
   files, looks pressed while on, its width never changes; ←/→/↑/↓, right-click, New file… still work.
 
 ### To verify — 2026-10-12 equalize panes, drag pane dividers, sidebar width
@@ -2130,7 +2133,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
      Expected: icons instead of boxes, monospaced Latin text.
   5. Git view: the file list and commit box sit right of the diff, in dark and light themes
      (retake the §14 screenshots).
-  6. Files view: "Search files…" at the top opens quick open, as Ctrl+Shift+O does. With the
+  6. Files view: "Search files…" at the top opens the palette on Files, as Ctrl+Shift+O does. With the
      Files view switched to a task worktree, picks open the worktree's copy.
   7. ✦ in the commit box with claude, codex and omp as the default agent: a Conventional
      Commits message; Commit still needs a click. With an old profile without `oneshot`, the
