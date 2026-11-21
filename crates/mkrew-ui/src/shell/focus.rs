@@ -393,12 +393,34 @@ impl Shell {
         panel: impl IntoElement,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        Self::shade(id, panel, None, cx)
+    }
+
+    /// [`Self::modal_shade`] with the panel anchored `top` px below the window's top edge
+    /// (still centered horizontally), so its top stays put while its height changes.
+    pub(crate) fn modal_shade_top(
+        id: &'static str,
+        panel: impl IntoElement,
+        top: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        Self::shade(id, panel, Some(top), cx)
+    }
+
+    /// The shared scrim; the panel is vertically centered unless `top` anchors it.
+    fn shade(
+        id: &'static str,
+        panel: impl IntoElement,
+        top: Option<f32>,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
         div()
             .id(id)
             .absolute()
             .inset_0()
             .flex()
-            .items_center()
+            .when_some(top, |el, top| el.items_start().pt(px(top)))
+            .when(top.is_none(), |el| el.items_center())
             .justify_center()
             .bg(gpui::rgba(cx.theme().scrim))
             .occlude()

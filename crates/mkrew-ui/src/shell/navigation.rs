@@ -533,7 +533,7 @@ impl Shell {
             palette.pick_entry(index);
         }
         self.workspace_menu = None;
-        self.palette_scroll.scroll_to_item(palette.selected);
+        self.palette_scroll.scroll_to_item(palette.selected_line());
         self.palette_host = self.host_of(window);
         self.palette = Some(palette);
         let terminal = self.focused_session(window).filter(|session| {
@@ -1212,11 +1212,7 @@ impl Shell {
                     .py(px(space::XS))
                     .text_size(font_size::META)
                     .when(error, |el| {
-                        el.child(icon_svg(
-                            Icon::X,
-                            theme::ICON_SIZE_SMALL,
-                            theme.status_exited,
-                        ))
+                        el.child(icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.danger_text))
                     })
                     .child(
                         div()
@@ -1419,6 +1415,6 @@ impl Shell {
                     .child(hint)
                     .child(close),
             );
-        Self::modal_shade("palette-shade", panel, cx)
+        Self::modal_shade_top("palette-shade", panel, theme::PALETTE_TOP_OFFSET, cx)
     }
 }

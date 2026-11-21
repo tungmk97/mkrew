@@ -459,6 +459,9 @@ pub const PALETTE_WIDTH: f32 = 640.0;
 pub const PALETTE_LIST_HEIGHT: f32 = 480.0;
 pub const PALETTE_SELECTED_BAR: f32 = 3.0;
 pub const PALETTE_GROUP_LIMIT: usize = 5;
+/// Distance from the window's top edge to the top of the palette panel (it stays there while
+/// its list grows or shrinks between scopes).
+pub const PALETTE_TOP_OFFSET: f32 = 64.0;
 /// Widest share of a palette row its title may take while a muted detail follows (the title
 /// is cut with `…` past that).
 pub const PALETTE_TITLE_MAX_FRACTION: f32 = 0.6;
