@@ -50,6 +50,7 @@ impl Shell {
         let sidebar_mode = ui.sidebar;
         let right_panel = inspector::RightPanel::from_mode(ui.right_panel);
         let prompts_dir = paths.prompts_dir();
+        let themes_dir = paths.themes_dir();
         let config_dir = paths.config_dir.clone();
         let main_window = window.window_handle();
         // System mode follows the OS live (ADR 0027).
@@ -135,13 +136,20 @@ impl Shell {
                 let now = status::now_ms();
                 let ticked = this.update_in(cx, |shell, window, cx| {
                     // ponytail: mtime poll on the 500 ms tick; a file watcher if it ever shows
-                    // in a profile.
+                    // in a profile. The themes folder rides the same tick (the names, times
+                    // and sizes of its `*.toml` files): a folder with hundreds of files costs
+                    // one stat each per tick; the upgrade path is `notify`.
                     let modified = std::fs::metadata(&shell.settings_file)
                         .and_then(|m| m.modified())
                         .ok();
                     if modified != shell.settings_modified {
                         shell.settings_modified = modified;
                         shell.apply_settings_file(window, cx);
+                    }
+                    let themes = ThemesStamp::read(&shell.themes_dir);
+                    if themes != shell.themes_stamp {
+                        shell.themes_stamp = themes;
+                        shell.apply_themes_dir(window, cx);
                     }
                     // Toasts hide here, within one tick of their time (SPEC §14).
                     if shell.toasts.expire(Instant::now()) {
@@ -319,6 +327,8 @@ impl Shell {
             keymap_errors: keymap_errors.to_vec(),
             keymap_file,
             settings_modified: None,
+            themes_stamp: ThemesStamp::read(&themes_dir),
+            themes_dir,
             settings_error: None,
             settings_file,
             prompts_dir,

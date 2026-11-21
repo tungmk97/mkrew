@@ -120,7 +120,7 @@ use mkrew_ui::terminal::view::{
 use mkrew_ui::text_box::{self, Input};
 use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
-use mkrew_ui::theme_catalog::ThemeCatalog;
+use mkrew_ui::theme_catalog::{ThemeCatalog, ThemesStamp};
 use mkrew_ui::toast::{self, Toasts};
 use mkrew_ui::turn::Turns;
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
@@ -524,6 +524,10 @@ struct Shell {
     settings_modified: Option<std::time::SystemTime>,
     /// Why the last read of `settings_file` failed; listed in the palette (§20.0).
     settings_error: Option<String>,
+    /// `<config>/mkrew/themes`: theme files (ADR 0101), polled with `settings.toml`.
+    themes_dir: PathBuf,
+    /// Their names, times and sizes at the last poll; a difference rebuilds the catalog.
+    themes_stamp: ThemesStamp,
     /// `<config>/mkrew/prompts`, read (seeded the first time) when a prompt picker opens.
     prompts_dir: PathBuf,
     /// `<config>/mkrew`: `mk web` keeps `web_token` there (Phone access link, ADR 0053).

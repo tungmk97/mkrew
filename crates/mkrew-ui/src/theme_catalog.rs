@@ -442,4 +442,29 @@ mod tests {
         std::fs::remove_file(&file).unwrap();
         assert_eq!(ThemesStamp::read(dir.path()), empty);
     }
+
+    #[test]
+    fn the_catalog_follows_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("moon.toml");
+        let mut palette = Palette::from_theme(&Theme::dark());
+        std::fs::write(&path, theme_file::render("Moon", &palette)).unwrap();
+        let stamp = ThemesStamp::read(dir.path());
+        let first = ThemeCatalog::load(dir.path());
+        assert_eq!(first.find("Moon").unwrap().theme.bg, palette.bg);
+
+        palette.bg = 0x101820;
+        std::fs::write(&path, theme_file::render("Moon", &palette)).unwrap();
+        assert_ne!(
+            ThemesStamp::read(dir.path()),
+            stamp,
+            "the poll sees the edit"
+        );
+        let second = ThemeCatalog::load(dir.path());
+        assert_eq!(second.find("Moon").unwrap().theme.bg, 0x101820);
+        assert_ne!(first, second);
+
+        std::fs::remove_file(&path).unwrap();
+        assert!(ThemeCatalog::load(dir.path()).find("Moon").is_none());
+    }
 }
