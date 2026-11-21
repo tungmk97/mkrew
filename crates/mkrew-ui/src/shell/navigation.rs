@@ -1055,8 +1055,9 @@ impl Shell {
     /// A Branches pick: `git.checkout`, after a question when something is at risk (changed
     /// files in the repository, live agents in that folder). A failure is a toast with git's
     /// own message; a success refreshes the Git view. Runs in the main window
-    /// ([`Self::in_main_window`]) with the palette's workspace active, so `repo_changes` reads
-    /// that workspace's summary.
+    /// ([`Self::in_main_window`]) with the palette's workspace active. `repo_changes` reads
+    /// that workspace's title bar summary; activating a workspace clears it and loads it
+    /// again, so while it is missing the summary is read here before the question.
     fn checkout_branch(
         &mut self,
         source: palette::Source,
@@ -1072,12 +1073,11 @@ impl Shell {
             self.activate_workspace(source.project_id, window, cx);
         }
         // ponytail: a task worktree's own changes are not in the title bar summary, so no
-        // question is asked there; git refuses a switch that would overwrite a change. The
-        // same for a workspace whose summary has not loaded yet (`repo_changes` is `None`).
-        let changes = if source.worktree_task_id.is_none() {
-            self.repo_changes(repo.as_deref()).unwrap_or(0)
+        // question is asked there; git refuses a switch that would overwrite a change.
+        let known = if source.worktree_task_id.is_none() {
+            self.repo_changes(repo.as_deref())
         } else {
-            0
+            Some(0)
         };
         let has_worktree =
             |task: Ulid| (self.board.task(task)).is_some_and(|task| task.worktree_path.is_some());
@@ -1087,16 +1087,6 @@ impl Shell {
             source.worktree_task_id,
             has_worktree,
         );
-        let answer =
-            palette::checkout_question(&branch, changes, agents).map(|(message, detail)| {
-                window.prompt(
-                    PromptLevel::Warning,
-                    &message,
-                    Some(detail.as_str()),
-                    &palette::CHECKOUT_ANSWERS,
-                    cx,
-                )
-            });
         let params = GitCheckoutParams {
             project_id: source.project_id,
             worktree_task_id: source.worktree_task_id,
@@ -1104,10 +1094,35 @@ impl Shell {
             branch,
         };
         cx.spawn_in(window, async move |this, cx| {
-            if let Some(answer) = answer
-                && !palette::confirms_checkout(answer.await.ok())
-            {
-                return;
+            let changes = match known {
+                Some(changes) => changes,
+                // A summary that cannot be read asks no question (git refuses a clobber).
+                None => crate::shell::git::git_summary_of(&connection, params.project_id)
+                    .await
+                    .ok()
+                    .and_then(|summary| {
+                        let repo = params.repo.as_deref().unwrap_or("");
+                        let found = summary.repos.iter().find(|found| found.repo == repo);
+                        found.map(RepoSummary::changed)
+                    })
+                    .unwrap_or(0),
+            };
+            let question = palette::checkout_question(&params.branch, changes, agents);
+            if let Some((message, detail)) = question {
+                let Ok(answer) = this.update_in(cx, |_, window, cx| {
+                    window.prompt(
+                        PromptLevel::Warning,
+                        &message,
+                        Some(detail.as_str()),
+                        &palette::CHECKOUT_ANSWERS,
+                        cx,
+                    )
+                }) else {
+                    return;
+                };
+                if !palette::confirms_checkout(answer.await.ok()) {
+                    return;
+                }
             }
             let project_id = params.project_id;
             let branch = params.branch.clone();

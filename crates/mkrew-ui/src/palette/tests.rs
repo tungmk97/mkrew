@@ -1,6 +1,6 @@
 use mkrew_protocol::{
-    Branch, Commit, FsMatch, FsSearchParams, FsSearchResult, GitBranchesParams, SearchHit,
-    SessionKind, StateSource, TaskStatus,
+    Branch, Commit, FsMatch, FsSearchParams, FsSearchResult, GitBranchesParams, GitLogParams,
+    SearchHit, SessionKind, StateSource, TaskStatus,
 };
 
 use super::*;
@@ -2119,11 +2119,19 @@ fn a_call_without_a_daemon_fails_in_its_own_scope() {
             worktree_task_id: None,
             repo: None,
         }),
+        Call::Commits(GitLogParams {
+            project_id: Ulid::new(),
+            worktree_task_id: None,
+            repo: None,
+            limit: 10,
+            path: None,
+        }),
     ] {
         let kind = std::mem::discriminant(&call.failed("x"));
         let wanted = match call {
             Call::Search(_) => Answer::Search(Err(String::new())),
-            _ => Answer::Branches(Err(String::new())),
+            Call::Branches(_) => Answer::Branches(Err(String::new())),
+            _ => Answer::Commits(Err(String::new())),
         };
         assert_eq!(kind, std::mem::discriminant(&wanted));
     }
