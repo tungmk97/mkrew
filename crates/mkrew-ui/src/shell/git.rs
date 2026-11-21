@@ -521,17 +521,20 @@ impl Shell {
                 }
                 let mode = shell.diff_mode;
                 let mut reveal = None;
+                let on_screen = shell.workspace == Some(project_id);
                 let again = shell.git_at(project_id, &at).and_then(|view| {
                     let again = view.diff_loaded(&target, loaded);
                     // A cross-file `n` / `p` picked its hunk: scroll to it (not on a refresh).
-                    reveal = view.take_hunk_reveal().and_then(|hunk| match &view.diff {
-                        git_view::Diff::Shown(shown) => shown.hunk_row(hunk, mode),
-                        _ => None,
-                    });
+                    // Another workspace keeps it pending until it is on screen again.
+                    if on_screen {
+                        reveal = view.take_hunk_reveal().and_then(|hunk| match &view.diff {
+                            git_view::Diff::Shown(shown) => shown.hunk_row(hunk, mode),
+                            _ => None,
+                        });
+                    }
                     again
                 });
-                // Another workspace's reply must not move the scroll of the one on screen.
-                if let Some(row) = reveal.filter(|_| shell.workspace == Some(project_id)) {
+                if let Some(row) = reveal {
                     shell.scroll_diff_to(row);
                 }
                 if let Some(target) = again {

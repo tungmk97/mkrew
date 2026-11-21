@@ -35,7 +35,7 @@ Reviewing an agent's work still took extra steps: marking a file viewed left the
 
 ## Consequences
 
-- A stale hunk fails with git's own text in the existing error toast, as a stale hunk stage does.
+- A stale hunk fails with git's own text in the dialog (a toast if it was closed), and the diff reloads.
 - A hand-made request naming a staged-only hunk of a clean file would apply; only the UI keeps that from happening.
 - An older daemon is refused by the protocol version check.
 - `docs/HUMAN_CHECKS.md` lists the review pass for a person to check in dark and light.
