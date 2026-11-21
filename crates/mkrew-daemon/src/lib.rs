@@ -15,6 +15,7 @@ mod git;
 mod git_view;
 pub mod ipc;
 mod launch;
+mod limits;
 pub mod lock;
 mod notify;
 mod plan;

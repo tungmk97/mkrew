@@ -500,6 +500,14 @@ impl Daemon {
                 ok(&self.hub.plans.for_project(params.project_id)),
                 After::Continue,
             ),
+            Request::LimitsGet => (ok(&self.hub.limits()), After::Continue),
+            Request::LimitsReport(params) => match self.hub.offer_limits(params) {
+                Ok(_) => (ok(&()), After::Continue),
+                Err(message) => (
+                    Outcome::error(ErrorCode::InvalidRequest, message),
+                    After::Continue,
+                ),
+            },
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (

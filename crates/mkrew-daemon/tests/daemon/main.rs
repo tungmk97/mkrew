@@ -59,6 +59,7 @@ mod tabs_tasks;
 mod task_runs;
 mod turns;
 mod web;
+mod widgets;
 mod workspaces;
 mod worktrees;
 
