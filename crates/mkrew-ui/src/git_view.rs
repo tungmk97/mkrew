@@ -438,6 +438,9 @@ pub enum Key {
     Up,
     /// ↓ / j: next file.
     Down,
+    /// The Git widget of the bar (ADR 0102): the next file like ↓, but past the last file the
+    /// first. In the History it steps like ↓ (commits do not wrap).
+    NextWrapping,
     /// n: next hunk.
     NextHunk,
     /// p: previous hunk.
@@ -1368,6 +1371,7 @@ impl GitView {
         match key {
             Key::Up => self.step_file(-1),
             Key::Down => self.step_file(1),
+            Key::NextWrapping => self.step_file_wrapping(),
             Key::NextHunk => {
                 self.step_hunk(true);
                 Requests::default()
@@ -1493,6 +1497,25 @@ impl GitView {
         Requests {
             diff: self.select(target),
             ..Requests::default()
+        }
+    }
+
+    /// [`Key::NextWrapping`].
+    fn step_file_wrapping(&mut self) -> Requests {
+        if self.history.is_some() {
+            return self.step_file(1);
+        }
+        let files = self.steppable();
+        let at = self
+            .selected
+            .as_ref()
+            .and_then(|selected| files.iter().position(|(target, _)| target == selected));
+        match (at, files.first()) {
+            (Some(at), Some((first, _))) if at + 1 == files.len() => Requests {
+                diff: self.select(first.clone()),
+                ..Requests::default()
+            },
+            _ => self.step_file(1),
         }
     }
 

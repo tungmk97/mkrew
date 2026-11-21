@@ -655,7 +655,7 @@ impl Shell {
                     self.scroll_diff_to(at);
                 }
             }
-            git_view::Key::Up | git_view::Key::Down
+            git_view::Key::Up | git_view::Key::Down | git_view::Key::NextWrapping
                 if requests.diff.is_some() || requests.show.is_some() =>
             {
                 self.scroll_diff_to(0);
