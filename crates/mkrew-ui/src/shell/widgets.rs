@@ -893,7 +893,6 @@ pub(crate) fn list_row(
 /// fill, the accent tint gradient over the top `GLASS_TINT_HEIGHT` px, a 1 px glass border,
 /// the float shadow, `radius::LARGE`, and it swallows the mouse. Callers set size, layout and
 /// content; the gradient is the first child, so their children paint over it.
-#[allow(dead_code)] // moved into by Task 7
 pub(crate) fn floating_panel(
     id: impl Into<gpui::ElementId>,
     theme: &Theme,

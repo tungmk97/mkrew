@@ -639,18 +639,12 @@ impl Shell {
                 }
             }
         };
-        let panel = div()
-            .id("prompt-picker")
+        let panel = floating_panel("prompt-picker", theme)
             .w(px(theme::DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::prompt_picker_key_down))

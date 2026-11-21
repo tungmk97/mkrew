@@ -295,18 +295,12 @@ impl Shell {
                     "",
                 ))
             });
-        let panel = div()
-            .id("ask-dialog")
+        let panel = floating_panel("ask-dialog", theme)
             .w(px(theme::ASK_DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,

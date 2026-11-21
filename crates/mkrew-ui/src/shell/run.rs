@@ -962,19 +962,13 @@ impl Shell {
             cx.notify();
         }));
         let max_height = (window.viewport_size().height - px(space::XXL * 2.0)).max(px(0.0));
-        let panel = div()
-            .id("run-setup")
+        let panel = floating_panel("run-setup", theme)
             .w(px(theme::RUN_SETUP_WIDTH))
             .max_h(max_height)
             .flex()
             .flex_col()
             .gap(px(space::L))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
@@ -1186,18 +1180,12 @@ impl Shell {
         } else {
             picker.dir.clone()
         };
-        let panel = div()
-            .id("run-picker")
+        let panel = floating_panel("run-picker", theme)
             .w(px(theme::RUN_SETUP_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,

@@ -415,18 +415,12 @@ impl Shell {
             .border(px(theme::BORDER_WIDTH))
             .border_color(ring_border)
             .when(ring, move |el| el.bg(tint));
-        let panel = div()
-            .id("task-dialog")
+        let panel = floating_panel("task-dialog", theme)
             .w(px(theme::DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             // A picker over it (library prompt, `@` file) or Settings (opened from the prompt
             // picker's Manage row) has the keyboard meanwhile.

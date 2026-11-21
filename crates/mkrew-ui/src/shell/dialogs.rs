@@ -375,18 +375,12 @@ impl Shell {
         let hint = confirm.as_ref().err().copied().filter(|_| {
             matches!(dialog.preview, Preview::Loaded(_)) && !dialog.busy && !nothing_changed
         });
-        let panel = div()
-            .id("undo-dialog")
+        let panel = floating_panel("undo-dialog", theme)
             .w(px(theme::UNDO_DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
@@ -593,18 +587,12 @@ impl Shell {
                     ))
                 })
         };
-        let panel = div()
-            .id("broadcast-dialog")
+        let panel = floating_panel("broadcast-dialog", theme)
             .w(px(theme::DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,

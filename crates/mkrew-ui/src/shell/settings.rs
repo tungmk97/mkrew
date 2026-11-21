@@ -338,18 +338,12 @@ impl Shell {
                 ));
 
         let max_height = (viewport_height - px(space::XXL * 2.0)).max(px(0.0));
-        let panel = div()
-            .id("settings-dialog")
+        let panel = floating_panel("settings-dialog", theme)
             .w(px(theme::SETTINGS_DIALOG_WIDTH))
             .h(px(theme::SETTINGS_DIALOG_HEIGHT))
             .max_h(max_height)
             .flex()
             .flex_col()
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,

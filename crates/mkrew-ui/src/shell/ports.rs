@@ -311,18 +311,12 @@ impl Shell {
                     .on_click(cx.listener(|shell, _, window, cx| shell.close_ports(window, cx))),
             ),
         };
-        let panel = div()
-            .id("ports-dialog")
+        let panel = floating_panel("ports-dialog", theme)
             .w(px(theme::PORTS_DIALOG_WIDTH))
             .flex()
             .flex_col()
             .gap(px(space::M))
             .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
