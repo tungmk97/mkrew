@@ -297,7 +297,9 @@ impl Shell {
                             }
                             offset.y = offset.y.clamp(-scroll.max_offset().y, px(0.));
                             scroll.set_offset(offset);
-                            window.refresh();
+                            // `refresh` is ignored while a frame is drawing, so the new
+                            // offset is drawn on a frame asked for once this one ends.
+                            window.on_next_frame(|window, _| window.refresh());
                         },
                     )
                     .absolute()

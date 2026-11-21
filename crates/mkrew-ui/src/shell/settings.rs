@@ -129,7 +129,7 @@ impl Shell {
                     self.settings_scroll
                         .scroll_to_item(card + banner + note + search + gallery);
                 }
-                Focus::Gallery(_) => self.gallery_reveal.set(true),
+                Focus::Gallery(_) if dialog.gallery_shown() => self.gallery_reveal.set(true),
                 _ => {}
             }
         }
