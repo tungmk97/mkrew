@@ -179,6 +179,7 @@ impl Shell {
                     dialog.bound(command, reply);
                 }
             }
+            Effect::KeepTheme { name, dark } => self.keep_theme(&name, dark, window, cx),
             Effect::AddMachine(machine) => self.add_machine(machine, cx),
             Effect::Prompts(action) => self.prompts_action(action, window, cx),
         }

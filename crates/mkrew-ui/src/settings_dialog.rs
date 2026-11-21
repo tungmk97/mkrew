@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
 
-use gpui::Keystroke;
+use gpui::{Keystroke, SharedString};
 use mkrew_core::prompt::PromptLibrary;
 use mkrew_core::settings::Settings;
 use mkrew_core::settings_fields::{Kind, Page, SETTINGS, Setting};
@@ -19,7 +19,7 @@ use crate::palette::{self, match_ranges};
 use crate::prompts_page::{PromptAction, PromptsPage, Spot, Written};
 use crate::task_dialog::{DialogKey, dialog_key};
 use crate::text_box::Input;
-use crate::theme_catalog::ThemeCatalog;
+use crate::theme_catalog::{CatalogTheme, Origin, ThemeCatalog};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -127,6 +127,9 @@ pub enum Focus {
     Add(Field),
     /// A spot of the Prompts page.
     Prompts(Spot),
+    /// A card of the theme gallery (Appearance); the whole gallery is one Tab stop and the
+    /// arrow keys move between its cards.
+    Gallery(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,6 +137,30 @@ pub struct ListPick {
     pub setting: &'static Setting,
     pub query: Input,
     pub selected: usize,
+}
+
+/// What a gallery card says besides its name (spec 3.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Badge {
+    /// The kept theme of the dark slot.
+    DarkMode,
+    /// The kept theme of the light slot.
+    LightMode,
+    /// A theme file.
+    File,
+    /// A theme file that breaks a contrast rule.
+    LowContrast,
+}
+
+impl Badge {
+    pub fn label(self) -> &'static str {
+        match self {
+            Badge::DarkMode => "Dark mode",
+            Badge::LightMode => "Light mode",
+            Badge::File => "File",
+            Badge::LowContrast => "Low contrast",
+        }
+    }
 }
 
 /// What the shell does after a key or click.
@@ -155,6 +182,12 @@ pub enum Effect {
     AddMachine(Machine),
     /// A Prompts page action the shell runs: file reads and writes, the questions.
     Prompts(PromptAction),
+    /// A gallery card was kept: the shell saves `name` to the slot of its own appearance
+    /// (`dark_theme` or `light_theme`) and shows the kept theme of the slot shown.
+    KeepTheme {
+        name: SharedString,
+        dark: bool,
+    },
 }
 
 /// The Machines page's "Add machine…" fields (spec §6.2).
@@ -297,6 +330,16 @@ pub struct SettingsDialog {
     /// The themes the slot lists pick from (ADR 0101); the shell hands over every new
     /// catalog with [`SettingsDialog::set_catalog`].
     pub catalog: ThemeCatalog,
+    /// The gallery card the keyboard was last on (its Tab stop returns there).
+    gallery_at: usize,
+    /// The card under the pointer, and the counter that tells a late timer its hover is
+    /// stale.
+    hovered: Option<SharedString>,
+    hover_serial: u64,
+    /// The theme the whole app shows now instead of the kept one (`None`: the kept one): set
+    /// by a hover that lasted the preview delay or by the keyboard on a card. The shell draws
+    /// it; nothing is written.
+    previewing: Option<SharedString>,
 }
 
 impl SettingsDialog {
@@ -316,6 +359,10 @@ impl SettingsDialog {
             add: None,
             prompts: PromptsPage::default(),
             catalog: ThemeCatalog::builtin(),
+            gallery_at: 0,
+            hovered: None,
+            hover_serial: 0,
+            previewing: None,
         }
     }
 
@@ -323,9 +370,177 @@ impl SettingsDialog {
         self.settings.is_err()
     }
 
-    /// A rebuilt catalog (the themes folder changed).
+    /// A rebuilt catalog (the themes folder changed): a hover or a preview of a card that is
+    /// gone ends, and the keyboard stays on a card that exists.
     pub fn set_catalog(&mut self, catalog: ThemeCatalog) {
         self.catalog = catalog;
+        let cards = self.gallery_cards().len();
+        self.gallery_at = self.gallery_at.min(cards.saturating_sub(1));
+        if let Focus::Gallery(at) = self.focus {
+            self.focus = if cards == 0 {
+                Focus::Find
+            } else {
+                Focus::Gallery(at.min(cards - 1))
+            };
+        }
+        let gone = |name: &Option<SharedString>| {
+            name.as_ref()
+                .is_some_and(|name| self.catalog.find(name).is_none())
+        };
+        let (hover_gone, preview_gone) = (gone(&self.hovered), gone(&self.previewing));
+        if hover_gone {
+            self.hovered = None;
+        }
+        if preview_gone {
+            self.previewing = None;
+        }
+    }
+
+    /// The Appearance page with no query draws the gallery above its cards.
+    pub fn gallery_shown(&self) -> bool {
+        self.tab == Tab::Settings(Page::Appearance) && !self.searching()
+    }
+
+    /// The cards the keyboard visits, in reading order: the dark group, then the light group
+    /// (an error card is not one of them).
+    pub fn gallery_cards(&self) -> Vec<&CatalogTheme> {
+        (self.catalog.group(true))
+            .chain(self.catalog.group(false))
+            .collect()
+    }
+
+    /// The card the keyboard is on.
+    pub fn focused_card(&self) -> Option<&CatalogTheme> {
+        let Focus::Gallery(at) = self.focus else {
+            return None;
+        };
+        self.gallery_cards().get(at).copied()
+    }
+
+    /// The names `[ui] dark_theme` and `light_theme` hold now (the defaults while the file does
+    /// not parse).
+    pub fn kept_names(&self) -> (String, String) {
+        let defaults;
+        let settings = match &self.settings {
+            Ok(settings) => settings,
+            Err(_) => {
+                defaults = Settings::default();
+                &defaults
+            }
+        };
+        (
+            settings.ui.dark_theme.clone(),
+            settings.ui.light_theme.clone(),
+        )
+    }
+
+    /// The badges of `card`: its slots first, then its origin and its contrast.
+    pub fn card_badges(&self, card: &CatalogTheme) -> Vec<Badge> {
+        let (dark, light) = self.kept_names();
+        let mut badges = Vec::new();
+        if *card.name == *dark {
+            badges.push(Badge::DarkMode);
+        }
+        if *card.name == *light {
+            badges.push(Badge::LightMode);
+        }
+        if matches!(card.origin, Origin::File(_)) {
+            badges.push(Badge::File);
+        }
+        if !card.problems.is_empty() {
+            badges.push(Badge::LowContrast);
+        }
+        badges
+    }
+
+    /// The theme the app should show now instead of the kept one.
+    pub fn previewing(&self) -> Option<&SharedString> {
+        self.previewing.as_ref()
+    }
+
+    /// The pointer entered card `name`; the shell waits the preview delay and then calls
+    /// [`Self::gallery_hover_due`] with the returned serial. An unknown name (an error card)
+    /// is never previewed.
+    pub fn gallery_hover(&mut self, name: &str) -> u64 {
+        self.hover_serial += 1;
+        self.hovered = self.catalog.find(name).map(|theme| theme.name.clone());
+        self.hover_serial
+    }
+
+    /// The delay of hover `serial` is over: it previews when it is still the latest hover.
+    pub fn gallery_hover_due(&mut self, serial: u64) {
+        if serial == self.hover_serial && self.hovered.is_some() {
+            self.previewing.clone_from(&self.hovered);
+        }
+    }
+
+    /// The pointer left the gallery: the kept theme comes back.
+    pub fn gallery_leave(&mut self) {
+        self.end_preview();
+    }
+
+    /// No hover, no preview (the pointer left, Esc, a page change, Settings closing).
+    pub fn end_preview(&mut self) {
+        self.hover_serial += 1;
+        self.hovered = None;
+        self.previewing = None;
+    }
+
+    /// A click on card `name`: the keyboard moves to it and the theme is kept for its slot.
+    /// An unknown name (an error card, a card that just went) does nothing.
+    pub fn gallery_click(&mut self, name: &str, keymap: &Keymap) -> Effect {
+        let Some(at) = (self.gallery_cards().iter()).position(|card| &*card.name == name) else {
+            return Effect::None;
+        };
+        let left = self.move_focus(Focus::Gallery(at), keymap);
+        if left != Effect::None {
+            return left;
+        }
+        self.keep_card(at)
+    }
+
+    /// Enter, Space or a click on card `at`.
+    fn keep_card(&mut self, at: usize) -> Effect {
+        let Some((name, dark)) = (self.gallery_cards().get(at)).map(|c| (c.name.clone(), c.dark))
+        else {
+            return Effect::None;
+        };
+        self.end_preview();
+        if self.read_only() {
+            return Effect::None;
+        }
+        Effect::KeepTheme { name, dark }
+    }
+
+    /// What the keyboard previews: the card it is on.
+    fn focus_preview(&self) -> Option<SharedString> {
+        self.focused_card().map(|card| card.name.clone())
+    }
+
+    /// Where an arrow key takes the keyboard from card `at`: Left / Up and Right / Down step
+    /// through the cards in reading order, across the two groups; Up from the first card goes
+    /// to the search box and Down from the last one to the first row.
+    fn gallery_move(&self, at: usize, motion: Motion, keymap: &Keymap) -> Option<Focus> {
+        let last = self.gallery_cards().len().checked_sub(1)?;
+        match motion {
+            Motion::Left => Some(Focus::Gallery(at.saturating_sub(1))),
+            Motion::Right => Some(Focus::Gallery((at + 1).min(last))),
+            Motion::Up if at == 0 => Some(Focus::Find),
+            Motion::Up => Some(Focus::Gallery(at - 1)),
+            Motion::Down if at >= last => (!self.rows(keymap).is_empty())
+                .then_some(Focus::Row(0))
+                .or(Some(Focus::Gallery(last))),
+            Motion::Down => Some(Focus::Gallery(at + 1)),
+            _ => None,
+        }
+    }
+
+    /// Where Down from the search box goes: the gallery when it is drawn, else the first row.
+    fn after_find(&self, keymap: &Keymap) -> Option<Focus> {
+        if self.gallery_shown() && !self.gallery_cards().is_empty() {
+            return Some(Focus::Gallery(self.gallery_at));
+        }
+        (!self.rows(keymap).is_empty()).then_some(Focus::Row(0))
     }
 
     pub fn rows(&self, keymap: &Keymap) -> Vec<Row> {
@@ -469,6 +684,11 @@ impl SettingsDialog {
         {
             self.draft = Some((setting, Input::from(self.current(setting))));
         }
+        if let Focus::Gallery(at) = focus {
+            self.gallery_at = at;
+        }
+        // The keyboard on a card previews it (no delay); anywhere else ends that preview.
+        self.previewing = self.focus_preview();
         effect
     }
 
@@ -484,11 +704,15 @@ impl SettingsDialog {
         self.capture = None;
         self.add = None;
         self.list_pick = None;
+        self.end_preview();
         effect
     }
 
     /// Enter / Space / a click on the focused row.
     fn activate(&mut self, keymap: &Keymap) -> Effect {
+        if let Focus::Gallery(at) = self.focus {
+            return self.keep_card(at);
+        }
         if let Focus::Add(_) = self.focus {
             return self.submit_add();
         }
@@ -595,6 +819,9 @@ impl SettingsDialog {
 
     fn step_focus(&mut self, back: bool, keymap: &Keymap) -> Effect {
         let mut order = vec![Focus::Tabs, Focus::Find];
+        if self.gallery_shown() && !self.gallery_cards().is_empty() {
+            order.push(Focus::Gallery(self.gallery_at));
+        }
         if !self.searching() {
             if self.tab == Tab::Keyboard {
                 order.push(Focus::Search);
@@ -641,7 +868,7 @@ impl SettingsDialog {
             Focus::Add(field) => field == Field::Mk,
             Focus::Prompts(spot) => spot == self.prompts_last_spot(),
             // The search box always follows the page list.
-            Focus::Tabs => false,
+            Focus::Tabs | Focus::Gallery(_) => false,
         }
     }
 
@@ -738,8 +965,18 @@ impl SettingsDialog {
         {
             return effect;
         }
+        if let Focus::Gallery(at) = self.focus
+            && let DialogKey::Move {
+                motion,
+                extend: false,
+            } = &key
+            && let Some(next) = self.gallery_move(at, *motion, keymap)
+        {
+            return self.move_focus(next, keymap);
+        }
         match key {
             DialogKey::Cancel => {
+                self.end_preview();
                 if let Some((setting, input)) = &self.draft
                     && **input != *self.current(setting)
                 {
@@ -786,10 +1023,15 @@ impl SettingsDialog {
                         };
                         self.move_focus(Focus::Row(next), keymap)
                     }
-                    Focus::Find if !up && !self.rows(keymap).is_empty() => {
-                        self.move_focus(Focus::Row(0), keymap)
-                    }
-                    Focus::Find | Focus::Search | Focus::Add(_) | Focus::Prompts(_) => Effect::None,
+                    Focus::Find if !up => match self.after_find(keymap) {
+                        Some(focus) => self.move_focus(focus, keymap),
+                        None => Effect::None,
+                    },
+                    Focus::Find
+                    | Focus::Search
+                    | Focus::Gallery(_)
+                    | Focus::Add(_)
+                    | Focus::Prompts(_) => Effect::None,
                 }
             }
             DialogKey::Enter | DialogKey::Save => self.activate(keymap),
@@ -1134,6 +1376,9 @@ mod tests {
             .unwrap();
         d.key(&key("tab"), None, keymap);
         d.key(&key("tab"), None, keymap);
+        if matches!(d.focus, Focus::Gallery(_)) {
+            d.key(&key("tab"), None, keymap);
+        }
         for _ in 0..index {
             d.key(&key("down"), None, keymap);
         }
@@ -1147,6 +1392,293 @@ mod tests {
             format!("{name}.toml"),
             Ok(crate::theme_file::render(name, &Palette::from_theme(&base))),
         )
+    }
+
+    /// Appearance with the built-ins, a dark file theme "Aurora", a light one "Dawn" and an
+    /// error card.
+    fn gallery_dialog() -> SettingsDialog {
+        let mut d = dialog();
+        d.set_catalog(ThemeCatalog::from_files(vec![
+            file_theme("Aurora", true),
+            file_theme("Dawn", false),
+            ("bad.toml".to_owned(), Ok("oops".to_owned())),
+        ]));
+        d.set_tab(Tab::Settings(Page::Appearance));
+        d
+    }
+
+    fn card_names(d: &SettingsDialog) -> Vec<String> {
+        (d.gallery_cards().iter())
+            .map(|card| card.name.to_string())
+            .collect()
+    }
+
+    fn previewing(d: &SettingsDialog) -> Option<String> {
+        d.previewing().map(ToString::to_string)
+    }
+
+    /// Tab, Tab: the page list, the search box, then the gallery.
+    fn to_gallery(d: &mut SettingsDialog, keymap: &Keymap) {
+        d.key(&key("tab"), None, keymap);
+        d.key(&key("tab"), None, keymap);
+        assert_eq!(d.focus, Focus::Gallery(0));
+    }
+
+    #[test]
+    fn the_gallery_lists_dark_then_light_without_the_error_card() {
+        let d = gallery_dialog();
+        let names = card_names(&d);
+        let dark = crate::theme::THEMES.iter().filter(|e| e.dark).count();
+        assert_eq!(names[0], "Mkrew Dark");
+        assert_eq!(
+            names[dark - 1],
+            "Everforest Dark",
+            "built-in darks in table order"
+        );
+        assert_eq!(names[dark], "Aurora", "then the dark files");
+        assert_eq!(names[dark + 1], "Mkrew Light", "then the light group");
+        assert_eq!(names.last().map(String::as_str), Some("Dawn"));
+        assert!(!names.iter().any(|name| name == "bad"));
+        assert_eq!(names.len(), crate::theme::THEMES.len() + 2);
+    }
+
+    #[test]
+    fn the_gallery_shows_on_appearance_with_no_query_only() {
+        let mut d = gallery_dialog();
+        assert!(d.gallery_shown());
+        d.find = Input::from("theme");
+        assert!(!d.gallery_shown());
+        d.find = Input::default();
+        d.set_tab(Tab::Settings(Page::General));
+        assert!(!d.gallery_shown());
+    }
+
+    #[test]
+    fn a_hover_previews_after_the_delay_and_a_newer_hover_wins() {
+        let mut d = gallery_dialog();
+        let first = d.gallery_hover("Dracula");
+        assert_eq!(previewing(&d), None, "nothing before the delay");
+        let second = d.gallery_hover("One Dark");
+        d.gallery_hover_due(first);
+        assert_eq!(previewing(&d), None, "the first timer is stale");
+        d.gallery_hover_due(second);
+        assert_eq!(previewing(&d).as_deref(), Some("One Dark"));
+    }
+
+    #[test]
+    fn leaving_the_gallery_restores_and_a_late_timer_does_nothing() {
+        let mut d = gallery_dialog();
+        let serial = d.gallery_hover("Dracula");
+        d.gallery_hover_due(serial);
+        assert!(d.previewing().is_some());
+        d.gallery_leave();
+        assert_eq!(previewing(&d), None);
+        d.gallery_hover_due(serial);
+        assert_eq!(previewing(&d), None, "the pointer is gone");
+        assert_eq!(d.gallery_hover("No such theme"), serial + 2);
+        d.gallery_hover_due(serial + 2);
+        assert_eq!(previewing(&d), None, "an unknown card never previews");
+    }
+
+    #[test]
+    fn a_click_keeps_the_theme_in_its_own_slot_and_ends_the_preview() {
+        let keymap = Keymap::defaults();
+        let mut d = gallery_dialog();
+        let serial = d.gallery_hover("Dawn");
+        d.gallery_hover_due(serial);
+        assert_eq!(
+            d.gallery_click("Dawn", &keymap),
+            Effect::KeepTheme {
+                name: "Dawn".into(),
+                dark: false
+            }
+        );
+        assert_eq!(previewing(&d), None);
+        let at = card_names(&d).iter().position(|n| n == "Aurora").unwrap();
+        assert_eq!(
+            d.gallery_click("Aurora", &keymap),
+            Effect::KeepTheme {
+                name: "Aurora".into(),
+                dark: true
+            }
+        );
+        assert_eq!(
+            d.focus,
+            Focus::Gallery(at),
+            "the keyboard follows the click"
+        );
+    }
+
+    #[test]
+    fn an_error_card_or_an_unknown_name_is_not_clickable() {
+        let keymap = Keymap::defaults();
+        let mut d = gallery_dialog();
+        let focus = d.focus;
+        assert_eq!(d.gallery_click("bad", &keymap), Effect::None);
+        assert_eq!(d.gallery_click("bad.toml", &keymap), Effect::None);
+        assert_eq!(d.focus, focus);
+    }
+
+    #[test]
+    fn the_keyboard_previews_a_card_and_enter_keeps_it() {
+        let keymap = Keymap::defaults();
+        let mut d = gallery_dialog();
+        to_gallery(&mut d, &keymap);
+        assert_eq!(previewing(&d).as_deref(), Some("Mkrew Dark"), "no delay");
+        d.key(&key("right"), None, &keymap);
+        assert_eq!(previewing(&d).as_deref(), Some("One Dark"));
+        assert_eq!(
+            d.key(&key("enter"), None, &keymap),
+            Effect::KeepTheme {
+                name: "One Dark".into(),
+                dark: true
+            }
+        );
+        assert_eq!(previewing(&d), None);
+        d.key(&key("right"), None, &keymap);
+        assert_eq!(
+            d.key(&typed(" "), None, &keymap),
+            Effect::KeepTheme {
+                name: "Dracula".into(),
+                dark: true
+            },
+            "Space acts like Enter"
+        );
+    }
+
+    #[test]
+    fn esc_restores_the_preview_and_then_closes_as_today() {
+        let keymap = Keymap::defaults();
+        let mut d = gallery_dialog();
+        let serial = d.gallery_hover("Dracula");
+        d.gallery_hover_due(serial);
+        assert_eq!(d.key(&key("escape"), None, &keymap), Effect::Close);
+        assert_eq!(previewing(&d), None);
+    }
+
+    #[test]
+    fn arrows_walk_the_cards_in_reading_order_across_both_groups() {
+        let keymap = Keymap::defaults();
+        let mut d = gallery_dialog();
+        let names = card_names(&d);
+        to_gallery(&mut d, &keymap);
+        let mut seen = vec![previewing(&d).unwrap()];
+        for _ in 1..names.len() {
+            d.key(&key("right"), None, &keymap);
+            seen.push(previewing(&d).unwrap());
+        }
+        assert_eq!(
+            seen, names,
+            "dark cards, then light ones; the error card is skipped"
+        );
+        let last = names.len() - 1;
+        d.key(&key("right"), None, &keymap);
+        assert_eq!(d.focus, Focus::Gallery(last), "no wrap");
+        d.key(&key("left"), None, &keymap);
+        assert_eq!(d.focus, Focus::Gallery(last - 1));
+        d.key(&key("down"), None, &keymap);
+        d.key(&key("down"), None, &keymap);
+        assert_eq!(
+            d.focus,
+            Focus::Row(0),
+            "Down from the last card enters the rows"
+        );
+        assert_eq!(previewing(&d), None, "the preview ends with the focus");
+        d.key(&key("tab"), None, &keymap);
+        d.key(&key("tab"), None, &keymap);
+        d.focus = Focus::Gallery(0);
+        d.key(&key("up"), None, &keymap);
+        assert_eq!(d.focus, Focus::Find, "Up from the first card goes back");
+    }
+
+    #[test]
+    fn tab_reaches_the_gallery_once_and_returns_to_the_same_card() {
+        let keymap = Keymap::defaults();
+        let mut d = gallery_dialog();
+        to_gallery(&mut d, &keymap);
+        d.key(&key("right"), None, &keymap);
+        d.key(&key("tab"), None, &keymap);
+        assert_eq!(d.focus, Focus::Row(0), "one stop for the whole gallery");
+        d.key(&key("shift-tab"), None, &keymap);
+        assert_eq!(d.focus, Focus::Gallery(1), "back on the card it left");
+    }
+
+    #[test]
+    fn a_broken_settings_file_lets_cards_preview_but_never_writes() {
+        let keymap = Keymap::defaults();
+        let mut d = SettingsDialog::new(Err("settings.toml:2:1: oops".into()), Vec::new());
+        d.set_tab(Tab::Settings(Page::Appearance));
+        let serial = d.gallery_hover("Dracula");
+        d.gallery_hover_due(serial);
+        assert_eq!(previewing(&d).as_deref(), Some("Dracula"));
+        assert_eq!(d.gallery_click("Dracula", &keymap), Effect::None);
+        assert_eq!(previewing(&d), None);
+    }
+
+    #[test]
+    fn a_new_catalog_ends_the_preview_of_a_card_that_is_gone() {
+        let mut d = gallery_dialog();
+        let serial = d.gallery_hover("Aurora");
+        d.gallery_hover_due(serial);
+        assert!(d.previewing().is_some());
+        d.set_catalog(ThemeCatalog::builtin());
+        assert_eq!(previewing(&d), None);
+        let mut d = gallery_dialog();
+        let serial = d.gallery_hover("Dracula");
+        d.gallery_hover_due(serial);
+        d.set_catalog(ThemeCatalog::builtin());
+        assert_eq!(
+            previewing(&d).as_deref(),
+            Some("Dracula"),
+            "a card that stays keeps its preview"
+        );
+    }
+
+    #[test]
+    fn the_keyboard_moves_to_a_card_that_exists_when_the_list_shrinks() {
+        let keymap = Keymap::defaults();
+        let mut d = gallery_dialog();
+        to_gallery(&mut d, &keymap);
+        for _ in 0..card_names(&d).len() {
+            d.key(&key("right"), None, &keymap);
+        }
+        let built_in = crate::theme::THEMES.len();
+        d.set_catalog(ThemeCatalog::builtin());
+        assert_eq!(d.focus, Focus::Gallery(built_in - 1));
+        d.set_catalog(ThemeCatalog::from_files(vec![file_theme("Aurora", true)]));
+        d.set_tab(Tab::Settings(Page::General));
+        d.set_catalog(ThemeCatalog::builtin());
+        assert_eq!(
+            d.focus,
+            Focus::Tabs,
+            "off the page the focus is the page list"
+        );
+    }
+
+    #[test]
+    fn badges_name_the_slots_the_origin_and_low_contrast() {
+        let mut d = dialog();
+        let mut dim = Palette::from_theme(&Theme::dark());
+        dim.fg = dim.bg;
+        d.set_catalog(ThemeCatalog::from_files(vec![(
+            "dim.toml".into(),
+            Ok(crate::theme_file::render("Dim", &dim)),
+        )]));
+        let badges = |d: &SettingsDialog, name: &str| d.card_badges(d.catalog.find(name).unwrap());
+        assert_eq!(badges(&d, "Mkrew Dark"), [Badge::DarkMode]);
+        assert_eq!(badges(&d, "Mkrew Light"), [Badge::LightMode]);
+        assert_eq!(badges(&d, "Dracula"), []);
+        assert_eq!(badges(&d, "Dim"), [Badge::File, Badge::LowContrast]);
+        let mut settings = Settings::default();
+        settings.ui.dark_theme = "Dim".into();
+        d.reload(Ok(settings));
+        assert_eq!(
+            badges(&d, "Dim"),
+            [Badge::DarkMode, Badge::File, Badge::LowContrast]
+        );
+        assert_eq!(badges(&d, "Mkrew Dark"), []);
+        assert_eq!(Badge::LowContrast.label(), "Low contrast");
+        assert_eq!(d.kept_names(), ("Dim".to_owned(), "Mkrew Light".to_owned()));
     }
 
     #[test]
