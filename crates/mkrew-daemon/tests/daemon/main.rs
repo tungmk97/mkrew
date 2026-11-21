@@ -18,12 +18,12 @@ use mkrew_protocol::{
     CommentSendParams, CommentStatus, Commit, CommitDetail, DaemonStatusResult, DocChangedEvent,
     DocComment, DocContent, DocFile, DocListParams, DocReadParams, ErrorCode, Event, FileDiff,
     Frame, FrameDecoder, FsContent, FsCreateParams, FsCreated, FsEntry, FsFindParams,
-    FsIgnoreParams, FsListParams, FsMatch, FsReadParams, FsWriteParams, FsWritten,
-    GitBranchesParams, GitChangedEvent, GitCheckoutParams, GitCommitParams, GitCommitResult,
-    GitDiffParams, GitDiscardParams, GitLogParams, GitMarker, GitMode, GitRemoteParams,
-    GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams, GitStatus,
-    GitStatusParams, HelloParams, HelloResult, HookReportParams, HunkTarget, Message, Outcome,
-    PROTOCOL_VERSION, PlanItem, PortRow, PortStopParams, Project, ProjectAddParams,
+    FsIgnoreParams, FsListParams, FsMatch, FsReadParams, FsSearchParams, FsSearchResult,
+    FsWriteParams, FsWritten, GitBranchesParams, GitChangedEvent, GitCheckoutParams,
+    GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams, GitLogParams, GitMarker,
+    GitMode, GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams,
+    GitStatus, GitStatusParams, HelloParams, HelloResult, HookReportParams, HunkTarget, Message,
+    Outcome, PROTOCOL_VERSION, PlanItem, PortRow, PortStopParams, Project, ProjectAddParams,
     ProjectCloneParams, ProjectClonedEvent, ProjectRef, ProjectUpdateParams, QueuedSend,
     RemoveWorktreeResult, Request, ResponseError, RunCommand, RunStartParams, RunStarted,
     RunStopParams, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent, SessionFiles,
@@ -274,6 +274,36 @@ impl Client {
                         assert_eq!(got, id);
                         return outcome;
                     }
+                    Frame::Message(Message::Event(event)) => self.events.push(event),
+                    Frame::Output { session_id, data } => {
+                        self.output.entry(session_id).or_default().extend(data);
+                    }
+                    other => panic!("unexpected frame {other:?}"),
+                }
+            }
+            let n = self.stream.read(&mut buf).unwrap();
+            assert!(n > 0, "daemon closed the connection");
+            self.decoder.push(&buf[..n]);
+        }
+    }
+
+    /// Sends `request` without waiting for its answer; [`Client::response`] reads answers in
+    /// whatever order the daemon sends them.
+    fn send(&mut self, request: Request) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        let frame = Frame::Message(Message::Request { id, request });
+        self.stream.write_all(&encode(&frame).unwrap()).unwrap();
+        id
+    }
+
+    /// The next response, whichever request it answers (events and output are kept).
+    fn response(&mut self) -> (u64, Outcome) {
+        let mut buf = [0u8; 4096];
+        loop {
+            while let Some(frame) = self.decoder.next_frame().unwrap() {
+                match frame {
+                    Frame::Message(Message::Response { id, outcome }) => return (id, outcome),
                     Frame::Message(Message::Event(event)) => self.events.push(event),
                     Frame::Output { session_id, data } => {
                         self.output.entry(session_id).or_default().extend(data);
