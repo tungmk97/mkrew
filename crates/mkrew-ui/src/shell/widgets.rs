@@ -446,10 +446,6 @@ pub(crate) fn grip_hover(
 
 /// A surface you pick lines from with a mouse down (a diff line): a pointer and, unless it is
 /// already `picked`, a border preview of the pick bar. Not a button, so no `Look`.
-#[expect(
-    dead_code,
-    reason = "first caller lands in a later P3 task; delete this attribute then"
-)]
 pub(crate) fn pick_surface(el: gpui::Div, picked: bool, border: u32) -> gpui::Div {
     el.cursor_pointer().when(!picked, |el| {
         el.hover(move |style| style.border_color(rgb(border)))

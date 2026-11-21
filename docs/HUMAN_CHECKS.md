@@ -86,6 +86,23 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
 - [ ] **Files and Docs look changes (spec 5.2, not bugs):** the file row, doc row, doc block and source line now hover with `theme.hover` (they used `card` or `surface_raised`).
   The Ignored chip, the search box and the mode segment turn their label to full text on hover.
   The row at the cursor, the opened file, a picked doc block or source line and the Ignored chip while on no longer dim while pressed.
+- [ ] **Git rows (dark + light):** hover an unpicked changed file row, a History commit row and a group header: a fill and a pointer.
+  The picked row keeps its fill and a pointer, and a click on it still selects.
+  Hover a Hint row ("nothing staged") and a commit Note row: no pointer, no hover.
+- [ ] **Git row actions (dark + light):** on a hovered file row hover the stage icon, the "viewed" check box and "Stage all" on a group header: each shows its own fill, one step above the row's.
+  Click the stage icon: the file moves and the row under it was not selected by the click.
+  Press and hold the stage icon or the viewed box: it dims and so does its file row (intended).
+- [ ] **Git Fetch (dark + light):** while a Fetch runs the icon shows no pointer and no hover.
+  While a Push runs the Fetch icon is faded with no pointer and no hover.
+  Idle, it hovers and fetches.
+- [ ] **Git chips and tabs (dark + light):** hover an inactive "Showing" chip, a Repo tab (text turns full color, with an underline) and the Ask dialog's agent chips (they share `chip_row`).
+  The active chip and tab show no look and no pointer.
+- [ ] **Git diff pick (dark + light):** hover a diff line: the border preview shows.
+  Mouse down and Shift+mouse down still pick a range.
+- [ ] **Git look changes (spec 5.2, not bugs):** the "Showing" and agent chips now hover with `theme.hover` (they used `surface`) and their label turns to full text.
+  The Repo tab now underlines on hover as well.
+  The picked file and commit rows no longer dim while pressed.
+  The stage icon is a `row_action` (a smaller hit area than the old square button).
 
 ### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
 - [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.

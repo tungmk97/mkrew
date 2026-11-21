@@ -1204,14 +1204,15 @@ pub(crate) fn pick_on_click(
     border: u32,
     cx: &Context<'_, Shell>,
 ) -> gpui::Div {
-    el.cursor_pointer()
-        .when(!picked.is_some_and(|p| p.contains(number, number)), |el| {
-            el.hover(move |style| style.border_color(rgb(border)))
-        })
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |shell, event: &gpui::MouseDownEvent, window, cx| {
-                shell.pick_diff_line(project_id, number, event.modifiers.shift, window, cx);
-            }),
-        )
+    pick_surface(
+        el,
+        picked.is_some_and(|p| p.contains(number, number)),
+        border,
+    )
+    .on_mouse_down(
+        MouseButton::Left,
+        cx.listener(move |shell, event: &gpui::MouseDownEvent, window, cx| {
+            shell.pick_diff_line(project_id, number, event.modifiers.shift, window, cx);
+        }),
+    )
 }

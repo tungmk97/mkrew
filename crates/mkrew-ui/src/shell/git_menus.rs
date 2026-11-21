@@ -64,7 +64,6 @@ impl Shell {
             .sum();
         let room = self.inspector_width - space::M * 2.0 - theme::ICON_BUTTON_SIZE;
         let fits = wanted <= room;
-        let hover = theme.text;
         let tabs = choices
             .into_iter()
             .enumerate()
@@ -95,14 +94,15 @@ impl Shell {
                     .tooltip(tooltip(theme, &tip, ""))
                     .when(active, |el| el.text_color(rgb(theme.text)))
                     .when(!active, |el| {
-                        el.cursor_pointer()
-                            .text_color(rgb(theme.text_muted))
-                            .hover(move |style| style.text_color(rgb(hover)))
-                            .active(|style| style.opacity(opacity::ACTIVE))
-                            .on_click(cx.listener(move |shell, _, window, cx| {
-                                window.focus(&shell.git_focus, cx);
-                                shell.set_git_repo(project_id, repo.clone(), window, cx);
-                            }))
+                        el.text_color(rgb(theme.text_muted))
+                            .pressable(Look::Text, true, theme)
+                            .on_press(
+                                true,
+                                cx.listener(move |shell, _, window, cx| {
+                                    window.focus(&shell.git_focus, cx);
+                                    shell.set_git_repo(project_id, repo.clone(), window, cx);
+                                }),
+                            )
                     })
                     .child(div().min_w_0().truncate().child(label.to_owned()))
                     .when(dirty, |el| el.child(changes_dot(theme)))
