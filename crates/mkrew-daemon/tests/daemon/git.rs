@@ -308,6 +308,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
             worktree_task_id: None,
             repo: None,
             paths: vec!["a.txt".into(), "new.txt".into()],
+            hunk: None,
             confirm,
         })
     };
@@ -361,6 +362,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
             worktree_task_id: None,
             repo: None,
             paths: vec![],
+            hunk: None,
             confirm: true,
         }),
     ] {

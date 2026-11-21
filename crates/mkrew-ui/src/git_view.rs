@@ -532,6 +532,7 @@ impl Discard {
             worktree_task_id: self.worktree_task_id,
             repo: self.repo.clone(),
             paths: vec![self.target.path.clone()],
+            hunk: None,
             confirm: true,
         }
     }

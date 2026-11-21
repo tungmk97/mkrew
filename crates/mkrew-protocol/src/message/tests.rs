@@ -1316,6 +1316,6 @@ fn an_attachment_owner_is_named_by_its_kind_on_the_wire() {
 }
 
 #[test]
-fn the_palette_protocol_is_version_54() {
-    assert_eq!(crate::PROTOCOL_VERSION, 54);
+fn the_review_flow_protocol_is_version_56() {
+    assert_eq!(crate::PROTOCOL_VERSION, 56);
 }
