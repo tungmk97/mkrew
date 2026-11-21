@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use gpui::{Keystroke, SharedString};
 use mkrew_core::prompt::PromptLibrary;
-use mkrew_core::settings::Settings;
+use mkrew_core::settings::{DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, Settings};
 use mkrew_core::settings_fields::{Kind, Page, SETTINGS, Setting};
 
 use crate::editor::Motion;
@@ -20,7 +20,6 @@ use crate::prompts_page::{PromptAction, PromptsPage, Spot, Written};
 use crate::task_dialog::{DialogKey, dialog_key};
 use crate::text_box::Input;
 use crate::theme_catalog::{CatalogTheme, Origin, ThemeCatalog};
-use mkrew_core::settings::{DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -375,20 +374,20 @@ impl SettingsDialog {
     /// gone ends, and the keyboard stays on a card that exists.
     pub fn set_catalog(&mut self, catalog: ThemeCatalog) {
         // The keyboard follows its card by name: a file added or removed shifts the indexes.
+        // `gallery_at` is the card the keyboard is on, or last was on.
+        let kept = self
+            .gallery_cards()
+            .get(self.gallery_at)
+            .map(|card| card.name.clone());
         let focused = self.focused_card().map(|card| card.name.clone());
         let keyboard_previews = focused.is_some() && self.previewing == focused;
         self.catalog = catalog;
         let cards = self.gallery_cards();
         let last = cards.len() - 1;
-        let found = focused
-            .and_then(|name| cards.iter().position(|card| card.name == name))
-            .or(match self.focus {
-                Focus::Gallery(at) => Some(at.min(last)),
-                _ => None,
-            });
+        let found = kept.and_then(|name| cards.iter().position(|card| card.name == name));
         self.gallery_at = found.unwrap_or(self.gallery_at.min(last));
-        if let Some(at) = found {
-            self.focus = Focus::Gallery(at);
+        if matches!(self.focus, Focus::Gallery(_)) {
+            self.focus = Focus::Gallery(self.gallery_at);
         }
         let gone = |name: &Option<SharedString>| {
             name.as_ref()
