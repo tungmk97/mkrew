@@ -1692,15 +1692,22 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   and Tailscale about once a second while open (off the UI thread); the title bar icon reads
   `daemon.status` every 5 s. A failed Start / Stop shows in the dialog. The link carries the
   access token: it is never logged and never in a tooltip.
-- Settings (Ctrl+,, palette "Global: Open settings", ADR 0073): a modal dialog (`SETTINGS_DIALOG_WIDTH` ×
-  `SETTINGS_DIALOG_HEIGHT`, never larger than the window minus a margin); page list on the left
-  (General, Appearance, Notifications, Voice, Jira, Phone, Features, Keyboard, Prompts, Machines), rows on the right
-  (label, help, control: switch, segmented choice, text field, list pick (fonts, themes)); Number and Text rows are
+- Settings (Ctrl+,, palette "Global: Open settings", ADR 0073, ADR 0097): a floating glass panel (`SETTINGS_DIALOG_WIDTH` ×
+  `SETTINGS_DIALOG_HEIGHT`, never larger than the window minus a margin). The left navigation (`SETTINGS_NAV_WIDTH`) starts with a
+  search box (Ctrl+F focuses it) and lists the pages under three overlines: App (General, Appearance, Notifications, Voice, Features),
+  Integrations (Jira, Phone, Machines) and Input (Keyboard, Prompts). The right side has the page title and a close button.
+  With a query, the right side lists the matching settings of every page (a muted `Page › Group` breadcrumb, the label with the
+  matched characters in accent and semibold, the help line and the real control); a setting matches when `palette::fuzzy` scores its label,
+  help, TOML key or page name above zero; a label match always ranks above a help-only match, then by score; pages with no match are dimmed; shortcuts are not searched.
+  Esc clears a non-empty query first and closes Settings on an empty one; no match shows "No setting matches “<query>”." with
+  "Clear search (Esc)". Each page shows its settings in cards, one per group (`Setting::group`: an overline title and a card
+  of rows with faint dividers; label and muted help on the left, the control on the right). Controls: switch (`toggle`), segmented
+  choice, `dropdown_trigger` (fonts, themes) and text fields for Text and Number; Number and Text rows are
   written on Enter or when the row loses the keyboard, Esc drops the draft. Keyboard rows show a
   chip, an accent dot when changed and Reset; a click or Enter captures the next keystroke, Esc
   cancels. A refused value or duplicate keystroke shows under its row, never as a toast. A file that
-  does not parse shows a banner with "Fix in Zed" and the settings controls do nothing. The footer
-  opens `settings.toml` and `keymap.toml` in Zed.
+  does not parse shows a banner with "Fix in Zed" and the settings controls do nothing (switches, segments and dropdowns are faded, with no hover and no pointer). The footer
+  shows `v<version>`, the links `settings.toml` and `keymap.toml` (they open the files in Zed) and "Changes apply at once."; on the Prompts page the hint stays "Ctrl+N new · Ctrl+S saves · Esc closes".
 - Settings → Machines (ADR 0089, this computer's window; a machine window shows only "Machines are managed in This computer's window."):
   one row per machine of `<config>/mkrew/machines.toml`: name, host (and the `mk` path), a status dot with its state in words (Connected, Connecting…, Reconnecting…, Not reachable: <reason>, Version differs: <message>, Window closed), **Open** (raises the window, or starts it) and **Remove** (confirms, closes that window, deletes the line).
   **Add machine…** (a bordered button; the filled primary one while the list is empty) opens a card with Name, Host and "mk path (optional)"; a refused value shows under its field, Save writes the file and opens the window.
@@ -1771,6 +1778,19 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 into `docs/screenshots/` (if automatic capture is not possible, list them in `docs/HUMAN_CHECKS.md`)
 and self-review: no hard-coded colors/spacing; hover/focus/disabled states exist; empty states
 exist; body text contrast ≥ 4.5:1; status never conveyed by color alone; run action glyphs ≥ 3:1.
+
+**Floating panels (glass), ADR 0097.**
+The palette, Settings, every modal dialog and the confirm prompt share one frame, `widgets::floating_panel`.
+It is a translucent fill (`glass`: the surface at 0.88 alpha in dark themes and 0.92 in light ones, raised until body text keeps 4.5:1 over a light or a dark page behind it), a 1 px `glass_border`, an accent `glass_tint` gradient over the top `GLASS_TINT_HEIGHT` px, `shadow_float` and `radius::LARGE`.
+There is no real backdrop blur (gpui-pre 0.3.7 cannot blur behind one element).
+The scrim behind a modal is black at 24 % (dark) or 16 % (light).
+A panel fades in and rises 4 px over `motion::FAST` and disappears at once; with the OS "Animation effects" setting off (Windows) it appears at once.
+No dialog builds its own panel frame.
+
+**Pressable states, ADR 0097.**
+Every element with a click handler gets its hover, press and disabled look from `mkrew_ui::pressable` (`Look`, `press_style`, `Pressable`) or from a widget in `widgets.rs` built on it.
+A disabled element is faded (`opacity::DISABLED`), has the default cursor and no hover, no press and no click.
+Focus rings stay with `DialogControl`.
 
 ---
 
