@@ -1751,3 +1751,18 @@ fn show_commit_opens_the_history_on_a_commit_older_than_the_default_log() {
     view.toggle_history();
     assert_eq!(view.begin_log().map(|params| params.limit), Some(50));
 }
+
+#[test]
+fn show_commit_closes_the_file_diff_of_the_commit_it_leaves() {
+    let mut view = history();
+    view.selected = Some(commit_target("b", "x"));
+    let requests = view.show_commit("a".into());
+    assert_eq!(requests.show.as_deref(), Some("a"));
+    assert_eq!(view.selected, None);
+    assert_eq!(
+        view.history
+            .as_ref()
+            .and_then(|history| history.selected.as_deref()),
+        Some("a")
+    );
+}

@@ -1227,10 +1227,7 @@ impl GitView {
         let mut requests = self.show(Section::History);
         // Already in the History: read the longer log now.
         requests.log = true;
-        requests.show = self
-            .history
-            .as_mut()
-            .and_then(|history| history.select(hash));
+        requests.show = self.select_commit(hash);
         requests
     }
 
