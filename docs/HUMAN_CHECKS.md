@@ -103,6 +103,25 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
   The Repo tab now underlines on hover as well.
   The picked file and commit rows no longer dim while pressed.
   The stage icon is a `row_action` (a smaller hit area than the old square button).
+- [ ] **Row dialogs (dark + light):** open Broadcast and hover a row: a fill and a pointer.
+  While a send is running its rows fade and do nothing.
+  Open the send dialog and hover an unpicked session row: a fill, and no faint outline around it.
+  The picked row keeps its fill and a pointer, and a click on it still acts.
+  While a send runs every row, the picked one too, fades and shows no pointer.
+- [ ] **Task dialog (dark + light):** hover an unselected agent chip: a fill.
+  The selected chip keeps its accent border and a pointer.
+  Open a task with a locked worktree choice: its row is faded with no hover and no pointer.
+  Unlocked, it hovers.
+- [ ] **Ports (dark + light):** hover a port row with a session: a fill, and a click goes to it.
+  Hover a row without a session: no pointer, no fade.
+  Hover the stop square: a fill one step above the row's, and the square stays red.
+  Press and hold the stop square: it dims and so does its port row (intended); the click only asks to stop.
+- [ ] **Dialog look changes (spec 5.2, not bugs):** the Broadcast, send, ports and worktree rows now hover with `theme.hover` (they used `surface_raised` or `hover`).
+  The agent chip label turns to full text on hover.
+  The picked send row and the selected agent chip no longer dim while pressed.
+  The send rows lost their faint 1 px outline.
+  A locked worktree row and every send row while sending now fade.
+- [ ] **Buttons in dialogs (dark + light):** open Discard changes (Git), Remove worktree and an Undo dialog: the red buttons still show their red text, and the focus ring still shows with Tab.
 
 ### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
 - [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.

@@ -472,7 +472,6 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let hover = theme.surface_raised;
         let busy = dialog.busy();
         let rows = dialog.rows.iter().enumerate().map(|(index, row)| {
             let result = row.delivery.as_ref().map(|delivery| {
@@ -507,19 +506,19 @@ impl Shell {
                 .when(dialog.in_list && index == dialog.cursor, |el| {
                     el.border_color(rgb(theme.accent))
                 })
-                .when(busy, |el| el.opacity(opacity::DISABLED))
+                .pressable(Look::Row, !busy, theme)
                 .when(!busy, |el| {
-                    el.cursor_pointer()
-                        .hover(move |style| style.bg(rgb(hover)))
-                        .active(|style| style.opacity(opacity::ACTIVE))
-                        .tooltip(tooltip(theme, "Check or uncheck", "Space"))
+                    el.tooltip(tooltip(theme, "Check or uncheck", "Space"))
                 })
-                .on_click(cx.listener(move |shell, _, _, cx| {
-                    if let Some(dialog) = shell.broadcast.as_mut() {
-                        dialog.toggle(index);
-                    }
-                    cx.notify();
-                }))
+                .on_press(
+                    !busy,
+                    cx.listener(move |shell, _, _, cx| {
+                        if let Some(dialog) = shell.broadcast.as_mut() {
+                            dialog.toggle(index);
+                        }
+                        cx.notify();
+                    }),
+                )
                 .child(
                     div()
                         .size(px(space::M))
