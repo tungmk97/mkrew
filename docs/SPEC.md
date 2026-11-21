@@ -2613,7 +2613,9 @@ A tag push publishes a release; a running Mkrew offers it and installs it in pla
    toast ("… is up to date", "… is available", or the error). A newer version shows the update
    button (§14) and one info toast "Mkrew <v> is available".
 3. **Install kind.** Windows: `<exe dir>/../unins000.exe` exists → Inno setup, per-user when the
-   exe is under `%LOCALAPPDATA%`. macOS: the exe is `<X>.app/Contents/MacOS/mkrew` → app bundle.
+   exe is under `%LOCALAPPDATA%`. macOS: the exe is `<X>.app/Contents/MacOS/mkrew` → app bundle;
+   a Gatekeeper-translocated copy (read-only, under `AppTranslocation/`) maps to the real bundle
+   it mounts (`statfs` `f_mntfromname`), so a quarantined app opened from Downloads updates too.
    Anything else (dev build, MSI install, Linux, Intel Mac, no matching asset): the button opens
    the release page.
 4. **Apply.** Unsaved Editor changes are asked about first. A confirmation (`window.prompt`):

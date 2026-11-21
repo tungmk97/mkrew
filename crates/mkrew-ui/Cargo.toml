@@ -79,6 +79,11 @@ windows = { version = "0.62", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# `statfs` finds the real bundle behind a Gatekeeper-translocated copy (in-app update); 0.2 is
+# already in the tree.
+libc = "0.2"
+
 [build-dependencies]
 # App icon resource (build.rs); same version gpui already builds with.
 embed-resource = "3"

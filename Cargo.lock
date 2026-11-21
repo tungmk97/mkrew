@@ -4074,6 +4074,7 @@ dependencies = [
  "image",
  "insta",
  "interprocess",
+ "libc",
  "mermaid-rs-renderer",
  "mkrew-core",
  "mkrew-daemon",
