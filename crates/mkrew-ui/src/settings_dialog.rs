@@ -51,6 +51,9 @@ pub const NAV: [(&str, &[Tab]); 3] = [
     ("Input", &[Tab::Keyboard, Tab::Prompts]),
 ];
 
+/// Where the limits widget opens Settings: the first page of the Integrations group.
+pub const INTEGRATIONS_TAB: Tab = Tab::Settings(Page::Jira);
+
 impl Tab {
     pub fn all() -> Vec<Tab> {
         NAV.iter()
@@ -1770,6 +1773,13 @@ mod tests {
         d.set_tab(Tab::Keyboard);
         d.key(&key("down"), None, &keymap);
         assert_eq!(d.tab, Tab::Prompts, "Down from Keyboard");
+    }
+
+    #[test]
+    fn the_limits_widget_opens_the_first_page_of_the_integrations_group() {
+        let (title, tabs) = NAV[1];
+        assert_eq!(title, "Integrations");
+        assert_eq!(tabs[0], INTEGRATIONS_TAB);
     }
 
     #[test]

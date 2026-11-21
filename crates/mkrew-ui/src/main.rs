@@ -1243,5 +1243,6 @@ impl Render for Shell {
                     )
                     .children(self.render_voice_pill(&theme, cx)),
             )
+            .children(self.render_widget_bar(window, &theme, cx))
     }
 }

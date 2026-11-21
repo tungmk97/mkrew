@@ -1925,6 +1925,14 @@ pub const PULSE_PERIOD: Duration = Duration::from_millis(1600);
 pub const PULSE_MIN_OPACITY: f32 = 0.35;
 /// A pane's status pill ("Idle · 2m") in the tab strip and the pane header.
 pub const STATUS_PILL_HEIGHT: f32 = 24.0;
+/// The widget bar along the bottom of the main window (ADR 0102), in px at the default font
+/// size: its height, the padding at its two ends, the gap between widgets, and the widest a
+/// folder or branch label gets before it ellipsizes. Font size is `font_size::META`; colors
+/// are `chrome`, `border` and `text_muted`.
+pub const WIDGET_BAR_HEIGHT: f32 = 24.0;
+pub const WIDGET_BAR_PADDING: f32 = space::S;
+pub const WIDGET_BAR_GAP: f32 = space::M;
+pub const WIDGET_BAR_LABEL_MAX_WIDTH: f32 = 160.0;
 /// Longest tab title before it truncates.
 pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
 /// Reading width of an agent pane: the terminal is at most this wide (≈ 120–140 columns at
@@ -2353,6 +2361,17 @@ mod tests {
             rems_px(TITLE_BAR_HEIGHT).0 * 20.0,
             TITLE_BAR_HEIGHT * 20.0 / 13.0
         );
+    }
+
+    #[test]
+    fn the_widget_bar_tokens_scale_and_sit_on_the_spacing_scale() {
+        assert_eq!(
+            rems_px(WIDGET_BAR_HEIGHT),
+            gpui::rems(WIDGET_BAR_HEIGHT / 13.0)
+        );
+        for step in [WIDGET_BAR_PADDING, WIDGET_BAR_GAP] {
+            assert!([4.0, 8.0, 12.0, 16.0, 24.0, 32.0].contains(&step), "{step}");
+        }
     }
 
     /// ✕ on the red hover of the Close button must stay readable in both themes.

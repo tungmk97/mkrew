@@ -1095,7 +1095,10 @@ push = true
         write_widgets_hidden(&path, &ids).unwrap();
         assert_eq!(load(&path).unwrap().ui.widgets_hidden, ids);
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("# keep me") && text.contains("theme = \"dark\""), "{text}");
+        assert!(
+            text.contains("# keep me") && text.contains("theme = \"dark\""),
+            "{text}"
+        );
         write_widgets_hidden(&path, &[]).unwrap();
         assert!(load(&path).unwrap().ui.widgets_hidden.is_empty());
     }
