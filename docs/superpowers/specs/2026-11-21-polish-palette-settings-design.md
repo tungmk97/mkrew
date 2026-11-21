@@ -106,7 +106,7 @@ Filled controls (the primary button, the switch) dim on hover with `opacity::HOV
 ```rust
 /// How a pressable element looks at rest, hovered and pressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Look {
+pub enum Look {
     /// A list or menu row: hover fill `hover`, no border change.
     Row,
     /// A chip or pill: hover fill `hover`.
@@ -121,7 +121,7 @@ pub(crate) enum Look {
 
 /// The resolved style of a pressable element; pure, so it is tested without a window.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PressStyle {
+pub struct PressStyle {
     pub hover_bg: Option<u32>,
     pub hover_fg: Option<u32>,
     pub underline_on_hover: bool,
@@ -130,9 +130,9 @@ pub(crate) struct PressStyle {
     pub pointer: bool,
 }
 
-pub(crate) fn press_style(look: Look, enabled: bool, theme: &Theme) -> PressStyle;
+pub fn press_style(look: Look, enabled: bool, theme: &Theme) -> PressStyle;
 
-pub(crate) trait Pressable: Sized {
+pub trait Pressable: Sized {
     /// Applies `press_style(look, enabled, theme)`: cursor, hover, active, disabled opacity.
     fn pressable(self, look: Look, enabled: bool, theme: &Theme) -> Self;
     /// Attaches `handler` to clicks only when `enabled`.
@@ -185,8 +185,8 @@ The right side has the page title and a close button.
 
 A search box sits at the top of the navigation; `Ctrl+F` focuses it while Settings is open.
 With a query, the right side lists the matching settings of every page instead of the current page.
-Each result row shows a muted breadcrumb (`Appearance › Font`), the label with the matched characters bold, the help line and the real control, usable in place.
-A setting matches when `palette::fuzzy` scores above zero on its label, its help, its TOML key or its page name; results are ranked by the best of those scores.
+Each result row shows a muted breadcrumb (`Appearance › Font`), the label with the matched characters in accent semibold (the palette's convention), the help line and the real control, usable in place.
+A setting matches when `palette::fuzzy` scores above zero on its label, its help, its TOML key or its page name; results are ranked by the best of those scores, with a fixed bonus on a label match.
 Pages with no match are dimmed in the navigation.
 Esc clears a non-empty query first; Esc on an empty query closes Settings.
 The Keyboard page keeps its own search; the global search does not search shortcuts.
@@ -208,7 +208,7 @@ Every control has hover, press, focus and disabled states through `Pressable`.
 ### 6.5 Footer
 
 Left: `v{CARGO_PKG_VERSION}` in meta text, then the links "settings.toml" and "keymap.toml" (they open the files in Zed, as today).
-Right: "Changes apply at once."
+Right: "Changes apply at once."; on the Prompts page the existing hint "Ctrl+N new · Ctrl+S saves · Esc closes" stays instead.
 
 Storage, `Setting::write` and apply-at-once behavior do not change.
 
