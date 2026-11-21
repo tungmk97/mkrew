@@ -12,7 +12,7 @@ use gpui::Keystroke;
 use mkrew_core::settings::FeatureSettings;
 use mkrew_protocol::{
     Branch, Commit, FsFindParams, FsMatch, FsSearchParams, FsSearchResult, GitBranchesParams,
-    GitLogParams, Project, SearchHit, Session, SessionState, Task,
+    GitLogParams, Project, SearchHit, Session, SessionKind, SessionState, Task,
 };
 use ulid::Ulid;
 
@@ -1097,6 +1097,73 @@ impl Source {
             worktree_task_id,
         }
     }
+}
+
+/// The answers of the checkout question, in `window.prompt` order.
+pub const CHECKOUT_ANSWERS: [&str; 2] = ["Switch", "Cancel"];
+
+/// Whether the checkout question's answer (an index into [`CHECKOUT_ANSWERS`]) switches.
+pub fn confirms_checkout(answer: Option<usize>) -> bool {
+    answer == Some(0)
+}
+
+/// The question before a checkout (message, detail), or `None` when nothing is at risk:
+/// `changes` files with uncommitted changes in the repository (git refuses a switch that
+/// would overwrite one, and the others follow to the new branch) and `agents` live agent
+/// sessions running in that folder.
+pub fn checkout_question(branch: &str, changes: usize, agents: usize) -> Option<(String, String)> {
+    let mut risks = Vec::new();
+    if changes > 0 {
+        let files = if changes == 1 { "file" } else { "files" };
+        risks.push(format!(
+            "{changes} {files} with uncommitted changes. Git refuses the switch when a change would be overwritten."
+        ));
+    }
+    match agents {
+        0 => {}
+        1 => risks.push(
+            "1 live agent session runs in this folder; its files change under it.".to_owned(),
+        ),
+        n => risks.push(format!(
+            "{n} live agent sessions run in this folder; their files change under them."
+        )),
+    }
+    (!risks.is_empty()).then(|| (format!("Switch to “{branch}”?"), risks.join("\n")))
+}
+
+/// Live agent sessions that run in the folder a checkout changes: with no `worktree_task_id`
+/// the project folder (sessions of tasks that have no worktree of their own, per
+/// `has_worktree`), else that task's worktree.
+pub fn agents_in_folder(
+    sessions: &[Session],
+    project_id: Ulid,
+    worktree_task_id: Option<Ulid>,
+    has_worktree: impl Fn(Ulid) -> bool,
+) -> usize {
+    sessions
+        .iter()
+        .filter(|session| {
+            session.project_id == project_id
+                && session.kind == SessionKind::Agent
+                && session.state != SessionState::Exited
+        })
+        .filter(|session| match worktree_task_id {
+            Some(task) => session.task_id == Some(task),
+            None => session.task_id.is_none_or(|task| !has_worktree(task)),
+        })
+        .count()
+}
+
+/// Records a command run from the palette as the latest of the recent ones (All lists them
+/// while the query is empty). Other actions are not remembered.
+// ponytail: UI memory only; save it in the UI state file if users ask for it across restarts.
+pub fn remember(recent: &mut Vec<Action>, action: &Action) {
+    if !matches!(action, Action::Run(_)) {
+        return;
+    }
+    recent.retain(|other| other != action);
+    recent.insert(0, action.clone());
+    recent.truncate(theme::PALETTE_GROUP_LIMIT);
 }
 
 /// What a daemon scope holds.

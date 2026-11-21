@@ -2003,3 +2003,90 @@ fn every_row_kind_yields_its_action() {
         Some(Action::GoTo(Target::Session(_)))
     ));
 }
+
+#[test]
+fn a_checkout_asks_only_when_something_is_at_risk() {
+    assert_eq!(checkout_question("main", 0, 0), None);
+    let (message, detail) = checkout_question("main", 2, 0).unwrap();
+    assert_eq!(message, "Switch to “main”?");
+    assert_eq!(
+        detail,
+        "2 files with uncommitted changes. Git refuses the switch when a change would be overwritten."
+    );
+    let (_, detail) = checkout_question("main", 1, 0).unwrap();
+    assert!(
+        detail.starts_with("1 file with uncommitted changes."),
+        "{detail}"
+    );
+    let (_, detail) = checkout_question("main", 0, 1).unwrap();
+    assert_eq!(
+        detail,
+        "1 live agent session runs in this folder; its files change under it."
+    );
+    let (_, detail) = checkout_question("main", 0, 3).unwrap();
+    assert_eq!(
+        detail,
+        "3 live agent sessions run in this folder; their files change under them."
+    );
+    let (_, both) = checkout_question("main", 1, 2).unwrap();
+    assert_eq!(both.lines().count(), 2);
+    assert!(confirms_checkout(Some(0)));
+    assert!(!confirms_checkout(Some(1)) && !confirms_checkout(None));
+}
+
+#[test]
+fn agents_count_in_the_folder_the_checkout_changes() {
+    let (app, other, task) = (Ulid::new(), Ulid::new(), Ulid::new());
+    let live = |project, task_id| Session {
+        task_id,
+        ..session(project, None, SessionState::Working)
+    };
+    let shell = Session {
+        kind: SessionKind::Shell,
+        ..session(app, None, SessionState::Idle)
+    };
+    let sessions = vec![
+        live(app, None),
+        live(app, Some(task)),
+        live(app, Some(Ulid::new())),
+        live(other, None),
+        session(app, None, SessionState::Exited),
+        shell,
+    ];
+    // A task that has a worktree runs there, not in the project folder.
+    let has_worktree = |id: Ulid| id == task;
+    assert_eq!(agents_in_folder(&sessions, app, None, has_worktree), 2);
+    assert_eq!(
+        agents_in_folder(&sessions, app, Some(task), has_worktree),
+        1
+    );
+    assert_eq!(agents_in_folder(&sessions, other, None, has_worktree), 1);
+}
+
+#[test]
+fn the_recent_commands_are_the_last_five_distinct_runs() {
+    let mut recent = Vec::new();
+    remember(&mut recent, &Action::GoTo(Target::Workspace(Ulid::new())));
+    assert!(recent.is_empty(), "only commands are remembered");
+    for command in [
+        Command::NewTask,
+        Command::OpenSettings,
+        Command::NewTask,
+        Command::ShowBoard,
+        Command::ShowDiff,
+        Command::NextTab,
+        Command::PreviousTab,
+    ] {
+        remember(&mut recent, &Action::Run(command));
+    }
+    assert_eq!(
+        recent,
+        [
+            Action::Run(Command::PreviousTab),
+            Action::Run(Command::NextTab),
+            Action::Run(Command::ShowDiff),
+            Action::Run(Command::ShowBoard),
+            Action::Run(Command::NewTask),
+        ]
+    );
+}
