@@ -122,6 +122,22 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
   The send rows lost their faint 1 px outline.
   A locked worktree row and every send row while sending now fade.
 - [ ] **Buttons in dialogs (dark + light):** open Discard changes (Git), Remove worktree and an Undo dialog: the red buttons still show their red text, and the focus ring still shows with Tab.
+- [ ] **Intended look changes (dark + light):** these are spec 5.2 changes, not bugs: the picker, history and turns rows now hover with `theme.hover` (they used `surface_raised`).
+  The thread links and the queue X turn their text to full color on hover.
+  The picked picker row and the selected history row no longer dim while pressed.
+  The pick-list rows lost their faint 1 px outline.
+- [ ] **Thread (dark + light):** hover "Earlier turns: Open transcript" and a "+N tool calls" line.
+  Each underlines and turns to full text color.
+- [ ] **Pickers (dark + light):** open the prompt picker and the slash picker and hover an unpicked row.
+  It shows a fill and a pointer, and no faint outline around any row.
+  The keyboard-picked row keeps its ring and fill, and a click on it still picks.
+- [ ] **Queue and history (dark + light):** queue a second message while an agent works and hover its X.
+  It shows a fill, and clicking it does not dim or select the panel.
+  Open History and the turns dialog and hover an unselected row: a fill and a pointer.
+  The selected row keeps a pointer and no fill change.
+  In the turns dialog press and hold Restore or Diff on a row: the button dims and so does its row (intended; the click acts as before).
+- [ ] **Inspector (dark + light):** with the right panel open hover its title bar toggle.
+  The hover is visible against the open fill.
 
 ### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
 - [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.
@@ -3968,15 +3984,3 @@ _Decisions the agent made on its own. Override them here if you disagree._
 - [x] (T0.9 / T0.8) Perceived latency and idle cost: type in
   `cargo run --release -p spike-term -- --stats` (read `key_p50` lines) and judge the idle CPU
   (~3.5 % of one core, GPUI vsync floor) and flood CPU (~0.8 core at 165 Hz) in the ADR. — ok
-- [ ] **Thread (dark + light):** hover "Earlier turns: Open transcript" and a "+N tool calls" line.
-  Each underlines and turns to full text color.
-- [ ] **Pickers (dark + light):** open the prompt picker and the slash picker and hover an unpicked row.
-  It shows a fill and a pointer, and no faint outline around any row.
-  The keyboard-picked row keeps its ring and fill, and a click on it still picks.
-- [ ] **Queue and history (dark + light):** queue a second message while an agent works and hover its X.
-  It shows a fill, and clicking it does not dim or select the panel.
-  Open History and the turns dialog and hover an unselected row: a fill and a pointer.
-  The selected row keeps a pointer and no fill change.
-  In the turns dialog press and hold Restore or Diff on a row: the button dims and so does its row (intended; the click acts as before).
-- [ ] **Inspector (dark + light):** with the right panel open hover its title bar toggle.
-  The hover is visible against the open fill.
