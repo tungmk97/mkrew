@@ -180,7 +180,8 @@ impl Daemon {
         }
     }
 
-    /// Requests are answered in order; the first one must be `hello`. Once greeted, the
+    /// The first request must be `hello`. Replies normally follow request order; `fs.search`
+    /// answers from its own task, so match replies by id. Once greeted, the
     /// client also receives every event (`session.state`, `session.exited`, …).
     ///
     /// The read loop is never cancelled (racing a pipe read against events in `select!`

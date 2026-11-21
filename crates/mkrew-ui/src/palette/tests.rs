@@ -1370,7 +1370,8 @@ fn an_entry_belongs_to_the_section_of_its_action() {
     assert_eq!(
         section(Action::Checkout {
             repo: None,
-            branch: "main".into()
+            branch: "main".into(),
+            current: false
         }),
         Scope::Branches
     );
@@ -1698,9 +1699,39 @@ fn branches_are_asked_once_and_filtered_here() {
         palette.picked(),
         Some(Action::Checkout {
             repo: None,
-            branch: "feature-x".into()
+            branch: "feature-x".into(),
+            current: false
         })
     );
+}
+
+#[test]
+fn the_current_branch_is_marked_so_a_pick_can_skip_the_switch() {
+    let mut palette = Palette::scoped(vec![], Some(source()), Scope::Branches, vec![]);
+    let asked = palette.wanted();
+    let listed = vec![branch("main", false, true, 1_000)];
+    assert!(palette.answer(asked[0].serial, Answer::Branches(Ok(listed)), 0));
+    assert_eq!(
+        palette.picked(),
+        Some(Action::Checkout {
+            repo: None,
+            branch: "main".into(),
+            current: true
+        })
+    );
+}
+
+#[test]
+fn search_ranges_outside_the_preview_or_inside_a_char_are_dropped() {
+    let hit = SearchHit {
+        path: "a.rs".into(),
+        line: 1,
+        preview: "é=1".into(),
+        // 0..1 splits "é", 2..9 runs past the end, 3..3 is empty, 2..3 is fine.
+        ranges: vec![(0, 1), (2, 9), (3, 3), (2, 3)],
+    };
+    let marks = hit_entry(hit).marks;
+    assert_eq!((marks.len(), marks.first()), (1, Some(&(2..3))));
 }
 
 #[test]
@@ -1981,7 +2012,8 @@ fn every_row_kind_yields_its_action() {
         ),
         Some(Action::Checkout {
             repo: None,
-            branch: "ab".into()
+            branch: "ab".into(),
+            current: false
         })
     );
     assert_eq!(

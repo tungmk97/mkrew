@@ -24,7 +24,7 @@ use crate::{docs, files};
 impl Daemon {
     pub(super) async fn git_status(&self, params: GitStatusParams) -> Outcome {
         if let Some(since) = &params.since
-            && let Err(reason) = check_ref(since)
+            && let Err(reason) = check_ref("base ref", since)
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
@@ -79,7 +79,7 @@ impl Daemon {
             Err(outcome) => return outcome,
         };
         if let Some(commit) = params.commit.as_ref().or(params.since.as_ref())
-            && let Err(reason) = check_ref(commit)
+            && let Err(reason) = check_ref("commit", commit)
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
@@ -127,7 +127,7 @@ impl Daemon {
     /// whose file no longer changes, is deleted here; marks of other lists are not touched.
     pub(super) async fn git_viewed(&self, params: GitStatusParams) -> Outcome {
         if let Some(since) = &params.since
-            && let Err(reason) = check_ref(since)
+            && let Err(reason) = check_ref("base ref", since)
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
@@ -220,7 +220,7 @@ impl Daemon {
             return Outcome::error(ErrorCode::InvalidRequest, message);
         }
         if let Some(since) = &params.since
-            && let Err(reason) = check_ref(since)
+            && let Err(reason) = check_ref("base ref", since)
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
@@ -429,7 +429,7 @@ impl Daemon {
         if params.branch.is_empty() {
             return Outcome::error(ErrorCode::InvalidRequest, "git.checkout needs a branch");
         }
-        if let Err(reason) = check_ref(&params.branch) {
+        if let Err(reason) = check_ref("branch", &params.branch) {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
         let GitCheckoutParams {
@@ -468,7 +468,7 @@ impl Daemon {
 
     /// `git.show`: one commit and the files of the project folder it changed.
     pub(super) async fn git_show(&self, params: GitShowParams) -> Outcome {
-        if let Err(reason) = check_ref(&params.commit) {
+        if let Err(reason) = check_ref("commit", &params.commit) {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
         let target = match self
@@ -548,7 +548,7 @@ impl Daemon {
         let base = params.base_ref.as_deref().map(str::trim);
         let base = base.filter(|b| !b.is_empty());
         if let Some(base) = base
-            && let Err(reason) = check_ref(base)
+            && let Err(reason) = check_ref("base ref", base)
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
@@ -672,13 +672,13 @@ fn prefix_files(repo: Option<&str>, files: &mut [ChangedFile]) {
 
 /// Rejects what can never be a ref and would change a git command line: a leading `-` (read
 /// as an option), whitespace and control characters.
-fn check_ref(base: &str) -> Result<(), String> {
-    if base.starts_with('-') {
-        return Err(format!("invalid base ref {base:?}: starts with '-'"));
+fn check_ref(what: &str, name: &str) -> Result<(), String> {
+    if name.starts_with('-') {
+        return Err(format!("invalid {what} {name:?}: starts with '-'"));
     }
-    if base.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    if name.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(format!(
-            "invalid base ref {base:?}: contains whitespace or control characters"
+            "invalid {what} {name:?}: contains whitespace or control characters"
         ));
     }
     Ok(())
@@ -691,10 +691,10 @@ mod tests {
     #[test]
     fn base_refs_that_git_could_read_as_options_are_rejected() {
         for ok in ["main", "origin/main", "release/1.2", "HEAD~3", "a1b2c3"] {
-            assert_eq!(check_ref(ok), Ok(()), "{ok}");
+            assert_eq!(check_ref("base ref", ok), Ok(()), "{ok}");
         }
         for bad in ["-f", "--force", "a b", "a\tb", "a\nb"] {
-            assert!(check_ref(bad).is_err(), "{bad:?}");
+            assert!(check_ref("base ref", bad).is_err(), "{bad:?}");
         }
     }
 

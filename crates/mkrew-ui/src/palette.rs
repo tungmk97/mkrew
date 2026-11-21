@@ -368,6 +368,19 @@ impl Scope {
         }
     }
 
+    /// The muted line when the scope lists nothing and nothing is typed.
+    pub fn empty(self) -> &'static str {
+        match self {
+            Scope::All => "Nothing to show yet.",
+            Scope::Commands => "No commands here.",
+            Scope::Sessions => "No sessions yet.",
+            Scope::Files => "No files in this workspace.",
+            Scope::Search => "Type to search the files.",
+            Scope::Branches => "No branches in this repository.",
+            Scope::Commits => "No commits in this repository.",
+        }
+    }
+
     /// The query field's placeholder.
     pub fn placeholder(self) -> &'static str {
         match self {
@@ -447,10 +460,12 @@ pub enum Action {
         line: u32,
     },
     /// Branches scope: `git switch` (after a question when something is at risk). `repo` is
-    /// the repository of the Git view (ADR 0029), `None` = the workspace folder.
+    /// the repository of the Git view (ADR 0029), `None` = the workspace folder. `current`
+    /// marks the branch already checked out: the pick only says so.
     Checkout {
         repo: Option<String>,
         branch: String,
+        current: bool,
     },
     /// Commits scope: the Git view's History on that commit.
     ShowCommit {
@@ -1962,8 +1977,15 @@ fn file_entry(found: FsMatch) -> Entry {
 }
 
 fn hit_entry(hit: SearchHit) -> Entry {
+    // The daemon marks on char boundaries inside the preview; a range that is not would
+    // panic in text layout, so it is dropped here as Files indices are.
     let marks = (hit.ranges.iter())
         .map(|&(start, end)| start as usize..end as usize)
+        .filter(|range| {
+            range.start < range.end
+                && hit.preview.is_char_boundary(range.start)
+                && hit.preview.is_char_boundary(range.end)
+        })
         .collect();
     Entry {
         detail: Some(format!("{}:{}", hit.path, hit.line)),
@@ -1992,6 +2014,7 @@ fn branch_entry(branch: Branch, repo: Option<&str>, now_ms: i64) -> Entry {
             Action::Checkout {
                 repo: repo.map(str::to_owned),
                 branch: branch.name.clone(),
+                current: branch.current,
             },
             branch.name,
             "",

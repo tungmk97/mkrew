@@ -975,7 +975,16 @@ impl Shell {
                     self.open_palette_file(source, path, Some(line), window, cx);
                 }
             }
-            palette::Action::Checkout { repo, branch } => {
+            palette::Action::Checkout {
+                current: true,
+                branch,
+                ..
+            } => self.toast_info(format!("Already on {branch}"), cx),
+            palette::Action::Checkout {
+                repo,
+                branch,
+                current: false,
+            } => {
                 if let Some(source) = source {
                     self.in_main_window(window, cx, move |shell, window, cx| {
                         shell.checkout_branch(source, repo, branch, window, cx);
@@ -1405,7 +1414,10 @@ impl Shell {
                     div()
                         .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
-                        .child(format!("Nothing matches “{}”.", palette.query().trim())),
+                        .child(match palette.query().trim() {
+                            "" => palette.scope().empty().to_owned(),
+                            query => format!("Nothing matches “{query}”."),
+                        }),
                 )
             })
             .child(
