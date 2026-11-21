@@ -88,10 +88,12 @@ pub struct AgentLimits {
 ### 5.3 Claude
 
 - A new CLI command `mk statusline` is Claude Code's status line command.
-- It reads the status line JSON from stdin (at most 1 MB), takes `session_id`, `rate_limits.five_hour` and `rate_limits.seven_day`, and sends `limits.report` to the daemon with a 300 ms connect and send budget; a failure is silent.
-- Then, if the user had a status line of their own, it runs that command through the shell with the same stdin, a 5 s timeout, and prints its stdout; otherwise it prints nothing.
+- It reads the status line JSON from stdin (at most 1 MB), takes `rate_limits.five_hour` and `rate_limits.seven_day`, and sends `limits.report` to the daemon with a 300 ms connect and send budget; a failure is silent.
+- Then, if the user had a status line of their own, it runs that command with the same stdin, a 5 s timeout, and prints its stdout; otherwise it prints nothing.
+- The command runs in the shell Claude Code itself uses: on Windows Git Bash (`CLAUDE_CODE_GIT_BASH_PATH`, else the `bash.exe` of the Git found on `PATH`), else PowerShell; elsewhere `sh -c`.
+- On timeout the whole process tree of that command is killed.
 - `mk integration install claude` sets `statusLine = {"type": "command", "command": "<mk> statusline"}` next to the hooks.
-- If the user already has a `statusLine` that is not Mkrew's, install saves it to `<config>/claude-statusline.json` before replacing it, and `mk statusline` chains to it.
+- If the user already has a `statusLine` that is not Mkrew's, install saves it to `claude-statusline.json` next to Claude's `settings.json` before replacing it, and `mk statusline` chains to it.
 - `mk integration uninstall claude` puts the saved status line back (or removes the key if there was none) and deletes the saved file.
 - `mk integration status` reports `Partly` when the hooks are installed but the status line is not.
 - `mk statusline` reaches the daemon the same way `mk hook` does (the local socket), so it needs no new transport.
