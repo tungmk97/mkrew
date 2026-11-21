@@ -73,11 +73,10 @@ fn item_row(
     // A disabled row has no buttons.
     let trails = item.trail.into_iter().filter(|_| enabled).enumerate();
     let trails = trails.map(|(at, trail)| {
-        // The hover fill differs from the hovered row's own (`border`).
-        let (fg, tint) = match trail.tone {
-            Tone::Normal => (theme.text_muted, theme.selected),
-            Tone::Danger => (theme.status_exited, theme.danger_bg),
-            Tone::Accent => (theme.accent_text, theme.selected),
+        let fg = match trail.tone {
+            Tone::Normal => theme.text_muted,
+            Tone::Danger => theme.status_exited,
+            Tone::Accent => theme.accent_text,
         };
         let (group, action) = (row_id.clone(), trail.action);
         div()
@@ -88,19 +87,20 @@ fn item_row(
             // No vertical padding: the row keeps its height.
             .px(px(space::XS))
             .rounded(px(radius::SMALL))
-            .cursor_pointer()
-            .hover(move |style| style.bg(rgb(tint)))
-            .active(|style| style.opacity(opacity::ACTIVE))
+            .pressable(Look::Icon, true, theme)
             .when(trail.on_hover && !selected, |el| {
                 el.opacity(opacity::HIDDEN)
                     .group_hover(group, |style| style.opacity(opacity::FULL))
             })
             .tooltip(tooltip(theme, &trail.tip, ""))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                // Not the row's own action.
-                cx.stop_propagation();
-                shell.run_menu_item(&action, 0, true, window, cx);
-            }))
+            .on_press(
+                true,
+                cx.listener(move |shell, _, window, cx| {
+                    // Not the row's own action.
+                    cx.stop_propagation();
+                    shell.run_menu_item(&action, 0, true, window, cx);
+                }),
+            )
             .child(icon_svg(trail.icon, theme::ICON_SIZE_SMALL, fg))
     });
     let trails: Vec<_> = trails.collect();

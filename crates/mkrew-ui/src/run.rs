@@ -17,21 +17,19 @@ pub enum RunAction {
     Stop,
 }
 
-/// The glyph color of a Run control and the faint fill it shows on hover, in the Run pill's
-/// menu: Start and Restart gray (color is for status only), Stop red (it ends processes).
+/// The glyph color of a Run control (the sidebar's run icons and the Run pill's menu): Start
+/// and Restart gray (color is for status only), Stop red (it ends processes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionColors {
     pub fg: u32,
-    pub tint: u32,
 }
 
 pub fn action_colors(action: RunAction, theme: &Theme) -> ActionColors {
-    let (fg, tint) = match action {
-        // `border`: one step above the menu panel's `surface_raised`, like a menu item hover.
-        RunAction::Start | RunAction::Restart => (theme.text_muted, theme.border),
-        RunAction::Stop => (theme.status_exited, theme.danger_bg),
+    let fg = match action {
+        RunAction::Start | RunAction::Restart => theme.text_muted,
+        RunAction::Stop => theme.status_exited,
     };
-    ActionColors { fg, tint }
+    ActionColors { fg }
 }
 
 /// Ports of live run sessions: loaded per workspace with `session.ports`, then kept live by
@@ -480,15 +478,15 @@ mod tests {
         assert_eq!(actions(false, false), [RunAction::Start]);
     }
 
-    /// The glyph stays visible on every surface it sits on (title bar, menu panel, its own
-    /// hover fill).
+    /// The glyph stays visible on every surface it sits on (title bar, menu panel, a hovered
+    /// row).
     #[test]
     fn run_action_colors_are_visible_in_both_themes() {
         use crate::theme::contrast;
         for theme in [Theme::dark(), Theme::light()] {
             for action in [RunAction::Start, RunAction::Restart, RunAction::Stop] {
                 let colors = action_colors(action, &theme);
-                for bg in [theme.bg, theme.hover, theme.surface_raised, colors.tint] {
+                for bg in [theme.bg, theme.hover, theme.surface_raised] {
                     let ratio = contrast(colors.fg, bg);
                     assert!(
                         ratio >= 3.0,
@@ -496,10 +494,6 @@ mod tests {
                         colors.fg
                     );
                 }
-            }
-            // A hovered tint differs from the menu panel it sits on.
-            for action in [RunAction::Start, RunAction::Restart, RunAction::Stop] {
-                assert_ne!(action_colors(action, &theme).tint, theme.surface_raised);
             }
         }
     }

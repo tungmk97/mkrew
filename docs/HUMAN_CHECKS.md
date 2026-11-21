@@ -33,6 +33,22 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
   Hover a board card next to the selected one: only the unselected card lights its border.
 - [ ] **Palette and conflict badge (dark + light):** open the palette and hover an unselected row (a fill) and the selected row (accent bar; a pointer, no fill change).
   On a card with a merge conflict hover Dismiss: it shows a fill that differs from the card.
+- [ ] **Sidebar rows (dark + light):** hover an unselected session row, a workspace header, a group label (`RUN 2`), a compact-rail row and the footer Inbox with something waiting: each shows a fill and a pointer.
+  The selected session row and the open workspace header keep the pointer and show no hover fill.
+  Click each: it still acts and does not fade.
+  With the inbox cleared, the Inbox label shows no pointer and no hover, and is not faded.
+- [ ] **Sidebar icons (dark + light):** hover the run action icons of a running Run row, the Restart all / Stop all pair on a RUN group label, the workspace chevron, and the X that clears the sidebar filter: each shows a fill one step above its (already hovered) row, and the chevron's fill has rounded corners.
+  Press and hold one: the icon dims, and so does the row under it (intended).
+  Both return to normal after release.
+- [ ] **Title bar (dark + light):** hover the workspace switcher and the branch pill: a fill, and the tooltip still hides while their dropdown is open.
+  While an update downloads the update icon is faded, shows no pointer and no hover.
+- [ ] **Toasts and menus (dark + light):** hover the X of a toast and the text of an error toast (underline).
+  Hover a row of a context menu and the trailing icon button of a row that has one (open, delete): both are visible, and the button differs from its row.
+- [ ] **Sidebar grip:** hover the right edge of the sidebar: the tint shows, and drag still resizes.
+- [ ] **Chrome look changes (spec 5.2, not bugs):** the switcher and branch pill turn their label to full text on hover.
+  A selected session row, the open workspace header and the live run row no longer dim while pressed.
+  The Stop icon hovers with a neutral fill (the red tint is gone, the glyph stays red).
+  The workspace chevron is new as a pressable.
 
 ### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
 - [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.

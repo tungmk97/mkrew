@@ -70,7 +70,6 @@ impl Shell {
             return Vec::new();
         }
         let shown = self.focused_session(window);
-        let hover = theme.hover;
         let collapsed = self.collapsed_groups.contains(&(project_id, RowGroup::Run));
         let mut label =
             self.group_label(project_id, RowGroup::Run, rows.len(), collapsed, theme, cx);
@@ -112,14 +111,15 @@ impl Shell {
                             // No vertical padding: the label keeps its height.
                             .px(px(space::XS))
                             .rounded(px(radius::SMALL))
-                            .cursor_pointer()
-                            .hover(move |style| style.bg(rgb(colors.tint)))
-                            .active(|style| style.opacity(opacity::ACTIVE))
+                            .pressable(Look::Raised, true, theme)
                             .tooltip(tooltip(theme, tip, ""))
-                            .on_click(cx.listener(move |shell, _, window, cx| {
-                                cx.stop_propagation();
-                                shell.run_action(project_id, action, None, window, cx);
-                            }))
+                            .on_press(
+                                true,
+                                cx.listener(move |shell, _, window, cx| {
+                                    cx.stop_propagation();
+                                    shell.run_action(project_id, action, None, window, cx);
+                                }),
+                            )
                             .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, colors.fg))
                     })),
             );
@@ -146,7 +146,6 @@ impl Shell {
             let actions = controls.iter().map(|&(glyph, tip, action)| {
                 let name = name.clone();
                 let colors = run::action_colors(action, theme);
-                // Not `row_action`: it sets its own hover, and a second `.hover()` panics.
                 div()
                     .id(SharedString::from(format!(
                         "run-{action:?}-{project_id}-{name}"
@@ -156,15 +155,16 @@ impl Shell {
                     .items_center()
                     .p(px(space::XS))
                     .rounded(px(radius::SMALL))
-                    .cursor_pointer()
-                    .hover(move |style| style.bg(rgb(colors.tint)))
-                    .active(|style| style.opacity(opacity::ACTIVE))
+                    .pressable(Look::Raised, true, theme)
                     .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, colors.fg))
                     .tooltip(tooltip(theme, tip, ""))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        cx.stop_propagation();
-                        shell.run_action(project_id, action, Some(name.clone()), window, cx);
-                    }))
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, _, window, cx| {
+                            cx.stop_propagation();
+                            shell.run_action(project_id, action, Some(name.clone()), window, cx);
+                        }),
+                    )
             });
             let actions = div()
                 .flex_none()
@@ -196,11 +196,13 @@ impl Shell {
                     "",
                 ))
                 .when_some(live, |el, session_id| {
-                    el.cursor_pointer()
-                        .hover(move |style| style.bg(rgb(hover)))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.open_session(session_id, window, cx);
-                        }))
+                    el.pressable_unless(selected, Look::Row, theme)
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                shell.open_session(session_id, window, cx);
+                            }),
+                        )
                         .on_mouse_down(
                             MouseButton::Right,
                             cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
@@ -307,7 +309,6 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let open = self.empty_workspaces_open;
-        let hover = theme.hover;
         let count = rows.len();
         let line = div()
             .id("empty-workspaces")
@@ -317,14 +318,16 @@ impl Shell {
             .gap(px(space::S))
             .px(px(space::S))
             .rounded(px(radius::SMALL))
-            .cursor_pointer()
             .text_size(font_size::META)
             .text_color(rgb(theme.text_muted))
-            .hover(move |style| style.bg(rgb(hover)))
-            .on_click(cx.listener(|shell, _, _, cx| {
-                shell.empty_workspaces_open = !shell.empty_workspaces_open;
-                cx.notify();
-            }))
+            .pressable(Look::Row, true, theme)
+            .on_press(
+                true,
+                cx.listener(|shell, _, _, cx| {
+                    shell.empty_workspaces_open = !shell.empty_workspaces_open;
+                    cx.notify();
+                }),
+            )
             .child(icon_svg(
                 if open {
                     Icon::ChevronDown
@@ -796,16 +799,13 @@ impl Shell {
                 .children(list)
                 .into_any_element()
         };
-        let divider = theme.divider;
-        let grip = div()
-            .id("sidebar-grip")
+        let grip = grip_hover(div().id("sidebar-grip"), theme)
             .absolute()
             .top_0()
             .bottom_0()
             .right_0()
             .w(px(theme::GRIP_WIDTH))
             .cursor(CursorStyle::ResizeLeftRight)
-            .hover(move |style| style.bg(rgb(divider)))
             .on_drag(SidebarGrip, |_, _, _, cx| cx.new(|_| EmptyView))
             .on_drag_move(
                 cx.listener(|shell, event: &DragMoveEvent<SidebarGrip>, window, cx| {
@@ -966,7 +966,6 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
-        let hover = theme.hover;
         let waiting = self.inbox_entries().len();
         let inbox_color = if waiting > 0 {
             theme.status_needs_input
@@ -992,8 +991,7 @@ impl Shell {
             })
             // Nothing to jump to while clear: no pointer, no hover, no click.
             .when(waiting > 0, |el| {
-                el.cursor_pointer()
-                    .hover(move |style| style.bg(rgb(hover)))
+                el.pressable(Look::Row, true, theme)
                     .when(!compact, |el| {
                         el.tooltip(tooltip(
                             theme,
@@ -1001,9 +999,12 @@ impl Shell {
                             self.keymap.label(Command::NextInbox),
                         ))
                     })
-                    .on_click(cx.listener(|shell, _, window, cx| {
-                        shell.jump_next_inbox(window, cx);
-                    }))
+                    .on_press(
+                        true,
+                        cx.listener(|shell, _, window, cx| {
+                            shell.jump_next_inbox(window, cx);
+                        }),
+                    )
             });
         // Full width ↔ compact rail (a hidden sidebar comes back as the rail).
         let compact_toggle = icon_button(
@@ -1084,7 +1085,6 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let id = group_label_id(project_id, group);
-        let hover = theme.hover;
         div()
             .id(id.clone())
             .group(id)
@@ -1095,8 +1095,7 @@ impl Shell {
             .px(px(space::S))
             .py(px(space::XS))
             .rounded(px(radius::SMALL))
-            .cursor_pointer()
-            .hover(move |style| style.bg(rgb(hover)))
+            .pressable(Look::Row, true, theme)
             .text_size(font_size::META)
             .font_weight(FontWeight(weight::MEDIUM))
             .text_color(rgb(theme.text_muted))
@@ -1109,13 +1108,16 @@ impl Shell {
                 },
                 "",
             ))
-            .on_click(cx.listener(move |shell, _, _, cx| {
-                let key = (project_id, group);
-                if !shell.collapsed_groups.remove(&key) {
-                    shell.collapsed_groups.insert(key);
-                }
-                cx.notify();
-            }))
+            .on_press(
+                true,
+                cx.listener(move |shell, _, _, cx| {
+                    let key = (project_id, group);
+                    if !shell.collapsed_groups.remove(&key) {
+                        shell.collapsed_groups.insert(key);
+                    }
+                    cx.notify();
+                }),
+            )
             .child(icon_svg(
                 if collapsed {
                     Icon::ChevronRight
@@ -1153,7 +1155,6 @@ pub(crate) fn workspace_row(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let project_id = row.project_id;
-    let hover = theme.hover;
     let group = SharedString::from(format!("workspace-{project_id}"));
     let color = row
         .color
@@ -1192,17 +1193,19 @@ pub(crate) fn workspace_row(
         .gap(px(space::S))
         .px(px(space::S))
         .rounded(px(radius::SMALL))
-        .cursor_pointer()
         .when(active, |el| el.bg(rgb(theme.selected)))
-        .hover(move |style| style.bg(rgb(hover)))
+        .pressable_unless(active, Look::Row, theme)
         .when(active, |el| {
             el.relative()
                 .child(record_bounds(Anchor::WorkspaceRow(project_id), cx))
         })
         .tooltip(tooltip(theme, &row.path, ""))
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.click_workspace_row(project_id, window, cx);
-        }))
+        .on_press(
+            true,
+            cx.listener(move |shell, _, window, cx| {
+                shell.click_workspace_row(project_id, window, cx);
+            }),
+        )
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
@@ -1217,12 +1220,17 @@ pub(crate) fn workspace_row(
                 .flex_none()
                 .flex()
                 .items_center()
-                .on_click(cx.listener(move |shell, _, _, cx| {
-                    // Only expands / collapses: not a click on the row (which shows it).
-                    cx.stop_propagation();
-                    shell.sidebar.toggle(project_id);
-                    cx.notify();
-                }))
+                .rounded(px(radius::SMALL))
+                .pressable(Look::Raised, true, theme)
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, _, cx| {
+                        // Only expands / collapses: not a click on the row (which shows it).
+                        cx.stop_propagation();
+                        shell.sidebar.toggle(project_id);
+                        cx.notify();
+                    }),
+                )
                 .child(icon_svg(
                     if row.expanded {
                         Icon::ChevronDown
@@ -1369,7 +1377,6 @@ pub(crate) fn session_row(
         Some(title) => title.clone(),
         None => row.agent.clone(),
     };
-    let hover = theme.hover;
     let row_id = SharedString::from(format!("session-{session_id}"));
     div()
         .id(row_id.clone())
@@ -1388,15 +1395,18 @@ pub(crate) fn session_row(
             el.bg(rgb(theme.selected))
                 .border_color(rgb(theme.selected_ring))
         })
-        .cursor_pointer()
-        .hover(move |style| style.bg(rgb(hover)))
+        // The selected row is picked, not disabled: the pointer, no hover fill.
+        .pressable_unless(selected, Look::Row, theme)
         .when(selected, |el| {
             el.relative()
                 .child(record_bounds(Anchor::SessionRow(session_id), cx))
         })
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.open_session(session_id, window, cx);
-        }))
+        .on_press(
+            true,
+            cx.listener(move |shell, _, window, cx| {
+                shell.open_session(session_id, window, cx);
+            }),
+        )
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
@@ -1511,7 +1521,6 @@ pub(crate) fn compact_workspace_row(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let project_id = row.project_id;
-    let hover = theme.hover;
     let color = row
         .color
         .as_deref()
@@ -1530,17 +1539,19 @@ pub(crate) fn compact_workspace_row(
         .justify_center()
         .gap(px(space::XS))
         .rounded(px(radius::SMALL))
-        .cursor_pointer()
         .when(active, |el| el.bg(rgb(theme.selected)))
-        .hover(move |style| style.bg(rgb(hover)))
+        .pressable_unless(active, Look::Row, theme)
         .when(active, |el| {
             el.relative()
                 .child(record_bounds(Anchor::WorkspaceRow(project_id), cx))
         })
         .tooltip(tooltip(theme, &sidebar::workspace_tip(&row), ""))
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.click_workspace_row(project_id, window, cx);
-        }))
+        .on_press(
+            true,
+            cx.listener(move |shell, _, window, cx| {
+                shell.click_workspace_row(project_id, window, cx);
+            }),
+        )
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
@@ -1578,7 +1589,6 @@ pub(crate) fn compact_session_row(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let session_id = row.session_id;
-    let hover = theme.hover;
     div()
         .id(SharedString::from(format!("session-{session_id}")))
         .h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
@@ -1587,22 +1597,24 @@ pub(crate) fn compact_session_row(
         .justify_center()
         .gap(px(space::XS))
         .rounded(px(radius::SMALL))
-        .cursor_pointer()
         .when(selected, |el| el.bg(rgb(theme.selected)))
         // A finish not yet viewed: tinted until the pane is focused (the rail has no bold title
         // to say it, ADR 0062).
         .when(row.unseen && !selected, |el| {
             el.bg(theme.tint(theme.status_done))
         })
-        .hover(move |style| style.bg(rgb(hover)))
+        .pressable_unless(selected, Look::Row, theme)
         .when(selected, |el| {
             el.relative()
                 .child(record_bounds(Anchor::SessionRow(session_id), cx))
         })
         .tooltip(tooltip(theme, &sidebar::session_tip(&row, now), ""))
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.open_session(session_id, window, cx);
-        }))
+        .on_press(
+            true,
+            cx.listener(move |shell, _, window, cx| {
+                shell.open_session(session_id, window, cx);
+            }),
+        )
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |shell, event: &MouseDownEvent, window, cx| {

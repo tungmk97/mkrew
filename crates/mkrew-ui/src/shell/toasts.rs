@@ -66,7 +66,6 @@ impl Shell {
                 toast::Kind::Error => (Icon::CircleAlert, theme.status_exited),
             };
             let id = item.id;
-            let hover = theme.hover;
             let is_error = item.kind == toast::Kind::Error;
             let text = item.text.clone();
             let body = div()
@@ -79,13 +78,15 @@ impl Shell {
                 .child(item.text.clone());
             // An error's full text is often cut by the line clamp: a click copies all of it.
             let body = if is_error {
-                body.cursor_pointer()
-                    .hover(move |style| style.bg(rgb(hover)))
+                body.pressable(Look::Text, true, theme)
                     .tooltip(tooltip(theme, "Copy the error", ""))
-                    .on_click(cx.listener(move |shell, _, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
-                        shell.toast_info("Copied", cx);
-                    }))
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                            shell.toast_info("Copied", cx);
+                        }),
+                    )
                     .into_any_element()
             } else {
                 body.into_any_element()
@@ -110,15 +111,16 @@ impl Shell {
                         .flex_none()
                         .p(px(space::XS))
                         .rounded(px(radius::SMALL))
-                        .cursor_pointer()
-                        .hover(move |style| style.bg(rgb(hover)))
-                        .active(|style| style.opacity(opacity::ACTIVE))
+                        .pressable(Look::Raised, true, theme)
                         .tooltip(tooltip(theme, "Dismiss", ""))
                         .child(icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted))
-                        .on_click(cx.listener(move |shell, _, _, cx| {
-                            shell.toasts.dismiss(id);
-                            cx.notify();
-                        })),
+                        .on_press(
+                            true,
+                            cx.listener(move |shell, _, _, cx| {
+                                shell.toasts.dismiss(id);
+                                cx.notify();
+                            }),
+                        ),
                 )
         });
         Some(

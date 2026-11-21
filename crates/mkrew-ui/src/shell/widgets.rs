@@ -405,10 +405,6 @@ pub(crate) fn icon_button_in(
 
 /// An icon button that cannot be used right now (the update button while it downloads, Fetch
 /// while Push runs): faded, no hover, no pointer. Attach no click to it.
-#[expect(
-    dead_code,
-    reason = "first caller lands in a later P3 task; delete this attribute then"
-)]
 pub(crate) fn disabled_icon_button(
     id: impl Into<gpui::ElementId>,
     glyph: Icon,
@@ -440,10 +436,6 @@ pub(crate) fn row_action(
 
 /// The hover tint of a resize grip (sidebar, pane divider, Markdown split). The caller sets the
 /// cursor and the drag handlers; a grip is not a button, so it has no `Look`.
-#[expect(
-    dead_code,
-    reason = "first caller lands in a later P3 task; delete this attribute then"
-)]
 pub(crate) fn grip_hover(
     grip: gpui::Stateful<gpui::Div>,
     theme: &Theme,
