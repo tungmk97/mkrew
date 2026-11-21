@@ -49,6 +49,17 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
   A selected session row, the open workspace header and the live run row no longer dim while pressed.
   The Stop icon hovers with a neutral fill (the red tint is gone, the glyph stays red).
   The workspace chevron is new as a pressable.
+- [ ] **Tab chips (dark + light):** hover an inactive tab in the main strip, in a detached window and a file tab: a fill and a pointer.
+  The shown tab shows a pointer and no hover fill; double-click it: it still renames.
+  Hover the X of an active and of an inactive tab chip: the X shows a fill on its chip.
+  Press and hold a tab chip, then drag it: the chip does not stay dimmed after the drop.
+- [ ] **Share and find bar (dark + light):** hover the Share button of a pane; with a followed share it shows a pointer and no fill and still opens its menu.
+  Open the terminal find bar (Ctrl+F in a terminal) and hover its X: the fill is visible on the bar.
+- [ ] **Reading width (dark + light):** with reading width on, hover its icon in the pane header: the hover is visible against the on fill.
+- [ ] **Pane divider:** hover the divider between two panes: the tint shows; drag still resizes.
+- [ ] **Tabs and panes look changes (spec 5.2, not bugs):** the tab chips and Share turn their label to full text on hover.
+  A followed Share no longer dims while pressed.
+  Pressing a tab's X (`row_action`) dims its chip.
 
 ### To verify - 2026-11-21 Scoped palette and protocol 54 (plan docs/superpowers/plans/2026-11-21-polish-p2-palette.md)
 - [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.

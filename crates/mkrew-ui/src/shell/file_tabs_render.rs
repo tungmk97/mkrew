@@ -32,7 +32,6 @@ impl Shell {
         let tabs = view.tabs();
         let active = view.active_index();
         let pinned_count = tabs.iter().filter(|tab| tab.pinned).count();
-        let hover = theme.hover;
         let close_keys = self.keymap.label(Command::CloseFileTab);
         div()
             .id("file-tabs")
@@ -83,7 +82,6 @@ impl Shell {
                     .rounded(px(radius::MEDIUM))
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(gpui::transparent_black())
-                    .cursor_pointer()
                     .whitespace_nowrap()
                     .text_size(font_size::BODY)
                     .when(is_active, |el| {
@@ -92,18 +90,17 @@ impl Shell {
                             .font_weight(FontWeight(weight::MEDIUM))
                             .text_color(rgb(theme.text))
                     })
-                    .when(!is_active, |el| {
-                        el.text_color(rgb(theme.text_muted))
-                            .hover(move |style| style.bg(rgb(hover)))
-                            .active(|style| style.opacity(opacity::ACTIVE))
-                    })
+                    .when(!is_active, |el| el.text_color(rgb(theme.text_muted)))
+                    // The shown tab is picked, not disabled: the pointer for the double-click.
+                    .pressable_unless(is_active, Look::Chip, theme)
                     .when(tab.transient && !dirty, |el| el.italic())
                     .when(is_active, |el| {
                         el.relative()
                             .child(record_bounds(Anchor::FileTab(tab.path.clone()), cx))
                     })
                     .tooltip(tooltip(theme, &tab.path, ""))
-                    .on_click(
+                    .on_press(
+                        true,
                         cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
                             let how = if event.click_count() == 2 {
                                 Open::Kept
