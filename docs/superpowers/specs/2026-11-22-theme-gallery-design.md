@@ -32,7 +32,7 @@ Done means:
 | Theme files | `<config>/themes/*.toml`, the same fields as the built-in `Palette`. |
 | Bad contrast in a file | Loaded, with a warning badge on its card; the user's file is the user's call. |
 | Parse error | Not loaded; an error card shows the file name and the message. |
-| Name taken | A file whose name equals a built-in or an earlier file is skipped with an error card. |
+| Name taken | A file whose name equals a built-in or an earlier file, ignoring ASCII case, is skipped with an error card. |
 | Actions | "New theme from current" and "Open themes folder" under the gallery. |
 
 ## 3. The gallery
