@@ -332,6 +332,12 @@ mod tests {
         fn worktree_add(&self, _: &Path, _: &Path, _: &str) -> io::Result<()> {
             unreachable!()
         }
+        fn branches(&self, _: &Path) -> io::Result<Vec<mkrew_protocol::Branch>> {
+            unreachable!()
+        }
+        fn checkout(&self, _: &Path, _: &str) -> io::Result<()> {
+            unreachable!()
+        }
         fn ignored(&self, _: &Path, _: &[String]) -> io::Result<Vec<String>> {
             unreachable!()
         }
