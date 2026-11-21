@@ -1,0 +1,7 @@
+{"type":"event_msg","payload":{"type":"user_message","message":"Run it"}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"cargo build\"}","call_id":"k1"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"k1","output":"{\"output\":\"error: boom\",\"metadata\":{\"exit_code\":101,\"duration_seconds\":1.0}}"}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"ls\"}","call_id":"k2"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"k2","output":"a.rs\nb.rs\n"}}
+{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Add File: a.rs\n","call_id":"k3"}}
+{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"k3","output":"{\"output\":\"Success\",\"metadata\":{\"exit_code\":0}}"}}

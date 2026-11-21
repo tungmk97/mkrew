@@ -4,7 +4,7 @@
 //! caller polls about once a second.
 
 use mkrew_core::UsageFormat;
-use mkrew_core::thread::{Item, ThreadReader, ToolCall};
+use mkrew_core::thread::{Item, THREAD_TURNS, ThreadReader, ToolCall};
 
 use crate::docs::Shown;
 
@@ -46,7 +46,7 @@ impl ThreadFile {
     pub fn new(format: &UsageFormat) -> Result<Self, String> {
         Ok(Self {
             format: format.clone(),
-            reader: ThreadReader::new(format)?,
+            reader: ThreadReader::new(format, THREAD_TURNS)?,
         })
     }
 
@@ -62,7 +62,7 @@ impl ThreadFile {
         let mut changed = false;
         if start != self.reader.offset() {
             // The format was accepted in `new`.
-            if let Ok(reader) = ThreadReader::new(&self.format) {
+            if let Ok(reader) = ThreadReader::new(&self.format, THREAD_TURNS) {
                 self.reader = reader;
                 changed = true;
             }
@@ -90,9 +90,10 @@ impl ThreadFile {
                     items: turn
                         .items
                         .iter()
-                        .map(|item| match item {
-                            Item::Text(text) => PageItem::Text(Shown::from_text(text)),
-                            Item::Tools(calls) => PageItem::Tools(calls.clone()),
+                        .filter_map(|item| match item {
+                            Item::Text(text) => Some(PageItem::Text(Shown::from_text(text))),
+                            Item::Tools(calls) => Some(PageItem::Tools(calls.clone())),
+                            Item::Thinking(_) => None,
                         })
                         .collect(),
                 })
