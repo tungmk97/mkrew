@@ -30,7 +30,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Branches:** newest first, `current` marked, a remote branch without a local one listed as `origin/x`; Enter on a clean repository switches at once with a toast "Switched to ..."; with changed files, or a live agent in that folder, a question comes first and says which; a refusal by git shows git's own message in a toast.
 - [ ] **Commits:** 500 commits found by message or hash; Enter opens the Git panel on History with that commit expanded, also a commit older than the 50 the History lists by default; leaving History puts the default back.
 - [ ] **`@` in a composer and in the New task prompt:** the palette opens on Files with no tabs and the title "Insert file", Enter types the path (the `composer.file_ref` form), Esc types the `@`; the New task dialog stays open under it.
-- [ ] **No workspace:** Files, Search, Branches and Commits say "Open a workspace to search it."; with the daemon stopped they show its error, not "Loading..." forever.
+- [ ] **No workspace:** Files, Search, Branches and Commits say "Open a workspace to search it."; with the daemon stopped they show its error, not "Loading…" forever.
 - [ ] **Theme picker (`Ctrl+Alt+J`):** no tabs, still previews on Up / Down and restores on Esc; its rows keep the muted "Dark" / "Light" text.
 - [ ] **Detached window:** `Ctrl+Shift+P` there lists what acts in that window; a picked file, search hit, branch or commit is run in the main window (it comes to the front, on the palette's workspace).
 - [ ] **Detached window closed under the `@` palette:** close a detached window while its `@` palette is open; check whether `@` is typed anywhere (decide if that is acceptable).

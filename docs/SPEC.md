@@ -182,7 +182,7 @@ Rust stable, one Cargo workspace. When adding a crate, check its latest version 
 | Syntax highlighting | `syntect` (pure-Rust regex feature, lazy-loaded) | files & diffs (M7) |
 | Diagrams | `mermaid-rs-renderer` (no default features) | Mermaid in the Docs preview (ADR 0021) |
 | File walking | `ignore` | respects .gitignore (M7) |
-| Fuzzy matching | `nucleo-matcher` | quick open files (M7) |
+| Fuzzy matching | `nucleo-matcher` | palette Files scope (M7) |
 | Content search | `grep-searcher`, `grep-regex`, `grep-matcher` | `fs.search` (ripgrep's engine over the files `ignore` walks) |
 | Diff | `similar` | |
 | Microphone | `cpal` | voice input (§20G); WASAPI on Windows, ALSA on Linux |
@@ -1319,7 +1319,7 @@ Only edit this file. When done, for EACH comment run:
   the editor's top line goes to the page's top); scrolling the page moves nothing else. A press
   on the page puts the editor's caret on that block's first line (scrolled into view only when
   it is off screen). The page has its own keyboard focus (selection, Ctrl+C, Ctrl+A); ✎ works as in Preview.
-- **Palette Files scope** (`Ctrl+Shift+O`, or the "Search files..." entry at the top of the tree) fuzzy-finds files of the current workspace, in the folder the tree shows (project or task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
+- **Palette Files scope** (`Ctrl+Shift+O`, or the "Search files…" entry at the top of the tree) fuzzy-finds files of the current workspace, in the folder the tree shows (project or task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
 - **Palette Search scope** (`Ctrl+Alt+Shift+F`) finds text in those files.
 - "Open in Zed" opens the file at the caret's line.
 - **Right-click menu** on tree rows (files and folders) and on the blank part of the tree (the
@@ -1576,7 +1576,7 @@ command palette shows each command's shortcut; tooltips show shortcuts too.
 The palette has scope tabs: All, Commands, Sessions, Files, Search, Branches, Commits.
 Tab and Shift+Tab switch scope, Up and Down move, Enter runs, Esc closes, a click on a tab switches to it.
 All lists, for a query, a section per scope except Search (five rows each, then "+N more ›" which switches to that scope); with an empty query it lists the sessions (waiting ones first) and the commands run lately.
-Files asks `fs.find` (debounced 80 ms), Search asks `fs.search` from two characters (150 ms, plain text, smart case), Branches asks `git.branches` and Commits asks `git.log` (500 commits) once per opening and both are filtered in the UI.
+Files asks `fs.find` (debounced 80 ms), Search asks `fs.search` from two characters, spaces at the ends not counted (150 ms, plain text, smart case), Branches asks `git.branches` and Commits asks `git.log` (500 commits) once per opening and both are filtered in the UI.
 A late answer is dropped.
 Branches switches with `git.checkout`; a question comes first when the repository has changed files or a live agent session runs in that folder; git's own error is shown as a toast.
 Commits opens the Git view's History on the commit.
