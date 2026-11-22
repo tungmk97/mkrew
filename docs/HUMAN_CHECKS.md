@@ -53,6 +53,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Install mk command (macOS):** palette → "Global: Install mk command" in `Mkrew.app` from `/Applications`: a toast names the link; in a new Terminal `mk --version` works and `mk daemon status` finds the app's daemon (the link must not break its sibling lookup).
   Run it again: no error. In a dev build (not in an app) the entry is not listed.
 - [ ] **Translocated copy (macOS):** open a freshly downloaded `Mkrew.app` straight from Downloads (before moving it): the update button opens the release page instead of failing, and "Install mk command" is not listed.
+- [ ] **Icon (macOS, dark + light):** Finder, the Dock, Cmd+Tab and Launchpad show the Mkrew lanes tile, with the usual margin, not the blank app icon.
+- [ ] **Release dry run:** run the Release workflow by hand (`workflow_dispatch`) once without the Apple secrets: the macOS job passes and the zip's `Mkrew.app/Contents/Resources/agents/` has no `cmd.toml`, `powershell.toml` or `git-bash.toml`.
+- [ ] **Signed release (needs your Apple Developer ID):** add the secrets `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_APP_PASSWORD`, `APPLE_TEAM_ID`, run the workflow again: `spctl --assess --type execute -vv Mkrew.app` says "accepted, source=Notarized Developer ID", a downloaded copy opens with a double-click, and voice input still asks for and gets the microphone.
 
 ### To verify - 2026-11-22 macOS keyboard (ADR 0098)
 

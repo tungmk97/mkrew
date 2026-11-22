@@ -39,13 +39,16 @@ or `/ALLUSERS`. Open a new terminal afterwards so the new `PATH` applies.
 
 ### macOS (app)
 
-Unzip `mkrew-<version>-macos-arm64.zip` and drag `Mkrew.app` to `/Applications`. The app is not
-signed with an Apple Developer ID, so Gatekeeper blocks the first open: run
-`xattr -dr com.apple.quarantine /Applications/Mkrew.app`, or open it once, then System Settings →
-Privacy & Security → Open Anyway (macOS 14 and older: right-click → Open). For `mk` in a terminal:
-`ln -s /Applications/Mkrew.app/Contents/MacOS/mk /usr/local/bin/mk`. An app opened from Finder
-does not get your shell's `PATH`; if `claude` or `codex` is not found, stop the daemon
-(`mk daemon stop`) and start the app from a terminal: `/Applications/Mkrew.app/Contents/MacOS/mkrew &`.
+Unzip `mkrew-<version>-macos-arm64.zip` and drag `Mkrew.app` to `/Applications`.
+Run it from `/Applications`, not from Downloads: macOS runs a quarantined app from a read-only copy there, and Mkrew cannot update itself or link `mk` from it.
+Releases built with an Apple Developer ID are signed and notarized, so they open with a double-click.
+A build without it (a fork, or a release made before the repository had its Apple secrets) is ad-hoc signed, and Gatekeeper blocks the first open.
+Run `xattr -dr com.apple.quarantine /Applications/Mkrew.app`, or open the app once and go to System Settings → Privacy & Security → Open Anyway.
+On macOS 15 and later "right-click → Open" no longer works for this; on macOS 14 and older it does.
+Mkrew asks your login shell for its `PATH` (the list Terminal has), so `claude`, `codex` and `zed` are found when you open the app from Finder or the Dock.
+For `mk` in a terminal use the palette entry "Global: Install mk command": it links `/usr/local/bin/mk`, or `~/.local/bin/mk` when that folder is not writable.
+Cmd+Q quits Mkrew.
+The red button only hides it (like Cmd+H) and the Dock icon brings it back; set `[ui] close_to_tray = false` to make the red button quit.
 
 ### Linux (tar.gz)
 
@@ -266,6 +269,7 @@ The same `[notify]` switches and the 30-second limit as the desktop notification
    - Windows: Settings → Apps → Installed apps → Mkrew → Uninstall (removes the files, the
      `PATH` entry and the shortcut).
    - tar.gz: delete the extracted folder and its `PATH` line.
+   - macOS: drag `Mkrew.app` to the Trash, and delete the `mk` link if you made one (`rm /usr/local/bin/mk ~/.local/bin/mk`).
    - From source: `cargo uninstall mkrew-ui mkrew-cli mkrew-daemon`.
 4. Optionally delete your data and settings (below).
 

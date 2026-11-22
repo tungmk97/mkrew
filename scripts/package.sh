@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Release archive for Linux/macOS (SPEC §4): dist/mkrew-<version>-<os>-<arch>.tar.gz holding
 # bin/{mkrew,mk,mkrew-daemon}, agents/*.toml (sample profiles) and README.md.
-# --app (macOS): dist/mkrew-<version>-macos-<arch>.zip holding an ad-hoc signed Mkrew.app.
+# --app (macOS): dist/mkrew-<version>-macos-<arch>.zip holding Mkrew.app with its icon, signed
+# with a Developer ID and notarized when MKREW_SIGN_IDENTITY, MKREW_NOTARY_APPLE_ID,
+# MKREW_NOTARY_PASSWORD and MKREW_NOTARY_TEAM_ID are set (ADR 0100), else ad-hoc signed.
 # Usage: scripts/package.sh [--no-build] [--bin-dir DIR] [--out DIR] [--app]
 # Prints the archive path. Nothing is published.
 set -euo pipefail
@@ -42,7 +44,23 @@ if [ "$app" = 1 ]; then
     cp "$bin_dir/$bin" "$bundle/Contents/MacOS/$bin"
     chmod 755 "$bundle/Contents/MacOS/$bin"
   done
-  cp "$root"/agents/*.toml "$bundle/Contents/Resources/agents/"
+  # Profiles of Windows shells only (cmd, powershell, git-bash) stay out of the Mac bundle.
+  for profile in "$root"/agents/*.toml; do
+    case "$(basename "$profile")" in
+      cmd.toml|powershell.toml|git-bash.toml) ;;
+      *) cp "$profile" "$bundle/Contents/Resources/agents/" ;;
+    esac
+  done
+  # App icon: packaging/macos/mkrew-1024.png (icon/mkrew-1-lanes/tile-dark.svg) at the sizes
+  # iconutil wants.
+  iconset="$stage/Mkrew.iconset"
+  mkdir -p "$iconset"
+  icon="$root/packaging/macos/mkrew-1024.png"
+  for size in 16 32 128 256 512; do
+    sips -z "$size" "$size" "$icon" --out "$iconset/icon_${size}x${size}.png" > /dev/null
+    sips -z "$((size * 2))" "$((size * 2))" "$icon" --out "$iconset/icon_${size}x${size}@2x.png" > /dev/null
+  done
+  iconutil -c icns "$iconset" -o "$bundle/Contents/Resources/Mkrew.icns"
   cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -51,6 +69,7 @@ if [ "$app" = 1 ]; then
   <key>CFBundleIdentifier</key><string>dev.mkrew.app</string>
   <key>CFBundleName</key><string>Mkrew</string>
   <key>CFBundleExecutable</key><string>mkrew</string>
+  <key>CFBundleIconFile</key><string>Mkrew</string>
   <key>NSMicrophoneUsageDescription</key><string>Voice input turns your speech into text.</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$version</string>
@@ -60,13 +79,42 @@ if [ "$app" = 1 ]; then
 </dict>
 </plist>
 PLIST
-  # Ad-hoc signature (ADR 0071): no Developer ID; the first open needs right-click → Open.
-  codesign --force --deep -s - "$bundle"
+  # Developer ID (ADR 0100): inside out, no --deep. The helper programs first, then the bundle
+  # with the hardened runtime and the microphone entitlement. Without an identity: ad-hoc
+  # (ADR 0071), which Gatekeeper still blocks on the first open.
+  identity="${MKREW_SIGN_IDENTITY:-}"
+  if [ -n "$identity" ]; then
+    for bin in mk mkrew-daemon; do
+      codesign --force --options runtime --timestamp --sign "$identity" "$bundle/Contents/MacOS/$bin"
+    done
+    codesign --force --options runtime --timestamp \
+      --entitlements "$root/packaging/macos/mkrew.entitlements" --sign "$identity" "$bundle"
+    codesign --verify --strict --verbose=2 "$bundle"
+  else
+    echo "package: MKREW_SIGN_IDENTITY not set, signing ad-hoc" >&2
+    codesign --force --deep -s - "$bundle"
+  fi
   mkdir -p "$out"
   out="$(cd "$out" && pwd)"
   zip="$out/mkrew-$version-macos-$(uname -m).zip"
   rm -f "$zip"
   ditto -c -k --keepParent "$bundle" "$zip"
+  if [ -n "$identity" ] && [ -n "${MKREW_NOTARY_APPLE_ID:-}" ] && [ -n "${MKREW_NOTARY_PASSWORD:-}" ] && [ -n "${MKREW_NOTARY_TEAM_ID:-}" ]; then
+    xcrun notarytool submit "$zip" --apple-id "$MKREW_NOTARY_APPLE_ID" \
+      --password "$MKREW_NOTARY_PASSWORD" --team-id "$MKREW_NOTARY_TEAM_ID" \
+      --wait --output-format json > "$stage/notary.json"
+    grep -Eq '"status" *: *"Accepted"' "$stage/notary.json" || {
+      cat "$stage/notary.json" >&2
+      echo "package: Apple did not accept the notarization" >&2
+      exit 1
+    }
+    # Stapling changes the bundle, so the zip is made again after it.
+    xcrun stapler staple "$bundle"
+    rm -f "$zip"
+    ditto -c -k --keepParent "$bundle" "$zip"
+  else
+    echo "package: notarization skipped (identity or MKREW_NOTARY_* not all set)" >&2
+  fi
   echo "$zip"
   exit 0
 fi
