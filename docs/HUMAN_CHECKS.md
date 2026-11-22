@@ -57,6 +57,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Double and triple click (dark + light):** double-click a path in `ls` output: the whole path highlights in the selection color, Cmd+C copies it.
   Triple-click a command line: the whole row highlights; paste into another shell pane: it is not run (no Enter).
   Double-click on a `(`: the text through the matching `)` highlights.
+- [ ] **Trackpad (dark + light):** in `less` on a long file, a short swipe moves a few lines and a hard flick does not run to the end of the file.
+  In an agent's full-screen view the scroll feels the same size as in a plain pane.
+  Scroll the history of a shell pane with a swipe, then reverse in the middle: the first line after the reversal moves at once.
+  Tune `PIXEL_WHEEL_SCALE` in `terminal/input.rs` if 0.5 is too slow or too fast.
 
 ### To verify - 2026-11-22 Theme gallery (plan docs/superpowers/plans/2026-11-22-theme-gallery.md)
 

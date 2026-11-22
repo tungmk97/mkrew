@@ -1046,6 +1046,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   wheel (scrolls that history; a program that turned on mouse tracking, like Claude Code's
   full-screen view, gets wheel reports instead, SGR when it asked; a full-screen program with
   alternate scroll gets Up/Down; copy mode always scrolls the history),
+  a trackpad's pixel scrolling counts half a line per line of travel when it goes to a program (wheel reports or arrow keys) and a full line when it scrolls the history, and a change of direction drops the left-over fraction (ADR 0099),
   search, resize → `session.resize`. Performance rules (mandatory — this is the hottest path):
     - Batch adjacent cells with identical style into one shaped text run per row (as Zed's
       terminal element does). Never one GPUI element per cell.

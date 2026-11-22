@@ -4,7 +4,7 @@
 //! SS3 for arrows in application-cursor mode, C0 control bytes for Ctrl+key, ESC prefix for Alt.
 //! macOS Option composes unless `[terminal] option_as_meta` (ADR 0099).
 
-use gpui::{App, Keystroke};
+use gpui::{App, Keystroke, Pixels, ScrollDelta};
 
 use crate::keymap::Os;
 
@@ -172,6 +172,41 @@ pub fn paste_bytes(text: &str, mode: InputMode) -> Vec<u8> {
     }
 }
 
+/// Lines a trackpad's pixel scrolling counts per line of travel when they go to a program as
+/// arrow keys or wheel reports: one swipe with momentum is dozens of lines, and each one would
+/// be a key press for `less` or an agent TUI. Scrolling the history stays 1 to 1.
+// ponytail: a fixed 0.5 tuned by reading, not by feel; make it `[terminal]` setting if a Mac
+// user finds it too slow or too fast (docs/HUMAN_CHECKS.md).
+pub const PIXEL_WHEEL_SCALE: f32 = 0.5;
+
+/// Whole wheel lines of one scroll event (positive = up, into the history) and the fraction to
+/// carry to the next one. `to_program`: the lines become wheel reports or arrow keys, not
+/// history scrolling. A notched wheel gives lines as they are; precise (pixel) deltas are
+/// scaled by [`PIXEL_WHEEL_SCALE`] when `to_program`. The carry of the other direction is
+/// dropped: it is not part of this swipe.
+pub fn wheel_lines(
+    delta: ScrollDelta,
+    line_height: Pixels,
+    to_program: bool,
+    carry: f32,
+) -> (i32, f32) {
+    let lines = match delta {
+        ScrollDelta::Lines(lines) => lines.y,
+        ScrollDelta::Pixels(pixels) => {
+            let lines = f32::from(pixels.y) / f32::from(line_height);
+            if to_program {
+                lines * PIXEL_WHEEL_SCALE
+            } else {
+                lines
+            }
+        }
+    };
+    let carry = if carry * lines < 0.0 { 0.0 } else { carry };
+    let total = lines + carry;
+    // Whole lines of one wheel event: far inside i32.
+    (total.trunc() as i32, total.fract())
+}
+
 /// Alternate scroll: `lines` wheel lines (positive = up) as that many Up/Down arrow presses.
 pub fn wheel_bytes(lines: i32, mode: InputMode) -> Vec<u8> {
     let arrow: &[u8] = match (lines > 0, mode.app_cursor) {
@@ -327,7 +362,7 @@ fn with_alt(mut bytes: Vec<u8>, alt: bool) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::Modifiers;
+    use gpui::{Modifiers, ScrollDelta, point, px};
 
     const NORMAL: InputMode = InputMode {
         app_cursor: false,
@@ -686,6 +721,46 @@ mod tests {
         assert_eq!(
             key_to_bytes(&key("alt-b", Some("b")), NORMAL, win_meta),
             Some(b"\x1bb".to_vec())
+        );
+    }
+
+    fn pixels(y: f32) -> ScrollDelta {
+        ScrollDelta::Pixels(point(px(0.0), px(y)))
+    }
+
+    #[test]
+    fn a_notched_wheel_is_whole_lines_for_the_history_and_for_programs() {
+        let lines = ScrollDelta::Lines(point(0.0, 3.0));
+        assert_eq!(wheel_lines(lines, px(20.0), false, 0.0), (3, 0.0));
+        assert_eq!(wheel_lines(lines, px(20.0), true, 0.0), (3, 0.0));
+    }
+
+    #[test]
+    fn trackpad_pixels_move_a_program_half_as_far_as_the_history() {
+        // 46 px of a 23 px line: two lines of history, one wheel report or arrow key.
+        assert_eq!(wheel_lines(pixels(46.0), px(23.0), false, 0.0), (2, 0.0));
+        assert_eq!(wheel_lines(pixels(46.0), px(23.0), true, 0.0), (1, 0.0));
+        assert_eq!(wheel_lines(pixels(-46.0), px(23.0), true, 0.0), (-1, 0.0));
+        assert_eq!(PIXEL_WHEEL_SCALE, 0.5);
+    }
+
+    #[test]
+    fn a_fraction_carries_in_the_same_direction() {
+        assert_eq!(wheel_lines(pixels(10.0), px(20.0), false, 0.0), (0, 0.5));
+        assert_eq!(wheel_lines(pixels(15.0), px(20.0), false, 0.5), (1, 0.25));
+        // No movement keeps what was carried.
+        assert_eq!(wheel_lines(pixels(0.0), px(20.0), false, 0.5), (0, 0.5));
+    }
+
+    #[test]
+    fn a_change_of_direction_drops_the_carried_fraction() {
+        // Half a line up was carried; the first move down starts from zero, not from +0.5.
+        assert_eq!(wheel_lines(pixels(-10.0), px(20.0), false, 0.5), (0, -0.5));
+        assert_eq!(wheel_lines(pixels(10.0), px(20.0), false, -0.5), (0, 0.5));
+        // 1.25 lines down after 0.5 up: one line, not zero.
+        assert_eq!(
+            wheel_lines(pixels(-25.0), px(20.0), false, 0.5),
+            (-1, -0.25)
         );
     }
 }

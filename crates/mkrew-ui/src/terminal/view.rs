@@ -37,7 +37,8 @@ use crate::terminal::emulator::{CopyEnd, Emulator, Grid, Pick, Wheel};
 use crate::terminal::find::{FindBar, FindKey, FindStatus, find_key};
 use crate::terminal::hints::{self, Typed};
 use crate::terminal::input::{
-    KeyAction, KeyEnv, is_copy_key, key_action, paste_bytes, wheel_bytes, wheel_report_bytes,
+    KeyAction, KeyEnv, is_copy_key, key_action, paste_bytes, wheel_bytes, wheel_lines,
+    wheel_report_bytes,
 };
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
 use crate::terminal::links::{self, Target};
@@ -64,7 +65,7 @@ pub struct TerminalPane {
     geometry: Option<Geometry>,
     /// A left-button drag is extending the selection.
     selecting: bool,
-    /// Wheel movement below one line, carried to the next event.
+    /// Wheel movement below one line, carried to the next event (dropped when the direction changes).
     scroll_remainder: f32,
     /// The open find bar (Ctrl+Shift+F) and its keyboard focus.
     find: Option<FindBar>,
@@ -691,20 +692,21 @@ impl TerminalPane {
         let Some(geometry) = self.geometry else {
             return;
         };
-        let lines = f32::from(event.delta.pixel_delta(geometry.line_height).y)
-            / f32::from(geometry.line_height)
-            + self.scroll_remainder;
-        self.scroll_remainder = lines.fract();
-        // Whole lines of one wheel event: far inside i32.
-        let whole = lines.trunc() as i32;
-        if whole == 0 {
-            return;
-        }
         let wheel = if self.emulator.copy_mode() {
             Wheel::History
         } else {
             self.emulator.wheel()
         };
+        let (whole, carry) = wheel_lines(
+            event.delta,
+            geometry.line_height,
+            wheel != Wheel::History,
+            self.scroll_remainder,
+        );
+        self.scroll_remainder = carry;
+        if whole == 0 {
+            return;
+        }
         if wheel != Wheel::History {
             if self.exited.is_none() {
                 let data = match wheel {
