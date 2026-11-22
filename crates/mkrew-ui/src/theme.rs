@@ -942,6 +942,18 @@ impl Theme {
         self
     }
 
+    /// The ink of the taskbar badge on `status_needs_input`: `bg` or `text`, whichever has
+    /// the better contrast with it.
+    pub fn badge_ink(&self) -> u32 {
+        if contrast(self.bg, self.status_needs_input)
+            >= contrast(self.text, self.status_needs_input)
+        {
+            self.bg
+        } else {
+            self.text
+        }
+    }
+
     /// The pre-restyle palette for the sidebar's session list (see [`Theme::classic`]).
     pub fn classic(&self) -> &Theme {
         self.classic.as_deref().unwrap_or(self)
@@ -2410,6 +2422,8 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
         // The only sign of expanded / collapsed (WCAG 1.4.11).
         check("chevron", t.chevron_color(), bg, 3.0);
     }
+    // The taskbar badge numeral on the needs-input amber (WCAG 1.4.11, 3:1).
+    check("badge ink", t.badge_ink(), t.status_needs_input, 3.0);
     // The widget bar (ADR 0102) is `chrome`; its text is META size, so 4.5:1 (not the 3:1 of
     // large or graphical marks): the labels, the amber limit and the red limit.
     for fg in [t.text_muted, t.status_needs_input, t.danger_text] {
@@ -2575,6 +2589,14 @@ mod tests {
                 "chevron",
                 Theme {
                     text_muted: t.sidebar,
+                    ..t.clone()
+                },
+            ),
+            (
+                "badge ink",
+                Theme {
+                    bg: t.status_needs_input,
+                    text: t.status_needs_input,
                     ..t.clone()
                 },
             ),

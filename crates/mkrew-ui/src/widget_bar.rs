@@ -319,18 +319,25 @@ fn percent_of(window: &LimitWindow) -> u32 {
 
 fn machine(input: &Input<'_>) -> Option<Widget> {
     let stats = input.data.machine()?;
-    // A CPU reading that is not a number is no data, not "NaN%".
-    if !stats.cpu_percent.is_finite() {
-        return None;
+    // A CPU reading that is not a number is left out, never shown as "NaN%".
+    let mut label = String::new();
+    let mut tooltip = input.machine_name.to_owned();
+    if stats.cpu_percent.is_finite() {
+        let cpu = stats.cpu_percent.clamp(0.0, 100.0).round();
+        label = format!("CPU {cpu:.0}%");
+        tooltip.push_str(&format!("\nCPU {cpu:.0}% of all cores"));
     }
-    let cpu = stats.cpu_percent.clamp(0.0, 100.0).round();
-    let mut label = format!("CPU {cpu:.0}%");
-    let mut tooltip = format!("{}\nCPU {cpu:.0}% of all cores", input.machine_name);
     // No total from the OS: the RAM part is left out.
     if stats.ram_total > 0 {
         let (used, total) = (gib(stats.ram_used), gib(stats.ram_total));
-        label.push_str(&format!(" · RAM {used}/{total} GB"));
+        if !label.is_empty() {
+            label.push_str(" · ");
+        }
+        label.push_str(&format!("RAM {used}/{total} GB"));
         tooltip.push_str(&format!("\nRAM {used} of {total} GB used"));
+    }
+    if label.is_empty() {
+        return None;
     }
     Some(Widget {
         id: WidgetId::Machine,
@@ -848,9 +855,18 @@ mod tests {
     }
 
     #[test]
-    fn a_cpu_reading_that_is_not_a_number_hides_the_machine_widget() {
+    fn a_cpu_reading_that_is_not_a_number_is_left_out_and_ram_stays() {
         for cpu in [f32::NAN, f32::INFINITY] {
             let data = data(vec![], Some(stats(cpu, 1.0, 2.0)));
+            let widgets = list(None, &data, &[], None);
+            assert_eq!(widgets[0].label(), "RAM 1.0/2.0 GB");
+            assert_eq!(widgets[0].tooltip, "This computer\nRAM 1.0 of 2.0 GB used");
+            let no_total = MachineStats {
+                cpu_percent: cpu,
+                ram_used: 5,
+                ram_total: 0,
+            };
+            let data = self::data(vec![], Some(no_total));
             assert_eq!(ids(&list(None, &data, &[], None)), [WidgetId::Version]);
         }
     }
