@@ -32,6 +32,7 @@ fn context(view: View) -> Context {
         pane: false,
         live_session: false,
         transcript: false,
+        chat: false,
         plan_linked: false,
         composer_open: false,
         approve_card: false,
@@ -2167,4 +2168,28 @@ fn a_call_without_a_daemon_fails_in_its_own_scope() {
         };
         assert_eq!(kind, std::mem::discriminant(&wanted));
     }
+}
+
+#[test]
+fn toggle_chat_is_listed_only_for_a_chat_capable_agent_pane() {
+    let on_terminals = context(View::Terminals);
+    assert!(
+        !commands(&on_terminals).contains(&Command::ToggleChat),
+        "no agent pane"
+    );
+    let agent = Context {
+        terminal: true,
+        agent_pane: true,
+        ..context(View::Terminals)
+    };
+    assert!(
+        !commands(&agent).contains(&Command::ToggleChat),
+        "no readable transcript format"
+    );
+    let chat = Context {
+        agent_pane: true,
+        chat: true,
+        ..context(View::Terminals)
+    };
+    assert!(commands(&chat).contains(&Command::ToggleChat));
 }

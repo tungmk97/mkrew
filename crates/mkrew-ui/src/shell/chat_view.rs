@@ -54,7 +54,6 @@ impl Shell {
         chat::effective(self.chat_available(info), saved, self.chat_default)
     }
 
-    #[expect(dead_code, reason = "the Task 8 toggle and the composer keys call it")]
     pub(crate) fn chat_session(&self, session: Ulid) -> bool {
         (self.sidebar.sessions().iter())
             .find(|s| s.id == session)
@@ -135,6 +134,70 @@ impl Shell {
         self.focus_session_pane(session);
         self.focus_pane(window, cx);
         cx.notify();
+    }
+
+    /// Chat <-> Terminal for `session`'s pane, when it can show Chat.
+    pub(crate) fn toggle_chat(
+        &mut self,
+        session: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let on = (self.sidebar.sessions().iter())
+            .find(|s| s.id == session && self.chat_available(s))
+            .map(|info| self.chat_on(info));
+        if let Some(on) = on {
+            self.set_chat(session, !on, window, cx);
+        }
+    }
+
+    /// The `Terminal | Chat` control of an agent pane's header (`None` when it cannot chat).
+    pub(crate) fn pane_mode_switch(
+        &self,
+        info: &Session,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::AnyElement> {
+        if !self.chat_available(info) {
+            return None;
+        }
+        let (session, chat) = (info.id, self.chat_on(info));
+        Some(
+            segmented(theme)
+                .child(
+                    segment(
+                        SharedString::from(format!("pane-mode-terminal-{session}")),
+                        !chat,
+                        theme,
+                    )
+                    .child("Terminal")
+                    .tooltip(tooltip(theme, "Show the terminal", ""))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        if chat {
+                            shell.set_chat(session, false, window, cx);
+                        }
+                    })),
+                )
+                .child(
+                    segment(
+                        SharedString::from(format!("pane-mode-chat-{session}")),
+                        chat,
+                        theme,
+                    )
+                    .child("Chat")
+                    .tooltip(tooltip(
+                        theme,
+                        "Show the conversation as a chat",
+                        self.keymap.label(Command::ToggleChat),
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        if !chat {
+                            shell.set_chat(session, true, window, cx);
+                        }
+                    })),
+                )
+                .into_any_element(),
+        )
     }
 
     /// The Chat page of `session`'s pane: the turns (scrolling, following the end), the subagent

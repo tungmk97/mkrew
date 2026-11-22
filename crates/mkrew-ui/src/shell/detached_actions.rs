@@ -348,8 +348,12 @@ impl Shell {
             cx.propagate();
             return;
         }
-        // The composer keeps its keys (Ctrl+Shift+Enter would read as Ctrl+Enter: send).
-        if self.composer_focus.is_focused(window) && self.composer_session(window).is_some() {
+        // The composer keeps its keys (Ctrl+Shift+Enter would read as Ctrl+Enter: send), except
+        // the Chat switch.
+        if self.composer_focus.is_focused(window)
+            && self.composer_session(window).is_some()
+            && command != Command::ToggleChat
+        {
             if command != Command::OpenComposer {
                 cx.propagate();
             }
@@ -409,6 +413,11 @@ impl Shell {
             }
             Command::RenameTab => self.start_rename(window, cx),
             Command::OpenComposer => self.open_composer(window, cx),
+            Command::ToggleChat => {
+                if let Some(session) = self.focused_agent(window) {
+                    self.toggle_chat(session, window, cx);
+                }
+            }
             Command::CommandPalette => self.open_palette(window, cx),
             Command::ContextMenu => {
                 if !menu_was_open && let Some(session) = self.focused_session(window) {

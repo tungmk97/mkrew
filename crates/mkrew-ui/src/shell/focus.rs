@@ -282,6 +282,14 @@ impl Shell {
             window.focus(&self.focus_handle, cx);
             return;
         }
+        // A pane in Chat mode keeps its terminal out of the tree: the keys go to its composer.
+        if let Some(session) = self.focused_session(window)
+            && self.chat_session(session)
+            && self.composers.shown(session).is_some()
+        {
+            window.focus(&self.composer_focus, cx);
+            return;
+        }
         match self
             .focused_session(window)
             .and_then(|session| self.panes.get(&session))

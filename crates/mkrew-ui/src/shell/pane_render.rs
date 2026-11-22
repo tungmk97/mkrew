@@ -767,7 +767,8 @@ impl Shell {
         parts
     }
 
-    /// An agent pane's controls: the Reading width toggle and `Share` (its menu: Follow in Zed).
+    /// An agent pane's controls: the Terminal | Chat switch, the Reading width toggle and `Share`
+    /// (its menu: Follow in Zed).
     /// Nothing for a shell or run pane.
     pub(crate) fn pane_controls(
         &self,
@@ -841,7 +842,11 @@ impl Shell {
                 shell.open_share_menu(session, event.position(), window, cx);
             }),
         );
-        vec![reading_toggle.into_any_element(), share.into_any_element()]
+        let mut controls = Vec::new();
+        controls.extend(self.pane_mode_switch(info, theme, cx));
+        controls.push(reading_toggle.into_any_element());
+        controls.push(share.into_any_element());
+        controls
     }
 
     /// The title of `info`'s pane, or the inline rename field while it is renamed (F2 or a
