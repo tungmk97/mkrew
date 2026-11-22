@@ -2,9 +2,8 @@
 //! plain data. Pure and tested headlessly; `shell/chat_view.rs` draws it.
 
 use std::collections::HashSet;
-use ulid::Ulid;
 
-use mkrew_core::thread::{PlanStatus, PlanStep, Subagent, ToolResult};
+use mkrew_core::thread::{PlanStatus, PlanStep, Subagent, ToolCall};
 
 use crate::thread_view::{Page, PageItem, PageTurn};
 
@@ -12,20 +11,17 @@ use crate::thread_view::{Page, PageItem, PageTurn};
 pub type RowKey = (u64, usize, usize);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Row {
+pub enum Row<'a> {
     /// Agent text: item `item` of the page turn.
     Text { item: usize },
     Thinking {
         key: RowKey,
-        text: String,
+        text: &'a str,
         open: bool,
     },
     Tool {
         key: RowKey,
-        name: String,
-        target: String,
-        input: String,
-        result: Option<ToolResult>,
+        call: &'a ToolCall,
         open: bool,
     },
 }
@@ -39,48 +35,49 @@ pub enum PlanMark {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlanRow {
-    pub text: String,
+pub struct PlanRow<'a> {
+    pub text: &'a str,
     pub mark: PlanMark,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChatTurn {
+pub struct ChatTurn<'a> {
     /// `page.first_turn` + the turn's index: stable while the turn is kept.
     pub key: u64,
-    pub prompt: String,
-    pub rows: Vec<Row>,
+    pub prompt: &'a str,
+    pub rows: Vec<Row<'a>>,
     /// Only on the newest turn that has a plan.
-    pub plan: Option<Vec<PlanRow>>,
+    pub plan: Option<Vec<PlanRow<'a>>>,
 }
 
 /// One subagent in the tray.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Chip {
-    pub description: String,
-    pub subagent_type: String,
+pub struct Chip<'a> {
+    pub description: &'a str,
+    pub subagent_type: &'a str,
     pub done: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QuestionCard {
-    pub text: String,
-    pub options: Vec<String>,
+pub struct QuestionCard<'a> {
+    pub text: &'a str,
+    pub options: &'a [String],
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct View {
+pub struct View<'a> {
     /// Older turns exist but are not kept ("Earlier turns: Open transcript").
     pub earlier: bool,
-    pub turns: Vec<ChatTurn>,
+    pub turns: Vec<ChatTurn<'a>>,
     /// The last turn's subagents, only while one of them runs.
-    pub tray: Vec<Chip>,
+    pub tray: Vec<Chip<'a>>,
     /// The last turn's question, only while it has no result.
-    pub question: Option<QuestionCard>,
+    pub question: Option<QuestionCard<'a>>,
 }
 
-/// The view of `page` with the rows in `open` expanded.
-pub fn view(page: Option<&Page>, open: &HashSet<RowKey>) -> View {
+/// The view of `page` with the rows in `open` expanded. Borrows from the page: it is built on
+/// every render, so it copies none of the transcript.
+pub fn view<'a>(page: Option<&'a Page>, open: &HashSet<RowKey>) -> View<'a> {
     let Some(page) = page else {
         return View::default();
     };
@@ -93,7 +90,7 @@ pub fn view(page: Option<&Page>, open: &HashSet<RowKey>) -> View {
             let key = page.first_turn + index as u64;
             ChatTurn {
                 key,
-                prompt: turn.prompt.clone(),
+                prompt: &turn.prompt,
                 rows: rows(key, turn, open),
                 plan: if plan_turn == Some(index) {
                     turn.plan
@@ -114,13 +111,13 @@ pub fn view(page: Option<&Page>, open: &HashSet<RowKey>) -> View {
         question: last
             .and_then(|turn| turn.question.as_ref())
             .map(|question| QuestionCard {
-                text: question.text.clone(),
-                options: question.options.clone(),
+                text: &question.text,
+                options: &question.options,
             }),
     }
 }
 
-fn rows(turn_key: u64, turn: &PageTurn, open: &HashSet<RowKey>) -> Vec<Row> {
+fn rows<'a>(turn_key: u64, turn: &'a PageTurn, open: &HashSet<RowKey>) -> Vec<Row<'a>> {
     let mut rows = Vec::new();
     for (item, entry) in turn.items.iter().enumerate() {
         match entry {
@@ -129,19 +126,16 @@ fn rows(turn_key: u64, turn: &PageTurn, open: &HashSet<RowKey>) -> Vec<Row> {
                 let key = (turn_key, item, 0);
                 rows.push(Row::Thinking {
                     key,
-                    text: text.clone(),
+                    text,
                     open: open.contains(&key),
                 });
             }
             PageItem::Tools(calls) => {
-                rows.extend(calls.iter().enumerate().map(|(call, c)| {
-                    let key = (turn_key, item, call);
+                rows.extend(calls.iter().enumerate().map(|(index, call)| {
+                    let key = (turn_key, item, index);
                     Row::Tool {
                         key,
-                        name: c.name.clone(),
-                        target: c.target.clone(),
-                        input: c.input.clone(),
-                        result: c.result.clone(),
+                        call,
                         open: open.contains(&key),
                     }
                 }));
@@ -151,11 +145,11 @@ fn rows(turn_key: u64, turn: &PageTurn, open: &HashSet<RowKey>) -> Vec<Row> {
     rows
 }
 
-fn plan_rows(steps: &[PlanStep]) -> Vec<PlanRow> {
+fn plan_rows(steps: &[PlanStep]) -> Vec<PlanRow<'_>> {
     steps
         .iter()
         .map(|step| PlanRow {
-            text: step.text.clone(),
+            text: &step.text,
             mark: match step.status {
                 PlanStatus::Pending => PlanMark::Todo,
                 PlanStatus::InProgress => PlanMark::Doing,
@@ -166,30 +160,15 @@ fn plan_rows(steps: &[PlanStep]) -> Vec<PlanRow> {
 }
 
 /// Every subagent of the turn while at least one still runs; none once all are done.
-fn tray(subagents: &[Subagent]) -> Vec<Chip> {
+fn tray(subagents: &[Subagent]) -> Vec<Chip<'_>> {
     if subagents.iter().all(|subagent| subagent.done) {
         return Vec::new();
     }
     subagents
         .iter()
         .map(|subagent| Chip {
-            description: subagent.description.clone(),
-            subagent_type: subagent.subagent_type.clone(),
-/// The transcripts to read: the panel's, then each Chat pane's; one per session (the first
-/// key of a session wins), so the panel and the pane never read the same file twice.
-pub fn wanted_reads(
-    panel: Option<(Ulid, String)>,
-    chats: Vec<(Ulid, String)>,
-) -> Vec<(Ulid, String)> {
-    let mut wanted: Vec<(Ulid, String)> = Vec::new();
-    for key in panel.into_iter().chain(chats) {
-        if !wanted.iter().any(|(session, _)| *session == key.0) {
-            wanted.push(key);
-        }
-    }
-    wanted
-}
-
+            description: &subagent.description,
+            subagent_type: &subagent.subagent_type,
             done: subagent.done,
         })
         .collect()
@@ -218,42 +197,23 @@ mod tests {
     fn head(text: &str, count: usize) -> String {
         text.lines()
             .take(count)
-    #[test]
-    fn one_read_per_session_and_the_panels_wins() {
-        let [a, b] = [Ulid::new(), Ulid::new()];
-        let key = |id, native: &str| (id, native.to_owned());
-        assert_eq!(wanted_reads(None, vec![]), []);
-        assert_eq!(
-            wanted_reads(Some(key(a, "n1")), vec![key(b, "n2"), key(a, "other")]),
-            [key(a, "n1"), key(b, "n2")]
-        );
-        assert_eq!(
-            wanted_reads(None, vec![key(b, "n2"), key(b, "n3")]),
-            [key(b, "n2")]
-        );
-    }
-
             .map(|line| format!("{line}\n"))
             .collect()
     }
 
-    fn labels(turn: &ChatTurn) -> Vec<String> {
+    fn labels(turn: &ChatTurn<'_>) -> Vec<String> {
         let state = |open: &bool| if *open { "open" } else { "shut" };
         turn.rows
             .iter()
             .map(|row| match row {
                 Row::Text { item } => format!("text {item}"),
                 Row::Thinking { open, .. } => format!("thinking {}", state(open)),
-                Row::Tool {
-                    name,
-                    target,
-                    open,
-                    result,
-                    ..
-                } => format!(
-                    "{name} {target} {} {}",
+                Row::Tool { call, open, .. } => format!(
+                    "{} {} {} {}",
+                    call.name,
+                    call.target,
                     state(open),
-                    match result {
+                    match &call.result {
                         Some(r) if r.is_error => "error",
                         Some(_) => "ok",
                         None => "pending",
@@ -305,14 +265,15 @@ mod tests {
         let text = todo_turn("one", "a", "pending")
             + &todo_turn("two", "b", "in_progress")
             + "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"three\"}}\n";
-        let v = view(Some(&page(&text)), &HashSet::new());
+        let page = page(&text);
+        let v = view(Some(&page), &HashSet::new());
         let plans: Vec<_> = v.turns.iter().map(|t| t.plan.clone()).collect();
         assert_eq!(
             plans,
             [
                 None,
                 Some(vec![PlanRow {
-                    text: "Step".into(),
+                    text: "Step",
                     mark: PlanMark::Doing
                 }]),
                 None
@@ -344,7 +305,8 @@ mod tests {
 
     #[test]
     fn plan_marks_follow_the_statuses() {
-        let v = view(Some(&page(CLAUDE_AGENTS)), &HashSet::new());
+        let agents = page(CLAUDE_AGENTS);
+        let v = view(Some(&agents), &HashSet::new());
         let marks: Vec<_> = v.turns[0]
             .plan
             .as_ref()
@@ -357,25 +319,28 @@ mod tests {
 
     #[test]
     fn a_question_shows_only_while_pending_and_only_for_the_last_turn() {
-        let pending = view(Some(&page(&head(CLAUDE_AGENTS, 7))), &HashSet::new());
+        let pending_page = page(&head(CLAUDE_AGENTS, 7));
+        let pending = view(Some(&pending_page), &HashSet::new());
         assert_eq!(
             pending.question,
             Some(QuestionCard {
-                text: "Which database?".into(),
-                options: vec!["SQLite".into(), "Postgres".into()]
+                text: "Which database?",
+                options: &["SQLite".to_owned(), "Postgres".to_owned()]
             })
         );
         // The whole fixture: q1 is still unanswered but is not the last turn; q2 is answered.
-        let all = view(Some(&page(CLAUDE_AGENTS)), &HashSet::new());
+        let all_page = page(CLAUDE_AGENTS);
+        let all = view(Some(&all_page), &HashSet::new());
         assert_eq!(all.question, None);
     }
 
     #[test]
     fn the_tray_shows_while_a_subagent_runs_and_goes_when_all_are_done() {
-        let running = view(Some(&page(&head(CLAUDE_AGENTS, 7))), &HashSet::new());
-        let chip = |d: &str, t: &str, done| Chip {
-            description: d.into(),
-            subagent_type: t.into(),
+        let running_page = page(&head(CLAUDE_AGENTS, 7));
+        let running = view(Some(&running_page), &HashSet::new());
+        let chip = |d, t, done| Chip {
+            description: d,
+            subagent_type: t,
             done,
         };
         assert_eq!(
@@ -387,7 +352,11 @@ mod tests {
         );
         let done = head(CLAUDE_AGENTS, 7)
             + "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"s2\",\"content\":\"ok\"}]}}\n";
-        assert!(view(Some(&page(&done)), &HashSet::new()).tray.is_empty());
+        let done_page = page(&done);
+        assert!(view(Some(&done_page), &HashSet::new()).tray.is_empty());
+        // The whole fixture: s2 never got a result, but it is not in the last turn.
+        let all_page = page(CLAUDE_AGENTS);
+        assert!(view(Some(&all_page), &HashSet::new()).tray.is_empty());
     }
 
     #[test]
