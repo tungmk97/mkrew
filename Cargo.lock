@@ -4128,6 +4128,8 @@ dependencies = [
  "mkrew-core",
  "mkrew-daemon",
  "mkrew-protocol",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "pulldown-cmark",
  "qrcodegen",
  "raw-window-handle",

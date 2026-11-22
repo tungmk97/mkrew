@@ -1,10 +1,12 @@
 //! The OS around the main window (SPEC §20J, ADR 0064): taskbar badge and flashing, the tray
-//! icon and its menu, hiding and showing the window. Windows only; elsewhere every call does
-//! nothing (gpui-pre 0.3.7 has no dock-badge, tray or hide-window call) and `has_tray()` is false,
-//! so a closed window still quits.
+//! icon and its menu, hiding and showing the window: Windows. macOS gets the Dock badge, the
+//! Dock bounce and the About panel (SPEC §20L, ADR 0100); elsewhere every call does nothing
+//! and `has_tray()` is false.
 
 use ulid::Ulid;
 
+#[cfg(target_os = "macos")]
+mod dock;
 #[cfg(not(windows))]
 mod none;
 #[cfg(windows)]
@@ -18,6 +20,37 @@ use win32 as os;
 pub use os::Os as Desktop;
 pub use os::reduce_motion;
 pub use os::set_window_shown;
+
+/// The Dock icon's badge text for `count` sessions that need the user: `None` clears it, `99+`
+/// from 100 (a Dock badge is a few characters wide).
+pub fn badge_label(count: usize) -> Option<String> {
+    match count {
+        0 => None,
+        1..=99 => Some(count.to_string()),
+        _ => Some("99+".to_owned()),
+    }
+}
+
+/// Puts `count` on the Dock icon (macOS); nothing elsewhere.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub fn set_dock_badge(count: usize) {
+    #[cfg(target_os = "macos")]
+    dock::set_badge(badge_label(count).as_deref());
+}
+
+/// Bounces the Dock icon once (macOS) unless `window`'s app is the active one; Windows flashes
+/// the taskbar through [`Desktop::flash`], Linux does nothing.
+pub fn request_attention(window: &gpui::Window) {
+    if cfg!(target_os = "macos") {
+        window.request_attention();
+    }
+}
+
+/// The standard About panel (macOS); nothing elsewhere.
+pub fn show_about_panel() {
+    #[cfg(target_os = "macos")]
+    dock::show_about_panel();
+}
 
 /// What a click in the tray asks of the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +116,15 @@ pub fn escape_menu(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_dock_badge_is_the_count_and_clears_at_zero() {
+        assert_eq!(badge_label(0), None);
+        assert_eq!(badge_label(1).as_deref(), Some("1"));
+        assert_eq!(badge_label(99).as_deref(), Some("99"));
+        assert_eq!(badge_label(100).as_deref(), Some("99+"));
+        assert_eq!(badge_label(5000).as_deref(), Some("99+"));
+    }
 
     #[test]
     fn the_instance_key_is_per_exe_path_and_ignores_case() {

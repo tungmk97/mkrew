@@ -302,7 +302,7 @@ pub const SETTINGS: &[Setting] = &[
         "flash_taskbar",
         Bool,
         "Flash the taskbar",
-        "Windows: while an agent needs you and Mkrew is not focused.",
+        "While an agent needs you and Mkrew is not focused: Windows flashes the taskbar button, macOS bounces the Dock icon.",
     ),
     row(
         Voice,
@@ -513,6 +513,11 @@ mod tests {
 
     fn setting(id: &str) -> &'static Setting {
         SETTINGS.iter().find(|s| s.id() == id).unwrap()
+    }
+
+    #[test]
+    fn the_flash_help_names_the_dock() {
+        assert!(setting("notify.flash_taskbar").help.contains("Dock"));
     }
 
     #[test]

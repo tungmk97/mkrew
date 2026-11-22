@@ -1,5 +1,5 @@
 //! Everything but Windows: nothing to show or hide, and no tray, so `has_tray` is false and the
-//! window's ✕ quits as before (macOS dock badge: gpui-pre 0.3.7 has no call, ADR 0064).
+//! window's ✕ quits as before. The badge goes to the Dock on macOS (`desktop::set_dock_badge`).
 
 use ulid::Ulid;
 
@@ -22,7 +22,9 @@ impl Os {
         false
     }
 
-    pub fn set_badge(&mut self, _count: usize, _bg: u32, _ink: u32) {}
+    pub fn set_badge(&mut self, count: usize, _bg: u32, _ink: u32) {
+        super::set_dock_badge(count);
+    }
 
     pub fn reapply_badge(&self) {}
 

@@ -1261,6 +1261,7 @@ impl Shell {
                     && attention::entered_needs_input(event, self.sidebar.sessions())
                 {
                     self.desktop.flash(true);
+                    mkrew_ui::desktop::request_attention(window);
                 }
                 if let Some(notices) = self.machine_notices.as_mut() {
                     notices.on_event(
