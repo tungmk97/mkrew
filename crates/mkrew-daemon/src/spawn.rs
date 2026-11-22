@@ -13,15 +13,28 @@ pub fn daemon_exe() -> anyhow::Result<PathBuf> {
 
 /// `base` plus the platform's executable suffix, next to the running executable when it is a
 /// file there, else the bare name for `PATH` to find. The daemon also finds `mk` this way.
+/// Next to the real file of the executable, so an `mk` reached through a link (the macOS
+/// "Install mk command") still finds the daemon in its bundle.
 pub fn sibling_exe(base: &str) -> anyhow::Result<PathBuf> {
     let name = format!("{base}{}", std::env::consts::EXE_SUFFIX);
     let exe = std::env::current_exe().context("locate the running executable")?;
-    let sibling = exe.with_file_name(&name);
-    Ok(if sibling.is_file() {
+    Ok(sibling_of(&exe, &name))
+}
+
+fn sibling_of(exe: &std::path::Path, name: &str) -> PathBuf {
+    // Windows' `canonicalize` gives `\\?\` paths that `cmd.exe` and friends dislike; its
+    // `current_exe` is already the real file.
+    let exe = if cfg!(unix) {
+        std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf())
+    } else {
+        exe.to_path_buf()
+    };
+    let sibling = exe.with_file_name(name);
+    if sibling.is_file() {
         sibling
     } else {
         PathBuf::from(name)
-    })
+    }
 }
 
 /// Names the program to use instead of looking for `mk` (tests).
@@ -120,6 +133,34 @@ mod tests {
         assert_eq!(
             sibling_exe("no-such-program").unwrap(),
             PathBuf::from(missing)
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod sibling_tests {
+    use super::*;
+
+    #[test]
+    fn a_sibling_is_found_next_to_the_real_file_of_a_link() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle = tmp.path().join("Mkrew.app/Contents/MacOS");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("mk"), b"").unwrap();
+        std::fs::write(bundle.join("mkrew-daemon"), b"").unwrap();
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(bundle.join("mk"), bin.join("mk")).unwrap();
+        // `mk` run through /usr/local/bin/mk still finds the daemon in its bundle.
+        let found = sibling_of(&bin.join("mk"), "mkrew-daemon");
+        assert_eq!(
+            found,
+            std::fs::canonicalize(bundle.join("mkrew-daemon")).unwrap()
+        );
+        // Not next to it: the bare name for PATH to find.
+        assert_eq!(
+            sibling_of(&bin.join("mk"), "nothing-here"),
+            PathBuf::from("nothing-here")
         );
     }
 }

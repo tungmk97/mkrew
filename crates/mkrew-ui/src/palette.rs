@@ -97,6 +97,8 @@ pub struct Context {
     pub toast: bool,
     /// An update is ready to install.
     pub update_ready: bool,
+    /// Running from `Mkrew.app` (not a translocated copy): "Install mk command" has something to link.
+    pub mk_install: bool,
     /// A machine's window: Phone access and the in-app update belong to this computer's.
     pub machine: bool,
     /// The palette was opened in a detached window (ADR 0096): only its commands are listed.
@@ -155,13 +157,14 @@ pub enum Extra {
     History,
     InstallUpdate,
     AddMachine,
+    InstallMkCommand,
     /// The Appearance gallery's two buttons (ADR 0101), for the keyboard.
     NewThemeFromCurrent,
     OpenThemesFolder,
 }
 
 impl Extra {
-    pub const ALL: [Self; 49] = [
+    pub const ALL: [Self; 50] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -209,6 +212,7 @@ impl Extra {
         Self::History,
         Self::InstallUpdate,
         Self::AddMachine,
+        Self::InstallMkCommand,
         Self::NewThemeFromCurrent,
         Self::OpenThemesFolder,
     ];
@@ -265,6 +269,7 @@ impl Extra {
             Self::History => "Global: History…",
             Self::InstallUpdate => "Global: Install update",
             Self::AddMachine => "Machine: Add…",
+            Self::InstallMkCommand => "Global: Install mk command",
             Self::NewThemeFromCurrent => "Theme: New theme from current",
             Self::OpenThemesFolder => "Theme: Open themes folder",
         }
@@ -332,6 +337,7 @@ impl Extra {
             Self::DismissToasts => context.toast,
             Self::History => context.workspace,
             Self::InstallUpdate => context.update_ready,
+            Self::InstallMkCommand => context.mk_install,
         }
     }
 }

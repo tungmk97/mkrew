@@ -50,6 +50,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   The Dock badge still counts while it is hidden.
   With `[ui] close_to_tray = false` the red button asks about unsaved changes and quits; in a machine window it always quits.
 - [ ] **Hide, minimized and full screen (macOS):** minimize the main window, click the Dock icon: the window comes back (Mkrew's `on_reopen`); press the red button while in full screen: the app hides without a crash (the Space may stay; report what you see).
+- [ ] **Install mk command (macOS):** palette → "Global: Install mk command" in `Mkrew.app` from `/Applications`: a toast names the link; in a new Terminal `mk --version` works and `mk daemon status` finds the app's daemon (the link must not break its sibling lookup).
+  Run it again: no error. In a dev build (not in an app) the entry is not listed.
+- [ ] **Translocated copy (macOS):** open a freshly downloaded `Mkrew.app` straight from Downloads (before moving it): the update button opens the release page instead of failing, and "Install mk command" is not listed.
 
 ### To verify - 2026-11-22 macOS keyboard (ADR 0098)
 

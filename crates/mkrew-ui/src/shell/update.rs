@@ -223,4 +223,47 @@ impl Shell {
         self.start_machines();
         self.toast_error(format!("Update failed: {error:#}"), cx);
     }
+
+    /// Palette "Global: Install mk command" (macOS app): links the bundle's `mk` where Terminal
+    /// finds it (`/usr/local/bin`, else `~/.local/bin`); a toast says where, or why not.
+    pub(crate) fn install_mk_command(&mut self, cx: &mut Context<'_, Self>) {
+        let InstallKind::MacApp { bundle } = update::current_install() else {
+            self.toast_error(
+                "Open Mkrew from Mkrew.app in /Applications to install the mk command.".to_owned(),
+                cx,
+            );
+            return;
+        };
+        let target = bundle.join("Contents").join("MacOS").join("mk");
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let path = mkrew_core::login_path::path()
+            .map(std::ffi::OsStr::to_owned)
+            .or_else(|| std::env::var_os("PATH"));
+        let dirs = mkrew_ui::mk_install::link_dirs(home.as_deref());
+        match mkrew_ui::mk_install::install(&target, &dirs, path.as_deref()) {
+            Ok(linked) => {
+                let folder = linked
+                    .link
+                    .parent()
+                    .map_or_else(String::new, |dir| dir.display().to_string());
+                let mut text = format!("mk is linked at {}.", linked.link.display());
+                if !linked.on_path {
+                    text.push_str(&format!(
+                        " Add {folder} to your PATH to use it in Terminal."
+                    ));
+                }
+                self.toast_info(text, cx);
+            }
+            Err(error) => {
+                tracing::warn!("install the mk command: {error}");
+                self.toast_error(
+                    format!(
+                        "Cannot install mk: {error}. In Terminal: sudo ln -sf '{}' /usr/local/bin/mk",
+                        target.display()
+                    ),
+                    cx,
+                );
+            }
+        }
+    }
 }

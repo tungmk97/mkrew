@@ -65,6 +65,7 @@ pub mod machine_notify;
 pub mod machines;
 pub mod markdown;
 pub mod menu;
+pub mod mk_install;
 pub mod palette;
 pub mod pane_text;
 pub mod peek;

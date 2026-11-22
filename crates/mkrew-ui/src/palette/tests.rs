@@ -41,6 +41,7 @@ fn context(view: View) -> Context {
         last_error: false,
         toast: false,
         update_ready: false,
+        mk_install: false,
         machine: false,
         detached_window: false,
         features: FeatureSettings {
@@ -2194,4 +2195,23 @@ fn a_call_without_a_daemon_fails_in_its_own_scope() {
         };
         assert_eq!(kind, std::mem::discriminant(&wanted));
     }
+}
+
+#[test]
+fn install_mk_command_is_listed_only_in_the_mac_app() {
+    let app = Context {
+        mk_install: true,
+        workspace: false,
+        workspaces: 0,
+        tabs: 0,
+        ..context(View::Terminals)
+    };
+    assert!(Extra::InstallMkCommand.available(&app));
+    assert!(!Extra::InstallMkCommand.available(&context(View::Terminals)));
+    let listed = entries(&Keymap::defaults(), &app, &[], &[], &[]);
+    let entry = listed
+        .iter()
+        .find(|e| e.action == Action::Extra(Extra::InstallMkCommand))
+        .expect("listed without a workspace");
+    assert_eq!(entry.title, "Global: Install mk command");
 }

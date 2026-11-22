@@ -377,6 +377,10 @@ impl Shell {
             last_error: self.toasts.last_error().is_some(),
             toast: !self.toasts.items().is_empty(),
             update_ready: self.update.is_some() && !self.updating,
+            mk_install: matches!(
+                mkrew_ui::update::current_install(),
+                mkrew_ui::update::InstallKind::MacApp { .. }
+            ),
             machine: self.target.is_machine(),
             detached_window: window_key.is_some(),
             features: self.features,
@@ -804,6 +808,7 @@ impl Shell {
                 cx.notify();
             }
             palette::Action::Extra(Extra::InstallUpdate) => self.start_update(window, cx),
+            palette::Action::Extra(Extra::InstallMkCommand) => self.install_mk_command(cx),
             palette::Action::RunCommand(action, index) => {
                 let Some(project_id) = workspace else {
                     return;
@@ -975,7 +980,10 @@ impl Shell {
                     Extra::JiraRefresh => self.load_jira(project_id, window, cx),
                     Extra::History => self.show_history(project_id, window, cx),
                     // Handled above: they need no workspace.
-                    Extra::CopyLastError | Extra::DismissToasts | Extra::InstallUpdate => {}
+                    Extra::CopyLastError
+                    | Extra::DismissToasts
+                    | Extra::InstallUpdate
+                    | Extra::InstallMkCommand => {}
                     // Handled above: it needs no workspace.
                     Extra::PhoneAccess => self.open_phone_access(window, cx),
                     // Handled above: it needs no workspace.
