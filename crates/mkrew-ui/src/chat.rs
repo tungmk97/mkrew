@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use mkrew_core::thread::{PlanStatus, PlanStep, ToolCall};
+use mkrew_core::thread::{PlanStatus, PlanStep, Subagent, ToolCall};
 use mkrew_protocol::SessionKind;
 use ulid::Ulid;
 
@@ -180,11 +180,19 @@ fn plan_rows(steps: &[PlanStep]) -> Vec<PlanRow<'_>> {
         .collect()
 }
 
-/// Whether a subagent of any kept turn still runs.
+/// A subagent that still runs: one of the newest turn, or a background one of an older turn
+/// (a foreground call of an older turn that never got its result was cut off, not running).
+fn runs(subagent: &Subagent, newest_turn: bool) -> bool {
+    !subagent.done && (newest_turn || subagent.background)
+}
+
+/// Whether a subagent of the kept turns still runs.
 pub fn subagent_runs(page: &Page) -> bool {
+    let last = page.turns.len().saturating_sub(1);
     page.turns
         .iter()
-        .any(|turn| turn.subagents.iter().any(|subagent| !subagent.done))
+        .enumerate()
+        .any(|(index, turn)| (turn.subagents.iter()).any(|subagent| runs(subagent, index == last)))
 }
 
 /// Whether `text` is a tool or thinking body that was cut (the reader's marker ends it).
@@ -192,8 +200,8 @@ pub fn body_cut(text: &str) -> bool {
     text.ends_with(mkrew_core::thread::CUT)
 }
 
-/// While a subagent of any kept turn runs: the running ones of every turn, and the newest
-/// turn's finished ones beside them. Nothing once none runs.
+/// While a subagent runs: the running ones of the kept turns, and the newest turn's finished
+/// ones beside them. Nothing once none runs.
 fn tray(page: &Page) -> Vec<Chip<'_>> {
     if !subagent_runs(page) {
         return Vec::new();
@@ -203,9 +211,10 @@ fn tray(page: &Page) -> Vec<Chip<'_>> {
         .iter()
         .enumerate()
         .flat_map(|(index, turn)| {
+            let newest = index == last;
             turn.subagents
                 .iter()
-                .filter(move |subagent| !subagent.done || index == last)
+                .filter(move |subagent| newest || runs(subagent, false))
         })
         .map(|subagent| Chip {
             description: &subagent.description,
@@ -532,12 +541,10 @@ mod tests {
             + "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"s2\",\"content\":\"ok\"}]}}\n";
         let done_page = page(&done);
         assert!(view(Some(&done_page), &HashSet::new()).tray.is_empty());
-        // The whole fixture: s2 never got a result and still runs, though in an older turn.
+        // The whole fixture: s2 never got a result, but it is a foreground call of an older turn.
         let all_page = page(CLAUDE_AGENTS);
-        assert_eq!(
-            view(Some(&all_page), &HashSet::new()).tray,
-            [chip("Review the diff", "reviewer", false)]
-        );
+        assert!(view(Some(&all_page), &HashSet::new()).tray.is_empty());
+        assert!(!subagent_runs(&all_page));
     }
 
     #[test]

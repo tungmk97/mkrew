@@ -109,6 +109,8 @@ pub struct Subagent {
     pub subagent_type: String,
     /// Its result arrived.
     pub done: bool,
+    /// Launched in the background (its result said so): it can outlive its turn.
+    pub background: bool,
     /// The id of a background launch (`toolUseResult.agentId`), to match its notification.
     pub agent_id: Option<String>,
 }
@@ -483,11 +485,9 @@ impl Turn {
             }
             let call = &mut calls[old];
             call.input.clear();
-            let is_error = call.result.as_ref().is_some_and(|r| r.is_error);
-            call.result = Some(ToolResult {
-                text: CUT.to_owned(),
-                is_error,
-            });
+            if let Some(result) = &mut call.result {
+                result.text = CUT.to_owned();
+            }
             return;
         }
     }
@@ -552,6 +552,7 @@ impl Turn {
         }
         for subagent in self.subagents.iter_mut().filter(|s| s.id == id) {
             if launched {
+                subagent.background = true;
                 subagent.agent_id.clone_from(&agent_id);
             } else {
                 subagent.done = true;
@@ -875,6 +876,7 @@ fn claude_tool(block: &Value) -> Vec<Line> {
                 .unwrap_or_default()
                 .to_owned(),
             done: false,
+            background: false,
             agent_id: None,
         })),
         _ => {}
@@ -1625,6 +1627,7 @@ mod tests {
             description: description.into(),
             subagent_type: kind.into(),
             done,
+            background: false,
             agent_id: None,
         };
         assert_eq!(
@@ -1958,6 +1961,39 @@ mod tests {
             let done = reader.turns()[0].subagents[0].done;
             assert_eq!(done, ends, "status {status}");
         }
+    }
+
+    /// A pending call pushed out of the newest calls stays pending (`None`), so it is not
+    /// shown as a finished call with a cut result.
+    #[test]
+    fn a_pending_call_pushed_out_stays_pending() {
+        let mut text = String::from(
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"go\"}}\n",
+        );
+        for i in 0..=DETAILED_CALLS {
+            text.push_str(&format!(
+                "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"tool_use\",\"id\":\"t{i}\",\"name\":\"Read\",\"input\":{{\"file_path\":\"f{i}\"}}}}]}}}}\n"
+            ));
+        }
+        let reader = read(UsageFormat::ClaudeJsonl, text.as_bytes());
+        let calls = calls(&reader.turns()[0]);
+        assert_eq!(calls[0].input, "");
+        assert_eq!(calls[0].result, None);
+    }
+
+    #[test]
+    fn only_background_launches_are_marked_background() {
+        let mut reader = claude();
+        reader.feed(&slice(CLAUDE_BACKGROUND, 0, 6));
+        let flags: Vec<_> = reader.turns()[0]
+            .subagents
+            .iter()
+            .map(|s| (s.id.as_str(), s.background))
+            .collect();
+        assert_eq!(
+            flags,
+            [("bg1", true), ("bg2", true), ("bg3", true), ("fg1", false)]
+        );
     }
 
     /// Only the newest `DETAILED_CALLS` calls of a turn keep their arguments and result; older

@@ -92,8 +92,10 @@ impl ThreadFile {
     }
 
     /// The turns as the panel shows them.
-    // ponytail: re-parses every kept turn's Markdown on each change (at most 50 turns); cache
-    // by text if it ever shows in a profile.
+    // ponytail: re-parses every kept turn's Markdown and clones every kept call on each change.
+    // Bound: <= 50 turns x 50 detailed calls x ~12 KB (the reader's `DETAILED_CALLS`) copied
+    // per build, off the UI thread. Upgrade path: a revision per turn in the reader and
+    // `Arc<PageTurn>` reuse of the turns that did not change.
     pub fn page(&self) -> Page {
         Page {
             turns: self
