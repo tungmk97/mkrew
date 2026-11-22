@@ -219,106 +219,105 @@ fn main() {
         }
     };
     let opening = Opening { target, id, jump };
-    gpui_platform::application()
-        .with_assets(icons::Assets)
-        .run(move |cx: &mut App| {
-            cx.set_global(ActiveKeymap(keymap.clone()));
-            cx.set_global(shell::app_menu::LocalWindow(!opening.target.is_machine()));
+    let app = gpui_platform::application().with_assets(icons::Assets);
+    // macOS: a click on the Dock icon while the app is hidden brings the main window back.
+    app.on_reopen(shell::app_menu::reopen);
+    app.run(move |cx: &mut App| {
+        cx.set_global(ActiveKeymap(keymap.clone()));
+        cx.set_global(shell::app_menu::LocalWindow(!opening.target.is_machine()));
+        shell::app_menu::bind_all(&keymap, cx);
+        shell::app_menu::register(cx);
+        cx.set_global(MenuAnchors::default());
+        // gpui draws animations in their end state while this is set (ADR 0097).
+        cx.set_reduce_motion(mkrew_ui::desktop::reduce_motion());
+        // Which char a shifted digit reports depends on the layout: bind again after a switch
+        // (e.g. US ↔ Vietnamese), or Ctrl+Shift+1..5 stop working until a restart.
+        cx.on_keyboard_layout_change(|cx| {
+            let keymap = cx.global::<ActiveKeymap>().0.clone();
             shell::app_menu::bind_all(&keymap, cx);
-            shell::app_menu::register(cx);
-            cx.set_global(MenuAnchors::default());
-            // gpui draws animations in their end state while this is set (ADR 0097).
-            cx.set_reduce_motion(mkrew_ui::desktop::reduce_motion());
-            // Which char a shifted digit reports depends on the layout: bind again after a switch
-            // (e.g. US ↔ Vietnamese), or Ctrl+Shift+1..5 stop working until a restart.
-            cx.on_keyboard_layout_change(|cx| {
-                let keymap = cx.global::<ActiveKeymap>().0.clone();
-                shell::app_menu::bind_all(&keymap, cx);
-            })
-            .detach();
-            // A broken file: the defaults until it is fixed (the daemon reports it, §20.0).
-            let settings = mkrew_core::settings::load(&paths.settings_file()).unwrap_or_default();
-            cx.set_global(theme::Fonts::from_settings(
-                &settings,
-                &cx.text_system().all_font_names(),
-            ));
-            cx.set_global(theme::ThemeNames::from_settings(&settings));
-            cx.set_global(mkrew_ui::terminal::input::KeyEnv::current(
-                settings.terminal.option_as_meta,
-            ));
-            // Theme files are read once here (the status tick reads them again when they change).
-            cx.set_global(ThemeCatalog::load(&paths.themes_dir()));
-            // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
-            cx.set_prompt_builder(shell::confirm_prompt::build);
-            // The place the window was left (a machine window has its own file).
-            let instance = opening.target.is_machine().then_some(opening.id.as_str());
-            let frame = detached::load_frame(&paths.data_dir.join(detached::main_file(instance)));
-            let displays: Vec<Bounds<Pixels>> = cx
-                .displays()
-                .iter()
-                .map(|display| display.visible_bounds())
-                .collect();
-            let primary = cx.primary_display().map(|display| display.visible_bounds());
-            let window_bounds = match frame {
-                Some(frame) => window_place::restored(
-                    window_place::saved_rect(&frame.bounds),
-                    Placement::from_flags(frame.maximized, frame.fullscreen),
-                    size(px(theme::WINDOW_MIN_WIDTH), px(theme::WINDOW_MIN_HEIGHT)),
-                    &displays,
-                    primary,
-                ),
-                None => WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    size(px(theme::WINDOW_WIDTH), px(theme::WINDOW_HEIGHT)),
-                    cx,
-                )),
-            };
-            let options = WindowOptions {
-                window_bounds: Some(window_bounds),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(title.into()),
-                    appears_transparent: CUSTOM_TITLE_BAR,
-                    traffic_light_position: theme::traffic_light_pos(
-                        Os::CURRENT,
-                        cx.global::<theme::Fonts>().ui_size,
-                    )
-                    .map(|(x, y)| point(px(x), px(y))),
-                }),
-                window_min_size: Some(size(
-                    px(theme::WINDOW_MIN_WIDTH),
-                    px(theme::WINDOW_MIN_HEIGHT),
-                )),
-                // macOS: we move the window from our own bar, so AppKit must not delay the click.
-                app_owns_titlebar_drag: cfg!(target_os = "macos"),
-                ..Default::default()
-            };
-            let mode = settings.ui.theme;
-            let opened = cx.open_window(options, |window, cx| {
-                theme::refresh(mode, window, cx);
-                cx.new(|cx| {
-                    Shell::new(launched, paths, keymap, &keymap_errors, opening, window, cx)
-                })
-            });
-            let main = match opened {
-                Ok(main) => main,
-                Err(error) => {
-                    eprintln!("mkrew: cannot open window: {error:#}");
-                    cx.quit();
-                    return;
-                }
-            };
-            cx.set_global(shell::app_menu::MainWindow(main));
-            // Sessions live in the daemon, so closing the main window ends the app, detached
-            // windows included (they come back on the next start, ADR 0096).
-            let main_id = main.window_id();
-            cx.on_window_closed(move |cx, closed| {
-                if closed == main_id || cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
-            cx.activate(true);
+        })
+        .detach();
+        // A broken file: the defaults until it is fixed (the daemon reports it, §20.0).
+        let settings = mkrew_core::settings::load(&paths.settings_file()).unwrap_or_default();
+        cx.set_global(theme::Fonts::from_settings(
+            &settings,
+            &cx.text_system().all_font_names(),
+        ));
+        cx.set_global(theme::ThemeNames::from_settings(&settings));
+        cx.set_global(mkrew_ui::terminal::input::KeyEnv::current(
+            settings.terminal.option_as_meta,
+        ));
+        // Theme files are read once here (the status tick reads them again when they change).
+        cx.set_global(ThemeCatalog::load(&paths.themes_dir()));
+        // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
+        cx.set_prompt_builder(shell::confirm_prompt::build);
+        // The place the window was left (a machine window has its own file).
+        let instance = opening.target.is_machine().then_some(opening.id.as_str());
+        let frame = detached::load_frame(&paths.data_dir.join(detached::main_file(instance)));
+        let displays: Vec<Bounds<Pixels>> = cx
+            .displays()
+            .iter()
+            .map(|display| display.visible_bounds())
+            .collect();
+        let primary = cx.primary_display().map(|display| display.visible_bounds());
+        let window_bounds = match frame {
+            Some(frame) => window_place::restored(
+                window_place::saved_rect(&frame.bounds),
+                Placement::from_flags(frame.maximized, frame.fullscreen),
+                size(px(theme::WINDOW_MIN_WIDTH), px(theme::WINDOW_MIN_HEIGHT)),
+                &displays,
+                primary,
+            ),
+            None => WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(theme::WINDOW_WIDTH), px(theme::WINDOW_HEIGHT)),
+                cx,
+            )),
+        };
+        let options = WindowOptions {
+            window_bounds: Some(window_bounds),
+            titlebar: Some(TitlebarOptions {
+                title: Some(title.into()),
+                appears_transparent: CUSTOM_TITLE_BAR,
+                traffic_light_position: theme::traffic_light_pos(
+                    Os::CURRENT,
+                    cx.global::<theme::Fonts>().ui_size,
+                )
+                .map(|(x, y)| point(px(x), px(y))),
+            }),
+            window_min_size: Some(size(
+                px(theme::WINDOW_MIN_WIDTH),
+                px(theme::WINDOW_MIN_HEIGHT),
+            )),
+            // macOS: we move the window from our own bar, so AppKit must not delay the click.
+            app_owns_titlebar_drag: cfg!(target_os = "macos"),
+            ..Default::default()
+        };
+        let mode = settings.ui.theme;
+        let opened = cx.open_window(options, |window, cx| {
+            theme::refresh(mode, window, cx);
+            cx.new(|cx| Shell::new(launched, paths, keymap, &keymap_errors, opening, window, cx))
         });
+        let main = match opened {
+            Ok(main) => main,
+            Err(error) => {
+                eprintln!("mkrew: cannot open window: {error:#}");
+                cx.quit();
+                return;
+            }
+        };
+        cx.set_global(shell::app_menu::MainWindow(main));
+        // Sessions live in the daemon, so closing the main window ends the app, detached
+        // windows included (they come back on the next start, ADR 0096).
+        let main_id = main.window_id();
+        cx.on_window_closed(move |cx, closed| {
+            if closed == main_id || cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
+        cx.activate(true);
+    });
 }
 
 /// What the window connects to.

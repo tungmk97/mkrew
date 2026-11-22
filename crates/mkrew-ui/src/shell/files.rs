@@ -602,26 +602,37 @@ impl Shell {
         .detach();
     }
 
-    /// The window's close button (§2.5, §20J): with `[ui] close_to_tray` on and a tray icon to
-    /// bring it back, the window only hides (Files changes stay in memory); otherwise unsaved
-    /// Files changes ask first, one file at a time, and the window closes once none are left.
-    /// The workspace that holds them is shown first, so a refused save is visible.
+    /// The window's close button (§2.5, §20J, §20L): with `[ui] close_to_tray` on and something
+    /// to bring it back (the tray icon on Windows, the Dock icon on macOS) the window only
+    /// hides (Files changes stay in memory); otherwise unsaved Files changes ask first, one
+    /// file at a time, and the window closes once none are left. The workspace that holds them
+    /// is shown first, so a refused save is visible.
     pub(crate) fn window_should_close(
         &mut self,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> bool {
-        if attention::hide_on_close(self.close_to_tray, self.desktop.has_tray()) {
+        let can_hide = mkrew_ui::desktop::can_hide_on_close(Os::CURRENT, self.desktop.has_tray());
+        if attention::hide_on_close(self.close_to_tray, can_hide) {
             self.desktop.hide_window();
             self.set_detached_shown(false, cx);
+            // macOS: gpui cannot hide one window, so the app hides like Cmd+H. Off this update:
+            // `hide` makes AppKit call back into the windows while gpui still holds the app.
+            if Os::CURRENT == Os::Mac {
+                cx.spawn(async move |this, cx| {
+                    let _ = this.update(cx, |_, cx| cx.hide());
+                })
+                .detach();
+            }
             return false;
         }
         let again: AfterSave = Box::new(|shell, window, cx| shell.close_when_saved(window, cx));
         if self.ask_unsaved(again, window, cx) {
             return false;
         }
-        // No tray to hide to (macOS, Linux): closing this window ends Mkrew, so the machine
-        // windows are asked to quit here, not left to the drop of the `Shell`.
+        // Not hiding (Linux, a machine window, or `close_to_tray` off): closing this window ends
+        // Mkrew, so the machine windows are asked to quit here, not left to the drop of the
+        // `Shell`.
         self.save_before_exit(cx);
         true
     }

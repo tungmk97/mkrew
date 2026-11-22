@@ -70,3 +70,10 @@ pub(crate) fn register(cx: &mut App) {
     })
     .detach();
 }
+
+/// A click on the Dock icon while no window shows (macOS `applicationShouldHandleReopen`): the
+/// main window comes back, as from the tray on Windows.
+pub(crate) fn reopen(cx: &mut App) {
+    cx.activate(true);
+    with_main(cx, |shell, window, cx| shell.restore_window(window, cx));
+}

@@ -126,7 +126,7 @@ pub const SETTINGS: &[Setting] = &[
         "close_to_tray",
         Bool,
         "Close to tray",
-        "Windows: the window's ✕ hides Mkrew to the tray icon.",
+        "The window's ✕ hides Mkrew instead of quitting: to the tray icon on Windows, like Cmd+H on macOS (the Dock icon brings it back).",
     ),
     row(
         General,
@@ -513,6 +513,12 @@ mod tests {
 
     fn setting(id: &str) -> &'static Setting {
         SETTINGS.iter().find(|s| s.id() == id).unwrap()
+    }
+
+    #[test]
+    fn the_close_help_names_macos() {
+        let help = setting("ui.close_to_tray").help;
+        assert!(help.contains("macOS") && help.contains("Dock"), "{help}");
     }
 
     #[test]

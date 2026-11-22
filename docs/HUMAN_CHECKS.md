@@ -46,6 +46,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   A machine window (`mkrew --machine`) has no Check for Updates….
 - [ ] **Quit and hide keys (macOS):** ⌘Q with an unsaved Files edit asks "Save changes?" first and then quits (agents keep running); ⌘H hides the app, the Dock icon shows it; ⌘M minimizes; Settings… opens the dialog; Copy in the Edit menu copies a terminal selection.
 - [ ] **Dock → Quit (macOS, known gap):** with an unsaved Files edit, Dock → Quit ends Mkrew without asking and the edit is lost; the detached windows come back at the next start.
+- [ ] **Red button (macOS):** the red button hides Mkrew; a click on the Dock icon (or Cmd+Tab) shows it again with the same panes, scrollback and an unsaved Files edit, and detached windows come back with it.
+  The Dock badge still counts while it is hidden.
+  With `[ui] close_to_tray = false` the red button asks about unsaved changes and quits; in a machine window it always quits.
+- [ ] **Hide, minimized and full screen (macOS):** minimize the main window, click the Dock icon: the window comes back (Mkrew's `on_reopen`); press the red button while in full screen: the app hides without a crash (the Space may stay; report what you see).
 
 ### To verify - 2026-11-22 macOS keyboard (ADR 0098)
 

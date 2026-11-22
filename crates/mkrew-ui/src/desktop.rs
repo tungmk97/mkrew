@@ -5,6 +5,8 @@
 
 use ulid::Ulid;
 
+use crate::keymap::Os;
+
 #[cfg(target_os = "macos")]
 mod dock;
 #[cfg(not(windows))]
@@ -29,6 +31,12 @@ pub fn badge_label(count: usize) -> Option<String> {
         1..=99 => Some(count.to_string()),
         _ => Some("99+".to_owned()),
     }
+}
+
+/// Whether the window's ✕ may hide it instead of quitting: something must bring it back, the
+/// tray icon (Windows, `tray_shown`) or the Dock icon (macOS, `on_reopen`).
+pub fn can_hide_on_close(os: Os, tray_shown: bool) -> bool {
+    os == Os::Mac || tray_shown
 }
 
 /// Puts `count` on the Dock icon (macOS); nothing elsewhere.
@@ -116,6 +124,21 @@ pub fn escape_menu(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keymap::Os;
+
+    #[test]
+    fn only_a_mac_may_hide_on_close_without_a_tray() {
+        assert!(
+            can_hide_on_close(Os::Mac, false),
+            "the Dock icon brings it back"
+        );
+        assert!(
+            !can_hide_on_close(Os::Windows, false),
+            "no tray icon: never hide into nothing"
+        );
+        assert!(!can_hide_on_close(Os::Linux, false));
+        assert!(can_hide_on_close(Os::Windows, true));
+    }
 
     #[test]
     fn the_dock_badge_is_the_count_and_clears_at_zero() {

@@ -1,5 +1,7 @@
-//! Everything but Windows: nothing to show or hide, and no tray, so `has_tray` is false and the
-//! window's ✕ quits as before. The badge goes to the Dock on macOS (`desktop::set_dock_badge`).
+//! Everything but Windows: nothing to show or hide, and no tray, so `has_tray` is false. On
+//! macOS the window's ✕ hides the app anyway (`desktop::can_hide_on_close`, the Dock icon
+//! brings it back); elsewhere it quits. The badge goes to the Dock on macOS
+//! (`desktop::set_dock_badge`).
 
 use ulid::Ulid;
 
