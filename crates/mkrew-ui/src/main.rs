@@ -139,6 +139,7 @@ use ulid::Ulid;
 mod shell;
 use shell::board::*;
 use shell::cards::*;
+use shell::chat_view::*;
 use shell::files_render::*;
 use shell::files_split;
 use shell::git_diff::*;
@@ -176,6 +177,11 @@ fn main() {
         .with_writer(std::io::stderr)
         .with_env_filter(filter)
         .init();
+    // Before GPUI starts any thread (`set_var`); the daemon this UI starts inherits it.
+    #[cfg(target_os = "macos")]
+    if let Some(path) = mkrew_core::lookup::adopt_login_shell_path() {
+        tracing::info!("PATH from the login shell: {}", path.to_string_lossy());
+    }
     let paths = match Paths::from_env() {
         Ok(paths) => paths,
         Err(error) => {
@@ -428,6 +434,13 @@ struct FileTabMenu {
     position: gpui::Point<gpui::Pixels>,
 }
 
+/// The open right-click menu of the widget bar (ADR 0102): one checkable row per widget and
+/// "Hide widget bar".
+struct WidgetMenu {
+    /// Window position of the click.
+    position: gpui::Point<gpui::Pixels>,
+}
+
 /// The menu of a Board card (SPEC §10): its hover buttons as rows, for the keyboard.
 struct CardMenu {
     task_id: Ulid,
@@ -582,6 +595,8 @@ struct Shell {
     file_menu: Option<FileMenu>,
     /// The open right-click menu of a Files tab.
     file_tab_menu: Option<FileTabMenu>,
+    /// The open right-click menu of the widget bar.
+    widget_menu: Option<WidgetMenu>,
     /// The open tab menu (Pin, Split right / down, Rename, Close).
     tab_menu: Option<TabMenu>,
     /// The open menu of a Board card (Shift+F10 on the selected card).
@@ -629,6 +644,9 @@ struct Shell {
     /// its own choice here (in memory only). Shell and run panes default to full width.
     reading_default: bool,
     reading_width: HashMap<Ulid, bool>,
+    /// `[ui] chat_default` (ADR 0104): the mode of an agent pane whose layout leaf has no
+    /// saved mode.
+    chat_default: bool,
     /// The run tab to show once its `tab.updated` arrives (it may trail `project.run_start`).
     run_reveal: Option<Ulid>,
     /// Ports of live run sessions (SPEC §10).
@@ -694,6 +712,13 @@ struct Shell {
     jira_scroll: ScrollHandle,
     /// The Board shows every workspace's tasks (`[ui] board_all_workspaces`, SPEC §10).
     board_all: bool,
+    /// `[ui] widget_bar` (ADR 0102): the thin bar at the bottom of the main window.
+    widget_bar: bool,
+    /// `[ui] widgets_hidden`: ids of the bar's hidden widgets (ids this build does not know
+    /// are kept).
+    widgets_hidden: Vec<String>,
+    /// The agent limits and machine stats the bar shows (events and `limits.get`).
+    widget_data: mkrew_ui::widget_bar::WidgetData,
     /// The card Ctrl+Enter runs (clicked last).
     selected_card: Option<Ulid>,
     /// Tasks whose `task.run` is in flight (Run is disabled meanwhile).
@@ -735,9 +760,15 @@ struct Shell {
     /// The right panel (Files / Session / Git tabs) next to Terminals, the Editor and the Diff;
     /// from `[ui] right_panel`, written by its toggle and tab row (SPEC §10, ADR 0081, ADR 0084).
     right_panel: inspector::RightPanel,
-    /// The session panel's Thread section (ADR 0057): the shown session's reading. `None`
-    /// while the panel is closed or shows no agent with a native id.
+    /// The transcripts being read, one per session (ADR 0104): the session panel's Thread
+    /// section and every pane in Chat mode share them.
+    reads: HashMap<Ulid, ThreadRead>,
+    /// The session panel's Thread section UI state.
     thread: Option<ThreadWatch>,
+    /// What each pane in Chat mode remembers (open rows, scroll), ADR 0104.
+    chats: HashMap<Ulid, ChatUi>,
+    /// Focused while a pane's chat list has the keyboard (the composer has its own).
+    chat_focus: FocusHandle,
     /// Its width in px, from `[ui] inspector_width` and the drag.
     inspector_width: f32,
     /// The edge was dragged since the last mouse-up: the width is saved when it ends.
@@ -1278,5 +1309,6 @@ impl Render for Shell {
                     )
                     .children(self.render_voice_pill(&theme, cx)),
             )
+            .children(self.render_widget_bar(window, &theme, cx))
     }
 }

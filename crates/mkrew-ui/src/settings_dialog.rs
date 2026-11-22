@@ -52,6 +52,9 @@ pub const NAV: [(&str, &[Tab]); 3] = [
     ("Input", &[Tab::Keyboard, Tab::Prompts]),
 ];
 
+/// Where the limits widget opens Settings: the first page of the Integrations group.
+pub const INTEGRATIONS_TAB: Tab = Tab::Settings(Page::Jira);
+
 impl Tab {
     pub fn all() -> Vec<Tab> {
         NAV.iter()
@@ -735,7 +738,7 @@ impl SettingsDialog {
                     });
                     Effect::None
                 }
-                Kind::Font | Kind::List(_) => Effect::None,
+                Kind::Font | Kind::List(_) | Kind::Strings => Effect::None,
                 // Enter in a text row: write it and keep editing.
                 Kind::Text | Kind::Number => {
                     let effect = self.commit_draft();
@@ -2505,6 +2508,13 @@ mod tests {
     }
 
     #[test]
+    fn the_limits_widget_opens_the_first_page_of_the_integrations_group() {
+        let (title, tabs) = NAV[1];
+        assert_eq!(title, "Integrations");
+        assert_eq!(tabs[0], INTEGRATIONS_TAB);
+    }
+
+    #[test]
     fn search_matches_label_help_key_and_page() {
         let ids = |q: &str| -> Vec<String> { search(q).iter().map(|h| h.setting.id()).collect() };
         assert!(
@@ -2663,7 +2673,7 @@ mod tests {
         let rows = d.rows(&keymap);
         let groups = grouped(&rows, false);
         let titles: Vec<&str> = groups.iter().map(|g| g.title).collect();
-        assert_eq!(titles, ["Theme", "Fonts", "Diffs", "Markdown"]);
+        assert_eq!(titles, ["Theme", "Fonts", "Diffs", "Markdown", "Window"]);
         let indices: Vec<usize> = groups
             .iter()
             .flat_map(|g| g.rows.iter().map(|(i, _)| *i))

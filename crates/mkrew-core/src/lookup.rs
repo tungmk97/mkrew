@@ -26,6 +26,72 @@ pub fn find(program: &OsStr) -> Option<PathBuf> {
     resolve(program, path.as_deref(), pathext.as_deref())
 }
 
+/// The `PATH` launchd gives apps started from Finder, the Dock or a non-interactive ssh.
+#[cfg(target_os = "macos")]
+const LAUNCHD_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+/// Printed before the shell's `PATH`, so rc-file output can be told apart from it.
+#[cfg(target_os = "macos")]
+const PATH_MARKER: &str = "__MKREW_PATH__";
+
+/// macOS: when this process has launchd's bare `PATH` (no Homebrew, npm, `~/.local/bin`), take
+/// the user's login shell's `PATH` instead, as a terminal would, so `omp`/`claude`/`zed` are
+/// found and children inherit it. Returns the adopted `PATH`; `None` when this process already
+/// had a real one or the shell gave none. Must run before any other thread starts
+/// (`set_var`).
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+pub fn adopt_login_shell_path() -> Option<OsString> {
+    if std::env::var_os("PATH").is_some_and(|p| p != LAUNCHD_PATH) {
+        return None;
+    }
+    let path = login_shell_path()?;
+    // SAFETY: callers run this first thing in `main`, before any thread exists.
+    unsafe { std::env::set_var("PATH", &path) };
+    Some(path)
+}
+
+/// `PATH` as seen by `$SHELL -l -i` (interactive too: many users set it in `.zshrc`).
+#[cfg(target_os = "macos")]
+fn login_shell_path() -> Option<OsString> {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    let shell = std::env::var_os("SHELL")
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/bin/zsh".into());
+    let mut child = Command::new(shell)
+        .args(["-l", "-i", "-c"])
+        // `printenv`, not `$PATH`: same output in zsh, bash and fish.
+        .arg(format!("printf %s {PATH_MARKER}; /usr/bin/printenv PATH"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    // A slow or stuck rc file must not hang startup.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while child.try_wait().ok()?.is_none() {
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let mut out = Vec::new();
+    std::io::Read::read_to_end(&mut child.stdout.take()?, &mut out).ok()?;
+    parse_shell_path(&out)
+}
+
+/// The `PATH` line after the last [`PATH_MARKER`] in the shell's output.
+#[cfg(target_os = "macos")]
+fn parse_shell_path(out: &[u8]) -> Option<OsString> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let marker = PATH_MARKER.as_bytes();
+    let start = out.windows(marker.len()).rposition(|w| w == marker)? + marker.len();
+    let path = out[start..].split(|&b| b == b'\n').next()?;
+    (!path.is_empty()).then(|| OsStr::from_bytes(path).to_owned())
+}
+
 /// Finds `program` the way a shell would. `pathext` set = Windows rules: a name without an
 /// extension only matches with one of the `PATHEXT` extensions (then `.ps1`), never bare.
 /// A name containing a path separator is checked as given, not searched on `path`.
@@ -151,5 +217,17 @@ mod tests {
         let path = Some(dir.path().as_os_str());
         assert_eq!(resolve(OsStr::new("claude"), path, None), Some(bare));
         assert_eq!(resolve(OsStr::new("codex"), path, None), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn shell_path_is_read_after_rc_file_noise() {
+        let out = b"Last login: today\n__MKREW_PATH__/opt/homebrew/bin:/usr/bin\nbye\n";
+        assert_eq!(
+            parse_shell_path(out),
+            Some(OsString::from("/opt/homebrew/bin:/usr/bin"))
+        );
+        assert_eq!(parse_shell_path(b"__MKREW_PATH__\n"), None);
+        assert_eq!(parse_shell_path(b"/usr/bin\n"), None);
     }
 }

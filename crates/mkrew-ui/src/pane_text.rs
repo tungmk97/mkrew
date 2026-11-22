@@ -30,6 +30,64 @@ pub fn pill_text(
     }
 }
 
+/// What a compact pane header has room for besides the agent chip and the status pill (it
+/// ellipsizes): as the pane narrows, the context share goes first, then `Share`, then the
+/// reading width toggle, then the `Terminal | Chat` switch (Ctrl+Alt+T still switches).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeaderRoom {
+    pub context: bool,
+    pub share: bool,
+    pub reading: bool,
+    pub switch: bool,
+}
+
+impl HeaderRoom {
+    /// Room for every part (the tab bar of a single pane).
+    pub const ALL: Self = Self {
+        context: true,
+        share: true,
+        reading: true,
+        switch: true,
+    };
+}
+
+// ponytail: widths in em of the UI font, measured once in logical px at 13 px, not with the
+// text system; a part drops whole, so an error only moves the moment it drops. Measure if one
+// drops visibly early or late.
+const CHIP_EM: f32 = 1.85;
+const PILL_MIN_EM: f32 = 4.0;
+const SWITCH_EM: f32 = 10.15;
+const READING_EM: f32 = 2.0;
+const SHARE_EM: f32 = 4.6;
+const CHAR_EM: f32 = 0.46;
+
+/// [`HeaderRoom`] of a header `width` px wide at `em` px per em; `context_chars` is the length
+/// of the context share label (0 without one), `switch` whether the pane offers
+/// `Terminal | Chat`.
+pub fn header_room(width: f32, em: f32, context_chars: usize, switch: bool) -> HeaderRoom {
+    let gap = crate::theme::space::S;
+    // The padding on both sides, then the chip, the (maybe empty) title and the pill.
+    let mut used = 2.0 * gap + (CHIP_EM + PILL_MIN_EM) * em + 2.0 * gap;
+    let mut fits = |part_em: f32| {
+        let part = gap + part_em * em;
+        let fits = used + part <= width;
+        if fits {
+            used += part;
+        }
+        fits
+    };
+    let switch = switch.then(|| fits(SWITCH_EM));
+    let reading = switch != Some(false) && fits(READING_EM);
+    let share = reading && fits(SHARE_EM);
+    let context = share && context_chars > 0 && fits(context_chars as f32 * CHAR_EM);
+    HeaderRoom {
+        context,
+        share,
+        reading,
+        switch: switch == Some(true),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use mkrew_protocol::{SessionState, SessionTurnEvent, Task, TaskStatus, TurnFile};
@@ -109,5 +167,37 @@ mod tests {
             pill_text(SessionState::Done, None, since, now, Some(&turn)),
             "Done · 1 file · 4m"
         );
+    }
+
+    /// A narrowing header drops the context share, then Share, then the reading toggle, then
+    /// the switch; a wider font needs more room.
+    #[test]
+    fn a_narrow_header_drops_its_parts_in_order() {
+        let room = |width: f32, switch: bool| {
+            let r = header_room(width, 13.0, 7, switch);
+            (r.switch, r.reading, r.share, r.context)
+        };
+        assert_eq!(room(2_000.0, true), (true, true, true, true));
+        // Each part drops at one width only, in order, and never comes back wider.
+        let mut seen: Vec<_> = (0..2_000).map(|w| room(w as f32, true)).collect();
+        seen.dedup();
+        assert_eq!(
+            seen,
+            [
+                (false, false, false, false),
+                (true, false, false, false),
+                (true, true, false, false),
+                (true, true, true, false),
+                (true, true, true, true),
+            ]
+        );
+        // The 304 px split pane seen in the smoke keeps the switch and the reading toggle; a
+        // pane without the switch uses its room for the others.
+        assert_eq!(room(304.0, true), (true, true, false, false));
+        assert_eq!(room(304.0, false), (false, true, true, true));
+        let wide_font = header_room(500.0, 20.0, 7, true);
+        assert!(room(500.0, true).3 && !wide_font.context);
+        // Without a context share nothing is kept for it.
+        assert!(!header_room(2_000.0, 13.0, 0, true).context);
     }
 }

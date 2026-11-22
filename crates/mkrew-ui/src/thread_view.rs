@@ -4,7 +4,7 @@
 //! caller polls about once a second.
 
 use mkrew_core::UsageFormat;
-use mkrew_core::thread::{Item, ThreadReader, ToolCall};
+use mkrew_core::thread::{Item, PlanStep, Question, Subagent, ThreadReader, ToolCall};
 
 use crate::docs::Shown;
 
@@ -22,16 +22,30 @@ pub struct Page {
 pub struct PageTurn {
     pub prompt: String,
     pub items: Vec<PageItem>,
+    pub plan: Option<Vec<PlanStep>>,
+    pub question: Option<Question>,
+    pub subagents: Vec<Subagent>,
 }
 
 pub enum PageItem {
     Text(Shown),
+    /// A thinking block (the Chat view shows it, the Thread section does not).
+    Thinking(String),
     Tools(Vec<ToolCall>),
+}
+
+impl Page {
+    /// The newest `count` turns, and how many older kept turns that leaves out.
+    pub fn newest(&self, count: usize) -> (usize, &[PageTurn]) {
+        let skipped = self.turns.len().saturating_sub(count);
+        (skipped, &self.turns[skipped..])
+    }
 }
 
 /// The reader of one shown session's transcript, fed with what `session.transcript` returns.
 pub struct ThreadFile {
     format: UsageFormat,
+    max_turns: usize,
     reader: ThreadReader,
 }
 
@@ -43,10 +57,11 @@ const _: fn() = || {
 };
 
 impl ThreadFile {
-    pub fn new(format: &UsageFormat) -> Result<Self, String> {
+    pub fn new(format: &UsageFormat, max_turns: usize) -> Result<Self, String> {
         Ok(Self {
             format: format.clone(),
-            reader: ThreadReader::new(format)?,
+            max_turns,
+            reader: ThreadReader::new(format, max_turns)?,
         })
     }
 
@@ -62,7 +77,7 @@ impl ThreadFile {
         let mut changed = false;
         if start != self.reader.offset() {
             // The format was accepted in `new`.
-            if let Ok(reader) = ThreadReader::new(&self.format) {
+            if let Ok(reader) = ThreadReader::new(&self.format, self.max_turns) {
                 self.reader = reader;
                 changed = true;
             }
@@ -77,8 +92,10 @@ impl ThreadFile {
     }
 
     /// The turns as the panel shows them.
-    // ponytail: re-parses every kept turn's Markdown on each change (at most 20 turns); cache
-    // by text if it ever shows in a profile.
+    // ponytail: re-parses every kept turn's Markdown and clones every kept call on each change.
+    // Bound: <= 50 turns x 50 detailed calls x ~12 KB (the reader's `DETAILED_CALLS`) copied
+    // per build, off the UI thread. Upgrade path: a revision per turn in the reader and
+    // `Arc<PageTurn>` reuse of the turns that did not change.
     pub fn page(&self) -> Page {
         Page {
             turns: self
@@ -92,9 +109,13 @@ impl ThreadFile {
                         .iter()
                         .map(|item| match item {
                             Item::Text(text) => PageItem::Text(Shown::from_text(text)),
+                            Item::Thinking(text) => PageItem::Thinking(text.clone()),
                             Item::Tools(calls) => PageItem::Tools(calls.clone()),
                         })
                         .collect(),
+                    plan: turn.plan.clone(),
+                    question: turn.question.clone(),
+                    subagents: turn.subagents.clone(),
                 })
                 .collect(),
             truncated: self.reader.truncated(),
@@ -117,6 +138,10 @@ fn clamp_prompt(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mkrew_core::thread::{CHAT_TURNS, THREAD_TURNS};
+
+    const CLAUDE_CHAT: &str =
+        include_str!("../../mkrew-core/tests/fixtures/thread/claude_chat.jsonl");
 
     fn prompt(text: &str) -> String {
         format!(
@@ -125,7 +150,7 @@ mod tests {
     }
 
     fn file() -> ThreadFile {
-        ThreadFile::new(&UsageFormat::OmpJsonl).unwrap()
+        ThreadFile::new(&UsageFormat::OmpJsonl, THREAD_TURNS).unwrap()
     }
 
     fn prompts(file: &ThreadFile) -> Vec<String> {
@@ -177,5 +202,35 @@ mod tests {
         let cut = clamp_prompt(&"é".repeat(PROMPT_MAX + 1));
         assert_eq!(cut.chars().count(), PROMPT_MAX + 1);
         assert!(cut.ends_with('…'));
+    }
+
+    #[test]
+    fn the_page_carries_thinking_calls_with_results_and_the_turn_extras() {
+        let mut file = ThreadFile::new(&UsageFormat::ClaudeJsonl, CHAT_TURNS).unwrap();
+        file.apply(0, CLAUDE_CHAT.as_bytes());
+        let page = file.page();
+        let turn = &page.turns[0];
+        assert!(matches!(&turn.items[0], PageItem::Thinking(t) if t == "Check the suite first."));
+        let PageItem::Tools(calls) = &turn.items[2] else {
+            panic!("tools expected");
+        };
+        assert_eq!(calls[0].result.as_ref().map(|r| r.is_error), Some(true));
+        assert!(turn.plan.is_none() && turn.question.is_none() && turn.subagents.is_empty());
+    }
+
+    #[test]
+    fn newest_leaves_out_the_older_kept_turns() {
+        let mut file = ThreadFile::new(&UsageFormat::OmpJsonl, CHAT_TURNS).unwrap();
+        for i in 0..25 {
+            file.apply(file.offset(), prompt(&format!("p{i}")).as_bytes());
+        }
+        let page = file.page();
+        let (skipped, shown) = page.newest(20);
+        assert_eq!(
+            (skipped, shown.len(), shown[0].prompt.as_str()),
+            (5, 20, "p5")
+        );
+        let (skipped, shown) = page.newest(100);
+        assert_eq!((skipped, shown.len()), (0, 25));
     }
 }

@@ -136,7 +136,48 @@ pub fn current_install() -> InstallKind {
         .filter_map(std::env::var_os)
         .map(PathBuf::from)
         .collect();
-    install_kind(std::env::consts::OS, &exe, &program_files)
+    match install_kind(std::env::consts::OS, &exe, &program_files) {
+        InstallKind::MacApp { bundle } => InstallKind::MacApp {
+            bundle: untranslocated(bundle),
+        },
+        kind => kind,
+    }
+}
+
+/// Gatekeeper runs a quarantined app (e.g. unzipped in Downloads by a browser) from a read-only
+/// copy under `.../AppTranslocation/<id>/d/`, where the update cannot unpack or swap. That copy
+/// is a `nullfs` mount whose source is the real bundle: update that one instead.
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn untranslocated(bundle: PathBuf) -> PathBuf {
+    use std::ffi::{CStr, CString, OsStr};
+    use std::os::unix::ffi::OsStrExt;
+    if !bundle.to_string_lossy().contains("/AppTranslocation/") {
+        return bundle;
+    }
+    let Ok(path) = CString::new(bundle.as_os_str().as_bytes()) else {
+        return bundle;
+    };
+    // SAFETY: `statfs` is plain old data (all-zero is valid) that `statfs()` fills in.
+    let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+    // SAFETY: `path` is NUL-terminated and `fs` is a valid, writable `statfs`.
+    if unsafe { libc::statfs(path.as_ptr(), &mut fs) } != 0 {
+        return bundle;
+    }
+    // SAFETY: the kernel NUL-terminates `f_mntfromname` within its fixed-size buffer.
+    let source = unsafe { CStr::from_ptr(fs.f_mntfromname.as_ptr()) };
+    let original = Path::new(OsStr::from_bytes(source.to_bytes()));
+    if original.extension() == Some("app".as_ref()) && original.is_dir() {
+        original.to_path_buf()
+    } else {
+        bundle
+    }
+}
+
+/// Only macOS translocates.
+#[cfg(not(target_os = "macos"))]
+fn untranslocated(bundle: PathBuf) -> PathBuf {
+    bundle
 }
 
 /// Inno setup switches: silent, reopen Mkrew after (`[Run]` `LaunchAfterUpdate`), same scope.

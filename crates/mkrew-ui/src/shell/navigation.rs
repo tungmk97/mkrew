@@ -359,6 +359,9 @@ impl Shell {
                     .and_then(|usage| usage.transcript.as_ref())
                     .is_some()
             }),
+            chat: focused_info
+                .as_ref()
+                .is_some_and(|info| self.chat_available(info)),
             plan_linked: self.focused_agent(window).is_some_and(|id| {
                 (self.sidebar.sessions().iter()).any(|s| s.id == id && s.plan_path.is_some())
             }),

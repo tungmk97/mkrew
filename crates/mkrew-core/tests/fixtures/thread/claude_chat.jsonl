@@ -1,0 +1,7 @@
+{"type":"user","message":{"role":"user","content":"Run the tests"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Check the suite first.","signature":"x"},{"type":"text","text":"Running them."},{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"cargo test","description":"Run tests"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b1","content":"2 failed","is_error":true}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"src/lib.rs"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":[{"type":"text","text":"fn main() {}\n"}]}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"ghost","content":"dropped"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Two tests fail."}]}}

@@ -1,0 +1,10 @@
+{"type":"user","message":{"role":"user","content":"Plan and ask"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"w1","name":"TodoWrite","input":{"todos":[{"content":"Read code","status":"completed","activeForm":"Reading"},{"content":"Write fix","status":"in_progress","activeForm":"Writing"},{"content":"Run tests","status":"pending","activeForm":"Running"}]}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"w1","content":"Todos modified"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"w2","name":"TodoWrite","input":{"todos":[{"content":"Read code","status":"completed"},{"content":"Write fix","status":"completed"},{"content":"Run tests","status":"in_progress"}]}}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"question":"Which database?","header":"DB","multiSelect":false,"options":[{"label":"SQLite","description":"local"},{"label":"Postgres","description":"server"}]}]}}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"s1","name":"Task","input":{"description":"Explore the repo","subagent_type":"Explore","prompt":"look"}},{"type":"tool_use","id":"s2","name":"Agent","input":{"description":"Review the diff","subagent_type":"reviewer","prompt":"review"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"s1","content":"found it"}]}}
+{"type":"user","message":{"role":"user","content":"Second turn"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"q2","name":"AskUserQuestion","input":{"questions":[{"question":"Which port?","options":[{"label":"80"},{"label":"8080"}]}]}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"q2","content":"User has answered: 8080"}]}}

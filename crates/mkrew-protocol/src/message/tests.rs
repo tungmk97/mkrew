@@ -342,6 +342,8 @@ fn every_m1_request_round_trips() {
             path: None,
         }),
         Request::SessionPlan(ProjectRef { project_id: sid() }),
+        Request::LimitsGet,
+        Request::LimitsReport(limits()),
         Request::TurnRestorePreview(TurnRef {
             session_id: sid(),
             n: 2,
@@ -1315,7 +1317,91 @@ fn an_attachment_owner_is_named_by_its_kind_on_the_wire() {
     assert!(serde_json::from_value::<AttachmentSaveParams>(old).is_err());
 }
 
+fn limits() -> AgentLimits {
+    AgentLimits {
+        agent: Cli::Codex,
+        five_hour: Some(LimitWindow {
+            used_percent: 23.5,
+            resets_at: Some(1_778_533_631),
+        }),
+        weekly: Some(LimitWindow {
+            used_percent: 46.0,
+            resets_at: None,
+        }),
+        observed_at: 1_778_519_153,
+    }
+}
+
 #[test]
-fn the_palette_protocol_is_version_54() {
-    assert_eq!(crate::PROTOCOL_VERSION, 54);
+fn limits_and_machine_stats_have_their_own_wire_shapes() {
+    assert_eq!(
+        round_trip(&Message::Event(Event::AgentLimits(limits()))),
+        json!({
+            "type": "event", "event": "agent.limits",
+            "data": {
+                "agent": "codex",
+                "five_hour": {"used_percent": 23.5, "resets_at": 1_778_533_631},
+                "weekly": {"used_percent": 46.0},
+                "observed_at": 1_778_519_153
+            }
+        })
+    );
+    assert_eq!(
+        round_trip(&Message::Event(Event::MachineStats(MachineStats {
+            cpu_percent: 23.5,
+            ram_used: 11,
+            ram_total: 31,
+        }))),
+        json!({
+            "type": "event", "event": "machine.stats",
+            "data": {"cpu_percent": 23.5, "ram_used": 11, "ram_total": 31}
+        })
+    );
+    let get = round_trip(&Message::Request {
+        id: 1,
+        request: Request::LimitsGet,
+    });
+    assert_eq!(get["method"], "limits.get");
+    let report = round_trip(&Message::Request {
+        id: 2,
+        request: Request::LimitsReport(limits()),
+    });
+    assert_eq!(report["method"], "limits.report");
+    assert_eq!(report["params"]["agent"], "codex");
+}
+
+#[test]
+fn limits_without_windows_read_with_both_absent() {
+    let bare: AgentLimits =
+        serde_json::from_value(json!({"agent": "claude", "observed_at": 5})).unwrap();
+    assert_eq!((bare.five_hour, bare.weekly), (None, None));
+    let window: LimitWindow = serde_json::from_value(json!({"used_percent": 3.0})).unwrap();
+    assert_eq!(window.resets_at, None);
+}
+
+#[test]
+fn a_report_replaces_an_older_different_one_only() {
+    let old = limits();
+    let newer = AgentLimits {
+        observed_at: old.observed_at + 1,
+        ..limits()
+    };
+    let older = AgentLimits {
+        observed_at: old.observed_at - 1,
+        weekly: None,
+        ..limits()
+    };
+    let same_time = AgentLimits {
+        weekly: None,
+        ..limits()
+    };
+    assert!(newer.supersedes(&old));
+    assert!(!older.supersedes(&old), "an older report is ignored");
+    assert!(same_time.supersedes(&old), "a tie: the later arrival wins");
+    assert!(!old.supersedes(&old), "the same content is no news");
+}
+
+#[test]
+fn the_review_flow_protocol_is_version_56() {
+    assert_eq!(crate::PROTOCOL_VERSION, 56);
 }

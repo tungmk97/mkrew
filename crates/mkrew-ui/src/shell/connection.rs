@@ -43,7 +43,9 @@ impl Shell {
         let diff_wrap = ui.diff_wrap;
         let close_to_tray = attention::close_to_tray_for(ui.close_to_tray, local);
         let reading_default = ui.reading_width;
+        let chat_default = ui.chat_default;
         let board_all = ui.board_all_workspaces;
+        let (widget_bar, widgets_hidden) = (ui.widget_bar, ui.widgets_hidden);
         let (md_mode, md_split) = (ui.md_mode, files_view::md_split_share(ui.md_split));
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
@@ -186,8 +188,11 @@ impl Shell {
                     // The recording meter has its own faster redraw (`toggle_voice`).
                     let transcribing = matches!(shell.voice, voice::State::Transcribing);
                     let jira_busy = shell.jira.values().any(JiraView::busy);
-                    let due =
-                        board_due || shell.starting_pane.is_some() || transcribing || jira_busy;
+                    let due = board_due
+                        || shell.starting_pane.is_some()
+                        || transcribing
+                        || jira_busy
+                        || shell.chat_animating();
                     if window.is_visible() && (due || status::redraw_due(sessions, last, now)) {
                         cx.notify();
                     }
@@ -354,6 +359,7 @@ impl Shell {
             workspace_menu: None,
             file_menu: None,
             file_tab_menu: None,
+            widget_menu: None,
             tab_menu: None,
             card_menu: None,
             menu_focus: cx.focus_handle(),
@@ -377,6 +383,7 @@ impl Shell {
             collapsed_groups: HashSet::new(),
             reading_default,
             reading_width: HashMap::new(),
+            chat_default,
             run_reveal: None,
             ports: Ports::default(),
             agent_icons: HashMap::new(),
@@ -396,6 +403,8 @@ impl Shell {
             plan_error: None,
             sidebar_layout: sidebar::Layout::from_mode(sidebar_mode),
             right_panel,
+            reads: HashMap::new(),
+            chats: HashMap::new(),
             thread: None,
             inspector_width,
             inspector_dragging: false,
@@ -414,6 +423,9 @@ impl Shell {
             jira_filter_focus: cx.focus_handle(),
             jira_scroll: ScrollHandle::new(),
             board_all,
+            widget_bar,
+            widgets_hidden,
+            widget_data: mkrew_ui::widget_bar::WidgetData::default(),
             selected_card: None,
             starting: HashSet::new(),
             run_with: None,
@@ -427,6 +439,7 @@ impl Shell {
             drop_hover: None,
             pane_drop: None,
             composer_focus: cx.focus_handle(),
+            chat_focus: cx.focus_handle(),
             ime_marked: Rc::default(),
             typing_target: Rc::default(),
             voice: voice::State::default(),
@@ -734,6 +747,9 @@ impl Shell {
                 shell.status = Status::Disconnected;
                 shell.report_machine_state(MachineState::Reconnecting);
                 shell.connection = None;
+                // The load figures belong to the daemon that went away; the limits stay
+                // until the new connection's list replaces them (`reset_connection_state`).
+                shell.widget_data.clear_machine();
                 // Kept with its draft: `save_task` / `delete_task` do nothing without a
                 // connection, and an in-flight save is not waited for.
                 if let Some(dialog) = shell.task_dialog.as_mut() {
@@ -883,6 +899,7 @@ impl Shell {
             .filter_map(|(id, view)| Some((id, view.into_commit_draft()?)))
             .collect();
         self.git_summary = None;
+        self.widget_data.clear_limits();
         self.close_popups(window, cx);
     }
 
@@ -963,6 +980,7 @@ impl Shell {
                         shell.load_usage(window, cx);
                         shell.load_ports(window, cx);
                         shell.load_plans(window, cx);
+                        shell.load_limits(window, cx);
                         shell.status = Status::Connected;
                         let current = shell
                             .workspace
@@ -1060,7 +1078,10 @@ impl Shell {
                         self.load_jira(project_id, window, cx);
                     }
                     self.reading_default = settings.ui.reading_width;
+                    self.chat_default = settings.ui.chat_default;
                     self.board_all = settings.ui.board_all_workspaces;
+                    self.widget_bar = settings.ui.widget_bar;
+                    self.widgets_hidden = settings.ui.widgets_hidden.clone();
                     self.follow_md_mode(settings.ui.md_mode);
                     if !self.md_split_dragging {
                         self.md_split = files_view::md_split_share(settings.ui.md_split);
@@ -1183,16 +1204,9 @@ impl Shell {
     /// What the window draws now, for [`redraw::event_needs_redraw`].
     pub(crate) fn shown(&self, window: &Window) -> redraw::Shown {
         let view = self.view();
-        let tabs = (self.workspace)
-            .filter(|_| view == View::Terminals)
-            .and_then(|id| self.tabs.get(&id));
-        let mut panes = on_screen(window.is_visible(), tabs);
-        // An idle detached window draws its shown tab's panes too.
-        for DockTab::Terminal { project, tab_id } in self.detached.visible_tabs() {
-            if let Some(tab) = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id)) {
-                panes.extend(tab.shown());
-            }
-        }
+        let panes = (self.hosted_sessions(window.is_visible()).into_iter())
+            .map(|(_, session)| session)
+            .collect();
         redraw::Shown {
             workspace: self.workspace,
             view,
@@ -1203,6 +1217,7 @@ impl Shell {
             sidebar: self.sidebar_layout.mode(),
             modal: self.modal_open(),
             all_board: self.all_board_shown(),
+            widget_bar: self.widget_bar,
         }
     }
 
@@ -1242,6 +1257,7 @@ impl Shell {
                 data_changed |= self.usages.apply(event);
                 data_changed |= self.plans.apply(event);
                 data_changed |= self.ports.apply(event);
+                data_changed |= self.widget_data.apply(event);
                 data_changed |= self.composers.apply(event);
                 if data_changed {
                     let shown = self.batch_shown(&mut shown_now, window);
@@ -1353,7 +1369,8 @@ impl Shell {
             let Some(delivery) = self.router.route(incoming) else {
                 continue;
             };
-            let Some(pane) = self.panes.get(&delivery.session_id()).cloned() else {
+            let session = delivery.session_id();
+            let Some(pane) = self.panes.get(&session).cloned() else {
                 continue;
             };
             pane.update(cx, |pane, _| match delivery {
@@ -1361,7 +1378,9 @@ impl Shell {
                 Delivery::Snapshot { snapshot, .. } => pane.load_snapshot(&snapshot),
                 Delivery::Exited { exit_code, .. } => pane.set_exited(exit_code),
             });
-            if !fed.iter().any(|p| p.entity_id() == pane.entity_id()) {
+            // A pane in Chat mode is not painted: it is no content to wait a frame for.
+            if !self.chat_session(session) && !fed.iter().any(|p| p.entity_id() == pane.entity_id())
+            {
                 fed.push(pane);
             }
         }

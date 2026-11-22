@@ -32,6 +32,7 @@ fn context(view: View) -> Context {
         pane: false,
         live_session: false,
         transcript: false,
+        chat: false,
         plan_linked: false,
         composer_open: false,
         approve_card: false,
@@ -302,6 +303,9 @@ fn availability_follows_the_view() {
     assert!(git.contains(&Command::AddComment));
     assert!(git.contains(&Command::PickUp));
     assert!(git.contains(&Command::SendSelection));
+
+    let docs = commands(&context(View::Docs));
+    assert!(docs.contains(&Command::SendSelection));
     assert!(
         !git.contains(&Command::ClosePane),
         "panes are not on screen"
@@ -394,6 +398,7 @@ fn availability_follows_the_view() {
             Command::ToggleFullScreen,
             Command::ToggleSidebar,
             Command::ToggleCompactSidebar,
+            Command::ToggleWidgetBar,
             Command::VoiceInput,
             Command::AskAi
         ]
@@ -406,6 +411,23 @@ fn availability_follows_the_view() {
             .any(|e| e.action == Action::Run(Command::OpenSettings)),
         "settings open without a workspace"
     );
+}
+
+#[test]
+fn the_widget_bar_toggle_is_listed_without_a_workspace() {
+    let none = Context {
+        workspace: false,
+        workspaces: 0,
+        tabs: 0,
+        ..context(View::Terminals)
+    };
+    let listed = entries(&Keymap::defaults(), &none, &[], &[], &[]);
+    let entry = listed
+        .iter()
+        .find(|e| e.action == Action::Run(Command::ToggleWidgetBar))
+        .expect("listed without a workspace");
+    assert_eq!(entry.title, "View: Show/hide widget bar");
+    assert_eq!(entry.shortcut, "Ctrl+Alt+Shift+J");
 }
 
 #[test]
@@ -2214,4 +2236,28 @@ fn install_mk_command_is_listed_only_in_the_mac_app() {
         .find(|e| e.action == Action::Extra(Extra::InstallMkCommand))
         .expect("listed without a workspace");
     assert_eq!(entry.title, "Global: Install mk command");
+}
+
+#[test]
+fn toggle_chat_is_listed_only_for_a_chat_capable_agent_pane() {
+    let on_terminals = context(View::Terminals);
+    assert!(
+        !commands(&on_terminals).contains(&Command::ToggleChat),
+        "no agent pane"
+    );
+    let agent = Context {
+        terminal: true,
+        agent_pane: true,
+        ..context(View::Terminals)
+    };
+    assert!(
+        !commands(&agent).contains(&Command::ToggleChat),
+        "no readable transcript format"
+    );
+    let chat = Context {
+        agent_pane: true,
+        chat: true,
+        ..context(View::Terminals)
+    };
+    assert!(commands(&chat).contains(&Command::ToggleChat));
 }

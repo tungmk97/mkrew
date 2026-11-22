@@ -668,6 +668,8 @@ impl Sidebar {
             | Event::SessionPorts(_)
             | Event::SessionPlan(_)
             | Event::AiGenerated(_)
+            | Event::AgentLimits(_)
+            | Event::MachineStats(_)
             | Event::ProjectCloned(_) => Change::None,
         }
     }

@@ -282,15 +282,17 @@ impl Shell {
             }
         }
         // Same for the focused pane's composer (§20B.1), unless it went away. Its own shortcut
-        // keeps it focused (Ctrl+Shift+Enter would read as Ctrl+Enter: send).
+        // keeps it focused (Ctrl+Shift+Enter would read as Ctrl+Enter: send); the Chat switch
+        // still acts (AltGr is Ctrl+Alt, but no layout types a char on Ctrl+Alt+T).
         if self.composer_focus.is_focused(window) {
-            if self.composer_session(window).is_some() {
+            if self.composer_session(window).is_none() {
+                self.focus_pane(window, cx);
+            } else if *command != Command::ToggleChat {
                 if *command != Command::OpenComposer {
                     cx.propagate();
                 }
                 return;
             }
-            self.focus_pane(window, cx);
         }
         // View keys (Board, Docs, ...) while the peek's reply box has the keyboard: the box types
         // them, and nothing closes the peek or acts on the view behind it.
@@ -342,6 +344,7 @@ impl Shell {
                 | Command::ZoomPane
                 | Command::MoveTabLeft
                 | Command::MoveTabRight
+                | Command::ToggleChat
                 | Command::ClosePane => return,
                 _ => {}
             }
@@ -463,6 +466,11 @@ impl Shell {
                 }
             }
             Command::OpenComposer => self.open_composer(window, cx),
+            Command::ToggleChat => {
+                if let Some(session) = self.focused_agent(window) {
+                    self.toggle_chat(session, window, cx);
+                }
+            }
             Command::SendSelection => self.open_selection_dialog(window, cx),
             Command::ShowBoard if self.view() == View::Board && self.jira_on => {
                 if let Some(project_id) = self.workspace {
@@ -496,6 +504,7 @@ impl Shell {
             Command::ToggleSidebar => self.toggle_sidebar(window, cx),
             Command::ToggleCompactSidebar => self.toggle_compact_sidebar(window, cx),
             Command::ToggleInspector => self.toggle_inspector(window, cx),
+            Command::ToggleWidgetBar => self.toggle_widget_bar(cx),
             // Handled at the top of `run`.
             Command::VoiceInput => {}
             Command::AskAi => self.open_ask(window, cx),

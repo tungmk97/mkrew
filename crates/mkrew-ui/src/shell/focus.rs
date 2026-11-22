@@ -123,6 +123,7 @@ impl Shell {
         self.workspace_menu = None;
         self.file_menu = None;
         self.file_tab_menu = None;
+        self.widget_menu = None;
         self.run_menu = None;
         self.workspace_switcher = false;
         self.repo_menu = false;
@@ -185,23 +186,15 @@ impl Shell {
         tabs.active()?.focused()
     }
 
-    /// Attaches the sessions on screen in any window (live ones, or already attached; none
-    /// for a hidden window or while the main window shows another view) and detaches all others
-    /// (SPEC §10), then focuses the focused pane of `window`.
-    pub(crate) fn sync_panes(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.keep_main_active_visible();
-        self.prune_detached(cx);
-        let mut visible = on_screen(
-            self.main_visible,
-            self.workspace
-                .filter(|_| self.view() == View::Terminals)
-                .and_then(|id| self.tabs.get(&id)),
-        );
-        let here = self.host_of(window);
-        // Every session on screen with the window that shows it.
-        let mut hosted: Vec<(HostId, Ulid)> = visible
-            .iter()
-            .map(|&session| (HostId::Main, session))
+    /// Every session on screen with the window that shows it: the main window's tab (none for a
+    /// hidden window or while it shows another view) and the visible detached tabs.
+    pub(crate) fn hosted_sessions(&self, main_visible: bool) -> Vec<(HostId, Ulid)> {
+        let tabs = (self.workspace)
+            .filter(|_| self.view() == View::Terminals)
+            .and_then(|id| self.tabs.get(&id));
+        let mut hosted: Vec<(HostId, Ulid)> = on_screen(main_visible, tabs)
+            .into_iter()
+            .map(|session| (HostId::Main, session))
             .collect();
         for tab in self.detached.visible_tabs() {
             let DockTab::Terminal { project, tab_id } = tab;
@@ -209,11 +202,20 @@ impl Shell {
                 continue;
             };
             let host = self.detached.host_of(&tab);
-            for session in shown.shown() {
-                visible.push(session);
-                hosted.push((host, session));
-            }
+            hosted.extend(shown.shown().into_iter().map(|session| (host, session)));
         }
+        hosted
+    }
+
+    /// Attaches the sessions on screen in any window (live ones, or already attached; none
+    /// for a hidden window or while the main window shows another view) and detaches all others
+    /// (SPEC §10), then focuses the focused pane of `window`.
+    pub(crate) fn sync_panes(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.keep_main_active_visible();
+        self.prune_detached(cx);
+        let hosted = self.hosted_sessions(self.main_visible);
+        let here = self.host_of(window);
+        let visible: Vec<Ulid> = hosted.iter().map(|&(_, session)| session).collect();
         for session in self.router.wanted() {
             if visible.contains(&session) {
                 continue;
@@ -280,6 +282,14 @@ impl Shell {
         // The panes' connection is dead: the keyboard stays with the window until it is back.
         if self.reconnecting() {
             window.focus(&self.focus_handle, cx);
+            return;
+        }
+        // A pane in Chat mode keeps its terminal out of the tree: the keys go to its composer.
+        if let Some(session) = self.focused_session(window)
+            && self.chat_session(session)
+            && self.composers.shown(session).is_some()
+        {
+            window.focus(&self.composer_focus, cx);
             return;
         }
         match self

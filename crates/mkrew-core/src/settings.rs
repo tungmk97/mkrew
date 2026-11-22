@@ -431,6 +431,10 @@ pub struct UiSettings {
     /// `[ui] reading_width`: agent panes start at reading width (≈ 120–140 columns, centered);
     /// each pane's Reading width toggle overrides it until restart. Shell panes are full width.
     pub reading_width: bool,
+    /// `[ui] chat_default` (ADR 0104): agent panes without a saved mode open in Chat (the
+    /// agent's conversation as a chat) instead of the terminal. Each pane's `Terminal | Chat`
+    /// switch overrides it and is kept in the tab layout.
+    pub chat_default: bool,
     /// `[ui] close_to_tray` (SPEC §20J): the window's ✕ hides Mkrew instead of quitting the UI
     /// (to the tray icon on Windows, the whole app on macOS). The agents run in the daemon either way.
     pub close_to_tray: bool,
@@ -442,6 +446,13 @@ pub struct UiSettings {
     /// `[ui] md_split`: the source's share of the Markdown Split view, percent (the UI keeps it
     /// 20–80); dragging the divider saves it.
     pub md_split: u8,
+    /// `[ui] widget_bar` (ADR 0102): the thin bar at the bottom of the main window with the
+    /// folder, Git branch, agent limits, machine load and version.
+    pub widget_bar: bool,
+    /// `[ui] widgets_hidden`: ids of the bar's widgets the user hid (`folder`, `git`,
+    /// `limits`, `machine`, `version`). Unknown ids are kept and ignored, so an older build
+    /// does not lose a newer build's choice.
+    pub widgets_hidden: Vec<String>,
 }
 
 impl Default for UiSettings {
@@ -459,10 +470,13 @@ impl Default for UiSettings {
             sidebar: SidebarMode::Full,
             right_panel: RightPanelMode::Hidden,
             reading_width: true,
+            chat_default: false,
             close_to_tray: true,
             board_all_workspaces: false,
             md_mode: MdMode::Preview,
             md_split: MD_SPLIT_DEFAULT,
+            widget_bar: true,
+            widgets_hidden: Vec::new(),
         }
     }
 }
@@ -544,6 +558,13 @@ pub fn write_ui_value(path: &Path, key: &str, value: &str) -> Result<(), Setting
     write_value(path, "ui", key, value)
 }
 
+/// Saves `[ui] widgets_hidden`; see [`write_value`]. The ids are written as given, so ids this
+/// build does not know are never dropped by the caller's toggle.
+pub fn write_widgets_hidden(path: &Path, ids: &[String]) -> Result<(), SettingsError> {
+    let list = toml::Value::Array(ids.iter().cloned().map(toml::Value::String).collect());
+    write_value(path, "ui", "widgets_hidden", &list.to_string())
+}
+
 /// Saves `[web] enabled` (the Phone access dialog's Start / Stop); see [`write_value`]. The
 /// daemon applies it through its settings watcher.
 pub fn write_web_enabled(path: &Path, enabled: bool) -> Result<(), SettingsError> {
@@ -621,6 +642,8 @@ pub fn template() -> &'static str {
      # Close to tray (Windows): the window's ✕ hides it to the tray icon; false quits the UI.\n\
      # Markdown files open in preview, split (source | preview) or source; switching writes it.\n\
      # Markdown split: the source's share in percent (20-80); dragging the divider writes it.\n\
+     # Widget bar: the thin bar at the bottom with the folder, Git branch, agent limits, machine load and version.\n\
+     # widgets_hidden lists the ids you hid: folder, git, limits, machine, version (the bar's right-click menu writes it).\n\
      [ui]\n\
      # font_family = \"\"\n\
      # font_size = 13\n\
@@ -634,10 +657,13 @@ pub fn template() -> &'static str {
      # sidebar_width = 280\n\
      # right_panel = \"hidden\"\n\
      # reading_width = true\n\
+     # chat_default = false\n\
      # close_to_tray = true\n\
      # board_all_workspaces = false\n\
      # md_mode = \"preview\"\n\
      # md_split = 50\n\
+     # widget_bar = true\n\
+     # widgets_hidden = []\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
@@ -836,6 +862,13 @@ mod tests {
     }
 
     #[test]
+    fn chat_default_is_off_and_reads_from_ui() {
+        assert!(!Settings::default().ui.chat_default);
+        let settings = parse(Path::new("settings.toml"), "[ui]\nchat_default = true\n").unwrap();
+        assert!(settings.ui.chat_default);
+    }
+
+    #[test]
     fn full_file_parses() {
         let src = r#"
 [notify]
@@ -900,10 +933,13 @@ push = true
                     sidebar: SidebarMode::Full,
                     right_panel: RightPanelMode::Hidden,
                     reading_width: true,
+                    chat_default: false,
                     close_to_tray: false,
                     board_all_workspaces: false,
                     md_mode: MdMode::Preview,
                     md_split: MD_SPLIT_DEFAULT,
+                    widget_bar: true,
+                    widgets_hidden: vec![],
                 },
                 terminal: TerminalSettings {
                     font_family: "JetBrains Mono".into(),
@@ -1090,6 +1126,37 @@ push = true
         assert_eq!((set.md_mode, set.md_split), (MdMode::Split, 35));
         assert!(parse_err("[ui]\nmd_mode = \"side\"").contains("unknown variant `side`"));
         assert!(parse_err("[ui]\nmd_split = 300").contains("invalid value"));
+    }
+
+    #[test]
+    fn the_widget_bar_defaults_to_shown_and_keeps_ids_it_does_not_know() {
+        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
+        assert!(ui("").widget_bar);
+        assert!(ui("").widgets_hidden.is_empty());
+        assert!(!ui("[ui]\nwidget_bar = false\n").widget_bar);
+        // A newer build wrote `clock`: this build keeps it.
+        assert_eq!(
+            ui("[ui]\nwidgets_hidden = [\"git\", \"clock\"]\n").widgets_hidden,
+            ["git", "clock"]
+        );
+        assert!(parse_err("[ui]\nwidgets_hidden = \"git\"\n").contains("invalid type"));
+    }
+
+    #[test]
+    fn write_widgets_hidden_round_trips_and_keeps_the_rest_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, "[ui]\n# keep me\ntheme = \"dark\"\n").unwrap();
+        let ids = vec!["git".to_owned(), "clock".to_owned()];
+        write_widgets_hidden(&path, &ids).unwrap();
+        assert_eq!(load(&path).unwrap().ui.widgets_hidden, ids);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("# keep me") && text.contains("theme = \"dark\""),
+            "{text}"
+        );
+        write_widgets_hidden(&path, &[]).unwrap();
+        assert!(load(&path).unwrap().ui.widgets_hidden.is_empty());
     }
 
     #[test]

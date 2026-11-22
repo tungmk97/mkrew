@@ -31,7 +31,8 @@ impl Shell {
     }
 
     /// Keys typed in the composer ([`Shell::prompt_key_down`]): Enter is a new line, Ctrl+Enter
-    /// sends, Esc hides it.
+    /// sends, Esc hides it; in Chat Enter sends, Shift+Enter is a new line, Esc goes to the chat
+    /// list.
     pub(crate) fn composer_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -42,10 +43,22 @@ impl Shell {
         let Some(session) = self.composer_session(window) else {
             return;
         };
+        // In Chat a plain Enter sends (the chat convention); Shift+Enter falls through to the
+        // new line. A picker that is open has the keys itself, so this never sees its Enter.
+        let chat = self.chat_session(session);
+        if chat && composer::sends_on_enter(&event.keystroke) {
+            self.send_composer(session, window, cx);
+            return;
+        }
         if self.prompt_key_down(composer::Target::Composer(session), event, window, cx) {
             return;
         }
         match task_dialog::dialog_key(&event.keystroke) {
+            // Chat: Esc moves to the chat list (the composer stays); Terminal: Esc hides it.
+            Some(DialogKey::Cancel) if chat => {
+                window.focus(&self.chat_focus, cx);
+                cx.notify();
+            }
             Some(DialogKey::Cancel) => {
                 self.composers.hide(session);
                 self.focus_pane(window, cx);
@@ -345,31 +358,16 @@ impl Shell {
         }
     }
 
-    /// The lines picked in `project_id`'s Editor view (one line, §12A) or Git diff (new side):
-    /// the file, first and last line, and their text (§20B.4).
+    /// The lines picked in `project_id`'s Editor view (a Markdown preview's selection, or the
+    /// editor's lines, §12A), Docs view (its comment selection) or Git diff (new side): the
+    /// file, first and last line, and their text (§20B.4).
     pub(crate) fn picked_lines(
         &self,
         project_id: Ulid,
         view: View,
     ) -> Option<(String, u32, u32, String)> {
         match view {
-            View::Editor => {
-                let files = self.files.get(&project_id)?;
-                let (Some(path), Some(shown)) = (files.file(), files.shown()) else {
-                    return None;
-                };
-                // The selected lines, else the caret's line.
-                let editor = &shown.editor;
-                let (first, last) = match editor.selection() {
-                    // A selection ending at a line's start does not include that line.
-                    Some(range) if range.end.col == 0 => (range.start.line, range.end.line - 1),
-                    Some(range) => (range.start.line, range.end.line),
-                    None => (editor.cursor().line, editor.cursor().line),
-                };
-                let text = editor.lines().get(first..=last)?.join("\n");
-                let line = |index: usize| u32::try_from(index + 1).ok();
-                Some((path.to_owned(), line(first)?, line(last)?, text))
-            }
+            View::Editor => self.files.get(&project_id)?.tab()?.picked_lines(),
             View::Diff => {
                 let git = self.git.get(&project_id)?;
                 let (Some(target), Some(selection), git_view::Diff::Shown(shown)) =
@@ -380,6 +378,7 @@ impl Shell {
                 let text = shown.new_side_text(selection)?;
                 Some((target.path.clone(), selection.start, selection.end, text))
             }
+            View::Docs => self.docs.get(&project_id)?.picked_lines(),
             _ => None,
         }
     }
@@ -783,11 +782,7 @@ impl Shell {
                 (
                     "",
                     theme.text_muted,
-                    mkrew_ui::os_text!(
-                        "Ctrl+Enter to send · @ for a file · Esc to hide",
-                        "⌘↩ to send · @ for a file · Esc to hide",
-                    )
-                    .to_owned(),
+                    composer::hint(self.chat_session(session)).to_owned(),
                 )
             })
         };
@@ -884,13 +879,21 @@ impl Shell {
                             .children(status.map(|(icon, color, text)| {
                                 div()
                                     .flex()
+                                    .min_w_0()
                                     .gap(px(space::XS))
                                     .text_size(font_size::META)
                                     .when(!icon.is_empty(), |el| {
-                                        el.child(div().text_color(rgb(color)).child(icon))
+                                        el.child(
+                                            div().flex_none().text_color(rgb(color)).child(icon),
+                                        )
                                     })
                                     .child(
+                                        // A narrow pane cuts the key hint with an ellipsis
+                                        // instead of drawing it under the buttons; an error
+                                        // wraps, so it is read in full.
                                         div()
+                                            .min_w_0()
+                                            .when(draft.error.is_none(), |el| el.truncate())
                                             .text_color(rgb(if draft.error.is_some() {
                                                 theme.text
                                             } else {

@@ -22,6 +22,9 @@ use serde_json::{Map, Value, json};
 /// Claude Code hook events Mkrew listens to (SPEC §6).
 const CLAUDE_EVENTS: [&str; 4] = ["SessionStart", "UserPromptSubmit", "Notification", "Stop"];
 const CODEX_ARGS: [&str; 2] = ["hook", "codex"];
+/// Where install saves the user's own Claude `statusLine` (next to `settings.json`) so
+/// `mk statusline` can run it and uninstall can put it back.
+const SAVED_STATUSLINE: &str = "claude-statusline.json";
 const OMP_EXTENSION: &str = include_str!("../assets/omp-extension.ts");
 const COPILOT_HOOKS: &str = include_str!("../assets/copilot-hooks.json");
 
@@ -54,12 +57,20 @@ enum Installed {
     No,
 }
 
+fn env_dir(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+/// The file holding the user's own Claude status line, when Claude's config folder is known.
+pub fn saved_statusline_file() -> Option<PathBuf> {
+    let settings = config_file(Agent::Claude, env_dir).ok()?;
+    Some(settings.with_file_name(SAVED_STATUSLINE))
+}
+
 pub fn run(action: Action, agent: Agent) -> anyhow::Result<ExitCode> {
-    let file = config_file(agent, |key| {
-        std::env::var_os(key)
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    })?;
+    let file = config_file(agent, env_dir)?;
     let mk = own_mk()?;
     let code = run_on(action, agent, &file, &mk)?;
     if action == Action::Install && code == ExitCode::SUCCESS && agent != Agent::Omp {
@@ -126,13 +137,21 @@ fn run_on(action: Action, agent: Agent, file: &Path, mk: &str) -> anyhow::Result
         return Ok(print_status(name, file, &installed));
     }
     let install = action == Action::Install;
-    let updated = match merged {
-        Merged::Claude => claude_edit(original, install, mk),
-        Merged::Codex => codex_edit(original, install, mk),
+    let saved_file = file.with_file_name(SAVED_STATUSLINE);
+    let saved = match merged {
+        Merged::Claude => read_saved(&saved_file),
+        Merged::Codex => None,
+    };
+    let edited = match merged {
+        Merged::Claude => claude_edit(original, install, mk, saved.as_ref()),
+        Merged::Codex => codex_edit(original, install, mk).map(|text| Edited {
+            text,
+            saved: Saved::Keep,
+        }),
     }
     .with_context(|| format!("update {}", file.display()))?;
     let verb = if install { "installed" } else { "uninstalled" };
-    let Some(updated) = updated else {
+    let Some(updated) = edited.text else {
         println!("{name}: already {verb} ({})", file.display());
         return Ok(ExitCode::SUCCESS);
     };
@@ -143,7 +162,19 @@ fn run_on(action: Action, agent: Agent, file: &Path, mk: &str) -> anyhow::Result
     if let Some(dir) = file.parent() {
         fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
     }
+    // The user's own status line is on disk before settings.json stops naming it.
+    if let Saved::Write(user) = &edited.saved {
+        let text = serde_json::to_string_pretty(user).context("serialize the status line")?;
+        fs::write(&saved_file, text + "\n")
+            .with_context(|| format!("write {}", saved_file.display()))?;
+    }
     fs::write(file, updated).with_context(|| format!("write {}", file.display()))?;
+    if edited.saved == Saved::Delete
+        && let Err(e) = fs::remove_file(&saved_file)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        eprintln!("warning: cannot delete {}: {e}", saved_file.display());
+    }
     match backup {
         Some(backup) => println!(
             "{name}: {verb} ({}; backup: {})",
@@ -153,6 +184,28 @@ fn run_on(action: Action, agent: Agent, file: &Path, mk: &str) -> anyhow::Result
         None => println!("{name}: {verb} ({})", file.display()),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The user's own `statusLine` saved by an earlier install. A missing file is "none"; an
+/// unreadable one is "none" with a warning, so uninstall still removes Mkrew's line.
+fn read_saved(file: &Path) -> Option<Value> {
+    match fs::read_to_string(file) {
+        Ok(text) => match serde_json::from_str(&text) {
+            Ok(value) => Some(value),
+            Err(e) => {
+                eprintln!(
+                    "warning: {} is not valid JSON ({e}); ignoring it",
+                    file.display()
+                );
+                None
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            eprintln!("warning: cannot read {} ({e}); ignoring it", file.display());
+            None
+        }
+    }
 }
 
 fn print_status(name: &str, file: &Path, installed: &Installed) -> ExitCode {
@@ -326,7 +379,8 @@ fn group_runs(group: &Value, pred: impl Fn(&Value) -> bool) -> bool {
         .is_some_and(|hooks| hooks.iter().any(pred))
 }
 
-/// `Yes` when every event runs `mk`; `Partly` when some run an `mk` (older path or form).
+/// `Yes` when every event runs `mk` and the status line is Mkrew's; `Partly` when something
+/// of Mkrew's is there but not all of it (older path or form, or the hooks without the line).
 fn claude_status(text: &str, mk: &str) -> anyhow::Result<Installed> {
     let settings = parse_settings(text)?;
     let count = |pred: &dyn Fn(&Value, &str) -> bool| {
@@ -346,15 +400,163 @@ fn claude_status(text: &str, mk: &str) -> anyhow::Result<Installed> {
     };
     let current = count(&|hook, event| *hook == claude_hook(mk, event));
     let ours = count(&|hook, event| claude_hook_is_ours(hook, event));
+    let line = settings.get("statusLine");
+    let line_current = line == Some(&statusline_value(mk));
+    let line_ours = line.is_some_and(statusline_is_ours);
     Ok(match (current, ours) {
-        (n, _) if n == CLAUDE_EVENTS.len() => Installed::Yes,
-        (_, 0) => Installed::No,
+        (n, _) if n == CLAUDE_EVENTS.len() && line_current => Installed::Yes,
+        (_, 0) if !line_ours => Installed::No,
         _ => Installed::Partly,
     })
 }
 
-/// The new `settings.json` text, or `None` if nothing changes.
-fn claude_edit(text: &str, install: bool, mk: &str) -> anyhow::Result<Option<String>> {
+/// Claude Code's `statusLine` as Mkrew sets it.
+fn statusline_value(mk: &str) -> Value {
+    json!({"type": "command", "command": statusline_command(mk)})
+}
+
+fn statusline_command(mk: &str) -> String {
+    command_for(
+        mk,
+        cfg!(windows),
+        short_path,
+        crate::claude_shell::claude_shell_is_bash,
+    )
+}
+
+/// What Claude Code's shell can run to start `mk statusline`. Off Windows `sh` runs the quoted
+/// path. On Windows the shell is Git Bash or PowerShell (they read a quoted path differently),
+/// so the command is the one both accept when there is one: the path with forward slashes and
+/// no quotes when it has nothing the shells treat specially, else its 8.3 short path when that
+/// has none either, else the quoted form of the shell Claude will use (`shell_is_bash`).
+fn command_for(
+    mk: &str,
+    windows: bool,
+    short: impl Fn(&str) -> Option<String>,
+    shell_is_bash: impl Fn() -> bool,
+) -> String {
+    if !windows {
+        return format!("\"{mk}\" statusline");
+    }
+    let plain = |path: &str| {
+        path.chars().enumerate().all(|(at, c)| {
+            c.is_alphanumeric()
+                || matches!(c, '/' | '.' | '_' | '-' | ':' | '+' | '@')
+                || (c == '~' && at > 0)
+        })
+    };
+    let slashed = mk.replace('\\', "/");
+    if plain(&slashed) {
+        return format!("{slashed} statusline");
+    }
+    if let Some(short) = short(mk).map(|short| short.replace('\\', "/"))
+        && plain(&short)
+    {
+        return format!("{short} statusline");
+    }
+    if shell_is_bash() {
+        format!("'{}' statusline", slashed.replace('\'', r"'\''"))
+    } else {
+        format!("& '{}' statusline", slashed.replace('\'', "''"))
+    }
+}
+
+/// The 8.3 short form of the absolute path `path` (`C:\PROGRA~1\...`), when the volume has one.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn short_path(path: &str) -> Option<String> {
+    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+    let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+    let mut buf = vec![0u16; 1024];
+    // SAFETY: `wide` is NUL terminated and `buf` holds `buf.len()` u16s; both outlive the call.
+    let len = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+    let len = usize::try_from(len)
+        .ok()
+        .filter(|len| (1..buf.len()).contains(len))?;
+    String::from_utf16(&buf[..len]).ok()
+}
+
+#[cfg(not(windows))]
+fn short_path(_path: &str) -> Option<String> {
+    None
+}
+
+/// Whether a `statusLine` value runs some `mk statusline` (any folder; bare, quoted or called
+/// with `&`, as [`command_for`] writes it).
+fn statusline_is_ours(value: &Value) -> bool {
+    let Some(command) = value["command"].as_str() else {
+        return false;
+    };
+    command
+        .trim()
+        .strip_suffix(" statusline")
+        .map(|program| program.trim().trim_start_matches('&').trim())
+        .is_some_and(|program| is_mk(program.trim_matches(['"', '\''])))
+}
+
+/// What an edit does to the saved status line file.
+#[derive(Debug, PartialEq)]
+enum Saved {
+    Keep,
+    /// The user's own `statusLine`, saved before Mkrew's replaces it.
+    Write(Value),
+    /// Uninstall put the saved line back (or install found nothing to chain).
+    Delete,
+}
+
+/// The edited `settings.json` text (`None` = nothing changes) and what to do with the saved file.
+#[derive(Debug, PartialEq)]
+struct Edited {
+    text: Option<String>,
+    saved: Saved,
+}
+
+/// Sets Mkrew's `statusLine` (saving a user's own, through the returned [`Saved`]) or, on
+/// uninstall, puts the saved one back (`saved` is the saved file's content). A `statusLine`
+/// the user set after installing is left alone by uninstall.
+fn statusline_edit(
+    settings: &mut Map<String, Value>,
+    install: bool,
+    mk: &str,
+    saved: Option<&Value>,
+) -> Saved {
+    let current = settings.get("statusLine").cloned();
+    let ours = current.as_ref().is_some_and(statusline_is_ours);
+    if install {
+        if current.as_ref() == Some(&statusline_value(mk)) {
+            return Saved::Keep;
+        }
+        settings.insert("statusLine".into(), statusline_value(mk));
+        return match current {
+            Some(user) if !ours => Saved::Write(user),
+            None if saved.is_some() => Saved::Delete,
+            _ => Saved::Keep,
+        };
+    }
+    if !ours {
+        return Saved::Keep;
+    }
+    match saved {
+        Some(user) => {
+            settings.insert("statusLine".into(), user.clone());
+            Saved::Delete
+        }
+        None => {
+            // `shift_remove`: `remove` swaps the last key into the gap.
+            settings.shift_remove("statusLine");
+            Saved::Keep
+        }
+    }
+}
+
+/// The new `settings.json` and what to do with the saved status line, or no text if nothing
+/// changes.
+fn claude_edit(
+    text: &str,
+    install: bool,
+    mk: &str,
+    saved: Option<&Value>,
+) -> anyhow::Result<Edited> {
     let mut settings = parse_settings(text)?;
     let before = Value::Object(settings.clone());
     let hooks = settings
@@ -398,13 +600,20 @@ fn claude_edit(text: &str, install: bool, mk: &str) -> anyhow::Result<Option<Str
     if hooks.is_empty() && before["hooks"] != json!({}) {
         settings.shift_remove("hooks");
     }
+    let saved = statusline_edit(&mut settings, install, mk, saved);
     let after = Value::Object(settings);
     if after == before {
-        return Ok(None);
+        return Ok(Edited {
+            text: None,
+            saved: Saved::Keep,
+        });
     }
     let mut out = serde_json::to_string_pretty(&after).context("serialize settings")?;
     out.push('\n');
-    Ok(Some(out))
+    Ok(Edited {
+        text: Some(out),
+        saved,
+    })
 }
 
 fn parse_config(text: &str) -> anyhow::Result<toml_edit::DocumentMut> {
@@ -480,6 +689,17 @@ mod tests {
     const OLD_MK: &str = r"D:\old\mk.exe";
     #[cfg(not(windows))]
     const OLD_MK: &str = "/old/mk";
+
+    /// The text of an edit with no saved status line on disk (most tests do not care).
+    fn claude_edit(text: &str, install: bool, mk: &str) -> anyhow::Result<Option<String>> {
+        super::claude_edit(text, install, mk, None).map(|edited| edited.text)
+    }
+
+    /// [`run_on`] with the test `mk`, which must succeed (install, reinstall and uninstall
+    /// all report success, also when nothing changes).
+    fn ok(action: Action, agent: Agent, file: &Path) {
+        assert_eq!(run_on(action, agent, file, MK).unwrap(), ExitCode::SUCCESS);
+    }
 
     #[test]
     fn omp_extension_runs_the_daemons_mk() {
@@ -584,7 +804,11 @@ mod tests {
 
         let settings = json(&installed);
         let keys: Vec<_> = settings.as_object().unwrap().keys().collect();
-        assert_eq!(keys, ["model", "hooks", "env"], "key order is kept");
+        assert_eq!(
+            keys,
+            ["model", "hooks", "env", "statusLine"],
+            "key order is kept; the status line goes last"
+        );
         assert_eq!(settings["env"], json(r#"{"A": "1"}"#));
         let stop = settings["hooks"]["Stop"].as_array().unwrap();
         assert_eq!(stop.len(), 2, "the user's own Stop hook stays");
@@ -716,10 +940,10 @@ mod tests {
             let ours = owned_contents(agent, MK).unwrap();
             let ours = ours.as_str();
             assert_eq!(owned_status(None, ours), Installed::No);
-            run_on(Action::Install, agent, &file, MK).unwrap();
+            ok(Action::Install, agent, &file);
             let text = fs::read_to_string(&file).unwrap();
             assert_eq!(owned_status(Some(&text), ours), Installed::Yes);
-            run_on(Action::Install, agent, &file, MK).unwrap();
+            ok(Action::Install, agent, &file);
             let backups = || {
                 fs::read_dir(file.parent().unwrap())
                     .unwrap()
@@ -740,12 +964,12 @@ mod tests {
             // An older version is outdated, replaced, and kept as a backup.
             fs::write(&file, "old").unwrap();
             assert_eq!(owned_status(Some("old"), ours), Installed::Partly);
-            run_on(Action::Install, agent, &file, MK).unwrap();
+            ok(Action::Install, agent, &file);
             assert_eq!(fs::read_to_string(&file).unwrap(), ours);
             assert_eq!(backups(), 1);
-            run_on(Action::Uninstall, agent, &file, MK).unwrap();
+            ok(Action::Uninstall, agent, &file);
             assert!(!file.exists());
-            run_on(Action::Uninstall, agent, &file, MK).unwrap();
+            ok(Action::Uninstall, agent, &file);
         }
 
         // The template (`"exec": "mk"`) is an older install: outdated, replaced, backed up.
@@ -754,7 +978,7 @@ mod tests {
         fs::write(&file, COPILOT_HOOKS).unwrap();
         let ours = copilot_hooks(MK);
         assert_eq!(owned_status(Some(COPILOT_HOOKS), &ours), Installed::Partly);
-        run_on(Action::Install, Agent::Copilot, &file, MK).unwrap();
+        ok(Action::Install, Agent::Copilot, &file);
         assert_eq!(fs::read_to_string(&file).unwrap(), ours);
         assert_eq!(fs::read_dir(file.parent().unwrap()).unwrap().count(), 2);
     }
@@ -792,5 +1016,212 @@ mod tests {
             None,
             "seeded on the next daemon start"
         );
+    }
+
+    fn statusline(text: &str) -> Value {
+        json(text)["statusLine"].clone()
+    }
+
+    #[test]
+    fn the_status_line_command_quotes_the_path() {
+        assert_eq!(
+            command_for(MK, false, short_path, || true),
+            format!("\"{MK}\" statusline")
+        );
+        assert!(statusline_is_ours(&statusline_value(MK)));
+        assert!(statusline_is_ours(&statusline_value(OLD_MK)), "any mk");
+        assert!(statusline_is_ours(
+            &json!({"type": "command", "command": "mk statusline"})
+        ));
+        assert!(!statusline_is_ours(
+            &json!({"type": "command", "command": "my-statusline"})
+        ));
+        assert!(!statusline_is_ours(
+            &json!({"type": "command", "command": "mk-other statusline"})
+        ));
+        assert!(!statusline_is_ours(&json!("mk statusline")));
+    }
+
+    #[test]
+    fn on_windows_the_command_is_one_both_shells_accept() {
+        let no_short = |_: &str| None;
+        let never = || -> bool { unreachable!("a plain path needs no shell") };
+        // 1: nothing special in the path: forward slashes, no quotes.
+        assert_eq!(
+            command_for(r"C:\Tools\Mkrew\bin\mk.exe", true, no_short, never),
+            "C:/Tools/Mkrew/bin/mk.exe statusline"
+        );
+        // 2: spaces, but a short path without any: that one.
+        let short = |_: &str| Some(r"C:\PROGRA~1\Mkrew\bin\mk.exe".to_owned());
+        assert_eq!(
+            command_for(r"C:\Program Files\Mkrew\bin\mk.exe", true, short, never),
+            "C:/PROGRA~1/Mkrew/bin/mk.exe statusline"
+        );
+        // 3: no short path: the quoted form of the shell Claude uses.
+        let mk = r"C:\Program Files\Mkrew\bin\mk.exe";
+        assert_eq!(
+            command_for(mk, true, no_short, || true),
+            "'C:/Program Files/Mkrew/bin/mk.exe' statusline"
+        );
+        assert_eq!(
+            command_for(mk, true, no_short, || false),
+            "& 'C:/Program Files/Mkrew/bin/mk.exe' statusline"
+        );
+        // A short path that still holds something special is not used.
+        let odd = |_: &str| Some(r"C:\a b\mk.exe".to_owned());
+        assert_eq!(
+            command_for(mk, true, odd, || false),
+            "& 'C:/Program Files/Mkrew/bin/mk.exe' statusline"
+        );
+        // A quote in the path is escaped for each shell.
+        assert_eq!(
+            command_for(r"C:\O'Neil\mk.exe", true, no_short, || true),
+            r"'C:/O'\''Neil/mk.exe' statusline"
+        );
+        assert_eq!(
+            command_for(r"C:\O'Neil\mk.exe", true, no_short, || false),
+            "& 'C:/O''Neil/mk.exe' statusline"
+        );
+        // Elsewhere `sh` runs the quoted path.
+        assert_eq!(
+            command_for("/opt/Mk rew/bin/mk", false, no_short, never),
+            "\"/opt/Mk rew/bin/mk\" statusline"
+        );
+    }
+
+    #[test]
+    fn every_form_of_the_command_is_recognized_as_mkrews() {
+        for command in [
+            "C:/Tools/Mkrew/bin/mk.exe statusline",
+            "C:/PROGRA~1/Mkrew/bin/mk.exe statusline",
+            "'C:/Program Files/Mkrew/bin/mk.exe' statusline",
+            "& 'C:/Program Files/Mkrew/bin/mk.exe' statusline",
+            r"'C:/O'\''Neil/mk.exe' statusline",
+            "\"/opt/Mk rew/bin/mk\" statusline",
+            "mk statusline",
+        ] {
+            assert!(
+                statusline_is_ours(&json!({"type": "command", "command": command})),
+                "{command}"
+            );
+        }
+        assert!(!statusline_is_ours(
+            &json!({"type": "command", "command": "& 'C:/x/other.exe' statusline"})
+        ));
+    }
+
+    #[test]
+    fn claude_install_sets_the_status_line_and_uninstall_removes_it() {
+        let original = r#"{"model": "opus"}"#;
+        let edited = super::claude_edit(original, true, MK, None).unwrap();
+        let text = edited.text.unwrap();
+        assert_eq!(statusline(&text), statusline_value(MK));
+        assert_eq!(edited.saved, Saved::Keep, "nothing of the user's to save");
+        assert_eq!(claude_status(&text, MK).unwrap(), Installed::Yes);
+        assert_eq!(claude_edit(&text, true, MK).unwrap(), None, "idempotent");
+        let back = super::claude_edit(&text, false, MK, None).unwrap();
+        assert_eq!(json(&back.text.unwrap()), json(original));
+        assert_eq!(back.saved, Saved::Keep);
+    }
+
+    #[test]
+    fn claude_install_keeps_a_users_status_line_for_chaining() {
+        let user = json!({"type": "command", "command": "~/.claude/line.sh", "padding": 0});
+        let original = json!({"statusLine": user, "model": "opus"}).to_string();
+        let edited = super::claude_edit(&original, true, MK, None).unwrap();
+        assert_eq!(edited.saved, Saved::Write(user.clone()));
+        let text = edited.text.unwrap();
+        assert_eq!(statusline(&text), statusline_value(MK));
+        let keys: Vec<_> = json(&text).as_object().unwrap().keys().cloned().collect();
+        assert_eq!(
+            keys,
+            ["statusLine", "model", "hooks"],
+            "the line keeps its place"
+        );
+
+        // Uninstall puts it back and deletes the saved file.
+        let back = super::claude_edit(&text, false, MK, Some(&user)).unwrap();
+        assert_eq!(back.saved, Saved::Delete);
+        assert_eq!(json(&back.text.unwrap()), json(&original));
+    }
+
+    #[test]
+    fn an_older_mkrew_status_line_is_replaced_without_being_saved() {
+        let old = json!({"statusLine": statusline_value(OLD_MK)}).to_string();
+        assert_eq!(claude_status(&old, MK).unwrap(), Installed::Partly);
+        let edited = super::claude_edit(&old, true, MK, None).unwrap();
+        assert_eq!(edited.saved, Saved::Keep);
+        assert_eq!(statusline(&edited.text.unwrap()), statusline_value(MK));
+    }
+
+    #[test]
+    fn a_stale_saved_file_goes_when_there_is_no_status_line_to_chain() {
+        let stale = json!({"type": "command", "command": "old.sh"});
+        let edited = super::claude_edit("{}", true, MK, Some(&stale)).unwrap();
+        assert_eq!(edited.saved, Saved::Delete);
+    }
+
+    #[test]
+    fn hooks_without_the_status_line_are_a_partial_install() {
+        let installed = claude_edit("{}", true, MK).unwrap().unwrap();
+        let mut settings = json(&installed);
+        settings.as_object_mut().unwrap().shift_remove("statusLine");
+        assert_eq!(
+            claude_status(&settings.to_string(), MK).unwrap(),
+            Installed::Partly
+        );
+        // Installing again completes it.
+        let again = claude_edit(&settings.to_string(), true, MK)
+            .unwrap()
+            .unwrap();
+        assert_eq!(claude_status(&again, MK).unwrap(), Installed::Yes);
+        // A status line alone is partial too.
+        let only_line = json!({"statusLine": statusline_value(MK)}).to_string();
+        assert_eq!(claude_status(&only_line, MK).unwrap(), Installed::Partly);
+    }
+
+    #[test]
+    fn uninstall_leaves_a_status_line_the_user_set_since() {
+        let user = json!({"type": "command", "command": "mine.sh"});
+        let text = json!({"statusLine": user}).to_string();
+        let saved = json!({"type": "command", "command": "older.sh"});
+        let edited = super::claude_edit(&text, false, MK, Some(&saved)).unwrap();
+        assert_eq!(edited.text, None);
+        assert_eq!(edited.saved, Saved::Keep);
+    }
+
+    #[test]
+    fn install_and_uninstall_write_the_saved_file_around_settings_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let saved = dir.path().join(SAVED_STATUSLINE);
+        let user = json!({"type": "command", "command": "line.sh"});
+        fs::write(&file, json!({"statusLine": user}).to_string()).unwrap();
+
+        ok(Action::Install, Agent::Claude, &file);
+        assert_eq!(json(&fs::read_to_string(&saved).unwrap()), user);
+        assert_eq!(
+            statusline(&fs::read_to_string(&file).unwrap()),
+            statusline_value(MK)
+        );
+        // Installing again does not overwrite the saved line with Mkrew's own.
+        ok(Action::Install, Agent::Claude, &file);
+        assert_eq!(json(&fs::read_to_string(&saved).unwrap()), user);
+
+        ok(Action::Uninstall, Agent::Claude, &file);
+        assert_eq!(statusline(&fs::read_to_string(&file).unwrap()), user);
+        assert!(!saved.exists(), "the saved file is deleted");
+    }
+
+    #[test]
+    fn an_unreadable_saved_file_is_no_chained_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let saved = dir.path().join(SAVED_STATUSLINE);
+        ok(Action::Install, Agent::Claude, &file);
+        fs::write(&saved, "{").unwrap();
+        ok(Action::Uninstall, Agent::Claude, &file);
+        assert_eq!(json(&fs::read_to_string(&file).unwrap()), json("{}"));
+        assert_eq!(fs::read_to_string(&saved).unwrap(), "{", "left alone");
     }
 }

@@ -158,6 +158,19 @@ first. The omp and Copilot files belong to Mkrew: install writes the whole file 
 is backed up first) and uninstall deletes it; `PI_CODING_AGENT_DIR` and `COPILOT_HOME` move them.
 The hooks call `mk hook …`, which does nothing when the agent runs outside Mkrew.
 
+### Widget bar
+
+A thin bar along the bottom of the window shows the workspace folder, the Git branch with its change count, your Claude and Codex 5-hour and weekly limits, the CPU and RAM of the computer the agents run on, and the Mkrew version.
+Click the folder to open it in the file explorer, the branch to open Git (again: the next changed file), the limits to open Settings, the version to check for updates.
+Long folder and branch names end with an ellipsis.
+The bar does nothing while a dialog is open or while Mkrew reconnects.
+Right-click the bar to hide single widgets or the whole bar.
+`Ctrl+Alt+Shift+J` and the palette's "View: Show/hide widget bar" toggle it; `[ui] widget_bar` and `widgets_hidden` in `settings.toml` keep the choice.
+Codex limits come from its transcript after a turn.
+Claude limits need its status line: `mk integration install claude` sets Claude Code's `statusLine` to `mk statusline`, which reports the limits to Mkrew and then runs the status line you had before (saved as `claude-statusline.json` next to `settings.json`; `mk integration uninstall claude` puts it back).
+Without a Claude subscription login (an API key), or with an older Claude Code, Claude sends no limits and that part of the bar stays absent.
+Run `mk integration install claude` again after updating Mkrew to get the status line.
+
 ### Workspaces, default agent and Run button
 
 - Add a project folder as a workspace: "Add workspace" in the sidebar (`Ctrl+Shift+K`) or
@@ -179,6 +192,9 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
   that needs you.
 - **Terminals** (`Ctrl+Shift+1`): tabs split into panes, each an agent or a shell. New agent tab
   `Ctrl+Shift+A`, shell tab `Ctrl+Shift+T`, split `Alt+Shift+=` / `Alt+Shift+-`.
+- **Chat view**: an agent pane (Claude Code, Codex, Oh My Pi) has a `Terminal | Chat` switch in its header; `Ctrl+Alt+T` flips it.
+  Chat shows the conversation as messages, tool calls that open to their arguments and result, the plan, a question card and the running subagents, with the composer under it (Enter sends, Shift+Enter adds a line).
+  The terminal keeps running underneath. `[ui] chat_default = true` opens agent panes in Chat.
 - **Task board** (`Ctrl+Shift+2`): new task `Ctrl+Shift+N`, run it `Ctrl+Enter`.
 - **File tree** (`Ctrl+Shift+3`, in the right panel), **Editor** (`Ctrl+Shift+6`) and **Git**
   (`Ctrl+Shift+4`): browse files, diff against the base

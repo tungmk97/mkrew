@@ -39,6 +39,9 @@ pub enum ViewError {
     NoBranch,
     #[error("branch {0:?} has no upstream to push to")]
     NoUpstream(String),
+    /// A change the request is not allowed to make (`invalid_request`).
+    #[error("{0}")]
+    Refused(String),
     #[error(transparent)]
     Git(#[from] io::Error),
 }

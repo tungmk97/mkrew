@@ -1,0 +1,19 @@
+{"type":"user","message":{"role":"user","content":"Plan the work"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"c1","name":"TaskCreate","input":{"subject":"Design","description":"d","activeForm":"Designing"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","content":"Task #7 created successfully: Design"}]},"toolUseResult":{"task":{"id":"1","subject":"Design"}}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"c2","name":"TaskCreate","input":{"subject":"Build","description":"b"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c2","content":"created"}]},"toolUseResult":{"task":{"id":"2","subject":"Build"}}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"c3","name":"TaskCreate","input":{"subject":"Ship","description":"s"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c3","content":"Task #3 created successfully: Ship"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"u1","name":"TaskUpdate","input":{"taskId":"1","status":"completed"}},{"type":"tool_use","id":"u2","name":"TaskUpdate","input":{"taskId":"2","status":"in_progress"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u1","content":"Updated task #1 status"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"u3","name":"TaskUpdate","input":{"taskId":"3","status":"deleted"}}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"u4","name":"TaskUpdate","input":{"taskId":"99","status":"completed"}}]}}
+{"type":"user","message":{"role":"user","content":"Next"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"l1","name":"TaskList","input":{}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"l1","content":"#2 [completed] Build\n#4 [pending] Test"}]},"toolUseResult":{"tasks":[{"id":"2","subject":"Build","status":"completed"},{"id":"4","subject":"Test","status":"pending"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"u5","name":"TaskUpdate","input":{"taskId":"4","status":"in_progress","subject":"Test it"}}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"c8","name":"TaskCreate","input":{"subject":"No id","description":"x"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c8","content":"Task #9 created"}]},"toolUseResult":{"other":true}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"c9","name":"TaskCreate","input":{"subject":"Failed","description":"x"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c9","is_error":true,"content":"Task #10 failed"}]},"toolUseResult":{"task":{"id":"10"}}}

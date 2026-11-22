@@ -54,6 +54,8 @@ pub enum Kind {
     Font,
     /// One of these names, picked from a searchable list (too many for `Choice`).
     List(&'static [&'static str]),
+    /// A TOML array of strings; set by another control (the widget bar's menu), never shown.
+    Strings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +101,19 @@ const fn hidden(section: &'static str, key: &'static str) -> Setting {
         section,
         key,
         kind: Kind::Number,
+        label: "",
+        help: "",
+        hidden: true,
+    }
+}
+
+const fn hidden_list(section: &'static str, key: &'static str) -> Setting {
+    Setting {
+        page: Page::Appearance,
+        group: "",
+        section,
+        key,
+        kind: Kind::Strings,
         label: "",
         help: "",
         hidden: true,
@@ -154,6 +169,15 @@ pub const SETTINGS: &[Setting] = &[
         Bool,
         "Reading width",
         "Agent panes start narrow (about 120–140 columns, centered).",
+    ),
+    row(
+        General,
+        "Workspace",
+        "ui",
+        "chat_default",
+        Bool,
+        "Chat view by default",
+        "Agent panes open as a chat instead of the terminal (Claude, Codex and omp).",
     ),
     row(
         General,
@@ -263,6 +287,16 @@ pub const SETTINGS: &[Setting] = &[
         "Markdown files open in",
         "Preview, Split (source | preview) or Source; switching a file's mode writes it.",
     ),
+    row(
+        Appearance,
+        "Window",
+        "ui",
+        "widget_bar",
+        Bool,
+        "Widget bar",
+        "A thin bar at the bottom with the folder, Git branch, agent limits, machine load and version.",
+    ),
+    hidden_list("ui", "widgets_hidden"),
     hidden("ui", "md_split"),
     hidden("ui", "inspector_width"),
     hidden("ui", "sidebar_width"),
@@ -477,6 +511,7 @@ impl Setting {
             Kind::Number if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) => {
                 text.to_owned()
             }
+            Kind::Strings => text.to_owned(),
             _ => toml::Value::String(text.to_owned()).to_string(),
         }
     }
@@ -524,6 +559,13 @@ mod tests {
     #[test]
     fn the_flash_help_names_the_dock() {
         assert!(setting("notify.flash_taskbar").help.contains("Dock"));
+    }
+
+    #[test]
+    fn chat_default_is_a_general_switch_off_by_default() {
+        let s = setting("ui.chat_default");
+        assert_eq!(s.current(&Settings::default()), "false");
+        assert_eq!(s.page, Page::General);
     }
 
     #[test]
@@ -629,5 +671,14 @@ mod tests {
         assert_eq!(setting("ui.diff_wrap").current(&defaults), "true");
         assert_eq!(setting("ui.font_size").current(&defaults), "13");
         assert_eq!(setting("composer.file_ref").current(&defaults), "@{path}");
+    }
+
+    #[test]
+    fn the_widget_bar_switch_is_a_setting_and_its_hidden_list_is_not_shown() {
+        let defaults = Settings::default();
+        assert_eq!(setting("ui.widget_bar").current(&defaults), "true");
+        assert!(!setting("ui.widget_bar").hidden);
+        assert!(setting("ui.widgets_hidden").hidden);
+        assert_eq!(setting("ui.widgets_hidden").current(&defaults), "[]");
     }
 }

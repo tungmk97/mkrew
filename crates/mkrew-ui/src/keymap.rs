@@ -100,6 +100,8 @@ pub enum Command {
     Peek,
     /// Open the prompt composer of the focused agent pane (§20B.1).
     OpenComposer,
+    /// Switch the focused agent pane between Terminal and Chat (ADR 0104).
+    ToggleChat,
     /// Send the picked lines (Files, Git diff) or the terminal selection to an agent's
     /// composer (§20B.4).
     SendSelection,
@@ -166,7 +168,7 @@ pub enum Command {
     GitStageAll,
     /// Git only: unstage every Staged file.
     GitUnstageAll,
-    /// Git only: open the discard confirmation of the selected file.
+    /// Git only: open the discard confirmation of the current hunk, else of the selected file.
     GitDiscard,
     /// Git only: fetch the shown repository.
     GitFetch,
@@ -208,6 +210,9 @@ pub enum Command {
     /// Show or hide the session panel right of Terminals (SPEC §10); from another view it
     /// shows Terminals with the panel open.
     ToggleInspector,
+    /// Show or hide the widget bar at the bottom of the main window (ADR 0102); remembered as
+    /// `[ui] widget_bar`.
+    ToggleWidgetBar,
     /// Start recording the microphone, or stop and type the speech as text into the field or
     /// terminal that has the keyboard (SPEC §20G).
     VoiceInput,
@@ -323,6 +328,7 @@ impl Command {
             Command::PreviousInbox,
             Command::Peek,
             Command::OpenComposer,
+            Command::ToggleChat,
             Command::SendSelection,
             Command::CopyMode,
             Command::LinkHints,
@@ -374,6 +380,7 @@ impl Command {
             Command::ToggleSidebar,
             Command::ToggleCompactSidebar,
             Command::ToggleInspector,
+            Command::ToggleWidgetBar,
             Command::VoiceInput,
             Command::AskAi,
             Command::ContextMenu,
@@ -434,6 +441,7 @@ impl Command {
             Command::PreviousInbox => "previous_inbox".into(),
             Command::Peek => "peek".into(),
             Command::OpenComposer => "open_composer".into(),
+            Command::ToggleChat => "toggle_chat".into(),
             Command::SendSelection => "send_selection".into(),
             Command::CopyMode => "copy_mode".into(),
             Command::LinkHints => "link_hints".into(),
@@ -486,6 +494,7 @@ impl Command {
             Command::ToggleSidebar => "toggle_sidebar".into(),
             Command::ToggleCompactSidebar => "toggle_compact_sidebar".into(),
             Command::ToggleInspector => "toggle_inspector".into(),
+            Command::ToggleWidgetBar => "toggle_widget_bar".into(),
             Command::VoiceInput => "voice_input".into(),
             Command::AskAi => "ask_ai".into(),
             Command::ContextMenu => "context_menu".into(),
@@ -659,6 +668,7 @@ impl Command {
             Command::PreviousInbox => "ctrl-alt-i".into(),
             Command::Peek => "ctrl-shift-space".into(),
             Command::OpenComposer => "ctrl-shift-enter".into(),
+            Command::ToggleChat => "ctrl-alt-t".into(),
             Command::SendSelection => "ctrl-shift-l".into(),
             Command::CopyMode => "alt-shift-c".into(),
             Command::LinkHints => "alt-shift-o".into(),
@@ -723,6 +733,7 @@ impl Command {
             Command::ToggleSidebar => "ctrl-shift-b".into(),
             Command::ToggleCompactSidebar => "ctrl-alt-b".into(),
             Command::ToggleInspector => "ctrl-shift-y".into(),
+            Command::ToggleWidgetBar => "ctrl-alt-shift-j".into(),
             Command::VoiceInput => "ctrl-shift-d".into(),
             Command::AskAi => "ctrl-shift-g".into(),
             Command::ContextMenu => "shift-f10".into(),
@@ -1514,6 +1525,8 @@ mod tests {
         assert_eq!(bound("ctrl-shift-space"), Some(Command::Peek));
         assert_eq!(keymap.label(Command::Peek), "Ctrl+Shift+Space");
         assert_eq!(bound("ctrl-shift-enter"), Some(Command::OpenComposer));
+        assert_eq!(bound("ctrl-alt-t"), Some(Command::ToggleChat));
+        assert_eq!(keymap.label(Command::ToggleChat), "Ctrl+Alt+T");
         assert_eq!(bound("ctrl-shift-l"), Some(Command::SendSelection));
         assert_eq!(bound("ctrl-shift-1"), Some(Command::ShowTerminals));
         assert_eq!(bound("ctrl-shift-2"), Some(Command::ShowBoard));
@@ -1565,6 +1578,15 @@ mod tests {
         assert_eq!(keymap.label(Command::ToggleInspector), "Ctrl+Shift+Y");
         // Global: also while a terminal has focus (it must not reach the agent).
         assert_eq!(Command::ToggleInspector.context(), None);
+        assert_eq!(bound("ctrl-alt-shift-j"), Some(Command::ToggleWidgetBar));
+        assert_eq!(keymap.label(Command::ToggleWidgetBar), "Ctrl+Alt+Shift+J");
+        // Global like the sidebar toggles; `ctrl-shift-j` stays Toggle theme.
+        assert_eq!(Command::ToggleWidgetBar.context(), None);
+        assert_eq!(bound("ctrl-shift-j"), Some(Command::ToggleTheme));
+        assert_eq!(
+            Command::from_name("toggle_widget_bar"),
+            Some(Command::ToggleWidgetBar)
+        );
         assert_eq!(bound("ctrl-shift-d"), Some(Command::VoiceInput));
         assert_eq!(keymap.label(Command::VoiceInput), "Ctrl+Shift+D");
         // Global: it must reach the shell while a terminal or a text field has the keyboard.

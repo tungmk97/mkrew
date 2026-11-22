@@ -29,8 +29,14 @@ pub enum Direction {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Node {
-    /// A pane showing one session.
-    Pane { session: Ulid },
+    /// A pane showing one session. `chat` is the pane's saved mode (ADR 0104): `Some(true)`
+    /// Chat, `Some(false)` Terminal, absent = not set (`[ui] chat_default` decides), so layouts
+    /// of older versions read unchanged.
+    Pane {
+        session: Ulid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        chat: Option<bool>,
+    },
     /// `ratio` is the share of the first child.
     Split {
         split: Axis,
@@ -189,7 +195,10 @@ pub const MIN_RATIO: f64 = 0.1;
 
 impl Node {
     pub fn pane(session: Ulid) -> Self {
-        Node::Pane { session }
+        Node::Pane {
+            session,
+            chat: None,
+        }
     }
 
     /// Parses a stored layout; JSON `null` is a tab without panes.
@@ -211,7 +220,7 @@ impl Node {
 
     fn validate(&self, seen: &mut HashSet<Ulid>) -> Result<(), LayoutError> {
         match self {
-            Node::Pane { session } => {
+            Node::Pane { session, .. } => {
                 if !seen.insert(*session) {
                     return Err(LayoutError::Duplicate(*session));
                 }
@@ -239,28 +248,53 @@ impl Node {
 
     fn collect(&self, out: &mut Vec<Ulid>) {
         match self {
-            Node::Pane { session } => out.push(*session),
+            Node::Pane { session, .. } => out.push(*session),
             Node::Split { children, .. } => children.iter().for_each(|c| c.collect(out)),
         }
     }
 
     pub fn contains(&self, session: Ulid) -> bool {
         match self {
-            Node::Pane { session: id } => *id == session,
+            Node::Pane { session: id, .. } => *id == session,
             Node::Split { children, .. } => children.iter().any(|c| c.contains(session)),
+        }
+    }
+
+    /// The mode saved on the pane of `session`; `None` = not set (or no such pane).
+    pub fn chat_of(&self, session: Ulid) -> Option<bool> {
+        match self {
+            Node::Pane { session: id, chat } => (*id == session).then_some(*chat).flatten(),
+            Node::Split { children, .. } => {
+                children.iter().find_map(|child| child.chat_of(session))
+            }
+        }
+    }
+
+    /// Saves `value` on the pane of `session`; false if it is not in the tree or already has it.
+    pub fn set_chat(&mut self, session: Ulid, value: Option<bool>) -> bool {
+        match self {
+            Node::Pane { session: id, chat } if *id == session => {
+                let changed = *chat != value;
+                *chat = value;
+                changed
+            }
+            Node::Pane { .. } => false,
+            Node::Split { children, .. } => children
+                .iter_mut()
+                .any(|child| child.set_chat(session, value)),
         }
     }
 
     fn first(&self) -> Ulid {
         match self {
-            Node::Pane { session } => *session,
+            Node::Pane { session, .. } => *session,
             Node::Split { children, .. } => children[0].first(),
         }
     }
 
     fn last(&self) -> Ulid {
         match self {
-            Node::Pane { session } => *session,
+            Node::Pane { session, .. } => *session,
             Node::Split { children, .. } => children[1].last(),
         }
     }
@@ -284,14 +318,19 @@ impl Node {
     /// `new` is taken by the pane of `target`.
     fn split_inner(&mut self, target: Ulid, axis: Axis, new: &mut Option<Node>) -> bool {
         match self {
-            Node::Pane { session } if *session == target => {
+            Node::Pane { session, chat } if *session == target => {
                 let Some(new) = new.take() else {
                     return false;
+                };
+                // The split keeps the pane's own mode on its half.
+                let old = Node::Pane {
+                    session: target,
+                    chat: *chat,
                 };
                 *self = Node::Split {
                     split: axis,
                     ratio: 0.5,
-                    children: Box::new([Node::pane(target), new]),
+                    children: Box::new([old, new]),
                 };
                 true
             }
@@ -481,7 +520,7 @@ impl Node {
 
     fn rects_inner(&self, area: Rect, out: &mut Vec<(Ulid, Rect)>) {
         match self {
-            Node::Pane { session } => out.push((*session, area)),
+            Node::Pane { session, .. } => out.push((*session, area)),
             Node::Split {
                 split,
                 ratio,
@@ -1041,5 +1080,49 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(node.neighbour(a, Direction::Right), Some(c));
+    }
+
+    #[test]
+    fn a_leaf_keeps_its_chat_flag_through_json_and_absent_stays_absent() {
+        let [a, b] = ids();
+        let json = serde_json::json!({"split":"vertical","ratio":0.5,"children":[
+            {"session": a.to_string(), "chat": true},
+            {"session": b.to_string()}
+        ]});
+        let node = Node::from_json(&json).unwrap().unwrap();
+        assert_eq!(node.chat_of(a), Some(true));
+        assert_eq!(node.chat_of(b), None);
+        assert_eq!(
+            Node::to_json(Some(&node)),
+            json,
+            "nothing is added to a leaf without a flag"
+        );
+    }
+
+    #[test]
+    fn set_chat_changes_only_that_pane_and_reports_a_change() {
+        let [a, b, other] = ids();
+        let mut node = Node::pane(a);
+        assert!(node.split(a, Axis::Vertical, b));
+        assert!(node.set_chat(b, Some(true)));
+        assert!(!node.set_chat(b, Some(true)), "unchanged");
+        assert_eq!((node.chat_of(a), node.chat_of(b)), (None, Some(true)));
+        assert!(node.set_chat(b, Some(false)));
+        assert_eq!(node.chat_of(b), Some(false));
+        assert!(node.set_chat(b, None));
+        assert!(!node.set_chat(other, Some(true)), "not in the tree");
+        // Closing a sibling leaves the flag on the surviving pane.
+        node.set_chat(a, Some(true));
+        let closed = node.close(b);
+        assert_eq!(closed.remaining.unwrap().chat_of(a), Some(true));
+    }
+
+    #[test]
+    fn splitting_a_pane_keeps_its_chat_flag() {
+        let [a, b] = ids();
+        let mut node = Node::pane(a);
+        node.set_chat(a, Some(true));
+        assert!(node.split(a, Axis::Vertical, b));
+        assert_eq!((node.chat_of(a), node.chat_of(b)), (Some(true), None));
     }
 }

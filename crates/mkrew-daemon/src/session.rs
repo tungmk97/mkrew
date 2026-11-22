@@ -15,10 +15,10 @@ use mkrew_core::state::PATTERN_TAIL_LINES;
 use mkrew_core::turn::{TurnEvent, TurnTracker};
 use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
-    ConflictDetectedEvent, DocChangedEvent, DocComment, Event, GitChangedEvent, HookReportParams,
-    QueuedSend, Session, SessionAttachResult, SessionEditedEvent, SessionExitedEvent, SessionKind,
-    SessionPortsEvent, SessionQueueEvent, SessionReadResult, SessionState, SessionStateEvent,
-    SessionTerminalTitleEvent, StateSource,
+    AgentLimits, ConflictDetectedEvent, DocChangedEvent, DocComment, Event, GitChangedEvent,
+    HookReportParams, QueuedSend, Session, SessionAttachResult, SessionEditedEvent,
+    SessionExitedEvent, SessionKind, SessionPortsEvent, SessionQueueEvent, SessionReadResult,
+    SessionState, SessionStateEvent, SessionTerminalTitleEvent, StateSource,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -108,6 +108,11 @@ pub struct Hub {
     pub terminal_titles: Mutex<HashMap<Ulid, String>>,
     /// Linked plans of live sessions, each with its file watcher (ADR 0039).
     pub plans: crate::plan::Plans,
+    /// The newest limits of each agent (spec 2026-11-22 section 5.1); memory only.
+    limits: Mutex<crate::limits::Limits>,
+    /// Connections that said `hello` and receive events; the machine sampler runs while it is
+    /// above 0 ([`crate::machine`]).
+    pub clients: tokio::sync::watch::Sender<usize>,
 }
 
 /// Idle time owed by flood handling: 1/[`PACE_IDLE_DIVISOR`] of the time spent, minus the idle
@@ -343,6 +348,8 @@ impl Hub {
             ports: Mutex::default(),
             terminal_titles: Mutex::default(),
             plans: crate::plan::Plans::default(),
+            limits: Mutex::default(),
+            clients: tokio::sync::watch::channel(0).0,
         }
     }
 
@@ -359,6 +366,23 @@ impl Hub {
     /// The cleaned terminal title of agent session `id`, if its program set one.
     pub fn terminal_title(&self, id: Ulid) -> Option<String> {
         lock(&self.terminal_titles).get(&id).cloned()
+    }
+
+    /// The newest limits each agent reported, for `limits.get`.
+    pub fn limits(&self) -> Vec<AgentLimits> {
+        lock(&self.limits).all()
+    }
+
+    /// Validates `limits` ([`crate::limits::checked`]), keeps them when they are news and
+    /// announces the change as `agent.limits`; returns whether they were news. A repeat or an
+    /// older report sends nothing.
+    pub fn offer_limits(&self, limits: AgentLimits) -> Result<bool, String> {
+        let limits = crate::limits::checked(limits)?;
+        let changed = lock(&self.limits).offer(limits.clone());
+        if changed {
+            let _ = self.events.send(Event::AgentLimits(limits));
+        }
+        Ok(changed)
     }
 
     pub fn live_count(&self) -> usize {

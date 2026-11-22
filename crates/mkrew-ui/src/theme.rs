@@ -141,6 +141,9 @@ pub const CONTROL_HEIGHT: f32 = 30.0;
 pub const INPUT_HEIGHT: f32 = 32.0;
 /// One segment of a segmented control.
 pub const SEGMENT_HEIGHT: f32 = 26.0;
+/// A segment of the pane header's `Terminal | Chat` switch: with its padding and border the
+/// switch is as tall as [`CONTROL_HEIGHT`], so headers line up with and without it.
+pub const COMPACT_SEGMENT_HEIGHT: f32 = CONTROL_HEIGHT - 2.0 * (SEGMENT_PADDING + BORDER_WIDTH);
 /// A status pill (Idle, In Progress) and an area chip / Git `M` badge.
 pub const PILL_HEIGHT: f32 = 22.0;
 pub const CHIP_HEIGHT: f32 = 20.0;
@@ -371,6 +374,12 @@ pub const PROMPT_FIELD_HEIGHT: f32 = 140.0;
 
 /// Tallest an agent pane's prompt composer grows (it scrolls past that, ~8 lines; §20B.1).
 pub const COMPOSER_MAX_HEIGHT: f32 = 160.0;
+
+/// Widest share of the Chat page a prompt card takes (it sits at the right).
+pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
+
+/// How far one arrow key scrolls the chat list, in px.
+pub const CHAT_SCROLL_STEP: f32 = 48.0;
 
 /// Tallest the composer's list of queued texts grows (it scrolls past that, ~4 rows; §20B.2).
 pub const COMPOSER_QUEUE_MAX_HEIGHT: f32 = 88.0;
@@ -946,6 +955,18 @@ impl Theme {
         self
     }
 
+    /// The ink of the taskbar badge on `status_needs_input`: `bg` or `text`, whichever has
+    /// the better contrast with it.
+    pub fn badge_ink(&self) -> u32 {
+        if contrast(self.bg, self.status_needs_input)
+            >= contrast(self.text, self.status_needs_input)
+        {
+            self.bg
+        } else {
+            self.text
+        }
+    }
+
     /// The pre-restyle palette for the sidebar's session list (see [`Theme::classic`]).
     pub fn classic(&self) -> &Theme {
         self.classic.as_deref().unwrap_or(self)
@@ -1082,7 +1103,7 @@ impl Theme {
             terminal_match_bg: 0xF6EBCF,
             terminal_match_current_bg: 0xE9C46A,
             status_working: 0x5452D0,
-            status_needs_input: 0xA4660F,
+            status_needs_input: 0x8B570D,
             status_done: 0x23854F,
             status_exited: 0xC2412F,
             status_idle: 0x8A8F99,
@@ -2278,6 +2299,14 @@ pub const PULSE_PERIOD: Duration = Duration::from_millis(1600);
 pub const PULSE_MIN_OPACITY: f32 = 0.35;
 /// A pane's status pill ("Idle · 2m") in the tab strip and the pane header.
 pub const STATUS_PILL_HEIGHT: f32 = 24.0;
+/// The widget bar along the bottom of the main window (ADR 0102), in px at the default font
+/// size: its height, the padding at its two ends, the gap between widgets, and the widest a
+/// folder or branch label gets before it ellipsizes. Font size is `font_size::META`; colors
+/// are `chrome`, `border` and `text_muted`.
+pub const WIDGET_BAR_HEIGHT: f32 = 24.0;
+pub const WIDGET_BAR_PADDING: f32 = space::S;
+pub const WIDGET_BAR_GAP: f32 = space::M;
+pub const WIDGET_BAR_LABEL_MAX_WIDTH: f32 = 160.0;
 /// Longest tab title before it truncates.
 pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
 /// Reading width of an agent pane: the terminal is at most this wide (≈ 120–140 columns at
@@ -2430,6 +2459,13 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
         }
         // The only sign of expanded / collapsed (WCAG 1.4.11).
         check("chevron", t.chevron_color(), bg, 3.0);
+    }
+    // The taskbar badge numeral on the needs-input amber (WCAG 1.4.11, 3:1).
+    check("badge ink", t.badge_ink(), t.status_needs_input, 3.0);
+    // The widget bar (ADR 0102) is `chrome`; its text is META size, so 4.5:1 (not the 3:1 of
+    // large or graphical marks): the labels, the amber limit and the red limit.
+    for fg in [t.text_muted, t.status_needs_input, t.danger_text] {
+        check("widget bar", fg, t.chrome, 4.5);
     }
     found
 }
@@ -2591,6 +2627,21 @@ mod tests {
                 "chevron",
                 Theme {
                     text_muted: t.sidebar,
+                    ..t.clone()
+                },
+            ),
+            (
+                "badge ink",
+                Theme {
+                    bg: t.status_needs_input,
+                    text: t.status_needs_input,
+                    ..t.clone()
+                },
+            ),
+            (
+                "widget bar",
+                Theme {
+                    chrome: t.text_muted,
                     ..t.clone()
                 },
             ),
@@ -3022,6 +3073,17 @@ mod tests {
         assert_eq!(title_bar_inset(Os::Mac, true), space::M);
         assert_eq!(title_bar_inset(Os::Windows, false), space::M);
         assert_eq!(title_bar_inset(Os::Linux, true), space::M);
+    }
+
+    #[test]
+    fn the_widget_bar_tokens_scale_and_sit_on_the_spacing_scale() {
+        assert_eq!(
+            rems_px(WIDGET_BAR_HEIGHT),
+            gpui::rems(WIDGET_BAR_HEIGHT / 13.0)
+        );
+        for step in [WIDGET_BAR_PADDING, WIDGET_BAR_GAP] {
+            assert!([4.0, 8.0, 12.0, 16.0, 24.0, 32.0].contains(&step), "{step}");
+        }
     }
 
     #[test]

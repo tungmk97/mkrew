@@ -290,23 +290,32 @@ fn fake_agents_go_through_every_state_transition() {
         changed
     };
     let screen = std::fs::read_to_string(profiles.join("screen.toml")).unwrap();
-    env.write_profile("screen", &idle_after(screen, "2000"));
-    // Idle only shows after the 10 s hook window anyway, so a long quiet period costs nothing.
+    // 6 s: a starved agent process (seen at 2 s under parallel test runs) between two spinner
+    // frames must not read as quiet; the scenario's final quiet gap is 20 s.
+    env.write_profile("screen", &idle_after(screen, "6000"));
+    // Idle only shows after the 10 s hook window anyway, so a long quiet period costs nothing;
+    // 15 s outlasts a first `mk hook` run held up for seconds (the scenario's busy gap is 30 s).
     let hooks = std::fs::read_to_string(profiles.join("hooks.toml")).unwrap();
-    let hooks = idle_after(hooks, "8000").replace("mode = \"screen\"", "mode = \"hook+screen\"");
+    let hooks = idle_after(hooks, "15000").replace("mode = \"screen\"", "mode = \"hook+screen\"");
     assert!(hooks.contains("hook+screen"), "{hooks}");
     env.write_profile("hooks", &hooks);
     // The shipped omp profile, running a copy of the fake agent's `omp` scenario with longer
-    // quiet gaps.
-    let omp = include_str!("../../../../agents/omp.toml").replace(
-        "command = \"omp\"",
-        &format!(
-            "command = '{}'\nargs = ['--scenario', '{}']",
-            built_bin("mkrew-fakeagent").display(),
-            omp_scenario.display()
-        ),
+    // quiet gaps; its 3 s `idle_after` is raised like the others (a stalled agent or a late
+    // ConPTY flush must not read as quiet).
+    let omp = include_str!("../../../../agents/omp.toml")
+        .replace(
+            "command = \"omp\"",
+            &format!(
+                "command = '{}'\nargs = ['--scenario', '{}']",
+                built_bin("mkrew-fakeagent").display(),
+                omp_scenario.display()
+            ),
+        )
+        .replace("idle_after_ms = 3000", "idle_after_ms = 6000");
+    assert!(
+        omp.contains("--scenario") && omp.contains("idle_after_ms = 6000"),
+        "{omp}"
     );
-    assert!(omp.contains("--scenario"), "{omp}");
     env.write_profile("omp", &omp);
 
     let (_daemon, mut client) = env.start();

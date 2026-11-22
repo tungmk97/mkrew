@@ -311,6 +311,7 @@ pub fn handles(command: Command) -> bool {
             | Command::RenamePane
             | Command::RenameTab
             | Command::OpenComposer
+            | Command::ToggleChat
             | Command::CommandPalette
             | Command::ContextMenu
             | Command::ToggleFullScreen
