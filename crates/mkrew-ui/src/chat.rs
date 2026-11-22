@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 
 use mkrew_core::thread::{PlanStatus, PlanStep, Subagent, ToolCall};
+use ulid::Ulid;
 
 use crate::thread_view::{Page, PageItem, PageTurn};
 
@@ -174,6 +175,21 @@ fn tray(subagents: &[Subagent]) -> Vec<Chip<'_>> {
         .collect()
 }
 
+/// The transcripts to read: the panel's, then each Chat pane's; one per session (the first
+/// key of a session wins), so the panel and the pane never read the same file twice.
+pub fn wanted_reads(
+    panel: Option<(Ulid, String)>,
+    chats: Vec<(Ulid, String)>,
+) -> Vec<(Ulid, String)> {
+    let mut wanted: Vec<(Ulid, String)> = Vec::new();
+    for key in panel.into_iter().chain(chats) {
+        if !wanted.iter().any(|(session, _)| *session == key.0) {
+            wanted.push(key);
+        }
+    }
+    wanted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +215,21 @@ mod tests {
             .take(count)
             .map(|line| format!("{line}\n"))
             .collect()
+    }
+
+    #[test]
+    fn one_read_per_session_and_the_panels_wins() {
+        let [a, b] = [Ulid::new(), Ulid::new()];
+        let key = |id, native: &str| (id, native.to_owned());
+        assert_eq!(wanted_reads(None, vec![]), []);
+        assert_eq!(
+            wanted_reads(Some(key(a, "n1")), vec![key(b, "n2"), key(a, "other")]),
+            [key(a, "n1"), key(b, "n2")]
+        );
+        assert_eq!(
+            wanted_reads(None, vec![key(b, "n2"), key(b, "n3")]),
+            [key(b, "n2")]
+        );
     }
 
     fn labels(turn: &ChatTurn<'_>) -> Vec<String> {
