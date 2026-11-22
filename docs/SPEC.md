@@ -733,6 +733,7 @@ Protocol 47 (ADR 0069): `Project.position`, `project.update` `position?`.
 - Output fan-out per chunk: emulator → state detector (at most 4 scans/s per session, ADR 0088),
   session log file (buffered writer), attached clients (binary frames, §7).
 - **Command lookup:** on Windows try `PATHEXT` (`claude.cmd`, `.ps1` shims). Clear error if not found.
+  On macOS, `mkrew` and `mkrew-daemon` started with launchd's bare `PATH` (Finder, Dock, non-interactive ssh) first take `PATH` from `$SHELL -l -i`, so Homebrew/npm installs are found.
 - **State detection:** one state machine per session (lives in `mkrew-core`, pure, unit-tested).
 - **Send queue:** `session.send` while the session is `working` is queued and delivered when the
   session reaches idle/done/needs_input.
@@ -2738,7 +2739,9 @@ A tag push publishes a release; a running Mkrew offers it and installs it in pla
    toast ("… is up to date", "… is available", or the error). A newer version shows the update
    button (§14) and one info toast "Mkrew <v> is available".
 3. **Install kind.** Windows: `<exe dir>/../unins000.exe` exists → Inno setup, per-user when the
-   exe is under `%LOCALAPPDATA%`. macOS: the exe is `<X>.app/Contents/MacOS/mkrew` → app bundle.
+   exe is under `%LOCALAPPDATA%`. macOS: the exe is `<X>.app/Contents/MacOS/mkrew` → app bundle;
+   a Gatekeeper-translocated copy (read-only, under `AppTranslocation/`) maps to the real bundle
+   it mounts (`statfs` `f_mntfromname`), so a quarantined app opened from Downloads updates too.
    Anything else (dev build, MSI install, Linux, Intel Mac, no matching asset): the button opens
    the release page.
 4. **Apply.** Unsaved Editor changes are asked about first. A confirmation (`window.prompt`):
