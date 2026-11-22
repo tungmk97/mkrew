@@ -40,6 +40,9 @@ With a real Claude Code session, a real Codex session (and omp if installed), da
 - [ ] The terminal keeps running while in Chat: the status pill, the Inbox and the notifications still change; switching back shows the terminal at the right size.
 - [ ] `[ui] chat_default = true` (Settings, General) opens agent panes in Chat; a pane switched to Terminal stays Terminal.
 - [ ] The empty state "No messages yet. Type below to start." shows before the first message; an exited session's chat stays readable.
+- [ ] Opening Chat, and clicking into the pane afterwards, shows the last message in full above the subagent tray; a list scrolled up stays where it is when the pane gains or loses the keyboard.
+- [ ] In a narrow pane the composer's key hint ends with an ellipsis and never draws under the "Prompts..." button.
+- [ ] Drag a split divider so an agent pane narrows: its header drops whole parts, never cuts one: first `ctx`, then Share, then the reading toggle, then `Terminal | Chat` (Ctrl+Alt+T still switches); the status pill ends with an ellipsis. Widening brings them back in the same order, also after hiding the sidebar or the right panel.
 
 ### To verify - 2026-11-22 Review flow (ADR 0103, plan docs/superpowers/plans/2026-11-22-review-flow.md)
 
