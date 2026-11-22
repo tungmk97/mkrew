@@ -200,7 +200,7 @@ mkrew/
 ├── AGENTS.md / CLAUDE.md     # agent instructions
 ├── docs/                     # SPEC, PROGRESS, BUILD_LOOP, HUMAN_CHECKS, decisions/, screenshots/
 ├── scripts/                  # verify, autobuild, status, package (setup .exe / tar.gz / macOS app)
-├── packaging/                # mkrew.iss (Inno Setup 6 setup .exe)
+├── packaging/                # mkrew.iss (Inno Setup 6 setup .exe); macos/ (app icon source, entitlements)
 ├── agents/                   # sample profiles: claude.toml codex.toml omp.toml shell.toml fake.toml
 └── crates/
     ├── mkrew-core/           # models, config, profile parsing, state machine. NO I/O beyond files, except the `tailscale` CLI runs of `mkrew_core::tailscale` (ADR 0053).
@@ -724,7 +724,7 @@ Protocol 47 (ADR 0069): `Project.position`, `project.update` `position?`.
   daemon scrollback stays bounded. Long history lives in the session log file on disk.
 - Output fan-out per chunk: emulator → state detector (at most 4 scans/s per session, ADR 0088),
   session log file (buffered writer), attached clients (binary frames, §7).
-- **Command lookup:** on Windows try `PATHEXT` (`claude.cmd`, `.ps1` shims). Clear error if not found.
+- **Command lookup:** on Windows try `PATHEXT` (`claude.cmd`, `.ps1` shims). On macOS the `PATH` is the login shell's merged before the process's own, so an app opened from Finder finds the same programs as Terminal (§20L). Clear error if not found.
 - **State detection:** one state machine per session (lives in `mkrew-core`, pure, unit-tested).
 - **Send queue:** `session.send` while the session is `working` is queued and delivered when the
   session reaches idle/done/needs_input.
@@ -918,7 +918,8 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   and on its `git.changed`; no polling, nothing for hidden workspaces. Window: the empty part is
   the drag area. **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering
   □ shows the Windows 11 Snap Layouts flyout), all edges resize; ✕ and Alt+F4 hide the window to the tray while `[ui] close_to_tray` is on (§20J); the controls are hidden in full
-  screen. **macOS:** native traffic lights at the left, drag and double-click as the OS does.
+  screen. **macOS:** native traffic lights at the left, centered in the bar at any `[ui] font_size`
+  (no gap is left for them in full screen), drag and double-click as the OS does.
   **Linux:** the OS title bar stays. Minimum window size 1100 × 560. Without a workspace only
   the logo, the sidebar toggle, the drag area and the window controls show.
 - **Machine windows** (ADR 0089, `mkrew-ui --machine <name>`; this computer's window is unchanged):
@@ -1057,7 +1058,9 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
       scrollback restarts from the daemon's ≤ 1,000 history lines (ADR 0030, 0082).
     - Use a monospace font with a precomputed cell size (width and line height are whole device pixels, ADR 0099); no per-cell measurement.
 - **Open in Zed:** on task cards, the workspace menu, the file tree menu and Docs; runs
-  `zed <path>[:line]`; clear error with install hint if `zed` is missing.
+  `zed <path>[:line]`; on macOS also `/usr/local/bin/zed`, `/opt/homebrew/bin/zed`, `~/.local/bin/zed`
+  and the tool inside `Zed.app`, and with only the app installed `open -a Zed.app <path>` (no line);
+  clear error with install hint if none is found.
 - **Open in File Explorer** ("Reveal in Finder" on macOS): in the workspace menu and in the file tree's right-click menu
   (§12A). It opens the OS file manager (Explorer, Finder, the Linux file manager): a folder is
   opened, a file is shown selected in its folder.
@@ -2162,7 +2165,7 @@ are errors (same rule as profiles). Full shape with defaults:
 needs_input = true          # OS notification on needs_input
 done = true                 # OS notification on done
 sound = true                # notification plays the OS default sound
-flash_taskbar = true        # §20J; Windows: the taskbar button flashes while a session needs input and the window is not focused
+flash_taskbar = true        # §20J; Windows: the taskbar button flashes, macOS: the Dock icon bounces, while a session needs input and the window is not focused
 
 [awake]
 keep_awake = true           # §20A.5
@@ -2183,7 +2186,7 @@ diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header to
 inspector_width = 300       # §10; px, the right panel's width (dragging its edge writes it; kept 240–560)
 right_panel = "hidden"      # §10; "files" | "session" | "git" | "hidden"; the right panel's toggle and tabs write it
 sidebar_width = 280         # §10; px, the workspace sidebar's width (dragging its edge writes it; kept 200–480)
-close_to_tray = true        # §20J; Windows: ✕ hides the window to the tray icon (false: ✕ quits the UI)
+close_to_tray = true        # §20J, §20L; Windows: ✕ hides the window to the tray icon; macOS: ✕ hides the app (false: ✕ quits the UI)
 board_all_workspaces = false # §10; the Board shows every workspace's tasks; its `This workspace | All workspaces` switch writes it
 md_mode = "preview"         # §12A; preview | split | source: how the next .md file opens; switching a file's mode writes it
 md_split = 50               # §12A; the source's share of the Markdown Split view, percent (kept 20-80); dragging the divider writes it
@@ -2679,17 +2682,18 @@ sidebar chip's count (§10, ADR 0036): needs input, plus finished and not yet vi
 
 1. **Taskbar badge (Windows).** The main window's taskbar button shows an overlay icon with that
    count (`ITaskbarList3::SetOverlayIcon`; amber, `9+` from 10; description "3 need you");
-   cleared at 0. macOS and Linux: nothing (gpui has no dock-badge call).
+   cleared at 0. macOS: the Dock icon's badge shows the same count (`99+` from 100, §20L). Linux: nothing.
 2. **Flash (Windows).** When a session enters `needs_input` while the window is not focused, the
    taskbar button flashes until the window is focused (`FlashWindowEx`); it stops on focus and when
-   nothing needs you any more. `[notify] flash_taskbar = false` turns it off (applies live).
+   nothing needs you any more. `[notify] flash_taskbar = false` turns it off (applies live). macOS:
+   the Dock icon bounces once (§20L); Linux: nothing.
 3. **Tray icon (Windows).** Owned by the UI process, shown while it runs. Icon: Mkrew's own while
    nothing works or waits, a dot in the working color while an agent works, a dot in the needs-input
    color while something needs you; tooltip `Mkrew · 2 need you · 1 working`. Right-click menu: up to
    8 sessions that need you (asking for input first, then newest first), `agent · workspace — state, age` (a click shows the window
    and opens that pane); a greyed `● N working`; `Open Mkrew`; `Quit UI (agents keep running)`. A
    left click opens the window.
-4. **Close to tray (Windows).** `[ui] close_to_tray = true` (default): ✕ and Alt+F4 hide the window
+4. **Close to tray (Windows; macOS in §20L).** `[ui] close_to_tray = true` (default): ✕ and Alt+F4 hide the window
    instead of closing it (no pane is attached while hidden, §10). The tray menu, an OS notification click and
    starting Mkrew again (same exe, same daemon socket) show it. `false`, or no tray icon: ✕ quits the UI as before
    (unsaved Editor changes ask first). `Quit UI` shows the window if unsaved Editor changes need an
@@ -2712,7 +2716,8 @@ A tag push publishes a release; a running Mkrew offers it and installs it in pla
 
 1. **Release.** `v*` tag whose number equals the root `Cargo.toml` `version` (the workflow
    refuses others). The Release workflow publishes (no draft) `mkrew-<v>-x64-setup.exe`,
-   `mkrew-<v>-macos-arm64.zip` (ad-hoc signed `Mkrew.app`) and the Linux tar.gz.
+   `mkrew-<v>-macos-arm64.zip` (`Mkrew.app`, Developer ID signed and notarized when the repository
+   has the Apple secrets, else ad-hoc signed; §20L) and the Linux tar.gz.
 2. **Check.** The UI asks `https://api.github.com/repos/tungmk97/mkrew/releases/latest` at window
    open and every 6 h (10 s timeout, background executor), and on palette "Global: Check for
    updates" (no key). Only a plain `a.b.c` tag strictly greater than the running version counts.
@@ -2720,7 +2725,9 @@ A tag push publishes a release; a running Mkrew offers it and installs it in pla
    toast ("… is up to date", "… is available", or the error). A newer version shows the update
    button (§14) and one info toast "Mkrew <v> is available".
 3. **Install kind.** Windows: `<exe dir>/../unins000.exe` exists → Inno setup, per-user when the
-   exe is under `%LOCALAPPDATA%`. macOS: the exe is `<X>.app/Contents/MacOS/mkrew` → app bundle.
+   exe is under `%LOCALAPPDATA%`. macOS: the exe is `<X>.app/Contents/MacOS/mkrew` → app bundle,
+   unless the path holds `AppTranslocation` (a quarantined copy macOS runs read-only: the button
+   opens the release page).
    Anything else (dev build, MSI install, Linux, Intel Mac, no matching asset): the button opens
    the release page.
 4. **Apply.** Unsaved Editor changes are asked about first. A confirmation (`window.prompt`):
@@ -2739,3 +2746,46 @@ A tag push publishes a release; a running Mkrew offers it and installs it in pla
    before the quit shows an error toast and keeps the app running.
 5. **What survives.** The new UI starts a new daemon, which resumes agent panes and tasks (§8).
    No checksum or signature beyond HTTPS.
+
+### §20L macOS app integration (outside the milestones, ADR 0100)
+
+What a Mac user expects of an app around its windows and the Dock.
+macOS only unless a line says "every OS".
+
+1. **Menu bar.**
+   `Mkrew`: About Mkrew (the standard panel, from the bundle's Info.plist), Settings…, Check for Updates… (not in a machine window), Services, Hide Mkrew, Hide Others, Show All, Quit Mkrew.
+   `Edit`: Copy, Paste.
+   `View`: Enter Full Screen.
+   `Window`: Minimize, Zoom.
+   Settings, Copy, Paste and Enter Full Screen are the keymap's own commands (`open_settings`, `copy`, `paste`, `toggle_full_screen`), so the menu shows the user's keys.
+   Quit (Cmd+Q), Hide (Cmd+H), Hide Others (Option+Cmd+H) and Minimize (Cmd+M) are menu-only keys; a key bound in `keymap.toml` wins.
+   Copy and Paste act in terminals only: the Files editor and text fields take key events, not menu actions (their keys work).
+2. **Quit.**
+   Cmd+Q and Quit Mkrew run "Quit UI" (§20J): unsaved Files changes and prompt drafts are asked first, the machine windows are asked to quit, the daemon and the agents keep running.
+   Dock → Quit and log-out end Mkrew without a question (gpui cannot veto them): the window places are saved, the machine windows are asked to quit, unsaved Files changes are lost.
+3. **Close.**
+   While `[ui] close_to_tray` is on (default), the red button hides the app like Cmd+H; a click on the Dock icon, or Cmd+Tab, shows it again with its state (panes, unsaved Files changes, detached windows).
+   The Dock badge and bounce keep working while hidden.
+   `false`, or a machine window: the red button asks about unsaved changes and quits.
+4. **Window place (every OS).**
+   The main window's restore rect, maximized and full screen state are kept in `<data>/main-window.json` (a machine window: `main-window-<key>.json`) and restored at the next start; a place on a monitor that is gone moves to the primary display; the size is never below 1100 x 560; a missing or broken file opens the window centered at 1200 x 760 as before.
+   A detached window keeps full screen too (`fullscreen` in `windows.json`; absent = false).
+   New and restored windows are kept inside a display's visible area (menu bar and Dock excluded).
+5. **Traffic lights.**
+   Centered on the title bar at any `[ui] font_size` (y = (bar height - 14) / 2, set when the size changes); no left gap for them in full screen.
+6. **Dock.**
+   The badge shows the Needs-you count (§20J), `99+` from 100, cleared at 0.
+   When a session enters `needs_input` while no Mkrew window is active and `[notify] flash_taskbar` is on, the icon bounces once.
+7. **PATH.**
+   The first program lookup asks the login shell (`$SHELL -l -i -c`, `/bin/zsh` if unset, 5 s limit) for its `PATH` and puts it before the process's own; agents and shells started by the daemon get it, and "Open in Zed" finds `zed` with it.
+   The default shell is started as a login shell.
+   If the shell fails or times out, the process's own `PATH` is used.
+8. **`mk` command.**
+   Palette "Global: Install mk command" (listed only in `Mkrew.app`, not in a translocated copy) links `/usr/local/bin/mk`, else `~/.local/bin/mk`, to the bundle's `mk`; a toast names the link and says when its folder is not on `PATH`.
+   A real file named `mk` is never replaced.
+9. **Packaging.**
+   `Mkrew.app` has an icon (`Mkrew.icns`) and leaves the Windows-only profiles out of its `agents/` copy.
+   The release job signs with Developer ID (hardened runtime, microphone entitlement), notarizes and staples when the repository has the secrets `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_APP_PASSWORD` and `APPLE_TEAM_ID`; otherwise it signs ad-hoc, and Gatekeeper blocks the first open (README: Open Anyway on macOS 15 and later, or `xattr -dr com.apple.quarantine`).
+10. **Not done.**
+    Single instance (LaunchServices reuses a running bundle; a terminal launch shares the daemon), a Dock menu, a window list in the Window menu, raising a running machine window from the launcher, and a veto of Dock Quit / log-out.
+    Each `mkrew --machine` window is its own process with its own Dock icon (ADR 0089).

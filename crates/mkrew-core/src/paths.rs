@@ -36,7 +36,8 @@ impl Paths {
     /// Resolves the paths with `var` as the environment (testable without touching it).
     pub fn resolve(var: impl Fn(&str) -> Option<String>) -> Result<Self, NoHomeDir> {
         // `BaseDirs` + "mkrew" (not `ProjectDirs`, which adds `config`/`data` on Windows)
-        // gives `%APPDATA%\mkrew\`, `~/.config/mkrew/`, … as SPEC §1 lists them.
+        // gives `%APPDATA%\mkrew\` (Windows), `~/.config/mkrew/` and `~/.local/share/mkrew/`
+        // (Linux) and `~/Library/Application Support/mkrew/` for both (macOS), as SPEC §1 lists them.
         let dirs = || directories::BaseDirs::new().ok_or(NoHomeDir);
         let data_dir = match var(ENV_DATA_DIR) {
             Some(dir) => PathBuf::from(dir),
