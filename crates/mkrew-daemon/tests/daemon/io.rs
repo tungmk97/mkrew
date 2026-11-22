@@ -107,10 +107,31 @@ fn slow_attached_client_gets_a_snapshot_instead_of_stalling_the_session() {
         .into_result::<SessionAttachResult>()
         .unwrap();
 
-    // `slow` stops reading. The session must keep running and the daemon keep answering.
+    // `slow` stops reading. The session must keep running and the daemon keep answering. The
+    // flood is CPU-bound (~13 s alone, several times that on a loaded machine), so a wall-clock
+    // deadline would test the machine: wait for the exit while the session log keeps growing,
+    // and fail only when it makes no progress for `TIMEOUT` (a real stall).
+    let log_path = env.data_dir().join("sessions").join(format!("{id}.log"));
     let mut other = Client::connect(&env.socket).unwrap();
     other.hello().unwrap();
-    let session = other.wait_state(id, SessionState::Exited);
+    let (mut logged, mut deadline) = (0, Instant::now() + TIMEOUT);
+    let session = loop {
+        let session = other.session(id);
+        if session.state == SessionState::Exited {
+            break session;
+        }
+        let len = std::fs::metadata(&log_path).map_or(0, |m| m.len());
+        // The log rotates, so its size also drops: any change is progress.
+        if len != logged {
+            (logged, deadline) = (len, Instant::now() + TIMEOUT);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "session stalled at {len} log bytes in {:?}",
+            session.state
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
     assert_eq!(session.exit_code, Some(0));
 
     // Its queue overflowed: the dropped output was replaced by a fresh snapshot.
@@ -128,9 +149,13 @@ fn slow_attached_client_gets_a_snapshot_instead_of_stalling_the_session() {
     };
     assert_eq!((snapshot.cols, snapshot.rows), (80, 24));
     let received = slow.output.get(&id).map_or(0, Vec::len);
-    let log = std::fs::metadata(env.data_dir().join("sessions").join(format!("{id}.log")))
-        .unwrap()
-        .len();
+    // The log rotates to `.log.1`: the live file alone can hold just the tail of the output.
+    let rotated = std::path::PathBuf::from(format!("{}.1", log_path.display()));
+    let log: u64 = [&log_path, &rotated]
+        .iter()
+        .filter_map(|p| std::fs::metadata(p).ok())
+        .map(|m| m.len())
+        .sum();
     assert!(
         (received as u64) < log,
         "received {received} of {log} bytes: nothing was dropped"

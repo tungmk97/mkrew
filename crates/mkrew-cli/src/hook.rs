@@ -22,8 +22,11 @@ use serde_json::Value;
 use ulid::Ulid;
 
 const ENV_SESSION_ID: &str = "MKREW_SESSION_ID";
-/// How long a hook waits for the daemon before giving up (agents block on their hooks).
+/// How long a hook waits for the daemon before giving up (agents block on their hooks);
+/// `MKREW_HOOK_TIMEOUT_MS` overrides it (the tests, where a loaded machine stretches the
+/// daemon's start snapshot of a turn, which a hook waits for).
 const REPORT_TIMEOUT: Duration = Duration::from_secs(5);
+const ENV_TIMEOUT_MS: &str = "MKREW_HOOK_TIMEOUT_MS";
 
 /// `hook.log` is rotated to `hook.log.1` above this size.
 const HOOK_LOG_CAP: u64 = 1024 * 1024;
@@ -129,17 +132,18 @@ fn report(id: &str, agent: String, args: &[String]) -> anyhow::Result<()> {
     });
     // The agent waits for this hook (Claude up to 60 s per event): a wedged daemon must not
     // stall it, so give up after `REPORT_TIMEOUT`. Exiting ends the stuck thread.
+    let timeout = std::env::var(ENV_TIMEOUT_MS)
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .map_or(REPORT_TIMEOUT, Duration::from_millis);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let sent = crate::project::connect(&paths).and_then(|mut c| c.call::<()>(report));
         let _ = tx.send(sent);
     });
-    match rx.recv_timeout(REPORT_TIMEOUT) {
+    match rx.recv_timeout(timeout) {
         Ok(sent) => sent?,
-        Err(_) => bail!(
-            "the daemon did not answer within {}s",
-            REPORT_TIMEOUT.as_secs()
-        ),
+        Err(_) => bail!("the daemon did not answer within {}s", timeout.as_secs()),
     }
     Ok(())
 }
