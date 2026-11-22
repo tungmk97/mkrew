@@ -199,6 +199,8 @@ fn main() {
     if mkrew_ui::desktop::raise_running_instance(&id, jump) {
         return;
     }
+    // macOS: the login shell's PATH for "Open in Zed" and the daemon this window starts.
+    mkrew_core::login_path::warm();
     // The machine list is read once, here (spec §4.5).
     let (target, title) = match &launch {
         Launch::Local { .. } => (Target::Local, "Mkrew".to_owned()),

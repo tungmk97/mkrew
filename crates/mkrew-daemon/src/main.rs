@@ -23,6 +23,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // macOS: the login shell's PATH (agents and shells get it), asked for while the daemon starts.
+    mkrew_core::login_path::warm();
     match mkrew_daemon::run(&paths) {
         Ok(()) => ExitCode::SUCCESS,
         Err(RunError::Lock(e @ LockError::AlreadyRunning(_))) => {

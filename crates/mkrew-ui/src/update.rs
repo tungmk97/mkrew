@@ -316,7 +316,7 @@ pub fn apply(kind: &InstallKind, file: &Path) -> Result<()> {
             swap_bundle(bundle, &dir.join("Mkrew.app"))?;
             let _ = std::fs::remove_dir_all(&dir);
             // Started directly (not `open`), so the new app and its daemon keep this process's
-            // environment (`PATH` with `claude`/`codex` when Mkrew was started from a terminal).
+            // environment; their `PATH` is the login shell's either way (`mkrew_core::login_path`).
             let mut relaunch = std::process::Command::new(bin.join("mkrew"));
             #[cfg(unix)]
             {

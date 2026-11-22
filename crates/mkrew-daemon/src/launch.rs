@@ -7,6 +7,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+use mkrew_core::login_path;
 use mkrew_core::lookup::{self, has_extension};
 use mkrew_core::{AgentProfile, ProfileKind};
 use portable_pty::CommandBuilder;
@@ -37,11 +38,29 @@ pub fn command(profile: &AgentProfile) -> Result<CommandBuilder, LaunchError> {
         program,
         searched: lookup::SEARCHED,
     })?;
-    let mut cmd = build(&resolved, &profile.args)?;
+    let mut cmd = build(&resolved, &args_for(profile, cfg!(target_os = "macos")))?;
+    // An app opened from Finder has launchd's bare `PATH`: agents and shells get the login
+    // shell's, as in Terminal (macOS only; `None` elsewhere).
+    if let Some(path) = login_path::path() {
+        cmd.env("PATH", path);
+    }
     for (key, value) in &profile.env {
         cmd.env(key, value);
     }
     Ok(cmd)
+}
+
+/// The args `profile` runs with. The OS default shell (a shell profile without `command`) is a
+/// login shell on macOS (`login`), as Terminal.app starts it, so `.zprofile` runs and Homebrew's
+/// `PATH` is set.
+fn args_for(profile: &AgentProfile, login: bool) -> Vec<String> {
+    let default_shell = profile.command.is_empty() && profile.kind == ProfileKind::Shell;
+    let mut args = Vec::new();
+    if login && default_shell {
+        args.push("-l".to_owned());
+    }
+    args.extend(profile.args.iter().cloned());
+    args
 }
 
 /// The program `profile` runs: its `command`, or the OS default shell for a shell profile
@@ -203,6 +222,28 @@ mod tests {
     fn the_program_of_a_shell_profile_without_command_is_the_default_shell() {
         assert_eq!(program(&profile("", ProfileKind::Shell)), default_shell());
         assert_eq!(program(&profile("claude", ProfileKind::Agent)), "claude");
+    }
+
+    #[test]
+    fn the_default_shell_is_a_login_shell_on_a_mac_only() {
+        let shell = profile("", ProfileKind::Shell);
+        assert_eq!(args_for(&shell, true), ["-l"]);
+        assert!(args_for(&shell, false).is_empty());
+        let with_args = AgentProfile {
+            args: vec!["-f".into()],
+            ..profile("", ProfileKind::Shell)
+        };
+        assert_eq!(args_for(&with_args, true), ["-l", "-f"]);
+        let bash = AgentProfile {
+            args: vec!["--login".into(), "-i".into()],
+            ..profile("bash", ProfileKind::Shell)
+        };
+        assert_eq!(
+            args_for(&bash, true),
+            ["--login", "-i"],
+            "a profile that names its shell keeps its own args"
+        );
+        assert!(args_for(&profile("claude", ProfileKind::Agent), true).is_empty());
     }
 
     #[test]

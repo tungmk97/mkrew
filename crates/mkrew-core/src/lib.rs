@@ -2,7 +2,8 @@
 //!
 //! No async runtime, GPUI or SQLite here (SPEC §4); the only I/O is reading profile and
 //! settings files and the prompt library, plus seeding it (and looking up the platform
-//! directories in [`paths`] and programs on `PATH` in [`lookup`]), and the one-shot calls to the
+//! directories in [`paths`] and programs on `PATH` in [`lookup`] (with the login shell's `PATH`
+//! on macOS, [`login_path`])), and the one-shot calls to the
 //! `tailscale` CLI in [`tailscale`], shared by `mk web`, the daemon and the UI, and reading the
 //! skill, command and prompt files of an agent CLI in [`slash`].
 
@@ -12,6 +13,7 @@ pub mod hook;
 pub mod jira;
 pub mod link;
 pub mod log_tail;
+pub mod login_path;
 pub mod lookup;
 pub mod paths;
 pub mod plan;

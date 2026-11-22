@@ -29,8 +29,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Main window place (every OS):** move and resize the main window, quit, start again: it opens at the same place and size; maximize it, quit, start: it opens maximized.
   On macOS, enter full screen (Ctrl+Cmd+F), quit with Cmd+Q, start: it opens in full screen; leave full screen: the window returns to its size before.
 - [ ] **Gone monitor:** with a second monitor, put the window on it, quit, unplug it, start: the window is centered on the main display, not off screen.
+  Also with a window bigger than the main display (for example 2560 wide on a 1536 wide screen): unplug the external monitor the window was on, start Mkrew, the title bar is on screen.
 - [ ] **Detached window in full screen (macOS):** close Mkrew with a detached window in full screen: the next start reopens it in full screen, not as a screen-sized window under the menu bar.
 - [ ] **Visible area (macOS):** drag a tab out so the new window would start under the menu bar or the Dock: it opens fully inside the visible area.
+- [ ] **PATH from Finder (macOS):** quit Mkrew and `mk daemon stop`, open `Mkrew.app` from Finder (not a terminal), start a Claude or Codex pane: the agent starts and the New menu lists it (before this change: "command not found").
+  A Shell pane starts as a login shell: `echo $PATH` shows `/opt/homebrew/bin` and `echo $0` shows `-zsh`.
+- [ ] **Slow shell:** add `sleep 8` to `~/.zshrc`, open Mkrew from Finder: it still opens (the first agent start may wait up to 5 s) and falls back to the system `PATH`; remove the line afterwards.
 
 ### To verify - 2026-11-22 macOS keyboard (ADR 0098)
 

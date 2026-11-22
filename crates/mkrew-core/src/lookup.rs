@@ -15,9 +15,12 @@ pub const SEARCHED: &str = if cfg!(windows) {
     "PATH"
 };
 
-/// `program` resolved with this process's `PATH` (and `PATHEXT` on Windows).
+/// `program` resolved with this process's `PATH` (and `PATHEXT` on Windows); on macOS with the
+/// login shell's `PATH` in front ([`crate::login_path`]).
 pub fn find(program: &OsStr) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH");
+    let path = crate::login_path::path()
+        .map(OsStr::to_owned)
+        .or_else(|| std::env::var_os("PATH"));
     let pathext = cfg!(windows)
         .then(|| std::env::var_os("PATHEXT").unwrap_or_else(|| OsString::from(DEFAULT_PATHEXT)));
     resolve(program, path.as_deref(), pathext.as_deref())
