@@ -174,8 +174,11 @@ impl Shell {
                     // The recording meter has its own faster redraw (`toggle_voice`).
                     let transcribing = matches!(shell.voice, voice::State::Transcribing);
                     let jira_busy = shell.jira.values().any(JiraView::busy);
-                    let due =
-                        board_due || shell.starting_pane.is_some() || transcribing || jira_busy;
+                    let due = board_due
+                        || shell.starting_pane.is_some()
+                        || transcribing
+                        || jira_busy
+                        || shell.chat_animating();
                     if window.is_visible() && (due || status::redraw_due(sessions, last, now)) {
                         cx.notify();
                     }
@@ -380,6 +383,7 @@ impl Shell {
             sidebar_layout: sidebar::Layout::from_mode(sidebar_mode),
             right_panel,
             reads: HashMap::new(),
+            chats: HashMap::new(),
             thread: None,
             inspector_width,
             inspector_dragging: false,
@@ -411,6 +415,7 @@ impl Shell {
             drop_hover: None,
             pane_drop: None,
             composer_focus: cx.focus_handle(),
+            chat_focus: cx.focus_handle(),
             ime_marked: Rc::default(),
             typing_target: Rc::default(),
             voice: voice::State::default(),

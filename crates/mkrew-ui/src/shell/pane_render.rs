@@ -510,16 +510,20 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let content = match self.panes.get(&session) {
-            Some(pane) => pane.clone().into_any_element(),
-            None => {
-                let (sentence, detail) = self.pane_placeholder(session);
-                message(theme, None, sentence, detail)
-                    .size_full()
-                    .into_any_element()
+        let info = self.sidebar.sessions().iter().find(|s| s.id == session);
+        let content = if info.is_some_and(|info| self.chat_on(info)) {
+            self.render_chat(session, is_focused, now, theme, cx)
+        } else {
+            match self.panes.get(&session) {
+                Some(pane) => pane.clone().into_any_element(),
+                None => {
+                    let (sentence, detail) = self.pane_placeholder(session);
+                    message(theme, None, sentence, detail)
+                        .size_full()
+                        .into_any_element()
+                }
             }
         };
-        let info = self.sidebar.sessions().iter().find(|s| s.id == session);
         let border = status::pane_border(theme, info.map(|s| s.state), several, is_focused);
         let reading = info.is_some_and(|info| self.reading_on(info));
         let color = (info.and_then(|info| info.color.as_deref()))

@@ -1,6 +1,6 @@
 //! The transcripts the window reads (ADR 0057, ADR 0104) and the session panel's Thread
 //! section. A 1 s poll per session runs only while the panel shows that agent session with a
-//! native id, or (Task 7) a pane on screen is in Chat mode.
+//! native id, or a pane on screen is in Chat mode.
 
 use mkrew_core::thread::{CHAT_TURNS, THREAD_TURNS};
 use mkrew_ui::chat;
@@ -41,7 +41,12 @@ impl Shell {
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let wanted = self.panel_shown() && self.panel_tab() == PanelTab::Session;
         let panel = inspector::wanted_thread(wanted, session);
-        let keys = chat::wanted_reads(panel.clone(), Vec::new());
+        let panes = self.chat_panes();
+        let chats = panes
+            .iter()
+            .filter_map(|(id, native)| Some((*id, native.clone()?)))
+            .collect();
+        let keys = chat::wanted_reads(panel.clone(), chats);
         let before = self.reads.len();
         self.reads.retain(|_, read| keys.contains(&read.key));
         let mut changed = self.reads.len() != before;
@@ -63,14 +68,24 @@ impl Shell {
             None => changed |= self.thread.take().is_some(),
             Some(key) if self.thread.as_ref().is_some_and(|w| w.key == key) => {}
             Some(key) => {
+                let scroll = ScrollHandle::new();
+                // The read is shared: it may have a page already, so no first page will come.
+                if self
+                    .reads
+                    .get(&key.0)
+                    .is_some_and(|read| read.page.is_some())
+                {
+                    scroll.scroll_to_bottom();
+                }
                 self.thread = Some(ThreadWatch {
                     key,
                     expanded: HashSet::new(),
-                    scroll: ScrollHandle::new(),
+                    scroll,
                 });
                 changed = true;
             }
         }
+        self.sync_chats(&panes);
         if changed {
             cx.notify();
         }
@@ -83,6 +98,11 @@ impl Shell {
             && (first || at_bottom(&watch.scroll))
         {
             watch.scroll.scroll_to_bottom();
+        }
+        if let Some(ui) = self.chats.get_mut(&session)
+            && (first || at_bottom(&ui.scroll))
+        {
+            ui.scroll.scroll_to_bottom();
         }
     }
 

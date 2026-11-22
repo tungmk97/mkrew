@@ -4,9 +4,27 @@
 use std::collections::HashSet;
 
 use mkrew_core::thread::{PlanStatus, PlanStep, Subagent, ToolCall};
+use mkrew_protocol::SessionKind;
 use ulid::Ulid;
 
+use crate::icons::AgentLogo;
 use crate::thread_view::{Page, PageItem, PageTurn};
+
+/// Whether a pane can show Chat: an agent whose profile is a shipped one with a readable
+/// transcript format (Claude, Codex, omp), or any agent whose transcript the daemon found.
+pub fn available(kind: SessionKind, profile: &str, has_transcript: bool) -> bool {
+    kind == SessionKind::Agent
+        && (has_transcript
+            || matches!(
+                AgentLogo::of(profile),
+                Some(AgentLogo::Claude | AgentLogo::Codex | AgentLogo::Omp)
+            ))
+}
+
+/// The pane's mode: Chat when it can and its saved choice (else `[ui] chat_default`) says so.
+pub fn effective(available: bool, saved: Option<bool>, default: bool) -> bool {
+    available && saved.unwrap_or(default)
+}
 
 /// A row that opens and closes: (turn key, item index, call index; 0 for thinking).
 pub type RowKey = (u64, usize, usize);
@@ -400,5 +418,42 @@ mod tests {
         };
         let v = view(Some(&empty), &HashSet::new());
         assert!(v.turns.is_empty() && v.earlier);
+    }
+
+    #[test]
+    fn only_agents_with_a_readable_transcript_can_chat() {
+        use SessionKind::{Agent, Shell};
+        assert!(available(Agent, "claude", false));
+        assert!(available(Agent, "codex", false));
+        assert!(available(Agent, "omp", false));
+        assert!(!available(Agent, "copilot", false), "no readable format");
+        assert!(
+            !available(Agent, "my-agent", false),
+            "unknown until its transcript is found"
+        );
+        assert!(
+            available(Agent, "my-agent", true),
+            "a copied profile whose transcript is found"
+        );
+        assert!(!available(Shell, "claude", true), "a shell pane");
+    }
+
+    #[test]
+    fn effective_mode_prefers_the_saved_choice_then_the_default_and_never_without_chat() {
+        assert!(effective(true, Some(true), false));
+        assert!(
+            !effective(true, Some(false), true),
+            "Terminal chosen against the default"
+        );
+        assert!(
+            effective(true, None, true),
+            "the default applies when nothing is saved"
+        );
+        assert!(!effective(true, None, false));
+        assert!(
+            !effective(false, Some(true), true),
+            "an incapable pane is always Terminal"
+        );
+        assert!(!effective(false, None, true));
     }
 }

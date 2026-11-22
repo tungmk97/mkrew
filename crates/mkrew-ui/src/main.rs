@@ -137,6 +137,7 @@ use ulid::Ulid;
 mod shell;
 use shell::board::*;
 use shell::cards::*;
+use shell::chat_view::*;
 use shell::files_render::*;
 use shell::files_split;
 use shell::git_diff::*;
@@ -711,6 +712,10 @@ struct Shell {
     reads: HashMap<Ulid, ThreadRead>,
     /// The session panel's Thread section UI state.
     thread: Option<ThreadWatch>,
+    /// What each pane in Chat mode remembers (open rows, scroll), ADR 0104.
+    chats: HashMap<Ulid, ChatUi>,
+    /// Focused while a pane's chat list has the keyboard (the composer has its own).
+    chat_focus: FocusHandle,
     /// Its width in px, from `[ui] inspector_width` and the drag.
     inspector_width: f32,
     /// The edge was dragged since the last mouse-up: the width is saved when it ends.
