@@ -26,6 +26,10 @@ const RAM_STEP: u64 = 100 * 1024 * 1024;
 /// a CPU move of 1 point, a RAM move of 100 MB, another RAM total, or [`HEARTBEAT`] without
 /// news. Compared with what was last SENT, so slow drift still gets through.
 pub fn should_send(last: Option<&MachineStats>, since_last: Duration, now: &MachineStats) -> bool {
+    // A CPU reading that is not a number is not sent (the UI would have nothing to show).
+    if !now.cpu_percent.is_finite() {
+        return false;
+    }
     let Some(last) = last else {
         return true;
     };
@@ -127,6 +131,18 @@ mod tests {
     #[test]
     fn the_first_reading_is_always_sent() {
         assert!(should_send(None, Duration::ZERO, &stats(0.0, 0)));
+    }
+
+    #[test]
+    fn a_cpu_reading_that_is_not_a_number_is_never_sent() {
+        for cpu in [f32::NAN, f32::INFINITY] {
+            assert!(!should_send(None, Duration::ZERO, &stats(cpu, 0)));
+            assert!(!should_send(
+                Some(&stats(1.0, 0)),
+                HEARTBEAT,
+                &stats(cpu, 0)
+            ));
+        }
     }
 
     #[test]
