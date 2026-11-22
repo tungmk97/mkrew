@@ -24,9 +24,12 @@ impl Shell {
         }
         let theme = cx.theme();
         if change.badge {
-            // Dark ink on amber in both themes: the dark theme's background token.
-            self.desktop
-                .set_badge(counts.needs_you, theme.status_needs_input, Theme::dark().bg);
+            // The theme's background or text color, whichever reads better on the amber.
+            self.desktop.set_badge(
+                counts.needs_you,
+                theme.status_needs_input,
+                theme.badge_ink(),
+            );
         }
         let color = match counts.icon() {
             attention::Icon::NeedsYou => theme.status_needs_input,

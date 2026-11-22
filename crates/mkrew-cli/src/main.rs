@@ -1,6 +1,7 @@
 //! `mk`: the Mkrew command-line client (SPEC §9).
 
 mod attach;
+mod claude_shell;
 mod client;
 mod comment;
 mod daemon;
@@ -10,6 +11,7 @@ mod ports;
 mod project;
 mod proxy;
 mod session;
+mod statusline;
 mod task;
 mod web;
 
@@ -96,6 +98,10 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Claude Code's status line command (set up by `mk integration install claude`): reports
+    /// the rate limits to the daemon, then runs your own status line, if you had one. Not for
+    /// interactive use.
+    Statusline,
     /// Join stdin/stdout to the daemon (starting it if needed); a machine window runs it
     /// through ssh (ADR 0089). Not for interactive use.
     #[command(hide = true)]
@@ -292,6 +298,11 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
     if let Command::Hook { agent, args } = cli.command {
         return hook::hook(agent, args);
     }
+    // Claude Code runs this on every status line update: nothing else may be set up and
+    // nothing may fail.
+    if matches!(cli.command, Command::Statusline) {
+        return Ok(statusline::run());
+    }
     // Only touches the agents' config files.
     if let Command::Integration { command } = cli.command {
         let (action, agent) = match command {
@@ -416,6 +427,8 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                 new_token,
             },
         ),
-        Command::Hook { .. } | Command::Integration { .. } => unreachable!("handled above"),
+        Command::Hook { .. } | Command::Integration { .. } | Command::Statusline => {
+            unreachable!("handled above")
+        }
     }
 }

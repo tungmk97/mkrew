@@ -242,6 +242,7 @@ fn detached_commands_are_an_explicit_list() {
         Command::NewShellTab,
         Command::ShowBoard,
         Command::ToggleSidebar,
+        Command::ToggleWidgetBar,
         Command::Workspace(1),
         Command::SaveFile,
         Command::VoiceInput,

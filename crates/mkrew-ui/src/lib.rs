@@ -106,6 +106,7 @@ pub mod update;
 pub mod usage;
 pub mod voice;
 pub mod watches;
+pub mod widget_bar;
 pub mod window_place;
 pub mod workspace_menu;
 pub mod worktree_dialog;
