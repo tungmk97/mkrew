@@ -7,7 +7,9 @@ use mkrew_core::thread::{PlanStatus, PlanStep, Subagent, ToolCall};
 use mkrew_protocol::SessionKind;
 use ulid::Ulid;
 
+use crate::docs::Shown;
 use crate::icons::AgentLogo;
+use crate::preview_select::{self, Point, Selection};
 use crate::thread_view::{Page, PageItem, PageTurn};
 
 /// Whether a pane can show Chat: an agent whose profile is a shipped one with a readable
@@ -214,12 +216,54 @@ pub fn scrolled(offset_y: f32, max_y: f32, delta: f32) -> f32 {
     (offset_y - delta).clamp(-max_y.max(0.0), 0.0)
 }
 
+/// A message: (turn key, item index); a selection lives inside one of them.
+pub type MsgKey = (u64, usize);
+
+/// A press at `at` in message `key`: a caret, Shift extends the selection of the same message,
+/// a double click takes the word (as the Files preview does).
+pub fn press(
+    current: Option<(MsgKey, Selection)>,
+    key: MsgKey,
+    shown: &Shown,
+    at: Point,
+    extend: bool,
+    clicks: usize,
+) -> (MsgKey, Selection) {
+    let selection = match current {
+        _ if clicks == 2 => preview_select::word_at(shown, at),
+        Some((was, selection)) if extend && was == key => Selection {
+            head: at,
+            ..selection
+        },
+        _ => Selection::caret(at),
+    };
+    (key, selection)
+}
+
+/// The text of message `key` in `page`; `None` when the page no longer has it as text.
+pub fn text_of(page: &Page, key: MsgKey) -> Option<&Shown> {
+    let index = usize::try_from(key.0.checked_sub(page.first_turn)?).ok()?;
+    match page.turns.get(index)?.items.get(key.1)? {
+        PageItem::Text(shown) => Some(shown),
+        _ => None,
+    }
+}
+
+/// The selected text as shown (Ctrl+C); `None` for no, an empty or a stale selection.
+pub fn copy_text(page: &Page, selecting: Option<(MsgKey, Selection)>) -> Option<String> {
+    let (key, selection) = selecting?;
+    let text = preview_select::copy_text(text_of(page, key)?, &selection);
+    (!text.is_empty()).then_some(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use mkrew_core::UsageFormat;
     use mkrew_core::thread::CHAT_TURNS;
 
+    use crate::docs::Shown;
+    use crate::preview_select::{Point, Selection};
     use crate::thread_view::ThreadFile;
 
     const CLAUDE_CHAT: &str =
@@ -470,5 +514,56 @@ mod tests {
         assert_eq!(scrolled(-290.0, 300.0, 48.0), -300.0, "stops at the end");
         assert_eq!(scrolled(-10.0, 300.0, -48.0), 0.0, "stops at the top");
         assert_eq!(scrolled(0.0, 0.0, 48.0), 0.0, "nothing to scroll");
+    }
+
+    fn at(byte: usize) -> Point {
+        Point {
+            block: 0,
+            piece: 0,
+            byte,
+        }
+    }
+
+    #[test]
+    fn a_press_puts_a_caret_shift_extends_in_the_same_message_and_a_double_click_takes_the_word() {
+        let shown = Shown::from_text("hello world");
+        let key = (0, 1);
+        let (_, caret) = press(None, key, &shown, at(3), false, 1);
+        assert_eq!(caret, Selection::caret(at(3)));
+        let (_, extended) = press(Some((key, caret)), key, &shown, at(8), true, 1);
+        assert_eq!((extended.anchor, extended.head), (at(3), at(8)));
+        // Shift in another message starts over instead of mixing two messages.
+        let (other, fresh) = press(Some((key, caret)), (0, 3), &shown, at(5), true, 1);
+        assert_eq!((other, fresh), ((0, 3), Selection::caret(at(5))));
+        let (_, word) = press(None, key, &shown, at(1), false, 2);
+        assert_eq!(word.range_in(0, 0), Some(0..5), "hello");
+    }
+
+    #[test]
+    fn a_stale_selection_is_ignored_after_the_page_changes() {
+        let page = page(CLAUDE_CHAT);
+        // Item 1 of turn 0 is the agent's text; item 0 is thinking; turn 7 does not exist.
+        assert!(text_of(&page, (0, 1)).is_some());
+        assert!(
+            text_of(&page, (0, 0)).is_none(),
+            "thinking is not selectable text"
+        );
+        assert!(text_of(&page, (0, 9)).is_none(), "no such item");
+        assert!(text_of(&page, (7, 1)).is_none(), "no such turn");
+        let whole = Selection {
+            anchor: at(0),
+            head: at(7),
+        };
+        assert_eq!(
+            copy_text(&page, Some(((0, 1), whole))).as_deref(),
+            Some("Running")
+        );
+        assert_eq!(copy_text(&page, Some(((7, 1), whole))), None);
+        assert_eq!(
+            copy_text(&page, Some(((0, 1), Selection::caret(at(2))))),
+            None,
+            "an empty selection copies nothing"
+        );
+        assert_eq!(copy_text(&page, None), None);
     }
 }

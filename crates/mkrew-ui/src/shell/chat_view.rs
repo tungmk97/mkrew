@@ -13,6 +13,10 @@ pub(crate) struct ChatUi {
     /// Expanded tool and thinking rows.
     pub(crate) open: HashSet<chat::RowKey>,
     pub(crate) scroll: ScrollHandle,
+    /// The selected text, inside one message.
+    pub(crate) selecting: Option<(chat::MsgKey, mkrew_ui::preview_select::Selection)>,
+    /// Where each message's text was painted last frame (for hit-testing a press).
+    pub(crate) hits: RefCell<HashMap<chat::MsgKey, preview::Hits>>,
 }
 
 impl ChatUi {
@@ -20,6 +24,8 @@ impl ChatUi {
         Self {
             open: HashSet::new(),
             scroll: ScrollHandle::new(),
+            selecting: None,
+            hits: RefCell::default(),
         }
     }
 }
@@ -286,6 +292,26 @@ impl Shell {
         let Some(session) = self.focused_session(window) else {
             return;
         };
+        if matches!(editor::edit_key(&event.keystroke), Some(EditKey::Copy)) {
+            cx.stop_propagation();
+            let text = self.chats.get(&session).and_then(|ui| {
+                let page = self.reads.get(&session)?.page.clone()?;
+                chat::copy_text(&page, ui.selecting)
+            });
+            if let Some(text) = text {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            return;
+        }
+        if !event.keystroke.modifiers.modified()
+            && event.keystroke.key == "escape"
+            && let Some(ui) = self.chats.get_mut(&session)
+            && ui.selecting.take().is_some()
+        {
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if event.keystroke.modifiers.modified() {
             return;
         }
@@ -316,6 +342,67 @@ impl Shell {
         cx.notify();
     }
 
+    /// A press on a message: the pane and the list get the keyboard (Ctrl+C, Esc), the caret
+    /// goes under the pointer (Shift extends, a double click takes the word).
+    fn chat_press(
+        &mut self,
+        session: Ulid,
+        key: chat::MsgKey,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        self.focus_session_pane(session);
+        window.focus(&self.chat_focus, cx);
+        let at = self.chats.get(&session).and_then(|ui| {
+            ui.hits
+                .borrow()
+                .get(&key)
+                .and_then(|hits| hits.hit(event.position))
+        });
+        let page = self.reads.get(&session).and_then(|read| read.page.clone());
+        let current = self.chats.get(&session).and_then(|ui| ui.selecting);
+        let pressed = at.zip(page).and_then(|(at, page)| {
+            let shown = chat::text_of(&page, key)?;
+            Some(chat::press(
+                current,
+                key,
+                shown,
+                at,
+                event.modifiers.shift,
+                event.click_count,
+            ))
+        });
+        if let Some(ui) = self.chats.get_mut(&session) {
+            ui.selecting = pressed;
+        }
+        cx.notify();
+    }
+
+    fn chat_drag(
+        &mut self,
+        session: Ulid,
+        key: chat::MsgKey,
+        position: Point<Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(ui) = self.chats.get_mut(&session) else {
+            return;
+        };
+        let at = ui
+            .hits
+            .borrow()
+            .get(&key)
+            .and_then(|hits| hits.hit(position));
+        if let (Some(at), Some((selected, selection))) = (at, ui.selecting.as_mut())
+            && *selected == key
+        {
+            selection.head = at;
+            cx.notify();
+        }
+    }
+
     /// One turn: the prompt card (right), then its rows, then the plan card if it has one.
     fn chat_turn(
         &self,
@@ -335,12 +422,38 @@ impl Shell {
                         .and_then(|page| page.turns.get(index))
                         .and_then(|turn| turn.items.get(*item))
                     {
-                        Some(PageItem::Text(shown)) => div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(space::XS))
-                            .children(preview::blocks(&shown.blocks, shown, theme))
-                            .into_any_element(),
+                        Some(PageItem::Text(shown)) => {
+                            let key = (turn.key, *item);
+                            let ui = self.chats.get(&session);
+                            let hits = ui
+                                .map(|ui| ui.hits.borrow_mut().entry(key).or_default().clone())
+                                .unwrap_or_default();
+                            let selection = ui
+                                .and_then(|ui| ui.selecting)
+                                .filter(|(selected, _)| *selected == key)
+                                .map(|(_, selection)| selection);
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(space::XS))
+                                .children(preview::message(shown, selection, &hits, theme))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(
+                                        move |shell, event: &MouseDownEvent, window, cx| {
+                                            shell.chat_press(session, key, event, window, cx);
+                                        },
+                                    ),
+                                )
+                                .on_mouse_move(cx.listener(
+                                    move |shell, event: &MouseMoveEvent, _, cx| {
+                                        if event.dragging() {
+                                            shell.chat_drag(session, key, event.position, cx);
+                                        }
+                                    },
+                                ))
+                                .into_any_element()
+                        }
                         _ => div().into_any_element(),
                     }
                 }
