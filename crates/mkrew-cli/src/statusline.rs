@@ -249,7 +249,7 @@ fn chain(command: &str, input: Vec<u8>, timeout: Duration) -> Option<Vec<u8>> {
         let _ = stdout.read_to_end(&mut out);
         let _ = done.send(out);
     });
-    if let Ok(out) = output.recv_timeout(timeout) {
+    if let Ok(out) = output.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
         while Instant::now() < deadline {
             match child.try_wait() {
                 Ok(Some(status)) => return status.success().then_some(out),
@@ -273,11 +273,15 @@ mod tests {
     const ECHO_STDIN: &str = r#"findstr "^""#;
     #[cfg(not(windows))]
     const ECHO_STDIN: &str = "cat";
-    /// Runs for about five seconds, in `bash`, `powershell` and `sh`.
+    /// Runs far longer than any test waits, in `bash`, `powershell` and `sh`.
     #[cfg(windows)]
-    const SLEEP_5S: &str = "ping -n 6 127.0.0.1";
+    const SLEEP_LONG: &str = "ping -n 31 127.0.0.1";
     #[cfg(not(windows))]
-    const SLEEP_5S: &str = "sleep 5";
+    const SLEEP_LONG: &str = "sleep 30";
+    /// For tests of what `chain` reads and writes, not of how fast: Git Bash needs more than
+    /// five seconds to start when the machine is saturated (measured up to 16 s), so a test
+    /// that waited for the production timeout would fail on a busy machine.
+    const SLOW_START: Duration = Duration::from_secs(60);
 
     const FULL: &str = r#"{"session_id":"s1","rate_limits":{"five_hour":{"used_percentage":42.5,"resets_at":1778533631},"seven_day":{"used_percentage":18,"resets_at":1778571719}}}"#;
 
@@ -355,14 +359,14 @@ mod tests {
 
     #[test]
     fn the_chained_command_gets_the_same_stdin_and_its_output_is_kept() {
-        let out = chain(ECHO_STDIN, FULL.as_bytes().to_vec(), Duration::from_secs(5)).unwrap();
+        let out = chain(ECHO_STDIN, FULL.as_bytes().to_vec(), SLOW_START).unwrap();
         assert_eq!(String::from_utf8_lossy(&out).trim(), FULL);
     }
 
     #[test]
     fn a_command_that_ignores_its_stdin_still_answers() {
         let big = vec![b'x'; 1024 * 1024];
-        let out = chain("echo hi", big, Duration::from_secs(5)).unwrap();
+        let out = chain("echo hi", big, SLOW_START).unwrap();
         assert_eq!(String::from_utf8_lossy(&out).trim(), "hi");
     }
 
@@ -386,11 +390,12 @@ mod tests {
     fn a_command_past_its_timeout_is_stopped() {
         let started = std::time::Instant::now();
         assert_eq!(
-            chain(SLEEP_5S, b"{}".to_vec(), Duration::from_millis(300)),
+            chain(SLEEP_LONG, b"{}".to_vec(), Duration::from_millis(300)),
             None
         );
+        // Stopped at the timeout, not left to run its 30 s: the margin is for a busy machine.
         assert!(
-            started.elapsed() < Duration::from_secs(3),
+            started.elapsed() < Duration::from_secs(20),
             "{:?}",
             started.elapsed()
         );
