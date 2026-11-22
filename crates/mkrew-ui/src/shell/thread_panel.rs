@@ -17,6 +17,9 @@ pub(crate) struct ThreadRead {
     _poll: gpui::Task<()>,
     /// Built off the UI thread on each change; `None` until a read found turns.
     pub(crate) page: Option<Rc<thread_view::Page>>,
+    /// omp's newest recap of the session, as the last `session.transcript` reply said (ADR
+    /// 0105); `None` for the other agents.
+    pub(crate) recap: Option<mkrew_protocol::Recap>,
 }
 
 /// What the Thread section remembers about the shown session.
@@ -59,6 +62,7 @@ impl Shell {
                         key,
                         _poll: poll,
                         page: None,
+                        recap: None,
                     },
                 );
                 changed = true;
@@ -130,9 +134,11 @@ impl Shell {
                     ),
                     None => None,
                 };
+                let mut recap: Option<Option<mkrew_protocol::Recap>> = None;
                 let mut more = false;
                 let page = match read {
                     Some(Ok(read)) if read.found => {
+                        recap = Some(read.recap.clone());
                         more = !read.data.is_empty()
                             && read.start + (read.data.len() as u64) < read.len;
                         if file.is_none() {
@@ -164,6 +170,13 @@ impl Shell {
                     }
                 };
                 let keep_going = this.update(cx, |shell, cx| {
+                    if let Some(recap) = recap
+                        && let Some(read) = shell.reads.get_mut(&key.0).filter(|r| r.key == key)
+                        && read.recap != recap
+                    {
+                        read.recap = recap;
+                        cx.notify();
+                    }
                     let arrived = match (page, shell.reads.get_mut(&key.0).filter(|r| r.key == key))
                     {
                         (Some(page), Some(read)) => {

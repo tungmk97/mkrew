@@ -103,6 +103,7 @@ fn session_transcript_reads_windows_and_answers_not_found_without_a_file() {
             start: 0,
             len: 0,
             data: Vec::new(),
+            recap: None,
         }
     );
 
@@ -113,6 +114,7 @@ fn session_transcript_reads_windows_and_answers_not_found_without_a_file() {
     let len = body.len() as u64;
     let first = transcript(&mut client, 0);
     assert!(first.found);
+    assert_eq!(first.recap, None, "a Claude session has no recap");
     assert_eq!(
         (first.format.as_str(), first.start, first.len),
         ("claude_jsonl", 0, len)

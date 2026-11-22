@@ -19,6 +19,7 @@ mod limits;
 pub mod lock;
 mod machine;
 mod notify;
+mod omp_recap;
 mod plan;
 mod ports;
 mod retention;

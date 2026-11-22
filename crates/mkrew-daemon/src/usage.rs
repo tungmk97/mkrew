@@ -20,7 +20,7 @@ pub const EVENT_KIND: &str = "usage";
 
 /// The folder the agent keeps its transcripts under: `CLAUDE_CONFIG_DIR` or `~/.claude`,
 /// `CODEX_HOME` or `~/.codex`, `PI_CODING_AGENT_DIR` or `~/.omp/agent` (omp).
-fn root(format: &UsageFormat) -> Option<PathBuf> {
+pub(crate) fn root(format: &UsageFormat) -> Option<PathBuf> {
     let (var, dir) = match format {
         UsageFormat::ClaudeJsonl => ("CLAUDE_CONFIG_DIR", ".claude"),
         UsageFormat::CodexJsonl => ("CODEX_HOME", ".codex"),

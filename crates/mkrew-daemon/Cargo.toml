@@ -35,6 +35,9 @@ notify = "8.2.0"
 # Quick open ranking for `fs.find` (SPEC §12A).
 nucleo-matcher = "0.3.1"
 portable-pty = "0.9"
+# omp's `history.db` (its idle recaps), read-only for `session.transcript` (ADR 0105); same
+# version and features as mkrew-store, so the tree gains no package.
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = "1"
 serde_json = "1"
 # `port.list` / `port.stop`: parent pid, start time, cwd and kill of other processes; 0.31 is

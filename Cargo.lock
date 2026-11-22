@@ -4055,6 +4055,7 @@ dependencies = [
  "notify-rust",
  "nucleo-matcher",
  "portable-pty",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",
