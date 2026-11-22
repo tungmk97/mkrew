@@ -1162,16 +1162,9 @@ impl Shell {
     /// What the window draws now, for [`redraw::event_needs_redraw`].
     pub(crate) fn shown(&self, window: &Window) -> redraw::Shown {
         let view = self.view();
-        let tabs = (self.workspace)
-            .filter(|_| view == View::Terminals)
-            .and_then(|id| self.tabs.get(&id));
-        let mut panes = on_screen(window.is_visible(), tabs);
-        // An idle detached window draws its shown tab's panes too.
-        for DockTab::Terminal { project, tab_id } in self.detached.visible_tabs() {
-            if let Some(tab) = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id)) {
-                panes.extend(tab.shown());
-            }
-        }
+        let panes = (self.hosted_sessions(window.is_visible()).into_iter())
+            .map(|(_, session)| session)
+            .collect();
         redraw::Shown {
             workspace: self.workspace,
             view,
@@ -1331,7 +1324,8 @@ impl Shell {
             let Some(delivery) = self.router.route(incoming) else {
                 continue;
             };
-            let Some(pane) = self.panes.get(&delivery.session_id()).cloned() else {
+            let session = delivery.session_id();
+            let Some(pane) = self.panes.get(&session).cloned() else {
                 continue;
             };
             pane.update(cx, |pane, _| match delivery {
@@ -1339,7 +1333,9 @@ impl Shell {
                 Delivery::Snapshot { snapshot, .. } => pane.load_snapshot(&snapshot),
                 Delivery::Exited { exit_code, .. } => pane.set_exited(exit_code),
             });
-            if !fed.iter().any(|p| p.entity_id() == pane.entity_id()) {
+            // A pane in Chat mode is not painted: it is no content to wait a frame for.
+            if !self.chat_session(session) && !fed.iter().any(|p| p.entity_id() == pane.entity_id())
+            {
                 fed.push(pane);
             }
         }

@@ -27,19 +27,9 @@ impl ChatUi {
 impl Shell {
     /// Sessions on screen in any window (the main window's tab and the detached ones').
     fn visible_sessions(&self) -> Vec<Ulid> {
-        let mut visible = on_screen(
-            self.main_visible,
-            self.workspace
-                .filter(|_| self.view() == View::Terminals)
-                .and_then(|id| self.tabs.get(&id)),
-        );
-        for tab in self.detached.visible_tabs() {
-            let DockTab::Terminal { project, tab_id } = tab;
-            if let Some(shown) = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id)) {
-                visible.extend(shown.shown());
-            }
-        }
-        visible
+        (self.hosted_sessions(self.main_visible).into_iter())
+            .map(|(_, session)| session)
+            .collect()
     }
 
     /// `info`'s pane can show Chat.
@@ -72,19 +62,26 @@ impl Shell {
     /// Keeps the Chat state of the panes on screen, drops the rest, and shows each Chat
     /// pane's composer (a Chat pane always has it). A pane that starts on a session whose
     /// shared read has a page already gets no first page: it starts at the end. Status tick.
-    pub(crate) fn sync_chats(&mut self, panes: &[(Ulid, Option<String>)]) {
+    /// Returns whether anything a pane draws changed (a new state or a newly shown composer),
+    /// so the caller redraws at once.
+    pub(crate) fn sync_chats(&mut self, panes: &[(Ulid, Option<String>)]) -> bool {
+        let before = self.chats.len();
         self.chats
             .retain(|id, _| panes.iter().any(|(pane, _)| pane == id));
+        let mut changed = self.chats.len() != before;
         for (id, _) in panes {
-            self.chats.entry(*id).or_insert_with(|| {
+            if !self.chats.contains_key(id) {
                 let ui = ChatUi::new();
                 if self.reads.get(id).is_some_and(|read| read.page.is_some()) {
                     ui.scroll.scroll_to_bottom();
                 }
-                ui
-            });
+                self.chats.insert(*id, ui);
+                changed = true;
+            }
+            changed |= self.composers.shown(*id).is_none();
             self.composers.open(*id);
         }
+        changed
     }
 
     /// A subagent runs in a visible Chat pane: its loading dots move on the status tick.

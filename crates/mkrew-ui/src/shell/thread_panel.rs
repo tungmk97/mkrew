@@ -85,7 +85,7 @@ impl Shell {
                 changed = true;
             }
         }
-        self.sync_chats(&panes);
+        changed |= self.sync_chats(&panes);
         if changed {
             cx.notify();
         }
