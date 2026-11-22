@@ -348,8 +348,15 @@ fn utc_seconds(stamp: &str) -> Option<i64> {
         .split(':')
         .map(|p| p.parse::<i64>().ok());
     let (hour, minute, second) = (t.next()??, t.next()??, t.next()??);
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let month_days = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
     let valid = (1..=12).contains(&month)
-        && (1..=31).contains(&day)
+        && (1..=month_days).contains(&day)
         && (0..24).contains(&hour)
         && (0..60).contains(&minute)
         && (0..61).contains(&second);
@@ -500,6 +507,19 @@ mod tests {
         assert_eq!(utc_seconds("2026-05-11T17:05:53+07:00"), None);
         assert_eq!(utc_seconds("yesterday"), None);
         assert_eq!(utc_seconds("2026-13-01T00:00:00Z"), None);
+        assert_eq!(
+            utc_seconds("2026-02-29T00:00:00Z"),
+            None,
+            "2026 is not a leap year"
+        );
+        assert_eq!(utc_seconds("2026-04-31T00:00:00Z"), None);
+        assert_eq!(
+            utc_seconds("1900-02-29T00:00:00Z"),
+            None,
+            "1900 is not a leap year"
+        );
+        assert!(utc_seconds("2000-02-29T00:00:00Z").is_some());
+        assert!(utc_seconds("2026-01-31T00:00:00Z").is_some());
     }
 
     #[test]
