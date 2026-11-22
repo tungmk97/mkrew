@@ -23,14 +23,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 ### To verify - 2026-11-22 Widget bar (ADR 0102, plan docs/superpowers/plans/2026-11-22-widget-bar.md)
 
-- [ ] The bar in dark and light themes: folder, branch with count, limits, CPU and RAM, version; hover, press and focus feel like the other chips; the text is readable; a long workspace or branch name ends in an ellipsis.
+- [ ] The bar in dark and light themes: folder, branch with count, limits, CPU and RAM, version; hover and press feel like the other title bar controls; the text is readable; a long workspace or branch name ends in an ellipsis.
 - [ ] Narrow the window: limits drop first, then CPU and RAM; folder, branch and version stay.
 - [ ] Right-click the bar: each widget has a check mark and toggling keeps the menu open; "Hide widget bar" hides the bar; `Ctrl+Alt+Shift+J` and the palette entry bring it back; restart Mkrew and the choices are kept; a hidden id you add by hand to `widgets_hidden` (for example `"clock"`) survives toggling.
 - [ ] Open a dialog (for example Settings) and, in a machine window, stop its daemon: while the dialog is open or Mkrew reconnects, clicks and right-click on the bar do nothing.
 - [ ] Git widget: click opens the Git view; click again steps through the changed files and wraps from the last to the first; a workspace with several repositories shows `N repos`.
 - [ ] Folder widget opens the workspace folder in the file explorer; version widget runs the update check; limits widget opens Settings.
-- [ ] Real limits: run `mk integration install claude`, send one turn in Claude Code and one in Codex; the limits widget shows both with plausible percentages and reset times in the tooltip (local time). A status line you had before still prints in Claude Code; `mk integration uninstall claude` brings it back.
-- [ ] On Windows, if your own status line uses bash syntax, check that it still prints (it is run through `cmd /C`, not Git Bash).
+- [ ] Real limits: run `mk integration install claude`, send one turn in Claude Code and one in Codex; the limits widget shows both with plausible percentages and reset times in the tooltip (local time).
+  A status line you had before still prints in Claude Code; `mk integration uninstall claude` brings it back.
+- [ ] On Windows, check that your own status line still prints with Git for Windows installed (it runs through Git Bash); without Git Bash it runs through PowerShell.
 - [ ] CPU and RAM match Task Manager closely; in a machine window they show that machine's numbers; with no Mkrew window open the daemon does no sampling (check its CPU use at idle).
 
 ### To verify - 2026-11-21 Pressable audit (P3)

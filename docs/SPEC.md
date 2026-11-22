@@ -1141,7 +1141,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   Detached windows have none.
 - Left: **folder** (the workspace name; tooltip the root path; click opens it in the file explorer) and **Git** (a branch icon and `master`, with ` · 3` when 3 files changed, `2 repos` for several; click opens the Git view, and with Git already open steps to the next changed file, wrapping at the end).
   Right: **limits** (`Claude 5h 42% · 7d 18% | Codex 5h 10% · 7d 3%`; a window below 80 % is muted, from 80 % amber, from 95 % red; the tooltip gives each reset in local time and as "in 2 h 10 min"; click opens Settings at the Integrations pages), **machine** (`CPU 23% · RAM 11.2/31.8 GB` of the daemon's machine, no click), **version** (`v0.5.3`; click runs the update check).
-- The folder and branch labels end with an ellipsis (`…`) when they pass `WIDGET_BAR_LABEL_MAX_WIDTH` (160 px); the tooltip has the full text.
+- The folder and branch labels end with an ellipsis (`…`) when they pass `WIDGET_BAR_LABEL_MAX_WIDTH` (160 px); the folder's tooltip has its path, the Git tooltip every repository line.
 - A widget with nothing to show is absent: no limits reported yet, no stats yet, no workspace, no repository.
   A limit window whose reset time passed shows nothing until a new report.
 - A narrow window drops limits first, then machine; folder, Git and version stay.
