@@ -28,6 +28,11 @@ const TARGET_KEYS: [&str; 6] = ["file_path", "path", "pattern", "command", "url"
 pub struct Turn {
     pub prompt: String,
     pub items: Vec<Item>,
+    /// The latest Claude `TodoWrite` input or Codex `update_plan` arguments of the turn.
+    pub plan: Option<Vec<PlanStep>>,
+    /// The last `AskUserQuestion` of the turn that has no result yet.
+    pub question: Option<Question>,
+    pub subagents: Vec<Subagent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +67,38 @@ pub struct ToolResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanStatus {
+    Pending,
+    InProgress,
+    Done,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanStep {
+    pub text: String,
+    pub status: PlanStatus,
+}
+
+/// A question the agent asked (Claude `AskUserQuestion`) that has no result yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Question {
+    /// The tool_use id, to match its result.
+    pub id: String,
+    pub text: String,
+    pub options: Vec<String>,
+}
+
+/// A subagent the turn started (Claude `Task` / `Agent`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subagent {
+    pub id: String,
+    pub description: String,
+    pub subagent_type: String,
+    /// Its result arrived.
+    pub done: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Format {
     Claude,
     Codex,
@@ -74,6 +111,9 @@ enum Line {
     Text(String),
     Thinking(String),
     Tool(ToolCall),
+    Plan(Vec<PlanStep>),
+    Question(Question),
+    Subagent(Subagent),
     /// The result of the call `id`.
     Result {
         id: String,
@@ -227,6 +267,18 @@ impl ThreadReader {
                 }
                 true
             }
+            Line::Plan(steps) => {
+                turn.plan = Some(steps);
+                true
+            }
+            Line::Question(question) => {
+                turn.question = Some(question);
+                true
+            }
+            Line::Subagent(subagent) => {
+                turn.subagents.push(subagent);
+                true
+            }
             Line::Result { id, result } => turn.set_result(&id, result),
         }
     }
@@ -239,15 +291,26 @@ impl Turn {
         if id.is_empty() {
             return false;
         }
+        let mut filled = false;
         for item in self.items.iter_mut().rev() {
             if let Item::Tools(calls) = item
                 && let Some(call) = calls.iter_mut().rev().find(|call| call.id == id)
             {
                 call.result = Some(result);
-                return true;
+                filled = true;
+                break;
             }
         }
-        false
+        if !filled {
+            return false;
+        }
+        if self.question.as_ref().is_some_and(|q| q.id == id) {
+            self.question = None;
+        }
+        for subagent in self.subagents.iter_mut().filter(|s| s.id == id) {
+            subagent.done = true;
+        }
+        true
     }
 }
 
@@ -400,6 +463,67 @@ fn tag<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     (!inner.is_empty()).then_some(inner)
 }
 
+/// A plan from `steps` (an array of objects whose `text_key` is the step and `status` one of
+/// `pending`, `in_progress`, `completed`); `None` when empty.
+fn plan_of(steps: &Value, text_key: &str) -> Option<Vec<PlanStep>> {
+    let steps: Vec<PlanStep> = steps
+        .as_array()?
+        .iter()
+        .filter_map(|step| {
+            let text = step[text_key].as_str()?.trim();
+            (!text.is_empty()).then(|| PlanStep {
+                text: text.to_owned(),
+                status: match step["status"].as_str() {
+                    Some("in_progress") => PlanStatus::InProgress,
+                    Some("completed") => PlanStatus::Done,
+                    _ => PlanStatus::Pending,
+                },
+            })
+        })
+        .collect();
+    (!steps.is_empty()).then_some(steps)
+}
+
+fn question_of(id: &str, input: &Value) -> Option<Question> {
+    // ponytail: the first of several questions; the card shows one. Add the rest if Claude
+    // asks several at once often enough to matter.
+    let first = input["questions"].as_array()?.first()?;
+    let text = first["question"].as_str()?.trim();
+    (!text.is_empty()).then(|| Question {
+        id: id.to_owned(),
+        text: text.to_owned(),
+        options: first["options"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|option| option["label"].as_str())
+            .map(str::to_owned)
+            .collect(),
+    })
+}
+
+/// The call itself, then what its name adds: a plan, the question asked, a subagent.
+fn claude_tool(block: &Value) -> Vec<Line> {
+    let (id, name, input) = (&block["id"], &block["name"], &block["input"]);
+    let mut lines = vec![tool(id, name, target_of(input), input)];
+    let id = id.as_str().unwrap_or_default();
+    match name.as_str() {
+        Some("TodoWrite") => lines.extend(plan_of(&input["todos"], "content").map(Line::Plan)),
+        Some("AskUserQuestion") => lines.extend(question_of(id, input).map(Line::Question)),
+        Some("Task" | "Agent") => lines.push(Line::Subagent(Subagent {
+            id: id.to_owned(),
+            description: input["description"].as_str().unwrap_or_default().to_owned(),
+            subagent_type: input["subagent_type"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            done: false,
+        })),
+        _ => {}
+    }
+    lines
+}
+
 fn claude_line(value: &Value) -> Vec<Line> {
     if value["isSidechain"] == true {
         return Vec::new();
@@ -465,12 +589,7 @@ fn claude_line(value: &Value) -> Vec<Line> {
             .flat_map(|block| match block["type"].as_str() {
                 Some("text") => own_text(block).map(Line::Text).into_iter().collect(),
                 Some("thinking") => thinking(block).into_iter().collect(),
-                Some("tool_use") => vec![tool(
-                    &block["id"],
-                    &block["name"],
-                    target_of(&block["input"]),
-                    &block["input"],
-                )],
+                Some("tool_use") => claude_tool(block),
                 _ => Vec::new(),
             })
             .collect(),
@@ -496,12 +615,16 @@ fn codex_line(value: &Value) -> Vec<Line> {
             let raw = payload["arguments"].as_str().unwrap_or_default();
             let arguments = serde_json::from_str::<Value>(raw)
                 .unwrap_or_else(|_| Value::String(raw.to_owned()));
-            vec![tool(
+            let mut lines = vec![tool(
                 &payload["call_id"],
                 &payload["name"],
                 target_of(&arguments),
                 &arguments,
-            )]
+            )];
+            if payload["name"] == "update_plan" {
+                lines.extend(plan_of(&arguments["plan"], "step").map(Line::Plan));
+            }
+            lines
         }
         (Some("response_item"), Some("custom_tool_call")) => {
             // Raw input (e.g. a patch): its first line that is not the `*** Begin` header.
@@ -602,6 +725,7 @@ mod tests {
         Turn {
             prompt: prompt.into(),
             items,
+            ..Turn::default()
         }
     }
 
@@ -992,5 +1116,111 @@ mod tests {
     #[test]
     fn unknown_formats_are_refused() {
         assert!(ThreadReader::new(&UsageFormat::Unknown("x".into()), THREAD_TURNS).is_err());
+    }
+
+    const CLAUDE_AGENTS: &[u8] = include_bytes!("../tests/fixtures/thread/claude_agents.jsonl");
+    const CODEX_PLAN: &[u8] = include_bytes!("../tests/fixtures/thread/codex_plan.jsonl");
+
+    fn step(text: &str, status: PlanStatus) -> PlanStep {
+        PlanStep {
+            text: text.into(),
+            status,
+        }
+    }
+
+    /// The first `count` lines of `bytes`.
+    fn head(bytes: &[u8], count: usize) -> Vec<u8> {
+        bytes
+            .split_inclusive(|b| *b == b'\n')
+            .take(count)
+            .flatten()
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn the_plan_is_the_latest_todowrite_of_the_turn() {
+        let reader = read(UsageFormat::ClaudeJsonl, CLAUDE_AGENTS);
+        assert_eq!(
+            reader.turns()[0].plan,
+            Some(vec![
+                step("Read code", PlanStatus::Done),
+                step("Write fix", PlanStatus::Done),
+                step("Run tests", PlanStatus::InProgress),
+            ])
+        );
+        assert_eq!(reader.turns()[1].plan, None);
+        // The TodoWrite call stays a (collapsed) tool row with its result.
+        let first = calls(&reader.turns()[0]);
+        assert_eq!(first[0].name, "TodoWrite");
+        assert_eq!(
+            first[0].result.as_ref().map(|r| r.text.as_str()),
+            Some("Todos modified")
+        );
+    }
+
+    #[test]
+    fn codex_update_plan_gives_the_plan() {
+        let reader = read(UsageFormat::CodexJsonl, CODEX_PLAN);
+        assert_eq!(
+            reader.turns()[0].plan,
+            Some(vec![
+                step("Design", PlanStatus::Done),
+                step("Build", PlanStatus::InProgress),
+                step("Ship", PlanStatus::Pending),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_question_is_pending_until_its_result_arrives() {
+        let mut reader = ThreadReader::new(&UsageFormat::ClaudeJsonl, THREAD_TURNS).unwrap();
+        reader.feed(&head(CLAUDE_AGENTS, 7));
+        assert_eq!(
+            reader.turns()[0].question,
+            Some(Question {
+                id: "q1".into(),
+                text: "Which database?".into(),
+                options: vec!["SQLite".into(), "Postgres".into()],
+            })
+        );
+        let answer = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"q1\",\"content\":\"User has answered: SQLite\"}]}}\n";
+        assert!(reader.feed(answer.as_bytes()));
+        assert_eq!(reader.turns()[0].question, None);
+    }
+
+    /// The second question of the fixture is answered in the same transcript.
+    #[test]
+    fn an_answered_question_is_not_pending() {
+        let reader = read(UsageFormat::ClaudeJsonl, CLAUDE_AGENTS);
+        assert_eq!(reader.turns()[1].question, None);
+        // A window that starts after the question: its result has no call and is dropped.
+        let mut late = ThreadReader::new(&UsageFormat::ClaudeJsonl, THREAD_TURNS).unwrap();
+        late.feed(&head(CLAUDE_AGENTS, 1));
+        let answer = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"q1\",\"content\":\"x\"}]}}\n";
+        assert!(!late.feed(answer.as_bytes()));
+        assert_eq!(late.turns()[0].question, None);
+    }
+
+    #[test]
+    fn task_and_agent_calls_are_subagents_until_their_result() {
+        let mut reader = ThreadReader::new(&UsageFormat::ClaudeJsonl, THREAD_TURNS).unwrap();
+        reader.feed(&head(CLAUDE_AGENTS, 7));
+        let agent = |id: &str, description: &str, kind: &str, done| Subagent {
+            id: id.into(),
+            description: description.into(),
+            subagent_type: kind.into(),
+            done,
+        };
+        assert_eq!(
+            reader.turns()[0].subagents,
+            [
+                agent("s1", "Explore the repo", "Explore", true),
+                agent("s2", "Review the diff", "reviewer", false),
+            ]
+        );
+        let done = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"s2\",\"content\":\"ok\"}]}}\n";
+        reader.feed(done.as_bytes());
+        assert!(reader.turns()[0].subagents.iter().all(|s| s.done));
     }
 }
