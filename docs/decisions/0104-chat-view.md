@@ -13,10 +13,12 @@ Mkrew already parses Claude, Codex and omp transcripts into a read-only Thread s
 ## Decision
 
 - Chat is a mode of an agent pane, next to its terminal, not a new panel.
-  A `Terminal | Chat` switch in the pane header (and `Ctrl+Alt+T`, palette "Toggle chat view") flips it.
+  A `Terminal | Chat` switch in the pane header (and `Ctrl+Alt+T`, palette "Agent: Toggle chat view") flips it.
 - The data is the transcript, read by the same `ThreadReader` through `session.transcript`.
   The reader now also keeps tool call ids, arguments (4 KB) and results (8 KB, with an error mark), thinking (8 KB), the latest plan, a pending `AskUserQuestion`, and the turn's `Task` / `Agent` subagents.
-  Its turn limit is an argument: 20 for the Thread section, 50 for Chat.
+  Only the newest 50 calls of a turn keep their arguments and result; older calls keep name, target and error mark, and their body says "Open transcript" like a cut one, so a long autonomous turn stays bounded.
+  A cut tool or thinking body shows an "Open transcript" link under it.
+  One reader of 50 turns per session serves the panel and Chat (see below); the Thread section shows its newest 20.
 - The plan comes from Claude `TodoWrite`, Codex `update_plan`, or the Claude task tools.
   Current Claude Code uses `TaskCreate`, `TaskUpdate` and `TaskList` by default and `TodoWrite` is off.
   For these the reader keeps one checklist for the session: a `TaskCreate` result adds a step (the id from `toolUseResult.task.id`, else `#N` in the result text), `TaskUpdate` changes or deletes the step with its `taskId`, and a `TaskList` result replaces the list.
