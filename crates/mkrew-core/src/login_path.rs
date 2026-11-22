@@ -21,6 +21,8 @@ const END: &str = "__MKREW_PATH_END__";
 const SCRIPT: &str = "printf '%s%s%s' __MKREW_PATH_BEGIN__ \"$PATH\" __MKREW_PATH_END__";
 /// Longest wait for the shell: a `.zshrc` with version managers takes 1 to 2 s.
 const TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a shell that has answered gets to exit by itself before it is killed.
+const EXIT_GRACE: Duration = Duration::from_millis(500);
 
 /// The `PATH` to look programs up on and to give agents: on macOS the login shell's list in
 /// front of this process's own; `None` elsewhere (the process's own is right) or when the
@@ -123,8 +125,19 @@ fn run(mut command: Command, timeout: Duration) -> Option<String> {
         let _ = sender.send(String::from_utf8_lossy(&seen).into_owned());
     });
     let text = receiver.recv_timeout(timeout).ok();
-    let _ = child.kill();
-    let _ = child.wait();
+    // After a good answer the shell is about to exit by itself: let it restore the terminal it
+    // may share; kill it only when it is still running (or on a timeout).
+    let until = std::time::Instant::now() + EXIT_GRACE;
+    while text.is_some()
+        && matches!(child.try_wait(), Ok(None))
+        && std::time::Instant::now() < until
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if !matches!(child.try_wait(), Ok(Some(_))) {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
     text
 }
 
