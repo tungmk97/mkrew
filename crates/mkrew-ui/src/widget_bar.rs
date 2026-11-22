@@ -160,9 +160,16 @@ impl WidgetData {
             .fold(false, |changed, limits| self.offer(limits) | changed)
     }
 
-    /// A lost connection: the next daemon has its own numbers.
-    pub fn clear(&mut self) {
-        *self = Self::default();
+    /// The new connection's list is about to replace the limits (events since the connect
+    /// stay in the daemon's answer). The machine figures are not touched: the next
+    /// `machine.stats` would take a sample interval to refill them.
+    pub fn clear_limits(&mut self) {
+        self.limits.clear();
+    }
+
+    /// A lost connection: those figures belong to the daemon that went away.
+    pub fn clear_machine(&mut self) {
+        self.machine = None;
     }
 
     pub fn limits(&self) -> &[AgentLimits] {
@@ -286,7 +293,7 @@ fn limits(input: &Input<'_>, utc_offset: &dyn Fn(i64) -> i32) -> Option<Widget> 
             tips.push(match window.resets_at {
                 Some(resets) => format!(
                     "{name} {long}: {percent}% used, resets {} ({})",
-                    local_clock(resets, input.now_secs, utc_offset(resets)),
+                    local_clock(resets, input.now_secs, utc_offset),
                     in_text(resets - input.now_secs)
                 ),
                 None => format!("{name} {long}: {percent}% used"),
@@ -312,6 +319,10 @@ fn percent_of(window: &LimitWindow) -> u32 {
 
 fn machine(input: &Input<'_>) -> Option<Widget> {
     let stats = input.data.machine()?;
+    // A CPU reading that is not a number is no data, not "NaN%".
+    if !stats.cpu_percent.is_finite() {
+        return None;
+    }
     let cpu = stats.cpu_percent.clamp(0.0, 100.0).round();
     let mut label = format!("CPU {cpu:.0}%");
     let mut tooltip = format!("{}\nCPU {cpu:.0}% of all cores", input.machine_name);
@@ -423,10 +434,11 @@ pub fn in_text(secs: i64) -> String {
 }
 
 /// The local clock time of Unix time `at`: `04:07` on `now`'s local day, else `Fri 14:41`.
-/// `utc_offset` is the local offset in seconds east of UTC.
-pub fn local_clock(at: i64, now: i64, utc_offset: i32) -> String {
-    let local = at + i64::from(utc_offset);
-    let today = (now + i64::from(utc_offset)).div_euclid(86_400);
+/// `utc_offset(t)` is the local offset in seconds east of UTC at Unix time `t`; `now`'s day
+/// uses the offset at `now`, so a daylight saving change between the two does not move it.
+pub fn local_clock(at: i64, now: i64, utc_offset: &dyn Fn(i64) -> i32) -> String {
+    let local = at + i64::from(utc_offset(at));
+    let today = (now + i64::from(utc_offset(now))).div_euclid(86_400);
     let (day, rest) = (local.div_euclid(86_400), local.rem_euclid(86_400));
     let clock = format!("{:02}:{:02}", rest / 3600, rest % 3600 / 60);
     if day == today {
@@ -812,15 +824,50 @@ mod tests {
     #[test]
     fn reset_times_are_local_and_name_the_day_when_it_is_not_today() {
         // 2026-05-12 00:05 local (UTC+7) now; the 5-hour window resets 04:07 the same day.
-        assert_eq!(local_clock(1_778_533_631, NOW, 25_200), "04:07");
+        assert_eq!(local_clock(1_778_533_631, NOW, &plus_seven), "04:07");
         // Three days on: Friday.
         assert_eq!(
-            local_clock(1_778_571_719 + 3 * 86_400, NOW, 25_200),
+            local_clock(1_778_571_719 + 3 * 86_400, NOW, &plus_seven),
             "Fri 14:41"
         );
         // The same instant in UTC is still the previous day for `now`.
-        assert_eq!(local_clock(1_778_533_631, NOW, 0), "21:07");
-        assert_eq!(local_clock(0, 0, 0), "00:00");
+        assert_eq!(local_clock(1_778_533_631, NOW, &|_| 0), "21:07");
+        assert_eq!(local_clock(0, 0, &|_| 0), "00:00");
+    }
+
+    /// `now` is judged by the offset at `now`: a clock that moves forward an hour between `now`
+    /// (23:59 on day 999) and the reset (01:30 on day 1000) still calls the reset tomorrow.
+    #[test]
+    fn today_uses_the_offset_at_now_across_a_daylight_saving_change() {
+        let change = 1_000 * 86_400;
+        let offset = |t: i64| if t < change { 0 } else { 3_600 };
+        assert_eq!(
+            local_clock(change + 1_800, change - 60, &offset),
+            "Wed 01:30"
+        );
+    }
+
+    #[test]
+    fn a_cpu_reading_that_is_not_a_number_hides_the_machine_widget() {
+        for cpu in [f32::NAN, f32::INFINITY] {
+            let data = data(vec![], Some(stats(cpu, 1.0, 2.0)));
+            assert_eq!(ids(&list(None, &data, &[], None)), [WidgetId::Version]);
+        }
+    }
+
+    #[test]
+    fn the_folder_and_git_sit_left_and_the_rest_right() {
+        let sides: Vec<Side> = WidgetId::ALL.into_iter().map(WidgetId::side).collect();
+        assert_eq!(
+            sides,
+            [
+                Side::Left,
+                Side::Left,
+                Side::Right,
+                Side::Right,
+                Side::Right
+            ]
+        );
     }
 
     #[test]
@@ -856,7 +903,12 @@ mod tests {
                 changed_at: 0,
             }))
         );
-        data.clear();
+        data.clear_limits();
+        assert_eq!(
+            (data.limits().len(), data.machine()),
+            (0, Some(&stats(2.0, 1.0, 2.0)))
+        );
+        data.clear_machine();
         assert_eq!((data.limits().len(), data.machine()), (0, None));
     }
 

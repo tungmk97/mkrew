@@ -111,7 +111,7 @@ impl Shell {
             }
         }
         let menu = (self.widget_menu.as_ref())
-            .filter(|_| !self.modal_open())
+            .filter(|_| !self.modal_open() && !self.reconnecting())
             .map(|menu| self.render_widget_menu(menu, theme, cx));
         let group = || {
             div()

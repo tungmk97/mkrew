@@ -44,7 +44,7 @@ impl Shell {
         let close_to_tray = ui.close_to_tray && local;
         let reading_default = ui.reading_width;
         let board_all = ui.board_all_workspaces;
-        let (widget_bar, widgets_hidden) = (ui.widget_bar, ui.widgets_hidden.clone());
+        let (widget_bar, widgets_hidden) = (ui.widget_bar, ui.widgets_hidden);
         let (md_mode, md_split) = (ui.md_mode, files_view::md_split_share(ui.md_split));
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
@@ -731,6 +731,9 @@ impl Shell {
                 shell.status = Status::Disconnected;
                 shell.report_machine_state(MachineState::Reconnecting);
                 shell.connection = None;
+                // The load figures belong to the daemon that went away; the limits stay
+                // until the new connection's list replaces them (`reset_connection_state`).
+                shell.widget_data.clear_machine();
                 // Kept with its draft: `save_task` / `delete_task` do nothing without a
                 // connection, and an in-flight save is not waited for.
                 if let Some(dialog) = shell.task_dialog.as_mut() {
@@ -880,7 +883,7 @@ impl Shell {
             .filter_map(|(id, view)| Some((id, view.into_commit_draft()?)))
             .collect();
         self.git_summary = None;
-        self.widget_data.clear();
+        self.widget_data.clear_limits();
         self.close_popups(window, cx);
     }
 
