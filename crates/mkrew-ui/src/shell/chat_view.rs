@@ -14,6 +14,7 @@ pub(crate) enum Stop {
     /// The "earlier turns" link.
     Earlier,
     /// The toggle of a tool or thinking row.
+    #[allow(dead_code)] // used again by the activity rows (Task 6)
     Row(chat::RowKey),
     /// "Answer in terminal" of the question card.
     Answer,
@@ -166,6 +167,7 @@ impl Shell {
         })
     }
 
+    #[allow(dead_code)] // used again by the activity rows (Task 6)
     pub(crate) fn toggle_chat_row(
         &mut self,
         session: Ulid,
@@ -298,7 +300,13 @@ impl Shell {
         if let Some(page) = page {
             (ui.hits.borrow_mut()).retain(|key, _| key.0 >= page.first_turn);
         }
-        let view = chat::view(page, &ui.open);
+        let working = (self.sidebar.sessions().iter())
+            .any(|s| s.id == session && s.state == SessionState::Working);
+        let recap = self
+            .reads
+            .get(&session)
+            .and_then(|read| read.recap.as_ref());
+        let view = chat::view(page, &ui.open, recap, working);
         if view.turns.is_empty() {
             ui.stops.borrow_mut().end();
             return message(
@@ -539,7 +547,7 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let Some(chat_ui) = self.chats.get(&session) else {
+        let Some(_chat_ui) = self.chats.get(&session) else {
             return div().into_any_element();
         };
         let rows: Vec<_> = turn
@@ -579,63 +587,16 @@ impl Shell {
                         _ => div().into_any_element(),
                     }
                 }
-                chat::Row::Thinking { key, text, open } => chat_disclosure(
-                    (session, *key),
-                    *open,
-                    div().italic().child("Thinking").into_any_element(),
-                    {
-                        let link = (*open && chat::body_cut(text))
-                            .then(|| cut_link(session, *key, theme, cx));
-                        move || {
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(space::XS))
-                                .child(mono_block((*text).to_owned(), theme.text_muted, theme))
-                                .children(link)
-                                .into_any_element()
-                        }
-                    },
-                    &chat_ui.stop(Stop::Row(*key), cx),
+                chat::Row::Activity {
+                    thought, summary, ..
+                } => meta_line(
                     theme,
-                    cx,
-                ),
-                chat::Row::Tool { key, call, open } => chat_disclosure(
-                    (session, *key),
-                    *open,
-                    div()
-                        .flex()
-                        .gap(px(space::S))
-                        .min_w_0()
-                        .child(
-                            div()
-                                .flex_none()
-                                .font_weight(FontWeight(weight::MEDIUM))
-                                .child(call.name.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .font_family(theme.terminal_font_family.clone())
-                                .child(call.target.clone()),
-                        )
-                        .into_any_element(),
-                    {
-                        let link = (*open
-                            && (chat::body_cut(&call.input)
-                                || call
-                                    .result
-                                    .as_ref()
-                                    .is_some_and(|r| chat::body_cut(&r.text))))
-                        .then(|| cut_link(session, *key, theme, cx));
-                        move || tool_body(call, link, theme).into_any_element()
-                    },
-                    &chat_ui.stop(Stop::Row(*key), cx),
-                    theme,
-                    cx,
-                ),
+                    chat::activity_label(thought.as_deref(), summary).into(),
+                )
+                .into_any_element(),
+                chat::Row::Recap { text } => {
+                    meta_line(theme, SharedString::from((*text).to_owned())).into_any_element()
+                }
             })
             .collect();
         div()
@@ -660,6 +621,7 @@ impl Shell {
 
 /// A row that opens and closes: `head` always, `body` (built only then) while open; a click
 /// on the head toggles.
+#[allow(dead_code)] // used again by the activity rows (Task 6)
 fn chat_disclosure(
     (session, key): (Ulid, chat::RowKey),
     open: bool,
@@ -708,6 +670,7 @@ fn chat_disclosure(
 }
 
 /// Monospace text on a faint block (arguments, results, thinking).
+#[allow(dead_code)] // used again by the activity rows (Task 6)
 fn mono_block(text: String, color: u32, theme: &Theme) -> gpui::Div {
     div()
         .p(px(space::S))
@@ -720,6 +683,7 @@ fn mono_block(text: String, color: u32, theme: &Theme) -> gpui::Div {
 }
 
 /// An open tool row: the arguments, then the result (`danger_text` when it is an error).
+#[allow(dead_code)] // used again by the activity rows (Task 6)
 fn tool_body(call: &ToolCall, link: Option<gpui::AnyElement>, theme: &Theme) -> gpui::Div {
     div()
         .flex()
@@ -752,6 +716,7 @@ fn tool_body(call: &ToolCall, link: Option<gpui::AnyElement>, theme: &Theme) -> 
 }
 
 /// "Open transcript" under a body the reader cut: the whole text is in the transcript.
+#[allow(dead_code)] // used again by the activity rows (Task 6)
 fn cut_link(
     session: Ulid,
     key: chat::RowKey,

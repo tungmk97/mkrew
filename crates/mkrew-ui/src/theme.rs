@@ -384,6 +384,16 @@ pub const CHAT_SCROLL_STEP: f32 = 48.0;
 /// Tallest the composer's list of queued texts grows (it scrolls past that, ~4 rows; §20B.2).
 pub const COMPOSER_QUEUE_MAX_HEIGHT: f32 = 88.0;
 
+/// Room the Chat composer's chips are reckoned to take (px, gap included), to decide which
+/// ones a narrow pane drops (ADR 0105). The model chip and the fixed part (the send button, ✦
+/// and "Prompts…") are always kept.
+pub const COMPOSER_CHIP_MODEL_WIDTH: f32 = 112.0;
+pub const COMPOSER_CHIP_EFFORT_WIDTH: f32 = 72.0;
+pub const COMPOSER_CHIP_PERMISSION_WIDTH: f32 = 104.0;
+pub const COMPOSER_CHIP_BRANCH_WIDTH: f32 = 120.0;
+pub const COMPOSER_CHIP_STATS_WIDTH: f32 = 168.0;
+pub const COMPOSER_FIXED_WIDTH: f32 = 176.0;
+
 /// Width of the "Undo task" dialog (wider: it shows a diff).
 pub const UNDO_DIALOG_WIDTH: f32 = 720.0;
 

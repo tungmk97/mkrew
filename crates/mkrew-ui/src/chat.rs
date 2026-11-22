@@ -3,14 +3,16 @@
 
 use std::collections::HashSet;
 
-use mkrew_core::thread::{PlanStatus, PlanStep, Subagent, ToolCall};
-use mkrew_protocol::SessionKind;
+use mkrew_core::thread::{PlanStatus, PlanStep, Subagent, ToolCall, short_model};
+use mkrew_protocol::{Recap, SessionKind, SessionUsageEvent};
 use ulid::Ulid;
 
 use crate::docs::Shown;
+use crate::git_summary::GitSummary;
 use crate::icons::AgentLogo;
 use crate::preview_select::{self, Point, Selection};
 use crate::thread_view::{Page, PageItem, PageTurn};
+use crate::{theme, usage};
 
 /// Whether a pane can show Chat: an agent whose profile is a shipped one with a readable
 /// transcript format (Claude, Codex, omp), or any agent whose transcript the daemon found.
@@ -31,13 +33,37 @@ pub fn effective(available: bool, saved: Option<bool>, default: bool) -> bool {
 /// A row that opens and closes: (turn key, item index, call index; 0 for thinking).
 pub type RowKey = (u64, usize, usize);
 
+/// A row of a turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row<'a> {
     /// Agent text: item `item` of the page turn.
     Text { item: usize },
+    /// Thinking and tool calls between two texts (or the turn's ends) as one row (ADR 0105).
+    Activity {
+        /// `(turn key, first item, usize::MAX)`: never the key of one of its children.
+        key: RowKey,
+        /// Thinking time of the children that have one, summed.
+        thinking_ms: Option<u64>,
+        counts: Counts,
+        /// The italic part of the label: "Thought for 4s", "Thought", or "Working…".
+        thought: Option<String>,
+        /// "3 commands, 2 reads"; empty while "Working…".
+        summary: String,
+        children: Vec<Child<'a>>,
+        open: bool,
+    },
+    /// omp's recap after the last turn (see [`recap_shown`]).
+    Recap { text: &'a str },
+}
+
+/// A row inside an open activity row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Child<'a> {
+    /// Opens to its text unless the text is empty (Claude's redacted thinking).
     Thinking {
         key: RowKey,
         text: &'a str,
+        ms: Option<u64>,
         open: bool,
     },
     Tool {
@@ -45,6 +71,107 @@ pub enum Row<'a> {
         call: &'a ToolCall,
         open: bool,
     },
+}
+
+/// Tool calls of one activity row by kind.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub commands: usize,
+    pub reads: usize,
+    pub edits: usize,
+    pub web: usize,
+    pub agents: usize,
+    pub other: usize,
+}
+
+impl Counts {
+    /// Counts one call of the tool `name` (the agents' names, in any case).
+    pub fn add(&mut self, name: &str) {
+        let slot = match name.to_ascii_lowercase().as_str() {
+            "bash" | "shell" | "shell_command" | "exec_command" => &mut self.commands,
+            "read" | "view" | "grep" | "glob" | "find" | "search" => &mut self.reads,
+            "edit" | "write" | "multiedit" | "apply_patch" | "ast_edit" => &mut self.edits,
+            "web_search" | "websearch" | "webfetch" | "fetch" | "browser" => &mut self.web,
+            "task" | "agent" => &mut self.agents,
+            _ => &mut self.other,
+        };
+        *slot += 1;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// `3 commands, 2 reads, 1 edit`: in that order, a kind without calls left out.
+    pub fn label(&self) -> String {
+        [
+            (self.commands, "command", "commands"),
+            (self.reads, "read", "reads"),
+            (self.edits, "edit", "edits"),
+            (self.web, "web call", "web calls"),
+            (self.agents, "agent", "agents"),
+            (self.other, "tool", "tools"),
+        ]
+        .into_iter()
+        .filter(|(n, ..)| *n > 0)
+        .map(|(n, one, many)| format!("{n} {}", if n == 1 { one } else { many }))
+        .collect::<Vec<_>>()
+        .join(", ")
+    }
+}
+
+/// The whole label of an activity row: the italic part, then ` · ` and the counts.
+pub fn activity_label(thought: Option<&str>, summary: &str) -> String {
+    match (thought, summary.is_empty()) {
+        (Some(thought), true) => thought.to_owned(),
+        (Some(thought), false) => format!("{thought} · {summary}"),
+        (None, _) => summary.to_owned(),
+    }
+}
+
+/// `Thought for 4s` (at least 1 s), or `Thinking` when the block has no time.
+pub fn thinking_label(ms: Option<u64>) -> String {
+    match ms {
+        Some(ms) => format!("Thought for {}", format_elapsed(ms.max(1000))),
+        None => "Thinking".to_owned(),
+    }
+}
+
+/// The italic part of an activity row that is not running: the thinking time, or just
+/// `Thought` when the row holds thinking without a time and no tool calls.
+fn thought_label(thinking: bool, ms: Option<u64>, counts: &Counts) -> Option<String> {
+    match ms {
+        Some(_) => Some(thinking_label(ms)),
+        None if thinking && counts.is_empty() => Some("Thought".to_owned()),
+        None => None,
+    }
+}
+
+/// `42s`, `2m 46s`, `1h 03m`.
+pub fn format_elapsed(ms: u64) -> String {
+    let secs = ms / 1000;
+    match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m {:02}s", secs / 60, secs % 60),
+        _ => format!("{}h {:02}m", secs / 3600, secs % 3600 / 60),
+    }
+}
+
+/// `950`, `1.2K`, `74K`, `1.5M`: tokens on a chip.
+pub fn format_k(n: u64) -> String {
+    match n {
+        0..=999 => n.to_string(),
+        1_000..=9_999 => format!("{}.{}K", n / 1000, n % 1000 / 100),
+        10_000..=999_999 => format!("{}K", n / 1000),
+        _ => format!("{}.{}M", n / 1_000_000, n % 1_000_000 / 100_000),
+    }
+}
+
+/// The recap goes after the last turn when the agent is not working and the recap is not older
+/// than that turn's prompt (`recap.at` is in seconds, `started_at` in milliseconds; a prompt
+/// without a time shows any recap).
+pub fn recap_shown(recap: &Recap, last_started_at: Option<i64>, working: bool) -> bool {
+    !working && last_started_at.is_none_or(|started| recap.at >= started / 1000)
 }
 
 /// The mark before a plan step: an empty ring, a half ring, a check.
@@ -97,22 +224,36 @@ pub struct View<'a> {
 }
 
 /// The view of `page` with the rows in `open` expanded. Borrows from the page: it is built on
-/// every render, so it copies none of the transcript.
-pub fn view<'a>(page: Option<&'a Page>, open: &HashSet<RowKey>) -> View<'a> {
+/// every render, so it copies none of the transcript. `working`: the agent is working, so the
+/// newest turn's last activity row says "Working…" and no recap shows; `recap`: omp's newest.
+pub fn view<'a>(
+    page: Option<&'a Page>,
+    open: &HashSet<RowKey>,
+    recap: Option<&'a Recap>,
+    working: bool,
+) -> View<'a> {
     let Some(page) = page else {
         return View::default();
     };
     let plan_turn = page.turns.iter().rposition(|turn| turn.plan.is_some());
+    let newest = page.turns.len().checked_sub(1);
     let turns = page
         .turns
         .iter()
         .enumerate()
         .map(|(index, turn)| {
             let key = page.first_turn + index as u64;
+            let is_newest = Some(index) == newest;
+            let mut turn_rows = rows(key, turn, open, working && is_newest);
+            if is_newest
+                && let Some(recap) = recap.filter(|r| recap_shown(r, turn.started_at, working))
+            {
+                turn_rows.push(Row::Recap { text: &recap.text });
+            }
             ChatTurn {
                 key,
                 prompt: &turn.prompt,
-                rows: rows(key, turn, open),
+                rows: turn_rows,
                 plan: if plan_turn == Some(index) {
                     turn.plan
                         .as_deref()
@@ -138,31 +279,105 @@ pub fn view<'a>(page: Option<&'a Page>, open: &HashSet<RowKey>) -> View<'a> {
     }
 }
 
-fn rows<'a>(turn_key: u64, turn: &'a PageTurn, open: &HashSet<RowKey>) -> Vec<Row<'a>> {
-    let mut rows = Vec::new();
-    for (item, entry) in turn.items.iter().enumerate() {
-        match entry {
-            PageItem::Text(_) => rows.push(Row::Text { item }),
-            PageItem::Thinking { text, .. } => {
-                let key = (turn_key, item, 0);
-                rows.push(Row::Thinking {
-                    key,
-                    text,
-                    open: open.contains(&key),
-                });
-            }
-            PageItem::Tools(calls) => {
-                rows.extend(calls.iter().enumerate().map(|(index, call)| {
-                    let key = (turn_key, item, index);
-                    Row::Tool {
-                        key,
-                        call,
-                        open: open.contains(&key),
-                    }
-                }));
-            }
+/// A run of thinking and tool calls: becomes one [`Row::Activity`].
+#[derive(Default)]
+struct Group<'a> {
+    first: Option<usize>,
+    children: Vec<Child<'a>>,
+    counts: Counts,
+    thinking: bool,
+    thinking_ms: Option<u64>,
+}
+
+impl<'a> Group<'a> {
+    fn thinking(
+        &mut self,
+        turn_key: u64,
+        item: usize,
+        text: &'a str,
+        ms: Option<u64>,
+        open: &HashSet<RowKey>,
+    ) {
+        let key = (turn_key, item, 0);
+        self.first.get_or_insert(item);
+        self.thinking = true;
+        if let Some(ms) = ms {
+            self.thinking_ms = Some(self.thinking_ms.unwrap_or(0) + ms);
+        }
+        self.children.push(Child::Thinking {
+            key,
+            text,
+            ms,
+            open: !text.is_empty() && open.contains(&key),
+        });
+    }
+
+    fn tools(&mut self, turn_key: u64, item: usize, calls: &'a [ToolCall], open: &HashSet<RowKey>) {
+        self.first.get_or_insert(item);
+        for (index, call) in calls.iter().enumerate() {
+            let key = (turn_key, item, index);
+            self.counts.add(&call.name);
+            self.children.push(Child::Tool {
+                key,
+                call,
+                open: open.contains(&key),
+            });
         }
     }
+
+    /// Ends the run (nothing when it is empty). `running`: the turn runs and this row is its
+    /// last.
+    fn flush(
+        &mut self,
+        turn_key: u64,
+        open: &HashSet<RowKey>,
+        running: bool,
+        rows: &mut Vec<Row<'a>>,
+    ) {
+        let group = std::mem::take(self);
+        let Some(first) = group.first else {
+            return;
+        };
+        let key = (turn_key, first, usize::MAX);
+        let (thought, summary) = if running {
+            (Some("Working…".to_owned()), String::new())
+        } else {
+            (
+                thought_label(group.thinking, group.thinking_ms, &group.counts),
+                group.counts.label(),
+            )
+        };
+        rows.push(Row::Activity {
+            key,
+            thinking_ms: group.thinking_ms,
+            counts: group.counts,
+            thought,
+            summary,
+            children: group.children,
+            open: open.contains(&key),
+        });
+    }
+}
+
+fn rows<'a>(
+    turn_key: u64,
+    turn: &'a PageTurn,
+    open: &HashSet<RowKey>,
+    running: bool,
+) -> Vec<Row<'a>> {
+    let mut rows = Vec::new();
+    let mut group = Group::default();
+    for (item, entry) in turn.items.iter().enumerate() {
+        match entry {
+            PageItem::Text(_) => {
+                group.flush(turn_key, open, false, &mut rows);
+                rows.push(Row::Text { item });
+            }
+            PageItem::Thinking { text, ms } => group.thinking(turn_key, item, text, *ms, open),
+            PageItem::Tools(calls) => group.tools(turn_key, item, calls, open),
+        }
+    }
+    group.flush(turn_key, open, running, &mut rows);
     rows
 }
 
@@ -305,6 +520,222 @@ pub fn copy_text(page: &Page, selecting: Option<(MsgKey, Selection)>) -> Option<
     (!text.is_empty()).then_some(text)
 }
 
+/// The status chips of a Chat composer (ADR 0105); a field with no data is `None`: its chip is
+/// hidden, never shown as 0.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ComposerStats {
+    /// Short model name ([`short_model`]).
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub permission: Option<String>,
+    pub branch: Option<BranchChip>,
+    /// Tokens in the context, and the window when known.
+    pub context: Option<(u64, Option<u64>)>,
+    pub tok_s: Option<u32>,
+    pub elapsed_ms: Option<u64>,
+}
+
+/// The branch chip: `name` and `*changed` files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchChip {
+    pub name: String,
+    pub changed: usize,
+}
+
+/// The chips of the session behind `page`. Model and context come from the transcript's
+/// `SessionMeta`, else from the usage event; the profile's context window wins over the
+/// transcript's. tok/s and elapsed time are the newest turn's: elapsed runs to `now` (epoch ms)
+/// while `working`. The branch shows only when the session runs at the workspace root.
+pub fn composer_stats(
+    page: Option<&Page>,
+    usage: Option<&SessionUsageEvent>,
+    git: Option<&GitSummary>,
+    at_root: bool,
+    working: bool,
+    now: i64,
+) -> ComposerStats {
+    let meta = page.map(|page| &page.meta);
+    let last = page.and_then(|page| page.turns.last());
+    let model = meta
+        .and_then(|meta| meta.model.as_deref())
+        .or_else(|| usage.and_then(|usage| usage.model.as_deref()))
+        .map(short_model);
+    let used = meta.and_then(|meta| meta.context).or_else(|| {
+        usage
+            .map(|usage| usage.context)
+            .filter(|context| *context > 0)
+    });
+    let window = usage
+        .and_then(|usage| usage.context_window)
+        .or_else(|| meta.and_then(|meta| meta.context_window));
+    let tok_s = last
+        .filter(|turn| turn.generation_ms > 0 && turn.output_tokens > 0)
+        .map(|turn| {
+            let rate = (turn.output_tokens * 1000 + turn.generation_ms / 2) / turn.generation_ms;
+            u32::try_from(rate).unwrap_or(u32::MAX)
+        });
+    let elapsed_ms = last.and_then(|turn| {
+        let start = turn.started_at?;
+        let end = if working { now } else { turn.ended_at? };
+        Some(u64::try_from((end - start).max(0)).unwrap_or(0))
+    });
+    ComposerStats {
+        model,
+        effort: meta.and_then(|meta| meta.effort.clone()),
+        permission: meta.and_then(|meta| meta.permission.clone()),
+        branch: git.filter(|_| at_root).and_then(|git| {
+            Some(BranchChip {
+                name: git.branch_label()?,
+                changed: git.changed(),
+            })
+        }),
+        context: used.map(|used| (used, window)),
+        tok_s,
+        elapsed_ms,
+    }
+}
+
+/// The stats of the chip row in order: `74K`, `102 tok/s`, `2m 46s`; those known.
+pub fn stat_parts(stats: &ComposerStats) -> Vec<String> {
+    let mut parts = Vec::new();
+    if let Some((used, _)) = stats.context {
+        parts.push(format_k(used));
+    }
+    if let Some(rate) = stats.tok_s {
+        parts.push(format!("{rate} tok/s"));
+    }
+    if let Some(ms) = stats.elapsed_ms {
+        parts.push(format_elapsed(ms));
+    }
+    parts
+}
+
+/// The thin context meter above the composer card.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Meter {
+    /// Used share, whole percent (can pass 100).
+    pub percent: u64,
+    /// Used share for the filled track, 0 to 1.
+    pub fraction: f32,
+    /// From `usage::WARNING_PERCENT` on.
+    pub warning: bool,
+    /// The window as `usage::format_tokens` writes it.
+    pub window_label: String,
+}
+
+/// `None` without a window.
+pub fn context_meter(used: u64, window: u64) -> Option<Meter> {
+    if window == 0 {
+        return None;
+    }
+    let percent = used.saturating_mul(100) / window;
+    Some(Meter {
+        percent,
+        fraction: (used as f32 / window as f32).clamp(0.0, 1.0),
+        warning: percent >= usage::WARNING_PERCENT,
+        window_label: usage::format_tokens(window),
+    })
+}
+
+/// Longest session title the placeholder shows.
+const PLACEHOLDER_MAX: usize = 60;
+
+/// The composer's placeholder: the transcript's title, else the pane's, in quotes; else
+/// `Message the agent…`.
+pub fn composer_placeholder(transcript_title: Option<&str>, pane_title: Option<&str>) -> String {
+    let title = [transcript_title, pane_title]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|title| !title.is_empty());
+    match title {
+        Some(title) if title.chars().count() > PLACEHOLDER_MAX => {
+            let cut: String = title.chars().take(PLACEHOLDER_MAX - 1).collect();
+            format!("\"{cut}…\"")
+        }
+        Some(title) => format!("\"{title}\""),
+        None => "Message the agent…".to_owned(),
+    }
+}
+
+/// Which chips of the Chat composer show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Chips {
+    pub model: bool,
+    pub effort: bool,
+    pub permission: bool,
+    pub branch: bool,
+    pub stats: bool,
+}
+
+impl Chips {
+    /// The chips `stats` has data for.
+    pub fn wanted(stats: &ComposerStats) -> Self {
+        Self {
+            model: stats.model.is_some(),
+            effort: stats.effort.is_some(),
+            permission: stats.permission.is_some(),
+            branch: stats.branch.is_some(),
+            stats: !stat_parts(stats).is_empty(),
+        }
+    }
+}
+
+/// What of `want` fits in `room` px: chips drop from the right, in the order stats,
+/// permission, effort, branch; the model chip and the fixed part (send, ✦, Prompts) stay.
+pub fn fit_chips(want: Chips, room: f32) -> Chips {
+    let width = |chips: &Chips| {
+        theme::COMPOSER_FIXED_WIDTH
+            + [
+                (chips.model, theme::COMPOSER_CHIP_MODEL_WIDTH),
+                (chips.effort, theme::COMPOSER_CHIP_EFFORT_WIDTH),
+                (chips.permission, theme::COMPOSER_CHIP_PERMISSION_WIDTH),
+                (chips.branch, theme::COMPOSER_CHIP_BRANCH_WIDTH),
+                (chips.stats, theme::COMPOSER_CHIP_STATS_WIDTH),
+            ]
+            .into_iter()
+            .filter(|(shown, _)| *shown)
+            .map(|(_, width)| width)
+            .sum::<f32>()
+    };
+    let drops: [fn(&mut Chips); 4] = [
+        |chips| chips.stats = false,
+        |chips| chips.permission = false,
+        |chips| chips.effort = false,
+        |chips| chips.branch = false,
+    ];
+    let mut chips = want;
+    for drop in drops {
+        if width(&chips) <= room {
+            break;
+        }
+        drop(&mut chips);
+    }
+    chips
+}
+
+/// The Files path (`/` separators, relative to the workspace folder `base`) a path pill names,
+/// or `None` when it leaves the workspace (an absolute path elsewhere, or any `..`). Pure: it
+/// reads no disk, so it works for a machine window too. Folder and drive case do not matter.
+pub fn files_path(base: &str, path: &str) -> Option<String> {
+    let path = path.replace('\\', "/");
+    let path = path.strip_prefix("./").unwrap_or(&path);
+    let clean = |rest: &str| {
+        (!rest.is_empty() && !rest.split('/').any(|part| part == "..")).then(|| rest.to_owned())
+    };
+    let absolute = path.starts_with('/') || path.as_bytes().get(1) == Some(&b':');
+    if !absolute {
+        return clean(path);
+    }
+    let base = base.replace('\\', "/");
+    let base = base.trim_end_matches('/');
+    let inside = path
+        .get(..base.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(base));
+    let rest = path.get(base.len()..).filter(|_| inside)?;
+    clean(rest.strip_prefix('/')?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,6 +745,72 @@ mod tests {
     use crate::docs::Shown;
     use crate::preview_select::{Point, Selection};
     use crate::thread_view::ThreadFile;
+
+    use mkrew_protocol::SessionUsageEvent;
+
+    use crate::git_summary::{GitSummary, RepoSummary};
+    use crate::thread_view::PageTurn;
+
+    const CLAUDE_TIMING: &str =
+        include_str!("../../mkrew-core/tests/fixtures/thread/claude_timing.jsonl");
+    const CODEX_TIMING: &str =
+        include_str!("../../mkrew-core/tests/fixtures/thread/codex_timing.jsonl");
+    const OMP_TIMING: &str =
+        include_str!("../../mkrew-core/tests/fixtures/thread/omp_timing.jsonl");
+    /// 2026-01-01T00:00:00Z in epoch milliseconds.
+    const T0: i64 = 1_767_225_600_000;
+
+    fn page_in(format: UsageFormat, jsonl: &str) -> Page {
+        let mut file = ThreadFile::new(&format, CHAT_TURNS).unwrap();
+        file.apply(0, jsonl.as_bytes());
+        file.page()
+    }
+
+    fn call(name: &str) -> ToolCall {
+        ToolCall {
+            id: String::new(),
+            name: name.into(),
+            target: String::new(),
+            input: String::new(),
+            result: None,
+        }
+    }
+
+    /// A one-turn page of `items`.
+    fn turn_page(items: Vec<PageItem>) -> Page {
+        Page {
+            turns: vec![PageTurn {
+                items,
+                ..PageTurn::default()
+            }],
+            ..Page::default()
+        }
+    }
+
+    fn think(ms: Option<u64>) -> PageItem {
+        PageItem::Thinking {
+            text: "hm".into(),
+            ms,
+        }
+    }
+
+    fn words(text: &str) -> PageItem {
+        PageItem::Text(Shown::from_text(text))
+    }
+
+    fn usage(context: u64, window: Option<u64>, model: Option<&str>) -> SessionUsageEvent {
+        SessionUsageEvent {
+            session_id: Ulid::new(),
+            input: 0,
+            output: 0,
+            cache_read: 0,
+            cache_write: 0,
+            context,
+            context_window: window,
+            model: model.map(str::to_owned),
+            transcript: None,
+        }
+    }
 
     const CLAUDE_CHAT: &str =
         include_str!("../../mkrew-core/tests/fixtures/thread/claude_chat.jsonl");
@@ -341,7 +838,7 @@ mod tests {
     fn the_tray_holds_every_running_subagent_of_the_kept_turns() {
         // A second prompt came before any notification: the three launched in turn 0 run.
         let before = page(&head(CLAUDE_BACKGROUND, 7));
-        let v = view(Some(&before), &HashSet::new());
+        let v = view(Some(&before), &HashSet::new(), None, false);
         let names = |v: &View<'_>| -> Vec<String> {
             v.tray
                 .iter()
@@ -355,7 +852,7 @@ mod tests {
         assert!(subagent_runs(&before));
         // After the notifications only Review B still runs.
         let after = page(CLAUDE_BACKGROUND);
-        let v = view(Some(&after), &HashSet::new());
+        let v = view(Some(&after), &HashSet::new(), None, false);
         assert_eq!(names(&v), ["Review B runs"]);
         assert!(subagent_runs(&after));
         // Once it is notified too, the tray goes.
@@ -363,7 +860,11 @@ mod tests {
             "{CLAUDE_BACKGROUND}{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"<task-notification>\\n<task-id>a222</task-id>\\n<status>completed</status>\\n</task-notification>\"}}}}\n"
         );
         let ended = page(&ended);
-        assert!(view(Some(&ended), &HashSet::new()).tray.is_empty());
+        assert!(
+            view(Some(&ended), &HashSet::new(), None, false)
+                .tray
+                .is_empty()
+        );
         assert!(!subagent_runs(&ended));
     }
 
@@ -394,50 +895,468 @@ mod tests {
             .iter()
             .map(|row| match row {
                 Row::Text { item } => format!("text {item}"),
-                Row::Thinking { open, .. } => format!("thinking {}", state(open)),
-                Row::Tool { call, open, .. } => format!(
-                    "{} {} {} {}",
-                    call.name,
-                    call.target,
+                Row::Activity {
+                    thought,
+                    summary,
+                    open,
+                    children,
+                    ..
+                } => format!(
+                    "activity [{}] {} {}",
+                    activity_label(thought.as_deref(), summary),
                     state(open),
-                    match &call.result {
-                        Some(r) if r.is_error => "error",
-                        Some(_) => "ok",
-                        None => "pending",
-                    }
+                    children.len()
                 ),
+                Row::Recap { text } => format!("recap {text}"),
             })
             .collect()
     }
 
     #[test]
-    fn rows_follow_the_items_with_one_row_per_call_and_their_open_state() {
+    fn thinking_and_tools_between_two_texts_are_one_activity_row() {
         let page = page(CLAUDE_CHAT);
-        let shut = view(Some(&page), &HashSet::new());
+        let shut = view(Some(&page), &HashSet::new(), None, false);
         assert_eq!(
             labels(&shut.turns[0]),
             [
-                "thinking shut",
+                "activity [Thought] shut 1",
                 "text 1",
-                "Bash cargo test shut error",
-                "Read src/lib.rs shut ok",
+                "activity [1 command, 1 read] shut 2",
                 "text 3"
             ]
         );
-        let open: HashSet<RowKey> = [(0, 2, 0), (0, 0, 0)].into_iter().collect();
-        let opened = view(Some(&page), &open);
+        // Opening the second activity shows its calls; a call opens on its own key.
+        let open: HashSet<RowKey> = [(0, 2, usize::MAX), (0, 2, 0)].into_iter().collect();
+        let opened = view(Some(&page), &open, None, false);
         assert_eq!(
             labels(&opened.turns[0]),
             [
-                "thinking open",
+                "activity [Thought] shut 1",
                 "text 1",
-                "Bash cargo test open error",
-                "Read src/lib.rs shut ok",
+                "activity [1 command, 1 read] open 2",
                 "text 3"
             ]
         );
+        let Row::Activity { children, .. } = &opened.turns[0].rows[2] else {
+            panic!("an activity row");
+        };
+        assert!(matches!(
+            &children[0],
+            Child::Tool {
+                open: true,
+                key: (0, 2, 0),
+                ..
+            }
+        ));
+        assert!(matches!(
+            &children[1],
+            Child::Tool {
+                open: false,
+                key: (0, 2, 1),
+                ..
+            }
+        ));
         assert_eq!(shut.turns[0].key, 0);
         assert!(!shut.earlier);
+    }
+
+    #[test]
+    fn activity_groups_cover_thinking_only_tools_only_mixed_and_the_turn_end() {
+        let page = turn_page(vec![
+            think(Some(4_000)),
+            PageItem::Tools(vec![call("Bash"), call("bash"), call("Read")]),
+            words("answer"),
+            PageItem::Tools(vec![call("Edit")]),
+            words("more"),
+            think(Some(2_000)),
+            think(Some(3_000)),
+            PageItem::Tools(vec![call("mystery")]),
+        ]);
+        let v = view(Some(&page), &HashSet::new(), None, false);
+        assert_eq!(
+            labels(&v.turns[0]),
+            [
+                "activity [Thought for 4s · 2 commands, 1 read] shut 4",
+                "text 2",
+                "activity [1 edit] shut 1",
+                "text 4",
+                "activity [Thought for 5s · 1 tool] shut 3",
+            ]
+        );
+        let Row::Activity {
+            thinking_ms, key, ..
+        } = &v.turns[0].rows[4]
+        else {
+            panic!("an activity row");
+        };
+        assert_eq!((*thinking_ms, *key), (Some(5_000), (0, 5, usize::MAX)));
+    }
+
+    #[test]
+    fn counts_sort_tools_into_kinds_with_plural_rules() {
+        let mut counts = Counts::default();
+        for name in [
+            "Bash",
+            "shell_command",
+            "exec_command",
+            "Read",
+            "Grep",
+            "glob",
+            "Edit",
+            "MultiEdit",
+            "apply_patch",
+            "WebFetch",
+            "web_search",
+            "Task",
+            "Agent",
+            "TodoWrite",
+        ] {
+            counts.add(name);
+        }
+        assert_eq!(
+            counts,
+            Counts {
+                commands: 3,
+                reads: 3,
+                edits: 3,
+                web: 2,
+                agents: 2,
+                other: 1
+            }
+        );
+        assert_eq!(
+            counts.label(),
+            "3 commands, 3 reads, 3 edits, 2 web calls, 2 agents, 1 tool"
+        );
+        let mut one = Counts::default();
+        one.add("edit");
+        assert_eq!(one.label(), "1 edit");
+        assert!(Counts::default().is_empty());
+    }
+
+    #[test]
+    fn a_redacted_thinking_row_does_not_open_and_a_long_thought_reads_in_minutes() {
+        let page = turn_page(vec![PageItem::Thinking {
+            text: String::new(),
+            ms: Some(166_000),
+        }]);
+        let open: HashSet<RowKey> = [(0, 0, 0), (0, 0, usize::MAX)].into_iter().collect();
+        let v = view(Some(&page), &open, None, false);
+        let Row::Activity {
+            children, thought, ..
+        } = &v.turns[0].rows[0]
+        else {
+            panic!("an activity row");
+        };
+        assert_eq!(thought.as_deref(), Some("Thought for 2m 46s"));
+        assert!(matches!(&children[0], Child::Thinking { open: false, .. }));
+        assert_eq!(thinking_label(Some(500)), "Thought for 1s");
+        assert_eq!(thinking_label(None), "Thinking");
+    }
+
+    #[test]
+    fn the_running_turn_ends_with_a_working_row_only_while_its_last_row_is_activity() {
+        let ends_in_activity = turn_page(vec![words("a"), PageItem::Tools(vec![call("Bash")])]);
+        let working = view(Some(&ends_in_activity), &HashSet::new(), None, true);
+        assert_eq!(
+            labels(&working.turns[0]),
+            ["text 0", "activity [Working…] shut 1"]
+        );
+        let idle = view(Some(&ends_in_activity), &HashSet::new(), None, false);
+        assert_eq!(labels(&idle.turns[0])[1], "activity [1 command] shut 1");
+        // The row is not last when text follows it; an older turn is never the running one.
+        let ends_in_text = turn_page(vec![PageItem::Tools(vec![call("Bash")]), words("a")]);
+        let v = view(Some(&ends_in_text), &HashSet::new(), None, true);
+        assert_eq!(labels(&v.turns[0])[0], "activity [1 command] shut 1");
+        let mut two = turn_page(vec![PageItem::Tools(vec![call("Bash")])]);
+        two.turns.push(PageTurn::default());
+        let v = view(Some(&two), &HashSet::new(), None, true);
+        assert_eq!(labels(&v.turns[0]), ["activity [1 command] shut 1"]);
+    }
+
+    fn recap(at: i64) -> Recap {
+        Recap {
+            text: "Fixed the parser.".into(),
+            at,
+        }
+    }
+
+    #[test]
+    fn the_recap_shows_only_when_fresh_and_idle() {
+        let page = page(CLAUDE_TIMING);
+        let start = T0 / 1000;
+        let recap_last = |r: &Recap, working| {
+            matches!(
+                view(Some(&page), &HashSet::new(), Some(r), working).turns[0]
+                    .rows
+                    .last(),
+                Some(Row::Recap {
+                    text: "Fixed the parser."
+                })
+            )
+        };
+        let fresh = recap(start + 60);
+        assert!(recap_last(&fresh, false));
+        assert!(!recap_last(&fresh, true), "working");
+        assert!(
+            !recap_last(&recap(start - 1), false),
+            "older than the prompt"
+        );
+        assert!(
+            recap_shown(&recap(start), None, false),
+            "a prompt without a time"
+        );
+        // It follows the last turn only, and an empty page has none.
+        let v = view(None, &HashSet::new(), Some(&fresh), false);
+        assert!(v.turns.is_empty());
+    }
+
+    #[test]
+    fn elapsed_times_and_token_counts_read_short() {
+        assert_eq!(format_elapsed(0), "0s");
+        assert_eq!(format_elapsed(42_000), "42s");
+        assert_eq!(format_elapsed(59_999), "59s");
+        assert_eq!(format_elapsed(60_000), "1m 00s");
+        assert_eq!(format_elapsed(166_000), "2m 46s");
+        assert_eq!(format_elapsed(3_780_000), "1h 03m");
+        assert_eq!(format_k(950), "950");
+        assert_eq!(format_k(1_234), "1.2K");
+        assert_eq!(format_k(74_000), "74K");
+        assert_eq!(format_k(1_500_000), "1.5M");
+    }
+
+    #[test]
+    fn composer_stats_come_from_the_meta_the_newest_turn_and_the_usage_event() {
+        let claude = page_in(UsageFormat::ClaudeJsonl, CLAUDE_TIMING);
+        let idle = composer_stats(Some(&claude), None, None, true, false, T0 + 99_000);
+        assert_eq!(idle.model.as_deref(), Some("opus 5.5"));
+        // The fixture's later `permission-mode` line (auto) wins over the prompt's.
+        assert_eq!(idle.permission.as_deref(), Some("auto"));
+        assert_eq!(idle.effort, None);
+        assert_eq!(idle.context, Some((205, None)));
+        // 60 tokens over 6 s of writing.
+        assert_eq!(idle.tok_s, Some(10));
+        // Finished: first line to last line of the turn.
+        assert_eq!(idle.elapsed_ms, Some(12_000));
+        // Running: from the prompt to now.
+        let live = composer_stats(Some(&claude), None, None, true, true, T0 + 90_000);
+        assert_eq!(live.elapsed_ms, Some(90_000));
+        // The profile's window wins over the transcript's (Codex writes one).
+        let codex = page_in(UsageFormat::CodexJsonl, CODEX_TIMING);
+        let from_transcript = composer_stats(Some(&codex), None, None, true, false, T0);
+        assert_eq!(from_transcript.context, Some((1_900, Some(258_400))));
+        let event = usage(5, Some(200_000), None);
+        let from_profile = composer_stats(Some(&codex), Some(&event), None, true, false, T0);
+        assert_eq!(from_profile.context, Some((1_900, Some(200_000))));
+        // 80 tokens over 3.5 s is 22.86 tok/s: rounded to 23; omp 22.5 rounds up to 23 too.
+        assert_eq!(from_transcript.tok_s, Some(23));
+        let omp = page_in(UsageFormat::OmpJsonl, OMP_TIMING);
+        assert_eq!(
+            composer_stats(Some(&omp), None, None, true, false, T0).tok_s,
+            Some(23)
+        );
+        assert_eq!(
+            composer_stats(Some(&omp), None, None, true, false, T0)
+                .effort
+                .as_deref(),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn composer_stats_fall_back_to_the_usage_event_and_hide_what_is_unknown() {
+        let nothing = composer_stats(None, None, None, true, false, T0);
+        assert_eq!(nothing, ComposerStats::default());
+        let event = usage(74_000, Some(200_000), Some("anthropic/claude-opus-5-5"));
+        let from_event = composer_stats(None, Some(&event), None, true, false, T0);
+        assert_eq!(from_event.model.as_deref(), Some("opus 5.5"));
+        assert_eq!(from_event.context, Some((74_000, Some(200_000))));
+        assert_eq!((from_event.tok_s, from_event.elapsed_ms), (None, None));
+        // A usage event that has no context yet is no context.
+        let empty = usage(0, Some(200_000), None);
+        assert_eq!(
+            composer_stats(None, Some(&empty), None, true, false, T0).context,
+            None
+        );
+        // No tokens or no writing time: no tok/s.
+        let mut flat = turn_page(vec![]);
+        flat.turns[0].output_tokens = 10;
+        assert_eq!(
+            composer_stats(Some(&flat), None, None, true, false, T0).tok_s,
+            None
+        );
+        flat.turns[0].generation_ms = 1_000;
+        flat.turns[0].output_tokens = 0;
+        assert_eq!(
+            composer_stats(Some(&flat), None, None, true, false, T0).tok_s,
+            None
+        );
+    }
+
+    #[test]
+    fn the_branch_chip_shows_only_at_the_workspace_root() {
+        let git = GitSummary {
+            repos: vec![RepoSummary {
+                repo: String::new(),
+                branch: Some("main".into()),
+                head: None,
+                modified: 2,
+                untracked: 1,
+            }],
+        };
+        let at = |root| composer_stats(None, None, Some(&git), root, false, T0).branch;
+        assert_eq!(
+            at(true),
+            Some(BranchChip {
+                name: "main".into(),
+                changed: 3
+            })
+        );
+        assert_eq!(at(false), None, "a task worktree has no branch chip");
+        assert_eq!(
+            composer_stats(None, None, None, true, false, T0).branch,
+            None
+        );
+    }
+
+    #[test]
+    fn the_stats_text_lists_only_what_is_known() {
+        let stats = ComposerStats {
+            context: Some((74_000, Some(200_000))),
+            tok_s: Some(102),
+            elapsed_ms: Some(166_000),
+            ..ComposerStats::default()
+        };
+        assert_eq!(stat_parts(&stats), ["74K", "102 tok/s", "2m 46s"]);
+        assert!(stat_parts(&ComposerStats::default()).is_empty());
+    }
+
+    #[test]
+    fn the_context_meter_warns_from_the_usage_threshold() {
+        assert_eq!(context_meter(10, 0), None);
+        let calm = context_meter(74_000, 200_000).unwrap();
+        assert_eq!((calm.percent, calm.warning), (37, false));
+        assert_eq!(calm.window_label, "200.0k tok");
+        let hot = context_meter(170_000, 200_000).unwrap();
+        assert_eq!((hot.percent, hot.warning), (85, true));
+        let over = context_meter(300_000, 200_000).unwrap();
+        assert!(
+            (over.fraction - 1.0).abs() < f32::EPSILON,
+            "never past the track"
+        );
+    }
+
+    #[test]
+    fn the_placeholder_is_the_session_title_in_quotes() {
+        assert_eq!(
+            composer_placeholder(Some("Fix login"), Some("pane")),
+            "\"Fix login\""
+        );
+        assert_eq!(
+            composer_placeholder(None, Some(" pane title ")),
+            "\"pane title\""
+        );
+        assert_eq!(composer_placeholder(Some("  "), None), "Message the agent…");
+        assert_eq!(composer_placeholder(None, None), "Message the agent…");
+        let long = composer_placeholder(Some(&"x".repeat(200)), None);
+        assert_eq!(long.chars().count(), 60 + 2);
+    }
+
+    #[test]
+    fn chips_drop_from_the_right_in_order() {
+        use crate::theme::{
+            COMPOSER_CHIP_BRANCH_WIDTH as BRANCH, COMPOSER_CHIP_EFFORT_WIDTH as EFFORT,
+            COMPOSER_CHIP_MODEL_WIDTH as MODEL, COMPOSER_CHIP_PERMISSION_WIDTH as PERMISSION,
+            COMPOSER_FIXED_WIDTH as FIXED,
+        };
+        let all = Chips {
+            model: true,
+            effort: true,
+            permission: true,
+            branch: true,
+            stats: true,
+        };
+        assert_eq!(fit_chips(all, 10_000.0), all);
+        let room = FIXED + MODEL + EFFORT + PERMISSION + BRANCH;
+        assert_eq!(
+            fit_chips(all, room),
+            Chips {
+                stats: false,
+                ..all
+            }
+        );
+        assert_eq!(
+            fit_chips(all, room - 1.0),
+            Chips {
+                stats: false,
+                permission: false,
+                ..all
+            }
+        );
+        assert_eq!(
+            fit_chips(all, FIXED + MODEL + BRANCH),
+            Chips {
+                stats: false,
+                permission: false,
+                effort: false,
+                ..all
+            }
+        );
+        // The branch goes last of the four; the model chip never goes.
+        let narrow = fit_chips(all, 0.0);
+        assert_eq!(
+            narrow,
+            Chips {
+                model: true,
+                effort: false,
+                permission: false,
+                branch: false,
+                stats: false
+            }
+        );
+        // A chip that is not wanted costs nothing.
+        let few = Chips {
+            effort: false,
+            permission: false,
+            branch: false,
+            stats: false,
+            ..all
+        };
+        assert_eq!(fit_chips(few, FIXED + MODEL), few);
+    }
+
+    #[test]
+    fn files_paths_stay_inside_the_workspace() {
+        let base = "C:\\Users\\me\\repo";
+        assert_eq!(files_path(base, "src\\a.rs").as_deref(), Some("src/a.rs"));
+        assert_eq!(files_path(base, "./src/a.rs").as_deref(), Some("src/a.rs"));
+        assert_eq!(
+            files_path(base, "C:\\Users\\me\\repo\\crates\\x.rs").as_deref(),
+            Some("crates/x.rs")
+        );
+        assert_eq!(
+            files_path(base, "c:/users/me/repo/crates/x.rs").as_deref(),
+            Some("crates/x.rs"),
+            "drive and folder case do not matter"
+        );
+        assert_eq!(
+            files_path("/home/me/repo/", "/home/me/repo/a.rs").as_deref(),
+            Some("a.rs")
+        );
+        assert_eq!(files_path(base, "C:\\Users\\me\\other\\a.rs"), None);
+        assert_eq!(
+            files_path(base, "C:\\Users\\me\\repository\\a.rs"),
+            None,
+            "a longer folder name"
+        );
+        assert_eq!(files_path(base, "..\\secret.rs"), None);
+        assert_eq!(files_path(base, "src/../../x.rs"), None);
+        assert_eq!(
+            files_path(base, "C:\\Users\\me\\repo"),
+            None,
+            "the folder itself"
+        );
+        assert_eq!(files_path(base, ""), None);
     }
 
     fn todo_turn(prompt: &str, id: &str, status: &str) -> String {
@@ -453,7 +1372,7 @@ mod tests {
             + &todo_turn("two", "b", "in_progress")
             + "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"three\"}}\n";
         let page = page(&text);
-        let v = view(Some(&page), &HashSet::new());
+        let v = view(Some(&page), &HashSet::new(), None, false);
         let plans: Vec<_> = v.turns.iter().map(|t| t.plan.clone()).collect();
         assert_eq!(
             plans,
@@ -484,14 +1403,14 @@ mod tests {
             first_turn: 0,
             ..Page::default()
         };
-        let v = view(Some(&page), &HashSet::new());
+        let v = view(Some(&page), &HashSet::new(), None, false);
         assert!(v.turns.iter().all(|t| t.plan.is_none()));
     }
 
     #[test]
     fn plan_marks_follow_the_statuses() {
         let agents = page(CLAUDE_AGENTS);
-        let v = view(Some(&agents), &HashSet::new());
+        let v = view(Some(&agents), &HashSet::new(), None, false);
         let marks: Vec<_> = v.turns[0]
             .plan
             .as_ref()
@@ -505,7 +1424,7 @@ mod tests {
     #[test]
     fn a_question_shows_only_while_pending_and_only_for_the_last_turn() {
         let pending_page = page(&head(CLAUDE_AGENTS, 7));
-        let pending = view(Some(&pending_page), &HashSet::new());
+        let pending = view(Some(&pending_page), &HashSet::new(), None, false);
         assert_eq!(
             pending.question,
             Some(QuestionCard {
@@ -515,14 +1434,14 @@ mod tests {
         );
         // The whole fixture: q1 is still unanswered but is not the last turn; q2 is answered.
         let all_page = page(CLAUDE_AGENTS);
-        let all = view(Some(&all_page), &HashSet::new());
+        let all = view(Some(&all_page), &HashSet::new(), None, false);
         assert_eq!(all.question, None);
     }
 
     #[test]
     fn the_tray_shows_while_a_subagent_runs_and_goes_when_all_are_done() {
         let running_page = page(&head(CLAUDE_AGENTS, 7));
-        let running = view(Some(&running_page), &HashSet::new());
+        let running = view(Some(&running_page), &HashSet::new(), None, false);
         let chip = |d, t, done| Chip {
             description: d,
             subagent_type: t,
@@ -538,23 +1457,31 @@ mod tests {
         let done = head(CLAUDE_AGENTS, 7)
             + "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"s2\",\"content\":\"ok\"}]}}\n";
         let done_page = page(&done);
-        assert!(view(Some(&done_page), &HashSet::new()).tray.is_empty());
+        assert!(
+            view(Some(&done_page), &HashSet::new(), None, false)
+                .tray
+                .is_empty()
+        );
         // The whole fixture: s2 never got a result, but it is a foreground call of an older turn.
         let all_page = page(CLAUDE_AGENTS);
-        assert!(view(Some(&all_page), &HashSet::new()).tray.is_empty());
+        assert!(
+            view(Some(&all_page), &HashSet::new(), None, false)
+                .tray
+                .is_empty()
+        );
         assert!(!subagent_runs(&all_page));
     }
 
     #[test]
     fn no_page_or_no_turns_is_an_empty_view_and_truncation_is_reported() {
-        assert_eq!(view(None, &HashSet::new()), View::default());
+        assert_eq!(view(None, &HashSet::new(), None, false), View::default());
         let empty = Page {
             turns: Vec::new(),
             truncated: true,
             first_turn: 3,
             ..Page::default()
         };
-        let v = view(Some(&empty), &HashSet::new());
+        let v = view(Some(&empty), &HashSet::new(), None, false);
         assert!(v.turns.is_empty() && v.earlier);
     }
 
