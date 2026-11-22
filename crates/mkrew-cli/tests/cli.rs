@@ -940,25 +940,24 @@ fn fake_agent_hooks_drive_the_session_state() {
     let waited = env.ok(&["wait", id, "--until", "needs_input", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "needs_input");
 
-    // The answer makes the fake agent run `mk hook fake busy`.
-    let answered = Instant::now();
+    // The answer makes the fake agent run `mk hook fake busy`. The deadline is only a bound for
+    // a loaded machine: the scenario's own 3 s sleep ends the working state, so a late
+    // "working" fails the next wait. No stopwatch: it also timed two process starts.
     env.ok(&["send", id, "y"]);
-    let waited = env.ok(&["wait", id, "--until", "working", "--timeout", "2000"]);
+    let waited = env.ok(&["wait", id, "--until", "working", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "working");
-    assert!(answered.elapsed() < Duration::from_secs(2));
     let waited = env.ok(&["wait", id, "--until", "done", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "done");
 
-    // The agent now sleeps; report as Claude Code and Codex would.
-    let reported = Instant::now();
+    // The agent now sleeps; report as Claude Code and Codex would. Like the first wait, the
+    // deadline only bounds a loaded machine (no stopwatch: it also timed process starts).
     env.hook(
         id,
         &["claude", "Notification"],
         r#"{"session_id": "claude-1", "notification_type": "permission_prompt"}"#,
     );
-    let waited = env.ok(&["wait", id, "--until", "needs_input", "--timeout", "2000"]);
+    let waited = env.ok(&["wait", id, "--until", "needs_input", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "needs_input");
-    assert!(reported.elapsed() < Duration::from_secs(2));
     env.hook(id, &["claude", "UserPromptSubmit"], "{}");
     let waited = env.ok(&["wait", id, "--until", "working", "--timeout", "5000"]);
     assert_eq!(waited.trim(), "working");

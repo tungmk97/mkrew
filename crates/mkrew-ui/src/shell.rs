@@ -63,6 +63,7 @@ mod settings;
 mod slash;
 mod tabs;
 mod task_dialog;
+mod theme_gallery;
 pub(crate) mod thread_panel;
 mod toasts;
 mod update;
