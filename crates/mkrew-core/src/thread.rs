@@ -20,9 +20,20 @@ pub const INPUT_MAX: usize = 4 * 1024;
 pub const RESULT_MAX: usize = 8 * 1024;
 pub const THINKING_MAX: usize = 8 * 1024;
 /// What follows a text that was cut.
-const CUT: &str = "… (cut)";
+pub const CUT: &str = "… (cut)";
+/// Calls of one turn that keep their arguments and result; older calls keep name, target and
+/// error mark only, so a long autonomous turn stays bounded (and so does every page copy).
+pub const DETAILED_CALLS: usize = 50;
 /// Input fields a tool call's target is taken from; the first present wins.
-const TARGET_KEYS: [&str; 6] = ["file_path", "path", "pattern", "command", "url", "query"];
+const TARGET_KEYS: [&str; 7] = [
+    "file_path",
+    "path",
+    "pattern",
+    "command",
+    "cmd",
+    "url",
+    "query",
+];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Turn {
@@ -321,6 +332,7 @@ impl ThreadReader {
                         Some(Item::Tools(calls)) => calls.push(call),
                         _ => turn.items.push(Item::Tools(vec![call])),
                     }
+                    turn.drop_old_bodies();
                     true
                 }
                 Line::Plan(steps) => {
@@ -449,6 +461,37 @@ impl ThreadReader {
 }
 
 impl Turn {
+    /// Past [`DETAILED_CALLS`] calls, strips the call that just fell out of the newest ones
+    /// (name, target and error mark stay; the result becomes the cut marker).
+    fn drop_old_bodies(&mut self) {
+        let total: usize = self
+            .items
+            .iter()
+            .map(|item| match item {
+                Item::Tools(calls) => calls.len(),
+                _ => 0,
+            })
+            .sum();
+        let Some(mut old) = total.checked_sub(DETAILED_CALLS + 1) else {
+            return;
+        };
+        for item in &mut self.items {
+            let Item::Tools(calls) = item else { continue };
+            if old >= calls.len() {
+                old -= calls.len();
+                continue;
+            }
+            let call = &mut calls[old];
+            call.input.clear();
+            let is_error = call.result.as_ref().is_some_and(|r| r.is_error);
+            call.result = Some(ToolResult {
+                text: CUT.to_owned(),
+                is_error,
+            });
+            return;
+        }
+    }
+
     /// The call `id` of this turn.
     fn call(&self, id: &str) -> Option<&ToolCall> {
         self.items.iter().rev().find_map(|item| match item {
@@ -839,12 +882,9 @@ fn claude_tool(block: &Value) -> Vec<Line> {
     lines
 }
 
-/// A `<task-notification>` that says a background task ended (completed, failed, stopped).
+/// A `<task-notification>` that says a background task ended (any status but `running`).
 fn notification(text: &str) -> Vec<Line> {
-    if !matches!(
-        tag(text, "status"),
-        Some("completed" | "failed" | "stopped")
-    ) {
+    if tag(text, "status").is_none_or(|status| status == "running") {
         return Vec::new();
     }
     let (tool_use_id, task_id) = (tag(text, "tool-use-id"), tag(text, "task-id"));
@@ -1900,5 +1940,71 @@ mod tests {
         assert!(!codex_output(&Value::String(unified.into())).1);
         let failed = "Exit code: 1\nWall time: 0.1 seconds\nOutput:\nnope";
         assert!(codex_output(&Value::String(failed.into())).1);
+    }
+
+    fn claude_status_notification(status: &str) -> String {
+        format!(
+            "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"<task-notification>\\n<task-id>a111</task-id>\\n<tool-use-id>bg1</tool-use-id>\\n<status>{status}</status>\\n</task-notification>\"}}}}\n"
+        )
+    }
+
+    /// Any status word ends a subagent, except `running`.
+    #[test]
+    fn any_notification_status_ends_a_subagent() {
+        for (status, ends) in [("killed", true), ("cancelled", true), ("running", false)] {
+            let mut reader = claude();
+            reader.feed(&slice(CLAUDE_BACKGROUND, 0, 3));
+            reader.feed(claude_status_notification(status).as_bytes());
+            let done = reader.turns()[0].subagents[0].done;
+            assert_eq!(done, ends, "status {status}");
+        }
+    }
+
+    /// Only the newest `DETAILED_CALLS` calls of a turn keep their arguments and result; older
+    /// ones keep name, target and error mark and show the cut marker as their result.
+    #[test]
+    fn a_turn_keeps_the_bodies_of_its_newest_calls_only() {
+        let total = DETAILED_CALLS + 7;
+        let mut text = String::from(
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"go\"}}\n",
+        );
+        for i in 0..total {
+            text.push_str(&format!(
+                "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"tool_use\",\"id\":\"t{i}\",\"name\":\"Read\",\"input\":{{\"file_path\":\"f{i}\"}}}}]}}}}\n\
+                 {{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"tool_result\",\"tool_use_id\":\"t{i}\",\"content\":\"body {i}\",\"is_error\":{}}}]}}}}\n",
+                i == 0
+            ));
+        }
+        let reader = read(UsageFormat::ClaudeJsonl, text.as_bytes());
+        let calls = calls(&reader.turns()[0]);
+        assert_eq!(calls.len(), total);
+        let with_body = calls.iter().filter(|c| !c.input.is_empty()).count();
+        assert_eq!(with_body, DETAILED_CALLS);
+        let old = calls[0];
+        assert_eq!((old.name.as_str(), old.target.as_str()), ("Read", "f0"));
+        assert_eq!(old.input, "");
+        assert_eq!(
+            old.result,
+            Some(ToolResult {
+                text: CUT.into(),
+                is_error: true
+            }),
+            "the error mark stays"
+        );
+        let newest = calls[total - 1];
+        assert!(newest.input.contains(&format!("f{}", total - 1)));
+        assert_eq!(
+            newest.result.as_ref().map(|r| r.text.as_str()),
+            Some(format!("body {}", total - 1).as_str())
+        );
+    }
+
+    /// Codex's unified `exec_command` takes `cmd` (codex-rs `ExecCommandArgs`).
+    #[test]
+    fn a_codex_exec_command_shows_its_cmd() {
+        let codex = "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"go\"}}\n\
+            {\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"call_id\":\"e1\",\"arguments\":\"{\\\"cmd\\\":\\\"cargo test\\\",\\\"workdir\\\":\\\"/w\\\"}\"}}\n";
+        let reader = read(UsageFormat::CodexJsonl, codex.as_bytes());
+        assert_eq!(calls(&reader.turns()[0])[0].target, "cargo test");
     }
 }
