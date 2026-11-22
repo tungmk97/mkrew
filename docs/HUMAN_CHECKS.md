@@ -61,6 +61,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   In an agent's full-screen view the scroll feels the same size as in a plain pane.
   Scroll the history of a shell pane with a swipe, then reverse in the middle: the first line after the reversal moves at once.
   Tune `PIXEL_WHEEL_SCALE` in `terminal/input.rs` if 0.5 is too slow or too fast.
+- [ ] **Check the terminal visually on macOS (dark/light), Retina and a non-Retina display:** select several lines and run `ls --color` or a program with colored backgrounds: every row has the same height, no 1 px stripes or gaps between rows, text sits on the same baseline in every row.
+  The window grid is a column or two different from before (the cell is slightly wider or taller): resizing the window still fits whole columns.
+  On Windows at 100 % and 150 %: the same, and the text looks as before.
+  The Files editor text and caret still line up when you click in the middle of a long line.
 
 ### To verify - 2026-11-22 Theme gallery (plan docs/superpowers/plans/2026-11-22-theme-gallery.md)
 

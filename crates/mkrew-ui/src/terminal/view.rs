@@ -40,7 +40,9 @@ use crate::terminal::input::{
     KeyAction, KeyEnv, is_copy_key, key_action, paste_bytes, wheel_bytes, wheel_lines,
     wheel_report_bytes,
 };
-use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
+use crate::terminal::layout::{
+    Background, CellStyle, RowCache, cell_at, grid_size, layout_row, snap_to_device,
+};
 use crate::terminal::links::{self, Target};
 use crate::theme::{self, ActiveTheme, Theme, font_size, radius, space};
 
@@ -1137,7 +1139,7 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Prepainted {
-        let (cell_width, line_height) = cell_size(window, &self.theme);
+        let (cell_width, line_height) = grid_cell_size(window, &self.theme);
         let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
         let (padding_x, padding_y) = (self.theme.terminal_padding_x, self.theme.terminal_padding_y);
         let geometry = Geometry {
@@ -1361,7 +1363,7 @@ impl Element for TerminalElement {
 }
 
 /// Cell width and line height. Monospace: one precomputed cell size, no per-cell measurement
-/// (SPEC §10).
+/// (SPEC §10). The Files editor uses this one.
 pub fn cell_size(window: &Window, theme: &Theme) -> (Pixels, Pixels) {
     let text_system = window.text_system();
     let font_size = px(theme.terminal_font_size);
@@ -1374,6 +1376,19 @@ pub fn cell_size(window: &Window, theme: &Theme) -> (Pixels, Pixels) {
         .map(|advance| advance.width)
         .unwrap_or(font_size * CELL_WIDTH_ESTIMATE);
     (cell_width, font_size * theme.terminal_line_height)
+}
+
+/// [`cell_size`] with both sides a whole number of device pixels, for the terminal grid: GPUI
+/// snaps every quad and glyph to device pixels on its own, so a 22.75 px line (45.5 device
+/// pixels at 2x) would make rows alternate between 45 and 46 (ADR 0099). Not for the Files
+/// editor, which lays its text out by the font's own advance.
+fn grid_cell_size(window: &Window, theme: &Theme) -> (Pixels, Pixels) {
+    let (cell_width, line_height) = cell_size(window, theme);
+    let scale = window.scale_factor();
+    (
+        px(snap_to_device(f32::from(cell_width), scale)),
+        px(snap_to_device(f32::from(line_height), scale)),
+    )
 }
 
 /// Glyph fallbacks built once: the terminal paints every frame.

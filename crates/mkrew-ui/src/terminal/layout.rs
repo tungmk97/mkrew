@@ -286,6 +286,13 @@ pub fn cell_at(
     (row, col, side)
 }
 
+/// `value` logical pixels rounded to a whole number of device pixels (at least one), for a
+/// window with `scale` device pixels per logical pixel. A scale below 1 is taken as 1.
+pub fn snap_to_device(value: f32, scale: f32) -> f32 {
+    let scale = scale.max(1.0);
+    (value * scale).round().max(1.0) / scale
+}
+
 /// Per-row cache of rendered rows: a row is rebuilt only when its cells or cursor changed
 /// ("re-layout only dirty rows", SPEC §10). A row that output scrolled to another index is
 /// reused from there, so a streaming agent does not re-shape the whole screen each frame.
@@ -655,5 +662,28 @@ mod tests {
             grid_size(10.0, 10.0, 8.0, 4.0, 10.0, 20.0),
             (MIN_COLS, MIN_ROWS)
         );
+    }
+
+    #[test]
+    fn snap_to_device_rounds_to_whole_device_pixels() {
+        // 13 px x 1.75 = 22.75 px: 46 device pixels at 2x, 23 at 1x.
+        assert_eq!(snap_to_device(22.75, 2.0), 23.0);
+        assert_eq!(snap_to_device(22.75, 1.0), 23.0);
+        // A Menlo 13 px advance of 7.83 px is 15.66 device pixels at 2x: 16.
+        assert_eq!(snap_to_device(7.83, 2.0), 8.0);
+        // Fractional scales: 28.4375 device pixels at 1.25x round to 28, i.e. 22.4 px.
+        assert!((snap_to_device(22.75, 1.25) - 22.4).abs() < 1e-4);
+        // Already whole: unchanged.
+        assert_eq!(snap_to_device(13.0, 2.0), 13.0);
+    }
+
+    #[test]
+    fn snap_to_device_never_gives_a_zero_cell() {
+        assert_eq!(snap_to_device(0.1, 1.0), 1.0);
+        assert_eq!(snap_to_device(0.1, 2.0), 0.5);
+        assert_eq!(snap_to_device(0.0, 2.0), 0.5);
+        // A scale below 1 does not exist; a bad one never divides by zero.
+        assert_eq!(snap_to_device(10.0, 0.0), 10.0);
+        assert_eq!(snap_to_device(f32::NAN, 2.0), 0.5);
     }
 }

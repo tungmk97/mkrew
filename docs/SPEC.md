@@ -1055,7 +1055,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
     - Panes that are not visible (other tab, other workspace, minimized window) are detached:
       no parsing, no layout, no rendering. Re-attach uses the daemon snapshot, so the pane's
       scrollback restarts from the daemon's ≤ 1,000 history lines (ADR 0030, 0082).
-    - Use a monospace font with a precomputed cell size; no per-cell measurement.
+    - Use a monospace font with a precomputed cell size (width and line height are whole device pixels, ADR 0099); no per-cell measurement.
 - **Open in Zed:** on task cards, the workspace menu, the file tree menu and Docs; runs
   `zed <path>[:line]`; clear error with install hint if `zed` is missing.
 - **Open in File Explorer** ("Reveal in Finder" on macOS): in the workspace menu and in the file tree's right-click menu
