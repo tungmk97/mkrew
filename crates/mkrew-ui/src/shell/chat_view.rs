@@ -159,10 +159,10 @@ impl Shell {
     /// A subagent runs in a visible Chat pane: its loading dots move on the status tick.
     pub(crate) fn chat_animating(&self) -> bool {
         self.chats.keys().any(|id| {
-            (self.reads.get(id))
-                .and_then(|read| read.page.as_ref())
-                .and_then(|page| page.turns.last())
-                .is_some_and(|turn| turn.subagents.iter().any(|s| !s.done))
+            !self.is_exited(*id)
+                && (self.reads.get(id))
+                    .and_then(|read| read.page.as_ref())
+                    .is_some_and(|page| chat::subagent_runs(page))
         })
     }
 
@@ -193,15 +193,16 @@ impl Shell {
         };
         let write = (self.tabs.get_mut(&project)).and_then(|tabs| tabs.set_chat(session, Some(on)));
         if on {
-            self.composers.open(session);
+            self.composers.enter_chat(session);
         } else {
-            self.composers.hide(session);
+            self.composers.leave_chat(session);
         }
         if let Some(write) = write {
             self.save_layout(project, write, window, cx);
         }
         self.focus_session_pane(session);
         self.focus_pane(window, cx);
+        self.sync_thread(cx);
         cx.notify();
     }
 
@@ -577,7 +578,19 @@ impl Shell {
                     (session, *key),
                     *open,
                     div().italic().child("Thinking").into_any_element(),
-                    || mono_block((*text).to_owned(), theme.text_muted, theme).into_any_element(),
+                    {
+                        let link = (*open && chat::body_cut(text))
+                            .then(|| cut_link(session, *key, theme, cx));
+                        move || {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(space::XS))
+                                .child(mono_block((*text).to_owned(), theme.text_muted, theme))
+                                .children(link)
+                                .into_any_element()
+                        }
+                    },
                     &chat_ui.stop(Stop::Row(*key), cx),
                     theme,
                     cx,
@@ -604,7 +617,16 @@ impl Shell {
                                 .child(call.target.clone()),
                         )
                         .into_any_element(),
-                    || tool_body(call, theme).into_any_element(),
+                    {
+                        let link = (*open
+                            && (chat::body_cut(&call.input)
+                                || call
+                                    .result
+                                    .as_ref()
+                                    .is_some_and(|r| chat::body_cut(&r.text))))
+                        .then(|| cut_link(session, *key, theme, cx));
+                        move || tool_body(call, link, theme).into_any_element()
+                    },
                     &chat_ui.stop(Stop::Row(*key), cx),
                     theme,
                     cx,
@@ -693,7 +715,7 @@ fn mono_block(text: String, color: u32, theme: &Theme) -> gpui::Div {
 }
 
 /// An open tool row: the arguments, then the result (`danger_text` when it is an error).
-fn tool_body(call: &ToolCall, theme: &Theme) -> gpui::Div {
+fn tool_body(call: &ToolCall, link: Option<gpui::AnyElement>, theme: &Theme) -> gpui::Div {
     div()
         .flex()
         .flex_col()
@@ -721,6 +743,27 @@ fn tool_body(call: &ToolCall, theme: &Theme) -> gpui::Div {
                 .text_color(rgb(theme.text_muted))
                 .child("No result yet."),
         })
+        .children(link)
+}
+
+/// "Open transcript" under a body the reader cut: the whole text is in the transcript.
+fn cut_link(
+    session: Ulid,
+    key: chat::RowKey,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::AnyElement {
+    meta_line(theme, "Open transcript".into())
+        .id(SharedString::from(format!(
+            "chat-cut-{session}-{}-{}-{}",
+            key.0, key.1, key.2
+        )))
+        .pressable(Look::Text, true, theme)
+        .on_press(
+            true,
+            cx.listener(move |shell, _, _, cx| shell.open_transcript(session, cx)),
+        )
+        .into_any_element()
 }
 
 /// The plan card: a mark per step (ring, half ring, check); the step in progress in the text
@@ -830,6 +873,19 @@ fn chat_question(
         .bg(rgb(theme.card))
         .font_family(theme.ui_font_family.clone())
         .text_size(font_size::BODY)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .text_size(font_size::META)
+                .font_weight(FontWeight(weight::SEMIBOLD))
+                .text_color(rgb(theme.status_needs_input))
+                .child(format!(
+                    "{} Waiting for your answer",
+                    sidebar::status_display(SessionState::NeedsInput).icon
+                )),
+        )
         .child(
             div()
                 .font_weight(FontWeight(weight::MEDIUM))

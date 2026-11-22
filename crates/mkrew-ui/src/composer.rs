@@ -108,6 +108,8 @@ pub struct Draft {
     pub busy: bool,
     /// Why the last send or rewrite failed.
     pub error: Option<String>,
+    /// Whether the composer was shown before the pane went to Chat.
+    pub before_chat: Option<bool>,
 }
 
 /// Every session's draft.
@@ -128,6 +130,22 @@ impl Composers {
     pub fn hide(&mut self, session: Ulid) {
         if let Some(draft) = self.drafts.get_mut(&session) {
             draft.shown = false;
+        }
+    }
+
+    /// The pane enters Chat: the composer shows, and whether it was shown is remembered.
+    pub fn enter_chat(&mut self, session: Ulid) {
+        let draft = self.drafts.entry(session).or_default();
+        if draft.before_chat.is_none() {
+            draft.before_chat = Some(draft.shown);
+        }
+        draft.shown = true;
+    }
+
+    /// The pane leaves Chat: the composer is as it was before (hidden when unknown).
+    pub fn leave_chat(&mut self, session: Ulid) {
+        if let Some(draft) = self.drafts.get_mut(&session) {
+            draft.shown = draft.before_chat.take().unwrap_or(false);
         }
     }
 
@@ -894,5 +912,27 @@ mod tests {
         composers.sent(session, Err("session exited".into()));
         composers.hide(session);
         assert_eq!(composers.trigger(session, &slash), None, "hidden");
+    }
+
+    #[test]
+    fn leaving_chat_restores_the_composer_as_it_was() {
+        let session = Ulid::new();
+        let mut composers = Composers::default();
+        // Open in Terminal, enter and leave Chat: still open.
+        composers.open(session);
+        composers.enter_chat(session);
+        composers.enter_chat(session);
+        composers.leave_chat(session);
+        assert!(composers.shown(session).is_some());
+        // Hidden in Terminal: hidden again after Chat, the draft is kept.
+        composers.hide(session);
+        composers.enter_chat(session);
+        assert!(composers.shown(session).is_some());
+        composers.leave_chat(session);
+        assert!(composers.shown(session).is_none());
+        // No record (Chat came from a saved mode): hidden.
+        composers.open(session);
+        composers.leave_chat(session);
+        assert!(composers.shown(session).is_none());
     }
 }

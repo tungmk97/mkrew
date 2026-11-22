@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use mkrew_core::thread::{PlanStatus, PlanStep, Subagent, ToolCall};
+use mkrew_core::thread::{PlanStatus, PlanStep, ToolCall};
 use mkrew_protocol::SessionKind;
 use ulid::Ulid;
 
@@ -90,7 +90,7 @@ pub struct View<'a> {
     /// Older turns exist but are not kept ("Earlier turns: Open transcript").
     pub earlier: bool,
     pub turns: Vec<ChatTurn<'a>>,
-    /// The last turn's subagents, only while one of them runs.
+    /// Every running subagent of the kept turns, see [`tray`].
     pub tray: Vec<Chip<'a>>,
     /// The last turn's question, only while it has no result.
     pub question: Option<QuestionCard<'a>>,
@@ -128,7 +128,7 @@ pub fn view<'a>(page: Option<&'a Page>, open: &HashSet<RowKey>) -> View<'a> {
     View {
         earlier: page.truncated,
         turns,
-        tray: last.map(|turn| tray(&turn.subagents)).unwrap_or_default(),
+        tray: tray(page),
         question: last
             .and_then(|turn| turn.question.as_ref())
             .map(|question| QuestionCard {
@@ -180,13 +180,33 @@ fn plan_rows(steps: &[PlanStep]) -> Vec<PlanRow<'_>> {
         .collect()
 }
 
-/// Every subagent of the turn while at least one still runs; none once all are done.
-fn tray(subagents: &[Subagent]) -> Vec<Chip<'_>> {
-    if subagents.iter().all(|subagent| subagent.done) {
+/// Whether a subagent of any kept turn still runs.
+pub fn subagent_runs(page: &Page) -> bool {
+    page.turns
+        .iter()
+        .any(|turn| turn.subagents.iter().any(|subagent| !subagent.done))
+}
+
+/// Whether `text` is a tool or thinking body that was cut (the reader's marker ends it).
+pub fn body_cut(text: &str) -> bool {
+    text.ends_with(mkrew_core::thread::CUT)
+}
+
+/// While a subagent of any kept turn runs: the running ones of every turn, and the newest
+/// turn's finished ones beside them. Nothing once none runs.
+fn tray(page: &Page) -> Vec<Chip<'_>> {
+    if !subagent_runs(page) {
         return Vec::new();
     }
-    subagents
+    let last = page.turns.len().saturating_sub(1);
+    page.turns
         .iter()
+        .enumerate()
+        .flat_map(|(index, turn)| {
+            turn.subagents
+                .iter()
+                .filter(move |subagent| !subagent.done || index == last)
+        })
         .map(|subagent| Chip {
             description: &subagent.description,
             subagent_type: &subagent.subagent_type,
@@ -303,6 +323,45 @@ mod tests {
             .take(count)
             .map(|line| format!("{line}\n"))
             .collect()
+    }
+
+    const CLAUDE_BACKGROUND: &str =
+        include_str!("../../mkrew-core/tests/fixtures/thread/claude_background.jsonl");
+
+    #[test]
+    fn the_tray_holds_every_running_subagent_of_the_kept_turns() {
+        // A second prompt came before any notification: the three launched in turn 0 run.
+        let before = page(&head(CLAUDE_BACKGROUND, 7));
+        let v = view(Some(&before), &HashSet::new());
+        let names = |v: &View<'_>| -> Vec<String> {
+            v.tray
+                .iter()
+                .map(|c| format!("{} {}", c.description, if c.done { "done" } else { "runs" }))
+                .collect()
+        };
+        assert_eq!(
+            names(&v),
+            ["Review A runs", "Review B runs", "Review C runs"]
+        );
+        assert!(subagent_runs(&before));
+        // After the notifications only Review B still runs.
+        let after = page(CLAUDE_BACKGROUND);
+        let v = view(Some(&after), &HashSet::new());
+        assert_eq!(names(&v), ["Review B runs"]);
+        assert!(subagent_runs(&after));
+        // Once it is notified too, the tray goes.
+        let ended = format!(
+            "{CLAUDE_BACKGROUND}{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"<task-notification>\\n<task-id>a222</task-id>\\n<status>completed</status>\\n</task-notification>\"}}}}\n"
+        );
+        let ended = page(&ended);
+        assert!(view(Some(&ended), &HashSet::new()).tray.is_empty());
+        assert!(!subagent_runs(&ended));
+    }
+
+    #[test]
+    fn a_body_ends_cut_with_the_marker() {
+        assert!(body_cut("some text… (cut)"));
+        assert!(!body_cut("some text"));
     }
 
     #[test]
@@ -473,9 +532,12 @@ mod tests {
             + "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"s2\",\"content\":\"ok\"}]}}\n";
         let done_page = page(&done);
         assert!(view(Some(&done_page), &HashSet::new()).tray.is_empty());
-        // The whole fixture: s2 never got a result, but it is not in the last turn.
+        // The whole fixture: s2 never got a result and still runs, though in an older turn.
         let all_page = page(CLAUDE_AGENTS);
-        assert!(view(Some(&all_page), &HashSet::new()).tray.is_empty());
+        assert_eq!(
+            view(Some(&all_page), &HashSet::new()).tray,
+            [chip("Review the diff", "reviewer", false)]
+        );
     }
 
     #[test]
