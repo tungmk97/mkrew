@@ -210,6 +210,24 @@ struct Facts {
     output: Option<(Option<String>, u64)>,
 }
 
+/// What a transcript says about the session, the newest value seen of each (ADR 0105). A
+/// reader that started mid-file (`start_mid_file`) holds only what it has seen.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionMeta {
+    /// The model as the agent names it (see [`short_model`]).
+    pub model: Option<String>,
+    /// Codex `reasoning_effort`, omp `thinkingLevel`; none for Claude (only in API requests).
+    pub effort: Option<String>,
+    /// Claude `permissionMode`, Codex `approval_policy`; none for omp.
+    pub permission: Option<String>,
+    /// The agent's own title for the session, cleaned by [`clean_title`].
+    pub title: Option<String>,
+    /// Tokens in the context of the newest message.
+    pub context: Option<u64>,
+    /// Codex only: `model_context_window`.
+    pub context_window: Option<u64>,
+}
+
 /// Incremental reader for one transcript file.
 #[derive(Debug, Clone)]
 pub struct ThreadReader {
@@ -235,6 +253,7 @@ pub struct ThreadReader {
     seen: HashMap<String, u64>,
     /// The `total_tokens` of the last Codex `token_count`: an equal one is a repeat.
     codex_total: Option<u64>,
+    meta: SessionMeta,
 }
 
 impl ThreadReader {
@@ -266,6 +285,7 @@ impl ThreadReader {
             last: None,
             seen: HashMap::new(),
             codex_total: None,
+            meta: SessionMeta::default(),
         })
     }
 
@@ -286,6 +306,11 @@ impl ThreadReader {
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    /// The newest model, effort, permission, title and context seen.
+    pub fn meta(&self) -> &SessionMeta {
+        &self.meta
     }
 
     /// True when turns were dropped (window start or the turn cap).
@@ -328,6 +353,7 @@ impl ThreadReader {
                 Format::Codex => codex_facts(&value, &mut self.codex_total),
                 Format::Omp => omp_facts(&value),
             };
+            update_meta(&mut self.meta, self.format, &value);
             let lines = match self.format {
                 Format::Claude => claude_line(&value),
                 Format::Codex => codex_line(&value),
@@ -1263,6 +1289,143 @@ fn omp_facts(value: &Value) -> Facts {
             .as_u64()
             .map(|tokens| (None, tokens)),
     }
+}
+
+fn update_meta(meta: &mut SessionMeta, format: Format, value: &Value) {
+    match format {
+        Format::Claude => claude_meta(meta, value),
+        Format::Codex => codex_meta(meta, value),
+        Format::Omp => omp_meta(meta, value),
+    }
+}
+
+/// Keeps `model` unless it is empty or a placeholder like `<synthetic>`.
+fn set_model(slot: &mut Option<String>, model: Option<&str>) {
+    if let Some(model) = model.filter(|m| !m.is_empty() && !m.starts_with('<'))
+        && slot.as_deref() != Some(model)
+    {
+        *slot = Some(model.to_owned());
+    }
+}
+
+fn set_title(slot: &mut Option<String>, raw: Option<&str>) {
+    let title = clean_title(raw.unwrap_or_default());
+    if !title.is_empty() {
+        *slot = Some(title);
+    }
+}
+
+fn claude_meta(meta: &mut SessionMeta, value: &Value) {
+    if value["isSidechain"] == true {
+        return;
+    }
+    match value["type"].as_str() {
+        Some("ai-title") => set_title(&mut meta.title, value["aiTitle"].as_str()),
+        Some("user") => {
+            if let Some(mode) = value["permissionMode"].as_str() {
+                meta.permission = Some(mode.to_owned());
+            }
+        }
+        Some("assistant") => {
+            let message = &value["message"];
+            set_model(&mut meta.model, message["model"].as_str());
+            let usage = &message["usage"];
+            let count = |key: &str| usage[key].as_u64().unwrap_or(0);
+            let context = count("input_tokens")
+                + count("cache_read_input_tokens")
+                + count("cache_creation_input_tokens");
+            if context > 0 {
+                meta.context = Some(context);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn codex_meta(meta: &mut SessionMeta, value: &Value) {
+    let payload = &value["payload"];
+    match (value["type"].as_str(), payload["type"].as_str()) {
+        (Some("turn_context"), _) => {
+            set_model(&mut meta.model, payload["model"].as_str());
+            meta.effort = payload["collaboration_mode"]["settings"]["reasoning_effort"]
+                .as_str()
+                .map(str::to_owned);
+            meta.permission = payload["approval_policy"].as_str().map(str::to_owned);
+        }
+        (Some("event_msg"), Some("token_count")) if !payload["info"].is_null() => {
+            let info = &payload["info"];
+            if let Some(context) = info["last_token_usage"]["total_tokens"].as_u64() {
+                meta.context = Some(context);
+            }
+            if let Some(window) = info["model_context_window"].as_u64() {
+                meta.context_window = Some(window);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn omp_meta(meta: &mut SessionMeta, value: &Value) {
+    match value["type"].as_str() {
+        Some("model_change") => set_model(&mut meta.model, value["model"].as_str()),
+        Some("thinking_level_change") => {
+            if let Some(level) = value["thinkingLevel"].as_str() {
+                meta.effort = Some(level.to_owned());
+            }
+        }
+        Some("title" | "title_change") => set_title(&mut meta.title, value["title"].as_str()),
+        Some("message") if value["message"]["role"] == "assistant" => {
+            let message = &value["message"];
+            set_model(&mut meta.model, message["model"].as_str());
+            let usage = &message["usage"];
+            let count = |key: &str| usage[key].as_u64().unwrap_or(0);
+            let context = count("input") + count("cacheRead") + count("cacheWrite");
+            if context > 0 {
+                meta.context = Some(context);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Longest model name the composer chip shows.
+const MODEL_MAX: usize = 24;
+
+/// A model name for a chip: the part after the last `/`, `claude-` and a trailing `-YYYYMMDD`
+/// dropped, a dash between digits a dot and any other dash a space (`anthropic/claude-opus-5-5`
+/// is `opus 5.5`), cut to [`MODEL_MAX`] characters with `…`.
+pub fn short_model(name: &str) -> String {
+    let base = name.rsplit('/').next().unwrap_or(name).trim();
+    let base = base.strip_prefix("claude-").unwrap_or(base);
+    let base = match base.rsplit_once('-') {
+        Some((head, tail)) if tail.len() == 8 && tail.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => base,
+    };
+    let chars: Vec<char> = base.chars().collect();
+    let mut out = String::with_capacity(base.len());
+    for (at, c) in chars.iter().enumerate() {
+        if *c == '-' {
+            let between_digits = at > 0
+                && chars[at - 1].is_ascii_digit()
+                && chars.get(at + 1).is_some_and(char::is_ascii_digit);
+            out.push(if between_digits { '.' } else { ' ' });
+        } else {
+            out.push(*c);
+        }
+    }
+    if out.chars().count() > MODEL_MAX {
+        out = out.chars().take(MODEL_MAX - 1).collect::<String>() + "…";
+    }
+    out
+}
+
+/// A session title without the private-use glyph omp puts first (a Nerd Font icon) and
+/// without edge blanks.
+pub fn clean_title(raw: &str) -> String {
+    let private = |c: char| matches!(c, '\u{E000}'..='\u{F8FF}' | '\u{F0000}'..='\u{FFFFD}' | '\u{100000}'..='\u{10FFFD}');
+    raw.trim_start_matches(|c: char| private(c) || c.is_whitespace())
+        .trim_end()
+        .to_owned()
 }
 
 #[cfg(test)]
@@ -2350,5 +2513,97 @@ mod tests {
         assert_eq!(turn.generation_ms, 0);
         assert_eq!(turn.output_tokens, 10);
         assert!(matches!(turn.items[0], Item::Thinking { ms: Some(0), .. }));
+    }
+
+    fn meta_of(format: UsageFormat, bytes: &[u8]) -> SessionMeta {
+        read(format, bytes).meta().clone()
+    }
+
+    #[test]
+    fn claude_meta() {
+        assert_eq!(
+            meta_of(UsageFormat::ClaudeJsonl, CLAUDE_TIMING),
+            SessionMeta {
+                model: Some("claude-opus-5-5".into()),
+                effort: None,
+                permission: Some("acceptEdits".into()),
+                title: Some("Fix login".into()),
+                // The newest main-thread message: 5 + 200 + 0 (the sidechain line is ignored).
+                context: Some(205),
+                context_window: None,
+            }
+        );
+    }
+
+    #[test]
+    fn codex_meta() {
+        assert_eq!(
+            meta_of(UsageFormat::CodexJsonl, CODEX_TIMING),
+            SessionMeta {
+                model: Some("gpt-5.3-codex".into()),
+                effort: Some("high".into()),
+                permission: Some("on-request".into()),
+                title: None,
+                context: Some(1_900),
+                context_window: Some(258_400),
+            }
+        );
+    }
+
+    /// The assistant message's model is newer than `model_change`; the glyph in the title goes.
+    #[test]
+    fn omp_meta() {
+        assert_eq!(
+            meta_of(UsageFormat::OmpJsonl, OMP_TIMING),
+            SessionMeta {
+                model: Some("claude-opus-5-5".into()),
+                effort: Some("high".into()),
+                permission: None,
+                title: Some("Check it".into()),
+                context: Some(1 + 2_000),
+                context_window: None,
+            }
+        );
+    }
+
+    /// A reader that starts in the middle of a file knows only what it has seen: fewer fields,
+    /// never wrong ones.
+    #[test]
+    fn a_reader_started_mid_file_knows_only_what_it_saw() {
+        let mut reader = ThreadReader::new(&UsageFormat::OmpJsonl, THREAD_TURNS).unwrap();
+        reader.start_mid_file(500);
+        let tail = "tail of a cut line\n{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-opus-5-5\",\"usage\":{\"input\":1,\"output\":2,\"cacheRead\":3,\"cacheWrite\":0},\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}\n";
+        reader.feed(tail.as_bytes());
+        assert_eq!(
+            reader.meta(),
+            &SessionMeta {
+                model: Some("claude-opus-5-5".into()),
+                context: Some(4),
+                ..SessionMeta::default()
+            }
+        );
+        assert!(reader.turns().is_empty());
+    }
+
+    #[test]
+    fn short_model_names() {
+        assert_eq!(short_model("anthropic/claude-opus-5-5"), "opus 5.5");
+        assert_eq!(short_model("claude-sonnet-4-5-20250929"), "sonnet 4.5");
+        assert_eq!(short_model("gpt-5.3-codex"), "gpt 5.3 codex");
+        assert_eq!(short_model(""), "");
+        // An unknown shape is kept, cut to 24 characters with an ellipsis.
+        let long = "x".repeat(40);
+        let cut = short_model(&long);
+        assert_eq!(cut.chars().count(), 24);
+        assert!(cut.ends_with('…'));
+        assert_eq!(short_model("a-b"), "a b");
+    }
+
+    #[test]
+    fn titles_lose_their_private_use_glyph() {
+        assert_eq!(clean_title("\u{F04F9} VER: Check it"), "VER: Check it");
+        assert_eq!(clean_title("  plain title  "), "plain title");
+        assert_eq!(clean_title("\u{E000}\u{F8FF}"), "");
+        assert_eq!(clean_title("Tiếng Việt"), "Tiếng Việt");
     }
 }

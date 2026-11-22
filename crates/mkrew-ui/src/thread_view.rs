@@ -4,7 +4,7 @@
 //! caller polls about once a second.
 
 use mkrew_core::UsageFormat;
-use mkrew_core::thread::{Item, PlanStep, Question, Subagent, ThreadReader, ToolCall};
+use mkrew_core::thread::{Item, PlanStep, Question, SessionMeta, Subagent, ThreadReader, ToolCall};
 
 use crate::docs::Shown;
 
@@ -18,6 +18,8 @@ pub struct Page {
     pub truncated: bool,
     /// Key of `turns[0]` (see `ThreadReader::first_turn`), for per-turn UI state.
     pub first_turn: u64,
+    /// What the transcript says about the session (model, effort, permission, title, context).
+    pub meta: SessionMeta,
 }
 
 #[derive(Default)]
@@ -137,6 +139,7 @@ impl ThreadFile {
                 .collect(),
             truncated: self.reader.truncated(),
             first_turn: self.reader.first_turn(),
+            meta: self.reader.meta().clone(),
         }
     }
 }
@@ -159,6 +162,8 @@ mod tests {
 
     const CLAUDE_CHAT: &str =
         include_str!("../../mkrew-core/tests/fixtures/thread/claude_chat.jsonl");
+    const OMP_TIMING: &str =
+        include_str!("../../mkrew-core/tests/fixtures/thread/omp_timing.jsonl");
 
     fn prompt(text: &str) -> String {
         format!(
@@ -235,6 +240,21 @@ mod tests {
         };
         assert_eq!(calls[0].result.as_ref().map(|r| r.is_error), Some(true));
         assert!(turn.plan.is_none() && turn.question.is_none() && turn.subagents.is_empty());
+    }
+
+    #[test]
+    fn the_page_carries_the_session_meta_and_the_turn_times() {
+        let mut file = ThreadFile::new(&UsageFormat::OmpJsonl, CHAT_TURNS).unwrap();
+        file.apply(0, OMP_TIMING.as_bytes());
+        let page = file.page();
+        assert_eq!(page.meta.title.as_deref(), Some("Check it"));
+        assert_eq!(page.meta.effort.as_deref(), Some("high"));
+        let turn = &page.turns[0];
+        assert_eq!((turn.output_tokens, turn.generation_ms), (180, 8_000));
+        assert!(matches!(
+            &turn.items[0],
+            PageItem::Thinking { text, ms: Some(4_000) } if text == "hm"
+        ));
     }
 
     #[test]

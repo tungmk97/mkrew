@@ -482,6 +482,7 @@ mod tests {
             turns: vec![turn(Some(vec![step])), turn(Some(Vec::new())), turn(None)],
             truncated: false,
             first_turn: 0,
+            ..Page::default()
         };
         let v = view(Some(&page), &HashSet::new());
         assert!(v.turns.iter().all(|t| t.plan.is_none()));
@@ -551,6 +552,7 @@ mod tests {
             turns: Vec::new(),
             truncated: true,
             first_turn: 3,
+            ..Page::default()
         };
         let v = view(Some(&empty), &HashSet::new());
         assert!(v.turns.is_empty() && v.earlier);
