@@ -335,6 +335,11 @@ impl Shell {
             chat_question(session, question, &stop, theme, cx)
         });
         ui.stops.borrow_mut().end();
+        // A list at its end stays there when its viewport shrinks (the tray or the composer's
+        // key hint appearing): `at_bottom` reads the last frame, the jump uses this frame's size.
+        if super::thread_panel::at_bottom(&ui.scroll) {
+            ui.scroll.scroll_to_bottom();
+        }
         div()
             .size_full()
             .flex()
