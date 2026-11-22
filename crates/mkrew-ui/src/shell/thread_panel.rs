@@ -1,6 +1,7 @@
 //! The session panel's Thread section (ADR 0057): the shown session's transcript read like a
 //! chat. A 1 s poll runs only while the panel shows an agent session with a native id.
 
+use mkrew_core::thread::THREAD_TURNS;
 use mkrew_ui::thread_view::{self, PageItem, ThreadFile};
 
 use crate::*;
@@ -86,7 +87,8 @@ impl Shell {
                         more = !read.data.is_empty()
                             && read.start + (read.data.len() as u64) < read.len;
                         if file.is_none() {
-                            file = ThreadFile::new(&UsageFormat::parse(&read.format)).ok();
+                            file = ThreadFile::new(&UsageFormat::parse(&read.format), THREAD_TURNS)
+                                .ok();
                         }
                         match file.take() {
                             Some(mut f) => {
@@ -170,73 +172,83 @@ impl Shell {
                         .bg(rgb(theme.card))
                         .child(turn.prompt.clone()),
                 )
-                .children(turn.items.iter().enumerate().map(|(item_index, item)| {
-                    match item {
-                        PageItem::Text(shown) => div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(space::XS))
-                            .text_size(font_size::BODY)
-                            .children(preview::blocks(&shown.blocks, shown, theme))
-                            .into_any_element(),
-                        PageItem::Tools(calls) => {
-                            let open = watch.expanded.contains(&(turn_key, item_index));
-                            let head = div()
-                                .id(SharedString::from(format!(
-                                    "thread-tools-{turn_key}-{item_index}"
-                                )))
-                                .text_size(font_size::META)
-                                .text_color(rgb(theme.text_muted))
-                                .pressable(Look::Text, true, theme)
-                                .child(format!(
-                                    "{} +{} tool call{}",
-                                    if open { "▾" } else { "▸" },
-                                    calls.len(),
-                                    if calls.len() == 1 { "" } else { "s" }
-                                ))
-                                .on_press(
-                                    true,
-                                    cx.listener(move |shell, _, _, cx| {
-                                        if let Some(watch) = shell.thread.as_mut()
-                                            && !watch.expanded.remove(&(turn_key, item_index))
-                                        {
-                                            watch.expanded.insert((turn_key, item_index));
-                                        }
-                                        cx.notify();
-                                    }),
-                                );
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(space::XS))
-                                .child(head)
-                                .when(open, |el| {
-                                    el.children(calls.iter().map(|call| {
-                                        div()
-                                            .flex()
-                                            .gap(px(space::S))
-                                            .text_size(font_size::META)
-                                            .text_color(rgb(theme.text_muted))
-                                            .child(
+                .children(
+                    turn.items
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(item_index, item)| match item {
+                            PageItem::Text(shown) => Some(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(space::XS))
+                                    .text_size(font_size::BODY)
+                                    .children(preview::blocks(&shown.blocks, shown, theme))
+                                    .into_any_element(),
+                            ),
+                            PageItem::Tools(calls) => {
+                                let open = watch.expanded.contains(&(turn_key, item_index));
+                                let head = div()
+                                    .id(SharedString::from(format!(
+                                        "thread-tools-{turn_key}-{item_index}"
+                                    )))
+                                    .text_size(font_size::META)
+                                    .text_color(rgb(theme.text_muted))
+                                    .pressable(Look::Text, true, theme)
+                                    .child(format!(
+                                        "{} +{} tool call{}",
+                                        if open { "▾" } else { "▸" },
+                                        calls.len(),
+                                        if calls.len() == 1 { "" } else { "s" }
+                                    ))
+                                    .on_press(
+                                        true,
+                                        cx.listener(move |shell, _, _, cx| {
+                                            if let Some(watch) = shell.thread.as_mut()
+                                                && !watch.expanded.remove(&(turn_key, item_index))
+                                            {
+                                                watch.expanded.insert((turn_key, item_index));
+                                            }
+                                            cx.notify();
+                                        }),
+                                    );
+                                Some(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(space::XS))
+                                        .child(head)
+                                        .when(open, |el| {
+                                            el.children(calls.iter().map(|call| {
                                                 div()
-                                                    .flex_none()
-                                                    .font_weight(FontWeight(weight::MEDIUM))
-                                                    .child(call.name.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .truncate()
-                                                    .font_family(theme.terminal_font_family.clone())
-                                                    .child(call.target.clone()),
-                                            )
-                                    }))
-                                })
-                                .into_any_element()
-                        }
-                    }
-                }))
+                                                    .flex()
+                                                    .gap(px(space::S))
+                                                    .text_size(font_size::META)
+                                                    .text_color(rgb(theme.text_muted))
+                                                    .child(
+                                                        div()
+                                                            .flex_none()
+                                                            .font_weight(FontWeight(weight::MEDIUM))
+                                                            .child(call.name.clone()),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .flex_1()
+                                                            .min_w_0()
+                                                            .truncate()
+                                                            .font_family(
+                                                                theme.terminal_font_family.clone(),
+                                                            )
+                                                            .child(call.target.clone()),
+                                                    )
+                                            }))
+                                        })
+                                        .into_any_element(),
+                                )
+                            }
+                            PageItem::Thinking(_) => None,
+                        }),
+                )
         });
         let list = div()
             .id("inspector-thread")
