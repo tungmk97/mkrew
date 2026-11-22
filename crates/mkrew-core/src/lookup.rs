@@ -220,7 +220,10 @@ mod tests {
     #[test]
     fn shell_path_is_read_after_rc_file_noise() {
         let out = b"Last login: today\n__MKREW_PATH__/opt/homebrew/bin:/usr/bin\nbye\n";
-        assert_eq!(parse_shell_path(out), Some(OsString::from("/opt/homebrew/bin:/usr/bin")));
+        assert_eq!(
+            parse_shell_path(out),
+            Some(OsString::from("/opt/homebrew/bin:/usr/bin"))
+        );
         assert_eq!(parse_shell_path(b"__MKREW_PATH__\n"), None);
         assert_eq!(parse_shell_path(b"/usr/bin\n"), None);
     }
