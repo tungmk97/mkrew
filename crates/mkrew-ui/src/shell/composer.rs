@@ -879,13 +879,21 @@ impl Shell {
                             .children(status.map(|(icon, color, text)| {
                                 div()
                                     .flex()
+                                    .min_w_0()
                                     .gap(px(space::XS))
                                     .text_size(font_size::META)
                                     .when(!icon.is_empty(), |el| {
-                                        el.child(div().text_color(rgb(color)).child(icon))
+                                        el.child(
+                                            div().flex_none().text_color(rgb(color)).child(icon),
+                                        )
                                     })
                                     .child(
+                                        // A narrow pane cuts the key hint with an ellipsis
+                                        // instead of drawing it under the buttons; an error
+                                        // wraps, so it is read in full.
                                         div()
+                                            .min_w_0()
+                                            .when(draft.error.is_none(), |el| el.truncate())
                                             .text_color(rgb(if draft.error.is_some() {
                                                 theme.text
                                             } else {
