@@ -179,6 +179,9 @@ impl Env {
             .env("MKREW_DATA_DIR", self.data_dir())
             .env("MKREW_CONFIG_DIR", self.dir.path().join("config"))
             .env("MKREW_SOCKET", &self.socket)
+            // `mk hook` gives up after 5 s by default; a loaded machine can stretch the start
+            // snapshot a hook waits for beyond that, and the agent then writes before it.
+            .env("MKREW_HOOK_TIMEOUT_MS", "60000")
             .env("MKREW_LOG", "debug")
             .env(mkrew_daemon::ENV_NOTIFY, self.notifications())
             // Transcripts for token usage (SPEC §20E.3): never the user's real ones.
@@ -479,7 +482,7 @@ action = "print"
 text = "four"
 [[step]]
 action = "sleep"
-ms = 10000
+ms = 20000
 "#;
 
 /// Hook+screen mode: `mk hook fake …` drives needs_input/working/done; idle comes from the
@@ -502,7 +505,7 @@ action = "hook"
 event = "busy"
 [[step]]
 action = "sleep"
-ms = 20000
+ms = 30000
 [[step]]
 action = "hook"
 event = "done"
@@ -512,7 +515,7 @@ ms = 300
 "#;
 
 /// The fake agent's `omp` scenario (crates/mkrew-fakeagent/scenarios/omp.toml) with quiet gaps
-/// of 9 s against the profile's `idle_after_ms` of 3000.
+/// of 18 s against the profile's `idle_after_ms`, raised to 6000 by the test.
 const OMP_SCENARIO: &str = r#"
 [[step]]
 action = "spinner"
@@ -523,7 +526,7 @@ action = "print"
 text = "Answered: the build uses cargo."
 [[step]]
 action = "sleep"
-ms = 9000
+ms = 18000
 [[step]]
 action = "spinner"
 text = "Editing src/lib.rs"
@@ -534,16 +537,18 @@ text = "Edited src/lib.rs"
 color = "green"
 [[step]]
 action = "sleep"
-ms = 9000
+ms = 18000
 "#;
 
 /// Records every `session.state` event of `ids` until all have exited, typing `y⏎` into a
-/// session the first time it needs input.
+/// session the first time it needs input. The scenarios sleep for seconds and a loaded machine
+/// stretches them, so there is no total deadline: it fails after [`TIMEOUT`] without any new
+/// state event (the longest quiet gap of a scenario is ~15 s).
 fn record_states(
     client: &mut Client,
     ids: &[Ulid],
 ) -> HashMap<Ulid, Vec<(SessionState, StateSource)>> {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut deadline = Instant::now() + TIMEOUT;
     let mut states: HashMap<Ulid, Vec<_>> = ids.iter().map(|id| (*id, Vec::new())).collect();
     let mut answered = Vec::new();
     let mut seen = 0;
@@ -558,6 +563,7 @@ fn record_states(
                 continue;
             };
             list.push((s.state, s.source));
+            deadline = Instant::now() + TIMEOUT;
             if s.state == SessionState::NeedsInput && !answered.contains(&s.session_id) {
                 answered.push(s.session_id);
                 client
