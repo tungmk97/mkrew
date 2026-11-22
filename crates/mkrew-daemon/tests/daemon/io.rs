@@ -189,13 +189,16 @@ fn big_paste_to_a_child_that_does_not_read_leaves_the_daemon_responsive() {
         client.wait_output(sleeper, "Sleeper ready.");
     }
 
-    // A 4 MiB paste on its own connection; it may wait until the session is killed.
+    // A 4 MiB paste on its own connection; it may wait until the session is killed. In lines:
+    // a Linux PTY in cooked mode drops input past its line buffer while no line is complete,
+    // so one 4 MiB line never backs up there and the check below would be a race.
     let socket = env.socket.clone();
     let (done_tx, done) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut paster = Client::connect(&socket).unwrap();
         paster.hello().unwrap();
-        let outcome = paster.input(sleeper, &vec![b'a'; 4 * 1024 * 1024]);
+        let line = [[b'a'; 63].as_slice(), b"\n"].concat();
+        let outcome = paster.input(sleeper, &line.repeat(64 * 1024));
         let _ = done_tx.send(outcome);
     });
     std::thread::sleep(Duration::from_millis(500));
