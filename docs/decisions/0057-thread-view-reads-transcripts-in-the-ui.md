@@ -2,6 +2,7 @@
 
 - Date: 2026-10-14
 - Status: accepted (extends ADR 0038's session panel)
+- Superseded in part by 0104: the Chat view shows tool output and thinking; the Thread section still does not.
 - Milestone: none (outside the milestone loop; user request, spec
   `docs/superpowers/specs/2026-10-14-thread-view-design.md`)
 
@@ -21,7 +22,7 @@ shows the result as a Thread section.
   the UI thread. Closing the panel or focusing another pane drops the task.
 - Bounds: the first read takes the last 4 MiB (from the first line break in that window); at most
   20 turns are kept. Older turns give "Earlier turns: Open transcript".
-- Thinking, tool output and sub-agent lines are not shown.
+- Thinking, tool output and sub-agent lines are not shown. (Chat, ADR 0104, shows them.)
 - No protocol change, no daemon change, no new dependency.
 
 ## Alternatives

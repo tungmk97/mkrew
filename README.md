@@ -176,6 +176,9 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
   that needs you.
 - **Terminals** (`Ctrl+Shift+1`): tabs split into panes, each an agent or a shell. New agent tab
   `Ctrl+Shift+A`, shell tab `Ctrl+Shift+T`, split `Alt+Shift+=` / `Alt+Shift+-`.
+- **Chat view**: an agent pane (Claude Code, Codex, Oh My Pi) has a `Terminal | Chat` switch in its header; `Ctrl+Alt+T` flips it.
+  Chat shows the conversation as messages, tool calls that open to their arguments and result, the plan, a question card and the running subagents, with the composer under it (Enter sends, Shift+Enter adds a line).
+  The terminal keeps running underneath. `[ui] chat_default = true` opens agent panes in Chat.
 - **Task board** (`Ctrl+Shift+2`): new task `Ctrl+Shift+N`, run it `Ctrl+Enter`.
 - **File tree** (`Ctrl+Shift+3`, in the right panel), **Editor** (`Ctrl+Shift+6`) and **Git**
   (`Ctrl+Shift+4`): browse files, diff against the base

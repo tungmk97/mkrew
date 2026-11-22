@@ -21,6 +21,26 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-22 Chat view (ADR 0104, plan docs/superpowers/plans/2026-11-22-chat-view.md)
+
+With a real Claude Code session, a real Codex session (and omp if installed), dark and light themes:
+- [ ] The pane header shows `Terminal | Chat` for Claude, Codex and omp; a shell pane and a Copilot pane show none. In a single pane it sits next to the status pill in the tab strip. In a split, the header is as tall with the switch as without it.
+- [ ] Ctrl+Alt+T and the palette entry "Agent: Toggle chat view" switch the pane, also while the composer has the keys; the choice survives restarting the UI and moving the pane. Both segments' tooltips show Ctrl+Alt+T. From the Board or Docs view the key does nothing.
+- [ ] Chat shows the prompt card on the right, the agent text as Markdown, tool rows that open to arguments and result; a failing command shows its result in the error color.
+- [ ] Thinking rows (Claude, omp) are collapsed and open to the text.
+- [ ] **Claude plan from the task tools:** ask Claude Code to plan a job with its task list (`TaskCreate`, `TaskUpdate`): the plan card shows the steps, and their marks follow as it works (ring, half ring, check; the step in progress in full text color).
+  `TodoWrite` (when enabled) and a Codex `update_plan` show as a plan card too.
+- [ ] **Claude background subagent:** start a subagent in the background (a `Task` / `Agent` call with `run_in_background`): the tray shows it with moving dots while it runs, then a check when it ends, then the tray goes.
+- [ ] **Claude question:** an `AskUserQuestion` shows as a card with its options while unanswered; "Answer in terminal" switches the pane to Terminal; after answering the card is gone.
+- [ ] **Codex output:** a failing command is marked as an error and a passing one is not (exit codes); report what a real transcript holds if the result text shows the wrong mark. The reader reads `{"output", "metadata": {"exit_code"}}`, an `Exit code: N` line and a `Process exited with code N` line before `Output:`.
+- [ ] **Keyboard:** Esc in the composer moves the keys to the chat list; arrows, PageUp / PageDown, Home and End scroll it.
+  Tab walks the tool and thinking row toggles, the "earlier turns" link and "Answer in terminal" (a focus ring shows on each; Enter or Space presses it), then goes back to the composer; Shift+Tab goes the other way.
+  Enter sends and Shift+Enter adds a newline in the composer; queued texts show under it.
+- [ ] **Selection and copy:** text inside one message selects with the mouse (double click takes a word), dragging past the message's edge reaches its start or end, a click elsewhere in the list ends the selection, Esc ends a selection first (a second Esc returns to the composer), and Ctrl+C copies the selected text.
+- [ ] The terminal keeps running while in Chat: the status pill, the Inbox and the notifications still change; switching back shows the terminal at the right size.
+- [ ] `[ui] chat_default = true` (Settings, General) opens agent panes in Chat; a pane switched to Terminal stays Terminal.
+- [ ] The empty state "No messages yet. Type below to start." shows before the first message; an exited session's chat stays readable.
+
 ### To verify - 2026-11-21 Pressable audit (P3)
 
 Look changes the audit makes on purpose (spec 5.2); they are not bugs:

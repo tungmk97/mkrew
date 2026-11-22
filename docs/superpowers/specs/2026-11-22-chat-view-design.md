@@ -61,7 +61,8 @@ Success means:
 
 - The pane header gets a two-segment `Terminal | Chat` control (`Look::Chip`) for sessions whose profile has a readable format; a single pane shows it next to its pill (ADR 0054).
 - `Command::ToggleChat`, default key `ctrl-alt-t` (free today), and a palette entry "Toggle chat view".
-- The mode is per session and is kept across restarts in the persisted tab layout (`tabs.rs` `Node` JSON, `tab.set_layout`): the pane's leaf gains an optional `chat: true`, absent meaning Terminal, so older layouts read unchanged.
+- The mode is per session and is kept across restarts in the persisted tab layout (`tabs.rs` `Node` JSON, `tab.set_layout`): the pane's leaf gains an optional `chat: true | false`.
+  An absent flag means not set, and then `[ui] chat_default` decides (default `false`, Terminal), so there are three states; a switch writes an explicit `true` or `false`, and older layouts read unchanged.
 - In Chat mode the terminal element is not drawn but its session keeps running and its screen is still read for state.
 
 ### 4.2 Chat page
