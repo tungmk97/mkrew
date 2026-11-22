@@ -1055,11 +1055,14 @@ fn text(bytes: Vec<u8>) -> String {
 /// own environment. On macOS (login `PATH` known) git is found on that `PATH` (a Homebrew git
 /// first) and its children (hooks, gpg, git-lfs, credential helpers) get it too.
 fn git(dir: &Path) -> Command {
+    // Found once: the daemon runs git for every status, diff and viewed mark.
+    static PROGRAM: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
+        mkrew_core::login_path::path()
+            .and_then(|_| mkrew_core::lookup::find(std::ffi::OsStr::new("git")))
+            .unwrap_or_else(|| "git".into())
+    });
     let login_path = mkrew_core::login_path::path();
-    let program = login_path
-        .and_then(|_| mkrew_core::lookup::find(std::ffi::OsStr::new("git")))
-        .unwrap_or_else(|| "git".into());
-    let mut command = Command::new(program);
+    let mut command = Command::new(&*PROGRAM);
     if let Some(path) = login_path {
         command.env("PATH", path);
     }
