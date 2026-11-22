@@ -13,3 +13,7 @@
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"l1","name":"TaskList","input":{}}]}}
 {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"l1","content":"#2 [completed] Build\n#4 [pending] Test"}]},"toolUseResult":{"tasks":[{"id":"2","subject":"Build","status":"completed"},{"id":"4","subject":"Test","status":"pending"}]}}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"u5","name":"TaskUpdate","input":{"taskId":"4","status":"in_progress","subject":"Test it"}}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"c8","name":"TaskCreate","input":{"subject":"No id","description":"x"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c8","content":"Task #9 created"}]},"toolUseResult":{"other":true}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"c9","name":"TaskCreate","input":{"subject":"Failed","description":"x"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c9","is_error":true,"content":"Task #10 failed"}]},"toolUseResult":{"task":{"id":"10"}}}

@@ -291,59 +291,77 @@ impl ThreadReader {
             } => return self.notified(tool_use_id.as_deref(), task_id.as_deref()),
             line => line,
         };
+        let tracked = self.track_tasks(&line);
         // Lines before the first prompt in the window have no turn.
         let Some(turn) = self.turns.last_mut() else {
             return false;
         };
-        match line {
-            // Handled above.
-            Line::Prompt(_) | Line::Notification { .. } => false,
-            Line::Text(text) => {
-                match turn.items.last_mut() {
-                    Some(Item::Text(last)) => {
-                        last.push_str("\n\n");
-                        last.push_str(&text);
+        tracked
+            | match line {
+                // Handled above.
+                Line::Prompt(_) | Line::Notification { .. } => false,
+                Line::Text(text) => {
+                    match turn.items.last_mut() {
+                        Some(Item::Text(last)) => {
+                            last.push_str("\n\n");
+                            last.push_str(&text);
+                        }
+                        _ => turn.items.push(Item::Text(text)),
                     }
-                    _ => turn.items.push(Item::Text(text)),
+                    true
                 }
-                true
-            }
-            Line::Thinking(text) => {
-                turn.items.push(Item::Thinking(text));
-                true
-            }
-            Line::Tool(call) => {
-                match turn.items.last_mut() {
-                    Some(Item::Tools(calls)) => calls.push(call),
-                    _ => turn.items.push(Item::Tools(vec![call])),
+                Line::Thinking(text) => {
+                    turn.items.push(Item::Thinking(text));
+                    true
                 }
-                true
+                Line::Tool(call) => {
+                    match turn.items.last_mut() {
+                        Some(Item::Tools(calls)) => calls.push(call),
+                        _ => turn.items.push(Item::Tools(vec![call])),
+                    }
+                    true
+                }
+                Line::Plan(steps) => {
+                    turn.plan = Some(steps);
+                    true
+                }
+                Line::Question(question) => {
+                    turn.question = Some(question);
+                    true
+                }
+                Line::Subagent(subagent) => {
+                    turn.subagents.push(subagent);
+                    true
+                }
+                Line::TaskCreate { .. } | Line::TaskUpdate { .. } => false,
+                Line::Result {
+                    id,
+                    result,
+                    structured,
+                } => {
+                    let structured = structured.unwrap_or_default();
+                    turn.set_result(&id, result, structured.async_launched, structured.agent_id)
+                }
             }
-            Line::Plan(steps) => {
-                turn.plan = Some(steps);
-                true
-            }
-            Line::Question(question) => {
-                turn.question = Some(question);
-                true
-            }
-            Line::Subagent(subagent) => {
-                turn.subagents.push(subagent);
-                true
-            }
+    }
+
+    /// Applies a task-tool line to the session checklist (also before the first turn, which
+    /// has nothing to copy it into yet) and copies it into the current turn's plan.
+    fn track_tasks(&mut self, line: &Line) -> bool {
+        match line {
             Line::TaskCreate { call_id, subject } => {
                 if self.creates.len() >= crate::plan::MAX_ITEMS {
                     self.creates.remove(0);
                 }
-                self.creates.push((call_id, subject));
-                false
+                self.creates.push((call_id.clone(), subject.clone()));
+                return false;
             }
             Line::TaskUpdate {
                 id,
                 status,
                 subject,
             } => {
-                let Some(at) = self.checklist.iter().position(|t| t.id == id) else {
+                let Some(at) = self.checklist.iter().position(|t| t.id == *id) else {
                     return false;
                 };
                 if status.as_deref() == Some("deleted") {
@@ -354,50 +372,55 @@ impl ThreadReader {
                         task.status = status;
                     }
                     if let Some(subject) = subject {
-                        task.text = subject;
+                        task.text.clone_from(subject);
                     }
                 }
-                turn.sync_plan(&self.checklist)
             }
             Line::Result {
                 id,
                 result,
                 structured,
             } => {
-                let present = structured.is_some();
-                let structured = structured.unwrap_or_default();
-                let mut changed = false;
-                if let Some(at) = self.creates.iter().position(|(call, _)| *call == id) {
+                if let Some(at) = self.creates.iter().position(|(call, _)| call == id) {
                     let (_, subject) = self.creates.remove(at);
                     // The result text is not fixed: `#N` in it only when there is no
                     // structured output at all.
-                    let task_id = if present {
-                        structured.task_id
-                    } else {
-                        hash_number(&result.text)
+                    let task_id = match structured {
+                        Some(structured) => structured.task_id.clone(),
+                        None => hash_number(&result.text),
                     };
-                    if let Some(task_id) = task_id
-                        && !result.is_error
-                        && self.checklist.len() < crate::plan::MAX_ITEMS
-                        && !self.checklist.iter().any(|t| t.id == task_id)
+                    let Some(task_id) = task_id else {
+                        return false;
+                    };
+                    if result.is_error
+                        || self.checklist.len() >= crate::plan::MAX_ITEMS
+                        || self.checklist.iter().any(|t| t.id == task_id)
                     {
-                        self.checklist.push(Task {
-                            id: task_id,
-                            text: subject,
-                            status: PlanStatus::Pending,
-                        });
-                        changed |= turn.sync_plan(&self.checklist);
+                        return false;
                     }
-                } else if let Some(tasks) = structured.tasks
+                    self.checklist.push(Task {
+                        id: task_id,
+                        text: subject,
+                        status: PlanStatus::Pending,
+                    });
+                } else if let Some(tasks) = structured.as_ref().and_then(|s| s.tasks.as_ref())
                     && !result.is_error
-                    && turn.call(&id).is_some_and(|call| call.name == "TaskList")
+                    // Without a turn the call is unknown: the `tasks` list is specific enough.
+                    && self
+                        .turns
+                        .last()
+                        .is_none_or(|turn| turn.call(id).is_some_and(|c| c.name == "TaskList"))
                 {
-                    self.checklist = tasks;
-                    changed |= turn.sync_plan(&self.checklist);
+                    self.checklist.clone_from(tasks);
+                } else {
+                    return false;
                 }
-                changed
-                    | turn.set_result(&id, result, structured.async_launched, structured.agent_id)
             }
+            _ => return false,
+        }
+        match self.turns.last_mut() {
+            Some(turn) => turn.sync_plan(&self.checklist),
+            None => false,
         }
     }
 
@@ -492,15 +515,6 @@ impl Turn {
     }
 }
 
-/// `text` trimmed and cut to [`crate::plan::MAX_TEXT_CHARS`] characters, with `…` after a cut.
-fn cut_text(text: &str) -> String {
-    let text = text.trim();
-    match text.char_indices().nth(crate::plan::MAX_TEXT_CHARS) {
-        Some((end, _)) => format!("{}…", &text[..end]),
-        None => text.to_owned(),
-    }
-}
-
 /// The digits after the first `#` that has some (`Task #3 created`).
 fn hash_number(text: &str) -> Option<String> {
     text.split('#')
@@ -550,7 +564,7 @@ fn structured_of(value: &Value) -> Option<Structured> {
                 .filter_map(|task| {
                     Some(Task {
                         id: id_str(&task["id"])?,
-                        text: cut_text(task["subject"].as_str()?),
+                        text: crate::plan::cut(task["subject"].as_str()?.trim()),
                         status: task["status"]
                             .as_str()
                             .and_then(status_of)
@@ -742,7 +756,7 @@ fn plan_of(steps: &Value, text_key: &str) -> Option<Vec<PlanStep>> {
             .as_array()?
             .iter()
             .filter_map(|step| {
-                let text = cut_text(step[text_key].as_str()?);
+                let text = crate::plan::cut(step[text_key].as_str()?.trim());
                 (!text.is_empty()).then(|| PlanStep {
                     text,
                     status: step["status"]
@@ -763,13 +777,13 @@ fn question_of(id: &str, input: &Value) -> Option<Question> {
     let text = first["question"].as_str()?.trim();
     (!text.is_empty()).then(|| Question {
         id: id.to_owned(),
-        text: cut_text(text),
+        text: crate::plan::cut(text),
         options: first["options"]
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(|option| option["label"].as_str())
-            .map(cut_text)
+            .map(|label| crate::plan::cut(label.trim()))
             .collect(),
     })
 }
@@ -785,7 +799,7 @@ fn claude_tool(block: &Value) -> Vec<Line> {
         Some("TaskCreate") => lines.extend(
             input["subject"]
                 .as_str()
-                .map(cut_text)
+                .map(|s| crate::plan::cut(s.trim()))
                 .filter(|subject| !subject.is_empty() && !id.is_empty())
                 .map(|subject| Line::TaskCreate {
                     call_id: id.to_owned(),
@@ -798,7 +812,7 @@ fn claude_tool(block: &Value) -> Vec<Line> {
                 status: input["status"].as_str().map(str::to_owned),
                 subject: input["subject"]
                     .as_str()
-                    .map(cut_text)
+                    .map(|s| crate::plan::cut(s.trim()))
                     .filter(|subject| !subject.is_empty()),
             }
         })),
@@ -1675,6 +1689,36 @@ mod tests {
                 step("Design", PlanStatus::Done),
                 step("Build", PlanStatus::Done),
             ])
+        );
+    }
+
+    /// A result with a `toolUseResult` but no `task.id` adds no step (the `#9` in its text is
+    /// not used), and neither does an error result.
+    #[test]
+    fn a_create_without_an_id_or_with_an_error_adds_no_step() {
+        let mut reader = claude();
+        reader.feed(&slice(CLAUDE_TASKS, 0, 3));
+        reader.feed(&slice(CLAUDE_TASKS, 15, 19));
+        assert_eq!(
+            reader.turns()[0].plan,
+            Some(vec![step("Design", PlanStatus::Pending)])
+        );
+    }
+
+    /// Task tools before the first turn of the window still build the checklist; the first
+    /// turn's plan starts from it when it next changes.
+    #[test]
+    fn the_checklist_builds_before_the_first_turn() {
+        let mut reader = claude();
+        reader.feed(&slice(CLAUDE_TASKS, 1, 3));
+        assert!(reader.turns().is_empty());
+        reader.feed(&slice(CLAUDE_TASKS, 11, 12));
+        assert_eq!(reader.turns()[0].plan, None);
+        let update = "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"u9\",\"name\":\"TaskUpdate\",\"input\":{\"taskId\":\"1\",\"status\":\"completed\"}}]}}\n";
+        assert!(reader.feed(update.as_bytes()));
+        assert_eq!(
+            reader.turns()[0].plan,
+            Some(vec![step("Design", PlanStatus::Done)])
         );
     }
 

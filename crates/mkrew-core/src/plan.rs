@@ -76,7 +76,7 @@ fn task_item(line: &str) -> Option<(bool, &str)> {
     (!text.is_empty()).then_some((done, text))
 }
 
-fn cut(text: &str) -> String {
+pub(crate) fn cut(text: &str) -> String {
     match text.char_indices().nth(MAX_TEXT_CHARS) {
         Some((end, _)) => format!("{}…", &text[..end]),
         None => text.to_owned(),
