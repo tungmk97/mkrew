@@ -993,7 +993,11 @@ impl Shell {
                         "Write the message with the workspace's default agent (Conventional Commits)",
                         "",
                     )))
-                    .child(commit.flex_none().tooltip(tooltip(theme, tip, mkrew_ui::os_text!("Ctrl+Enter", "⌘↩")))),
+                    .child(commit.flex_none().tooltip(tooltip(
+                        theme,
+                        tip,
+                        mkrew_ui::os_text!("Ctrl+Enter", "⌘↩"),
+                    ))),
             )
     }
 }

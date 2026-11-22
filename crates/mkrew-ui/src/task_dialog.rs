@@ -666,7 +666,11 @@ mod tests {
         assert_eq!(mac("cmd-enter", None), Some(DialogKey::Save));
         assert_eq!(mac("shift-enter", Some("\n")), Some(DialogKey::Enter));
         assert_eq!(mac("cmd-shift-enter", None), None, "the composer key");
-        assert_eq!(mac("cmd-alt-enter", None), None, "the context-menu key");
+        assert_eq!(
+            mac("cmd-alt-enter", None),
+            None,
+            "the Files find bar's Replace all key"
+        );
         assert_eq!(mac("ctrl-a", None), moved(Motion::Home, false));
         assert_eq!(mac("ctrl-e", None), moved(Motion::End, false));
         assert_eq!(mac("ctrl-n", None), moved(Motion::Down, false));

@@ -307,7 +307,8 @@ impl Shell {
     }
 
     /// Typing edits the query; Enter / Shift+Enter go to the next / previous match; Tab goes
-    /// to the replace field when it is shown; Ctrl+Alt+Enter replaces all; Esc closes the bar.
+    /// to the replace field when it is shown; Ctrl+Alt+Enter (⌥⌘↩ on macOS) replaces all; Esc
+    /// closes the bar.
     pub(crate) fn file_find_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -403,7 +404,7 @@ impl Shell {
     /// Keys of the replace field:
     /// - typing edits the replacement;
     /// - Enter replaces the current match and goes to the next;
-    /// - Ctrl+Alt+Enter replaces all;
+    /// - Ctrl+Alt+Enter (⌥⌘↩ on macOS) replaces all;
     /// - Tab goes back to the find field;
     /// - Esc closes the bar.
     pub(crate) fn file_replace_key_down(

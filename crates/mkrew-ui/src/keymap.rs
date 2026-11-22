@@ -599,7 +599,7 @@ impl Command {
             Command::ToggleInspector => "cmd-shift-y",
             Command::VoiceInput => "ctrl-cmd-v",
             Command::AskAi => "cmd-shift-g",
-            Command::ContextMenu => "cmd-alt-enter",
+            Command::ContextMenu => "ctrl-cmd-m",
             Command::FocusSidebar => "cmd-0",
             Command::NextComment => "cmd-]",
             Command::PreviousComment => "cmd-[",
@@ -1273,6 +1273,22 @@ mod tests {
     use crate::editor::edit_key_for;
     use crate::task_dialog::dialog_key_for;
     use crate::terminal::input::{InputMode, key_to_bytes};
+
+    /// The Files find bar's Replace all is Cmd+Option+Enter on macOS: a window or Editor default
+    /// on it would run first and Replace all would never fire.
+    #[test]
+    fn mac_replace_all_key_is_no_window_shortcut() {
+        let replace_all = keystroke("cmd-alt-enter");
+        for (command, keys) in Keymap::defaults_for(Os::Mac).bindings() {
+            let context = command.context();
+            if context.is_none() || context == Some(EDITOR_CONTEXT) {
+                assert!(
+                    !same_keys(keys, &replace_all),
+                    "{command:?} shadows Replace all"
+                );
+            }
+        }
+    }
 
     /// GPUI runs key bindings before a field sees the key, so a window-wide macOS default on a
     /// text key would take it from every field (and an Editor default from the Editor).

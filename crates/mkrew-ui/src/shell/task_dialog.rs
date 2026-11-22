@@ -617,7 +617,11 @@ impl Shell {
                     } else {
                         button("task-save", save_label, theme, true)
                             .focus_stop(theme)
-                            .tooltip(tooltip(theme, save_label, mkrew_ui::os_text!("Ctrl+Enter", "⌘↩")))
+                            .tooltip(tooltip(
+                                theme,
+                                save_label,
+                                mkrew_ui::os_text!("Ctrl+Enter", "⌘↩"),
+                            ))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.save_task(window, cx);
                             }))

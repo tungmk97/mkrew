@@ -1564,7 +1564,7 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Quick open / new task / run task (Board) | ⌘P / ⌘N / ⌘↩ |
 | Run start / restart / stop | ⌘R / ⌃⌘R / ⌘. |
 | Command palette / settings / toggle theme / full screen | ⇧⌘P / ⌘, / ⇧⌘J / ⌃⌘F |
-| Sidebar / right panel / context menu | ⌘B / ⇧⌘Y / ⌥⌘↩ |
+| Sidebar / right panel / context menu | ⌘B / ⇧⌘Y / ⌃⌘M |
 | Move tab left / right / to a new window | ⌃⌘← / ⌃⌘→ / ⇧⌘N |
 
 In the Editor, and while the Git list (or the diff, with the list hidden) has the keyboard, the terminal never has focus, so single-key shortcuts are safe there.

@@ -383,7 +383,8 @@ struct Renaming {
 }
 
 /// The right-click menu of a Files tree row or of the tree itself (SPEC §12A): New file,
-/// New folder, Copy path, Add to .gitignore, Open in File Explorer ("Reveal in Finder" on macOS), Open in Zed.
+/// New folder, Copy path, Add to .gitignore, Open in File Explorer ("Reveal in Finder" on
+/// macOS), Open in Zed.
 struct FileMenu {
     project_id: Ulid,
     /// The worktree the Files view showed when the menu opened (`None` = the project folder).

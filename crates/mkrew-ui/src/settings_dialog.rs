@@ -96,8 +96,8 @@ impl Row {
 
 /// Whether `keystroke` may become `command`'s binding. A command that works everywhere would
 /// take a plain key (Enter, Tab, a letter) from the terminal and every text field, so it needs
-/// Ctrl, Alt or Win (⌃ ⌥ ⌘ on macOS), or a function key; a command of one view (Git, Files, Board, Docs) takes
-/// any key, like its defaults.
+/// Ctrl, Alt or Win (⌃ ⌥ ⌘ on macOS), or a function key; a command of one view (Git, Files,
+/// Board, Docs) takes any key, like its defaults.
 fn bindable(command: Command, keystroke: &Keystroke) -> bool {
     let m = keystroke.modifiers;
     let function = keystroke
