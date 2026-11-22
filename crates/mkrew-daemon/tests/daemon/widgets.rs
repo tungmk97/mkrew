@@ -99,8 +99,8 @@ fn a_percentage_beyond_the_scale_is_clamped() {
 fn machine_stats_arrive_while_a_client_is_connected() {
     let env = Env::new();
     let (_daemon, mut client) = env.start();
-    // Real `sysinfo` on this machine, nothing else: the first reading comes after one
-    // sampling period (2 s).
+    // Real `sysinfo` on this machine, nothing else: the first reading comes about 3 s in (the
+    // connection counts after 1 s, then one 2 s sampling period).
     let Event::MachineStats(stats) =
         client.wait_event_where(|e| matches!(e, Event::MachineStats(_)))
     else {

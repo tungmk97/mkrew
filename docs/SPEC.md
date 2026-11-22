@@ -2495,7 +2495,7 @@ and milestone numbers are not reused.
    Codex: `UsageReader` reads `payload.rate_limits` of each `token_count` line (also while `info` is null): `primary` / `secondary` with `window_minutes` 300 are the 5-hour window and 10080 the weekly one, any other length is ignored, `used_percent` and `resets_at` are taken as written, `observed_at` is the line's timestamp; the `track` task passes them on at each turn end.
    Claude: `mk statusline` reads Claude Code's status line JSON from stdin (at most 1 MB), takes `rate_limits.five_hour` and `rate_limits.seven_day` (`used_percentage`, `resets_at` in Unix seconds) and sends `limits.report` within 300 ms; a failure is silent.
    It then runs the user's own status line, saved by `mk integration install claude` in `claude-statusline.json` next to `settings.json`, through the shell with the same stdin and a 5 s timeout, and prints its output; any failure prints nothing and exits 0.
-   Install sets `statusLine` to `"<mk>" statusline`; uninstall puts the saved line back or removes the key.
+   Install sets `statusLine` to the `mk` path followed by `statusline`, in a form both Git Bash and PowerShell parse (see ADR 0102); uninstall puts the saved line back or removes the key.
    `mk integration status claude` says "partly installed" when the hooks are in but the status line is not.
    omp and Copilot record no limits.
 
