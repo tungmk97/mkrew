@@ -21,6 +21,12 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-22 macOS keyboard (ADR 0098)
+
+- [ ] **On a Mac (US layout):** ⇧⌘P opens the palette, ⌃⌘2 shows the Board, ⌥⌘← moves pane focus, ⌘D splits, ⌘1 switches workspace; Settings → Keyboard shows ⌘ symbols.
+- [ ] **On a Mac (German layout):** Option+5 / Option+6 type `[` / `]` in a terminal and in the composer; ⌘] / ⌘[ step through comments.
+- [ ] **Look (dark + light) on a Mac:** tooltips and the palette show ⇧⌘P style shortcuts, never "Ctrl".
+
 ### To verify - 2026-11-22 Theme gallery (plan docs/superpowers/plans/2026-11-22-theme-gallery.md)
 
 - [ ] **Gallery layout (dark + light):** open Settings > Appearance: "Themes" overline, a "Dark" group and a "Light" group of cards, three per row at the default size, then the themes folder line with "New theme from current" and "Open themes folder".

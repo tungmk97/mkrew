@@ -499,8 +499,110 @@ impl Command {
             .find(|command| command.name() == name)
     }
 
-    /// SPEC §13 default, in GPUI keystroke syntax.
+    /// SPEC §13 default for this OS, in GPUI keystroke syntax.
     pub fn default_keys(self) -> String {
+        self.default_keys_for(Os::CURRENT)
+    }
+
+    /// SPEC §13 default on `os`: the macOS table where it differs, else the PC key.
+    pub fn default_keys_for(self, os: Os) -> String {
+        match os {
+            Os::Mac => self.mac_keys().unwrap_or_else(|| self.pc_keys()),
+            Os::Windows | Os::Linux => self.pc_keys(),
+        }
+    }
+
+    /// The macOS defaults where they differ from [`Command::pc_keys`] (SPEC §13 "macOS
+    /// defaults", ADR 0098): Cmd for Ctrl; never Option + a character key (it types characters),
+    /// Shift + a digit or symbol (macOS reports the shifted char, so the binding never
+    /// matches), an F-key or PgUp / PgDn (Fn on a MacBook). `None` = the PC key.
+    fn mac_keys(self) -> Option<String> {
+        let keys = match self {
+            Command::AddWorkspace => "cmd-shift-k",
+            Command::Workspace(n) => return Some(format!("cmd-{n}")),
+            Command::NewShellTab => "cmd-t",
+            Command::NewAgentTab => "cmd-shift-a",
+            Command::RenameTab => "cmd-shift-r",
+            Command::CloseTab => "cmd-shift-w",
+            Command::SplitRight => "cmd-d",
+            Command::SplitDown => "cmd-shift-d",
+            Command::SplitAgent => "cmd-alt-a",
+            Command::SplitShell => "cmd-alt-s",
+            Command::Layout(preset) => match preset {
+                Preset::Columns2 => "cmd-alt-1",
+                Preset::Rows2 => "cmd-alt-2",
+                Preset::Columns3 => "cmd-alt-3",
+                Preset::MainAndStack => "cmd-alt-4",
+                Preset::Grid => "cmd-alt-5",
+            },
+            Command::EqualizePanes => "cmd-alt-0",
+            Command::Focus(Direction::Left) => "cmd-alt-left",
+            Command::Focus(Direction::Right) => "cmd-alt-right",
+            Command::Focus(Direction::Up) => "cmd-alt-up",
+            Command::Focus(Direction::Down) => "cmd-alt-down",
+            Command::Resize(Direction::Left) => "cmd-alt-shift-left",
+            Command::Resize(Direction::Right) => "cmd-alt-shift-right",
+            Command::Resize(Direction::Up) => "cmd-alt-shift-up",
+            Command::Resize(Direction::Down) => "cmd-alt-shift-down",
+            Command::ZoomPane => "cmd-shift-m",
+            Command::ClosePane => "cmd-shift-x",
+            Command::RenamePane => "cmd-alt-r",
+            Command::Copy => "cmd-c",
+            Command::Paste => "cmd-v",
+            Command::PageUp => "cmd-up",
+            Command::PageDown => "cmd-down",
+            Command::Find => "cmd-f",
+            Command::OpenInZed => "cmd-alt-e",
+            Command::NextInbox => "cmd-shift-i",
+            Command::Peek => "cmd-shift-space",
+            Command::OpenComposer => "cmd-shift-enter",
+            Command::SendSelection => "cmd-shift-l",
+            Command::CopyMode => "cmd-alt-c",
+            Command::LinkHints => "cmd-alt-o",
+            Command::ShowTerminals => "ctrl-cmd-1",
+            Command::ShowBoard => "ctrl-cmd-2",
+            Command::ShowFileTree => "ctrl-cmd-3",
+            Command::ShowGitPanel => "ctrl-cmd-4",
+            Command::ShowDocs => "ctrl-cmd-5",
+            Command::ShowEditor => "ctrl-cmd-6",
+            Command::ShowDiff => "ctrl-cmd-7",
+            Command::ToggleDocSource => "cmd-shift-e",
+            Command::SendComments => "cmd-shift-s",
+            Command::ToggleIgnored => "cmd-shift-h",
+            Command::SaveFile => "cmd-s",
+            Command::FindInFile => "cmd-alt-shift-f",
+            Command::ReplaceInFile => "cmd-alt-f",
+            Command::CloseFileTab => "cmd-w",
+            Command::ToggleFilePreview => "cmd-shift-v",
+            Command::QuickOpen => "cmd-p",
+            Command::SearchInFiles => "cmd-shift-f",
+            Command::NewTask => "cmd-n",
+            Command::RunTask => "cmd-enter",
+            Command::RunStart => "cmd-r",
+            Command::RunRestart => "ctrl-cmd-r",
+            Command::RunStop => "cmd-.",
+            Command::CommandPalette => "cmd-shift-p",
+            Command::OpenSettings => "cmd-,",
+            Command::ToggleTheme => "cmd-shift-j",
+            Command::ToggleFullScreen => "ctrl-cmd-f",
+            Command::ToggleSidebar => "cmd-b",
+            Command::ToggleInspector => "cmd-shift-y",
+            Command::VoiceInput => "ctrl-cmd-v",
+            Command::AskAi => "cmd-shift-g",
+            Command::ContextMenu => "cmd-alt-enter",
+            Command::FocusSidebar => "cmd-0",
+            Command::NextComment => "cmd-]",
+            Command::PreviousComment => "cmd-[",
+            Command::MoveTabLeft => "ctrl-cmd-left",
+            Command::MoveTabRight => "ctrl-cmd-right",
+            Command::MoveTabToNewWindow => "cmd-shift-n",
+            _ => return None,
+        };
+        Some(keys.into())
+    }
+
+    /// The Windows / Linux default.
+    fn pc_keys(self) -> String {
         match self {
             Command::AddWorkspace => "ctrl-shift-k".into(),
             Command::Workspace(n) => format!("alt-{n}"),
@@ -688,12 +790,14 @@ impl Command {
 /// A fresh `keymap.toml`: every command commented out at its default, in [`Command::all`]
 /// order, so uncommenting a line and changing its keys is all it takes.
 pub fn template() -> String {
-    let mut text = String::from(
-        "# Mkrew keyboard shortcuts. The Settings dialog (Ctrl+,) writes this file; a hand edit\n\
+    let settings = keys_label(&Command::OpenSettings.default_keys());
+    let palette = keys_label(&Command::CommandPalette.default_keys());
+    let mut text = format!(
+        "# Mkrew keyboard shortcuts. The Settings dialog ({settings}) writes this file; a hand edit\n\
          # applies after a restart. Uncomment a line and change its keys.\n\
-         # Keys use GPUI syntax: modifiers ctrl, alt, shift joined by `-`, e.g. \"ctrl-shift-k\".\n\
+         # Keys use GPUI syntax: modifiers ctrl, alt, shift and cmd (macOS) joined by `-`, e.g. \"ctrl-shift-k\".\n\
          # A keystroke bound twice, an unknown command or an invalid keystroke is listed in the\n\
-         # command palette (Ctrl+Shift+P) and that entry keeps its default.\n\n",
+         # command palette ({palette}) and that entry keeps its default.\n\n"
     );
     for command in Command::all() {
         text.push_str(&format!(
@@ -838,10 +942,11 @@ pub fn keys_label_for(keys: &str, os: Os) -> String {
 
 /// The sidebar's one-line summary of `keymap.toml` problems.
 pub fn notice(errors: &[KeymapError]) -> Option<String> {
+    let settings = keys_label(&Command::OpenSettings.default_keys());
     errors.first().map(|first| match errors.len() {
-        1 => format!("{first}; using the default. Fix it in Settings (Ctrl+,)."),
+        1 => format!("{first}; using the default. Fix it in Settings ({settings})."),
         n => format!(
-            "{first} (+{} more); using the defaults. Fix them in Settings (Ctrl+,).",
+            "{first} (+{} more); using the defaults. Fix them in Settings ({settings}).",
             n - 1
         ),
     })
@@ -875,11 +980,21 @@ pub struct Keymap {
 }
 
 impl Keymap {
-    /// The SPEC §13 defaults.
+    /// The SPEC §13 defaults of this OS.
     pub fn defaults() -> Keymap {
+        Keymap::defaults_for(Os::CURRENT)
+    }
+
+    /// The SPEC §13 defaults of `os`.
+    pub fn defaults_for(os: Os) -> Keymap {
         let bindings = Command::all()
             .into_iter()
-            .filter_map(|command| Some((command, Keystroke::parse(&command.default_keys()).ok()?)))
+            .filter_map(|command| {
+                Some((
+                    command,
+                    Keystroke::parse(&command.default_keys_for(os)).ok()?,
+                ))
+            })
             .collect();
         Keymap { bindings }
     }
@@ -901,9 +1016,14 @@ impl Keymap {
         }
     }
 
-    /// The defaults overridden by the entries of a `keymap.toml`.
+    /// This OS's defaults overridden by the entries of a `keymap.toml`.
     pub fn parse(text: &str) -> (Keymap, Vec<KeymapError>) {
-        let mut keymap = Keymap::defaults();
+        Keymap::parse_for(text, Os::CURRENT)
+    }
+
+    /// [`Keymap::parse`] over `os`'s defaults.
+    pub fn parse_for(text: &str, os: Os) -> (Keymap, Vec<KeymapError>) {
+        let mut keymap = Keymap::defaults_for(os);
         let table = match text.parse::<toml::Table>() {
             Ok(table) => table,
             Err(error) => return (keymap, vec![KeymapError::Syntax(error.message().into())]),
@@ -941,7 +1061,7 @@ impl Keymap {
             Some((i, other.0))
         }) {
             let (command, keys) = overrides.remove(index);
-            if let Ok(default) = Keystroke::parse(&command.default_keys()) {
+            if let Ok(default) = Keystroke::parse(&command.default_keys_for(os)) {
                 keymap.set(command, default);
             }
             errors.push(KeymapError::Duplicate {
@@ -1186,6 +1306,87 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_mac_default_parses_and_is_unique() {
+        let keymap = Keymap::defaults_for(Os::Mac);
+        assert_eq!(keymap.bindings().len(), Command::all().len());
+        for (command, keys) in keymap.bindings() {
+            for (other, bound) in keymap.bindings() {
+                assert!(
+                    other == command || !same_keys(keys, bound) || !command.shares_context(*other),
+                    "{command:?} and {other:?} share {keys:?}"
+                );
+            }
+        }
+    }
+
+    /// macOS reports Shift + digit / symbol as the shifted char (gpui-pre-macos events.rs), so
+    /// such a binding never matches; F-keys and PgUp / PgDn / Home / End need Fn on a MacBook;
+    /// Option + a character key types a character on a Mac.
+    #[test]
+    fn mac_defaults_are_keys_a_macbook_presses_without_typing() {
+        for (command, keys) in Keymap::defaults_for(Os::Mac).bindings() {
+            let m = keys.modifiers;
+            let one_char = keys.key.chars().count() == 1;
+            let letter = keys.key.chars().all(|c| c.is_ascii_alphabetic());
+            assert!(
+                !(m.shift && one_char && !letter),
+                "{command:?}: Shift with {:?} never matches on macOS",
+                keys.key
+            );
+            let function = (keys.key.strip_prefix('f')).is_some_and(|n| n.parse::<u8>().is_ok());
+            assert!(
+                !function
+                    && !matches!(
+                        keys.key.as_str(),
+                        "pageup" | "pagedown" | "home" | "end" | "insert"
+                    ),
+                "{command:?}: {:?} needs Fn on a MacBook",
+                keys.key
+            );
+            assert!(
+                !(m.alt && !m.control && !m.platform && one_char),
+                "{command:?}: Option+{:?} types a character on a Mac",
+                keys.key
+            );
+        }
+    }
+
+    #[test]
+    fn every_mac_binding_becomes_a_gpui_key_binding() {
+        let keymap = Keymap::defaults_for(Os::Mac);
+        let bindings = keymap.key_bindings(&gpui::DummyKeyboardMapper);
+        assert_eq!(
+            bindings.len(),
+            Command::all().len() + keymap.menu_shielded().count()
+        );
+    }
+
+    #[test]
+    fn a_pc_keymap_file_on_a_mac_keeps_its_keys_and_reports_clashes() {
+        let (keymap, errors) = Keymap::parse_for(
+            "close_pane = \"ctrl-shift-q\"\nzoom_pane = \"cmd-shift-k\"\n",
+            Os::Mac,
+        );
+        let bound = |command| keymap.keystroke(command).unwrap();
+        assert!(same_keys(
+            bound(Command::ClosePane),
+            &keystroke("ctrl-shift-q")
+        ));
+        assert!(
+            same_keys(bound(Command::ZoomPane), &keystroke("cmd-shift-m")),
+            "the clash keeps the macOS default"
+        );
+        assert_eq!(
+            errors,
+            [KeymapError::Duplicate {
+                command: "zoom_pane".into(),
+                keys: "cmd-shift-k".into(),
+                other: "add_workspace".into(),
+            }]
+        );
     }
 
     #[test]

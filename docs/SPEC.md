@@ -1450,7 +1450,8 @@ step). A click puts the caret under the pointer, Shift+click or a drag selects, 
 click selects the word / line. Where a field sits over a list, ↑/↓ move in the list.
 Shift+Enter sends `ESC CR` (the Alt+Enter form), which agents read as a new line; Mkrew has no
 kitty / win32-input keyboard mode, so this is the one form every agent gets through ConPTY.
-On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
+On macOS the defaults use Cmd where the table says Ctrl, and never need Option with a character key (Option types characters on a Mac), Shift with a digit or symbol (macOS reports the shifted character, so such a binding never matches), an F-key or PgUp / PgDn (Fn on a MacBook); "macOS defaults" below lists every difference (ADR 0098).
+Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (⇧⌘P).
 
 | Group | Action | Default |
 | --- | --- | --- |
@@ -1539,6 +1540,30 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Agent (v2) | Send selection to an agent (Editor, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
 | Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10) |
+
+**macOS defaults** (ADR 0098); a command not listed keeps the key of the table above:
+
+| Action | Default on macOS |
+| --- | --- |
+| Add workspace / switch to workspace 1-9 / focus the sidebar | ⇧⌘K / ⌘1-9 / ⌘0 |
+| New shell tab / new agent tab / rename tab / close tab | ⌘T / ⇧⌘A / ⇧⌘R / ⇧⌘W |
+| Split right / split down / split with agent / split with shell | ⌘D / ⇧⌘D / ⌥⌘A / ⌥⌘S |
+| Layouts 1-5 / equalize panes | ⌥⌘1-5 / ⌥⌘0 |
+| Focus pane ← → ↑ ↓ / resize pane | ⌥⌘ arrows / ⌥⇧⌘ arrows |
+| Zoom pane / close pane / rename pane | ⇧⌘M / ⇧⌘X / ⌥⌘R |
+| Terminal copy / paste / page up / page down / copy mode / link hints | ⌘C / ⌘V / ⌘↑ / ⌘↓ / ⌥⌘C / ⌥⌘O |
+| Find / Open in Zed / next Inbox item / peek | ⌘F / ⌥⌘E / ⇧⌘I / ⇧⌘Space |
+| Composer / send selection / Ask AI / voice input | ⇧⌘↩ / ⇧⌘L / ⇧⌘G / ⌃⌘V |
+| Terminals, Board, File tree, Git, Docs, Editor, Diff | ⌃⌘1 … ⌃⌘7 |
+| Docs source / send comments / next / previous comment | ⇧⌘E / ⇧⌘S / ⌘] / ⌘[ |
+| File tree: show ignored | ⇧⌘H |
+| Editor: save / find / replace / close tab / preview | ⌘S / ⌥⇧⌘F / ⌥⌘F / ⌘W / ⇧⌘V |
+| Search in files | ⇧⌘F |
+| Quick open / new task / run task (Board) | ⌘P / ⌘N / ⌘↩ |
+| Run start / restart / stop | ⌘R / ⌃⌘R / ⌘. |
+| Command palette / settings / toggle theme / full screen | ⇧⌘P / ⌘, / ⇧⌘J / ⌃⌘F |
+| Sidebar / right panel / context menu | ⌘B / ⇧⌘Y / ⌥⌘↩ |
+| Move tab left / right / to a new window | ⌃⌘← / ⌃⌘→ / ⇧⌘N |
 
 In the Editor, and while the Git list (or the diff, with the list hidden) has the keyboard, the terminal never has focus, so single-key shortcuts are safe there.
 Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A / S used to be

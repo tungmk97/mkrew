@@ -184,6 +184,7 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
 - **Docs** (`Ctrl+Shift+5`): review Markdown plans, comment on passages and send the comments
   back to the agent session that wrote them.
 - **Palette** `Ctrl+Shift+P`: every command, your sessions, files, text in files, branches (switch) and commits, with scope tabs (Tab / Shift+Tab); plus actions without a shortcut.
+- **macOS**: the shortcuts use Cmd (⇧⌘P for the palette, ⌘, for settings); Settings → Keyboard shows every key, and SPEC §13 "macOS defaults" lists them.
 - **Prompt boxes** (the composer, `Ctrl+Shift+Enter`, and the New task Prompt):
   type `/` at the start of a line or after a space to pick one of the agent's own commands, skills and plugin commands (Claude Code, Codex, Oh My Pi, Copilot), as its terminal would list them.
   Type `@` to pick a file.
