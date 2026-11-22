@@ -22,27 +22,47 @@ pub struct Linked {
     pub link: PathBuf,
     /// Its folder is on `PATH` already.
     pub on_path: bool,
+    /// An older link of ours in an earlier folder could not be replaced and still shadows this
+    /// one in Terminal; the toast names it and the elevated `ln -sf` that fixes it.
+    pub shadowed_by: Option<PathBuf>,
 }
 
 /// Links `target` as `mk` in the first of `dirs` that takes it; `path` (the `PATH` string) says
 /// whether that folder is searched. An error lists why each folder refused.
 pub fn install(target: &Path, dirs: &[PathBuf], path: Option<&OsStr>) -> Result<Linked, String> {
     let mut refused = Vec::new();
+    let mut shadowed_by = None;
     for dir in dirs {
         match link_in(target, dir) {
             Ok(link) => {
                 let on_path = path.is_some_and(|path| {
                     std::env::split_paths(path).any(|searched| searched == *dir)
                 });
-                return Ok(Linked { link, on_path });
+                return Ok(Linked {
+                    link,
+                    on_path,
+                    shadowed_by,
+                });
             }
-            Err(why) => refused.push(why),
+            Err(why) => {
+                // An older link of ours that could not be replaced (root-owned): it keeps
+                // winning in Terminal when its folder comes first on `PATH`.
+                if shadowed_by.is_none() && is_stale_ours(&dir.join("mk"), target) {
+                    shadowed_by = Some(dir.join("mk"));
+                }
+                refused.push(why);
+            }
         }
     }
     if refused.is_empty() {
         return Err("no folder to link into".to_owned());
     }
     Err(refused.join("; "))
+}
+
+/// `link` is a symlink to some bundle's `mk` other than `target` (a stale link of ours).
+fn is_stale_ours(link: &Path, target: &Path) -> bool {
+    std::fs::read_link(link).is_ok_and(|to| to != target && to.ends_with("Contents/MacOS/mk"))
 }
 
 fn link_in(target: &Path, dir: &Path) -> Result<PathBuf, String> {
@@ -222,6 +242,22 @@ mod tests {
         fn nothing_to_link_into_is_an_error() {
             let error = install(Path::new("/x/mk"), &[], Some(OsStr::new("/usr/bin"))).unwrap_err();
             assert!(error.contains("no folder"), "{error}");
+        }
+
+        #[test]
+        fn an_older_link_of_ours_is_stale_and_anything_else_is_not() {
+            let tmp = tempfile::tempdir().unwrap();
+            let target = bundle_mk(tmp.path());
+            let old = tmp.path().join("old-link");
+            std::os::unix::fs::symlink("/gone/Mkrew.app/Contents/MacOS/mk", &old).unwrap();
+            assert!(is_stale_ours(&old, &target));
+            let same = tmp.path().join("same-link");
+            std::os::unix::fs::symlink(&target, &same).unwrap();
+            assert!(!is_stale_ours(&same, &target), "already right");
+            let other = tmp.path().join("other-link");
+            std::os::unix::fs::symlink("/usr/bin/true", &other).unwrap();
+            assert!(!is_stale_ours(&other, &target));
+            assert!(!is_stale_ours(&tmp.path().join("none"), &target));
         }
     }
 }

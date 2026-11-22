@@ -1052,9 +1052,17 @@ fn text(bytes: Vec<u8>) -> String {
 }
 
 /// `git -C <dir>` with null stdio except stdout, ignoring any repo forced by the daemon's
-/// own environment.
+/// own environment. On macOS (login `PATH` known) git is found on that `PATH` (a Homebrew git
+/// first) and its children (hooks, gpg, git-lfs, credential helpers) get it too.
 fn git(dir: &Path) -> Command {
-    let mut command = Command::new("git");
+    let login_path = mkrew_core::login_path::path();
+    let program = login_path
+        .and_then(|_| mkrew_core::lookup::find(std::ffi::OsStr::new("git")))
+        .unwrap_or_else(|| "git".into());
+    let mut command = Command::new(program);
+    if let Some(path) = login_path {
+        command.env("PATH", path);
+    }
     command
         .arg("-C")
         .arg(dir)

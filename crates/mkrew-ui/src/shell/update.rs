@@ -262,6 +262,14 @@ impl Shell {
                         " Add {folder} to your PATH to use it in Terminal."
                     ));
                 }
+                if let Some(old) = &linked.shadowed_by {
+                    text.push_str(&format!(
+                        " The older link {} cannot be replaced and still wins in Terminal. In Terminal: sudo ln -sf '{}' {}",
+                        old.display(),
+                        target.display(),
+                        old.display()
+                    ));
+                }
                 self.toast_info(text, cx);
             }
             Err(error) => {

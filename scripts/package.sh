@@ -102,7 +102,7 @@ PLIST
   if [ -n "$identity" ] && [ -n "${MKREW_NOTARY_APPLE_ID:-}" ] && [ -n "${MKREW_NOTARY_PASSWORD:-}" ] && [ -n "${MKREW_NOTARY_TEAM_ID:-}" ]; then
     xcrun notarytool submit "$zip" --apple-id "$MKREW_NOTARY_APPLE_ID" \
       --password "$MKREW_NOTARY_PASSWORD" --team-id "$MKREW_NOTARY_TEAM_ID" \
-      --wait --output-format json > "$stage/notary.json"
+      --wait --output-format json > "$stage/notary.json" || true
     grep -Eq '"status" *: *"Accepted"' "$stage/notary.json" || {
       cat "$stage/notary.json" >&2
       # Apple's reason for the rejection is in the submission log, not in the submit answer.

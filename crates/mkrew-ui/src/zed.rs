@@ -182,6 +182,10 @@ pub fn command(zed: &Path, path: &Path, line: Option<u32>) -> Command {
         // std escapes the argument for `.cmd`/`.bat` shims (or refuses to run them).
         Command::new(zed)
     };
+    // macOS: Zed's CLI (and the editor it starts) get the login shell's `PATH` too.
+    if let Some(path) = mkrew_core::login_path::path() {
+        command.env("PATH", path);
+    }
     command
         .arg(target(path, line))
         .stdin(Stdio::null())

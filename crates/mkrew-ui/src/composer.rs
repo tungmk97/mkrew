@@ -467,7 +467,8 @@ mod tests {
     fn the_hint_names_the_keys_of_the_composer_in_use() {
         assert!(hint(true).starts_with("Enter to send"));
         assert!(hint(true).contains("Shift+Enter"));
-        assert!(hint(false).contains(" to send"));
+        let send = crate::os_text!("Ctrl+Enter to send", "⌘↩ to send");
+        assert!(hint(false).starts_with(send), "{}", hint(false));
     }
 
     /// A blank draft never sends, whichever key asked: Enter in Chat on an empty box does nothing.

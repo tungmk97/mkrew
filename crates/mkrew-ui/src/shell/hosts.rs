@@ -422,7 +422,18 @@ impl Shell {
                 continue;
             };
             let bounds = Bounds::new(point(px(b.x), px(b.y)), size(px(b.width), px(b.height)));
-            let bounds = mkrew_ui::window_place::fit_on_displays(bounds, &displays, primary);
+            // As the main window: cut to its display, title bar reachable, in its placement.
+            let (placement, bounds) =
+                mkrew_ui::window_place::Placement::of(mkrew_ui::window_place::restored(
+                    bounds,
+                    placement,
+                    size(
+                        px(mkrew_ui::theme::DETACHED_MIN_WIDTH),
+                        px(mkrew_ui::theme::DETACHED_MIN_HEIGHT),
+                    ),
+                    &displays,
+                    primary,
+                ));
             self.open_os_window(key, bounds, placement, HostId::Main, window, cx);
         }
     }

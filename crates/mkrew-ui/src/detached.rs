@@ -288,7 +288,8 @@ pub fn toast_host(activation: &[HostId], shown: impl Fn(HostId) -> bool) -> Host
 }
 
 /// The commands a detached window acts on (spec 2026-11-10 §4.2); every other key there does
-/// nothing, so none can act on the main window's tabs.
+/// nothing, so none can act on the main window's tabs. The exception is Settings (Ctrl+, or ⌘,),
+/// which opens in the main window on every OS (`run_detached`); it is not in this list.
 pub fn handles(command: Command) -> bool {
     matches!(
         command,

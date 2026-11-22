@@ -40,7 +40,7 @@ or `/ALLUSERS`. Open a new terminal afterwards so the new `PATH` applies.
 ### macOS (app)
 
 Unzip `mkrew-<version>-macos-arm64.zip` and drag `Mkrew.app` to `/Applications`.
-Run it from `/Applications`, not from Downloads: macOS runs a quarantined app from a read-only copy there, and Mkrew cannot update itself or link `mk` from it.
+Run it from `/Applications` rather than Downloads: macOS runs a quarantined app from a read-only temporary copy there. Mkrew follows that copy to the real app, so the update and the `mk` link still work, but opening it from `/Applications` is the simplest.
 Releases built with an Apple Developer ID are signed and notarized, so they open with a double-click.
 A build without it (a fork, or a release made before the repository had its Apple secrets) is ad-hoc signed, and Gatekeeper blocks the first open.
 Run `xattr -dr com.apple.quarantine /Applications/Mkrew.app`, or open the app once and go to System Settings → Privacy & Security → Open Anyway.

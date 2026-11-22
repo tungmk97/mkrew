@@ -293,3 +293,29 @@ fn a_restored_window_fits_the_display_it_opens_on() {
         WindowBounds::Windowed(inside)
     );
 }
+
+#[test]
+fn a_detached_window_bigger_than_its_display_is_cut_with_the_detached_minimum() {
+    let primary = rect(0.0, 25.0, 1536.0, 800.0);
+    let min = size(
+        px(theme::DETACHED_MIN_WIDTH),
+        px(theme::DETACHED_MIN_HEIGHT),
+    );
+    // Taller than the display and starting above it: size cut, title bar pulled onto it.
+    assert_eq!(
+        restored(
+            rect(100.0, -300.0, 1800.0, 1400.0),
+            Placement::Windowed,
+            min,
+            &[primary],
+            Some(primary)
+        ),
+        WindowBounds::Windowed(primary)
+    );
+    // A small one stays small (the minimum is the detached one, not the main window's).
+    let small = rect(200.0, 200.0, 600.0, 400.0);
+    assert_eq!(
+        restored(small, Placement::Windowed, min, &[primary], Some(primary)),
+        WindowBounds::Windowed(small)
+    );
+}

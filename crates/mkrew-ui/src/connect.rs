@@ -168,11 +168,12 @@ pub enum MachineError {
 /// Connects to `machine`'s daemon through `ssh … mk proxy`; never spawns anything else.
 pub fn connect_machine(machine: &Machine) -> Result<Connection, MachineError> {
     let (program, args) = crate::machines::ssh_command(machine);
-    let endpoint = Endpoint::Program {
-        program,
-        args,
-        env: Vec::new(),
-    };
+    // The login shell's `PATH` (macOS), so a `ProxyCommand` naming a Homebrew tool works.
+    let env = mkrew_core::login_path::path()
+        .and_then(|path| path.to_str())
+        .map(|path| vec![("PATH".to_owned(), path.to_owned())])
+        .unwrap_or_default();
+    let endpoint = Endpoint::Program { program, args, env };
     let error = match Connection::open(&endpoint) {
         Ok(Ok(connection)) => return Ok(connection),
         Ok(Err(error)) => error,

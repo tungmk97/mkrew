@@ -1163,7 +1163,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
 - A terminal tab moves into a window of its own by dragging its chip outside every Mkrew window (the new window opens at the pointer), with `Shift+F4`, or from the tab menu and the palette.
 - A detached window has a title bar (the shown tab and its workspace, Move all back, the window controls), a tab strip with each tab's workspace, and the tab's panes.
 - Tabs move between windows by dragging their chip onto another window (onto its strip: at the gap under the pointer) or with the tab menu's Move to main window / Move to window: `<tab> - <workspace>` (named by the tab that window shows).
-- Its keys act on its own tab only: tab and pane commands of §13, the palette (its commands only: also Window: Close and Window: Move all tabs back), the context menu, the composer. The `/` and `@` pickers and the prompt picker open in the window of their composer. Turns… opens in the main window.
+- Its keys act on its own tab only: tab and pane commands of §13, the palette (its commands only: also Window: Close and Window: Move all tabs back), the context menu, the composer. The `/` and `@` pickers and the prompt picker open in the window of their composer. Turns… opens in the main window. Settings (Ctrl+, or ⌘,) opens in the main window on every OS (not over another dialog, not while reconnecting).
 - Closing a detached window (✕ or Window: Close) closes its tabs (one confirmation for running agents); quitting Mkrew keeps them and reopens the windows on the next start (`<data>/windows.json`).
 - A hidden or minimized detached window detaches its panes like the main window.
 - File tabs stay in the main window (until the Editor part of the spec ships).
@@ -1615,7 +1615,7 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Zoom pane / close pane / rename pane | ⇧⌘M / ⇧⌘X / ⌥⌘R |
 | Terminal copy / paste / page up / page down / copy mode / link hints | ⌘C / ⌘V / ⌘↑ / ⌘↓ / ⌥⌘C / ⌥⌘O |
 | Find / Open in Zed / next Inbox item / peek | ⌘F / ⌥⌘E / ⇧⌘I / ⇧⌘Space |
-| Composer / send selection / Ask AI / voice input | ⇧⌘↩ / ⇧⌘L / ⇧⌘G / ⌃⌘V |
+| Composer / chat view / send selection / Ask AI / voice input | ⇧⌘↩ / ⇧⌘T / ⇧⌘L / ⇧⌘G / ⌃⌘V |
 | Terminals, Board, File tree, Git, Docs, Editor, Diff | ⌃⌘1 … ⌃⌘7 |
 | Docs source / send comments / next / previous comment | ⇧⌘E / ⇧⌘S / ⌘] / ⌘[ |
 | File tree: show ignored | ⇧⌘H |
@@ -1625,7 +1625,7 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Quick open / new task / run task (Board) | ⌘P / ⌘N / ⌘↩ |
 | Run start / restart / stop | ⌘R / ⌃⌘R / ⌘. |
 | Command palette / settings / toggle theme / full screen | ⇧⌘P / ⌘, / ⇧⌘J / ⌃⌘F |
-| Sidebar / right panel / context menu | ⌘B / ⇧⌘Y / ⌃⌘M |
+| Sidebar / right panel / widget bar / context menu | ⌘B / ⇧⌘Y / ⇧⌘B / ⌃⌘M |
 | Move tab left / right / to a new window | ⌃⌘← / ⌃⌘→ / ⇧⌘N |
 
 In the Editor, and while the Git list (or the diff, with the list hidden) has the keyboard, the terminal never has focus, so single-key shortcuts are safe there.
@@ -2836,11 +2836,14 @@ macOS only unless a line says "every OS".
    The badge shows the Needs-you count (§20J), `99+` from 100, cleared at 0.
    When a session enters `needs_input` while no Mkrew window is active and `[notify] flash_taskbar` is on, the icon bounces once.
 7. **PATH.**
-   The first program lookup asks the login shell (`$SHELL -l -i -c`, `/bin/zsh` if unset, 5 s limit) for its `PATH` and puts it before the process's own; agents and shells started by the daemon get it, and "Open in Zed" finds `zed` with it.
+   The first program lookup asks the login shell (`$SHELL -l -i -c`, `/bin/zsh` if unset, 5 s limit) for its `PATH` and puts it before the process's own; the process environment is not changed.
+   It is handed explicitly to: agents and shells and the AI helper commands the daemon starts (`launch::command`), every `git` the daemon runs (found on it first, so a Homebrew git wins; its hooks, gpg, git-lfs and credential helpers get it), the `ssh` of a machine connection (a `ProxyCommand` naming a Homebrew tool works), and `zed`; `lookup::find` uses it for `zed`, `tailscale` and agent commands.
+   Other programs the UI starts by name (`open`, `ssh` itself) live in `/usr/bin`; the daemon and `mk` are started by full path, and the daemon warms its own login `PATH` at start.
    The default shell is started as a login shell.
    If the shell fails or times out, the process's own `PATH` is used.
 8. **`mk` command.**
    Palette "Global: Install mk command" (listed only in `Mkrew.app`) links `/usr/local/bin/mk`, else `~/.local/bin/mk`, to the bundle's `mk`; a toast names the link and says when its folder is not on `PATH`.
+   When `/usr/local/bin` holds an older link of ours that cannot be replaced (root-owned), the install falls back to `~/.local/bin` and the toast says the older link shadows the new one and gives `sudo ln -sf '<mk>' /usr/local/bin/mk` to fix it.
    A translocated copy (§20K) links the real bundle's `mk`; it is refused only when that bundle could not be found (the path still holds `/AppTranslocation/`), as the link would dangle.
    A link already pointing at that `mk` is left as it is; a link to anything but a bundle's `Contents/MacOS/mk`, or a real file named `mk`, is never replaced.
    The error hint is `sudo mkdir -p /usr/local/bin && sudo ln -s '<mk>' /usr/local/bin/mk`.
@@ -2848,5 +2851,6 @@ macOS only unless a line says "every OS".
    `Mkrew.app` has an icon (`Mkrew.icns`) and leaves the Windows-only profiles out of its `agents/` copy.
    The release job signs with Developer ID (hardened runtime, microphone entitlement), notarizes and staples when the repository has the secrets `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_APP_PASSWORD` and `APPLE_TEAM_ID`; otherwise it signs ad-hoc, and Gatekeeper blocks the first open (README: Open Anyway on macOS 15 and later, or `xattr -dr com.apple.quarantine`).
 10. **Not done.**
-    Single instance (LaunchServices reuses a running bundle; a terminal launch shares the daemon), a Dock menu, a window list in the Window menu, raising a running machine window from the launcher, and a veto of Dock Quit / log-out.
+    Single instance (LaunchServices reuses a running bundle; a terminal launch shares the daemon), a Dock menu, raising a running machine window from the launcher, and a veto of Dock Quit / log-out.
+    To verify on a Mac: AppKit lists the open windows in the Window menu by itself (gpui registers our Window menu as the system windows menu), and View shows exactly one Enter Full Screen; if AppKit adds its own next to ours, ours is dropped on macOS.
     Each `mkrew --machine` window is its own process with its own Dock icon (ADR 0089).

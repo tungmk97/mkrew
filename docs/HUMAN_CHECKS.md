@@ -41,9 +41,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   With Zed removed, the toast says to install it and keep it in `/Applications`.
 - [ ] **Dock badge (macOS):** start an agent that asks for input, switch to another app: the Dock icon shows the Needs-you count in a red badge and the icon bounces once; focusing Mkrew and viewing the pane clears the badge when nothing needs you.
   With `[notify] flash_taskbar = false` the bounce stops, the badge stays.
-- [ ] **Menu bar (macOS, dark + light):** the menu bar reads Mkrew, Edit, View, Window; Mkrew has About, Settings… (⌘,), Check for Updates…, Services, Hide, Hide Others, Show All, Quit; View has Enter Full Screen (⌃⌘F); Window has Minimize (⌘M) and Zoom.
+- [ ] **Menu bar (macOS, dark + light):** the menu bar reads Mkrew, Edit, View, Window; Mkrew has About, Settings… (⌘,), Check for Updates…, Services, Hide, Hide Others, Show All, Quit; Window has Minimize (⌘M) and Zoom.
+  Look for: the window list appears at the bottom of Window by itself (open a second window to see it); View shows exactly one Enter Full Screen (⌃⌘F). If there are two, drop ours on macOS.
   About shows the Mkrew icon and version.
   A machine window (`mkrew --machine`) has no Check for Updates….
+- [ ] **Login PATH for git and ssh (macOS, from a Finder launch):** in the Git view commit in a repository with a husky hook (it runs `npx`/`node`) or with `commit.gpgsign` and a Homebrew gpg: the commit works.
+  Connect a machine whose `~/.ssh/config` has a `ProxyCommand` naming a Homebrew tool: it connects.
+- [ ] **Stale mk link (macOS):** make `/usr/local/bin/mk` a root-owned link to a deleted bundle (`sudo ln -sf /gone/Mkrew.app/Contents/MacOS/mk /usr/local/bin/mk`), run "Install mk command": the toast says the older link shadows the new one and names `sudo ln -sf ...`; running that command fixes `mk --version` in Terminal.
 - [ ] **Quit and hide keys (macOS):** ⌘Q with an unsaved Files edit asks "Save changes?" first and then quits (agents keep running); ⌘H hides the app, the Dock icon shows it; ⌘M minimizes; Settings… opens the dialog; Copy in the Edit menu copies a terminal selection.
 - [ ] **Dock → Quit (macOS, known gap):** with an unsaved Files edit, Dock → Quit ends Mkrew without asking and the edit is lost; the detached windows come back at the next start.
 - [ ] **Red button (macOS):** the red button hides Mkrew; a click on the Dock icon (or Cmd+Tab) shows it again with the same panes, scrollback and an unsaved Files edit, and detached windows come back with it.
