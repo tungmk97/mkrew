@@ -16,7 +16,7 @@ use mkrew_core::settings::DiffMode;
 use mkrew_protocol::{
     ChangeKind, ChangedFile, CommentContext, Commit, CommitDetail, DiffLine, DiffLineKind, Event,
     FileDiff, GitDiffParams, GitDiscardParams, GitLogParams, GitMode, GitSetViewedParams,
-    GitShowParams, GitStageParams, GitStatus, GitStatusParams, HunkTarget, Request, Session,
+    GitShowParams, GitStageParams, GitStatus, GitStatusParams, Hunk, HunkTarget, Request, Session,
     SessionFiles, SessionFilesParams, SessionState, ViewedFile,
 };
 use ulid::Ulid;
@@ -438,9 +438,12 @@ pub enum Key {
     Up,
     /// ↓ / j: next file.
     Down,
-    /// n: next hunk.
+    /// The Git widget of the bar (ADR 0102): the next file like ↓, but past the last file the
+    /// first. In the History it steps like ↓ (commits do not wrap).
+    NextWrapping,
+    /// n: next hunk; past the last one, the next file that is not viewed.
     NextHunk,
-    /// p: previous hunk.
+    /// p: previous hunk; before the first one, the previous file that is not viewed.
     PreviousHunk,
     /// b: Working changes ↔ Against base (from History: back to the one it left).
     ToggleMode,
@@ -492,8 +495,9 @@ impl StageRequest {
     }
 }
 
-/// The discard confirmation of one Unstaged / Untracked file; the dialog shows the file's diff
-/// (the view's shown diff once the file is selected) as what is lost.
+/// The discard confirmation of one Unstaged / Untracked file, or of one hunk of an Unstaged
+/// file; the dialog shows the file's diff (the view's shown diff once the file is selected),
+/// or that hunk, as what is lost.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discard {
     pub project_id: Ulid,
@@ -504,9 +508,30 @@ pub struct Discard {
     pub also_staged: bool,
     pub busy: bool,
     pub error: Option<String>,
+    /// One hunk of the file instead of the whole file: its index in the shown diff and the
+    /// hunk itself (what the dialog lists and the daemon reverses).
+    pub hunk: Option<(usize, Hunk)>,
 }
 
 impl Discard {
+    /// The dialog's title.
+    pub fn title(&self) -> &'static str {
+        if self.hunk.is_some() {
+            "Discard this hunk?"
+        } else {
+            "Discard changes?"
+        }
+    }
+
+    /// The danger button's label.
+    pub fn confirm_label(&self) -> &'static str {
+        if self.hunk.is_some() {
+            "Discard hunk"
+        } else {
+            "Discard changes"
+        }
+    }
+
     /// What confirming does, in one sentence.
     pub fn sentence(&self) -> String {
         let path = &self.target.path;
@@ -520,20 +545,66 @@ impl Discard {
         } else {
             ""
         };
+        if self.hunk.is_some() {
+            return format!(
+                "This hunk of “{path}” is discarded and cannot be recovered. Its other changes stay.{staged}"
+            );
+        }
         format!(
             "The unstaged changes to “{path}” below are discarded and cannot be recovered.{staged}"
         )
     }
 
-    /// The `git.discard` to send (only ever after the user confirmed).
+    /// The `git.discard` to send (only ever after the user confirmed): the file, or with a
+    /// hunk only that hunk (`paths` is empty then).
     pub fn params(&self) -> GitDiscardParams {
+        let hunk = self.hunk.as_ref().map(|(_, hunk)| HunkTarget {
+            path: self.target.path.clone(),
+            hunk: hunk.clone(),
+        });
         GitDiscardParams {
             project_id: self.project_id,
             worktree_task_id: self.worktree_task_id,
             repo: self.repo.clone(),
-            paths: vec![self.target.path.clone()],
+            paths: if hunk.is_some() {
+                vec![]
+            } else {
+                vec![self.target.path.clone()]
+            },
+            hunk,
             confirm: true,
         }
+    }
+
+    /// The rows of `shown` the dialog lists (at most [`DISCARD_PREVIEW_ROWS`]) and how many
+    /// more there are: the whole diff, or the rows of the one hunk.
+    pub fn preview_rows(&self, shown: &Shown) -> (Range<usize>, usize) {
+        let Some((index, _)) = &self.hunk else {
+            let listed = shown.rows.len().min(DISCARD_PREVIEW_ROWS);
+            return (0..listed, shown.rows.len() - listed);
+        };
+        let Some(start) = shown
+            .rows
+            .iter()
+            .position(|row| *row == DiffRow::Hunk(*index))
+        else {
+            return (0..0, 0);
+        };
+        let lines = shown.rows[start + 1..]
+            .iter()
+            .take_while(|row| matches!(row, DiffRow::Line(_)))
+            .count();
+        let end = start + 1 + lines;
+        let stop = end.min(start + DISCARD_PREVIEW_ROWS);
+        (start..stop, end - stop)
+    }
+
+    /// `shown` (the diff reloads while the dialog is open) still has this hunk at its place:
+    /// confirming then discards what the dialog lists. A file discard has no hunk to check.
+    pub fn hunk_is_current(&self, shown: &Shown) -> bool {
+        self.hunk
+            .as_ref()
+            .is_none_or(|(index, hunk)| shown.diff.hunks.get(*index) == Some(hunk))
     }
 }
 
@@ -599,6 +670,13 @@ pub struct Changer {
     pub label: String,
 }
 
+/// Which hunk of the next file a cross-file `n` / `p` selects once that file's diff is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingHunk {
+    First,
+    Last,
+}
+
 /// One workspace's Git view.
 #[derive(Debug)]
 pub struct GitView {
@@ -614,6 +692,11 @@ pub struct GitView {
     pub diff: Diff,
     /// The current hunk of the shown diff (`n` / `p`).
     pub hunk: Option<usize>,
+    /// `n` / `p` went on to another file: the hunk to select when its diff is shown. Cleared by
+    /// any other selection change; a file without hunks keeps it.
+    pending_hunk: Option<PendingHunk>,
+    /// The hunk a pending target just selected, until the shell has scrolled to it.
+    reveal_hunk: Option<usize>,
     /// Why the last "Open in Zed" failed.
     pub zed_error: Option<String>,
     /// Why the last refresh of the shown (kept) status failed.
@@ -682,6 +765,8 @@ impl GitView {
             selected: None,
             diff: Diff::None,
             hunk: None,
+            pending_hunk: None,
+            reveal_hunk: None,
             zed_error: None,
             refresh_error: None,
             stage_error: None,
@@ -949,6 +1034,7 @@ impl GitView {
         self.selected = None;
         self.diff = Diff::None;
         self.hunk = None;
+        self.pending_hunk = None;
     }
 
     /// Opens the Diff view on the selection (or the first file once listed).
@@ -1298,6 +1384,8 @@ impl GitView {
     /// Shows `target`'s diff. Returns it when it has to be read: another file, or the same
     /// one whose diff failed (a retry).
     pub fn select(&mut self, target: Target) -> Option<Target> {
+        // Any click, arrow or refresh that picks a file drops a pending `n` / `p` target.
+        self.pending_hunk = None;
         if self.selected.as_ref() == Some(&target) && !matches!(self.diff, Diff::Failed(_)) {
             return None;
         }
@@ -1334,8 +1422,20 @@ impl GitView {
         if self.selected.as_ref() == Some(target) {
             self.diff = match loaded {
                 Ok(shown) => {
-                    if self.hunk.is_some_and(|hunk| hunk >= shown.diff.hunks.len()) {
+                    let count = shown.diff.hunks.len();
+                    if self.hunk.is_some_and(|hunk| hunk >= count) {
                         self.hunk = None;
+                    }
+                    // A cross-file `n` / `p` picks its hunk now; a file without hunks keeps
+                    // the target, so the next `n` / `p` moves on again.
+                    if let Some(pending) = self.pending_hunk.filter(|_| count > 0) {
+                        let hunk = match pending {
+                            PendingHunk::First => 0,
+                            PendingHunk::Last => count - 1,
+                        };
+                        self.hunk = Some(hunk);
+                        self.reveal_hunk = Some(hunk);
+                        self.pending_hunk = None;
                     }
                     Diff::Shown(Rc::new(shown))
                 }
@@ -1343,6 +1443,11 @@ impl GitView {
             };
         }
         if again { self.selected.clone() } else { None }
+    }
+
+    /// The hunk a cross-file `n` / `p` just selected, once: the shell scrolls the diff to it.
+    pub fn take_hunk_reveal(&mut self) -> Option<usize> {
+        self.reveal_hunk.take()
     }
 
     /// Switches Working changes ↔ Against base (from a task's changes: Working; from the
@@ -1368,14 +1473,9 @@ impl GitView {
         match key {
             Key::Up => self.step_file(-1),
             Key::Down => self.step_file(1),
-            Key::NextHunk => {
-                self.step_hunk(true);
-                Requests::default()
-            }
-            Key::PreviousHunk => {
-                self.step_hunk(false);
-                Requests::default()
-            }
+            Key::NextWrapping => self.step_file_wrapping(),
+            Key::NextHunk => self.step_hunk(true),
+            Key::PreviousHunk => self.step_hunk(false),
             Key::ToggleMode => self.toggle_mode(),
             Key::ToggleHistory => self.toggle_history(),
             Key::Stage(_) => Requests::default(),
@@ -1496,25 +1596,90 @@ impl GitView {
         }
     }
 
-    /// The next / previous hunk of the shown diff (from none: the first / last); stops at
-    /// the ends.
-    fn step_hunk(&mut self, forward: bool) {
-        let Diff::Shown(shown) = &self.diff else {
-            return;
-        };
+    /// [`Key::NextWrapping`].
+    fn step_file_wrapping(&mut self) -> Requests {
+        if self.history.is_some() {
+            return self.step_file(1);
+        }
+        let files = self.steppable();
+        let at = self
+            .selected
+            .as_ref()
+            .and_then(|selected| files.iter().position(|(target, _)| target == selected));
+        match (at, files.first()) {
+            (Some(at), Some((first, _))) if at + 1 == files.len() => Requests {
+                diff: self.select(first.clone()),
+                ..Requests::default()
+            },
+            _ => self.step_file(1),
+        }
+    }
+
+    /// The next / previous hunk of the shown diff (from none: the first / last). Past the last
+    /// (first) hunk it goes on to the next (previous) file that is not viewed and, once that
+    /// diff is shown, to its first (last) hunk ([`PendingHunk`]); no wrap at the list ends. A
+    /// file without hunks, or whose diff failed to load, counts as past both ends (a diff still
+    /// loading waits). On a collapsed (viewed) diff, whose hunks are hidden, the keys go
+    /// straight to the next (previous) file.
+    fn step_hunk(&mut self, forward: bool) -> Requests {
         if self.diff_collapsed() {
-            return;
+            return self.step_hunk_file(forward);
         }
+        let shown = match &self.diff {
+            Diff::Shown(shown) => shown,
+            Diff::Failed(_) => return self.step_hunk_file(forward),
+            _ => return Requests::default(),
+        };
         let count = shown.diff.hunks.len();
-        if count == 0 {
-            return;
+        let next = match (self.hunk, forward) {
+            _ if count == 0 => None,
+            (None, true) => Some(0),
+            (None, false) => Some(count - 1),
+            (Some(hunk), true) => (hunk + 1 < count).then_some(hunk + 1),
+            (Some(hunk), false) => hunk.checked_sub(1),
+        };
+        if next.is_some() {
+            self.hunk = next;
+            return Requests::default();
         }
-        self.hunk = Some(match (self.hunk, forward) {
-            (None, true) => 0,
-            (None, false) => count - 1,
-            (Some(hunk), true) => (hunk + 1).min(count - 1),
-            (Some(hunk), false) => hunk.saturating_sub(1),
+        self.step_hunk_file(forward)
+    }
+
+    /// `n` / `p` ran out of hunks: selects the next / previous listed file that is not viewed
+    /// (every file counts in the History, which has no marks and never leaves its commit) and
+    /// remembers which of its hunks to select. `step_file` is not used: it cannot skip viewed
+    /// files and would step to another commit.
+    fn step_hunk_file(&mut self, forward: bool) -> Requests {
+        let files = self.steppable();
+        let Some(at) = self
+            .selected
+            .as_ref()
+            .and_then(|selected| files.iter().position(|(target, _)| target == selected))
+        else {
+            return Requests::default();
+        };
+        let open = |(target, _): &&(Target, ChangedFile)| {
+            self.history.is_some() || !self.viewed.contains(target.group, &target.path)
+        };
+        let next = if forward {
+            files[at + 1..].iter().find(open)
+        } else {
+            files[..at].iter().rev().find(open)
+        }
+        .map(|(target, _)| target.clone());
+        let Some(next) = next else {
+            return Requests::default();
+        };
+        let diff = self.select(next);
+        self.pending_hunk = Some(if forward {
+            PendingHunk::First
+        } else {
+            PendingHunk::Last
         });
+        Requests {
+            diff,
+            ..Requests::default()
+        }
     }
 
     /// Follows `git.changed` of this workspace (sent for every file-watcher batch).
@@ -1727,6 +1892,30 @@ impl GitView {
         })
     }
 
+    /// After `v` marked `target` viewed: selects the next file below it that is not viewed,
+    /// wrapping to the top (ADR 0103); the file's diff is in the returned requests, as for an
+    /// arrow key. Nothing moves when `target` is not the selected file (a row's box), is not
+    /// viewed (the mark was cleared), is a History file, or every file is viewed. Uses the
+    /// local marks, so a fast second `v` does not jump back.
+    pub fn next_unviewed(&mut self, target: &Target) -> Requests {
+        let marked = self.viewed.contains(target.group, &target.path);
+        if self.history.is_some() || self.selected.as_ref() != Some(target) || !marked {
+            return Requests::default();
+        }
+        let files = self.steppable();
+        let Some(at) = files.iter().position(|(listed, _)| listed == target) else {
+            return Requests::default();
+        };
+        let next = (1..files.len())
+            .map(|by| &files[(at + by) % files.len()].0)
+            .find(|listed| !self.viewed.contains(listed.group, &listed.path))
+            .cloned();
+        Requests {
+            diff: next.and_then(|next| self.select(next)),
+            ..Requests::default()
+        }
+    }
+
     /// The selected file is viewed and its diff is shown collapsed ("Show diff" opens it).
     pub fn diff_collapsed(&self) -> bool {
         self.selected.as_ref().is_some_and(|selected| {
@@ -1769,7 +1958,48 @@ impl GitView {
             also_staged: also_staged.is_some(),
             busy: false,
             error: None,
+            hunk: None,
         })
+    }
+
+    /// Hunk headers offer "Discard hunk": the selected file is a modified one of the Changes
+    /// group and its diff is shown. (Only modified files go by hunk: the patch has no
+    /// file-mode headers. Cheap: the render asks it every frame.)
+    pub fn hunks_discardable(&self) -> bool {
+        self.selected
+            .as_ref()
+            .filter(|selected| selected.group == Group::Unstaged)
+            .is_some_and(|selected| {
+                matches!(self.diff, Diff::Shown(_))
+                    && self
+                        .file(selected)
+                        .is_some_and(|file| file.kind == ChangeKind::Modified)
+            })
+    }
+
+    /// The discard confirmation of hunk `hunk` of the shown diff.
+    pub fn hunk_discard(&self, hunk: usize) -> Option<Discard> {
+        if !self.hunks_discardable() {
+            return None;
+        }
+        let Diff::Shown(shown) = &self.diff else {
+            return None;
+        };
+        let target = shown.diff.hunks.get(hunk)?.clone();
+        Some(Discard {
+            hunk: Some((hunk, target)),
+            ..self.discard(self.selected.as_ref()?)?
+        })
+    }
+
+    /// `x`: the current hunk's confirmation when there is one that can go by hunk (a folded
+    /// diff hides its hunks), else the selected file's.
+    pub fn discard_key(&self) -> Option<Discard> {
+        let hunk = self
+            .hunk
+            .filter(|_| !self.diff_collapsed())
+            .and_then(|hunk| self.hunk_discard(hunk));
+        hunk.or_else(|| self.discard(self.selected.as_ref()?))
     }
 
     /// The shown diff of `target`, if it is the selected file and its diff is loaded (what a
@@ -1779,6 +2009,15 @@ impl GitView {
             Diff::Shown(shown) if self.selected.as_ref() == Some(target) => Some(Rc::clone(shown)),
             _ => None,
         }
+    }
+
+    /// `dialog`'s confirm may go ahead: its file still has these changes, their diff is shown
+    /// and, for a hunk, still has it at its place (the diff reloads while the dialog is open).
+    pub fn discard_ready(&self, dialog: &Discard) -> bool {
+        self.file(&dialog.target).is_some()
+            && self
+                .shown_diff(&dialog.target)
+                .is_some_and(|shown| dialog.hunk_is_current(&shown))
     }
 
     /// The selected file's diff comments start over when it is another file: returns its path

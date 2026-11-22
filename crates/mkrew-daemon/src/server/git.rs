@@ -8,7 +8,7 @@ use mkrew_protocol::{
     ChangedFile, ErrorCode, Event, GitBranchesParams, GitChangedEvent, GitCheckoutParams,
     GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams, GitLogParams,
     GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams,
-    GitStatusParams, HunkTarget, Outcome, Project, ProjectRef, ViewedFile,
+    GitStatusParams, Hunk, HunkTarget, Outcome, Project, ProjectRef, ViewedFile,
 };
 use mkrew_store::ViewedScope;
 use serde::Serialize;
@@ -296,8 +296,8 @@ impl Daemon {
         };
         let hunk = match params.hunk {
             Some(HunkTarget { path, hunk }) if paths.is_empty() => {
-                match project_path(params.repo.as_deref(), &path) {
-                    Ok(path) => Some((path, hunk)),
+                match hunk_target(params.repo.as_deref(), path, hunk) {
+                    Ok(target) => Some(target),
                     Err(outcome) => return outcome,
                 }
             }
@@ -323,7 +323,9 @@ impl Daemon {
     }
 
     /// `git.discard`: the unstaged changes of `paths` are lost; tracked files go back to their
-    /// index version, untracked ones are deleted. Refused without `confirm: true`.
+    /// index version, untracked ones are deleted. With `hunk` and no `paths`, only that hunk
+    /// of a tracked file is reversed in the working tree (`git apply -R`; the index is kept).
+    /// Refused without `confirm: true`.
     pub(super) async fn git_discard(&self, params: GitDiscardParams) -> Outcome {
         if !params.confirm {
             let message = "git.discard loses changes: it needs confirm: true";
@@ -332,12 +334,36 @@ impl Daemon {
         let paths = match relative_paths(&params.paths)
             .and_then(|paths| repo_paths(params.repo.as_deref(), paths))
         {
-            Ok(paths) if !paths.is_empty() => paths,
-            Ok(_) => return Outcome::error(ErrorCode::InvalidRequest, "git.discard needs paths"),
+            Ok(paths) => paths,
             Err(outcome) => return outcome,
         };
+        let hunk = match params.hunk {
+            Some(HunkTarget { path, hunk }) if paths.is_empty() => {
+                match hunk_target(params.repo.as_deref(), path, hunk) {
+                    Ok(target) => Some(target),
+                    Err(outcome) => return outcome,
+                }
+            }
+            Some(_) => {
+                let message = "git.discard takes either paths or a hunk";
+                return Outcome::error(ErrorCode::InvalidRequest, message);
+            }
+            None if paths.is_empty() => {
+                return Outcome::error(ErrorCode::InvalidRequest, "git.discard needs paths");
+            }
+            None => None,
+        };
         let target = (params.project_id, params.worktree_task_id, params.repo);
-        self.git_change("git.discard", target, move |git, dir, _| {
+        self.git_change("git.discard", target, move |git, dir, repo| {
+            if let Some((path, hunk)) = hunk {
+                // An untracked file has no index text to go back to: its one "hunk" is the file.
+                if !git.is_tracked(dir, &path)? {
+                    let message = format!("{path} is not tracked: discard the file instead");
+                    return Err(ViewError::Refused(message));
+                }
+                let patch = mkrew_core::git::hunk_patch(&path, &hunk);
+                return Ok(git.discard_hunk(dir, repo, &patch)?);
+            }
             let mut tracked = Vec::new();
             let mut untracked = Vec::new();
             for path in paths {
@@ -350,7 +376,7 @@ impl Daemon {
             if !tracked.is_empty() {
                 git.discard(dir, &tracked)?;
             }
-            git.clean(dir, &untracked)
+            Ok(git.clean(dir, &untracked)?)
         })
         .await
     }
@@ -585,7 +611,7 @@ impl Daemon {
 }
 
 /// Not a repo / no base / nothing to push to = `invalid_state`; unknown commit = `not_found`;
-/// git failing = `internal` with its stderr.
+/// a refused change = `invalid_request`; git failing = `internal` with its stderr.
 fn view_outcome<T: Serialize>(
     method: &str,
     result: Result<Result<T, ViewError>, JoinError>,
@@ -601,11 +627,25 @@ fn view_outcome<T: Serialize>(
         Ok(Err(e @ ViewError::UnknownCommit(_))) => {
             Outcome::error(ErrorCode::NotFound, e.to_string())
         }
+        Ok(Err(e @ ViewError::Refused(_))) => {
+            Outcome::error(ErrorCode::InvalidRequest, e.to_string())
+        }
         Ok(Err(ViewError::Git(e))) => {
             Outcome::error(ErrorCode::Internal, format!("{method} failed: {e}"))
         }
         Err(e) => Outcome::error(ErrorCode::Internal, format!("{method} failed: {e}")),
     }
+}
+
+/// A hunk's repo-relative path and the hunk itself, refused (`invalid_request`) when a line
+/// holds a line feed: it would add sections to the patch built from it. A lone carriage
+/// return inside a line is legal (`git apply` splits on line feeds only).
+fn hunk_target(repo: Option<&str>, path: String, hunk: Hunk) -> Result<(String, Hunk), Outcome> {
+    if hunk.lines.iter().any(|line| line.text.contains('\n')) {
+        let message = "hunk line holds a line feed";
+        return Err(Outcome::error(ErrorCode::InvalidRequest, message));
+    }
+    Ok((project_path(repo, &path)?, hunk))
 }
 
 /// The project-relative, `/`-separated form of `path`; `invalid_request` for an absolute

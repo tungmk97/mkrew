@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use mkrew_core::profile::{UsageConfig, UsageFormat};
 use mkrew_core::usage::{Usage, UsageReader};
-use mkrew_protocol::{Event, SessionUsageEvent};
+use mkrew_protocol::{AgentLimits, Event, SessionUsageEvent};
 use tokio::sync::mpsc;
 use ulid::Ulid;
 
@@ -197,14 +197,16 @@ async fn run(
 ) {
     let mut last: Option<Usage> = None;
     let mut last_path: Option<String> = None;
+    let mut last_limits: Option<AgentLimits> = None;
     while let Some(native) = ends.recv().await {
         let read = tokio::task::spawn_blocking(move || {
             let usage = tracker.read(&native);
             let warning = tracker.reader.take_warning();
-            (tracker, usage, warning)
+            let limits = tracker.reader.limits().cloned();
+            (tracker, usage, warning, limits)
         })
         .await;
-        let Ok((back, usage, warning)) = read else {
+        let Ok((back, usage, warning, limits)) = read else {
             return;
         };
         tracker = back;
@@ -212,6 +214,14 @@ async fn run(
         let path = tracker.path().map(|p| p.to_string_lossy().into_owned());
         if let Some(warning) = warning {
             tracing::warn!(id = %session, "token usage: {warning}");
+        }
+        // Account-wide, so not tied to this session's usage lines: a Codex transcript names
+        // the limits on lines without token counts too (spec 2026-11-22 section 5.2).
+        if let Some(limits) = limits.filter(|l| last_limits.as_ref() != Some(l)) {
+            last_limits = Some(limits.clone());
+            if let Err(e) = hub.offer_limits(limits) {
+                tracing::debug!(id = %session, "limits not kept: {e}");
+            }
         }
         let Some(usage) = usage.filter(|u| last.as_ref() != Some(u) || last_path != path) else {
             continue;
@@ -246,6 +256,56 @@ mod tests {
     use super::*;
 
     const CLAUDE: &[u8] = include_bytes!("../../mkrew-core/tests/fixtures/usage/claude.jsonl");
+    const CODEX: &[u8] = include_bytes!("../../mkrew-core/tests/fixtures/usage/codex.jsonl");
+
+    #[test]
+    fn the_tracker_hands_on_the_codex_limits_with_the_usage() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("sessions/2026/05/11");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("rollout-2026-05-11T17-04-33-0199a-thread.jsonl"),
+            CODEX,
+        )
+        .unwrap();
+        let mut tracker =
+            Tracker::new(UsageFormat::CodexJsonl, Some(root.path().to_owned())).unwrap();
+        assert_eq!(tracker.reader.limits(), None);
+        assert!(tracker.read("0199a-thread").is_some());
+        let limits = tracker.reader.limits().unwrap();
+        assert_eq!(limits.five_hour.map(|w| w.used_percent), Some(23.0));
+        assert_eq!(limits.weekly.map(|w| w.used_percent), Some(46.0));
+    }
+
+    /// The tracker task, not just the reader, hands the Codex limits to the hub (which keeps
+    /// and announces them) at a turn end.
+    #[tokio::test]
+    async fn the_tracker_run_offers_the_codex_limits_to_the_hub() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("sessions/2026/05/11");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("rollout-2026-05-11T17-04-33-0199a-thread.jsonl"),
+            CODEX,
+        )
+        .unwrap();
+        let store = mkrew_store::Store::open(&root.path().join("mkrew.db")).unwrap();
+        let hub = Arc::new(Hub::new(store));
+        let mut events = hub.events.subscribe();
+        let tracker = Tracker::new(UsageFormat::CodexJsonl, Some(root.path().to_owned())).unwrap();
+        let (ends, rx) = mpsc::unbounded_channel();
+        ends.send("0199a-thread".to_owned()).unwrap();
+        drop(ends);
+        run(Arc::clone(&hub), Ulid::new(), None, tracker, rx).await;
+
+        let kept = hub.limits();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].agent, mkrew_protocol::Cli::Codex);
+        assert_eq!(kept[0].five_hour.map(|w| w.used_percent), Some(23.0));
+        let announced = std::iter::from_fn(|| events.try_recv().ok())
+            .any(|e| matches!(e, Event::AgentLimits(l) if l.agent == mkrew_protocol::Cli::Codex));
+        assert!(announced, "the change is broadcast");
+    }
 
     #[test]
     fn claude_transcripts_are_found_in_any_project_folder() {

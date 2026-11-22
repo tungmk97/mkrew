@@ -6,7 +6,7 @@
 use std::ops::Range;
 
 use crate::docs::Shown;
-use crate::markdown::{Block, BlockKind, Item};
+use crate::markdown::{Block, BlockKind, Item, Lines};
 use crate::preview::inline;
 use crate::text_box;
 
@@ -192,6 +192,15 @@ pub fn copy_text(shown: &Shown, selection: &Selection) -> String {
             .collect();
         return texts.join("\n");
     }
+    let parts: Vec<String> = touched(shown, selection)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    parts.join("\n")
+}
+
+/// The blocks that have selected text, in page order, each with its index and that text.
+fn touched(shown: &Shown, selection: &Selection) -> Vec<(usize, String)> {
     let (start, end) = selection.ordered();
     let mut parts = Vec::new();
     for index in start.block..=end.block {
@@ -213,10 +222,30 @@ pub fn copy_text(shown: &Shown, selection: &Selection) -> String {
             flat.text.len()
         };
         if let Some(text) = flat.text.get(from..to).filter(|text| !text.is_empty()) {
-            parts.push(text.to_owned());
+            parts.push((index, text.to_owned()));
         }
     }
-    parts.join("\n")
+    parts
+}
+
+/// The source lines of the blocks `selection` touches (a block with no selected text, such as
+/// a diagram, is not touched): from the first block's first line to the last block's last
+/// line. "Send selection" sends the Markdown of these lines (ADR 0103). `None` when nothing
+/// is selected.
+pub fn source_lines(shown: &Shown, selection: &Selection) -> Option<Lines> {
+    if selection.is_empty() {
+        return None;
+    }
+    let mut blocks = touched(shown, selection)
+        .into_iter()
+        .filter_map(|(index, _)| shown.blocks.get(index))
+        .map(|block| block.lines);
+    let first = blocks.next()?;
+    let last = blocks.next_back().unwrap_or(first);
+    Some(Lines {
+        start: first.start.min(last.start),
+        end: first.end.max(last.end),
+    })
 }
 
 /// Ctrl+A: from the first to the last text of the page; `None` when it shows no text.
@@ -420,5 +449,48 @@ mod tests {
             (at(1, 0, 0), at(1, 0, 4))
         );
         assert_eq!(select_all(&shown("***\n")), None);
+    }
+
+    const PAGE: &str =
+        "# Title\n\nfirst para\n\nsecond para\n\n```mermaid\ngraph TD; A-->B\n```\n\nlast\n";
+
+    #[test]
+    fn source_lines_are_the_union_of_the_blocks_touched() {
+        let page = shown(PAGE);
+        let lines = |anchor: Point, head: Point| {
+            source_lines(&page, &Selection { anchor, head }).map(|l| (l.start, l.end))
+        };
+        // Inside one block: its whole range.
+        assert_eq!(lines(at(1, 0, 2), at(1, 0, 5)), Some((3, 3)));
+        // Across two blocks.
+        assert_eq!(lines(at(1, 0, 2), at(2, 0, 3)), Some((3, 5)));
+        // A backwards drag is the same.
+        assert_eq!(lines(at(2, 0, 3), at(1, 0, 2)), Some((3, 5)));
+        // Ending on the first byte of a block selects nothing of it.
+        assert_eq!(lines(at(1, 0, 2), at(2, 0, 0)), Some((3, 3)));
+        // A diagram shows no text: it neither counts nor splits the selection.
+        assert_eq!(lines(at(2, 0, 0), at(4, 0, 4)), Some((5, 11)));
+        // Nothing selected.
+        assert_eq!(lines(at(1, 0, 2), at(1, 0, 2)), None);
+        assert_eq!(
+            source_lines(&page, &select_all(&page).unwrap()).map(|l| (l.start, l.end)),
+            Some((1, 11))
+        );
+    }
+
+    #[test]
+    fn source_lines_count_after_front_matter_and_with_crlf_endings() {
+        let page = shown("---\r\ntitle: x\r\n---\r\n\r\nfirst para\r\n\r\nsecond para\r\n");
+        let lines = |anchor: Point, head: Point| {
+            source_lines(&page, &Selection { anchor, head }).map(|l| (l.start, l.end))
+        };
+        // Block 0 is the front matter; the paragraphs follow it on lines 5 and 7.
+        assert_eq!(lines(at(1, 0, 2), at(1, 0, 5)), Some((5, 5)));
+        assert_eq!(lines(at(1, 0, 2), at(2, 0, 3)), Some((5, 7)));
+        assert_eq!(
+            crate::docs::source_text(&page.lines, 5, 7).as_deref(),
+            Some("first para\n\nsecond para"),
+            "the Markdown source, without the carriage returns"
+        );
     }
 }

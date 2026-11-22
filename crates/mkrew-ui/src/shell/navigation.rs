@@ -527,12 +527,13 @@ impl Shell {
         }
     }
 
-    /// The theme picker (ADR 0078): the palette listing `theme::THEMES`, on the current one.
+    /// The theme picker (ADR 0078): the palette listing the theme catalog, on the current one.
     pub(crate) fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.restore_theme_pick(window, cx);
         let current = cx.theme().clone();
-        let mut palette = Palette::new(palette::theme_entries(current.name));
-        if let Some(index) = theme::THEMES.iter().position(|e| e.name == current.name) {
+        let catalog = cx.global::<ThemeCatalog>();
+        let mut palette = Palette::new(palette::theme_entries(catalog, &current.name));
+        if let Some(index) = catalog.index_of(&current.name) {
             palette.pick_entry(index);
         }
         self.workspace_menu = None;
@@ -551,10 +552,16 @@ impl Shell {
         cx.notify();
     }
 
-    /// Back to the current theme for the mode the picker opened on (Esc, or anything replacing
-    /// it); rebuilt, so an OS appearance or settings change meanwhile is kept.
+    /// Back to the current theme for the mode the picker or a gallery preview started on (Esc,
+    /// or anything replacing it); rebuilt, so an OS appearance or settings change meanwhile
+    /// is kept.
     pub(crate) fn restore_theme_pick(&mut self, window: &Window, cx: &mut Context<'_, Self>) {
-        if let Some(mode) = self.theme_pick.take() {
+        let picked = self.theme_pick.take();
+        let previewed = self.gallery_preview.take();
+        if let Some(dialog) = self.settings_dialog.as_mut() {
+            dialog.end_preview();
+        }
+        if let Some(mode) = picked.or(previewed.map(|(mode, _)| mode)) {
             theme::refresh(mode, window, cx);
             cx.refresh_windows();
         }
@@ -570,20 +577,39 @@ impl Shell {
             return;
         };
         let fonts = cx.global::<theme::Fonts>().clone();
+        let Some(listed) = cx.global::<ThemeCatalog>().themes().get(index) else {
+            return;
+        };
         let shown = Theme {
             mode,
-            ..theme::THEMES[index].build()
+            ..listed.theme.clone()
         };
         cx.set_global(shown.with_fonts(&fonts));
         cx.refresh_windows();
     }
 
-    /// Saves theme `index` to the slot shown and shows it (Enter or a click in the picker). A
-    /// failed write keeps it for this session and says so, like the title bar toggle.
+    /// Saves theme `index` to the slot shown and shows it (Enter or a click in the picker).
     fn choose_theme(&mut self, index: usize, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let name = theme::THEMES[index].name;
+        // The catalog may have been rebuilt since the picker listed it.
+        let Some(name) = (cx.global::<ThemeCatalog>().themes().get(index)).map(|t| t.name.clone())
+        else {
+            return;
+        };
+        let dark = theme::slot_is_dark(cx.theme().mode, theme::os_dark(window));
+        self.keep_theme(&name, dark, window, cx);
+    }
+
+    /// Saves `name` to the slot of `dark` and shows the kept theme of the slot that is shown
+    /// (a theme of the other appearance changes the other slot only). A failed write keeps
+    /// the choice for this session and says so, like the title bar toggle.
+    pub(crate) fn keep_theme(
+        &mut self,
+        name: &str,
+        dark: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let mode = cx.theme().mode;
-        let dark = theme::slot_is_dark(mode, theme::os_dark(window));
         let mut names = cx.global::<theme::ThemeNames>().clone();
         if dark {
             names.dark = name.into();
@@ -591,13 +617,24 @@ impl Shell {
             names.light = name.into();
         }
         cx.set_global(names);
+        self.gallery_preview = None;
         theme::refresh(mode, window, cx);
         cx.refresh_windows();
-        let value = format!("\"{name}\"");
-        if let Err(error) =
-            mkrew_core::settings::write_ui_value(&self.settings_file, theme::slot_key(dark), &value)
-        {
-            self.settings_write_failed("the theme", error, cx);
+        let value = theme::toml_string(name);
+        match mkrew_core::settings::write_ui_value(
+            &self.settings_file,
+            theme::slot_key(dark),
+            &value,
+        ) {
+            Err(error) => self.settings_write_failed("the theme", error, cx),
+            Ok(()) => {
+                // Now, not at the next mtime poll: the dialog's rows show the new value, and a
+                // hand edit saved in the same poll window applies too.
+                self.settings_modified = std::fs::metadata(&self.settings_file)
+                    .and_then(|m| m.modified())
+                    .ok();
+                self.apply_settings_file(window, cx);
+            }
         }
     }
 
@@ -761,6 +798,8 @@ impl Shell {
             palette::Action::Extra(Extra::PhoneAccess) => self.open_phone_access(window, cx),
             palette::Action::Extra(Extra::Ports) => self.open_ports(window, cx),
             palette::Action::Extra(Extra::ManagePrompts) => self.open_prompts_settings(window, cx),
+            palette::Action::Extra(Extra::NewThemeFromCurrent) => self.new_theme_from_current(cx),
+            palette::Action::Extra(Extra::OpenThemesFolder) => self.open_themes_folder(cx),
             palette::Action::Extra(Extra::CheckUpdates) => self.check_updates(true, window, cx),
             palette::Action::Extra(Extra::CopyLastError) => self.copy_last_error(cx),
             palette::Action::Extra(Extra::DismissToasts) => {
@@ -948,6 +987,8 @@ impl Shell {
                     Extra::AddMachine => self.open_machine_add(window, cx),
                     // Handled above: it needs no workspace.
                     Extra::ManagePrompts => self.open_prompts_settings(window, cx),
+                    // Handled above: they need no workspace.
+                    Extra::NewThemeFromCurrent | Extra::OpenThemesFolder => {}
                     Extra::CheckUpdates => self.check_updates(true, window, cx),
                 }
             }

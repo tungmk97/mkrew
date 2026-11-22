@@ -884,6 +884,46 @@ fn integration_install_status_uninstall() {
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{");
 }
 
+/// A status line of the user's own is saved before Mkrew's replaces it, and uninstall puts it back.
+#[test]
+fn integration_keeps_and_restores_a_users_status_line() {
+    let env = Env::new();
+    let claude = env.dir.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    let settings = claude.join("settings.json");
+    let original = "{\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"line.sh\"\n  }\n}\n";
+    std::fs::write(&settings, original).unwrap();
+    let integration = |args: &[&str]| {
+        env.command(args)
+            .env("CLAUDE_CONFIG_DIR", &claude)
+            .output()
+            .unwrap()
+    };
+    let install = integration(&["integration", "install", "claude"]);
+    assert!(install.status.success(), "{install:?}");
+    let saved: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(claude.join("claude-statusline.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["command"], "line.sh");
+    let installed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert!(
+        installed["statusLine"]["command"]
+            .as_str()
+            .unwrap()
+            .ends_with(" statusline"),
+        "{installed}"
+    );
+    let status = integration(&["integration", "status", "claude"]);
+    assert!(status.status.success(), "{status:?}");
+
+    let uninstall = integration(&["integration", "uninstall", "claude"]);
+    assert!(uninstall.status.success(), "{uninstall:?}");
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), original);
+    assert!(!claude.join("claude-statusline.json").exists());
+}
+
 /// The fake agent's `hook` steps drive the session (screen detection would not see the prompt),
 /// and `mk hook` understands Claude's stdin and Codex's argument JSON.
 #[test]
@@ -940,25 +980,24 @@ fn fake_agent_hooks_drive_the_session_state() {
     let waited = env.ok(&["wait", id, "--until", "needs_input", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "needs_input");
 
-    // The answer makes the fake agent run `mk hook fake busy`.
-    let answered = Instant::now();
+    // The answer makes the fake agent run `mk hook fake busy`. The deadline is only a bound for
+    // a loaded machine: the scenario's own 3 s sleep ends the working state, so a late
+    // "working" fails the next wait. No stopwatch: it also timed two process starts.
     env.ok(&["send", id, "y"]);
-    let waited = env.ok(&["wait", id, "--until", "working", "--timeout", "2000"]);
+    let waited = env.ok(&["wait", id, "--until", "working", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "working");
-    assert!(answered.elapsed() < Duration::from_secs(2));
     let waited = env.ok(&["wait", id, "--until", "done", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "done");
 
-    // The agent now sleeps; report as Claude Code and Codex would.
-    let reported = Instant::now();
+    // The agent now sleeps; report as Claude Code and Codex would. Like the first wait, the
+    // deadline only bounds a loaded machine (no stopwatch: it also timed process starts).
     env.hook(
         id,
         &["claude", "Notification"],
         r#"{"session_id": "claude-1", "notification_type": "permission_prompt"}"#,
     );
-    let waited = env.ok(&["wait", id, "--until", "needs_input", "--timeout", "2000"]);
+    let waited = env.ok(&["wait", id, "--until", "needs_input", "--timeout", "10000"]);
     assert_eq!(waited.trim(), "needs_input");
-    assert!(reported.elapsed() < Duration::from_secs(2));
     env.hook(id, &["claude", "UserPromptSubmit"], "{}");
     let waited = env.ok(&["wait", id, "--until", "working", "--timeout", "5000"]);
     assert_eq!(waited.trim(), "working");
@@ -1665,4 +1704,56 @@ fn proxy_uses_a_running_daemon() {
         .unwrap();
     drop(stdin);
     assert!(proxy.wait().unwrap().success());
+}
+
+/// A command that copies its stdin to stdout, in `cmd` and in `sh`.
+#[cfg(windows)]
+const ECHO_STDIN: &str = r#"findstr "^""#;
+#[cfg(not(windows))]
+const ECHO_STDIN: &str = "cat";
+
+/// Claude Code runs `mk statusline` on every update: the user's own status line still prints
+/// its text, with no daemon running (the report is dropped) and without one saved (nothing
+/// printed), and the exit code is 0 either way.
+#[test]
+fn statusline_chains_the_users_status_line_and_never_fails() {
+    let env = Env::new();
+    let claude = env.dir.path().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    let payload = r#"{"session_id":"s1","rate_limits":{"five_hour":{"used_percentage":42.5,"resets_at":1778533631}}}"#;
+    let run = || {
+        let mut child = env
+            .command(&["statusline"])
+            .env("CLAUDE_CONFIG_DIR", &claude)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+    // A freshly built `mk` can take seconds on its first start (virus scan): not what is timed.
+    env.ok(&["--help"]);
+    let started = Instant::now();
+    let none = run();
+    // The report budget is 300 ms: no daemon must not slow Claude down.
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(none.status.success(), "{none:?}");
+    assert!(none.stdout.is_empty(), "{none:?}");
+
+    let saved = serde_json::json!({"type": "command", "command": ECHO_STDIN});
+    std::fs::write(claude.join("claude-statusline.json"), saved.to_string()).unwrap();
+    let chained = run();
+    assert!(chained.status.success(), "{chained:?}");
+    assert_eq!(String::from_utf8_lossy(&chained.stdout).trim(), payload);
 }

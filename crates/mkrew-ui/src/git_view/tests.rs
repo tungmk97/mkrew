@@ -410,7 +410,7 @@ fn keys_move_files_and_hunks() {
         Some(target(Group::Unstaged, "b.rs"))
     );
 
-    // Hunks: none shown yet → nothing; then first / last and clamped.
+    // Hunks: none shown yet → nothing; then first / last, and moves inside the file.
     view.key(Key::NextHunk);
     assert_eq!(view.hunk, None);
     let shown = target(Group::Unstaged, "b.rs");
@@ -421,13 +421,11 @@ fn keys_move_files_and_hunks() {
     );
     view.key(Key::PreviousHunk);
     assert_eq!(view.hunk, Some(1));
-    view.key(Key::NextHunk);
-    assert_eq!(view.hunk, Some(1));
-    view.key(Key::PreviousHunk);
     view.key(Key::PreviousHunk);
     assert_eq!(view.hunk, Some(0));
-    // A refreshed diff with fewer hunks drops a hunk that no longer exists.
     view.key(Key::NextHunk);
+    assert_eq!(view.hunk, Some(1));
+    // A refreshed diff with fewer hunks drops a hunk that no longer exists.
     view.begin_diff();
     view.diff_loaded(&shown, Ok(laid_out(vec![hunk(1, 1, 1, 1)])));
     assert_eq!(view.hunk, None);
@@ -435,6 +433,177 @@ fn keys_move_files_and_hunks() {
     view.key(Key::NextHunk);
     view.key(Key::Up);
     assert_eq!(view.hunk, None);
+}
+
+/// Shows `count` hunks as the diff of `target`, as the shell does once `git.diff` answers.
+fn show_hunks(view: &mut GitView, target: &Target, count: u32) {
+    let hunks = (0..count)
+        .map(|n| hunk(n * 10 + 1, 1, n * 10 + 1, 1))
+        .collect();
+    view.begin_diff();
+    view.diff_loaded(target, Ok(laid_out(hunks)));
+}
+
+#[test]
+fn n_and_p_past_the_ends_go_on_to_the_next_and_previous_file() {
+    let mut view = changes(&["a.rs", "b.rs"]);
+    show_hunks(&mut view, &unstaged("a.rs"), 2);
+    view.key(Key::NextHunk);
+    view.key(Key::NextHunk);
+    assert_eq!(view.hunk, Some(1));
+    // Past the last hunk: b.rs, and its first hunk once its diff is shown.
+    let moved = view.key(Key::NextHunk);
+    assert_eq!(moved.diff, Some(unstaged("b.rs")));
+    assert_eq!(view.selected, Some(unstaged("b.rs")));
+    assert_eq!(view.hunk, None);
+    assert_eq!(view.take_hunk_reveal(), None, "nothing to reveal yet");
+    show_hunks(&mut view, &unstaged("b.rs"), 3);
+    assert_eq!(view.hunk, Some(0));
+    assert_eq!(view.take_hunk_reveal(), Some(0));
+    assert_eq!(view.take_hunk_reveal(), None, "revealed once");
+    // Before the first hunk: a.rs, and its last hunk.
+    let back = view.key(Key::PreviousHunk);
+    assert_eq!(back.diff, Some(unstaged("a.rs")));
+    show_hunks(&mut view, &unstaged("a.rs"), 2);
+    assert_eq!(view.hunk, Some(1));
+    assert_eq!(view.take_hunk_reveal(), Some(1));
+    // A plain refresh of the same file reveals nothing and keeps the hunk.
+    show_hunks(&mut view, &unstaged("a.rs"), 2);
+    assert_eq!(view.hunk, Some(1));
+    assert_eq!(view.take_hunk_reveal(), None);
+}
+
+#[test]
+fn n_and_p_skip_viewed_files_and_stop_at_the_ends() {
+    let mut view = changes(&["a.rs", "b.rs", "c.rs"]);
+    mark_viewed(&mut view, &["b.rs"]);
+    show_hunks(&mut view, &unstaged("a.rs"), 1);
+    view.key(Key::NextHunk);
+    assert_eq!(view.hunk, Some(0));
+    // b.rs is viewed: c.rs is next.
+    assert_eq!(view.key(Key::NextHunk).diff, Some(unstaged("c.rs")));
+    show_hunks(&mut view, &unstaged("c.rs"), 1);
+    assert_eq!(view.hunk, Some(0));
+    // No wrap at the end.
+    assert_eq!(view.key(Key::NextHunk), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("c.rs")));
+    assert_eq!(view.hunk, Some(0));
+    // Back over the viewed file to a.rs, and no wrap at the start.
+    assert_eq!(view.key(Key::PreviousHunk).diff, Some(unstaged("a.rs")));
+    show_hunks(&mut view, &unstaged("a.rs"), 1);
+    assert_eq!(view.key(Key::PreviousHunk), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("a.rs")));
+}
+
+#[test]
+fn a_file_without_hunks_keeps_the_pending_target_and_n_moves_on_again() {
+    let mut view = changes(&["a.rs", "bin.png", "c.rs"]);
+    show_hunks(&mut view, &unstaged("a.rs"), 1);
+    view.key(Key::NextHunk);
+    assert_eq!(view.key(Key::NextHunk).diff, Some(unstaged("bin.png")));
+    // A binary file: its diff has no hunks.
+    show_hunks(&mut view, &unstaged("bin.png"), 0);
+    assert_eq!(view.hunk, None);
+    assert_eq!(view.pending_hunk, Some(PendingHunk::First));
+    assert_eq!(view.key(Key::NextHunk).diff, Some(unstaged("c.rs")));
+    show_hunks(&mut view, &unstaged("c.rs"), 2);
+    assert_eq!(view.hunk, Some(0));
+    assert_eq!(view.pending_hunk, None);
+}
+
+#[test]
+fn n_and_p_pass_a_file_whose_diff_failed_but_wait_for_one_loading() {
+    let mut view = changes(&["a.rs", "b.rs", "c.rs"]);
+    // a.rs is still loading: nothing moves.
+    assert_eq!(view.key(Key::NextHunk), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("a.rs")));
+    view.begin_diff();
+    view.diff_loaded(&unstaged("a.rs"), Err("gone".into()));
+    assert_eq!(view.key(Key::NextHunk).diff, Some(unstaged("b.rs")));
+    view.begin_diff();
+    view.diff_loaded(&unstaged("b.rs"), Err("gone".into()));
+    assert_eq!(view.key(Key::NextHunk).diff, Some(unstaged("c.rs")));
+    show_hunks(&mut view, &unstaged("c.rs"), 1);
+    assert_eq!(view.hunk, Some(0), "its first hunk");
+}
+
+#[test]
+fn p_over_a_file_without_hunks_keeps_the_last_target_until_a_file_with_hunks() {
+    let mut view = changes(&["a.rs", "bin.png", "c.rs"]);
+    view.select(unstaged("c.rs"));
+    show_hunks(&mut view, &unstaged("c.rs"), 1);
+    view.key(Key::PreviousHunk);
+    assert_eq!(view.hunk, Some(0));
+    assert_eq!(view.key(Key::PreviousHunk).diff, Some(unstaged("bin.png")));
+    // A binary file: its diff has no hunks, the target waits.
+    show_hunks(&mut view, &unstaged("bin.png"), 0);
+    assert_eq!(view.hunk, None);
+    assert_eq!(view.pending_hunk, Some(PendingHunk::Last));
+    assert_eq!(view.key(Key::PreviousHunk).diff, Some(unstaged("a.rs")));
+    show_hunks(&mut view, &unstaged("a.rs"), 3);
+    assert_eq!(view.hunk, Some(2), "its last hunk");
+    assert_eq!(view.pending_hunk, None);
+}
+
+#[test]
+fn a_click_clears_the_pending_target() {
+    let mut view = changes(&["a.rs", "b.rs"]);
+    show_hunks(&mut view, &unstaged("a.rs"), 1);
+    view.key(Key::NextHunk);
+    view.key(Key::NextHunk);
+    assert_eq!(view.selected, Some(unstaged("b.rs")));
+    // A click on the selected row changes nothing else, but drops the target.
+    assert_eq!(view.select(unstaged("b.rs")), None);
+    show_hunks(&mut view, &unstaged("b.rs"), 2);
+    assert_eq!(view.hunk, None);
+    // A click on another file does too: `p` three times goes back to a.rs with a pending
+    // last hunk, and a click on b.rs drops it.
+    view.key(Key::PreviousHunk);
+    view.key(Key::PreviousHunk);
+    assert_eq!(view.key(Key::PreviousHunk).diff, Some(unstaged("a.rs")));
+    assert_eq!(view.pending_hunk, Some(PendingHunk::Last));
+    assert!(view.select(unstaged("b.rs")).is_some());
+    assert_eq!(view.pending_hunk, None);
+}
+
+#[test]
+fn in_the_history_n_and_p_move_between_the_commits_files_only() {
+    let mut view = history();
+    let (x, y) = (commit_target("b", "x"), commit_target("b", "y"));
+    show_hunks(&mut view, &x, 1);
+    view.key(Key::NextHunk);
+    assert_eq!(view.hunk, Some(0));
+    // Past the last hunk of x: y, the commit's next file (the History has no viewed marks).
+    assert_eq!(view.key(Key::NextHunk).diff, Some(y.clone()));
+    show_hunks(&mut view, &y, 1);
+    assert_eq!(view.hunk, Some(0));
+    // Past the last file: nothing, and never another commit.
+    assert_eq!(view.key(Key::NextHunk), Requests::default());
+    assert_eq!(view.selected, Some(y));
+    assert_eq!(view.key(Key::PreviousHunk).diff, Some(x.clone()));
+    show_hunks(&mut view, &x, 1);
+    assert_eq!(view.key(Key::PreviousHunk), Requests::default());
+    assert_eq!(view.selected, Some(x));
+}
+
+#[test]
+fn the_widget_click_steps_to_the_next_file_and_wraps_at_the_end() {
+    let mut view = loaded();
+    let first = target(Group::Staged, "a.rs");
+    assert_eq!(view.selected, Some(first.clone()));
+    for (group, path) in [
+        (Group::Unstaged, "a.rs"),
+        (Group::Unstaged, "b.rs"),
+        (Group::Untracked, "new.txt"),
+    ] {
+        assert_eq!(view.key(Key::NextWrapping).diff, Some(target(group, path)));
+    }
+    assert_eq!(
+        view.key(Key::NextWrapping).diff,
+        Some(first.clone()),
+        "past the last file: the first"
+    );
+    assert_eq!(view.selected, Some(first));
 }
 
 #[test]
@@ -1564,9 +1733,6 @@ fn a_collapsed_diff_ignores_hunk_keys_and_stages_the_whole_file() {
     view.begin_diff();
     view.diff_loaded(&a, Ok(laid_out(vec![hunk(1, 1, 1, 1), hunk(20, 1, 20, 1)])));
     assert!(view.diff_collapsed());
-    view.key(Key::NextHunk);
-    view.key(Key::PreviousHunk);
-    assert_eq!(view.hunk, None);
     // A hunk chosen before the collapse is not staged blind.
     view.hunk = Some(1);
     let file = view.stage_key(Stage::Unstage).unwrap();
@@ -1583,6 +1749,33 @@ fn a_collapsed_diff_ignores_hunk_keys_and_stages_the_whole_file() {
     view.toggle_viewed(&a);
     view.toggle_viewed(&a);
     assert_eq!(view.hunk, None);
+}
+
+#[test]
+fn n_and_p_on_a_collapsed_diff_go_to_the_next_and_previous_file() {
+    let mut view = with_viewed();
+    let a = target(Group::Staged, "a.rs");
+    view.begin_diff();
+    view.diff_loaded(&a, Ok(laid_out(vec![hunk(1, 1, 1, 1), hunk(20, 1, 20, 1)])));
+    assert!(view.diff_collapsed());
+    // No hunk is chosen in a folded diff; `n` goes on to the next file that is not viewed.
+    let moved = view.key(Key::NextHunk);
+    assert_eq!(moved.diff, Some(unstaged("a.rs")));
+    assert_eq!(view.selected, Some(unstaged("a.rs")));
+    assert_eq!(view.hunk, None);
+    show_hunks(&mut view, &unstaged("a.rs"), 2);
+    assert_eq!(view.hunk, Some(0), "its first hunk");
+    // `p` before the first hunk: the staged a.rs is viewed, so nothing earlier is open.
+    assert_eq!(view.key(Key::PreviousHunk), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("a.rs")));
+    // `p` on a collapsed diff in the middle goes back to the previous file that is open.
+    mark_viewed(&mut view, &["b.rs"]);
+    view.select(unstaged("b.rs"));
+    show_hunks(&mut view, &unstaged("b.rs"), 1);
+    assert!(view.diff_collapsed());
+    assert_eq!(view.key(Key::PreviousHunk).diff, Some(unstaged("a.rs")));
+    show_hunks(&mut view, &unstaged("a.rs"), 2);
+    assert_eq!(view.hunk, Some(1), "its last hunk");
 }
 
 #[test]
@@ -1765,4 +1958,241 @@ fn show_commit_closes_the_file_diff_of_the_commit_it_leaves() {
             .and_then(|history| history.selected.as_deref()),
         Some("a")
     );
+}
+
+/// A Working view whose only listed files are the modified Changes files `names`, the first
+/// one selected.
+fn changes(names: &[&str]) -> GitView {
+    let mut view = GitView::new(Ulid::new(), None);
+    assert!(view.begin_status().is_some());
+    let status = GitStatus {
+        unstaged: names
+            .iter()
+            .map(|name| file(name, ChangeKind::Modified))
+            .collect(),
+        ..GitStatus::default()
+    };
+    let requests = view.status_loaded(Ok(status));
+    assert_eq!(requests.diff, Some(target(Group::Unstaged, names[0])));
+    view
+}
+
+/// The daemon answers that the Changes files `names` are viewed.
+fn mark_viewed(view: &mut GitView, names: &[&str]) {
+    let (params, serial) = view.begin_viewed();
+    let files = names.iter().map(|name| viewed_file(name, false)).collect();
+    view.viewed_loaded(serial, (params.mode, params.since), files);
+}
+
+fn unstaged(path: &str) -> Target {
+    target(Group::Unstaged, path)
+}
+
+#[test]
+fn marking_a_file_viewed_selects_the_next_one_that_is_not_viewed() {
+    let mut view = changes(&["a.rs", "b.rs", "c.rs"]);
+    // Not viewed yet: nothing moves.
+    assert_eq!(view.next_unviewed(&unstaged("a.rs")), Requests::default());
+    view.toggle_viewed(&unstaged("a.rs")).unwrap();
+    let moved = view.next_unviewed(&unstaged("a.rs"));
+    assert_eq!(moved.diff, Some(unstaged("b.rs")));
+    assert_eq!(view.selected, Some(unstaged("b.rs")));
+    // The optimistic marks decide: a second `v` does not jump back to a.rs.
+    view.toggle_viewed(&unstaged("b.rs")).unwrap();
+    assert_eq!(
+        view.next_unviewed(&unstaged("b.rs")).diff,
+        Some(unstaged("c.rs"))
+    );
+    // Every file viewed: the selection stays and nothing is requested.
+    view.toggle_viewed(&unstaged("c.rs")).unwrap();
+    assert_eq!(view.next_unviewed(&unstaged("c.rs")), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("c.rs")));
+}
+
+#[test]
+fn next_unviewed_wraps_to_the_top_and_skips_viewed_files() {
+    let mut view = changes(&["a.rs", "b.rs", "c.rs"]);
+    mark_viewed(&mut view, &["b.rs"]);
+    view.select(unstaged("c.rs"));
+    view.toggle_viewed(&unstaged("c.rs")).unwrap();
+    // Nothing below c.rs: wraps to a.rs (b.rs is viewed).
+    assert_eq!(
+        view.next_unviewed(&unstaged("c.rs")).diff,
+        Some(unstaged("a.rs"))
+    );
+}
+
+#[test]
+fn v_on_a_viewed_file_only_clears_the_mark() {
+    let mut view = changes(&["a.rs", "b.rs"]);
+    mark_viewed(&mut view, &["a.rs"]);
+    assert!(!view.toggle_viewed(&unstaged("a.rs")).unwrap().viewed);
+    assert_eq!(view.next_unviewed(&unstaged("a.rs")), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("a.rs")));
+}
+
+#[test]
+fn marking_another_row_or_a_history_file_moves_nothing() {
+    let mut view = changes(&["a.rs", "b.rs", "c.rs"]);
+    // a.rs is selected; the box of b.rs was ticked.
+    view.toggle_viewed(&unstaged("b.rs")).unwrap();
+    assert_eq!(view.next_unviewed(&unstaged("b.rs")), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("a.rs")));
+    // In the History the keys only look at the commit's files: even a marked, selected Changes
+    // file does not move the selection.
+    let mut view = changes(&["a.rs", "b.rs"]);
+    view.toggle_viewed(&unstaged("a.rs")).unwrap();
+    let _ = view.show(Section::History);
+    view.selected = Some(unstaged("a.rs"));
+    assert!(view.viewed.contains(Group::Unstaged, "a.rs"));
+    assert_eq!(view.next_unviewed(&unstaged("a.rs")), Requests::default());
+    assert_eq!(view.selected, Some(unstaged("a.rs")));
+}
+
+#[test]
+fn a_hunk_of_a_modified_changes_file_can_be_discarded_alone() {
+    let mut view = changes(&["a.rs", "b.rs"]);
+    // Diff still loading: no hunk to name.
+    assert!(!view.hunks_discardable());
+    assert_eq!(view.hunk_discard(0), None);
+    show_hunks(&mut view, &unstaged("a.rs"), 2);
+    assert!(view.hunks_discardable());
+    let discard = view.hunk_discard(1).unwrap();
+    assert_eq!(
+        discard
+            .hunk
+            .as_ref()
+            .map(|(index, hunk)| (*index, hunk.old_start)),
+        Some((1, 11))
+    );
+    assert_eq!(discard.title(), "Discard this hunk?");
+    assert_eq!(discard.confirm_label(), "Discard hunk");
+    assert!(discard.sentence().contains("This hunk of “a.rs”"));
+    let params = discard.params();
+    assert!(params.confirm && params.paths.is_empty());
+    let named = params.hunk.unwrap();
+    assert_eq!((named.path.as_str(), named.hunk.old_start), ("a.rs", 11));
+    assert_eq!(view.hunk_discard(2), None, "no such hunk");
+    // The file's own confirmation is unchanged.
+    let file = view.discard(&unstaged("a.rs")).unwrap();
+    assert_eq!(file.title(), "Discard changes?");
+    assert_eq!(file.params().paths, ["a.rs"]);
+    assert_eq!(file.params().hunk, None);
+}
+
+#[test]
+fn x_takes_the_current_hunk_else_the_file() {
+    let mut view = changes(&["a.rs"]);
+    show_hunks(&mut view, &unstaged("a.rs"), 2);
+    assert_eq!(view.discard_key().unwrap().hunk, None, "no current hunk");
+    view.key(Key::PreviousHunk);
+    assert_eq!(
+        view.discard_key().unwrap().hunk.map(|(index, _)| index),
+        Some(1)
+    );
+    // A viewed file's diff is folded: its hidden hunk is not discarded blind.
+    mark_viewed(&mut view, &["a.rs"]);
+    assert!(view.diff_collapsed());
+    assert_eq!(view.discard_key().unwrap().hunk, None);
+}
+
+#[test]
+fn staged_untracked_and_deleted_files_have_no_hunk_discard() {
+    let mut view = loaded();
+    let staged = target(Group::Staged, "a.rs");
+    show_hunks(&mut view, &staged, 1);
+    assert!(!view.hunks_discardable(), "staged");
+    assert_eq!(view.discard_key(), None, "staged files have no discard");
+    let gone = unstaged("b.rs");
+    view.select(gone.clone());
+    show_hunks(&mut view, &gone, 1);
+    assert!(!view.hunks_discardable(), "deleted");
+    assert_eq!(view.hunk_discard(0), None);
+    assert_eq!(
+        view.discard_key().unwrap().hunk,
+        None,
+        "the file goes by path"
+    );
+    let new = target(Group::Untracked, "new.txt");
+    view.select(new.clone());
+    show_hunks(&mut view, &new, 1);
+    assert_eq!(view.hunk_discard(0), None, "untracked");
+    assert_eq!(view.discard_key().unwrap().hunk, None);
+}
+
+#[test]
+fn the_hunk_dialog_lists_only_its_rows_and_stops_when_the_hunk_changed() {
+    let mut view = changes(&["a.rs"]);
+    let a = unstaged("a.rs");
+    view.begin_diff();
+    view.diff_loaded(&a, Ok(two_hunks()));
+    let shown = view.shown_diff(&a).unwrap();
+    // Rows: Hunk(0) + 4 lines, Gap, Hunk(1) + 2 lines.
+    assert_eq!(shown.rows.len(), 9);
+    let second = view.hunk_discard(1).unwrap();
+    assert_eq!(second.preview_rows(&shown), (6..9, 0));
+    let first = view.hunk_discard(0).unwrap();
+    assert_eq!(first.preview_rows(&shown), (0..5, 0));
+    let file = view.discard(&a).unwrap();
+    assert_eq!(file.preview_rows(&shown), (0..9, 0));
+    assert!(second.hunk_is_current(&shown));
+    // The diff reloads (an agent edited the file): the dialog's hunk is no longer there.
+    view.begin_diff();
+    view.diff_loaded(&a, Ok(laid_out(vec![hunk(1, 1, 1, 1)])));
+    let reloaded = view.shown_diff(&a).unwrap();
+    assert!(!second.hunk_is_current(&reloaded));
+    assert!(
+        file.hunk_is_current(&reloaded),
+        "a file discard has no hunk"
+    );
+}
+
+#[test]
+fn a_hunk_dialog_is_not_ready_once_its_hunk_changed() {
+    let mut view = changes(&["a.rs"]);
+    let a = unstaged("a.rs");
+    view.begin_diff();
+    view.diff_loaded(&a, Ok(two_hunks()));
+    let second = view.hunk_discard(1).unwrap();
+    let file = view.discard(&a).unwrap();
+    assert!(view.discard_ready(&second));
+    assert!(view.discard_ready(&file));
+    // The diff reloads (an agent edited the file): the second hunk is gone.
+    view.begin_diff();
+    view.diff_loaded(&a, Ok(laid_out(vec![hunk(1, 1, 1, 1)])));
+    assert!(!view.discard_ready(&second), "stale hunk");
+    assert!(view.discard_ready(&file), "a file discard has no hunk");
+}
+
+#[test]
+fn the_history_gives_no_hunk_discard() {
+    let mut view = history();
+    let x = commit_target("b", "x");
+    show_hunks(&mut view, &x, 2);
+    assert!(!view.hunks_discardable());
+    assert_eq!(view.hunk_discard(0), None);
+    view.key(Key::NextHunk);
+    assert_eq!(
+        view.discard_key(),
+        None,
+        "a commit's files are not discarded"
+    );
+}
+
+#[test]
+fn the_hunk_sentence_names_the_staged_changes_that_stay() {
+    // `loaded()`'s a.rs is both staged and modified.
+    let mut view = loaded();
+    let a = unstaged("a.rs");
+    view.select(a.clone());
+    show_hunks(&mut view, &a, 1);
+    let sentence = view.hunk_discard(0).unwrap().sentence();
+    assert!(sentence.contains("Its staged changes stay."));
+    // A file with no staged changes says nothing of them.
+    let mut view = changes(&["b.rs"]);
+    let b = unstaged("b.rs");
+    show_hunks(&mut view, &b, 1);
+    let sentence = view.hunk_discard(0).unwrap().sentence();
+    assert!(sentence.contains("This hunk of “b.rs”"));
+    assert!(!sentence.contains("staged"));
 }

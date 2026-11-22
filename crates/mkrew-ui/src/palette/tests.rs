@@ -302,6 +302,9 @@ fn availability_follows_the_view() {
     assert!(git.contains(&Command::AddComment));
     assert!(git.contains(&Command::PickUp));
     assert!(git.contains(&Command::SendSelection));
+
+    let docs = commands(&context(View::Docs));
+    assert!(docs.contains(&Command::SendSelection));
     assert!(
         !git.contains(&Command::ClosePane),
         "panes are not on screen"
@@ -394,6 +397,7 @@ fn availability_follows_the_view() {
             Command::ToggleFullScreen,
             Command::ToggleSidebar,
             Command::ToggleCompactSidebar,
+            Command::ToggleWidgetBar,
             Command::VoiceInput,
             Command::AskAi
         ]
@@ -406,6 +410,23 @@ fn availability_follows_the_view() {
             .any(|e| e.action == Action::Run(Command::OpenSettings)),
         "settings open without a workspace"
     );
+}
+
+#[test]
+fn the_widget_bar_toggle_is_listed_without_a_workspace() {
+    let none = Context {
+        workspace: false,
+        workspaces: 0,
+        tabs: 0,
+        ..context(View::Terminals)
+    };
+    let listed = entries(&Keymap::defaults(), &none, &[], &[], &[]);
+    let entry = listed
+        .iter()
+        .find(|e| e.action == Action::Run(Command::ToggleWidgetBar))
+        .expect("listed without a workspace");
+    assert_eq!(entry.title, "View: Show/hide widget bar");
+    assert_eq!(entry.shortcut, "Ctrl+Alt+Shift+J");
 }
 
 #[test]
@@ -494,6 +515,27 @@ fn manage_prompts_is_listed_without_a_workspace_and_in_a_machine_window() {
 }
 
 #[test]
+fn the_theme_file_actions_are_listed_without_a_workspace() {
+    let none = Context {
+        workspace: false,
+        workspaces: 0,
+        tabs: 0,
+        ..context(View::Terminals)
+    };
+    let listed = entries(&Keymap::defaults(), &none, &[], &[], &[]);
+    for (extra, title) in [
+        (Extra::NewThemeFromCurrent, "Theme: New theme from current"),
+        (Extra::OpenThemesFolder, "Theme: Open themes folder"),
+    ] {
+        let entry = listed
+            .iter()
+            .find(|e| e.action == Action::Extra(extra))
+            .unwrap_or_else(|| panic!("{extra:?} listed without a workspace"));
+        assert_eq!(entry.title, title);
+    }
+}
+
+#[test]
 fn workspace_extras_need_an_active_workspace() {
     let workspace = [
         Extra::WorkspacePin,
@@ -514,12 +556,14 @@ fn workspace_extras_need_an_active_workspace() {
 
 fn extras(context: &Context) -> Vec<Extra> {
     // Listed by the "workspace extras" test and the single-action tests below.
-    const SEPARATE: [Extra; 12] = [
+    const SEPARATE: [Extra; 14] = [
         Extra::RunSetup,
         Extra::Ports,
         Extra::PhoneAccess,
         Extra::CheckUpdates,
         Extra::AddMachine,
+        Extra::NewThemeFromCurrent,
+        Extra::OpenThemesFolder,
         Extra::ManagePrompts,
         Extra::WorkspacePin,
         Extra::WorkspaceExplorer,
@@ -1203,25 +1247,29 @@ fn mark_unread_is_listed_only_for_a_session_that_can_be_marked() {
 
 #[test]
 fn theme_entries_list_every_theme_with_its_appearance_and_mark_the_current() {
-    let entries = theme_entries("Dracula");
+    let catalog = crate::theme_catalog::ThemeCatalog::builtin();
+    let entries = theme_entries(&catalog, "Dracula");
     assert_eq!(entries.len(), crate::theme::THEMES.len());
     assert_eq!(entries[0].action, Action::Theme(0));
     assert_eq!(entries[0].title, "Mkrew Dark");
     assert_eq!(entries[0].shortcut, "Dark");
     assert_eq!(entries[2].title, "Dracula");
     assert_eq!(entries[2].shortcut, "✓ Dark");
-    assert_eq!(entries[7].shortcut, "Light");
+    assert_eq!(entries[12].title, "Mkrew Light");
+    assert_eq!(entries[13].shortcut, "Light");
 }
 
 #[test]
 fn the_picker_starts_on_the_current_theme_and_moves_from_there() {
-    let mut palette = Palette::new(theme_entries("Dracula"));
+    let catalog = crate::theme_catalog::ThemeCatalog::builtin();
+    let mut palette = Palette::new(theme_entries(&catalog, "Dracula"));
     palette.pick_entry(2);
     assert_eq!(palette.picked(), Some(Action::Theme(2)));
     palette.step(1);
     assert_eq!(palette.picked(), Some(Action::Theme(3)));
-    palette.insert("solar");
-    assert_eq!(palette.picked(), Some(Action::Theme(10)));
+    palette.insert("solarized light");
+    let solarized_light = catalog.index_of("Solarized Light").unwrap();
+    assert_eq!(palette.picked(), Some(Action::Theme(solarized_light)));
 }
 
 #[test]

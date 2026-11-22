@@ -15,7 +15,15 @@ impl Shell {
         let mut fonts: Vec<String> = cx.text_system().all_font_names();
         fonts.sort_unstable_by_key(|font| font.to_lowercase());
         fonts.dedup();
-        self.settings_dialog = Some(SettingsDialog::new(settings, fonts));
+        let mut dialog = SettingsDialog::new(settings, fonts);
+        dialog.set_catalog(cx.global::<ThemeCatalog>().clone());
+        // The dialog this one replaces may have been previewing a card: the kept theme comes
+        // back (the new dialog starts with no preview).
+        if let Some((mode, _)) = self.gallery_preview.take() {
+            theme::refresh(mode, window, cx);
+            cx.refresh_windows();
+        }
+        self.settings_dialog = Some(dialog);
         self.settings_from_composer =
             self.composer_session(window).is_some() && self.composer_focus.is_focused(window);
         // The task dialog under it stays the open dialog: its late replies (the image save,
@@ -32,6 +40,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.restore_theme_pick(window, cx);
         self.settings_dialog = None;
         if std::mem::take(&mut self.settings_from_composer)
             && self.composer_session(window).is_some()
@@ -108,16 +117,27 @@ impl Shell {
         {
             self.prompts_body_scroll.scroll_to_bottom();
         }
-        // Keep the focused row on screen: the banner and the Keyboard search box come before
-        // the cards, and a card holds several rows.
-        if let Some(dialog) = &self.settings_dialog
-            && let Focus::Row(index) = dialog.focus
-        {
-            let banner = self.settings_notice(dialog).is_some();
-            let search = keyboard_search_shown(dialog);
-            let card = dialog.group_of(index, &self.keymap);
-            self.settings_scroll
-                .scroll_to_item(card + usize::from(banner) + usize::from(search));
+        // Keep the focused row on screen: the banner, the machine's daemon note, the Keyboard
+        // search box and the theme gallery come before the cards, and a card holds several
+        // rows. A gallery card is one of many in a child taller than the dialog, so it
+        // scrolls itself into view.
+        if let Some(dialog) = &self.settings_dialog {
+            match dialog.focus {
+                Focus::Row(index) => {
+                    let banner = usize::from(self.settings_notice(dialog).is_some());
+                    let note = usize::from(
+                        (dialog.searching() || matches!(dialog.tab, Tab::Settings(_)))
+                            && self.machine_name().is_some(),
+                    );
+                    let search = usize::from(keyboard_search_shown(dialog));
+                    let gallery = usize::from(dialog.gallery_shown());
+                    let card = dialog.group_of(index, &self.keymap);
+                    self.settings_scroll
+                        .scroll_to_item(card + banner + note + search + gallery);
+                }
+                Focus::Gallery(_) if dialog.gallery_shown() => self.gallery_reveal.set(true),
+                _ => {}
+            }
         }
     }
 
@@ -177,9 +197,12 @@ impl Shell {
                     dialog.bound(command, reply);
                 }
             }
+            Effect::KeepTheme { name, dark } => self.keep_theme(&name, dark, window, cx),
             Effect::AddMachine(machine) => self.add_machine(machine, cx),
             Effect::Prompts(action) => self.prompts_action(action, window, cx),
         }
+        // A hover, a keyboard move or Esc changed what the gallery previews.
+        self.sync_theme_preview(window, cx);
         // The Prompts page reads its folder when it opens and after every write.
         self.sync_prompts();
         cx.notify();
@@ -348,6 +371,11 @@ impl Shell {
                     .flatten(),
             )
             .children(search.map(|search| search.mb(px(below))))
+            .children(
+                dialog
+                    .gallery_shown()
+                    .then(|| self.render_theme_gallery(dialog, theme, cx)),
+            )
             .children(self.settings_cards(dialog, &rows, typing, theme, cx));
 
         let header = div()
@@ -850,6 +878,8 @@ impl Shell {
                 .on_press(!read_only, Self::press_row(index, cx))
                 .into_any_element()
             }
+            // Hidden rows are never drawn.
+            Kind::Strings => div().into_any_element(),
         }
     }
 

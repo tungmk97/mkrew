@@ -16,6 +16,30 @@ impl Shell {
             return;
         };
         self.select_git_file(project_id, target, window, cx);
+        self.show_git_discard(discard, window, cx);
+    }
+
+    /// "Discard hunk" and `x` with a current hunk: the confirmation for that hunk of the shown
+    /// diff. It opens over the diff as it is: no selection change, no scroll.
+    pub(crate) fn open_git_hunk_discard(
+        &mut self,
+        project_id: Ulid,
+        hunk: usize,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some(discard) = self.git_view(project_id).hunk_discard(hunk) {
+            self.show_git_discard(discard, window, cx);
+        }
+    }
+
+    /// Shows the discard confirmation `discard`; the keyboard goes to the dialog.
+    pub(crate) fn show_git_discard(
+        &mut self,
+        discard: git_view::Discard,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.git_discard = Some(discard);
         self.dialog_serial += 1;
         window.focus(&self.dialog_focus, cx);
@@ -43,13 +67,22 @@ impl Shell {
         }
     }
 
-    /// The destructive confirm: `git.discard` of the dialog's file, `confirm: true`.
+    /// The destructive confirm: `git.discard` of the dialog's file or hunk, `confirm: true`.
     pub(crate) fn confirm_git_discard(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         let serial = self.dialog_serial;
-        let Some(dialog) = self.git_discard.as_mut().filter(|dialog| !dialog.busy) else {
+        // The diff reloads while the dialog is open: what it lists must still be what is
+        // shown, as the (then disabled) confirm button says.
+        let ready = self.git_discard.as_ref().is_some_and(|dialog| {
+            !dialog.busy
+                && self
+                    .git
+                    .get(&dialog.project_id)
+                    .is_some_and(|view| view.discard_ready(dialog))
+        });
+        let Some(dialog) = self.git_discard.as_mut().filter(|_| ready) else {
             return;
         };
         dialog.busy = true;
@@ -84,6 +117,8 @@ impl Shell {
                             shell.toast_error(format!("Discard failed: {error}"), cx);
                         }
                         cx.notify();
+                        // A hunk that no longer applies: read the diff again (spec 7).
+                        shell.refresh_git(project_id, window, cx);
                     }
                 }
             });
@@ -211,8 +246,9 @@ impl Shell {
         .detach();
     }
 
-    /// "Discard changes?" of a Git view file: what is lost (the file's diff), Cancel and the
-    /// danger confirm, enabled once that diff is shown. Looks like the undo dialog.
+    /// "Discard changes?" / "Discard this hunk?" of a Git view file or hunk: what is lost (the
+    /// file's diff, or that hunk), Cancel and the danger confirm, enabled once that diff is
+    /// shown. Looks like the undo dialog.
     pub(crate) fn render_git_discard(
         &self,
         dialog: &git_view::Discard,
@@ -243,8 +279,15 @@ impl Shell {
             }
             _ => None,
         });
+        let stale = shown
+            .as_deref()
+            .is_some_and(|shown| !dialog.hunk_is_current(shown));
         let body = match (&shown, failed) {
             _ if gone => muted("This file no longer has these changes.".into()).into_any_element(),
+            _ if stale => {
+                muted("This hunk changed meanwhile. Close this and choose it again.".into())
+                    .into_any_element()
+            }
             (Some(shown), _) if shown.diff.binary || shown.diff.too_large => muted(format!(
                 "{} {} lines added, {} removed.",
                 if shown.diff.binary {
@@ -258,10 +301,7 @@ impl Shell {
             .into_any_element(),
             (Some(shown), _) => {
                 let project_id = dialog.project_id;
-                let more = shown
-                    .rows
-                    .len()
-                    .saturating_sub(git_view::DISCARD_PREVIEW_ROWS);
+                let (rows, more) = dialog.preview_rows(shown);
                 div()
                     .flex()
                     .flex_col()
@@ -277,13 +317,9 @@ impl Shell {
                             .rounded(px(radius::MEDIUM))
                             .bg(rgb(theme.surface))
                             .overflow_scroll()
-                            .children(
-                                (0..shown.rows.len().min(git_view::DISCARD_PREVIEW_ROWS)).map(
-                                    |index| {
-                                        git_diff_preview_row(shown, index, project_id, theme, cx)
-                                    },
-                                ),
-                            ),
+                            .children(rows.map(|index| {
+                                git_diff_preview_row(shown, index, project_id, theme, cx)
+                            })),
                     )
                     .when(more > 0, |el| {
                         el.child(muted(format!("… and {more} more lines.")))
@@ -319,7 +355,7 @@ impl Shell {
             }
             (None, None) => muted("Loading the changes…".into()).into_any_element(),
         };
-        let ready = shown.is_some() && !gone && !dialog.busy;
+        let ready = !dialog.busy && view.is_some_and(|view| view.discard_ready(dialog));
         let panel = floating_panel("git-discard-dialog", theme)
             .w(px(theme::UNDO_DIALOG_WIDTH))
             .flex()
@@ -338,7 +374,7 @@ impl Shell {
                     .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
-                    .child("Discard changes?"),
+                    .child(dialog.title()),
             )
             .child(
                 div()
@@ -364,7 +400,7 @@ impl Shell {
                             })),
                     )
                     .child(if ready {
-                        danger_button("git-discard-confirm", "Discard changes", theme)
+                        danger_button("git-discard-confirm", dialog.confirm_label(), theme)
                             .focus_stop(theme)
                             .tooltip(tooltip(theme, "Discard the changes shown above", ""))
                             .on_click(cx.listener(|shell, _, window, cx| {
@@ -374,7 +410,7 @@ impl Shell {
                         let label = if dialog.busy {
                             "Discarding…"
                         } else {
-                            "Discard changes"
+                            dialog.confirm_label()
                         };
                         disabled_button("git-discard-confirm", label, theme, false)
                             .bg(rgb(theme.diff_del_bg))

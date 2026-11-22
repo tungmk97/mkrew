@@ -293,6 +293,9 @@ mod tests {
         fn discard(&self, _: &Path, _: &[String]) -> io::Result<()> {
             unreachable!()
         }
+        fn discard_hunk(&self, _: &Path, _: &Repo, _: &str) -> io::Result<()> {
+            unreachable!()
+        }
         fn commit(&self, _: &Path, _: &str) -> io::Result<String> {
             unreachable!()
         }

@@ -45,16 +45,20 @@ impl Shell {
         let reading_default = ui.reading_width;
         let chat_default = ui.chat_default;
         let board_all = ui.board_all_workspaces;
+        let (widget_bar, widgets_hidden) = (ui.widget_bar, ui.widgets_hidden);
         let (md_mode, md_split) = (ui.md_mode, files_view::md_split_share(ui.md_split));
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
         let sidebar_mode = ui.sidebar;
         let right_panel = inspector::RightPanel::from_mode(ui.right_panel);
         let prompts_dir = paths.prompts_dir();
+        let themes_dir = paths.themes_dir();
         let config_dir = paths.config_dir.clone();
         let main_window = window.window_handle();
         // System mode follows the OS live (ADR 0027).
-        cx.observe_window_appearance(window, |_, window, cx| {
+        cx.observe_window_appearance(window, |shell, window, cx| {
+            // A preview was built for the old appearance; the kept theme is rebuilt now.
+            shell.drop_gallery_preview();
             theme::refresh(cx.theme().mode, window, cx);
             cx.notify();
         })
@@ -136,13 +140,20 @@ impl Shell {
                 let now = status::now_ms();
                 let ticked = this.update_in(cx, |shell, window, cx| {
                     // ponytail: mtime poll on the 500 ms tick; a file watcher if it ever shows
-                    // in a profile.
+                    // in a profile. The themes folder rides the same tick (the names, times
+                    // and sizes of its `*.toml` files): a folder with hundreds of files costs
+                    // one stat each per tick; the upgrade path is `notify`.
                     let modified = std::fs::metadata(&shell.settings_file)
                         .and_then(|m| m.modified())
                         .ok();
                     if modified != shell.settings_modified {
                         shell.settings_modified = modified;
                         shell.apply_settings_file(window, cx);
+                    }
+                    let themes = ThemesStamp::read(&shell.themes_dir);
+                    if themes != shell.themes_stamp {
+                        shell.themes_stamp = themes;
+                        shell.apply_themes_dir(window, cx);
                     }
                     // Toasts hide here, within one tick of their time (SPEC §14).
                     if shell.toasts.expire(Instant::now()) {
@@ -323,6 +334,9 @@ impl Shell {
             keymap_errors: keymap_errors.to_vec(),
             keymap_file,
             settings_modified: None,
+            // The folder as the startup load saw it: the poll reloads only on a change.
+            themes_stamp: ThemesStamp::read(&themes_dir),
+            themes_dir,
             settings_error: None,
             settings_file,
             prompts_dir,
@@ -339,6 +353,7 @@ impl Shell {
             workspace_menu: None,
             file_menu: None,
             file_tab_menu: None,
+            widget_menu: None,
             tab_menu: None,
             card_menu: None,
             menu_focus: cx.focus_handle(),
@@ -402,6 +417,9 @@ impl Shell {
             jira_filter_focus: cx.focus_handle(),
             jira_scroll: ScrollHandle::new(),
             board_all,
+            widget_bar,
+            widgets_hidden,
+            widget_data: mkrew_ui::widget_bar::WidgetData::default(),
             selected_card: None,
             starting: HashSet::new(),
             run_with: None,
@@ -486,6 +504,8 @@ impl Shell {
             palette_recent: Vec::new(),
             palette_return: None,
             theme_pick: None,
+            gallery_preview: None,
+            gallery_reveal: Default::default(),
             prompt_picker: None,
             prompt_picker_scroll: ScrollHandle::new(),
             slash_picker: None,
@@ -719,6 +739,9 @@ impl Shell {
                 shell.status = Status::Disconnected;
                 shell.report_machine_state(MachineState::Reconnecting);
                 shell.connection = None;
+                // The load figures belong to the daemon that went away; the limits stay
+                // until the new connection's list replaces them (`reset_connection_state`).
+                shell.widget_data.clear_machine();
                 // Kept with its draft: `save_task` / `delete_task` do nothing without a
                 // connection, and an in-flight save is not waited for.
                 if let Some(dialog) = shell.task_dialog.as_mut() {
@@ -868,6 +891,7 @@ impl Shell {
             .filter_map(|(id, view)| Some((id, view.into_commit_draft()?)))
             .collect();
         self.git_summary = None;
+        self.widget_data.clear_limits();
         self.close_popups(window, cx);
     }
 
@@ -948,6 +972,7 @@ impl Shell {
                         shell.load_usage(window, cx);
                         shell.load_ports(window, cx);
                         shell.load_plans(window, cx);
+                        shell.load_limits(window, cx);
                         shell.status = Status::Connected;
                         let current = shell
                             .workspace
@@ -1040,6 +1065,8 @@ impl Shell {
                     self.reading_default = settings.ui.reading_width;
                     self.chat_default = settings.ui.chat_default;
                     self.board_all = settings.ui.board_all_workspaces;
+                    self.widget_bar = settings.ui.widget_bar;
+                    self.widgets_hidden = settings.ui.widgets_hidden.clone();
                     self.follow_md_mode(settings.ui.md_mode);
                     if !self.md_split_dragging {
                         self.md_split = files_view::md_split_share(settings.ui.md_split);
@@ -1175,6 +1202,7 @@ impl Shell {
             sidebar: self.sidebar_layout.mode(),
             modal: self.modal_open(),
             all_board: self.all_board_shown(),
+            widget_bar: self.widget_bar,
         }
     }
 
@@ -1214,6 +1242,7 @@ impl Shell {
                 data_changed |= self.usages.apply(event);
                 data_changed |= self.plans.apply(event);
                 data_changed |= self.ports.apply(event);
+                data_changed |= self.widget_data.apply(event);
                 data_changed |= self.composers.apply(event);
                 if data_changed {
                     let shown = self.batch_shown(&mut shown_now, window);

@@ -572,6 +572,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `port.list` | – | `PortRow[]`: every listening TCP port of the daemon's machine (`port`, `addr`, `pid`, `process`, `project_id?`, `worktree_task_id?`, `branch?` without `mkrew/`, `session_id?`, `session_title?`, `run_command?`); a pid under a live session takes that session's workspace, worktree and run command; else a cwd inside a workspace or task worktree folder (the longest wins) takes it; the daemon and its own children (`mk web`) are left out (spec 2026-11-01, ADR 0091) |
 | `port.stop` | `port`, `pid` | ok - lists again first; `not_found` when `pid` no longer holds `port`; a run command's session is killed like `project.run_stop`; any other process is killed with its descendants, never its parents, so a shell pane or an agent stays; `invalid_state` when the OS refuses, when the daemon is among the descendants (it never kills itself), or when `pid` is a session's own root process |
 | `watch.release` | `project_id`, `worktree_task_id?` | ok (`null`) - the UI no longer shows that workspace (or task worktree): it gives back the file watcher that `doc.*`, `fs.*` and `git.status` keep running. The watcher stops unless a session of the project is live; a later request of those kinds keeps it again (ADR 0087) |
+| `limits.get` | - | `AgentLimits[]`: the newest 5-hour and weekly limits each agent reported (`agent` = claude or codex, `five_hour?` / `weekly?` = `{used_percent, resets_at?}`, `observed_at` Unix seconds); kept in daemon memory only (ADR 0102) |
+| `limits.report` | `AgentLimits` | ok (`null`) - from `mk statusline`; the daemon keeps the newest `observed_at` per agent (a tie: the later report) and announces `agent.limits`; `invalid_request` for an agent other than claude and codex or a percentage that is not a number; percentages are clamped to 0-100 |
 | `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task (`list`: Task[], filters `project_id?`/`status?`; `create` = Todo card, `title`, `prompt`, `agent_profile?` (none = project `default_agent` at run time, stored as `''`), `position?` (after the last Todo card); `update`: `title`/`prompt`/`agent_profile`, absent = unchanged, `null` agent = default; `move`: `status` + `position`; `delete` returns ok, `invalid_state` while a session of the task is not exited, its exited sessions stay as history with `task_id` = NULL — ADR 0004) |
 | `task.run` | `task_id`, `cols`, `rows` | `session_id` |
 | `task.undo_preview` | `task_id` | `checkpoint`, `fingerprint` (opaque), `changed[]` (tracked files restored), `added[]` (tracked since the checkpoint, deleted), `created[]` (untracked files created since, deleted), `diff` (≤ 1 MiB) + `diff_truncated`; `invalid_state` without a checkpoint (ADR 0005) |
@@ -617,8 +619,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `git.diff` | `project_id`, `path`, `mode`, `staged?` (working mode: index side), `commit?`, `since?` (base mode, as in `git.status`) | `binary`, `too_large`, `added`/`removed`, `hunks[]` (`old/new_start/lines`, `header`, `lines[]` with `kind`, `text`, `old_line?`/`new_line?`, `no_newline`, `crlf`) |
 | `git.viewed` | the params of `git.status` | `ViewedFile[]` (`path`, `staged`): the files of that list (`working` / `base` / the `since` checkpoint) whose viewed mark still stands (ADR 0065). Re-hashes the marked files through the diff cache and deletes marks whose diff text changed |
 | `git.set_viewed` | the params of `git.diff` (no `commit`), `viewed` (bool) | `null`; hashes the file's diff now and stores (`viewed: true`) or removes the mark; `invalid_state` for a file with no diff, `invalid_request` with `commit` |
-| `git.stage` / `git.unstage` | `paths[]` or `hunk` | ok |
-| `git.discard` | `paths[]`, `confirm: true` | ok (destructive; UI always confirms first) |
+| `git.stage` / `git.unstage` | `paths[]` or `hunk` | ok; `invalid_request` for a hunk line holding a line feed (it would add sections to the patch) |
+| `git.discard` | `paths[]` (empty with a hunk) or `hunk` (a `HunkTarget` of the unstaged diff), `confirm: true` | ok (destructive; UI always confirms first). A hunk is reversed in the working tree only (`git apply -R`, the index stays); `invalid_request` for `paths` together with a hunk, for an untracked file or for a hunk line holding a line feed; a hunk that no longer applies fails with git's text |
 | `git.commit` | `message` | new commit hash |
 | `git.log` | `limit`, `path?` | Commit[] |
 | `git.show` | `commit` | commit info + changed files |
@@ -642,6 +644,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.exited` | process exited, with `exit_code` |
 | `session.ports` | a run session's port list grew (`session_id`, `ports`): ports are scanned from its screen text (`http(s)://<host>:<port>`, `port(s)[:=] <n>`), first 4 distinct, never removed while it lives |
 | `session.usage` | an agent session's token usage changed at a turn end (§20E.3): `session_id`, `input` (fresh, cache excluded), `output`, `cache_read`, `cache_write`, `context`, `context_window?`, `model?`, `transcript?` |
+| `agent.limits` | an agent's newest limits changed (`AgentLimits`, see `limits.get`); Codex's come from its transcript at a turn end (§20E.3), Claude's from `mk statusline` |
+| `machine.stats` | CPU and RAM of the daemon's machine: `cpu_percent`, `ram_used`, `ram_total` (0 = unknown); sampled every 2 s while a client is connected, sent when CPU moves 1 point or RAM 100 MB, or every 10 s |
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
 | `session.updated` | a session's title, color, pin, position or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.move`, `session.link_plan`): the whole Session |
 | `session.terminal_title` | an agent session's terminal title (OSC 0/2) changed: `session_id`, `title?` — leading glyphs stripped, paths ignored, ≤ 60 chars, once per change; memory only (ADR 0031) |
@@ -695,6 +699,10 @@ Protocol 52 (slash picker, spec 2026-11-04): request `slash.list`.
 Protocol 53 (ADR 0095): `attachment.save` takes `owner` (`{"session": id}` or `{"project": id}`) instead of `session_id`.
 
 Protocol 54 (Polish spec 2026-11-21 §8): requests `git.branches`, `git.checkout`, `fs.search`.
+
+Protocol 55 (Widget bar spec 2026-11-22 sections 5 and 6, ADR 0102): requests `limits.get` and `limits.report`, events `agent.limits` and `machine.stats`.
+
+Protocol 56 (ADR 0103): `git.discard` takes `hunk`.
 
 Protocol 41: `session.move` and `Session.position`.
 
@@ -788,6 +796,7 @@ mk send <session-id> "<text>" [--no-submit]
 mk wait <session-id> --until idle,needs_input,done [--timeout 60000]
 mk integration install|uninstall|status <claude|codex|omp|copilot>
 mk hook <agent> <event>                # called by agent hooks, not by users
+mk statusline                          # Claude Code's status line command (ADR 0102): reports the rate limits, then runs your own status line; set up by `mk integration install claude`
 mk open <project> [file[:line]]        # opens in Zed
 mk comment list [--file <path>] [--project P]  # default project: MKREW_SESSION_ID's, else cwd's
 mk comment reply <comment-id> "<text>" # used by agents to answer review comments
@@ -818,10 +827,12 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 │ ▸ W web       1 idle│                                                                 │
 │ ▸ 2 empty workspaces I D │                                                            │
 │ 📥 Inbox clear     ⇤ │                                                                │
-└──────────────┴────────────────────────────────────────────────────────────────────────┘
+├──────────────┴────────────────────────────────────────────────────────────────────────┤
+│ 📁 api  ⎇ master · 3                  Claude 5h 42% · 7d 18%  CPU 23% · RAM 11/32 GB  v0.5.3 │
+└───────────────────────────────────────────────────────────────────────────────────────┘
 ```
 ADR 0054 simplified this screen: one place per piece of information, color for status only,
-empty things hidden, detail on hover / in menus. There is no status bar.
+empty things hidden, detail on hover / in menus. It removed the old status bar; ADR 0102 adds back a thin widget bar along the bottom (see "Widget bar" below).
 The right panel (below) is a third column right of Terminals, the Editor and the Diff while open.
 Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view bar only while a file tab or a diff is open.
 
@@ -946,6 +957,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   compact toggle in the sidebar footer, its git HEAD in the title bar's repository tooltip, the
   focused agent's context share in the tab strip (single pane) or pane header (split), and the
   other usage fields (tokens, cache, model) on the Session tab's card.
+  The widget bar of ADR 0102 is not that bar: it holds only the folder, branch, limits, machine load and version.
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
   Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`; Esc gives
   the keyboard back and keeps a typed draft on the card, like the composer).
@@ -1124,6 +1136,20 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   `port.list` is asked when it opens, every 2 s while it is open and after each Stop; nothing runs while it is closed; it closes on disconnect.
   `↑` / `↓` select, Enter opens the pane.
 - **Empty states** everywhere (see §14).
+
+### Widget bar (ADR 0102)
+
+- One bar, `WIDGET_BAR_HEIGHT` tall, along the bottom of the main window, below the sidebar and the main area (`theme.chrome`, a 1 px `theme.border` top edge, muted text, the same in dark and light).
+  Detached windows have none.
+- Left: **folder** (the workspace name; tooltip the root path; click opens it in the file explorer) and **Git** (a branch icon and `master`, with ` · 3` when 3 files changed, `2 repos` for several; click opens the Git view, and with Git already open steps to the next changed file, wrapping at the end).
+  Right: **limits** (`Claude 5h 42% · 7d 18% | Codex 5h 10% · 7d 3%`; a window below 80 % is muted, from 80 % amber, from 95 % red; the tooltip gives each reset in local time and as "in 2 h 10 min"; click opens Settings at the Integrations pages), **machine** (`CPU 23% · RAM 11.2/31.8 GB` of the daemon's machine, no click), **version** (`v0.5.3`; click runs the update check).
+- The folder and branch labels end with an ellipsis (`…`) when they pass `WIDGET_BAR_LABEL_MAX_WIDTH` (160 px); the folder's tooltip has its path, the Git tooltip every repository line.
+- A widget with nothing to show is absent: no limits reported yet, no stats yet, no workspace, no repository.
+  A limit window whose reset time passed shows nothing until a new report.
+- A narrow window drops limits first, then machine; folder, Git and version stay.
+- The bar is inert while a dialog is open and while the window is reconnecting: clicks and the right-click menu do nothing and the bar's own menu is not drawn.
+- Right-click anywhere on the bar: one checkable row per widget and "Hide widget bar".
+  `[ui] widget_bar` and `[ui] widgets_hidden` (ids `folder`, `git`, `limits`, `machine`, `version`; unknown ids are kept) remember the choices; Settings has a "Widget bar" switch on Appearance.
 
 ### Detached windows (ADR 0096)
 
@@ -1328,6 +1354,9 @@ Only edit this file. When done, for EACH comment run:
   the editor's top line goes to the page's top); scrolling the page moves nothing else. A press
   on the page puts the editor's caret on that block's first line (scrolled into view only when
   it is off screen). The page has its own keyboard focus (selection, Ctrl+C, Ctrl+A); ✎ works as in Preview.
+- **Send selection from the preview** (ADR 0103): `Ctrl+Shift+L` with text selected on the page (Preview, or Split while the editor selects nothing) sends the Markdown source of the blocks the selection touches, with `path:a-b` (§20B.4).
+  A selection inside one block sends that block's whole line range.
+  With nothing selected on the page it sends the editor's selected lines or its caret's line, as before.
 - **Palette Files scope** (`Ctrl+Shift+O`, or the "Search files…" entry at the top of the tree) fuzzy-finds files of the current workspace, in the folder the tree shows (project or task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
 - **Palette Search scope** (`Ctrl+Alt+Shift+F`) finds text in those files.
 - "Open in Zed" opens the file at the caret's line.
@@ -1403,7 +1432,12 @@ Windows (tens of ms, worse with antivirus), so:
   file stops changing (checked with every status refresh). Staging a whole viewed file keeps the
   mark; marks of Against base, a task's changes and Working changes are separate lists.
 - **Stage / unstage** per file or per hunk (daemon builds the patch, runs `git apply --cached`).
-- **Discard** per file: always confirms and shows what will be lost.
+- **Review flow** (ADR 0103): `v` on the selected file that is not viewed marks it and selects the next file below it that is not viewed, wrapping to the top (every file viewed: the selection stays); `v` on a viewed file only clears the mark.
+  `n` past the last hunk of a file selects the next file that is not viewed and its first hunk, `p` before the first hunk the previous such file and its last hunk; there is no wrap and a file without hunks is passed on the next key.
+  On a viewed file's folded diff, whose hunks are hidden, `n` / `p` go straight to the next / previous file that is not viewed; `x` there still discards the file.
+- **Discard** per file or per hunk: always confirms and shows what will be lost.
+  A hunk of a modified file in the Changes group has a "Discard hunk" button after "Stage hunk"; `x` with a current hunk opens the same confirmation for that hunk, else the file's.
+  The daemon reverses the hunk in the working tree only (`git apply -R`); the dialog stays disabled and confirm refuses if a reload changed the hunk, and a hunk that still fails to apply shows git's text and reloads the diff.
 - **Commit:** multi-line message box, Commit button (`Ctrl+Enter`), and ✦: the workspace's
   default agent writes a Conventional Commits message from the staged changes (else the
   unstaged ones) via `ai.generate` (§7); the answer replaces the draft, nothing is committed
@@ -1472,6 +1506,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Toggle full screen | F11 |
 | Global | Toggle sidebar | Ctrl+Shift+B |
 | Global | Toggle compact sidebar | Ctrl+Alt+B |
+| Global | Show / hide the widget bar (ADR 0102) | Ctrl+Alt+Shift+J |
 | Global | Voice input: start / stop recording (§20G) | Ctrl+Shift+D |
 | Global | Ask AI: a question outside every project (§20H) | Ctrl+Shift+G |
 | Global | Focus the sidebar filter with the active row highlighted (shows the sidebar if hidden, widens the compact rail; again returns to the pane) | Alt+0 |
@@ -1531,22 +1566,22 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Next / previous file | ↓ / ↑ (or j / k) |
 | Git | Open the selected file's diff | Enter |
 | Git | Close an open menu, else unselect the picked lines, else close the diff | Esc |
-| Git | Next / previous hunk | n / p |
+| Git | Next / previous hunk (past the last / first one: the next / previous file that is not viewed) | n / p |
 | Git | Stage / unstage selected file or hunk | s / u |
 | Git | Toggle Working changes / Against base | b |
 | Git | Toggle History | h |
 | Git | Toggle Unified / Split diff | d |
 | Git | Wrap long diff lines / cut them at the edge | W |
-| Git | Mark the selected file viewed / not viewed | v |
+| Git | Mark the selected file viewed / not viewed (marking opens the next file that is not viewed) | v |
 | Git | Focus commit message / commit | c / Ctrl+Enter |
 | Git | Stage all of the selected file's group (Unstaged + Untracked when a Staged file or nothing is selected) / unstage all | Shift+S / Shift+U |
-| Git | Discard the selected file (asks first) / fetch / push | x / f / Shift+P |
+| Git | Discard the current hunk, else the selected file (asks first) / fetch / push | x / f / Shift+P |
 | Git | Comment on selected lines | Ctrl+Alt+M |
 | Git | Send comments to agent | Ctrl+Shift+S |
 | Agent (v2) | Peek the first session that needs you (↑/↓ cycle, Alt+Y / Alt+N answer, Ctrl+O open the pane, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
 | Agent (v2) | In a prompt box (the composer, the task dialog's Prompt), at the start of a line or after a space: pick the agent's command (§20B.7) / pick a file (§12A); Enter or Tab types the pick, Esc types the character | / / @ |
-| Agent (v2) | Send selection to an agent (Editor, Git diff, terminal) | Ctrl+Shift+L |
+| Agent (v2) | Send selection to an agent (Editor, Markdown preview, Docs, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
 | Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10) |
 
@@ -1654,7 +1689,7 @@ before it (`Theme::classic`).
 | `danger-bg` | #342526 | #F8E8E6 |
 | `danger-text` / `success-text` | #EF8F82 / #6FD39B | #B4382A / #1E6B3A |
 | `status-working` | #8E8CF5 | #5452D0 |
-| `status-needs-input` (attention) | #E4A452 | #A4660F |
+| `status-needs-input` (attention) | #E4A452 | #8B570D |
 | `status-done` (success) | #57C78A | #23854F |
 | `status-exited` (danger) | #EF7B6C | #C2412F |
 | `status-idle` | #7D838C | #8A8F99 |
@@ -1767,7 +1802,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   Palette: "Global: Manage prompts…" (also in a machine window); the prompt picker's last row "Manage prompts…" opens the page too.
 - Machine chip and reconnect banner (ADR 0089) add no tokens; they reuse these.
   Chip: `well` fill, `text-muted` icon and name, `radius::PILL`, `PILL_HEIGHT` (22), `ICON_SIZE_SMALL` (14), `META` text, `space::XS` between parts, `TITLE_CHIP_MAX_WIDTH` (160).
-  Dot (`status_dot`, also on the Machines rows): `status-done` #57C78A / #23854F, `status-needs-input` #E4A452 / #A4660F, `status-exited` #EF7B6C / #C2412F, `text-muted` for a closed window.
+  Dot (`status_dot`, also on the Machines rows): `status-done` #57C78A / #23854F, `status-needs-input` #E4A452 / #8B570D, `status-exited` #EF7B6C / #C2412F, `text-muted` for a closed window.
   Banner: `warning-bg` #322B23 / #F4EDE2 fill, a `BORDER_WIDTH` bottom edge in `divider`, `space::M` x `space::S` padding, `META` text in `text` (the detail line in `text-muted`), **Try now** a primary button.
   The Machines rows and Add card use `space::S` / `space::M`, `radius::MEDIUM` and `surface-raised`; a broken-file error shows `status-exited` ✕ and `text`.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
@@ -1802,14 +1837,23 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   answer rightmost (accent; the danger button for `PromptLevel::Critical`). Esc = Cancel,
   Enter/Space = the ringed button (default: the first answer), Tab/←/→ move the ring. A click
   on the shade does nothing. OS file/folder pickers stay native.
-- Theme: System (follows the OS live), Light or Dark — `[ui] theme`, cycled by the title bar toggle
-  (ADR 0027). Each slot shows a built-in theme (ADR 0078): `[ui] light_theme` (default Mkrew Light;
-  One Light, GitHub Light, Catppuccin Latte, Solarized Light, Gruvbox Light) and `[ui] dark_theme`
-  (default Mkrew Dark; One Dark, Dracula, Catppuccin Mocha, Tokyo Night, Gruvbox Dark); an unknown
-  name shows the Mkrew theme. "Theme: Select theme…" (Ctrl+Alt+J) previews while moving, Enter or a
-  click on a row saves to the slot shown, Esc restores (an outside click does not close it).
-  Settings → Appearance has "Light mode theme" / "Dark mode theme" rows. In terminals the default
-  fg/bg and ANSI 0–15 follow the theme; 256-color 16–255 and 24-bit colors are drawn as the program
+- Theme: System (follows the OS live), Light or Dark - `[ui] theme`, cycled by the title bar toggle
+  (ADR 0027).
+  Each slot shows a theme (ADR 0078, ADR 0101): `[ui] light_theme` (default Mkrew Light) and `[ui] dark_theme` (default Mkrew Dark).
+  There are 22 built-in themes.
+  Dark: Mkrew Dark, One Dark, Dracula, Catppuccin Mocha, Tokyo Night, Gruvbox Dark, Nord, Solarized Dark, GitHub Dark, Rosé Pine, Kanagawa, Everforest Dark.
+  Light: Mkrew Light, One Light, GitHub Light, Catppuccin Latte, Solarized Light, Gruvbox Light, Rosé Pine Dawn, Everforest Light, Ayu Light, Tokyo Night Day.
+  A file `<config>/mkrew/themes/*.toml` adds one (`name`, `dark` and the fields of the built-in palette, all required; the folder is polled with `settings.toml`, so a saved file shows up within a second).
+  A file whose name is a built-in's name, or an earlier file's name, is an error; the comparison ignores ASCII case.
+  An invalid file shows its error on a card and never breaks the app; a file with poor contrast loads with a "Low contrast" badge.
+  A name that is unknown, or whose file is gone, shows the slot's Mkrew theme.
+  Settings → Appearance opens with the theme gallery above its cards: "Dark" and "Light" groups of cards (a small window in the theme's own colors, its name, badges), "New theme from current" and "Open themes folder" under them.
+  Hovering a card for 120 ms, or focusing it with the keyboard (Tab reaches the gallery, arrows move between cards), shows the whole app in that theme; leaving the gallery, Esc or closing Settings restores; a click or Enter keeps the theme for its own slot.
+  "Theme: Select theme…" (Ctrl+Alt+J) lists the same themes, previews while moving, Enter or a click on a row saves to the slot shown, Esc restores (an outside click does not close it).
+  "Theme: New theme from current" and "Theme: Open themes folder" in the palette do what the two buttons under the cards do; the buttons are Tab stops with a focus ring and a tooltip.
+  Settings → Appearance also has "Light mode theme" / "Dark mode theme" rows.
+  In terminals the default fg/bg and ANSI 0–15 follow the theme;
+  256-color 16–255 and 24-bit colors are drawn as the program
   sends them.
 
 **Design check (every milestone with UI):** capture screenshots of new views in light and dark
@@ -2043,7 +2087,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
       e2e with the fake agent: a text queued while working and removed is never typed.
 - [ ] Prompt library: samples seeded on first run, variables rendered (unit tests), insertable from
       the palette, the composer and the task dialog.
-- [ ] Send selection from the Editor, Git diff and a terminal opens the right session's composer, prefilled.
+- [ ] Send selection from the Editor (also a Markdown preview selection), Docs, Git diff and a terminal opens the right session's composer, prefilled.
 - [ ] Dropping files types their paths; pasting an image stores it via `attachment.save` and types
       the path; attachments of sessions ended > 7 days ago are deleted.
 - [ ] "Run with…" on a Todo/Review card updates the task's agent and runs it.
@@ -2141,8 +2185,8 @@ follow_debounce_ms = 1500   # §20C.4
 font_family = ""            # §14; "" = system UI font; other UI sizes keep their ratio to it
 font_size = 13              # px, 8–32
 theme = "system"            # §14; "system" | "light" | "dark"; the title bar toggle writes it
-light_theme = "Mkrew Light" # §14; a built-in theme name, shown in Light mode / a light OS
-dark_theme = "Mkrew Dark"   # §14; shown in Dark mode / a dark OS
+light_theme = "Mkrew Light" # §14; a built-in theme name or the name of a file in themes/, shown in Light mode / a light OS
+dark_theme = "Mkrew Dark"   # §14; the same for Dark mode / a dark OS
 diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header toggle writes it
 inspector_width = 300       # §10; px, the right panel's width (dragging its edge writes it; kept 240–560)
 right_panel = "hidden"      # §10; "files" | "session" | "git" | "hidden"; the right panel's toggle and tabs write it
@@ -2152,6 +2196,8 @@ board_all_workspaces = false # §10; the Board shows every workspace's tasks; it
 md_mode = "preview"         # §12A; preview | split | source: how the next .md file opens; switching a file's mode writes it
 md_split = 50               # §12A; the source's share of the Markdown Split view, percent (kept 20-80); dragging the divider writes it
 chat_default = false         # §11; agent panes without a saved mode open in Chat (Claude, Codex, omp); each pane's Terminal | Chat switch overrides it
+widget_bar = true          # §10; the widget bar at the bottom of the main window; its menu and Ctrl+Alt+Shift+J write it
+widgets_hidden = []        # §10; ids of hidden widgets: folder, git, limits, machine, version; its menu writes it
 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
@@ -2290,7 +2336,7 @@ context_window = 200000        # tokens, for the % shown
    The picker's last row "Manage prompts…" and the palette's "Global: Manage prompts…" open Settings → Prompts (§14), where prompts are added, edited, renamed and deleted with `mkrew_core::prompt::{validate_name, create, save, rename, delete, read}`.
    A name is at most 64 characters and cannot be empty, start with a dot, contain `/ \ : * ? " < > |` or a control character, end in a space or a dot, or be a Windows reserved name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, also before a first dot); it is unique ignoring case, except that a prompt may be renamed to a new case of its own name.
    `save` writes a temp file in the folder and renames it over the target.
-4. **Send selection to agent.** `Ctrl+Shift+L` in the Editor (the editor's selected lines, else the caret's line), Git diff (picked new-side
+4. **Send selection to agent.** `Ctrl+Shift+L` in the Editor (a Markdown preview's selection as its blocks' source lines; else the editor's selected lines, else the caret's line), Docs (the comment selection), Git diff (picked new-side
    lines) and a terminal (selected text) opens a session picker (default: the task's session for
    Git task changes, else the workspace's most recently active agent session; same list as
    §12's send dialog), then that session's composer prefilled with
@@ -2467,6 +2513,13 @@ and milestone numbers are not reused.
    trusted). A call with no tokens (aborted) changes neither. omp's file does not hold the
    context window: `context_window` in the profile is the only source.
    Unknown/changed format → no usage, one warning in the log.
+4. **Agent limits (ADR 0102).** Limits belong to the account, so the daemon keeps the newest `AgentLimits` per agent in memory (`observed_at` wins, a tie goes to the later report) and announces each change as `agent.limits`; `limits.get` returns them.
+   Codex: `UsageReader` reads `payload.rate_limits` of each `token_count` line (also while `info` is null): `primary` / `secondary` with `window_minutes` 300 are the 5-hour window and 10080 the weekly one, any other length is ignored, `used_percent` and `resets_at` are taken as written, `observed_at` is the line's timestamp; the `track` task passes them on at each turn end.
+   Claude: `mk statusline` reads Claude Code's status line JSON from stdin (at most 1 MB), takes `rate_limits.five_hour` and `rate_limits.seven_day` (`used_percentage`, `resets_at` in Unix seconds) and sends `limits.report` within 300 ms; a failure is silent.
+   It then runs the user's own status line, saved by `mk integration install claude` in `claude-statusline.json` next to `settings.json`, through the shell with the same stdin and a 5 s timeout, and prints its output; any failure prints nothing and exits 0.
+   Install sets `statusLine` to the `mk` path followed by `statusline`, in a form both Git Bash and PowerShell parse (see ADR 0102); uninstall puts the saved line back or removes the key.
+   `mk integration status claude` says "partly installed" when the hooks are in but the status line is not.
+   omp and Copilot record no limits.
 
 **Protocol (M13):** `task.create/update` accept `worktree: bool`; Task carries `worktree`,
 `worktree_path?`, `branch?`, `fanout_of?`; new `task.merge` (`task_id`, `confirm: true`) →

@@ -157,10 +157,13 @@ pub enum Extra {
     History,
     InstallUpdate,
     AddMachine,
+    /// The Appearance gallery's two buttons (ADR 0101), for the keyboard.
+    NewThemeFromCurrent,
+    OpenThemesFolder,
 }
 
 impl Extra {
-    pub const ALL: [Self; 47] = [
+    pub const ALL: [Self; 49] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -208,6 +211,8 @@ impl Extra {
         Self::History,
         Self::InstallUpdate,
         Self::AddMachine,
+        Self::NewThemeFromCurrent,
+        Self::OpenThemesFolder,
     ];
 
     pub fn title(self) -> &'static str {
@@ -259,6 +264,8 @@ impl Extra {
             Self::History => "Global: History…",
             Self::InstallUpdate => "Global: Install update",
             Self::AddMachine => "Machine: Add…",
+            Self::NewThemeFromCurrent => "Theme: New theme from current",
+            Self::OpenThemesFolder => "Theme: Open themes folder",
         }
     }
 
@@ -309,7 +316,10 @@ impl Extra {
             }
             Self::AgentImprove => in_view(View::Terminals) && context.composer_open,
             Self::PhoneAccess | Self::CheckUpdates | Self::AddMachine => !context.machine,
-            Self::Ports | Self::ManagePrompts => true,
+            Self::Ports
+            | Self::ManagePrompts
+            | Self::NewThemeFromCurrent
+            | Self::OpenThemesFolder => true,
             Self::GitChangeBase => context.workspace && context.git && context.git_base,
             Self::GitSwitchRepo => context.workspace && context.git && context.git_repos,
             // The switch heads the Tasks side of the Board.
@@ -441,7 +451,7 @@ pub enum Action {
     Run(Command),
     Extra(Extra),
     GoTo(Target),
-    /// The theme picker's row for `theme::THEMES[i]` (ADR 0078).
+    /// The theme picker's row for the theme at this index of the theme catalog (ADR 0101).
     Theme(usize),
     /// "Agent: New <Profile> pane": a new pane with the profile at this position of the
     /// shell's profile list (see [`agent_entries`]).
@@ -639,7 +649,7 @@ pub fn title(command: Command) -> String {
         Command::GitToggleViewed => "Git: Mark file as viewed / not viewed".into(),
         Command::GitStageAll => "Git: Stage all (selected group, else every change)".into(),
         Command::GitUnstageAll => "Git: Unstage all".into(),
-        Command::GitDiscard => "Git: Discard changes to selected file…".into(),
+        Command::GitDiscard => "Git: Discard changes to selected file or hunk…".into(),
         Command::GitFetch => "Git: Fetch".into(),
         Command::GitPush => "Git: Push".into(),
         Command::NewTask => "Task: New task".into(),
@@ -666,6 +676,7 @@ pub fn title(command: Command) -> String {
         Command::ToggleSidebar => "Global: Toggle sidebar".into(),
         Command::ToggleCompactSidebar => "Global: Toggle compact sidebar".into(),
         Command::ToggleInspector => "View: Toggle right panel".into(),
+        Command::ToggleWidgetBar => "View: Show/hide widget bar".into(),
         Command::VoiceInput => "Global: Voice input (start / stop)".into(),
         Command::AskAi => "Global: Ask AI…".into(),
         Command::ContextMenu => "Global: Open context menu".into(),
@@ -689,6 +700,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::SelectTheme
         | Command::ToggleFullScreen
         | Command::ToggleSidebar
+        | Command::ToggleWidgetBar
         | Command::ToggleCompactSidebar
         | Command::VoiceInput
         | Command::AskAi => true,
@@ -737,7 +749,10 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::OpenComposer => on_panes && context.agent_pane,
         Command::ToggleChat => on_panes && context.agent_pane && context.chat,
         Command::SendSelection => {
-            in_view(View::Editor) || in_view(View::Diff) || (on_panes && context.terminal)
+            in_view(View::Editor)
+                || in_view(View::Diff)
+                || in_view(View::Docs)
+                || (on_panes && context.terminal)
         }
         Command::RunTask => in_view(View::Board),
         Command::ApproveCard => in_view(View::Board) && context.approve_card,
@@ -815,18 +830,19 @@ pub fn settings_error(keymap: &Keymap, error: Option<&str>) -> Vec<Entry> {
         .collect()
 }
 
-/// The theme picker's rows (ADR 0078): every built-in theme, its appearance on the right, the
-/// shown one marked.
-pub fn theme_entries(current: &str) -> Vec<Entry> {
-    crate::theme::THEMES
+/// The theme picker's rows (ADR 0078, ADR 0101): every theme of the catalog, its appearance
+/// on the right, the shown one marked. `Action::Theme(i)` is the index into the catalog.
+pub fn theme_entries(catalog: &crate::theme_catalog::ThemeCatalog, current: &str) -> Vec<Entry> {
+    catalog
+        .themes()
         .iter()
         .enumerate()
-        .map(|(index, entry)| {
-            let look = if entry.dark { "Dark" } else { "Light" };
+        .map(|(index, listed)| {
+            let look = if listed.dark { "Dark" } else { "Light" };
             Entry::new(
                 Action::Theme(index),
-                entry.name,
-                if entry.name == current {
+                listed.name.to_string(),
+                if &*listed.name == current {
                     format!("✓ {look}")
                 } else {
                     look.into()

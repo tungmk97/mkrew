@@ -339,6 +339,20 @@ impl Docs {
         let next = at.map_or(0, |at| at.saturating_add_signed(offset).min(last));
         shown.get(next).map(|(file, _)| file.file_path.clone())
     }
+
+    /// What "Send selection" sends from Docs (§20B.4): the selected file, the first and last
+    /// line of the comment selection (a block or a line range) and the file's source text of
+    /// those lines. `None` without a file shown, without a pick, or when the pick lies past
+    /// the end of the file (it was read again, shorter).
+    pub fn picked_lines(&self) -> Option<(String, u32, u32, String)> {
+        let (Doc::Shown(shown), Some(path), Some(pick)) =
+            (&self.doc, &self.selected, self.comments.selection)
+        else {
+            return None;
+        };
+        let text = source_text(&shown.lines, pick.start, pick.end)?;
+        Some((path.clone(), pick.start, pick.end, text))
+    }
 }
 
 /// `content` split into lines as comment anchors count them (`\n` or `\r\n` endings; a final
@@ -348,6 +362,14 @@ pub fn source_lines(content: &str) -> Vec<String> {
         .lines()
         .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
         .collect()
+}
+
+/// Lines `start..=end` (1-based, as comment anchors count) of `lines`, joined with `\n`;
+/// `None` when they reach outside the file.
+pub fn source_text(lines: &[String], start: u32, end: u32) -> Option<String> {
+    let from = usize::try_from(start).ok()?.checked_sub(1)?;
+    let to = usize::try_from(end).ok()?;
+    Some(lines.get(from..to)?.join("\n"))
 }
 
 /// Line number `n` right-aligned to the width of the largest one (`total`), for a monospaced
@@ -715,5 +737,23 @@ mod tests {
         assert_eq!(read.as_deref(), Some("a.md"));
         assert_eq!(kept.comments.begin_list("a.md").as_deref(), Some("a.md"));
         assert!(kept.comments.draft.is_some());
+    }
+
+    #[test]
+    fn a_comment_pick_is_the_selection_to_send() {
+        let mut docs = Docs::new(Ulid::new());
+        docs.selected = Some("a.md".into());
+        docs.doc = Doc::Shown(Rc::new(shown("a.md", "one\n\ntwo\nthree\n", "h")));
+        assert_eq!(docs.picked_lines(), None, "nothing picked");
+        docs.comments.pick(3, 4, false);
+        assert_eq!(
+            docs.picked_lines(),
+            Some(("a.md".into(), 3, 4, "two\nthree".into()))
+        );
+        // The file was read again, shorter: the pick lies past its end.
+        docs.doc = Doc::Shown(Rc::new(shown("a.md", "one\n", "h2")));
+        assert_eq!(docs.picked_lines(), None);
+        docs.doc = Doc::Loading;
+        assert_eq!(docs.picked_lines(), None, "no file shown");
     }
 }

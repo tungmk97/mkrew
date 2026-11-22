@@ -1243,6 +1243,46 @@ impl FileTab {
         (!text.is_empty()).then_some(text)
     }
 
+    /// What "Send selection" sends from this tab (§20B.4): the file, first and last line and
+    /// their text. In Preview the page's selection (the source lines of the blocks it touches,
+    /// as Markdown); in Split the editor's own selection first, then the page's; else the
+    /// editor's selected lines, else its caret's line. The editor's caret always answers, so
+    /// the page is asked before it.
+    pub fn picked_lines(&self) -> Option<(String, u32, u32, String)> {
+        let editor = &self.shown()?.editor;
+        let from_page = self.previewing() || (self.splitting() && editor.selection().is_none());
+        let page = from_page.then(|| self.preview_lines()).flatten();
+        if let Some((first, last, text)) = page {
+            return Some((self.path.clone(), first, last, text));
+        }
+        // The selected lines, else the caret's line.
+        let (first, last) = match editor.selection() {
+            // A selection ending at a line's start does not include that line.
+            Some(range) if range.end.col == 0 => (range.start.line, range.end.line - 1),
+            Some(range) => (range.start.line, range.end.line),
+            None => (editor.cursor().line, editor.cursor().line),
+        };
+        let text = editor.lines().get(first..=last)?.join("\n");
+        let line = |index: usize| u32::try_from(index + 1).ok();
+        Some((self.path.clone(), line(first)?, line(last)?, text))
+    }
+
+    /// The page's selection as source lines and their text; `None` without a selection, outside
+    /// Preview and Split, or while the page is of an older text (its lines may have moved).
+    fn preview_lines(&self) -> Option<(u32, u32, String)> {
+        if !(self.previewing() || self.splitting()) {
+            return None;
+        }
+        let current = self
+            .page
+            .as_ref()
+            .is_some_and(|page| Some(page.stamp) == self.stamp());
+        let page = self.preview().filter(|_| current)?;
+        let lines = preview_select::source_lines(page, self.preview_selection.as_ref()?)?;
+        let text = docs::source_text(&page.lines, lines.start, lines.end)?;
+        Some((lines.start, lines.end, text))
+    }
+
     /// Esc: `true` when there was a selection.
     pub fn clear_preview_selection(&mut self) -> bool {
         self.preview_selection.take().is_some()

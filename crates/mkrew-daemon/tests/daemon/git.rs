@@ -308,6 +308,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
             worktree_task_id: None,
             repo: None,
             paths: vec!["a.txt".into(), "new.txt".into()],
+            hunk: None,
             confirm,
         })
     };
@@ -361,11 +362,240 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
             worktree_task_id: None,
             repo: None,
             paths: vec![],
+            hunk: None,
             confirm: true,
         }),
     ] {
         assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
     }
+    client.stop();
+}
+
+/// Review flow: one hunk of an unstaged change is discarded and the other stays; `confirm`,
+/// `paths` together with a hunk, a path outside the repo and an untracked file are refused;
+/// a hunk that no longer applies fails with git's text and changes nothing.
+#[test]
+fn git_discard_one_hunk_leaves_the_other_and_refuses_the_rest() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "user.email", "t@t"]);
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    let lines: Vec<String> = (1..=20).map(|n| format!("line {n}\n")).collect();
+    std::fs::write(repo.join("a.txt"), lines.concat()).unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    let mut changed = lines.clone();
+    changed[1] = "line two\n".into();
+    changed[18] = "line nineteen\n".into();
+    std::fs::write(repo.join("a.txt"), changed.concat()).unwrap();
+    std::fs::write(repo.join("new.txt"), "new\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+    let diff = |client: &mut Client| -> FileDiff {
+        let request = Request::GitDiff(GitDiffParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: None,
+            path: "a.txt".into(),
+            mode: GitMode::Working,
+            staged: false,
+            commit: None,
+            since: None,
+        });
+        client.call(request).into_result().unwrap()
+    };
+    let discard = |path: &str, paths: &[&str], hunk: &mkrew_protocol::Hunk, confirm| {
+        Request::GitDiscard(GitDiscardParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: None,
+            paths: paths.iter().map(|&p| p.to_owned()).collect(),
+            hunk: Some(HunkTarget {
+                path: path.into(),
+                hunk: hunk.clone(),
+            }),
+            confirm,
+        })
+    };
+    let read = || std::fs::read_to_string(repo.join("a.txt")).unwrap();
+
+    let hunks = diff(&mut client).hunks;
+    assert_eq!(hunks.len(), 2);
+    for bad in [
+        discard("a.txt", &[], &hunks[0], false),
+        discard("a.txt", &["a.txt"], &hunks[0], true),
+        discard("../x", &[], &hunks[0], true),
+        discard("new.txt", &[], &hunks[0], true),
+    ] {
+        assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
+    }
+    assert_eq!(read(), changed.concat(), "the refusals changed nothing");
+
+    let _: () = client
+        .call(discard("a.txt", &[], &hunks[0], true))
+        .into_result()
+        .unwrap();
+    let mut expected = lines.clone();
+    expected[18] = "line nineteen\n".into();
+    assert_eq!(read(), expected.concat());
+    let left = diff(&mut client).hunks;
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].lines, hunks[1].lines);
+    assert_eq!(git(&repo, &["diff", "--cached", "--name-only"]), "");
+    // The same hunk again no longer applies: git's reason, nothing changes.
+    match client
+        .call(discard("a.txt", &[], &hunks[0], true))
+        .into_result::<serde_json::Value>()
+    {
+        Err(ResponseError::Daemon(body)) => {
+            assert_eq!(body.code, ErrorCode::Internal);
+            assert!(
+                body.message.starts_with("git.discard failed: git failed: "),
+                "{}",
+                body.message
+            );
+        }
+        other => panic!("expected a daemon error, got {other:?}"),
+    }
+    assert_eq!(read(), expected.concat());
+    client.stop();
+}
+
+/// A hunk line holding a line break could add sections to the patch: stage and discard
+/// refuse it and change nothing.
+#[test]
+fn git_stage_and_discard_refuse_a_hunk_line_with_a_line_break() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "user.email", "t@t"]);
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("a.txt"), "two\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+    let request = Request::GitDiff(GitDiffParams {
+        project_id: id,
+        worktree_task_id: None,
+        repo: None,
+        path: "a.txt".into(),
+        mode: GitMode::Working,
+        staged: false,
+        commit: None,
+        since: None,
+    });
+    let mut hunk = client
+        .call(request)
+        .into_result::<FileDiff>()
+        .unwrap()
+        .hunks
+        .remove(0);
+    hunk.lines[0].text.push_str("\ndiff --git a/b.txt b/b.txt");
+    let target = || {
+        Some(HunkTarget {
+            path: "a.txt".into(),
+            hunk: hunk.clone(),
+        })
+    };
+    let stage = Request::GitStage(GitStageParams {
+        project_id: id,
+        worktree_task_id: None,
+        repo: None,
+        paths: vec![],
+        hunk: target(),
+    });
+    let discard = Request::GitDiscard(GitDiscardParams {
+        project_id: id,
+        worktree_task_id: None,
+        repo: None,
+        paths: vec![],
+        hunk: target(),
+        confirm: true,
+    });
+    for bad in [stage, discard] {
+        assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
+    }
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+        "two\n"
+    );
+    assert_eq!(git(&repo, &["diff", "--cached", "--name-only"]), "");
+    client.stop();
+}
+
+/// A carriage return inside a line is not a line break for `git apply`: such a hunk stages
+/// and discards.
+#[test]
+fn git_stage_and_discard_accept_a_hunk_line_with_an_inner_carriage_return() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "user.email", "t@t"]);
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(repo.join("a.txt"), "a\rb\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("a.txt"), "c\rd\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+    let target = |client: &mut Client| {
+        let request = Request::GitDiff(GitDiffParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: None,
+            path: "a.txt".into(),
+            mode: GitMode::Working,
+            staged: false,
+            commit: None,
+            since: None,
+        });
+        let diff: FileDiff = client.call(request).into_result().unwrap();
+        Some(HunkTarget {
+            path: "a.txt".into(),
+            hunk: diff.hunks.into_iter().next().unwrap(),
+        })
+    };
+    let hunk = target(&mut client);
+    let _: () = client
+        .call(Request::GitStage(GitStageParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: None,
+            paths: vec![],
+            hunk,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        git(&repo, &["diff", "--cached", "--name-only"]).trim(),
+        "a.txt"
+    );
+    // A new unstaged edit, then its hunk is discarded: back to the staged text.
+    std::fs::write(repo.join("a.txt"), "e\rf\n").unwrap();
+    let hunk = target(&mut client);
+    let _: () = client
+        .call(Request::GitDiscard(GitDiscardParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: None,
+            paths: vec![],
+            hunk,
+            confirm: true,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+        "c\rd\n"
+    );
     client.stop();
 }
 

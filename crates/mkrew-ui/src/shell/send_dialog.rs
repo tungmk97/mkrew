@@ -167,9 +167,10 @@ impl Shell {
         .detach();
     }
 
-    /// "Send selection" (Ctrl+Shift+L, §20B.4): the picked lines of Files or the Git diff, or
-    /// the focused terminal's selected text, go to a session picked in the send dialog (the
-    /// task's session for Git task changes, else the most recently active agent).
+    /// "Send selection" (Ctrl+Shift+L, §20B.4): the picked lines of Files (a Markdown preview's
+    /// selection included), Docs or the Git diff, or the focused terminal's selected text, go
+    /// to a session picked in the send dialog (the task's session for Git task changes, else
+    /// the most recently active agent).
     pub(crate) fn open_selection_dialog(
         &mut self,
         window: &mut Window,
@@ -180,7 +181,7 @@ impl Shell {
         };
         let sessions = self.sidebar.sessions();
         let (file_path, prefill, task) = match self.view() {
-            view @ (View::Editor | View::Diff) => {
+            view @ (View::Editor | View::Diff | View::Docs) => {
                 let picked = self
                     .picked_lines(project_id, view)
                     .filter(|(_, _, _, text)| !text.trim().is_empty());

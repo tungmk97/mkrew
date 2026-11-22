@@ -41,6 +41,61 @@ With a real Claude Code session, a real Codex session (and omp if installed), da
 - [ ] `[ui] chat_default = true` (Settings, General) opens agent panes in Chat; a pane switched to Terminal stays Terminal.
 - [ ] The empty state "No messages yet. Type below to start." shows before the first message; an exited session's chat stays readable.
 
+### To verify - 2026-11-22 Review flow (ADR 0103, plan docs/superpowers/plans/2026-11-22-review-flow.md)
+
+- [ ] **Restart the daemon first** (protocol 56; a window from before it shows a version mismatch).
+- [ ] **Viewed, then next (dark + light):** Git tab with 3+ changed files and a diff open.
+  `v` on the first file marks it (its row dims) and the second file's diff opens with the list scrolled to it.
+  `v` on a viewed file only clears the mark and moves nothing.
+  Mark every file: the selection stays on the last one.
+  Tick the box of a row that is not selected: that row is marked, the selection stays.
+- [ ] **Hunk stepping:** in a file with 2+ hunks press `n` past the last hunk: the next file that is not viewed opens, its first hunk shows the `▸` marker and is scrolled to.
+  `p` before the first hunk goes back to the previous file's last hunk.
+  Viewed files and a binary file with no hunks are passed; at the first and last file nothing moves.
+  `n` / `p` on a viewed file's folded diff go to the next / previous file that is not viewed.
+- [ ] **Discard hunk (dark + light):** an unstaged modified file with two hunks: each hunk header shows `Stage hunk` and a red `Discard hunk`.
+  No such button on Staged, Untracked, deleted or renamed files, in Against base or in History.
+  Click one: "Discard this hunk?" lists only that hunk's lines; Cancel keeps it; confirm removes that hunk, the other stays and the diff reloads.
+  With a file that also has staged changes the dialog adds "Its staged changes stay."
+  With `n` choosing a hunk, `x` opens the same dialog; with no hunk chosen `x` still opens the file's dialog.
+  Change the file in an editor while the dialog is open: the dialog says the hunk changed and confirm stays off.
+- [ ] **CRLF file:** discard a hunk of a CRLF file (Git for Windows with `core.autocrlf` true, and with false): the other lines keep their line endings.
+- [ ] **Send from a preview:** Files, a `.md` in Preview: select text across two paragraphs, press `Ctrl+Shift+L`.
+  The send dialog names the file as `README.md:3-5` and the composer gets the Markdown source of both blocks.
+  Same in Split with the page selected; with the editor selecting too, the editor's lines go.
+  With nothing selected the caret's line goes, as before.
+- [ ] **Send from Docs:** Docs, click a block (Shift+click extends), press `Ctrl+Shift+L`: the same dialog with the file and line range; in Source mode too.
+
+### To verify - 2026-11-22 Widget bar (ADR 0102, plan docs/superpowers/plans/2026-11-22-widget-bar.md)
+
+- [ ] The bar in dark and light themes: folder, branch with count, limits, CPU and RAM, version; hover and press feel like the other title bar controls; the text is readable; a long workspace or branch name ends in an ellipsis.
+- [ ] Narrow the window: limits drop first, then CPU and RAM; folder, branch and version stay.
+- [ ] In a light theme, the tray icon's needs-input amber (now darker, 8B570D) is still visible on a dark Windows taskbar, and the taskbar badge number reads on it.
+- [ ] Right-click the bar: each widget has a check mark and toggling keeps the menu open; "Hide widget bar" hides the bar; `Ctrl+Alt+Shift+J` and the palette entry bring it back; restart Mkrew and the choices are kept; a hidden id you add by hand to `widgets_hidden` (for example `"clock"`) survives toggling.
+- [ ] Open a dialog (for example Settings) and, in a machine window, stop its daemon: while the dialog is open or Mkrew reconnects, clicks and right-click on the bar do nothing.
+- [ ] Git widget: click opens the Git view; click again steps through the changed files and wraps from the last to the first; a workspace with several repositories shows `N repos`.
+- [ ] Folder widget opens the workspace folder in the file explorer; version widget runs the update check; limits widget opens Settings.
+- [ ] Real limits: run `mk integration install claude`, send one turn in Claude Code and one in Codex; the limits widget shows both with plausible percentages and reset times in the tooltip (local time).
+  A status line you had before still prints in Claude Code; `mk integration uninstall claude` brings it back.
+- [ ] On Windows, check that your own status line still prints with Git for Windows installed (it runs through Git Bash); without Git Bash it runs through PowerShell.
+- [ ] CPU and RAM match Task Manager closely; in a machine window they show that machine's numbers; with no Mkrew window open the daemon does no sampling (check its CPU use at idle).
+
+### To verify - 2026-11-22 Theme gallery (plan docs/superpowers/plans/2026-11-22-theme-gallery.md)
+
+- [ ] **Gallery layout (dark + light):** open Settings > Appearance: "Themes" overline, a "Dark" group and a "Light" group of cards, three per row at the default size, then the themes folder line with "New theme from current" and "Open themes folder".
+  Each card has its picture, name and the right badges ("Dark mode" / "Light mode" on the kept themes).
+- [ ] **A card picture against its theme (dark + light):** open the theme picker (`Ctrl+Alt+J`) on a few themes and compare the app with that theme's card: the strip colors, the text bars, the accent pill and the six dots match.
+  Check Solarized Dark, GitHub Dark, Everforest Light and Tokyo Night Day in particular (their colors were changed for contrast, ADR 0101).
+- [ ] **Hover preview without flashing (dark + light):** sweep the pointer across several cards: nothing changes until it rests about a tenth of a second on one; the whole app then shows that theme; leaving the gallery, pressing Esc and closing Settings each bring the kept theme back.
+  A click keeps the card for its own slot (the badge moves) and does not change the mode; with the other appearance shown, the app keeps its own theme.
+- [ ] **Keyboard:** Tab reaches the gallery as one stop, arrows move between cards in reading order across Dark and Light, the focused card previews at once, Enter keeps it.
+- [ ] **Gallery buttons (dark + light):** Tab reaches "New theme from current" and "Open themes folder" with a focus ring and a tooltip each; Enter runs them.
+  The palette lists "Theme: New theme from current" and "Theme: Open themes folder".
+- [ ] **A broken file's card:** save `<config>/themes/broken.toml` with `name = "x"` only: an error card names the file and the missing key; the rest of the gallery works and the card cannot be clicked.
+  A file named like a built-in (any letter case) shows "Name taken by the built-in theme".
+- [ ] **Live reload in Zed:** "New theme from current" opens `<name> copy.toml` in Zed; change `bg`, save: the card (and the app, when that theme is kept) follows within a second; delete the file: the card goes and the slot shows its Mkrew theme.
+  Make a file whose `fg` equals its `bg`: its card shows "Low contrast" with the reason in a tooltip.
+
 ### To verify - 2026-11-21 Pressable audit (P3)
 
 Look changes the audit makes on purpose (spec 5.2); they are not bugs:
