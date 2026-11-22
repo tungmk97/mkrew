@@ -120,6 +120,7 @@ use mkrew_ui::terminal::view::{
 use mkrew_ui::text_box::{self, Input};
 use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
+use mkrew_ui::theme_catalog::{ThemeCatalog, ThemesStamp};
 use mkrew_ui::toast::{self, Toasts};
 use mkrew_ui::turn::Turns;
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
@@ -242,6 +243,8 @@ fn main() {
                 &cx.text_system().all_font_names(),
             ));
             cx.set_global(theme::ThemeNames::from_settings(&settings));
+            // Theme files are read once here (the status tick reads them again when they change).
+            cx.set_global(ThemeCatalog::load(&paths.themes_dir()));
             // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
             cx.set_prompt_builder(shell::confirm_prompt::build);
             let options = WindowOptions {
@@ -528,6 +531,10 @@ struct Shell {
     settings_modified: Option<std::time::SystemTime>,
     /// Why the last read of `settings_file` failed; listed in the palette (§20.0).
     settings_error: Option<String>,
+    /// `<config>/mkrew/themes`: theme files (ADR 0101), polled with `settings.toml`.
+    themes_dir: PathBuf,
+    /// Their names, times and sizes at the last poll; a difference rebuilds the catalog.
+    themes_stamp: ThemesStamp,
     /// `<config>/mkrew/prompts`, read (seeded the first time) when a prompt picker opens.
     prompts_dir: PathBuf,
     /// `<config>/mkrew`: `mk web` keeps `web_token` there (Phone access link, ADR 0053).
@@ -867,6 +874,11 @@ struct Shell {
     /// The theme mode while the palette is the theme picker (ADR 0078); Esc rebuilds the theme
     /// for it from the current settings. `Some` while the palette is the theme picker.
     theme_pick: Option<mkrew_core::settings::ThemeMode>,
+    /// The theme shown for a gallery card (mode it had, name), while one is previewed.
+    gallery_preview: Option<(mkrew_core::settings::ThemeMode, SharedString)>,
+    /// Set by a key press in the theme gallery: the keyboard's card scrolls into view when it
+    /// is next painted.
+    gallery_reveal: std::rc::Rc<std::cell::Cell<bool>>,
     /// The open prompt picker (modal; over the task dialog when it types into it).
     prompt_picker: Option<PromptPicker>,
     /// Keeps the prompt picker's pick in view.

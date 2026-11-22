@@ -247,8 +247,8 @@ pub enum ThemeMode {
     Dark,
 }
 
-/// Built-in theme names (ADR 0078), in picker order: dark ones, then light ones. The UI's
-/// `theme::THEMES` lists the same names (tested there).
+/// Built-in theme names (ADR 0078, ADR 0101), in picker order: dark ones, then light ones.
+/// The UI's `theme::THEMES` lists the same names (tested there).
 pub const THEME_NAMES: &[&str] = &[
     "Mkrew Dark",
     "One Dark",
@@ -256,12 +256,22 @@ pub const THEME_NAMES: &[&str] = &[
     "Catppuccin Mocha",
     "Tokyo Night",
     "Gruvbox Dark",
+    "Nord",
+    "Solarized Dark",
+    "GitHub Dark",
+    "Rosé Pine",
+    "Kanagawa",
+    "Everforest Dark",
     "Mkrew Light",
     "One Light",
     "GitHub Light",
     "Catppuccin Latte",
     "Solarized Light",
     "Gruvbox Light",
+    "Rosé Pine Dawn",
+    "Everforest Light",
+    "Ayu Light",
+    "Tokyo Night Day",
 ];
 pub const DEFAULT_DARK_THEME: &str = "Mkrew Dark";
 pub const DEFAULT_LIGHT_THEME: &str = "Mkrew Light";
@@ -754,7 +764,10 @@ mod tests {
         // Unknown names parse; the UI falls back (ADR 0078).
         assert_eq!(ui("[ui]\nlight_theme = \"nope\"").light_theme, "nope");
         assert_eq!(THEME_NAMES[0], DEFAULT_DARK_THEME);
-        assert_eq!(THEME_NAMES[6], DEFAULT_LIGHT_THEME);
+        assert_eq!(
+            THEME_NAMES[12], DEFAULT_LIGHT_THEME,
+            "the light ones follow the 12 dark ones"
+        );
     }
 
     #[test]

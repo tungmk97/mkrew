@@ -9,6 +9,8 @@ use mkrew_core::settings::Settings;
 pub use mkrew_core::settings::ThemeMode;
 use mkrew_protocol::WORKSPACE_COLORS;
 
+use crate::theme_catalog::ThemeCatalog;
+
 /// Spacing scale in px: 4 · 8 · 12 · 16 · 24 · 32.
 pub mod space {
     pub const XS: f32 = 4.0;
@@ -322,6 +324,23 @@ pub const SETTINGS_FONT_LIST_HEIGHT: f32 = 200.0;
 pub const SETTINGS_PROMPTS_LIST_WIDTH: f32 = 200.0;
 pub const SETTINGS_PROMPTS_LIST_HEIGHT: f32 = 360.0;
 pub const SETTINGS_PROMPT_BODY_HEIGHT: f32 = 240.0;
+/// The theme gallery of Settings → Appearance (ADR 0101): a card is this wide (three fit a
+/// row at the default Settings width), the picture of a window in the card's own colors is
+/// this tall, and its parts: the top strip, the left strip, the two text bars, the accent
+/// pill and the six ANSI dots.
+pub const THEME_CARD_WIDTH: f32 = 200.0;
+pub const THEME_PICTURE_HEIGHT: f32 = 96.0;
+pub const THEME_PICTURE_CHROME: f32 = 12.0;
+pub const THEME_PICTURE_SIDEBAR: f32 = 36.0;
+pub const THEME_BAR_HEIGHT: f32 = 6.0;
+pub const THEME_BAR_LONG: f32 = 72.0;
+pub const THEME_BAR_SHORT: f32 = 48.0;
+pub const THEME_PILL_HEIGHT: f32 = 10.0;
+pub const THEME_PILL_WIDTH: f32 = 28.0;
+pub const THEME_DOT: f32 = 8.0;
+/// How long the pointer rests on a gallery card before the app shows that theme, so moving
+/// across the cards does not flash.
+pub const THEME_PREVIEW_DELAY: Duration = Duration::from_millis(120);
 /// An on/off switch: track size and the knob's inset.
 pub const SWITCH_WIDTH: f32 = 32.0;
 pub const SWITCH_HEIGHT: f32 = 18.0;
@@ -668,6 +687,12 @@ pub fn slot_key(dark: bool) -> &'static str {
     if dark { "dark_theme" } else { "light_theme" }
 }
 
+/// `text` as a TOML string literal (quoted and escaped): the value `write_ui_value` takes,
+/// so a theme name with a quote or a backslash cannot break `settings.toml`.
+pub fn toml_string(text: &str) -> String {
+    toml::Value::String(text.to_owned()).to_string()
+}
+
 /// Whether the OS shows `window` dark.
 pub fn os_dark(window: &Window) -> bool {
     matches!(
@@ -838,8 +863,9 @@ pub struct Theme {
     pub dark: bool,
     /// The chosen mode (`[ui] theme`); `dark` is what it resolved to.
     pub mode: ThemeMode,
-    /// The built-in theme this is (ADR 0078), e.g. "Mkrew Dark".
-    pub name: &'static str,
+    /// The theme this is, e.g. "Mkrew Dark" (ADR 0078); owned because the name of a theme
+    /// file is not `'static` (ADR 0101).
+    pub name: SharedString,
     pub ui_font_family: SharedString,
     pub terminal_font_family: SharedString,
     pub terminal_font_size: f32,
@@ -866,12 +892,18 @@ pub struct Theme {
 impl gpui::Global for Theme {}
 
 impl Theme {
-    /// The theme of `mode`'s slot (SPEC §14, ADR 0078); an unknown name is that slot's Mkrew theme.
-    pub fn resolve(mode: ThemeMode, os_dark: bool, names: &ThemeNames) -> Self {
+    /// The theme of `mode`'s slot (SPEC §14, ADR 0078, ADR 0101); a name the catalog does
+    /// not know (a removed file) is that slot's Mkrew theme.
+    pub fn resolve(
+        mode: ThemeMode,
+        os_dark: bool,
+        names: &ThemeNames,
+        catalog: &ThemeCatalog,
+    ) -> Self {
         let dark = slot_is_dark(mode, os_dark);
-        let theme = find_theme(names.slot(dark)).map_or_else(
+        let theme = catalog.find(names.slot(dark)).map_or_else(
             || if dark { Self::dark() } else { Self::light() },
-            ThemeEntry::build,
+            |listed| listed.theme.clone(),
         );
         Self { mode, ..theme }
     }
@@ -1000,7 +1032,7 @@ impl Theme {
                 0xF472B6,
             ],
             dark: true,
-            name: "Mkrew Dark",
+            name: "Mkrew Dark".into(),
             ..Self::shared()
         }
         .with_glass();
@@ -1093,7 +1125,7 @@ impl Theme {
                 0xDB2777,
             ],
             dark: false,
-            name: "Mkrew Light",
+            name: "Mkrew Light".into(),
             ..Self::shared()
         }
         .with_glass();
@@ -1331,7 +1363,7 @@ impl Theme {
             workspace_colors: [0; WORKSPACE_COLORS.len()],
             dark: false,
             mode: ThemeMode::System,
-            name: "",
+            name: "".into(),
             ui_font_family: UI_FONT.into(),
             terminal_font_family: pick_family(TERMINAL_FONTS, &[]).into(),
             terminal_font_size: 13.0,
@@ -1376,6 +1408,31 @@ pub struct Palette {
     pub cyan: u32,
     /// The terminal's ANSI 0–15 as the theme publishes them.
     pub ansi: [u32; 16],
+}
+
+impl Palette {
+    /// The palette a theme can be written back as (the two Mkrew themes have none of their
+    /// own): its own background, chrome, surface, text, muted text, accent and ANSI colors,
+    /// with the six hues taken from ANSI red to cyan.
+    pub fn from_theme(theme: &Theme) -> Self {
+        let a = theme.ansi;
+        Self {
+            dark: theme.dark,
+            bg: theme.bg,
+            chrome: theme.chrome,
+            surface: theme.surface,
+            fg: theme.text,
+            muted: theme.text_muted,
+            accent: theme.accent,
+            red: a[1],
+            green: a[2],
+            yellow: a[3],
+            blue: a[4],
+            magenta: a[5],
+            cyan: a[6],
+            ansi: a,
+        }
+    }
 }
 
 /// `a` blended toward `b` by `t` (0 = `a`, 1 = `b`), per RGB channel.
@@ -1472,7 +1529,7 @@ impl Theme {
 
     /// A built-in theme from its palette (ADR 0078; token table in the spec). Status, workspace
     /// and QR colors, the classic sidebar palette, fonts and sizes stay the Mkrew base's.
-    pub fn from_palette(name: &'static str, p: &Palette) -> Self {
+    pub fn from_palette(name: impl Into<SharedString>, p: &Palette) -> Self {
         let base = if p.dark { Self::dark() } else { Self::light() };
         let tint = |hue, t| mix(p.bg, hue, t);
         let surface_raised = mix(p.surface, p.fg, 0.10);
@@ -1503,7 +1560,7 @@ impl Theme {
             p.fg
         };
         Self {
-            name,
+            name: name.into(),
             bg: p.bg,
             terminal_bg: p.bg,
             sidebar: p.chrome,
@@ -1591,11 +1648,12 @@ impl ThemeEntry {
             (None, false) => Theme::light(),
         }
     }
-}
 
-/// The theme named `name` (exact match).
-pub fn find_theme(name: &str) -> Option<&'static ThemeEntry> {
-    THEMES.iter().find(|entry| entry.name == name)
+    /// The palette the theme is derived from; `None` for the two Mkrew themes, which are
+    /// written token by token.
+    pub fn palette(&self) -> Option<&Palette> {
+        self.palette.as_ref()
+    }
 }
 
 const fn dark_entry(name: &'static str, palette: Palette) -> ThemeEntry {
@@ -1614,7 +1672,7 @@ const fn light_entry(name: &'static str, palette: Palette) -> ThemeEntry {
     }
 }
 
-/// Every built-in theme, in [`mkrew_core::settings::THEME_NAMES`] order.
+/// Every built-in theme, in [`mkrew_core::settings::THEME_NAMES`] order: dark ones, then light ones.
 pub const THEMES: &[ThemeEntry] = &[
     ThemeEntry {
         name: "Mkrew Dark",
@@ -1728,6 +1786,163 @@ pub const THEMES: &[ThemeEntry] = &[
             ansi: [
                 0x282828, 0xCC241D, 0x98971A, 0xD79921, 0x458588, 0xB16286, 0x689D6A, 0xA89984,
                 0x928374, 0xFB4934, 0xB8BB26, 0xFABD2F, 0x83A598, 0xD3869B, 0x8EC07C, 0xEBDBB2,
+            ],
+        },
+    ),
+    // Nord. Source: palette https://www.nordtheme.com/docs/colors-and-palettes (nord0 to
+    // nord15); ANSI and the muted text (dim_foreground) from
+    // https://github.com/nordtheme/alacritty/blob/main/src/nord.yaml; the flat nord0 surfaces
+    // as in https://github.com/arcticicestudio/nord-visual-studio-code/blob/develop/themes/nord-color-theme.json
+    dark_entry(
+        "Nord",
+        Palette {
+            dark: true,
+            bg: 0x2E3440,
+            chrome: 0x2E3440,
+            surface: 0x2E3440,
+            fg: 0xD8DEE9,
+            muted: 0xA5ABB6,
+            accent: 0x88C0D0,
+            red: 0xBF616A,
+            green: 0xA3BE8C,
+            yellow: 0xEBCB8B,
+            blue: 0x81A1C1,
+            magenta: 0xB48EAD,
+            cyan: 0x88C0D0,
+            ansi: [
+                0x3B4252, 0xBF616A, 0xA3BE8C, 0xEBCB8B, 0x81A1C1, 0xB48EAD, 0x88C0D0, 0xE5E9F0,
+                0x4C566A, 0xBF616A, 0xA3BE8C, 0xEBCB8B, 0x81A1C1, 0xB48EAD, 0x8FBCBB, 0xECEFF4,
+            ],
+        },
+    ),
+    // Solarized Dark. Source: https://ethanschoonover.com/solarized/ (base03 to base3 and the
+    // eight accents) and the terminal mapping of
+    // https://github.com/altercation/solarized/blob/master/xresources/solarized
+    // Changed for the contrast rules (ADR 0101): fg 839496 (base0) -> EEE8D5 (base2), accent
+    // 268BD2 -> 62ABDE; muted is base1.
+    dark_entry(
+        "Solarized Dark",
+        Palette {
+            dark: true,
+            bg: 0x002B36,
+            chrome: 0x002B36,
+            surface: 0x002B36,
+            fg: 0xEEE8D5,
+            muted: 0x93A1A1,
+            accent: 0x62ABDE,
+            red: 0xDC322F,
+            green: 0x859900,
+            yellow: 0xB58900,
+            blue: 0x268BD2,
+            magenta: 0xD33682,
+            cyan: 0x2AA198,
+            ansi: [
+                0x073642, 0xDC322F, 0x859900, 0xB58900, 0x268BD2, 0xD33682, 0x2AA198, 0xEEE8D5,
+                0x002B36, 0xCB4B16, 0x586E75, 0x657B83, 0x839496, 0x6C71C4, 0x93A1A1, 0xFDF6E3,
+            ],
+        },
+    ),
+    // GitHub Dark (GitHub Dark Default). Source: https://github.com/primer/github-vscode-theme
+    // (src/colors.js: fg e6edf3, muted 7d8590) with the primitives of
+    // https://github.com/primer/primitives/blob/main/src/tokens/base/color/dark/dark.json5
+    // (canvas 0d1117, inset 010409, overlay 151b23, blue 58a6ff); ANSI as exported in
+    // https://gist.github.com/stef-k/aa85769be6b0a080a97cb2b623665137 (its terminal.ansi* keys).
+    // Changed for the contrast rules (ADR 0101): accent 2F81F7 (accent.fg) -> 58A6FF.
+    dark_entry(
+        "GitHub Dark",
+        Palette {
+            dark: true,
+            bg: 0x0D1117,
+            chrome: 0x010409,
+            surface: 0x151B23,
+            fg: 0xE6EDF3,
+            muted: 0x7D8590,
+            accent: 0x58A6FF,
+            red: 0xFF7B72,
+            green: 0x3FB950,
+            yellow: 0xD29922,
+            blue: 0x58A6FF,
+            magenta: 0xBC8CFF,
+            cyan: 0x39C5CF,
+            ansi: [
+                0x484F58, 0xFF7B72, 0x3FB950, 0xD29922, 0x58A6FF, 0xBC8CFF, 0x39C5CF, 0xB1BAC4,
+                0x6E7681, 0xFFA198, 0x56D364, 0xE3B341, 0x79C0FF, 0xD2A8FF, 0x56D4DD, 0xFFFFFF,
+            ],
+        },
+    ),
+    // Rosé Pine. Source: https://github.com/rose-pine/alacritty/blob/main/dist/rose-pine.toml
+    // (base 191724, surface 1f1d2e, text e0def4, subtle 908caa, love, gold, rose, pine, foam,
+    // iris and the ANSI table) and https://rosepinetheme.com/palette/
+    dark_entry(
+        "Rosé Pine",
+        Palette {
+            dark: true,
+            bg: 0x191724,
+            chrome: 0x191724,
+            surface: 0x1F1D2E,
+            fg: 0xE0DEF4,
+            muted: 0x908CAA,
+            accent: 0xC4A7E7,
+            red: 0xEB6F92,
+            green: 0x31748F,
+            yellow: 0xF6C177,
+            blue: 0x9CCFD8,
+            magenta: 0xC4A7E7,
+            cyan: 0xEBBCBA,
+            ansi: [
+                0x26233A, 0xEB6F92, 0x31748F, 0xF6C177, 0x9CCFD8, 0xC4A7E7, 0xEBBCBA, 0xE0DEF4,
+                0x6E6A86, 0xEB6F92, 0x31748F, 0xF6C177, 0x9CCFD8, 0xC4A7E7, 0xEBBCBA, 0xE0DEF4,
+            ],
+        },
+    ),
+    // Kanagawa (wave). Source: https://github.com/rebelot/kanagawa.nvim/blob/master/lua/kanagawa/colors.lua
+    // (palette) and .../lua/kanagawa/themes.lua (the wave `ui`, `syn` and `term` tables):
+    // sumiInk3 bg, sumiInk0 chrome, sumiInk2 surface, fujiWhite fg, oldWhite muted, crystalBlue.
+    dark_entry(
+        "Kanagawa",
+        Palette {
+            dark: true,
+            bg: 0x1F1F28,
+            chrome: 0x16161D,
+            surface: 0x1A1A22,
+            fg: 0xDCD7BA,
+            muted: 0xC8C093,
+            accent: 0x7E9CD8,
+            red: 0xE46876,
+            green: 0x98BB6C,
+            yellow: 0xE6C384,
+            blue: 0x7E9CD8,
+            magenta: 0x957FB8,
+            cyan: 0x7AA89F,
+            ansi: [
+                0x16161D, 0xC34043, 0x76946A, 0xC0A36E, 0x7E9CD8, 0x957FB8, 0x6A9589, 0xC8C093,
+                0x727169, 0xE82424, 0x98BB6C, 0xE6C384, 0x7FB4CA, 0x938AA9, 0x7AA89F, 0xDCD7BA,
+            ],
+        },
+    ),
+    // Everforest Dark (medium). Source: https://github.com/sainnhe/everforest/blob/master/palette.md
+    // (bg0 2d353b, bg_dim 232a2e, grey1 859289 and the accents) and the terminal table of
+    // https://github.com/sainnhe/everforest/blob/master/colors/everforest.vim
+    // Changed for the contrast rules (ADR 0101): fg D3C6AA -> D5C9AE (the ANSI white stays D3C6AA).
+    dark_entry(
+        "Everforest Dark",
+        Palette {
+            dark: true,
+            bg: 0x2D353B,
+            chrome: 0x232A2E,
+            surface: 0x232A2E,
+            fg: 0xD5C9AE,
+            muted: 0x859289,
+            accent: 0xA7C080,
+            red: 0xE67E80,
+            green: 0xA7C080,
+            yellow: 0xDBBC7F,
+            blue: 0x7FBBB3,
+            magenta: 0xD699B6,
+            cyan: 0x83C092,
+            ansi: [
+                0x475258, 0xE67E80, 0xA7C080, 0xDBBC7F, 0x7FBBB3, 0xD699B6, 0x83C092, 0xD3C6AA,
+                0x475258, 0xE67E80, 0xA7C080, 0xDBBC7F, 0x7FBBB3, 0xD699B6, 0x83C092, 0xD3C6AA,
             ],
         },
     ),
@@ -1846,6 +2061,114 @@ pub const THEMES: &[ThemeEntry] = &[
             ],
         },
     ),
+    // Rosé Pine Dawn. Source: https://github.com/rose-pine/alacritty/blob/main/dist/rose-pine-dawn.toml
+    // (base faf4ed, surface fffaf3, overlay f2e9e1, text 575279, subtle 797593, pine 286983,
+    // and the ANSI table) and https://rosepinetheme.com/palette/
+    light_entry(
+        "Rosé Pine Dawn",
+        Palette {
+            dark: false,
+            bg: 0xFAF4ED,
+            chrome: 0xF2E9E1,
+            surface: 0xFFFAF3,
+            fg: 0x575279,
+            muted: 0x797593,
+            accent: 0x286983,
+            red: 0xB4637A,
+            green: 0x286983,
+            yellow: 0xEA9D34,
+            blue: 0x56949F,
+            magenta: 0x907AA9,
+            cyan: 0xD7827E,
+            ansi: [
+                0xF2E9E1, 0xB4637A, 0x286983, 0xEA9D34, 0x56949F, 0x907AA9, 0xD7827E, 0x575279,
+                0x9893A5, 0xB4637A, 0x286983, 0xEA9D34, 0x56949F, 0x907AA9, 0xD7827E, 0x575279,
+            ],
+        },
+    ),
+    // Everforest Light. Source: https://github.com/sainnhe/everforest/blob/master/palette.md
+    // (light: bg0 fdf6e3, bg_dim efebd4, hard bg0 fffbef, grey2 829181 and the accents) and the
+    // terminal table of .../colors/everforest.vim (black is fg, white is bg3 in the light scheme).
+    // Changed for the contrast rules (ADR 0101): fg 5C6A72 -> 525F66, accent 3A94C5 -> 2A6F94,
+    // surface F4F0D9 (bg1) -> FFFBEF (the hard-contrast bg0).
+    light_entry(
+        "Everforest Light",
+        Palette {
+            dark: false,
+            bg: 0xFDF6E3,
+            chrome: 0xEFEBD4,
+            surface: 0xFFFBEF,
+            fg: 0x525F66,
+            muted: 0x829181,
+            accent: 0x2A6F94,
+            red: 0xF85552,
+            green: 0x8DA101,
+            yellow: 0xDFA000,
+            blue: 0x3A94C5,
+            magenta: 0xDF69BA,
+            cyan: 0x35A77C,
+            ansi: [
+                0x5C6A72, 0xF85552, 0x8DA101, 0xDFA000, 0x3A94C5, 0xDF69BA, 0x35A77C, 0xE6E2CC,
+                0x5C6A72, 0xF85552, 0x8DA101, 0xDFA000, 0x3A94C5, 0xDF69BA, 0x35A77C, 0xE6E2CC,
+            ],
+        },
+    ),
+    // Ayu Light. Source: https://github.com/ayu-theme/ayu-colors/blob/master/themes/light.yaml
+    // (surface lift fcfcfc, base f8f9fa, over ffffff, accent f29718, palette) and the terminal
+    // table of https://github.com/ayu-theme/vscode-ayu/blob/master/ayu-light.json; fg is the
+    // editor text 020a12 at 64 % over fcfcfc (5C6166), muted the ui text 021a3c at 48 % over
+    // f8f9fa (828E9F).
+    // Changed for the contrast rules (ADR 0101): accent F29718 -> 975E0F.
+    light_entry(
+        "Ayu Light",
+        Palette {
+            dark: false,
+            bg: 0xFCFCFC,
+            chrome: 0xF8F9FA,
+            surface: 0xFFFFFF,
+            fg: 0x5C6166,
+            muted: 0x828E9F,
+            accent: 0x975E0F,
+            red: 0xF07171,
+            green: 0x86B300,
+            yellow: 0xEBA400,
+            blue: 0x22A4E6,
+            magenta: 0xA37ACC,
+            cyan: 0x4CBF99,
+            ansi: [
+                0x000000, 0xF06B6C, 0x6CBF43, 0xE7A100, 0x21A1E2, 0xA176CB, 0x4ABC96, 0xC7C7C7,
+                0x686868, 0xF07171, 0x86B300, 0xEBA400, 0x22A4E6, 0xA37ACC, 0x4CBF99, 0xD1D1D1,
+            ],
+        },
+    ),
+    // Tokyo Night Day. Source: https://github.com/folke/tokyonight.nvim/blob/main/extras/alacritty/tokyonight_day.toml
+    // (bg e1e2e7, fg 3760bf, fg_dark 6172b0, the ANSI table).
+    // Changed for the contrast rules (ADR 0101): the Mkrew workspace colors need 3:1 on the
+    // hover and selected fills, which a bg this dark cannot give, so bg and surface are
+    // E1E2E7 lightened to F1F2F5 and the published bg is the chrome; fg 3760BF -> 2F52A2 and
+    // accent 2E7DE9 -> 2461B5 (text and code need 4.5:1).
+    light_entry(
+        "Tokyo Night Day",
+        Palette {
+            dark: false,
+            bg: 0xF1F2F5,
+            chrome: 0xE1E2E7,
+            surface: 0xF1F2F5,
+            fg: 0x2F52A2,
+            muted: 0x6172B0,
+            accent: 0x2461B5,
+            red: 0xF52A65,
+            green: 0x587539,
+            yellow: 0x8C6C3E,
+            blue: 0x2E7DE9,
+            magenta: 0x9854F1,
+            cyan: 0x007197,
+            ansi: [
+                0xB4B5B9, 0xF52A65, 0x587539, 0x8C6C3E, 0x2E7DE9, 0x9854F1, 0x007197, 0x6172B0,
+                0xA1A6C5, 0xFF4774, 0x5C8524, 0xA27629, 0x358AFF, 0xA463FF, 0x007EA8, 0x3760BF,
+            ],
+        },
+    ),
 ];
 
 /// Views read the theme with `cx.theme()` (ADR 0027).
@@ -1859,13 +2182,14 @@ impl ActiveTheme for App {
     }
 }
 
-/// Rebuilds the theme global from `mode`, the window's OS appearance, the `ThemeNames` and
-/// `Fonts` globals. Called at startup, on OS appearance changes, on a settings reload and by
-/// the toggle.
+/// Rebuilds the theme global from `mode`, the window's OS appearance, the `ThemeNames`,
+/// `ThemeCatalog` and `Fonts` globals. Called at startup, on OS appearance changes, on a
+/// settings or themes folder reload and by the toggle.
 pub fn refresh(mode: ThemeMode, window: &Window, cx: &mut App) {
     let fonts = cx.global::<Fonts>().clone();
     let names = cx.global::<ThemeNames>().clone();
-    cx.set_global(Theme::resolve(mode, os_dark(window), &names).with_fonts(&fonts));
+    let theme = Theme::resolve(mode, os_dark(window), &names, cx.global::<ThemeCatalog>());
+    cx.set_global(theme.with_fonts(&fonts));
 }
 
 /// System → Light → Dark → System (the title bar toggle, `ToggleTheme`).
@@ -1958,6 +2282,137 @@ pub fn contrast(a: u32, b: u32) -> f32 {
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
+/// A contrast rule a theme does not meet (ADR 0101): which rule, and the colors that fail it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub rule: &'static str,
+    pub detail: String,
+}
+
+impl std::fmt::Display for Problem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.rule, self.detail)
+    }
+}
+
+/// The contrast rules `theme` does not meet, each failing pair once; empty for every built-in
+/// theme (a test), and the reason for the "Low contrast" badge of a theme file.
+pub fn problems(theme: &Theme) -> Vec<Problem> {
+    let t = theme;
+    let mut found: Vec<Problem> = Vec::new();
+    let mut check = |rule: &'static str, fg: u32, bg: u32, min: f32| {
+        let ratio = contrast(fg, bg);
+        if ratio < min {
+            let problem = Problem {
+                rule,
+                detail: format!("{fg:06X} on {bg:06X} reads {ratio:.2}:1, needs {min}:1"),
+            };
+            if !found.contains(&problem) {
+                found.push(problem);
+            }
+        }
+    };
+    let grounds = [
+        t.bg,
+        t.surface,
+        t.surface_raised,
+        t.sidebar,
+        t.hover,
+        t.selected,
+        t.card,
+    ];
+    for bg in grounds {
+        for fg in [t.text, t.text_muted] {
+            check("body text", fg, bg, 4.5);
+        }
+    }
+    // Decoded exactly as `with_glass` quantized them; the page behind is a light or a dark one.
+    let alpha = (t.glass & 0xFF) as f32 / 255.0;
+    let tint = (t.glass_tint & 0xFF) as f32 / 255.0;
+    for backdrop in [t.bg, t.text] {
+        let fill = glass_over(t.surface, t.accent, alpha, tint, backdrop);
+        check("text on glass", t.text, fill, 4.5);
+    }
+    check("on accent", t.on_accent, t.accent, 3.0);
+    // The close button's red hover under its cross.
+    check("window close", t.on_accent, t.status_exited, 3.0);
+    for bg in [
+        t.terminal_selection_bg,
+        t.terminal_match_bg,
+        t.terminal_match_current_bg,
+    ] {
+        check("selected text", t.text, bg, 4.5);
+    }
+    let code = [
+        t.syntax_keyword,
+        t.syntax_string,
+        t.syntax_number,
+        t.syntax_type,
+        t.syntax_function,
+    ];
+    // `surface_raised` is the Files viewer's selected line.
+    for fg in code.into_iter().chain([t.accent]) {
+        for bg in [t.bg, t.surface, t.surface_raised] {
+            check("code", fg, bg, 4.5);
+        }
+    }
+    // A toast card is `surface_raised`; its marks are the info accent, the error red and the X.
+    check("toast", t.text, t.surface_raised, 4.5);
+    for mark in [t.accent_text, t.status_exited, t.text_muted] {
+        check("toast mark", mark, t.surface_raised, 3.0);
+    }
+    // Comments and line numbers are `text_muted`.
+    for fg in code.into_iter().chain([t.text, t.text_muted]) {
+        for bg in [t.diff_add_bg, t.diff_del_bg, t.diff_mod_bg] {
+            check("highlighted diff", fg, bg, 4.5);
+        }
+    }
+    // WCAG 1.4.11: the Files editor's change bars are graphical objects.
+    for fg in [t.diff_add_text, t.diff_mod_text, t.diff_del_text] {
+        for bg in [t.bg, t.surface, t.surface_raised] {
+            check("change bars", fg, bg, 3.0);
+        }
+    }
+    for (fg, bg) in [
+        (t.diff_add_text, t.diff_add_bg),
+        (t.diff_del_text, t.diff_del_bg),
+        (t.diff_mod_text, t.diff_mod_bg),
+        // Line numbers in the gutter of a changed line.
+        (t.text_dim, t.diff_add_gutter),
+        (t.text_dim, t.diff_del_gutter),
+        (t.text_dim, t.diff_mod_gutter),
+        // Git status letters on the list and on its selected row.
+        (t.git_modified, t.bg),
+        (t.git_untracked, t.bg),
+        (t.git_modified, t.selected),
+        (t.git_untracked, t.selected),
+    ] {
+        check("diff lines", fg, bg, 4.5);
+    }
+    // The sidebar's session list keeps Mkrew's classic palette on this theme's sidebar.
+    let classic = t.classic();
+    for fg in [classic.text, classic.text_muted] {
+        check("sidebar text", fg, t.sidebar, 4.5);
+    }
+    // Where a swatch or avatar sits: the dialogs, the menu, the sidebar and its row fills.
+    // WCAG 1.4.11: graphical objects >= 3:1.
+    for color in t.workspace_colors {
+        for bg in grounds {
+            check("workspace colors", color, bg, 3.0);
+        }
+    }
+    // Avatars and chevrons sit on the sidebar and its row fills.
+    for bg in [t.sidebar, t.hover, t.selected] {
+        for color in t.workspace_colors {
+            let (letter, fill) = t.avatar_colors(color, bg);
+            check("avatar letters", letter, fill, 4.5);
+        }
+        // The only sign of expanded / collapsed (WCAG 1.4.11).
+        check("chevron", t.chevron_color(), bg, 3.0);
+    }
+    found
+}
+
 /// `0xRRGGBB` as the CSS / SVG color `#RRGGBB` (diagram and QR code SVGs).
 pub fn hex(color: u32) -> String {
     format!("#{color:06X}")
@@ -1971,6 +2426,159 @@ mod tests {
 
     fn all_themes() -> Vec<Theme> {
         THEMES.iter().map(ThemeEntry::build).collect()
+    }
+
+    #[test]
+    fn every_built_in_theme_meets_every_contrast_rule() {
+        for theme in all_themes() {
+            let found = problems(&theme);
+            assert!(
+                found.is_empty(),
+                "{}: {}",
+                theme.name,
+                found
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+    }
+
+    #[test]
+    fn a_palette_with_no_contrast_reports_the_rules_it_breaks() {
+        let mut palette = *THEMES[1].palette().expect("One Dark has a palette");
+        palette.fg = palette.bg;
+        palette.accent = palette.bg;
+        let found = problems(&Theme::from_palette("Bad", &palette));
+        let rules: Vec<&str> = found.iter().map(|problem| problem.rule).collect();
+        for rule in ["body text", "on accent", "code"] {
+            assert!(rules.contains(&rule), "{rule} missing from {rules:?}");
+        }
+        let first = found[0].to_string();
+        assert!(first.starts_with(found[0].rule), "{first}");
+        assert!(first.contains(" on "), "the colors are named: {first}");
+    }
+
+    #[test]
+    fn each_contrast_rule_fires_when_its_token_is_broken() {
+        let t = Theme::dark();
+        let broken = [
+            (
+                "body text",
+                Theme {
+                    text_muted: t.bg,
+                    ..t.clone()
+                },
+            ),
+            // Alpha 0: the fill is the page itself, and the page can be the text color.
+            (
+                "text on glass",
+                Theme {
+                    glass: 0,
+                    ..t.clone()
+                },
+            ),
+            (
+                "on accent",
+                Theme {
+                    on_accent: t.accent,
+                    ..t.clone()
+                },
+            ),
+            (
+                "window close",
+                Theme {
+                    status_exited: t.on_accent,
+                    ..t.clone()
+                },
+            ),
+            (
+                "selected text",
+                Theme {
+                    terminal_selection_bg: t.text,
+                    ..t.clone()
+                },
+            ),
+            (
+                "code",
+                Theme {
+                    syntax_keyword: t.bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "toast",
+                Theme {
+                    text: t.surface_raised,
+                    ..t.clone()
+                },
+            ),
+            (
+                "toast mark",
+                Theme {
+                    accent_text: t.surface_raised,
+                    ..t.clone()
+                },
+            ),
+            (
+                "highlighted diff",
+                Theme {
+                    syntax_keyword: t.diff_add_bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "change bars",
+                Theme {
+                    diff_add_text: t.bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "diff lines",
+                Theme {
+                    git_modified: t.bg,
+                    ..t.clone()
+                },
+            ),
+            // A built-in Mkrew theme is its own classic palette.
+            (
+                "sidebar text",
+                Theme {
+                    sidebar: t.text,
+                    ..t.clone()
+                },
+            ),
+            ("workspace colors", {
+                let mut colors = t.workspace_colors;
+                colors[0] = t.bg;
+                Theme {
+                    workspace_colors: colors,
+                    ..t.clone()
+                }
+            }),
+            // The letter is `text`; a fill is the tint over the sidebar, so `text` = sidebar.
+            (
+                "avatar letters",
+                Theme {
+                    text: t.sidebar,
+                    ..t.clone()
+                },
+            ),
+            (
+                "chevron",
+                Theme {
+                    text_muted: t.sidebar,
+                    ..t.clone()
+                },
+            ),
+        ];
+        assert!(problems(&t).is_empty(), "the base theme is clean");
+        for (rule, theme) in broken {
+            let rules: Vec<&str> = problems(&theme).iter().map(|p| p.rule).collect();
+            assert!(rules.contains(&rule), "{rule} missing from {rules:?}");
+        }
     }
 
     #[test]
@@ -1996,24 +2604,6 @@ mod tests {
         assert_eq!(dark.scrim, with_alpha(0x000000, 0.24));
         assert_eq!(light.scrim, with_alpha(0x000000, 0.16));
         assert!(dark.scrim & 0xFF < 0x59 && light.scrim & 0xFF < dark.scrim & 0xFF);
-    }
-
-    #[test]
-    fn text_on_glass_reads_at_4_5_over_a_light_or_dark_page() {
-        for theme in all_themes() {
-            // Decoded exactly as `with_glass` quantized them.
-            let alpha = (theme.glass & 0xFF) as f32 / 255.0;
-            let tint = (theme.glass_tint & 0xFF) as f32 / 255.0;
-            for backdrop in [theme.bg, theme.text] {
-                let fill = glass_over(theme.surface, theme.accent, alpha, tint, backdrop);
-                let ratio = contrast(theme.text, fill);
-                assert!(
-                    ratio >= 4.5,
-                    "{}: {ratio:.2}:1 over {backdrop:06X}",
-                    theme.name
-                );
-            }
-        }
     }
 
     #[test]
@@ -2058,23 +2648,39 @@ mod tests {
     }
 
     #[test]
+    fn there_are_22_built_in_themes_grouped_dark_then_light() {
+        assert_eq!(THEMES.len(), 22);
+        assert_eq!(THEMES.iter().filter(|e| e.dark).count(), 12);
+        assert!(
+            THEMES.iter().take(12).all(|e| e.dark),
+            "picker order: dark first"
+        );
+        assert!(THEMES.iter().skip(12).all(|e| !e.dark));
+        let mut names: Vec<&str> = THEMES.iter().map(|e| e.name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), 22, "names are unique");
+    }
+
+    #[test]
     fn the_theme_table_matches_the_settings_names() {
         let names: Vec<&str> = THEMES.iter().map(|e| e.name).collect();
         assert_eq!(names, mkrew_core::settings::THEME_NAMES);
         for entry in THEMES {
             let theme = entry.build();
             assert_eq!(theme.dark, entry.dark, "{}", entry.name);
-            assert_eq!(theme.name, entry.name);
+            assert_eq!(theme.name.as_ref(), entry.name);
         }
+        let catalog = catalog();
         assert_eq!(
-            find_theme("Mkrew Dark").map(ThemeEntry::build),
+            catalog.find("Mkrew Dark").map(|t| t.theme.clone()),
             Some(Theme::dark())
         );
         assert_eq!(
-            find_theme("Mkrew Light").map(ThemeEntry::build),
+            catalog.find("Mkrew Light").map(|t| t.theme.clone()),
             Some(Theme::light())
         );
-        assert!(find_theme("dracula").is_none(), "exact names only");
+        assert!(catalog.find("dracula").is_none(), "exact names only");
     }
 
     #[test]
@@ -2083,17 +2689,6 @@ mod tests {
         assert_eq!(mix(0x102030, 0x102030, 0.7), 0x102030);
         assert_eq!(mix(0xFF0000, 0x0000FF, 0.0), 0xFF0000);
         assert_eq!(mix(0xFF0000, 0x0000FF, 1.0), 0x0000FF);
-    }
-
-    #[test]
-    fn the_classic_sidebar_text_reads_on_every_sidebar() {
-        for theme in all_themes() {
-            let classic = theme.classic();
-            for (what, color) in [("text", classic.text), ("text_muted", classic.text_muted)] {
-                let ratio = contrast(color, theme.sidebar);
-                assert!(ratio >= 4.5, "{} {what}: {ratio:.2}", theme.name);
-            }
-        }
     }
 
     #[test]
@@ -2246,30 +2841,6 @@ mod tests {
     }
 
     #[test]
-    fn body_text_contrast_is_at_least_4_5() {
-        for theme in all_themes() {
-            for bg in [
-                theme.bg,
-                theme.surface,
-                theme.surface_raised,
-                theme.sidebar,
-                theme.hover,
-                theme.selected,
-                theme.card,
-            ] {
-                for fg in [theme.text, theme.text_muted] {
-                    let ratio = contrast(fg, bg);
-                    assert!(
-                        ratio >= 4.5,
-                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
     fn hex_is_a_padded_css_color() {
         assert_eq!(hex(0x17181C), "#17181C");
         assert_eq!(hex(0x00000A), "#00000A", "leading zeros stay");
@@ -2301,6 +2872,10 @@ mod tests {
         assert_eq!(next_mode(ThemeMode::Dark), ThemeMode::System);
     }
 
+    fn catalog() -> ThemeCatalog {
+        ThemeCatalog::builtin()
+    }
+
     fn names(light: &str, dark: &str) -> ThemeNames {
         ThemeNames {
             light: light.into(),
@@ -2311,12 +2886,12 @@ mod tests {
     #[test]
     fn mode_resolves_against_the_os() {
         let n = ThemeNames::from_settings(&Settings::default());
-        assert!(Theme::resolve(ThemeMode::System, true, &n).dark);
-        assert!(!Theme::resolve(ThemeMode::System, false, &n).dark);
-        assert!(!Theme::resolve(ThemeMode::Light, true, &n).dark);
-        assert!(Theme::resolve(ThemeMode::Dark, false, &n).dark);
+        assert!(Theme::resolve(ThemeMode::System, true, &n, &catalog()).dark);
+        assert!(!Theme::resolve(ThemeMode::System, false, &n, &catalog()).dark);
+        assert!(!Theme::resolve(ThemeMode::Light, true, &n, &catalog()).dark);
+        assert!(Theme::resolve(ThemeMode::Dark, false, &n, &catalog()).dark);
         assert_eq!(
-            Theme::resolve(ThemeMode::Dark, false, &n).mode,
+            Theme::resolve(ThemeMode::Dark, false, &n, &catalog()).mode,
             ThemeMode::Dark
         );
     }
@@ -2324,33 +2899,76 @@ mod tests {
     #[test]
     fn default_names_resolve_to_exactly_today() {
         let n = ThemeNames::from_settings(&Settings::default());
-        assert_eq!(Theme::resolve(ThemeMode::System, true, &n), Theme::dark());
-        assert_eq!(Theme::resolve(ThemeMode::System, false, &n), Theme::light());
+        assert_eq!(
+            Theme::resolve(ThemeMode::System, true, &n, &catalog()),
+            Theme::dark()
+        );
+        assert_eq!(
+            Theme::resolve(ThemeMode::System, false, &n, &catalog()),
+            Theme::light()
+        );
     }
 
     #[test]
     fn unknown_names_fall_back_to_mkrew() {
         let n = names("nope", "dracula");
-        assert_eq!(Theme::resolve(ThemeMode::System, true, &n), Theme::dark());
-        assert_eq!(Theme::resolve(ThemeMode::System, false, &n), Theme::light());
+        assert_eq!(
+            Theme::resolve(ThemeMode::System, true, &n, &catalog()),
+            Theme::dark()
+        );
+        assert_eq!(
+            Theme::resolve(ThemeMode::System, false, &n, &catalog()),
+            Theme::light()
+        );
     }
 
     #[test]
     fn each_slot_picks_its_name() {
         let n = names("Solarized Light", "Dracula");
-        assert_eq!(Theme::resolve(ThemeMode::Dark, false, &n).name, "Dracula");
-        assert_eq!(
-            Theme::resolve(ThemeMode::Light, true, &n).name,
-            "Solarized Light"
-        );
-        assert_eq!(Theme::resolve(ThemeMode::System, true, &n).name, "Dracula");
+        let name = |mode, os_dark| {
+            Theme::resolve(mode, os_dark, &n, &catalog())
+                .name
+                .to_string()
+        };
+        assert_eq!(name(ThemeMode::Dark, false), "Dracula");
+        assert_eq!(name(ThemeMode::Light, true), "Solarized Light");
+        assert_eq!(name(ThemeMode::System, true), "Dracula");
     }
 
     #[test]
     fn a_slot_may_hold_the_other_appearance() {
         let n = names("Mkrew Light", "GitHub Light");
-        let theme = Theme::resolve(ThemeMode::Dark, false, &n);
-        assert_eq!((theme.name, theme.dark), ("GitHub Light", false));
+        let theme = Theme::resolve(ThemeMode::Dark, false, &n, &catalog());
+        assert_eq!((theme.name.as_ref(), theme.dark), ("GitHub Light", false));
+    }
+
+    #[test]
+    fn a_file_theme_resolves_until_its_file_goes() {
+        let file = (
+            "aurora.toml".to_owned(),
+            Ok(crate::theme_file::render(
+                "Aurora",
+                &Palette::from_theme(&Theme::dark()),
+            )),
+        );
+        let with = ThemeCatalog::from_files(vec![file]);
+        let n = names("Mkrew Light", "Aurora");
+        let shown = Theme::resolve(ThemeMode::System, true, &n, &with);
+        assert_eq!(shown.name.as_ref(), "Aurora");
+        assert_eq!(
+            Theme::resolve(ThemeMode::System, true, &n, &catalog()),
+            Theme::dark(),
+            "the file is gone: the slot's Mkrew theme, like an unknown name"
+        );
+    }
+
+    #[test]
+    fn a_theme_name_is_saved_as_a_valid_toml_string() {
+        for name in ["Plain", "Rosé Pine", "He said \"hi\"", "back\\slash"] {
+            let text = format!("theme = {}", toml_string(name));
+            let table: toml::Table = text.parse().unwrap();
+            assert_eq!(table["theme"].as_str(), Some(name), "{text}");
+        }
     }
 
     #[test]
@@ -2371,159 +2989,6 @@ mod tests {
         );
         for step in [WIDGET_BAR_PADDING, WIDGET_BAR_GAP] {
             assert!([4.0, 8.0, 12.0, 16.0, 24.0, 32.0].contains(&step), "{step}");
-        }
-    }
-
-    /// ✕ on the red hover of the Close button must stay readable in both themes.
-    #[test]
-    fn window_close_hover_is_readable() {
-        for theme in all_themes() {
-            let ratio = contrast(theme.on_accent, theme.status_exited);
-            assert!(ratio >= 3.0, "{}: {ratio:.2}", theme.name);
-        }
-    }
-
-    #[test]
-    fn on_accent_text_is_readable_on_the_accent() {
-        for t in all_themes() {
-            assert!(
-                contrast(t.on_accent, t.accent) >= 3.0,
-                "{}: {:06X}",
-                t.name,
-                t.accent
-            );
-        }
-    }
-
-    #[test]
-    fn selected_text_stays_readable() {
-        for theme in all_themes() {
-            for bg in [
-                theme.terminal_selection_bg,
-                theme.terminal_match_bg,
-                theme.terminal_match_current_bg,
-            ] {
-                let ratio = contrast(theme.text, bg);
-                assert!(ratio >= 4.5, "{}: {bg:06X}: {ratio:.2}", theme.name);
-            }
-        }
-    }
-
-    #[test]
-    fn code_stays_readable() {
-        for theme in all_themes() {
-            for fg in [
-                theme.syntax_keyword,
-                theme.syntax_string,
-                theme.syntax_number,
-                theme.syntax_type,
-                theme.syntax_function,
-                theme.accent,
-            ] {
-                // `surface_raised` = the Files viewer's selected line.
-                for bg in [theme.bg, theme.surface, theme.surface_raised] {
-                    let ratio = contrast(fg, bg);
-                    assert!(
-                        ratio >= 4.5,
-                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-            }
-        }
-    }
-
-    /// A toast card is `surface_raised`: its text, its two marks (info accent, error red) and
-    /// the ✕ must read on it in both appearances.
-    #[test]
-    fn toast_text_and_marks_read_on_the_card() {
-        for theme in all_themes() {
-            let ratio = contrast(theme.text, theme.surface_raised);
-            assert!(ratio >= 4.5, "{}: text: {ratio:.2}", theme.name);
-            for (name, mark) in [
-                ("info", theme.accent_text),
-                ("error", theme.status_exited),
-                ("close", theme.text_muted),
-            ] {
-                let ratio = contrast(mark, theme.surface_raised);
-                assert!(ratio >= 3.0, "{}: {name}: {ratio:.2}", theme.name);
-            }
-        }
-    }
-
-    #[test]
-    fn highlighted_diff_lines_stay_readable() {
-        for theme in all_themes() {
-            for fg in [
-                theme.syntax_keyword,
-                theme.syntax_string,
-                theme.syntax_number,
-                theme.syntax_type,
-                theme.syntax_function,
-                theme.text,
-                // Comments and line numbers.
-                theme.text_muted,
-            ] {
-                for bg in [theme.diff_add_bg, theme.diff_del_bg, theme.diff_mod_bg] {
-                    let ratio = contrast(fg, bg);
-                    assert!(
-                        ratio >= 4.5,
-                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-            }
-        }
-    }
-
-    /// The Files editor's change bars stand out from the editor and its caret row
-    /// (WCAG 1.4.11: graphical objects ≥ 3:1).
-    #[test]
-    fn change_bars_stand_out_from_the_editor() {
-        for theme in all_themes() {
-            for fg in [
-                theme.diff_add_text,
-                theme.diff_mod_text,
-                theme.diff_del_text,
-            ] {
-                for bg in [theme.bg, theme.surface, theme.surface_raised] {
-                    let ratio = contrast(fg, bg);
-                    assert!(
-                        ratio >= 3.0,
-                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-            }
-        }
-    }
-
-    /// Added, removed and modified (a line changed in place, Split diff) lines read on
-    /// their own backgrounds, in both appearances.
-    #[test]
-    fn diff_line_colors_read_on_their_backgrounds() {
-        for theme in all_themes() {
-            for (fg, bg) in [
-                (theme.diff_add_text, theme.diff_add_bg),
-                (theme.diff_del_text, theme.diff_del_bg),
-                (theme.diff_mod_text, theme.diff_mod_bg),
-                // Line numbers in the gutter of a changed line.
-                (theme.text_dim, theme.diff_add_gutter),
-                (theme.text_dim, theme.diff_del_gutter),
-                (theme.text_dim, theme.diff_mod_gutter),
-                // Git status letters on the list and on its selected row.
-                (theme.git_modified, theme.bg),
-                (theme.git_untracked, theme.bg),
-                (theme.git_modified, theme.selected),
-                (theme.git_untracked, theme.selected),
-            ] {
-                let ratio = contrast(fg, bg);
-                assert!(
-                    ratio >= 4.5,
-                    "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
-                    theme.name
-                );
-            }
         }
     }
 
@@ -2573,29 +3038,8 @@ mod tests {
     }
 
     #[test]
-    fn workspace_colors_stand_out_from_every_surface_and_from_each_other() {
+    fn workspace_colors_are_distinct_and_every_name_has_one() {
         for theme in all_themes() {
-            // Where a swatch or avatar sits: the dialogs, the menu, the sidebar and its row fills.
-            let surfaces = [
-                theme.bg,
-                theme.surface,
-                theme.surface_raised,
-                theme.sidebar,
-                theme.card,
-                theme.hover,
-                theme.selected,
-            ];
-            for (name, color) in WORKSPACE_COLORS.iter().zip(theme.workspace_colors) {
-                for bg in surfaces {
-                    // WCAG 1.4.11: graphical objects ≥ 3:1.
-                    let ratio = contrast(color, bg);
-                    assert!(
-                        ratio >= 3.0,
-                        "{}: {name} {color:06X} on {bg:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-            }
             // Clearly distinct: neighbouring hues (round the color wheel) differ by ≥ 12°.
             let mut hues: Vec<f32> = theme.workspace_colors.iter().map(|c| hue(*c)).collect();
             hues.sort_by(f32::total_cmp);
@@ -2625,29 +3069,5 @@ mod tests {
             assert!(Theme::dark().workspace_color(old).is_some(), "{old}");
         }
         assert!(Theme::dark().workspace_color("lime").is_some());
-    }
-
-    #[test]
-    fn avatar_letters_and_chevrons_stay_readable() {
-        for theme in all_themes() {
-            for bg in [theme.sidebar, theme.hover, theme.selected] {
-                for color in theme.workspace_colors {
-                    let (letter, fill) = theme.avatar_colors(color, bg);
-                    let ratio = contrast(letter, fill);
-                    assert!(
-                        ratio >= 4.5,
-                        "{}: {letter:06X} on {fill:06X}: {ratio:.2}",
-                        theme.name
-                    );
-                }
-                // The chevron is the only sign of expanded / collapsed (WCAG 1.4.11).
-                let ratio = contrast(theme.chevron_color(), bg);
-                assert!(
-                    ratio >= 3.0,
-                    "{}: chevron on {bg:06X}: {ratio:.2}",
-                    theme.name
-                );
-            }
-        }
     }
 }

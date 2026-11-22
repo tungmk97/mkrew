@@ -51,10 +51,13 @@ impl Shell {
         let sidebar_mode = ui.sidebar;
         let right_panel = inspector::RightPanel::from_mode(ui.right_panel);
         let prompts_dir = paths.prompts_dir();
+        let themes_dir = paths.themes_dir();
         let config_dir = paths.config_dir.clone();
         let main_window = window.window_handle();
         // System mode follows the OS live (ADR 0027).
-        cx.observe_window_appearance(window, |_, window, cx| {
+        cx.observe_window_appearance(window, |shell, window, cx| {
+            // A preview was built for the old appearance; the kept theme is rebuilt now.
+            shell.drop_gallery_preview();
             theme::refresh(cx.theme().mode, window, cx);
             cx.notify();
         })
@@ -136,13 +139,20 @@ impl Shell {
                 let now = status::now_ms();
                 let ticked = this.update_in(cx, |shell, window, cx| {
                     // ponytail: mtime poll on the 500 ms tick; a file watcher if it ever shows
-                    // in a profile.
+                    // in a profile. The themes folder rides the same tick (the names, times
+                    // and sizes of its `*.toml` files): a folder with hundreds of files costs
+                    // one stat each per tick; the upgrade path is `notify`.
                     let modified = std::fs::metadata(&shell.settings_file)
                         .and_then(|m| m.modified())
                         .ok();
                     if modified != shell.settings_modified {
                         shell.settings_modified = modified;
                         shell.apply_settings_file(window, cx);
+                    }
+                    let themes = ThemesStamp::read(&shell.themes_dir);
+                    if themes != shell.themes_stamp {
+                        shell.themes_stamp = themes;
+                        shell.apply_themes_dir(window, cx);
                     }
                     // Toasts hide here, within one tick of their time (SPEC §14).
                     if shell.toasts.expire(Instant::now()) {
@@ -320,6 +330,9 @@ impl Shell {
             keymap_errors: keymap_errors.to_vec(),
             keymap_file,
             settings_modified: None,
+            // The folder as the startup load saw it: the poll reloads only on a change.
+            themes_stamp: ThemesStamp::read(&themes_dir),
+            themes_dir,
             settings_error: None,
             settings_file,
             prompts_dir,
@@ -483,6 +496,8 @@ impl Shell {
             palette_recent: Vec::new(),
             palette_return: None,
             theme_pick: None,
+            gallery_preview: None,
+            gallery_reveal: Default::default(),
             prompt_picker: None,
             prompt_picker_scroll: ScrollHandle::new(),
             slash_picker: None,
