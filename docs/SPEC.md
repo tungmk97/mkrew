@@ -1802,14 +1802,23 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   answer rightmost (accent; the danger button for `PromptLevel::Critical`). Esc = Cancel,
   Enter/Space = the ringed button (default: the first answer), Tab/←/→ move the ring. A click
   on the shade does nothing. OS file/folder pickers stay native.
-- Theme: System (follows the OS live), Light or Dark — `[ui] theme`, cycled by the title bar toggle
-  (ADR 0027). Each slot shows a built-in theme (ADR 0078): `[ui] light_theme` (default Mkrew Light;
-  One Light, GitHub Light, Catppuccin Latte, Solarized Light, Gruvbox Light) and `[ui] dark_theme`
-  (default Mkrew Dark; One Dark, Dracula, Catppuccin Mocha, Tokyo Night, Gruvbox Dark); an unknown
-  name shows the Mkrew theme. "Theme: Select theme…" (Ctrl+Alt+J) previews while moving, Enter or a
-  click on a row saves to the slot shown, Esc restores (an outside click does not close it).
-  Settings → Appearance has "Light mode theme" / "Dark mode theme" rows. In terminals the default
-  fg/bg and ANSI 0–15 follow the theme; 256-color 16–255 and 24-bit colors are drawn as the program
+- Theme: System (follows the OS live), Light or Dark - `[ui] theme`, cycled by the title bar toggle
+  (ADR 0027).
+  Each slot shows a theme (ADR 0078, ADR 0101): `[ui] light_theme` (default Mkrew Light) and `[ui] dark_theme` (default Mkrew Dark).
+  There are 22 built-in themes.
+  Dark: Mkrew Dark, One Dark, Dracula, Catppuccin Mocha, Tokyo Night, Gruvbox Dark, Nord, Solarized Dark, GitHub Dark, Rosé Pine, Kanagawa, Everforest Dark.
+  Light: Mkrew Light, One Light, GitHub Light, Catppuccin Latte, Solarized Light, Gruvbox Light, Rosé Pine Dawn, Everforest Light, Ayu Light, Tokyo Night Day.
+  A file `<config>/mkrew/themes/*.toml` adds one (`name`, `dark` and the fields of the built-in palette, all required; the folder is polled with `settings.toml`, so a saved file shows up within a second).
+  A file whose name is a built-in's name, or an earlier file's name, is an error; the comparison ignores ASCII case.
+  An invalid file shows its error on a card and never breaks the app; a file with poor contrast loads with a "Low contrast" badge.
+  A name that is unknown, or whose file is gone, shows the slot's Mkrew theme.
+  Settings → Appearance opens with the theme gallery above its cards: "Dark" and "Light" groups of cards (a small window in the theme's own colors, its name, badges), "New theme from current" and "Open themes folder" under them.
+  Hovering a card for 120 ms, or focusing it with the keyboard (Tab reaches the gallery, arrows move between cards), shows the whole app in that theme; leaving the gallery, Esc or closing Settings restores; a click or Enter keeps the theme for its own slot.
+  "Theme: Select theme…" (Ctrl+Alt+J) lists the same themes, previews while moving, Enter or a click on a row saves to the slot shown, Esc restores (an outside click does not close it).
+  "Theme: New theme from current" and "Theme: Open themes folder" in the palette do what the two buttons under the cards do; the buttons are Tab stops with a focus ring and a tooltip.
+  Settings → Appearance also has "Light mode theme" / "Dark mode theme" rows.
+  In terminals the default fg/bg and ANSI 0–15 follow the theme;
+  256-color 16–255 and 24-bit colors are drawn as the program
   sends them.
 
 **Design check (every milestone with UI):** capture screenshots of new views in light and dark
@@ -2141,8 +2150,8 @@ follow_debounce_ms = 1500   # §20C.4
 font_family = ""            # §14; "" = system UI font; other UI sizes keep their ratio to it
 font_size = 13              # px, 8–32
 theme = "system"            # §14; "system" | "light" | "dark"; the title bar toggle writes it
-light_theme = "Mkrew Light" # §14; a built-in theme name, shown in Light mode / a light OS
-dark_theme = "Mkrew Dark"   # §14; shown in Dark mode / a dark OS
+light_theme = "Mkrew Light" # §14; a built-in theme name or the name of a file in themes/, shown in Light mode / a light OS
+dark_theme = "Mkrew Dark"   # §14; the same for Dark mode / a dark OS
 diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header toggle writes it
 inspector_width = 300       # §10; px, the right panel's width (dragging its edge writes it; kept 240–560)
 right_panel = "hidden"      # §10; "files" | "session" | "git" | "hidden"; the right panel's toggle and tabs write it

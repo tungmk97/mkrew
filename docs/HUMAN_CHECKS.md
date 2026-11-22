@@ -46,6 +46,22 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   With nothing selected the caret's line goes, as before.
 - [ ] **Send from Docs:** Docs, click a block (Shift+click extends), press `Ctrl+Shift+L`: the same dialog with the file and line range; in Source mode too.
 
+### To verify - 2026-11-22 Theme gallery (plan docs/superpowers/plans/2026-11-22-theme-gallery.md)
+
+- [ ] **Gallery layout (dark + light):** open Settings > Appearance: "Themes" overline, a "Dark" group and a "Light" group of cards, three per row at the default size, then the themes folder line with "New theme from current" and "Open themes folder".
+  Each card has its picture, name and the right badges ("Dark mode" / "Light mode" on the kept themes).
+- [ ] **A card picture against its theme (dark + light):** open the theme picker (`Ctrl+Alt+J`) on a few themes and compare the app with that theme's card: the strip colors, the text bars, the accent pill and the six dots match.
+  Check Solarized Dark, GitHub Dark, Everforest Light and Tokyo Night Day in particular (their colors were changed for contrast, ADR 0101).
+- [ ] **Hover preview without flashing (dark + light):** sweep the pointer across several cards: nothing changes until it rests about a tenth of a second on one; the whole app then shows that theme; leaving the gallery, pressing Esc and closing Settings each bring the kept theme back.
+  A click keeps the card for its own slot (the badge moves) and does not change the mode; with the other appearance shown, the app keeps its own theme.
+- [ ] **Keyboard:** Tab reaches the gallery as one stop, arrows move between cards in reading order across Dark and Light, the focused card previews at once, Enter keeps it.
+- [ ] **Gallery buttons (dark + light):** Tab reaches "New theme from current" and "Open themes folder" with a focus ring and a tooltip each; Enter runs them.
+  The palette lists "Theme: New theme from current" and "Theme: Open themes folder".
+- [ ] **A broken file's card:** save `<config>/themes/broken.toml` with `name = "x"` only: an error card names the file and the missing key; the rest of the gallery works and the card cannot be clicked.
+  A file named like a built-in (any letter case) shows "Name taken by the built-in theme".
+- [ ] **Live reload in Zed:** "New theme from current" opens `<name> copy.toml` in Zed; change `bg`, save: the card (and the app, when that theme is kept) follows within a second; delete the file: the card goes and the slot shows its Mkrew theme.
+  Make a file whose `fg` equals its `bg`: its card shows "Low contrast" with the reason in a tooltip.
+
 ### To verify - 2026-11-21 Pressable audit (P3)
 
 Look changes the audit makes on purpose (spec 5.2); they are not bugs:

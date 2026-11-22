@@ -193,6 +193,8 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
 - **Shortcuts**: `Ctrl+,` opens Settings; its Keyboard page lists every command and rebinds it, applied at once.
   Your choices are saved in `keymap.toml` in the config directory.
   Defaults: [SPEC §13](docs/SPEC.md#13-ui-keyboard-shortcuts).
+- **Themes**: Settings → Appearance shows every theme as a card; hover to preview, click to keep.
+  To add your own, save a `.toml` file in the `themes/` folder of the config directory (the page has "New theme from current" and "Open themes folder"); it shows up within a second.
 - **Without the UI** (also over SSH):
 
   ```bash
@@ -270,7 +272,7 @@ The same `[notify]` switches and the 30-second limit as the desktop notification
 
 | | Windows | Linux | macOS |
 | --- | --- | --- | --- |
-| Config (`agents/`, `keymap.toml`) | `%APPDATA%\mkrew\` | `~/.config/mkrew/` | `~/Library/Application Support/mkrew/` |
+| Config (`agents/`, `keymap.toml`, `themes/`) | `%APPDATA%\mkrew\` | `~/.config/mkrew/` | `~/Library/Application Support/mkrew/` |
 | Data (`mkrew.db`, `logs/`, `sessions/`, `backups/`) | `%APPDATA%\mkrew\` | `~/.local/share/mkrew/` | `~/Library/Application Support/mkrew/` |
 
 `MKREW_CONFIG_DIR` and `MKREW_DATA_DIR` override them. The daemon listens on the named pipe
