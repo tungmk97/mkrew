@@ -45,3 +45,13 @@ The facts an operator glances at all day (the folder, the Git branch, the machin
 - Claude Code runs `mk statusline` on every update, so it must stay fast and silent: the report budget is 300 ms and a failure prints nothing.
 - On Windows the chained status line runs in the shell Claude Code uses: Git Bash, or PowerShell when Git Bash is missing, so a status line that needs bash syntax runs only where Git Bash is installed.
 - A newer UI against an older daemon is refused by the version check, as for every protocol bump.
+- The bar's text is `META` size on `chrome`, so `theme::problems()` (ADR 0101) has a "widget bar" rule: `text_muted`, `status_needs_input` and `danger_text` each need 4.5:1 on `chrome`.
+  Every dark theme met it.
+  The amber of the light themes did not (3.57:1 on Gruvbox Light, 4.37:1 on Mkrew Light), and it is one fixed token, so one change fixes all ten:
+
+  | Theme | Field | Before -> used |
+  |---|---|---|
+  | Mkrew Light and the nine light themes built on it | `status_needs_input` | A4660F -> 8B570D |
+
+  Mkrew Light's golden snapshot moved with it.
+  The same amber is the needs-input dot and pane border, now a little darker on light themes.

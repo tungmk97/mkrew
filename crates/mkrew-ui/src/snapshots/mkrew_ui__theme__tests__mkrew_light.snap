@@ -42,7 +42,7 @@ Theme {
     terminal_match_bg: 16182223,
     terminal_match_current_bg: 15320170,
     status_working: 5526224,
-    status_needs_input: 10774031,
+    status_needs_input: 9131789,
     status_done: 2327887,
     status_exited: 12730671,
     status_idle: 9080729,

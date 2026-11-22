@@ -1078,7 +1078,7 @@ impl Theme {
             terminal_match_bg: 0xF6EBCF,
             terminal_match_current_bg: 0xE9C46A,
             status_working: 0x5452D0,
-            status_needs_input: 0xA4660F,
+            status_needs_input: 0x8B570D,
             status_done: 0x23854F,
             status_exited: 0xC2412F,
             status_idle: 0x8A8F99,
@@ -2410,6 +2410,11 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
         // The only sign of expanded / collapsed (WCAG 1.4.11).
         check("chevron", t.chevron_color(), bg, 3.0);
     }
+    // The widget bar (ADR 0102) is `chrome`; its text is META size, so 4.5:1 (not the 3:1 of
+    // large or graphical marks): the labels, the amber limit and the red limit.
+    for fg in [t.text_muted, t.status_needs_input, t.danger_text] {
+        check("widget bar", fg, t.chrome, 4.5);
+    }
     found
 }
 
@@ -2570,6 +2575,13 @@ mod tests {
                 "chevron",
                 Theme {
                     text_muted: t.sidebar,
+                    ..t.clone()
+                },
+            ),
+            (
+                "widget bar",
+                Theme {
+                    chrome: t.text_muted,
                     ..t.clone()
                 },
             ),

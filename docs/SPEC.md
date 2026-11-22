@@ -1669,7 +1669,7 @@ before it (`Theme::classic`).
 | `danger-bg` | #342526 | #F8E8E6 |
 | `danger-text` / `success-text` | #EF8F82 / #6FD39B | #B4382A / #1E6B3A |
 | `status-working` | #8E8CF5 | #5452D0 |
-| `status-needs-input` (attention) | #E4A452 | #A4660F |
+| `status-needs-input` (attention) | #E4A452 | #8B570D |
 | `status-done` (success) | #57C78A | #23854F |
 | `status-exited` (danger) | #EF7B6C | #C2412F |
 | `status-idle` | #7D838C | #8A8F99 |
@@ -1782,7 +1782,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   Palette: "Global: Manage prompts…" (also in a machine window); the prompt picker's last row "Manage prompts…" opens the page too.
 - Machine chip and reconnect banner (ADR 0089) add no tokens; they reuse these.
   Chip: `well` fill, `text-muted` icon and name, `radius::PILL`, `PILL_HEIGHT` (22), `ICON_SIZE_SMALL` (14), `META` text, `space::XS` between parts, `TITLE_CHIP_MAX_WIDTH` (160).
-  Dot (`status_dot`, also on the Machines rows): `status-done` #57C78A / #23854F, `status-needs-input` #E4A452 / #A4660F, `status-exited` #EF7B6C / #C2412F, `text-muted` for a closed window.
+  Dot (`status_dot`, also on the Machines rows): `status-done` #57C78A / #23854F, `status-needs-input` #E4A452 / #8B570D, `status-exited` #EF7B6C / #C2412F, `text-muted` for a closed window.
   Banner: `warning-bg` #322B23 / #F4EDE2 fill, a `BORDER_WIDTH` bottom edge in `divider`, `space::M` x `space::S` padding, `META` text in `text` (the detail line in `text-muted`), **Try now** a primary button.
   The Machines rows and Add card use `space::S` / `space::M`, `radius::MEDIUM` and `surface-raised`; a broken-file error shows `status-exited` ✕ and `text`.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
