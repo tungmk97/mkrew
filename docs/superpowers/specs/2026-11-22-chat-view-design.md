@@ -41,9 +41,17 @@ Success means:
   - `result: Option<ToolResult>` with `text` (cut to 8 KB) and `is_error`.
 - A result line (Claude `tool_result`, Codex `function_call_output`, omp tool result) fills the call with the same id in the current turn; a result with no matching call is dropped.
 - `Item` gains `Thinking(String)` (cut to 8 KB).
-- `Turn` gains `plan: Option<Vec<PlanStep>>`, the latest Claude `TodoWrite` input or Codex `update_plan` arguments in the turn, with `PlanStep { text, status: Pending | InProgress | Done }`.
-- `Turn` gains `question: Option<Question>`: the last Claude `AskUserQuestion` tool call of the turn that has no result yet, with its question text and option labels.
-- `Turn` gains `subagents: Vec<Subagent>`: Claude `Task` / `Agent` calls with `description`, `subagent_type` and `done` (its result arrived).
+- `Turn` gains `plan: Option<Vec<PlanStep>>`, the latest checklist in the turn, with `PlanStep { text, status: Pending | InProgress | Done }`.
+  It comes from Claude `TodoWrite` (the whole list), Codex `update_plan` (the whole list) or Claude's task tools, which current Claude Code uses by default instead of `TodoWrite`.
+  For the task tools the reader keeps one session checklist: a `TaskCreate` result adds `{id, subject}` (the id from the entry's `toolUseResult.task.id`, else `#N` in the result text), `TaskUpdate` changes the step with its `taskId` (`status`, `subject`; `deleted` removes it), and a `TaskList` result replaces the list.
+  Every change sets the current turn's `plan` to a copy of the checklist.
+  An empty list sets `Some(empty)`, which the UI shows as no plan.
+  Steps are capped like `mkrew_core::plan` (`MAX_ITEMS` steps, `MAX_TEXT_CHARS` per text).
+- `Turn` gains `question: Option<Question>`: the last Claude `AskUserQuestion` tool call of the turn that has no result yet, with its question text and option labels (text capped like plan steps).
+- `Turn` gains `subagents: Vec<Subagent>`: Claude `Task` / `Agent` calls with `description`, `subagent_type` and `done`.
+  A foreground result marks it done.
+  A background launch (result `toolUseResult.status` `async_launched`, or text starting "Async agent launched") keeps it running and records its `agentId`.
+  A later `<task-notification>` user line marks it done (any `<status>`: completed, failed, stopped), matched by `<tool-use-id>` to the call id, else by `<task-id>` to the recorded `agentId`, in any kept turn; the notification is still not a prompt.
 - `MAX_TURNS` becomes a reader argument: the Thread section passes 20, Chat 50.
 - Claude `isSidechain` lines stay skipped.
 
