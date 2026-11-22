@@ -1,5 +1,4 @@
-//! "Open in Zed" (SPEC §10): runs `zed <path>[:line]`, with `zed` found on `PATH` (and
-//! `PATHEXT` on Windows). Reading and editing code is Zed's job; Mkrew only hands it the path.
+//! "Open in Zed" (SPEC §10): runs `zed <path>[:line]`, with `zed` found on `PATH` (and `PATHEXT` on Windows; on macOS also the usual CLI folders and `open -a`). Reading and editing code is Zed's job; Mkrew only hands it the path.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -8,15 +7,33 @@ use std::sync::{Mutex, PoisonError};
 
 use mkrew_core::lookup::{self, has_extension};
 
-/// Shown when `zed` is missing.
-pub const INSTALL_HINT: &str = "Install Zed from https://zed.dev, then make sure its `zed` \
-     command is on PATH (the Windows installer adds it; on macOS/Linux run \"cli: install\" \
-     in Zed) and restart Mkrew.";
+use crate::keymap::Os;
+
+/// What to do when `zed` is missing, for `os`.
+pub fn install_hint(os: Os) -> &'static str {
+    match os {
+        Os::Windows => {
+            "Install Zed from https://zed.dev, then make sure its `zed` command is on PATH \
+             (the Windows installer adds it) and restart Mkrew."
+        }
+        Os::Mac => {
+            "Install Zed from https://zed.dev and keep it in /Applications: Mkrew opens it from \
+             there. For the `zed` command in Terminal, run \"cli: install\" in Zed."
+        }
+        Os::Linux => {
+            "Install Zed from https://zed.dev, then make sure its `zed` command is on PATH \
+             (run \"cli: install\" in Zed) and restart Mkrew."
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ZedError {
-    #[error("Zed's `zed` command was not found (searched {searched}). {INSTALL_HINT}")]
-    NotFound { searched: &'static str },
+    #[error("Zed's `zed` command was not found (searched {searched}). {hint}")]
+    NotFound {
+        searched: &'static str,
+        hint: &'static str,
+    },
     #[error("cannot start {program}: {source}")]
     Spawn {
         program: String,
@@ -38,14 +55,93 @@ pub fn open(path: &Path, line: Option<u32>) -> Result<(), ZedError> {
         return Ok(());
     }
     // Not found yet, or moved/uninstalled since: look again.
-    *found = lookup::find(OsStr::new("zed"));
+    *found = find_zed();
+    // Only the app is installed (macOS): `open -a` starts it on the path, without a line.
+    if found.is_none()
+        && let Some(app) = installed_app()
+    {
+        return open_app(&app, path);
+    }
     open_with(found.clone(), path, line).inspect_err(|_| *found = None)
+}
+
+/// `zed` on `PATH`, else (macOS) in the places a Mac keeps it.
+fn find_zed() -> Option<PathBuf> {
+    lookup::find(OsStr::new("zed")).or_else(|| {
+        if Os::CURRENT != Os::Mac {
+            return None;
+        }
+        first_file(&mac_cli_candidates(home().as_deref()), |p| p.is_file())
+    })
+}
+
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Zed's command-line tool on a Mac when `PATH` has none: the link "cli: install" makes,
+/// Homebrew's, `~/.local/bin`, and the tool inside the app.
+pub fn mac_cli_candidates(home: Option<&Path>) -> Vec<PathBuf> {
+    let mut list = vec![
+        PathBuf::from("/usr/local/bin/zed"),
+        PathBuf::from("/opt/homebrew/bin/zed"),
+    ];
+    if let Some(home) = home {
+        list.push(home.join(".local").join("bin").join("zed"));
+    }
+    list.push(PathBuf::from("/Applications/Zed.app/Contents/MacOS/cli"));
+    list
+}
+
+/// Where Zed's app bundle may be: `/Applications`, then `~/Applications`.
+pub fn mac_app_dirs(home: Option<&Path>) -> Vec<PathBuf> {
+    let mut list = vec![PathBuf::from("/Applications/Zed.app")];
+    list.extend(home.map(|home| home.join("Applications").join("Zed.app")));
+    list
+}
+
+fn first_file(candidates: &[PathBuf], is_file: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    candidates.iter().find(|path| is_file(path)).cloned()
+}
+
+fn installed_app() -> Option<PathBuf> {
+    if Os::CURRENT != Os::Mac {
+        return None;
+    }
+    mac_app_dirs(home().as_deref())
+        .into_iter()
+        .find(|dir| dir.is_dir())
+}
+
+/// `open -a <app> <path>`: the last resort, it cannot take a line.
+pub fn open_app_command(app: &Path, path: &Path) -> Command {
+    let mut command = Command::new("open");
+    command
+        .arg("-a")
+        .arg(app)
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
+fn open_app(app: &Path, path: &Path) -> Result<(), ZedError> {
+    let mut child = open_app_command(app, path)
+        .spawn()
+        .map_err(|source| ZedError::Spawn {
+            program: "open".into(),
+            source,
+        })?;
+    std::thread::spawn(move || child.wait());
+    Ok(())
 }
 
 /// [`open`] with `zed` already looked up (`None` = not found).
 fn open_with(zed: Option<PathBuf>, path: &Path, line: Option<u32>) -> Result<(), ZedError> {
     let zed = zed.ok_or(ZedError::NotFound {
         searched: lookup::SEARCHED,
+        hint: install_hint(Os::CURRENT),
     })?;
     let mut child = command(&zed, path, line)
         .spawn()
@@ -143,5 +239,69 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("`zed` command was not found"), "{message}");
         assert!(message.contains("https://zed.dev"), "{message}");
+    }
+
+    #[test]
+    fn a_mac_looks_in_the_usual_cli_folders_then_inside_the_app() {
+        let home = Path::new("/Users/me");
+        let list = mac_cli_candidates(Some(home));
+        assert_eq!(list[0], Path::new("/usr/local/bin/zed"));
+        assert!(list.contains(&PathBuf::from("/opt/homebrew/bin/zed")));
+        assert!(list.contains(&home.join(".local").join("bin").join("zed")));
+        assert_eq!(
+            list.last().unwrap(),
+            Path::new("/Applications/Zed.app/Contents/MacOS/cli")
+        );
+        assert_eq!(
+            mac_cli_candidates(None).len(),
+            3,
+            "no home: the three system places"
+        );
+        assert_eq!(
+            mac_app_dirs(Some(home)),
+            [
+                PathBuf::from("/Applications/Zed.app"),
+                home.join("Applications").join("Zed.app")
+            ]
+        );
+    }
+
+    #[test]
+    fn the_first_candidate_that_is_a_file_wins() {
+        let (a, b, c) = (PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c"));
+        let all = [a, b.clone(), c.clone()];
+        assert_eq!(first_file(&all, |p| p == b || p == c), Some(b));
+        assert_eq!(first_file(&all, |_| false), None);
+    }
+
+    #[test]
+    fn the_app_fallback_runs_open_with_the_bundle_and_the_path() {
+        let app = Path::new("/Applications/Zed.app");
+        let file = Path::new("/p/x.rs");
+        let command = open_app_command(app, file);
+        assert_eq!(command.get_program(), "open");
+        assert_eq!(
+            args(&command),
+            [OsStr::new("-a"), app.as_os_str(), file.as_os_str()]
+        );
+    }
+
+    #[test]
+    fn the_hint_names_the_fix_for_each_os() {
+        let mac = install_hint(Os::Mac);
+        assert!(
+            mac.contains("/Applications") && mac.contains("cli: install"),
+            "{mac}"
+        );
+        assert!(
+            !mac.contains("restart"),
+            "a Mac finds it again by itself: {mac}"
+        );
+        assert!(install_hint(Os::Windows).contains("installer"));
+        let linux = install_hint(Os::Linux);
+        assert!(
+            linux.contains("cli: install") && linux.contains("restart Mkrew"),
+            "{linux}"
+        );
     }
 }
