@@ -16,6 +16,26 @@ use gpui::Keystroke;
 use crate::board::CardKey;
 use crate::split::{Direction, Preset};
 
+/// The OS whose conventions apply: default shortcuts, shortcut text and text-field keys
+/// (SPEC §13, ADR 0098). Functions take it explicitly so the macOS rules are tested on any OS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Os {
+    Windows,
+    Mac,
+    Linux,
+}
+
+impl Os {
+    /// The OS this build runs on.
+    pub const CURRENT: Os = if cfg!(target_os = "macos") {
+        Os::Mac
+    } else if cfg!(windows) {
+        Os::Windows
+    } else {
+        Os::Linux
+    };
+}
+
 /// Something a shortcut does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
@@ -805,9 +825,15 @@ pub fn folded_clash(
         .map(|(other, _)| *other)
 }
 
-/// `keys` as shortcut text ("Ctrl+Shift+K"); the raw text when it is not a keystroke.
+/// `keys` as this OS's shortcut text ("Ctrl+Shift+K", "⇧⌘K" on macOS); the raw text when it is
+/// not a keystroke.
 pub fn keys_label(keys: &str) -> String {
-    parse_keys(keys).map_or_else(|| keys.to_owned(), |keystroke| label(&keystroke))
+    keys_label_for(keys, Os::CURRENT)
+}
+
+/// [`keys_label`] as `os` writes it.
+pub fn keys_label_for(keys: &str, os: Os) -> String {
+    parse_keys(keys).map_or_else(|| keys.to_owned(), |keystroke| label(&keystroke, os))
 }
 
 /// The sidebar's one-line summary of `keymap.toml` problems.
@@ -1015,12 +1041,12 @@ impl Keymap {
         bindings
     }
 
-    /// Shortcut text for tooltips and menus, e.g. "Ctrl+Shift+X"; empty if unbound.
+    /// Shortcut text for tooltips and menus, e.g. "Ctrl+Shift+X" ("⇧⌘X" on macOS); empty if unbound.
     pub fn label(&self, command: Command) -> String {
         self.bindings
             .iter()
             .find(|(c, _)| *c == command)
-            .map(|(_, keystroke)| label(keystroke))
+            .map(|(_, keystroke)| label(keystroke, Os::CURRENT))
             .unwrap_or_default()
     }
 
@@ -1053,42 +1079,96 @@ fn same_keys(a: &Keystroke, b: &Keystroke) -> bool {
     a.modifiers == b.modifiers && a.key.eq_ignore_ascii_case(&b.key)
 }
 
-fn label(keystroke: &Keystroke) -> String {
+/// Shortcut text: "Ctrl+Alt+Shift+Win+K" (Super on Linux); on macOS the modifier symbols in
+/// Apple's order and no separator ("⌃⌥⇧⌘K").
+fn label(keystroke: &Keystroke, os: Os) -> String {
     let m = keystroke.modifiers;
-    let mut parts: Vec<String> = Vec::new();
-    for (on, name) in [
+    let key = key_name(&keystroke.key, os);
+    if os == Os::Mac {
+        let mut text: String = [
+            (m.control, '⌃'),
+            (m.alt, '⌥'),
+            (m.shift, '⇧'),
+            (m.platform, '⌘'),
+        ]
+        .into_iter()
+        .filter_map(|(on, symbol)| on.then_some(symbol))
+        .collect();
+        text.push_str(&key);
+        return text;
+    }
+    let platform = if os == Os::Linux { "Super" } else { "Win" };
+    let mut parts: Vec<&str> = [
         (m.control, "Ctrl"),
         (m.alt, "Alt"),
         (m.shift, "Shift"),
-        (m.platform, "Win"),
-    ] {
-        if on {
-            parts.push(name.into());
-        }
-    }
-    let key = match keystroke.key.as_str() {
-        "left" => "←".to_owned(),
-        "right" => "→".to_owned(),
-        "up" => "↑".to_owned(),
-        "down" => "↓".to_owned(),
-        "pageup" => "PgUp".to_owned(),
-        "pagedown" => "PgDn".to_owned(),
+        (m.platform, platform),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect();
+    parts.push(&key);
+    parts.join("+")
+}
+
+/// A key in shortcut text: arrows as ← → ↑ ↓, PgUp / PgDn, macOS's ↩ ⌫ ⌦ ⇥, else the key
+/// with its first letter capitalized.
+fn key_name(key: &str, os: Os) -> String {
+    let mac = os == Os::Mac;
+    let name = match key {
+        "left" => "←",
+        "right" => "→",
+        "up" => "↑",
+        "down" => "↓",
+        "pageup" => "PgUp",
+        "pagedown" => "PgDn",
+        "enter" if mac => "↩",
+        "backspace" if mac => "⌫",
+        "delete" if mac => "⌦",
+        "tab" if mac => "⇥",
         key => {
             let mut chars = key.chars();
-            chars
+            return chars
                 .next()
                 .map(|first| first.to_uppercase().chain(chars).collect())
-                .unwrap_or_default()
+                .unwrap_or_default();
         }
     };
-    parts.push(key);
-    parts.join("+")
+    name.to_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::terminal::input::{InputMode, key_to_bytes};
+
+    #[test]
+    fn mac_labels_use_the_modifier_symbols_in_apple_order() {
+        let mac = |keys| keys_label_for(keys, Os::Mac);
+        assert_eq!(mac("cmd-shift-k"), "⇧⌘K");
+        assert_eq!(mac("ctrl-alt-shift-cmd-left"), "⌃⌥⇧⌘←");
+        assert_eq!(mac("cmd-alt-enter"), "⌥⌘↩");
+        assert_eq!(mac("cmd-enter"), "⌘↩");
+        assert_eq!(mac("cmd-backspace"), "⌘⌫");
+        assert_eq!(mac("alt-delete"), "⌥⌦");
+        assert_eq!(mac("ctrl-tab"), "⌃⇥");
+        assert_eq!(mac("cmd-,"), "⌘,");
+        assert_eq!(mac("alt-y"), "⌥Y");
+        assert_eq!(mac("escape"), "Escape");
+        assert_eq!(mac("nonsense key"), "nonsense key");
+    }
+
+    #[test]
+    fn pc_labels_name_the_platform_key_per_os() {
+        assert_eq!(keys_label_for("ctrl-shift-k", Os::Windows), "Ctrl+Shift+K");
+        assert_eq!(keys_label_for("ctrl-enter", Os::Windows), "Ctrl+Enter");
+        assert_eq!(keys_label_for("win-k", Os::Windows), "Win+K");
+        assert_eq!(keys_label_for("super-k", Os::Linux), "Super+K");
+        assert_eq!(
+            keys_label_for("alt-shift-pageup", Os::Linux),
+            "Alt+Shift+PgUp"
+        );
+    }
 
     fn keystroke(keys: &str) -> Keystroke {
         Keystroke::parse(keys).unwrap()
