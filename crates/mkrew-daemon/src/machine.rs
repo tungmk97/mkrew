@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sampler_runs_only_while_a_client_is_counted() {
+    fn the_client_count_follows_the_guards() {
         let dir = tempfile::tempdir().unwrap();
         let hub = Arc::new(Hub::new(Store::open(&dir.path().join("mkrew.db")).unwrap()));
         assert_eq!(*hub.clients.borrow(), 0);
@@ -176,5 +176,36 @@ mod tests {
         assert_eq!(*hub.clients.borrow(), 1);
         drop(b);
         assert_eq!(*hub.clients.borrow(), 0);
+    }
+
+    /// `start`: nothing is sent with no client, the first sample after a join is sent, and a
+    /// client that leaves silences it until the next one joins (which sends again at once).
+    #[tokio::test(start_paused = true)]
+    async fn the_sampler_sends_after_a_join_and_stops_after_the_last_leaves() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = Arc::new(Hub::new(Store::open(&dir.path().join("mkrew.db")).unwrap()));
+        let mut events = hub.events.subscribe();
+        let sampler = start(Arc::clone(&hub));
+        let sent = |events: &mut tokio::sync::broadcast::Receiver<Event>| {
+            std::iter::from_fn(|| events.try_recv().ok())
+                .filter(|e| matches!(e, Event::MachineStats(_)))
+                .count()
+        };
+
+        tokio::time::sleep(HEARTBEAT * 2).await;
+        assert_eq!(sent(&mut events), 0, "no client, no sample");
+
+        let client = ClientGuard::join(&hub);
+        tokio::time::sleep(SAMPLE_EVERY + Duration::from_millis(500)).await;
+        assert_eq!(sent(&mut events), 1, "the first sample after the join");
+
+        drop(client);
+        tokio::time::sleep(HEARTBEAT * 2).await;
+        assert_eq!(sent(&mut events), 0, "the last client left");
+
+        let _client = ClientGuard::join(&hub);
+        tokio::time::sleep(SAMPLE_EVERY + Duration::from_millis(500)).await;
+        assert_eq!(sent(&mut events), 1, "a rejoin sends again");
+        sampler.abort();
     }
 }
