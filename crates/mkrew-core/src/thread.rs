@@ -1236,6 +1236,12 @@ fn codex_facts(value: &Value, last_total: &mut Option<u64>) -> Facts {
             assistant: true,
             output: None,
         },
+        // Codex writes these event lines just before their `response_item`, same time: the
+        // writing gap lands on whichever comes first.
+        (Some("event_msg"), Some("agent_message" | "agent_reasoning")) => Facts {
+            assistant: true,
+            output: None,
+        },
         (Some("response_item"), Some("function_call" | "custom_tool_call" | "reasoning")) => {
             Facts {
                 assistant: true,
@@ -2289,7 +2295,8 @@ mod tests {
         assert_eq!(turn.started_at, Some(T0 + 1_000));
         assert_eq!(turn.ended_at, Some(T0 + 7_000));
         assert_eq!(turn.output_tokens, 50 + 30);
-        // The message at +3 (after the prompt at +1), the call at +6 (after +4.5).
+        // The `agent_message` event at +3 (after the prompt at +1; the `response_item` message
+        // at the same time adds 0), the call at +6 (after +4.5).
         assert_eq!(turn.generation_ms, 2_000 + 1_500);
     }
 
