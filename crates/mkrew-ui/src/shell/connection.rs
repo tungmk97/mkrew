@@ -43,6 +43,7 @@ impl Shell {
         let diff_wrap = ui.diff_wrap;
         let close_to_tray = ui.close_to_tray && local;
         let reading_default = ui.reading_width;
+        let chat_default = ui.chat_default;
         let board_all = ui.board_all_workspaces;
         let (md_mode, md_split) = (ui.md_mode, files_view::md_split_share(ui.md_split));
         let inspector_width = inspector::saved_width(ui.inspector_width);
@@ -358,6 +359,7 @@ impl Shell {
             collapsed_groups: HashSet::new(),
             reading_default,
             reading_width: HashMap::new(),
+            chat_default,
             run_reveal: None,
             ports: Ports::default(),
             agent_icons: HashMap::new(),
@@ -1031,6 +1033,7 @@ impl Shell {
                         self.load_jira(project_id, window, cx);
                     }
                     self.reading_default = settings.ui.reading_width;
+                    self.chat_default = settings.ui.chat_default;
                     self.board_all = settings.ui.board_all_workspaces;
                     self.follow_md_mode(settings.ui.md_mode);
                     if !self.md_split_dragging {

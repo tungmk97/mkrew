@@ -598,6 +598,9 @@ struct Shell {
     /// its own choice here (in memory only). Shell and run panes default to full width.
     reading_default: bool,
     reading_width: HashMap<Ulid, bool>,
+    /// `[ui] chat_default` (ADR 0104): the mode of an agent pane whose layout leaf has no
+    /// saved mode.
+    chat_default: bool,
     /// The run tab to show once its `tab.updated` arrives (it may trail `project.run_start`).
     run_reveal: Option<Ulid>,
     /// Ports of live run sessions (SPEC §10).
