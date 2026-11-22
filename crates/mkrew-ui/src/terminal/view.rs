@@ -67,7 +67,8 @@ pub struct TerminalPane {
     geometry: Option<Geometry>,
     /// A left-button drag is extending the selection.
     selecting: bool,
-    /// Wheel movement below one line, carried to the next event (dropped when the direction changes).
+    /// Wheel movement below one line, carried to the next event (dropped when the direction
+    /// changes).
     scroll_remainder: f32,
     /// The open find bar (Ctrl+Shift+F) and its keyboard focus.
     find: Option<FindBar>,

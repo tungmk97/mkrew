@@ -1914,7 +1914,7 @@ mod tests {
     }
 
     #[test]
-    fn option_as_meta_is_a_switch_on_the_general_page() {
+    fn option_as_meta_is_a_switch() {
         let keymap = Keymap::defaults();
         let mut d = dialog();
         focus_on(&mut d, "terminal.option_as_meta", &keymap);

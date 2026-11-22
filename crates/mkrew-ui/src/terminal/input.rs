@@ -694,7 +694,7 @@ mod tests {
             ("alt-1", "¡", b"\x1b1"),
             // Shift on a non-letter arrives as the shifted char with shift off.
             ("alt-!", "⁄", b"\x1b!"),
-            ("alt-space", "\u{a0}", b"\x1b "),
+            ("alt-space", " ", b"\x1b "),
         ];
         for (spec, composed, expected) in cases {
             assert_eq!(

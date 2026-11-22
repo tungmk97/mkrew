@@ -32,7 +32,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 ### To verify - 2026-11-22 macOS terminal input (ADR 0099, plan docs/superpowers/plans/2026-11-22-macos-2-terminal.md)
 
 - Needs a Mac: the pure parts are unit-tested on Windows, none of this has run on macOS.
-- [ ] **Setting (dark + light):** Settings, General, has a switch "Option as Meta" under "Board shows all workspaces".
+- [ ] **Setting (dark + light):** Settings, General, has a "Terminal" group after the Workspace group with a switch "Option as Meta".
   Its help text fits the row.
   Turning it on writes `option_as_meta = true` under `[terminal]` and keeps the comments.
   Restart the daemon after installing: an older daemon rejects the new key as unknown.
@@ -47,10 +47,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Option+B / Option+F move by word in zsh, Option+Backspace deletes a word, and Option+D deletes the next word.
   Turn it off again: Option+B types ∫ without restarting.
 - [ ] **Vietnamese (macOS built-in Telex, then VNI):** type "việt nam" in a zsh pane, in the composer and in the Git commit box.
-  The word is right when you press Space, with no doubled letters ("vieetj" would be a bug) and nothing left of the older word.
-  [INFERENCE] The built-in input method may revise text it already committed, which Mkrew cannot reach (see ADR 0099, Not changed): if so, say so.
-- [ ] **Japanese or Chinese IME:** with Hiragana or Pinyin active, type "nihon" in a shell pane: the first key composes (no ASCII `n` printed before the candidate window opens).
+  The word is right when you press Space, with no doubled letters and nothing left of the older word.
+  A raw "vieetj" means GPUI does not give keys to an ASCII-capable input method first (a known limit, a follow-up after the Mac check), not that committed text was revised: say so.
+- [ ] **Japanese or Chinese IME:** with Hiragana or Pinyin active, type "nihon" in a shell pane and in the composer: the first key composes (no ASCII `n` printed before the candidate window opens).
   The candidate window opens next to the cursor.
+- [ ] **CJK input mode and terminal keys:** with Hiragana or Pinyin active, copy mode (h j k l) and link hints still act on single letters.
 - [ ] **Dead keys:** US layout, in a shell pane, Option+E then E types é; Option+` then A types à; Option+E then Space types ´.
   (Text fields do not compose Option dead keys yet; see Plan A "Not fixed".)
 - [ ] **Windows (regression):** Telex or Unikey types "việt" in a shell pane, the composer and the find bar exactly as before.

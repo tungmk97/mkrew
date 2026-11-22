@@ -85,7 +85,8 @@ This applies on every OS.
 `text_for_range` returns a slice of it, and `replace_text_in_range` with a range erases back to the start of the range and types the replacement and what followed it.
 Ranges count UTF-16 units.
 Ranges are honored on macOS only: Windows Telex was written and tested with every range meaning "all composing text", so there a range stays that.
-`prefers_ime_for_printable_keys` is true, so with a CJK or other IME source active printable keys reach the input method first (only GPUI's macOS backend asks for it).
+`prefers_ime_for_printable_keys` is true, so with an input mode that is not ASCII-capable (Japanese kana, Chinese, Korean) printable keys reach the input method first (only GPUI's macOS backend asks for it).
+GPUI does not do this for ASCII-capable modes (Telex, VNI, Romaji): there plain letters reach the view first and the terminal sends them as typed.
 
 `terminal::view::grid_cell_size` rounds the cell width and the line height to whole device pixels with the window's scale factor (`layout::snap_to_device`).
 The Files editor keeps `cell_size`, because its text is laid out by the font's own advance.

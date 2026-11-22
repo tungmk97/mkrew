@@ -166,7 +166,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         General,
-        "Workspace",
+        "Terminal",
         "terminal",
         "option_as_meta",
         Bool,

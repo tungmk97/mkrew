@@ -1436,8 +1436,7 @@ only combinations bound in the keymap are intercepted; everything else goes to t
 therefore avoid plain `Ctrl+<letter>` and favor `Ctrl+Shift`/`Alt`, like Windows Terminal.
 Editor-only commands may use plain `Ctrl+<letter>` (no terminal has focus there, ADR 0028); the
 editor's own keys (arrows, Ctrl+Z/Y/A/C/X/V) are not in the keymap.
-One exception on Windows and Linux: plain Ctrl+C copies while terminal text is selected (ADR 0022); without a selection
-it reaches the agent as ^C. Anything sent to the agent clears the selection.
+One exception on Windows and Linux: plain Ctrl+C copies while terminal text is selected (ADR 0022); without a selection it reaches the agent as ^C. Anything sent to the agent clears the selection.
 Plain Ctrl+V pastes in a terminal pane; ^V reaches the program only when the clipboard holds no
 text, image or files (ADR 0026).
 On macOS neither exception applies (ADR 0099): Ctrl+C is always ^C and Ctrl+V is always ^V.
@@ -1447,8 +1446,8 @@ On macOS Option+key types the layout's character by default (Option+2 is €, Op
 With `[terminal] option_as_meta = true` Option sends ESC plus the key (Option+B is `ESC b`, Option+Shift+B is `ESC B`), so a shell's word moves work.
 Keys that are not text keep their xterm form with Option as Alt (Option+←, Option+Backspace).
 The setting has no effect on Windows and Linux (ADR 0099).
-The input method (macOS dead keys and Option characters, Windows Telex, CJK) types into a terminal or field as key presses: composing text is typed in place and erased and retyped when the input method revises it, by range.
-With an input source that is an IME, printable keys reach it first.
+The input method (macOS dead keys and Option characters, Windows Telex, CJK) types into a terminal or field as key presses: composing text is typed in place and erased and retyped when the input method revises it (by range on macOS).
+With an input mode that is not ASCII-capable (Japanese kana, Chinese, Korean), printable keys reach the input method first; ASCII-capable modes (Telex, VNI, Romaji) get plain letters as typed.
 Every text field of the app (task title and prompt, composer, follow-up, commit box, run setup,
 comments, broadcast, peek reply, the palette, Ask AI, Settings, the filters and
 find bars, the inline rename) edits like a normal text box (ADR 0075): ←/→, Ctrl+←/→ by word,

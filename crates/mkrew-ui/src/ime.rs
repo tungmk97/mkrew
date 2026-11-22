@@ -241,9 +241,10 @@ impl<V: 'static> InputHandler for Typing<V> {
         self.marked.marked_for(&self.focus).clear();
     }
 
-    /// With an IME input source active (Japanese, Chinese, Korean, Telex) printable keys reach
-    /// the input method first, as they must to compose; it types through `replace_text_in_range`.
-    /// With a plain layout this changes nothing.
+    /// With an input mode that is not ASCII-capable (Japanese kana, Chinese, Korean) printable
+    /// keys reach the input method first, as they must to compose; it types through
+    /// `replace_text_in_range`. GPUI does not offer keys first to ASCII-capable modes such as
+    /// Telex, VNI or Romaji. With a plain layout this changes nothing.
     fn prefers_ime_for_printable_keys(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
         true
     }
