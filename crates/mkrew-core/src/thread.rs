@@ -28,7 +28,9 @@ const TARGET_KEYS: [&str; 6] = ["file_path", "path", "pattern", "command", "url"
 pub struct Turn {
     pub prompt: String,
     pub items: Vec<Item>,
-    /// The latest Claude `TodoWrite` input or Codex `update_plan` arguments of the turn.
+    /// The latest Claude `TodoWrite` input or Codex `update_plan` arguments of the turn, or
+    /// the session checklist of Claude's task tools after their latest change in the turn.
+    /// `Some(empty)` is an emptied list.
     pub plan: Option<Vec<PlanStep>>,
     /// The last `AskUserQuestion` of the turn that has no result yet.
     pub question: Option<Question>,
@@ -96,6 +98,8 @@ pub struct Subagent {
     pub subagent_type: String,
     /// Its result arrived.
     pub done: bool,
+    /// The id of a background launch (`toolUseResult.agentId`), to match its notification.
+    pub agent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,11 +118,49 @@ enum Line {
     Plan(Vec<PlanStep>),
     Question(Question),
     Subagent(Subagent),
-    /// The result of the call `id`.
+    /// The result of the call `id`, with what the entry's `toolUseResult` says (Claude).
     Result {
         id: String,
         result: ToolResult,
+        structured: Option<Structured>,
     },
+    /// A `TaskCreate` call: the step is added when its result gives the task id.
+    TaskCreate {
+        call_id: String,
+        subject: String,
+    },
+    /// A `TaskUpdate` call.
+    TaskUpdate {
+        id: String,
+        status: Option<String>,
+        subject: Option<String>,
+    },
+    /// A `<task-notification>`: a background subagent ended.
+    Notification {
+        tool_use_id: Option<String>,
+        task_id: Option<String>,
+    },
+}
+
+/// A step of the checklist Claude's task tools build.
+#[derive(Debug, Clone)]
+struct Task {
+    id: String,
+    text: String,
+    status: PlanStatus,
+}
+
+/// The parts of a Claude entry's `toolUseResult` the reader uses.
+#[derive(Debug, Default)]
+struct Structured {
+    /// `task.id` of a `TaskCreate` result.
+    task_id: Option<String>,
+    /// `tasks` of a `TaskList` result.
+    tasks: Option<Vec<Task>>,
+    /// `agentId` of a background launch.
+    agent_id: Option<String>,
+    /// `status == "async_launched"`.
+    async_launched: bool,
 }
 
 /// Incremental reader for one transcript file.
@@ -134,6 +176,10 @@ pub struct ThreadReader {
     truncated: bool,
     first_turn: u64,
     max_turns: usize,
+    /// The task tools' checklist of the session.
+    checklist: Vec<Task>,
+    /// `TaskCreate` calls (tool-use id, subject) whose result has not come yet.
+    creates: Vec<(String, String)>,
 }
 
 impl ThreadReader {
@@ -159,6 +205,8 @@ impl ThreadReader {
             truncated: false,
             first_turn: 0,
             max_turns: max_turns.max(1),
+            checklist: Vec::new(),
+            creates: Vec::new(),
         })
     }
 
@@ -237,6 +285,10 @@ impl ThreadReader {
                 }
                 return true;
             }
+            Line::Notification {
+                tool_use_id,
+                task_id,
+            } => return self.notified(tool_use_id.as_deref(), task_id.as_deref()),
             line => line,
         };
         // Lines before the first prompt in the window have no turn.
@@ -245,7 +297,7 @@ impl ThreadReader {
         };
         match line {
             // Handled above.
-            Line::Prompt(_) => false,
+            Line::Prompt(_) | Line::Notification { .. } => false,
             Line::Text(text) => {
                 match turn.items.last_mut() {
                     Some(Item::Text(last)) => {
@@ -279,19 +331,141 @@ impl ThreadReader {
                 turn.subagents.push(subagent);
                 true
             }
-            Line::Result { id, result } => turn.set_result(&id, result),
+            Line::TaskCreate { call_id, subject } => {
+                if self.creates.len() >= crate::plan::MAX_ITEMS {
+                    self.creates.remove(0);
+                }
+                self.creates.push((call_id, subject));
+                false
+            }
+            Line::TaskUpdate {
+                id,
+                status,
+                subject,
+            } => {
+                let Some(at) = self.checklist.iter().position(|t| t.id == id) else {
+                    return false;
+                };
+                if status.as_deref() == Some("deleted") {
+                    self.checklist.remove(at);
+                } else {
+                    let task = &mut self.checklist[at];
+                    if let Some(status) = status.as_deref().and_then(status_of) {
+                        task.status = status;
+                    }
+                    if let Some(subject) = subject {
+                        task.text = subject;
+                    }
+                }
+                turn.sync_plan(&self.checklist)
+            }
+            Line::Result {
+                id,
+                result,
+                structured,
+            } => {
+                let present = structured.is_some();
+                let structured = structured.unwrap_or_default();
+                let mut changed = false;
+                if let Some(at) = self.creates.iter().position(|(call, _)| *call == id) {
+                    let (_, subject) = self.creates.remove(at);
+                    // The result text is not fixed: `#N` in it only when there is no
+                    // structured output at all.
+                    let task_id = if present {
+                        structured.task_id
+                    } else {
+                        hash_number(&result.text)
+                    };
+                    if let Some(task_id) = task_id
+                        && !result.is_error
+                        && self.checklist.len() < crate::plan::MAX_ITEMS
+                        && !self.checklist.iter().any(|t| t.id == task_id)
+                    {
+                        self.checklist.push(Task {
+                            id: task_id,
+                            text: subject,
+                            status: PlanStatus::Pending,
+                        });
+                        changed |= turn.sync_plan(&self.checklist);
+                    }
+                } else if let Some(tasks) = structured.tasks
+                    && !result.is_error
+                    && turn.call(&id).is_some_and(|call| call.name == "TaskList")
+                {
+                    self.checklist = tasks;
+                    changed |= turn.sync_plan(&self.checklist);
+                }
+                changed
+                    | turn.set_result(&id, result, structured.async_launched, structured.agent_id)
+            }
         }
+    }
+
+    /// Marks done the subagent a `<task-notification>` names: the one whose call id is
+    /// `tool_use_id`, else the one whose `agent_id` is `task_id`, newest first over every kept
+    /// turn. False (nothing changes) when none, or when it was done already.
+    fn notified(&mut self, tool_use_id: Option<&str>, task_id: Option<&str>) -> bool {
+        let locate = |matches: &dyn Fn(&Subagent) -> bool| {
+            self.turns
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(t, turn)| turn.subagents.iter().rposition(matches).map(|s| (t, s)))
+        };
+        let at = tool_use_id
+            .and_then(|id| locate(&|s| s.id == id))
+            .or_else(|| task_id.and_then(|id| locate(&|s| s.agent_id.as_deref() == Some(id))));
+        let Some((turn, subagent)) = at else {
+            return false;
+        };
+        !std::mem::replace(&mut self.turns[turn].subagents[subagent].done, true)
     }
 }
 
 impl Turn {
+    /// The call `id` of this turn.
+    fn call(&self, id: &str) -> Option<&ToolCall> {
+        self.items.iter().rev().find_map(|item| match item {
+            Item::Tools(calls) => calls.iter().rev().find(|call| call.id == id),
+            _ => None,
+        })
+    }
+
+    /// Sets `plan` to a copy of `checklist`; false when it already was.
+    fn sync_plan(&mut self, checklist: &[Task]) -> bool {
+        let plan = Some(
+            checklist
+                .iter()
+                .map(|task| PlanStep {
+                    text: task.text.clone(),
+                    status: task.status,
+                })
+                .collect(),
+        );
+        if self.plan == plan {
+            return false;
+        }
+        self.plan = plan;
+        true
+    }
+
     /// Fills the call `id` of this turn with `result`; false (nothing changes) when the turn
-    /// has no such call.
-    fn set_result(&mut self, id: &str, result: ToolResult) -> bool {
+    /// has no such call. A subagent of that id is done, unless this is a background launch
+    /// (`async_launched`, or the text says so): it keeps running and records its agent id.
+    fn set_result(
+        &mut self,
+        id: &str,
+        result: ToolResult,
+        async_launched: bool,
+        agent_id: Option<String>,
+    ) -> bool {
         if id.is_empty() {
             return false;
         }
         let mut filled = false;
+        let launched =
+            async_launched || result.text.trim_start().starts_with("Async agent launched");
+        let agent_id = agent_id.or_else(|| launched.then(|| text_agent_id(&result.text)).flatten());
         for item in self.items.iter_mut().rev() {
             if let Item::Tools(calls) = item
                 && let Some(call) = calls.iter_mut().rev().find(|call| call.id == id)
@@ -308,10 +482,90 @@ impl Turn {
             self.question = None;
         }
         for subagent in self.subagents.iter_mut().filter(|s| s.id == id) {
-            subagent.done = true;
+            if launched {
+                subagent.agent_id.clone_from(&agent_id);
+            } else {
+                subagent.done = true;
+            }
         }
         true
     }
+}
+
+/// `text` trimmed and cut to [`crate::plan::MAX_TEXT_CHARS`] characters, with `…` after a cut.
+fn cut_text(text: &str) -> String {
+    let text = text.trim();
+    match text.char_indices().nth(crate::plan::MAX_TEXT_CHARS) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_owned(),
+    }
+}
+
+/// The digits after the first `#` that has some (`Task #3 created`).
+fn hash_number(text: &str) -> Option<String> {
+    text.split('#')
+        .skip(1)
+        .map(|rest| {
+            rest.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+        })
+        .find(|digits| !digits.is_empty())
+}
+
+/// The word after `agentId:` in a launch result's text.
+fn text_agent_id(text: &str) -> Option<String> {
+    let mut words = text.split_whitespace();
+    words.find(|word| *word == "agentId:")?;
+    words.next().map(str::to_owned)
+}
+
+/// A task id: a string or a number.
+fn id_str(id: &Value) -> Option<String> {
+    match id {
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn status_of(status: &str) -> Option<PlanStatus> {
+    match status {
+        "pending" => Some(PlanStatus::Pending),
+        "in_progress" => Some(PlanStatus::InProgress),
+        "completed" => Some(PlanStatus::Done),
+        _ => None,
+    }
+}
+
+/// The used parts of an entry's `toolUseResult`; `None` when it is not an object.
+fn structured_of(value: &Value) -> Option<Structured> {
+    value.as_object()?;
+    Some(Structured {
+        task_id: id_str(&value["task"]["id"]),
+        tasks: value["tasks"].as_array().map(|tasks| {
+            tasks
+                .iter()
+                .filter(|task| task["status"] != "deleted")
+                .filter_map(|task| {
+                    Some(Task {
+                        id: id_str(&task["id"])?,
+                        text: cut_text(task["subject"].as_str()?),
+                        status: task["status"]
+                            .as_str()
+                            .and_then(status_of)
+                            .unwrap_or(PlanStatus::Pending),
+                    })
+                })
+                .take(crate::plan::MAX_ITEMS)
+                .collect()
+        }),
+        agent_id: value["agentId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned),
+        async_launched: value["status"] == "async_launched",
+    })
 }
 
 /// `text` cut to at most `max` bytes on a char boundary, with [`CUT`] after a cut.
@@ -424,6 +678,7 @@ fn result(id: &Value, text: &str, is_error: bool) -> Line {
             text: clip(text.trim_end(), RESULT_MAX),
             is_error,
         },
+        structured: None,
     }
 }
 
@@ -457,13 +712,17 @@ fn codex_output(output: &Value) -> (String, bool) {
             .is_some_and(|code| code != 0);
         return (text.to_owned(), failed);
     }
-    let failed = raw.lines().any(|line| {
-        ["Exit code: ", "Process exited with code "]
-            .iter()
-            .find_map(|prefix| line.strip_prefix(prefix))
-            .and_then(|rest| rest.trim().parse::<i64>().ok())
-            .is_some_and(|code| code != 0)
-    });
+    // Only the lines before `Output:` are the tool's own; a command may print the same words.
+    let failed = raw
+        .lines()
+        .take_while(|line| *line != "Output:")
+        .any(|line| {
+            ["Exit code: ", "Process exited with code "]
+                .iter()
+                .find_map(|prefix| line.strip_prefix(prefix))
+                .and_then(|rest| rest.trim().parse::<i64>().ok())
+                .is_some_and(|code| code != 0)
+        });
     (raw.to_owned(), failed)
 }
 
@@ -475,24 +734,26 @@ fn tag<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 }
 
 /// A plan from `steps` (an array of objects whose `text_key` is the step and `status` one of
-/// `pending`, `in_progress`, `completed`); `None` when empty.
+/// `pending`, `in_progress`, `completed`), at most `MAX_ITEMS` steps with cut texts; `None`
+/// when `steps` is not an array (an empty array is an emptied plan).
 fn plan_of(steps: &Value, text_key: &str) -> Option<Vec<PlanStep>> {
-    let steps: Vec<PlanStep> = steps
-        .as_array()?
-        .iter()
-        .filter_map(|step| {
-            let text = step[text_key].as_str()?.trim();
-            (!text.is_empty()).then(|| PlanStep {
-                text: text.to_owned(),
-                status: match step["status"].as_str() {
-                    Some("in_progress") => PlanStatus::InProgress,
-                    Some("completed") => PlanStatus::Done,
-                    _ => PlanStatus::Pending,
-                },
+    Some(
+        steps
+            .as_array()?
+            .iter()
+            .filter_map(|step| {
+                let text = cut_text(step[text_key].as_str()?);
+                (!text.is_empty()).then(|| PlanStep {
+                    text,
+                    status: step["status"]
+                        .as_str()
+                        .and_then(status_of)
+                        .unwrap_or(PlanStatus::Pending),
+                })
             })
-        })
-        .collect();
-    (!steps.is_empty()).then_some(steps)
+            .take(crate::plan::MAX_ITEMS)
+            .collect(),
+    )
 }
 
 fn question_of(id: &str, input: &Value) -> Option<Question> {
@@ -502,13 +763,13 @@ fn question_of(id: &str, input: &Value) -> Option<Question> {
     let text = first["question"].as_str()?.trim();
     (!text.is_empty()).then(|| Question {
         id: id.to_owned(),
-        text: text.to_owned(),
+        text: cut_text(text),
         options: first["options"]
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(|option| option["label"].as_str())
-            .map(str::to_owned)
+            .map(cut_text)
             .collect(),
     })
 }
@@ -521,6 +782,26 @@ fn claude_tool(block: &Value) -> Vec<Line> {
     match name.as_str() {
         Some("TodoWrite") => lines.extend(plan_of(&input["todos"], "content").map(Line::Plan)),
         Some("AskUserQuestion") => lines.extend(question_of(id, input).map(Line::Question)),
+        Some("TaskCreate") => lines.extend(
+            input["subject"]
+                .as_str()
+                .map(cut_text)
+                .filter(|subject| !subject.is_empty() && !id.is_empty())
+                .map(|subject| Line::TaskCreate {
+                    call_id: id.to_owned(),
+                    subject,
+                }),
+        ),
+        Some("TaskUpdate") => lines.extend(id_str(&input["taskId"]).map(|task_id| {
+            Line::TaskUpdate {
+                id: task_id,
+                status: input["status"].as_str().map(str::to_owned),
+                subject: input["subject"]
+                    .as_str()
+                    .map(cut_text)
+                    .filter(|subject| !subject.is_empty()),
+            }
+        })),
         Some("Task" | "Agent") => lines.push(Line::Subagent(Subagent {
             id: id.to_owned(),
             description: input["description"].as_str().unwrap_or_default().to_owned(),
@@ -529,10 +810,29 @@ fn claude_tool(block: &Value) -> Vec<Line> {
                 .unwrap_or_default()
                 .to_owned(),
             done: false,
+            agent_id: None,
         })),
         _ => {}
     }
     lines
+}
+
+/// A `<task-notification>` that says a background task ended (completed, failed, stopped).
+fn notification(text: &str) -> Vec<Line> {
+    if !matches!(
+        tag(text, "status"),
+        Some("completed" | "failed" | "stopped")
+    ) {
+        return Vec::new();
+    }
+    let (tool_use_id, task_id) = (tag(text, "tool-use-id"), tag(text, "task-id"));
+    if tool_use_id.is_none() && task_id.is_none() {
+        return Vec::new();
+    }
+    vec![Line::Notification {
+        tool_use_id: tool_use_id.map(str::to_owned),
+        task_id: task_id.map(str::to_owned),
+    }]
 }
 
 fn claude_line(value: &Value) -> Vec<Line> {
@@ -542,7 +842,7 @@ fn claude_line(value: &Value) -> Vec<Line> {
     let content = &value["message"]["content"];
     match value["type"].as_str() {
         Some("user") => {
-            let results: Vec<Line> = content
+            let mut results: Vec<Line> = content
                 .as_array()
                 .into_iter()
                 .flatten()
@@ -556,21 +856,31 @@ fn claude_line(value: &Value) -> Vec<Line> {
                 })
                 .collect();
             if !results.is_empty() {
+                // The entry's `toolUseResult` belongs to its result when there is just one.
+                if let [Line::Result { structured, .. }] = results.as_mut_slice() {
+                    *structured = structured_of(&value["toolUseResult"]);
+                }
                 return results;
+            }
+            let text = block_text(content, "text");
+            if let Some(text) = text
+                .as_deref()
+                .filter(|t| t.starts_with("<task-notification>"))
+            {
+                return notification(text);
             }
             if value["isMeta"] == true {
                 return Vec::new();
             }
-            let Some(text) = block_text(content, "text") else {
+            let Some(text) = text else {
                 return Vec::new();
             };
-            // Injected lines: compaction summary, background-task and SDK-peer messages,
-            // interrupts, command stdout.
+            // Injected lines: compaction summary, SDK-peer messages, interrupts, command
+            // stdout.
             let injected = value["isCompactSummary"] == true
                 || value["origin"]["kind"]
                     .as_str()
                     .is_some_and(|k| k != "human")
-                || text.starts_with("<task-notification>")
                 || text.starts_with("[Request interrupted")
                 || text.starts_with("<local-command-");
             if injected {
@@ -1228,17 +1538,20 @@ mod tests {
         assert_eq!(reader.turns()[0].question, None);
     }
 
-    /// The second question of the fixture is answered in the same transcript.
+    /// A question left unanswered when a new prompt arrives stays on its old turn; the new
+    /// last turn has none. An answered one (second turn of the fixture) is not pending.
     #[test]
     fn an_answered_question_is_not_pending() {
         let reader = read(UsageFormat::ClaudeJsonl, CLAUDE_AGENTS);
         assert_eq!(reader.turns()[1].question, None);
-        // A window that starts after the question: its result has no call and is dropped.
-        let mut late = ThreadReader::new(&UsageFormat::ClaudeJsonl, THREAD_TURNS).unwrap();
-        late.feed(&head(CLAUDE_AGENTS, 1));
-        let answer = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"q1\",\"content\":\"x\"}]}}\n";
-        assert!(!late.feed(answer.as_bytes()));
-        assert_eq!(late.turns()[0].question, None);
+        let mut reader = ThreadReader::new(&UsageFormat::ClaudeJsonl, THREAD_TURNS).unwrap();
+        reader.feed(&head(CLAUDE_AGENTS, 8));
+        let [first, second] = reader.turns() else {
+            panic!("{:?}", reader.turns());
+        };
+        assert_eq!(second.prompt, "Second turn");
+        assert_eq!(first.question.as_ref().map(|q| q.id.as_str()), Some("q1"));
+        assert_eq!(second.question, None);
     }
 
     #[test]
@@ -1250,6 +1563,7 @@ mod tests {
             description: description.into(),
             subagent_type: kind.into(),
             done,
+            agent_id: None,
         };
         assert_eq!(
             reader.turns()[0].subagents,
@@ -1261,5 +1575,247 @@ mod tests {
         let done = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"s2\",\"content\":\"ok\"}]}}\n";
         reader.feed(done.as_bytes());
         assert!(reader.turns()[0].subagents.iter().all(|s| s.done));
+    }
+
+    const CLAUDE_TASKS: &[u8] = include_bytes!("../tests/fixtures/thread/claude_tasks.jsonl");
+    const CLAUDE_BACKGROUND: &[u8] =
+        include_bytes!("../tests/fixtures/thread/claude_background.jsonl");
+
+    /// Lines `from..to` (0-based) of `bytes`.
+    fn slice(bytes: &[u8], from: usize, to: usize) -> Vec<u8> {
+        bytes
+            .split_inclusive(|b| *b == b'\n')
+            .skip(from)
+            .take(to - from)
+            .flatten()
+            .copied()
+            .collect()
+    }
+
+    fn claude() -> ThreadReader {
+        ThreadReader::new(&UsageFormat::ClaudeJsonl, THREAD_TURNS).unwrap()
+    }
+
+    /// The checklist is built from create results (the id from `toolUseResult`, else `#N` in
+    /// the text), updated, deleted, replaced by a list result and kept across turns.
+    #[test]
+    fn task_tools_keep_one_checklist() {
+        let mut reader = claude();
+        let plan = |reader: &ThreadReader, turn: usize| reader.turns()[turn].plan.clone();
+        reader.feed(&slice(CLAUDE_TASKS, 0, 2));
+        assert_eq!(plan(&reader, 0), None, "a create without its result");
+        reader.feed(&slice(CLAUDE_TASKS, 2, 3));
+        assert_eq!(
+            plan(&reader, 0),
+            Some(vec![step("Design", PlanStatus::Pending)]),
+            "toolUseResult.task.id wins over `#7` in the text"
+        );
+        reader.feed(&slice(CLAUDE_TASKS, 3, 7));
+        assert_eq!(
+            plan(&reader, 0),
+            Some(vec![
+                step("Design", PlanStatus::Pending),
+                step("Build", PlanStatus::Pending),
+                step("Ship", PlanStatus::Pending),
+            ]),
+            "the last id comes from `#3` in the text: no toolUseResult"
+        );
+        reader.feed(&slice(CLAUDE_TASKS, 7, 9));
+        assert_eq!(
+            plan(&reader, 0),
+            Some(vec![
+                step("Design", PlanStatus::Done),
+                step("Build", PlanStatus::InProgress),
+                step("Ship", PlanStatus::Pending),
+            ])
+        );
+        assert!(reader.feed(&slice(CLAUDE_TASKS, 9, 10)), "a delete");
+        let two = Some(vec![
+            step("Design", PlanStatus::Done),
+            step("Build", PlanStatus::InProgress),
+        ]);
+        assert_eq!(plan(&reader, 0), two);
+        // The call row is new; the unknown id leaves the checklist as it is.
+        reader.feed(&slice(CLAUDE_TASKS, 10, 11));
+        assert_eq!(plan(&reader, 0), two);
+
+        reader.feed(&slice(CLAUDE_TASKS, 11, 12));
+        assert_eq!(plan(&reader, 1), None, "the new turn's plan is not set yet");
+        reader.feed(&slice(CLAUDE_TASKS, 12, 14));
+        assert_eq!(
+            plan(&reader, 1),
+            Some(vec![
+                step("Build", PlanStatus::Done),
+                step("Test", PlanStatus::Pending),
+            ]),
+            "a list result replaces the checklist"
+        );
+        assert_eq!(plan(&reader, 0), two, "the old turn keeps its plan");
+        reader.feed(&slice(CLAUDE_TASKS, 14, 15));
+        assert_eq!(
+            plan(&reader, 1),
+            Some(vec![
+                step("Build", PlanStatus::Done),
+                step("Test it", PlanStatus::InProgress),
+            ]),
+            "an update can rename"
+        );
+    }
+
+    /// An update in a later turn applies to a task created in an earlier one.
+    #[test]
+    fn the_checklist_outlives_the_turn() {
+        let mut reader = claude();
+        reader.feed(&slice(CLAUDE_TASKS, 0, 12));
+        let update = "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"u9\",\"name\":\"TaskUpdate\",\"input\":{\"taskId\":\"2\",\"status\":\"completed\"}}]}}\n";
+        assert!(reader.feed(update.as_bytes()));
+        assert_eq!(
+            reader.turns()[1].plan,
+            Some(vec![
+                step("Design", PlanStatus::Done),
+                step("Build", PlanStatus::Done),
+            ])
+        );
+    }
+
+    /// An empty list gives `Some(empty)` (not nothing) for `TodoWrite` and for a list result.
+    #[test]
+    fn an_emptied_list_is_some_empty() {
+        let todo = "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"w\",\"name\":\"TodoWrite\",\"input\":{\"todos\":[]}}]}}\n";
+        let mut reader = claude();
+        reader.feed(&slice(CLAUDE_TASKS, 0, 1));
+        reader.feed(todo.as_bytes());
+        assert_eq!(reader.turns()[0].plan, Some(vec![]));
+
+        let codex = "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"go\"}}\n\
+            {\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"update_plan\",\"call_id\":\"p\",\"arguments\":\"{\\\"plan\\\":[]}\"}}\n";
+        let reader = read(UsageFormat::CodexJsonl, codex.as_bytes());
+        assert_eq!(reader.turns()[0].plan, Some(vec![]));
+
+        let mut reader = claude();
+        reader.feed(&slice(CLAUDE_TASKS, 0, 3));
+        reader.feed(&slice(CLAUDE_TASKS, 11, 12));
+        let list = "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"l2\",\"name\":\"TaskList\",\"input\":{}}]}}\n\
+            {\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"l2\",\"content\":\"No tasks\"}]},\"toolUseResult\":{\"tasks\":[]}}\n";
+        reader.feed(list.as_bytes());
+        assert_eq!(reader.turns()[1].plan, Some(vec![]));
+    }
+
+    /// Plan steps, question and option texts are cut to `MAX_TEXT_CHARS` characters (never
+    /// inside a char) with a `…`; the checklist holds at most `MAX_ITEMS` steps.
+    #[test]
+    fn long_plan_and_question_texts_are_cut() {
+        let long = "é".repeat(crate::plan::MAX_TEXT_CHARS + 30);
+        let cut = format!("{}…", "é".repeat(crate::plan::MAX_TEXT_CHARS));
+        let assistant = |tool: &str, input: &str| {
+            format!(
+                "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"tool_use\",\"id\":\"x\",\"name\":\"{tool}\",\"input\":{input}}}]}}}}\n"
+            )
+        };
+        let mut jsonl = slice(CLAUDE_TASKS, 0, 1);
+        jsonl.extend(
+            assistant(
+                "TodoWrite",
+                &format!("{{\"todos\":[{{\"content\":\"{long}\",\"status\":\"pending\"}}]}}"),
+            )
+            .into_bytes(),
+        );
+        let reader = read(UsageFormat::ClaudeJsonl, &jsonl);
+        assert_eq!(
+            reader.turns()[0].plan,
+            Some(vec![step(&cut, PlanStatus::Pending)])
+        );
+
+        let mut jsonl = slice(CLAUDE_TASKS, 0, 1);
+        jsonl.extend(assistant(
+            "AskUserQuestion",
+            &format!("{{\"questions\":[{{\"question\":\"{long}\",\"options\":[{{\"label\":\"{long}\"}}]}}]}}"),
+        ).into_bytes());
+        let reader = read(UsageFormat::ClaudeJsonl, &jsonl);
+        let question = reader.turns()[0].question.as_ref().unwrap();
+        assert_eq!(question.text, cut);
+        assert_eq!(question.options, std::slice::from_ref(&cut));
+
+        let mut jsonl = slice(CLAUDE_TASKS, 0, 1);
+        for i in 0..crate::plan::MAX_ITEMS + 5 {
+            let id = format!("c{i}");
+            jsonl.extend(format!(
+                "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"tool_use\",\"id\":\"{id}\",\"name\":\"TaskCreate\",\"input\":{{\"subject\":\"{long}\"}}}}]}}}}\n\
+                 {{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"tool_result\",\"tool_use_id\":\"{id}\",\"content\":\"ok\"}}]}},\"toolUseResult\":{{\"task\":{{\"id\":\"{i}\"}}}}}}\n"
+            ).into_bytes());
+        }
+        let reader = read(UsageFormat::ClaudeJsonl, &jsonl);
+        let plan = reader.turns()[0].plan.as_ref().unwrap();
+        assert_eq!(plan.len(), crate::plan::MAX_ITEMS);
+        assert_eq!(plan[0].text, cut);
+    }
+
+    /// A background launch stays running until its notification: matched by tool-use id, and
+    /// by task id when that tag is absent. A second notification and one for an unknown id
+    /// change nothing; none of them is a prompt.
+    #[test]
+    fn background_subagents_run_until_their_notification() {
+        let mut reader = claude();
+        let state = |reader: &ThreadReader| -> Vec<(String, bool)> {
+            reader
+                .turns()
+                .iter()
+                .flat_map(|t| &t.subagents)
+                .map(|s| (s.id.clone(), s.done))
+                .collect()
+        };
+        let running = |done: [bool; 4]| -> Vec<(String, bool)> {
+            ["bg1", "bg2", "bg3", "fg1"]
+                .iter()
+                .zip(done)
+                .map(|(id, done)| ((*id).to_owned(), done))
+                .collect()
+        };
+        reader.feed(&slice(CLAUDE_BACKGROUND, 0, 6));
+        assert_eq!(
+            state(&reader),
+            running([false, false, false, true]),
+            "launch results keep them running (structured status, text only, structured only); a plain result is done"
+        );
+        let agent_ids: Vec<_> = reader.turns()[0]
+            .subagents
+            .iter()
+            .map(|s| s.agent_id.as_deref())
+            .collect();
+        assert_eq!(
+            agent_ids,
+            [Some("a111"), Some("a222"), Some("a333"), None],
+            "from toolUseResult, from `agentId:` in the text, from toolUseResult"
+        );
+        reader.feed(&slice(CLAUDE_BACKGROUND, 6, 7));
+        assert!(
+            reader.feed(&slice(CLAUDE_BACKGROUND, 7, 8)),
+            "by tool-use id"
+        );
+        assert_eq!(state(&reader), running([true, false, false, true]));
+        assert!(reader.feed(&slice(CLAUDE_BACKGROUND, 8, 9)), "by task id");
+        assert_eq!(state(&reader), running([true, false, true, true]));
+        assert!(
+            !reader.feed(&slice(CLAUDE_BACKGROUND, 9, 10)),
+            "a second one"
+        );
+        assert!(
+            !reader.feed(&slice(CLAUDE_BACKGROUND, 10, 11)),
+            "unknown ids"
+        );
+        assert_eq!(state(&reader), running([true, false, true, true]));
+        assert_eq!(reader.turns().len(), 2, "no notification is a prompt");
+    }
+
+    /// A command that prints `Exit code: 1` and exits 0 is not an error: the exit lines are
+    /// only read before the `Output:` line.
+    #[test]
+    fn codex_exit_lines_in_the_output_are_not_the_exit_code() {
+        let printed = "Exit code: 0\nWall time: 0.1 seconds\nOutput:\nExit code: 1\nbye";
+        assert!(!codex_output(&Value::String(printed.into())).1);
+        let unified = "Process exited with code 0\nOutput:\nProcess exited with code 2";
+        assert!(!codex_output(&Value::String(unified.into())).1);
+        let failed = "Exit code: 1\nWall time: 0.1 seconds\nOutput:\nnope";
+        assert!(codex_output(&Value::String(failed.into())).1);
     }
 }
