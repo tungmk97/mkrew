@@ -211,7 +211,29 @@ pub fn restored(
             saved.size.height.max(min.height),
         ),
     );
-    placement.window_bounds(fit_on_displays(grown, displays, primary))
+    let fitted = fit_on_displays(grown, displays, primary);
+    // The display the window is mostly on: its size is cut to it (never below `min`) and its
+    // top-left corner pulled inside it, so the title bar can always be reached.
+    let overlap = |display: &Bounds<Pixels>| {
+        let both = display.intersect(&fitted);
+        f32::from(both.size.width) * f32::from(both.size.height)
+    };
+    let display = (displays.iter().copied())
+        .filter(|display| overlap(display) > 0.0)
+        .max_by(|a, b| overlap(a).total_cmp(&overlap(b)))
+        .or(primary);
+    let Some(display) = display else {
+        return placement.window_bounds(fitted);
+    };
+    let size = size(
+        fitted.size.width.min(display.size.width).max(min.width),
+        fitted.size.height.min(display.size.height).max(min.height),
+    );
+    let origin = point(
+        (fitted.origin.x.min(display.right() - size.width)).max(display.origin.x),
+        (fitted.origin.y.min(display.bottom() - size.height)).max(display.origin.y),
+    );
+    placement.window_bounds(Bounds::new(origin, size))
 }
 
 /// A saved rect as screen bounds.

@@ -270,3 +270,26 @@ fn a_new_window_stays_inside_the_visible_area_of_its_display() {
         "not under the Dock: 25 + 985 - 600"
     );
 }
+
+#[test]
+fn a_restored_window_fits_the_display_it_opens_on() {
+    let primary = rect(0.0, 0.0, 1536.0, 824.0);
+    let min = size(px(1100.0), px(560.0));
+    let open = |saved, placement| restored(saved, placement, min, &[primary], Some(primary));
+    // Bigger than the display, its monitor gone: the size is cut to the display.
+    assert_eq!(
+        open(rect(1920.0, 0.0, 2560.0, 1400.0), Placement::Windowed),
+        WindowBounds::Windowed(primary)
+    );
+    // Straddling the right edge by most of its width: pulled fully onto the display.
+    assert_eq!(
+        open(rect(1400.0, 100.0, 1200.0, 600.0), Placement::Maximized),
+        WindowBounds::Maximized(rect(336.0, 100.0, 1200.0, 600.0))
+    );
+    // Fully inside: as saved.
+    let inside = rect(50.0, 40.0, 1200.0, 700.0);
+    assert_eq!(
+        open(inside, Placement::Windowed),
+        WindowBounds::Windowed(inside)
+    );
+}
