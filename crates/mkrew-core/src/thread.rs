@@ -1321,7 +1321,7 @@ fn claude_meta(meta: &mut SessionMeta, value: &Value) {
     }
     match value["type"].as_str() {
         Some("ai-title") => set_title(&mut meta.title, value["aiTitle"].as_str()),
-        Some("user") => {
+        Some("user" | "permission-mode") => {
             if let Some(mode) = value["permissionMode"].as_str() {
                 meta.permission = Some(mode.to_owned());
             }
@@ -1422,7 +1422,12 @@ pub fn short_model(name: &str) -> String {
 /// A session title without the private-use glyph omp puts first (a Nerd Font icon) and
 /// without edge blanks.
 pub fn clean_title(raw: &str) -> String {
-    let private = |c: char| matches!(c, '\u{E000}'..='\u{F8FF}' | '\u{F0000}'..='\u{FFFFD}' | '\u{100000}'..='\u{10FFFD}');
+    let private = |c: char| {
+        matches!(
+            c,
+            '\u{E000}'..='\u{F8FF}' | '\u{F0000}'..='\u{FFFFD}' | '\u{100000}'..='\u{10FFFD}'
+        )
+    };
     raw.trim_start_matches(|c: char| private(c) || c.is_whitespace())
         .trim_end()
         .to_owned()
@@ -2526,7 +2531,8 @@ mod tests {
             SessionMeta {
                 model: Some("claude-opus-5-5".into()),
                 effort: None,
-                permission: Some("acceptEdits".into()),
+                // The later `permission-mode` line wins over the user line's `acceptEdits`.
+                permission: Some("auto".into()),
                 title: Some("Fix login".into()),
                 // The newest main-thread message: 5 + 200 + 0 (the sidechain line is ignored).
                 context: Some(205),
