@@ -25,6 +25,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 - [ ] The bar in dark and light themes: folder, branch with count, limits, CPU and RAM, version; hover and press feel like the other title bar controls; the text is readable; a long workspace or branch name ends in an ellipsis.
 - [ ] Narrow the window: limits drop first, then CPU and RAM; folder, branch and version stay.
+- [ ] In a light theme, the tray icon's needs-input amber (now darker, 8B570D) is still visible on a dark Windows taskbar, and the taskbar badge number reads on it.
 - [ ] Right-click the bar: each widget has a check mark and toggling keeps the menu open; "Hide widget bar" hides the bar; `Ctrl+Alt+Shift+J` and the palette entry bring it back; restart Mkrew and the choices are kept; a hidden id you add by hand to `widgets_hidden` (for example `"clock"`) survives toggling.
 - [ ] Open a dialog (for example Settings) and, in a machine window, stop its daemon: while the dialog is open or Mkrew reconnects, clicks and right-click on the bar do nothing.
 - [ ] Git widget: click opens the Git view; click again steps through the changed files and wraps from the last to the first; a workspace with several repositories shows `N repos`.
