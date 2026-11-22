@@ -975,8 +975,8 @@ impl TerminalPane {
             return self.type_text(text, cx);
         }
         // An open composition belongs to what the user typed, not to the voice text.
-        self.ime_marked.marked_for(&self.find_focus).set(0);
-        for keystroke in crate::ime::keys(&std::cell::Cell::new(0), text, false) {
+        self.ime_marked.marked_for(&self.find_focus).clear();
+        for keystroke in crate::ime::keys(&crate::ime::Marked::default(), None, text, false) {
             let event = KeyDownEvent {
                 keystroke,
                 is_held: false,

@@ -46,6 +46,14 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Option as Meta:** turn the switch on in Settings without restarting.
   Option+B / Option+F move by word in zsh, Option+Backspace deletes a word, and Option+D deletes the next word.
   Turn it off again: Option+B types ∫ without restarting.
+- [ ] **Vietnamese (macOS built-in Telex, then VNI):** type "việt nam" in a zsh pane, in the composer and in the Git commit box.
+  The word is right when you press Space, with no doubled letters ("vieetj" would be a bug) and nothing left of the older word.
+  [INFERENCE] The built-in input method may revise text it already committed, which Mkrew cannot reach (see ADR 0099, Not changed): if so, say so.
+- [ ] **Japanese or Chinese IME:** with Hiragana or Pinyin active, type "nihon" in a shell pane: the first key composes (no ASCII `n` printed before the candidate window opens).
+  The candidate window opens next to the cursor.
+- [ ] **Dead keys:** US layout, in a shell pane, Option+E then E types é; Option+` then A types à; Option+E then Space types ´.
+  (Text fields do not compose Option dead keys yet; see Plan A "Not fixed".)
+- [ ] **Windows (regression):** Telex or Unikey types "việt" in a shell pane, the composer and the find bar exactly as before.
 
 ### To verify - 2026-11-22 Theme gallery (plan docs/superpowers/plans/2026-11-22-theme-gallery.md)
 

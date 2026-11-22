@@ -1446,6 +1446,8 @@ On macOS Option+key types the layout's character by default (Option+2 is €, Op
 With `[terminal] option_as_meta = true` Option sends ESC plus the key (Option+B is `ESC b`, Option+Shift+B is `ESC B`), so a shell's word moves work.
 Keys that are not text keep their xterm form with Option as Alt (Option+←, Option+Backspace).
 The setting has no effect on Windows and Linux (ADR 0099).
+The input method (macOS dead keys and Option characters, Windows Telex, CJK) types into a terminal or field as key presses: composing text is typed in place and erased and retyped when the input method revises it, by range.
+With an input source that is an IME, printable keys reach it first.
 Every text field of the app (task title and prompt, composer, follow-up, commit box, run setup,
 comments, broadcast, peek reply, the palette, Ask AI, Settings, the filters and
 find bars, the inline rename) edits like a normal text box (ADR 0075): ←/→, Ctrl+←/→ by word,

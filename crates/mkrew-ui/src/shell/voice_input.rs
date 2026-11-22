@@ -147,8 +147,8 @@ impl Shell {
             .filter(|(focus, _)| focus.is_focused(window));
         if let Some((focus, on_key)) = field {
             // An open composition belongs to what the user typed, not to the voice text.
-            self.ime_marked.marked_for(&focus).set(0);
-            for keystroke in ime::keys(&Cell::new(0), text, false) {
+            self.ime_marked.marked_for(&focus).clear();
+            for keystroke in ime::keys(&ime::Marked::default(), None, text, false) {
                 let event = KeyDownEvent {
                     keystroke,
                     is_held: false,
