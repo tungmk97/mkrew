@@ -239,17 +239,16 @@ fn folder(input: &Input<'_>) -> Option<Widget> {
 
 fn git(input: &Input<'_>) -> Option<Widget> {
     let summary = input.git?;
-    let branch = summary.branch_label()?;
+    // The count is its own part, so a long branch name ellipsizes without hiding it.
+    let mut parts = vec![Part::muted(summary.branch_label()?)];
     let changed = summary.changed();
-    let label = if changed > 0 {
-        format!("{branch} · {changed}")
-    } else {
-        branch
-    };
+    if changed > 0 {
+        parts.extend([Part::muted("·"), Part::muted(changed.to_string())]);
+    }
     let tooltip = summary.branch_tooltip().unwrap_or_default();
     Some(Widget {
         id: WidgetId::Git,
-        parts: vec![Part::muted(label)],
+        parts,
         tooltip: format!("{tooltip}\nClick: open Git, again for the next changed file"),
         click: Click::Git,
     })
@@ -661,6 +660,18 @@ mod tests {
             Some("2 repos · 3")
         );
         assert_eq!(one(GitSummary::default()), None, "no repository, no widget");
+    }
+
+    /// The UI ellipsizes only the first part of the Git widget, so the count must not be in it.
+    #[test]
+    fn the_change_count_is_not_part_of_the_branch_name() {
+        let summary = GitSummary {
+            repos: vec![repo(Some("feature/long"), 2, 1)],
+        };
+        let widgets = list(Some(&summary), &WidgetData::default(), &[], None);
+        let git = widgets.iter().find(|w| w.id == WidgetId::Git).unwrap();
+        let texts: Vec<&str> = git.parts.iter().map(|p| p.text.as_str()).collect();
+        assert_eq!(texts, ["feature/long", "·", "3"]);
     }
 
     #[test]

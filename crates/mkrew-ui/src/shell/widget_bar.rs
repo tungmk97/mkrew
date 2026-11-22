@@ -162,9 +162,11 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let (id, click) = (widget.id, widget.click);
-        let capped = matches!(id, WidgetId::Folder | WidgetId::Git);
-        let parts = widget.parts.into_iter().map(|part| {
-            // The cap and the ellipsis sit on the div that holds the text itself.
+        let named = matches!(id, WidgetId::Folder | WidgetId::Git);
+        let parts = widget.parts.into_iter().enumerate().map(|(at, part)| {
+            // The cap and the ellipsis sit on the div that holds the name itself; the parts
+            // after it (the change count) never shrink.
+            let capped = named && at == 0;
             div()
                 .when(capped, |el| {
                     el.min_w_0()
