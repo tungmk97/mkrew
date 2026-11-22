@@ -73,7 +73,7 @@ impl Tab {
     /// The one pane on screen (zoomed, or the only pane), which then has no header.
     pub fn single(&self) -> Option<Ulid> {
         match (self.zoomed, self.layout.as_ref()) {
-            (Some(session), _) | (None, Some(&Node::Pane { session })) => Some(session),
+            (Some(session), _) | (None, Some(&Node::Pane { session, .. })) => Some(session),
             _ => None,
         }
     }
@@ -258,6 +258,20 @@ impl Tabs {
     /// The tab whose layout holds `session`.
     pub fn tab_of(&self, session: Ulid) -> Option<&Tab> {
         self.tabs.iter().find(|tab| tab.contains(session))
+    }
+
+    /// The mode saved for `session`'s pane (see [`Node::chat_of`]).
+    pub fn chat_of(&self, session: Ulid) -> Option<bool> {
+        self.tab_of(session)?.layout.as_ref()?.chat_of(session)
+    }
+
+    /// Saves `chat` on `session`'s pane: the write to send, `None` when nothing changed or no
+    /// tab holds it.
+    pub fn set_chat(&mut self, session: Ulid, chat: Option<bool>) -> Option<TabSetLayoutParams> {
+        let tab_id = self.tab_of(session)?.id;
+        let tab = self.tab_mut(tab_id)?;
+        let changed = tab.layout.as_mut()?.set_chat(session, chat);
+        changed.then(|| tab.write())
     }
 
     pub fn active(&self) -> Option<&Tab> {
@@ -564,6 +578,7 @@ impl Tabs {
         if session == target {
             return None;
         }
+        let chat = self.chat_of(session);
         let mut writes = Vec::new();
         let source = self.tab_mut(from)?;
         let closed = source.layout.take()?.close(session);
@@ -578,7 +593,7 @@ impl Tabs {
         let tab = self.tab_mut(to)?;
         // `target` is still in the tab (it is not `session`), which no longer holds `session`.
         let placed = (tab.layout.as_mut())
-            .is_some_and(|node| node.split_with(target, axis, Node::pane(session)));
+            .is_some_and(|node| node.split_with(target, axis, Node::Pane { session, chat }));
         debug_assert!(placed, "the moved pane always fits next to its target");
         tab.focused = Some(session);
         tab.fix_focus();
@@ -642,7 +657,15 @@ impl Tabs {
                 sessions.push(*id);
             }
         }
-        tab.layout = Some(preset.build(&sessions)?);
+        let kept: Vec<(Ulid, Option<bool>)> = sessions
+            .iter()
+            .map(|id| (*id, tab.layout.as_ref().and_then(|node| node.chat_of(*id))))
+            .collect();
+        let mut built = preset.build(&sessions)?;
+        for (id, chat) in kept {
+            built.set_chat(id, chat);
+        }
+        tab.layout = Some(built);
         tab.zoomed = None;
         tab.fix_focus();
         Some(tab.write())
