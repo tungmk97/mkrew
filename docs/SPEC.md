@@ -1450,6 +1450,8 @@ step). A click puts the caret under the pointer, Shift+click or a drag selects, 
 click selects the word / line. Where a field sits over a list, ↑/↓ move in the list.
 Shift+Enter sends `ESC CR` (the Alt+Enter form), which agents read as a new line; Mkrew has no
 kitty / win32-input keyboard mode, so this is the one form every agent gets through ConPTY.
+On macOS (ADR 0098) fields and the Editor follow the Mac text keys instead: Option+←/→ by word, Cmd+←/→ to the line's start / end, Cmd+↑/↓ to the text's start / end, Option+Backspace / Option+Delete the word before / after the caret, Cmd+Backspace / Cmd+Delete to the line's start / end, Cmd+A / C / X / V / Z, Cmd+Shift+Z (and Cmd+Y) redo, Cmd+Enter or Ctrl+Enter save or send, and the Emacs keys Ctrl+A / E (line start / end), Ctrl+B / F / P / N (← → ↑ ↓), Ctrl+D (Delete), Ctrl+H (Backspace) and Ctrl+K (delete to the line's end); Ctrl+←/→ are left to macOS (Spaces).
+An Option + character key types the character macOS composed (Option+B types "∫").
 On macOS the defaults use Cmd where the table says Ctrl, and never need Option with a character key (Option types characters on a Mac), Shift with a digit or symbol (macOS reports the shifted character, so such a binding never matches), an F-key or PgUp / PgDn (Fn on a MacBook); "macOS defaults" below lists every difference (ADR 0098).
 Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (⇧⌘P).
 

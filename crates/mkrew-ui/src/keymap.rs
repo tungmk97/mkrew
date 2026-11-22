@@ -1260,7 +1260,32 @@ fn key_name(key: &str, os: Os) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::edit_key_for;
+    use crate::task_dialog::dialog_key_for;
     use crate::terminal::input::{InputMode, key_to_bytes};
+
+    /// GPUI runs key bindings before a field sees the key, so a window-wide macOS default on a
+    /// text key would take it from every field (and an Editor default from the Editor).
+    #[test]
+    fn mac_window_shortcuts_leave_the_text_keys_alone() {
+        for (command, keys) in Keymap::defaults_for(Os::Mac).bindings() {
+            let context = command.context();
+            if context.is_none() {
+                assert_eq!(
+                    dialog_key_for(keys, Os::Mac),
+                    None,
+                    "{command:?} takes a text-field key"
+                );
+            }
+            if context.is_none() || context == Some(EDITOR_CONTEXT) {
+                assert_eq!(
+                    edit_key_for(keys, Os::Mac),
+                    None,
+                    "{command:?} takes an Editor key"
+                );
+            }
+        }
+    }
 
     #[test]
     fn mac_labels_use_the_modifier_symbols_in_apple_order() {

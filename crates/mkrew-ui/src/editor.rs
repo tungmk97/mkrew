@@ -8,6 +8,7 @@ use std::ops::Range;
 use gpui::Keystroke;
 
 use crate::highlight::TAB;
+use crate::keymap::Os;
 use crate::text_box::class;
 
 /// A place in the text: a line (0-based) and a byte offset into it, on a char boundary.
@@ -53,6 +54,11 @@ pub enum EditKey {
     },
     Delete {
         word: bool,
+    },
+    /// Cmd+Backspace / Cmd+Delete / Ctrl+K (macOS): the selection, else from the caret to its
+    /// line's start (`forward: false`) or end.
+    DeleteLine {
+        forward: bool,
     },
     Enter,
     Tab,
@@ -314,6 +320,7 @@ impl Editor {
             EditKey::Move { motion, extend } => self.move_caret(motion, extend, page),
             EditKey::Backspace { word } => self.delete(word, false),
             EditKey::Delete { word } => self.delete(word, true),
+            EditKey::DeleteLine { forward } => self.delete_line(forward),
             EditKey::Enter => {
                 let line = &self.lines[self.cursor.line];
                 let text = format!("\n{}", &line[..indent_len(line).min(self.cursor.col)]);
@@ -369,6 +376,24 @@ impl Editor {
                 (true, true) => self.word_right(self.cursor),
             };
             self.cursor.min(to)..self.cursor.max(to)
+        });
+        if range.start != range.end {
+            self.replace(range, "");
+        }
+    }
+
+    fn delete_line(&mut self, forward: bool) {
+        let at = self.cursor;
+        let range = self.selection().unwrap_or_else(|| {
+            let to = Pos::new(
+                at.line,
+                if forward {
+                    self.lines[at.line].len()
+                } else {
+                    0
+                },
+            );
+            at.min(to)..at.max(to)
         });
         if range.start != range.end {
             self.replace(range, "");
@@ -600,9 +625,37 @@ pub fn selected_cells(line: &str, index: usize, selection: &Range<Pos>) -> Optio
     (start < end).then_some(start..end)
 }
 
-/// The editor meaning of `keystroke` (VS Code keys). `None` means the key is not the editor's:
+/// The editor meaning of `keystroke` on this OS. `None` means the key is not the editor's:
 /// window shortcuts like Ctrl+Shift+Z, Alt+arrows and Ctrl+S go on to the keymap.
 pub fn edit_key(keystroke: &Keystroke) -> Option<EditKey> {
+    edit_key_for(keystroke, Os::CURRENT)
+}
+
+/// [`edit_key`] with `os`'s keys: VS Code's on Windows / Linux; on macOS Option by word, Cmd
+/// to the line's / file's ends, Cmd+Shift+Z redo and the Emacs Ctrl keys (ADR 0098).
+pub fn edit_key_for(keystroke: &Keystroke, os: Os) -> Option<EditKey> {
+    let key = match os {
+        Os::Mac => mac_edit_key(keystroke),
+        Os::Windows | Os::Linux => pc_edit_key(keystroke),
+    };
+    key.or_else(|| typed_text(keystroke).map(EditKey::Insert))
+}
+
+/// The text `keystroke` types: its char, unless Cmd or a lone Ctrl is held. AltGr (Ctrl+Alt on
+/// Windows) and macOS Option arrive with the composed char, which is typed.
+pub(crate) fn typed_text(keystroke: &Keystroke) -> Option<String> {
+    let m = keystroke.modifiers;
+    if m.platform || (m.control && !m.alt) {
+        return None;
+    }
+    keystroke
+        .key_char
+        .as_deref()
+        .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
+        .map(str::to_owned)
+}
+
+fn pc_edit_key(keystroke: &Keystroke) -> Option<EditKey> {
     let m = keystroke.modifiers;
     let ctrl = m.control || m.platform;
     let plain_ctrl = ctrl && !m.alt && !m.shift;
@@ -614,35 +667,85 @@ pub fn edit_key(keystroke: &Keystroke) -> Option<EditKey> {
         })
     };
     match keystroke.key.as_str() {
-        "left" => return caret(Motion::Left, Motion::WordLeft),
-        "right" => return caret(Motion::Right, Motion::WordRight),
-        "up" if !ctrl => return caret(Motion::Up, Motion::Up),
-        "down" if !ctrl => return caret(Motion::Down, Motion::Down),
-        "home" => return caret(Motion::Home, Motion::DocStart),
-        "end" => return caret(Motion::End, Motion::DocEnd),
-        "pageup" if !ctrl => return caret(Motion::PageUp, Motion::PageUp),
-        "pagedown" if !ctrl => return caret(Motion::PageDown, Motion::PageDown),
-        "backspace" if !m.alt => return Some(EditKey::Backspace { word: ctrl }),
-        "delete" if !m.alt => return Some(EditKey::Delete { word: ctrl }),
-        "enter" if !ctrl && !m.alt => return Some(EditKey::Enter),
-        "tab" if !ctrl && !m.alt && !m.shift => return Some(EditKey::Tab),
-        "a" if plain_ctrl => return Some(EditKey::SelectAll),
-        "z" if plain_ctrl => return Some(EditKey::Undo),
-        "y" if plain_ctrl => return Some(EditKey::Redo),
-        "c" if plain_ctrl => return Some(EditKey::Copy),
-        "x" if plain_ctrl => return Some(EditKey::Cut),
-        "v" if plain_ctrl => return Some(EditKey::Paste),
-        _ => {}
+        "left" => caret(Motion::Left, Motion::WordLeft),
+        "right" => caret(Motion::Right, Motion::WordRight),
+        "up" if !ctrl => caret(Motion::Up, Motion::Up),
+        "down" if !ctrl => caret(Motion::Down, Motion::Down),
+        "home" => caret(Motion::Home, Motion::DocStart),
+        "end" => caret(Motion::End, Motion::DocEnd),
+        "pageup" if !ctrl => caret(Motion::PageUp, Motion::PageUp),
+        "pagedown" if !ctrl => caret(Motion::PageDown, Motion::PageDown),
+        "backspace" if !m.alt => Some(EditKey::Backspace { word: ctrl }),
+        "delete" if !m.alt => Some(EditKey::Delete { word: ctrl }),
+        "enter" if !ctrl && !m.alt => Some(EditKey::Enter),
+        "tab" if !ctrl && !m.alt && !m.shift => Some(EditKey::Tab),
+        "a" if plain_ctrl => Some(EditKey::SelectAll),
+        "z" if plain_ctrl => Some(EditKey::Undo),
+        "y" if plain_ctrl => Some(EditKey::Redo),
+        "c" if plain_ctrl => Some(EditKey::Copy),
+        "x" if plain_ctrl => Some(EditKey::Cut),
+        "v" if plain_ctrl => Some(EditKey::Paste),
+        _ => None,
     }
-    // AltGr arrives as Ctrl+Alt with the composed char; plain Ctrl+key types nothing.
-    if m.platform || (m.control && !m.alt) {
-        return None;
+}
+
+/// macOS: one modifier means one thing (Shift extends a selection); mixes go to the keymap.
+fn mac_edit_key(keystroke: &Keystroke) -> Option<EditKey> {
+    let m = keystroke.modifiers;
+    let cmd = m.platform && !m.control && !m.alt;
+    let opt = m.alt && !m.control && !m.platform;
+    let plain = !m.platform && !m.control && !m.alt;
+    let emacs = m.control && !m.alt && !m.platform && !m.shift;
+    let plain_cmd = cmd && !m.shift;
+    let to = |motion| {
+        Some(EditKey::Move {
+            motion,
+            extend: m.shift,
+        })
+    };
+    match keystroke.key.as_str() {
+        "left" if cmd => to(Motion::Home),
+        "left" if opt => to(Motion::WordLeft),
+        "left" if plain => to(Motion::Left),
+        "right" if cmd => to(Motion::End),
+        "right" if opt => to(Motion::WordRight),
+        "right" if plain => to(Motion::Right),
+        "up" if cmd => to(Motion::DocStart),
+        "up" if plain => to(Motion::Up),
+        "down" if cmd => to(Motion::DocEnd),
+        "down" if plain => to(Motion::Down),
+        "home" if cmd => to(Motion::DocStart),
+        "home" if plain => to(Motion::Home),
+        "end" if cmd => to(Motion::DocEnd),
+        "end" if plain => to(Motion::End),
+        "pageup" if plain => to(Motion::PageUp),
+        "pagedown" if plain => to(Motion::PageDown),
+        "backspace" if cmd => Some(EditKey::DeleteLine { forward: false }),
+        "backspace" if opt => Some(EditKey::Backspace { word: true }),
+        "backspace" if plain => Some(EditKey::Backspace { word: false }),
+        "delete" if cmd => Some(EditKey::DeleteLine { forward: true }),
+        "delete" if opt => Some(EditKey::Delete { word: true }),
+        "delete" if plain => Some(EditKey::Delete { word: false }),
+        "enter" if plain => Some(EditKey::Enter),
+        "tab" if plain && !m.shift => Some(EditKey::Tab),
+        "a" if plain_cmd => Some(EditKey::SelectAll),
+        "z" if plain_cmd => Some(EditKey::Undo),
+        "z" if cmd => Some(EditKey::Redo),
+        "y" if plain_cmd => Some(EditKey::Redo),
+        "c" if plain_cmd => Some(EditKey::Copy),
+        "x" if plain_cmd => Some(EditKey::Cut),
+        "v" if plain_cmd => Some(EditKey::Paste),
+        "a" if emacs => to(Motion::Home),
+        "e" if emacs => to(Motion::End),
+        "b" if emacs => to(Motion::Left),
+        "f" if emacs => to(Motion::Right),
+        "p" if emacs => to(Motion::Up),
+        "n" if emacs => to(Motion::Down),
+        "d" if emacs => Some(EditKey::Delete { word: false }),
+        "h" if emacs => Some(EditKey::Backspace { word: false }),
+        "k" if emacs => Some(EditKey::DeleteLine { forward: true }),
+        _ => None,
     }
-    keystroke
-        .key_char
-        .as_deref()
-        .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
-        .map(|text| EditKey::Insert(text.to_owned()))
 }
 
 #[cfg(test)]
@@ -942,6 +1045,63 @@ mod tests {
         let mut altgr = Keystroke::parse("ctrl-alt-q").unwrap();
         altgr.key_char = Some("@".into());
         assert_eq!(edit_key(&altgr), Some(EditKey::Insert("@".into())));
+    }
+
+    #[test]
+    fn mac_editor_keys_follow_text_edit() {
+        let key = |keys: &str| edit_key_for(&Keystroke::parse(keys).unwrap(), Os::Mac);
+        let moved = |motion, extend| Some(EditKey::Move { motion, extend });
+        assert_eq!(key("cmd-left"), moved(Motion::Home, false));
+        assert_eq!(key("cmd-shift-right"), moved(Motion::End, true));
+        assert_eq!(key("alt-shift-left"), moved(Motion::WordLeft, true));
+        assert_eq!(key("cmd-up"), moved(Motion::DocStart, false));
+        assert_eq!(key("cmd-down"), moved(Motion::DocEnd, false));
+        assert_eq!(
+            key("alt-backspace"),
+            Some(EditKey::Backspace { word: true })
+        );
+        assert_eq!(
+            key("cmd-backspace"),
+            Some(EditKey::DeleteLine { forward: false })
+        );
+        assert_eq!(key("ctrl-k"), Some(EditKey::DeleteLine { forward: true }));
+        assert_eq!(key("cmd-shift-z"), Some(EditKey::Redo));
+        assert_eq!(key("cmd-c"), Some(EditKey::Copy));
+        assert_eq!(key("shift-enter"), Some(EditKey::Enter));
+        // Window shortcuts go on to the keymap.
+        for keys in [
+            "cmd-s",
+            "cmd-alt-left",
+            "cmd-shift-v",
+            "ctrl-left",
+            "cmd-alt-f",
+        ] {
+            assert_eq!(key(keys), None, "{keys}");
+        }
+        let mut option_b = Keystroke::parse("alt-b").unwrap();
+        option_b.key_char = Some("∫".into());
+        assert_eq!(
+            edit_key_for(&option_b, Os::Mac),
+            Some(EditKey::Insert("∫".into()))
+        );
+    }
+
+    #[test]
+    fn delete_line_removes_to_the_line_start_or_end() {
+        let mut editor = Editor::new("one two\nthree four");
+        editor.set_cursor(Pos::new(1, 3), false);
+        editor.key(EditKey::DeleteLine { forward: false }, 10);
+        assert_eq!(
+            (editor.text().as_str(), editor.cursor()),
+            ("one two\nee four", Pos::new(1, 0))
+        );
+        assert!(
+            !editor.key(EditKey::DeleteLine { forward: false }, 10),
+            "nothing before the caret on its line"
+        );
+        editor.set_cursor(Pos::new(0, 3), false);
+        editor.key(EditKey::DeleteLine { forward: true }, 10);
+        assert_eq!(editor.text(), "one\nee four");
     }
 
     /// The widest row in screen cells (a tab is `TAB` cells, more than its one byte) follows

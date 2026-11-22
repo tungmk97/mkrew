@@ -230,6 +230,16 @@ impl Input {
         self.splice(self.cursor..end, "", false)
     }
 
+    /// Cmd+Backspace / Cmd+Delete / Ctrl+K (macOS): the selection, else from the caret to its
+    /// line's start (`forward: false`) or end. `true` when the text changed.
+    pub fn delete_line(&mut self, forward: bool) -> bool {
+        if let Some(range) = self.selection() {
+            return self.splice(range, "", false);
+        }
+        let to = self.target(if forward { Motion::End } else { Motion::Home });
+        self.splice(self.cursor.min(to)..self.cursor.max(to), "", false)
+    }
+
     /// Ctrl+X after the caller copied the selection: removes it. `true` when there was one.
     pub fn cut(&mut self) -> bool {
         match self.selection() {
@@ -374,6 +384,7 @@ impl Input {
             DialogKey::DeleteWord => self.delete_word(),
             DialogKey::Delete { word: false } => self.delete(),
             DialogKey::Delete { word: true } => self.delete_word_after(),
+            DialogKey::DeleteLine { forward } => self.delete_line(*forward),
             DialogKey::Cut => self.cut(),
             DialogKey::Undo => self.undo(),
             DialogKey::Redo => self.redo(),
@@ -674,6 +685,25 @@ mod tests {
         text.key(DialogKey::SelectAll);
         text.key(DialogKey::DeleteWord);
         assert_eq!(text.text(), "");
+    }
+
+    #[test]
+    fn delete_line_removes_to_the_line_start_or_end() {
+        let mut input = Input::from("one two\nthree four");
+        input.click(11, false, 1);
+        assert!(input.delete_line(false));
+        assert_eq!((input.as_str(), input.cursor()), ("one two\nee four", 8));
+        assert!(
+            !input.delete_line(false),
+            "nothing before the caret on its line"
+        );
+        assert!(input.delete_line(true));
+        assert_eq!(input.as_str(), "one two\n");
+        let mut input = Input::from("keep this");
+        input.click(5, false, 1);
+        input.click(9, true, 1);
+        assert!(input.delete_line(false), "a selection goes first");
+        assert_eq!(input.as_str(), "keep ");
     }
 
     /// Typing one char at a time (or an IME erasing and retyping a composing letter) is one

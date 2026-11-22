@@ -10,7 +10,8 @@ use mkrew_protocol::{
 use ulid::Ulid;
 
 use crate::composer::{self, Prompt, Trigger};
-use crate::editor::Motion;
+use crate::editor::{Motion, typed_text};
+use crate::keymap::Os;
 use crate::slash_picker::SlashKey;
 use crate::text_box::Input;
 use crate::workspace_menu::{AgentChoice, Agents, agent_choices};
@@ -41,11 +42,16 @@ pub enum DialogKey {
     /// Tab / Shift+Tab.
     SwitchField,
     Backspace,
-    /// Ctrl+Backspace (Cmd+Backspace on macOS): delete the word before the caret.
+    /// Ctrl+Backspace (Option+Backspace on macOS): delete the word before the caret.
     DeleteWord,
-    /// Delete; with Ctrl (Cmd), the word after the caret.
+    /// Delete; with Ctrl (Option on macOS), the word after the caret.
     Delete {
         word: bool,
+    },
+    /// Cmd+Backspace / Cmd+Delete / Ctrl+K (macOS): the selection, else from the caret to its
+    /// line's start (`forward: false`) or end.
+    DeleteLine {
+        forward: bool,
     },
     /// Arrows, Home/End (Ctrl: by word, to the text's start/end); Shift extends the selection.
     /// Only fields that draw their caret ([`crate::text_box::Input::edit`]) use it.
@@ -60,14 +66,28 @@ pub enum DialogKey {
     Paste,
     /// Ctrl+A (Cmd+A): the next edit replaces the whole text.
     SelectAll,
-    /// Ctrl+Z / Ctrl+Y (Cmd): undo / redo the field's last edit (Ctrl+Shift+Z is Open in Zed).
+    /// Ctrl+Z / Ctrl+Y (Cmd+Z / Cmd+Shift+Z on macOS): undo / redo the field's last edit.
     Undo,
     Redo,
     Insert(String),
 }
 
-/// The dialog meaning of `keystroke`; `None` = ignored.
+/// The dialog meaning of `keystroke` on this OS; `None` = ignored.
 pub fn dialog_key(keystroke: &Keystroke) -> Option<DialogKey> {
+    dialog_key_for(keystroke, Os::CURRENT)
+}
+
+/// [`dialog_key`] with `os`'s text keys (SPEC §13): on macOS Option moves and deletes by word,
+/// Cmd goes to the line's / text's ends, Cmd+Shift+Z redoes and the Emacs Ctrl keys work.
+pub fn dialog_key_for(keystroke: &Keystroke, os: Os) -> Option<DialogKey> {
+    let key = match os {
+        Os::Mac => mac_dialog_key(keystroke),
+        Os::Windows | Os::Linux => pc_dialog_key(keystroke),
+    };
+    key.or_else(|| typed_text(keystroke).map(DialogKey::Insert))
+}
+
+fn pc_dialog_key(keystroke: &Keystroke) -> Option<DialogKey> {
     let m = keystroke.modifiers;
     let command = m.platform || m.control;
     let plain_command = command && !m.alt && !m.shift;
@@ -78,36 +98,86 @@ pub fn dialog_key(keystroke: &Keystroke) -> Option<DialogKey> {
         })
     };
     match keystroke.key.as_str() {
-        "escape" => return Some(DialogKey::Cancel),
-        "enter" if command => return Some(DialogKey::Save),
-        "enter" => return Some(DialogKey::Enter),
-        "tab" => return Some(DialogKey::SwitchField),
-        "backspace" if command && !m.alt => return Some(DialogKey::DeleteWord),
-        "backspace" => return Some(DialogKey::Backspace),
-        "delete" if !m.alt => return Some(DialogKey::Delete { word: command }),
-        "left" => return caret(Motion::Left, Motion::WordLeft),
-        "right" => return caret(Motion::Right, Motion::WordRight),
-        "up" if !command => return caret(Motion::Up, Motion::Up),
-        "down" if !command => return caret(Motion::Down, Motion::Down),
-        "home" => return caret(Motion::Home, Motion::DocStart),
-        "end" => return caret(Motion::End, Motion::DocEnd),
-        "c" if plain_command => return Some(DialogKey::Copy),
-        "x" if plain_command => return Some(DialogKey::Cut),
-        "v" if plain_command => return Some(DialogKey::Paste),
-        "a" if plain_command => return Some(DialogKey::SelectAll),
-        "z" if plain_command => return Some(DialogKey::Undo),
-        "y" if plain_command => return Some(DialogKey::Redo),
-        _ => {}
+        "escape" => Some(DialogKey::Cancel),
+        "enter" if command => Some(DialogKey::Save),
+        "enter" => Some(DialogKey::Enter),
+        "tab" => Some(DialogKey::SwitchField),
+        "backspace" if command && !m.alt => Some(DialogKey::DeleteWord),
+        "backspace" => Some(DialogKey::Backspace),
+        "delete" if !m.alt => Some(DialogKey::Delete { word: command }),
+        "left" => caret(Motion::Left, Motion::WordLeft),
+        "right" => caret(Motion::Right, Motion::WordRight),
+        "up" if !command => caret(Motion::Up, Motion::Up),
+        "down" if !command => caret(Motion::Down, Motion::Down),
+        "home" => caret(Motion::Home, Motion::DocStart),
+        "end" => caret(Motion::End, Motion::DocEnd),
+        "c" if plain_command => Some(DialogKey::Copy),
+        "x" if plain_command => Some(DialogKey::Cut),
+        "v" if plain_command => Some(DialogKey::Paste),
+        "a" if plain_command => Some(DialogKey::SelectAll),
+        "z" if plain_command => Some(DialogKey::Undo),
+        "y" if plain_command => Some(DialogKey::Redo),
+        _ => None,
     }
-    // AltGr arrives as Ctrl+Alt with the composed char; plain Ctrl+key types nothing.
-    if m.platform || (m.control && !m.alt) {
-        return None;
+}
+
+/// macOS: one modifier means one thing (Shift extends a selection); mixes go to the keymap.
+fn mac_dialog_key(keystroke: &Keystroke) -> Option<DialogKey> {
+    let m = keystroke.modifiers;
+    let cmd = m.platform && !m.control && !m.alt;
+    let opt = m.alt && !m.control && !m.platform;
+    let plain = !m.platform && !m.control && !m.alt;
+    let emacs = m.control && !m.alt && !m.platform && !m.shift;
+    let plain_cmd = cmd && !m.shift;
+    let to = |motion| {
+        Some(DialogKey::Move {
+            motion,
+            extend: m.shift,
+        })
+    };
+    match keystroke.key.as_str() {
+        "escape" => Some(DialogKey::Cancel),
+        "enter" if plain_cmd || emacs => Some(DialogKey::Save),
+        "enter" if plain => Some(DialogKey::Enter),
+        "tab" if plain => Some(DialogKey::SwitchField),
+        "backspace" if cmd => Some(DialogKey::DeleteLine { forward: false }),
+        "backspace" if opt => Some(DialogKey::DeleteWord),
+        "backspace" if plain => Some(DialogKey::Backspace),
+        "delete" if cmd => Some(DialogKey::DeleteLine { forward: true }),
+        "delete" if opt => Some(DialogKey::Delete { word: true }),
+        "delete" if plain => Some(DialogKey::Delete { word: false }),
+        "left" if cmd => to(Motion::Home),
+        "left" if opt => to(Motion::WordLeft),
+        "left" if plain => to(Motion::Left),
+        "right" if cmd => to(Motion::End),
+        "right" if opt => to(Motion::WordRight),
+        "right" if plain => to(Motion::Right),
+        "up" if cmd => to(Motion::DocStart),
+        "up" if plain => to(Motion::Up),
+        "down" if cmd => to(Motion::DocEnd),
+        "down" if plain => to(Motion::Down),
+        "home" if cmd => to(Motion::DocStart),
+        "home" if plain => to(Motion::Home),
+        "end" if cmd => to(Motion::DocEnd),
+        "end" if plain => to(Motion::End),
+        "c" if plain_cmd => Some(DialogKey::Copy),
+        "x" if plain_cmd => Some(DialogKey::Cut),
+        "v" if plain_cmd => Some(DialogKey::Paste),
+        "a" if plain_cmd => Some(DialogKey::SelectAll),
+        "z" if plain_cmd => Some(DialogKey::Undo),
+        "z" if cmd => Some(DialogKey::Redo),
+        "y" if plain_cmd => Some(DialogKey::Redo),
+        "a" if emacs => to(Motion::Home),
+        "e" if emacs => to(Motion::End),
+        "b" if emacs => to(Motion::Left),
+        "f" if emacs => to(Motion::Right),
+        "p" if emacs => to(Motion::Up),
+        "n" if emacs => to(Motion::Down),
+        "d" if emacs => Some(DialogKey::Delete { word: false }),
+        "h" if emacs => Some(DialogKey::Backspace),
+        "k" if emacs => Some(DialogKey::DeleteLine { forward: true }),
+        _ => None,
     }
-    keystroke
-        .key_char
-        .as_deref()
-        .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
-        .map(|text| DialogKey::Insert(text.to_owned()))
 }
 
 /// What the dialog wants after a key.
@@ -556,6 +626,67 @@ mod tests {
         assert_eq!(key("ctrl-delete"), Some(DialogKey::Delete { word: true }));
         assert_eq!(key("ctrl-c"), Some(DialogKey::Copy));
         assert_eq!(key("ctrl-x"), Some(DialogKey::Cut));
+    }
+
+    /// A macOS key as gpui-pre-macos reports it: no char with Cmd or Ctrl, the composed char
+    /// with Option.
+    fn mac(spec: &str, key_char: Option<&str>) -> Option<DialogKey> {
+        let mut keystroke = Keystroke::parse(spec).unwrap();
+        keystroke.key_char = key_char.map(str::to_owned);
+        dialog_key_for(&keystroke, Os::Mac)
+    }
+
+    #[test]
+    fn mac_fields_use_option_for_words_cmd_for_ends_and_the_emacs_keys() {
+        let moved = |motion, extend| Some(DialogKey::Move { motion, extend });
+        assert_eq!(mac("cmd-left", None), moved(Motion::Home, false));
+        assert_eq!(mac("cmd-shift-right", None), moved(Motion::End, true));
+        assert_eq!(mac("alt-left", None), moved(Motion::WordLeft, false));
+        assert_eq!(mac("alt-shift-right", None), moved(Motion::WordRight, true));
+        assert_eq!(mac("cmd-up", None), moved(Motion::DocStart, false));
+        assert_eq!(mac("cmd-shift-down", None), moved(Motion::DocEnd, true));
+        assert_eq!(mac("ctrl-left", None), None, "Ctrl+arrows switch Spaces");
+        assert_eq!(mac("alt-backspace", None), Some(DialogKey::DeleteWord));
+        assert_eq!(
+            mac("cmd-backspace", None),
+            Some(DialogKey::DeleteLine { forward: false })
+        );
+        assert_eq!(
+            mac("alt-delete", None),
+            Some(DialogKey::Delete { word: true })
+        );
+        assert_eq!(
+            mac("cmd-delete", None),
+            Some(DialogKey::DeleteLine { forward: true })
+        );
+        assert_eq!(mac("cmd-z", None), Some(DialogKey::Undo));
+        assert_eq!(mac("cmd-shift-z", None), Some(DialogKey::Redo));
+        assert_eq!(mac("cmd-a", None), Some(DialogKey::SelectAll));
+        assert_eq!(mac("cmd-v", None), Some(DialogKey::Paste));
+        assert_eq!(mac("cmd-enter", None), Some(DialogKey::Save));
+        assert_eq!(mac("shift-enter", Some("\n")), Some(DialogKey::Enter));
+        assert_eq!(mac("cmd-shift-enter", None), None, "the composer key");
+        assert_eq!(mac("cmd-alt-enter", None), None, "the context-menu key");
+        assert_eq!(mac("ctrl-a", None), moved(Motion::Home, false));
+        assert_eq!(mac("ctrl-e", None), moved(Motion::End, false));
+        assert_eq!(mac("ctrl-n", None), moved(Motion::Down, false));
+        assert_eq!(mac("ctrl-d", None), Some(DialogKey::Delete { word: false }));
+        assert_eq!(mac("ctrl-h", None), Some(DialogKey::Backspace));
+        assert_eq!(
+            mac("ctrl-k", None),
+            Some(DialogKey::DeleteLine { forward: true })
+        );
+        assert_eq!(mac("ctrl-tab", None), None, "the tab switch");
+        assert_eq!(mac("cmd-b", None), None);
+        assert_eq!(
+            mac("alt-b", Some("∫")),
+            Some(DialogKey::Insert("∫".into())),
+            "Option types the char macOS composed"
+        );
+        assert_eq!(
+            mac("shift-a", Some("A")),
+            Some(DialogKey::Insert("A".into()))
+        );
     }
 
     #[test]
