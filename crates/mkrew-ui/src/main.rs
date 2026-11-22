@@ -222,21 +222,18 @@ fn main() {
     gpui_platform::application()
         .with_assets(icons::Assets)
         .run(move |cx: &mut App| {
-            let bindings = keymap.key_bindings(cx.keyboard_mapper().as_ref());
-            cx.bind_keys(bindings);
             cx.set_global(ActiveKeymap(keymap.clone()));
+            cx.set_global(shell::app_menu::LocalWindow(!opening.target.is_machine()));
+            shell::app_menu::bind_all(&keymap, cx);
+            shell::app_menu::register(cx);
             cx.set_global(MenuAnchors::default());
             // gpui draws animations in their end state while this is set (ADR 0097).
             cx.set_reduce_motion(mkrew_ui::desktop::reduce_motion());
             // Which char a shifted digit reports depends on the layout: bind again after a switch
             // (e.g. US ↔ Vietnamese), or Ctrl+Shift+1..5 stop working until a restart.
             cx.on_keyboard_layout_change(|cx| {
-                let bindings = cx
-                    .global::<ActiveKeymap>()
-                    .0
-                    .key_bindings(cx.keyboard_mapper().as_ref());
-                cx.clear_key_bindings();
-                cx.bind_keys(bindings);
+                let keymap = cx.global::<ActiveKeymap>().0.clone();
+                shell::app_menu::bind_all(&keymap, cx);
             })
             .detach();
             // A broken file: the defaults until it is fixed (the daemon reports it, §20.0).
@@ -310,6 +307,7 @@ fn main() {
                     return;
                 }
             };
+            cx.set_global(shell::app_menu::MainWindow(main));
             // Sessions live in the daemon, so closing the main window ends the app, detached
             // windows included (they come back on the next start, ADR 0096).
             let main_id = main.window_id();

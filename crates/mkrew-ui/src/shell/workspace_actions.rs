@@ -661,10 +661,8 @@ impl Shell {
         errors: Vec<KeymapError>,
         cx: &mut Context<'_, Self>,
     ) {
-        let bindings = keymap.key_bindings(cx.keyboard_mapper().as_ref());
-        cx.clear_key_bindings();
-        cx.bind_keys(bindings);
         cx.set_global(ActiveKeymap(keymap.clone()));
+        crate::shell::app_menu::bind_all(&keymap, cx);
         self.keymap_error = keymap::notice(&errors);
         self.keymap_errors = errors;
         self.keymap = keymap;

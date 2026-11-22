@@ -15,6 +15,7 @@
 //! dialog model, the toast queue, the scroll bar of the Files editor and the Markdown preview, and
 //! the taskbar / tray attention model, and the in-app update (GitHub releases, install in place).
 
+pub mod app_menu;
 pub mod ask;
 pub mod attention;
 pub mod base_dialog;

@@ -39,6 +39,7 @@ mod git_viewed;
 mod picking;
 mod send_dialog;
 
+pub(crate) mod app_menu;
 mod ask_dialog;
 mod attention;
 pub(crate) mod board;

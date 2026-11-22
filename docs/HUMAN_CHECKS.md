@@ -41,6 +41,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   With Zed removed, the toast says to install it and keep it in `/Applications`.
 - [ ] **Dock badge (macOS):** start an agent that asks for input, switch to another app: the Dock icon shows the Needs-you count in a red badge and the icon bounces once; focusing Mkrew and viewing the pane clears the badge when nothing needs you.
   With `[notify] flash_taskbar = false` the bounce stops, the badge stays.
+- [ ] **Menu bar (macOS, dark + light):** the menu bar reads Mkrew, Edit, View, Window; Mkrew has About, Settings… (⌘,), Check for Updates…, Services, Hide, Hide Others, Show All, Quit; View has Enter Full Screen (⌃⌘F); Window has Minimize (⌘M) and Zoom.
+  About shows the Mkrew icon and version.
+  A machine window (`mkrew --machine`) has no Check for Updates….
+- [ ] **Quit and hide keys (macOS):** ⌘Q with an unsaved Files edit asks "Save changes?" first and then quits (agents keep running); ⌘H hides the app, the Dock icon shows it; ⌘M minimizes; Settings… opens the dialog; Copy in the Edit menu copies a terminal selection.
+- [ ] **Dock → Quit (macOS, known gap):** with an unsaved Files edit, Dock → Quit ends Mkrew without asking and the edit is lost; the detached windows come back at the next start.
 
 ### To verify - 2026-11-22 macOS keyboard (ADR 0098)
 
