@@ -333,10 +333,13 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         if command == Command::OpenSettings {
-            self.in_window(HostId::Main, cx, |shell, window, cx| {
-                window.activate_window();
-                shell.open_settings_dialog(window, cx);
-            });
+            // The main window's own guard: no Settings over another dialog or the palette.
+            if !self.modal_open() {
+                self.in_window(HostId::Main, cx, |shell, window, cx| {
+                    window.activate_window();
+                    shell.open_settings_dialog(window, cx);
+                });
+            }
             return;
         }
         if !detached::handles(command) || (self.reconnecting() && !self.modal_open()) {

@@ -86,8 +86,12 @@ pub(crate) fn register(cx: &mut App) {
 }
 
 /// A click on the Dock icon while no window shows (macOS `applicationShouldHandleReopen`): the
-/// main window comes back, as from the tray on Windows.
+/// main window comes back, as from the tray on Windows. Not deferred: gpui runs this callback
+/// outside `App::update`, so a deferred job would wait for some later update, and no window is
+/// being dispatched, so the direct update works.
 pub(crate) fn reopen(cx: &mut App) {
     cx.activate(true);
-    with_main(cx, |shell, window, cx| shell.restore_window(window, cx));
+    if let Some(main) = cx.try_global::<MainWindow>().map(|main| main.0) {
+        let _ = main.update(cx, |shell, window, cx| shell.restore_window(window, cx));
+    }
 }
