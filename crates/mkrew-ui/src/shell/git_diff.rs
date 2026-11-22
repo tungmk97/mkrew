@@ -431,7 +431,7 @@ impl Shell {
                 if on {
                     "Mark as not viewed"
                 } else {
-                    "Mark as viewed: its diff collapses until it changes"
+                    "Mark as viewed: its diff collapses until it changes, and the next file opens"
                 },
                 self.keymap.label(Command::GitToggleViewed),
             ))
@@ -608,6 +608,9 @@ impl Shell {
                 git_view::Stage::Unstage => self.keymap.label(Command::GitUnstage),
             })
             .unwrap_or_default();
+        let discard_keys = view
+            .hunks_discardable()
+            .then(|| self.keymap.label(Command::GitDiscard));
         let width = (!wrap).then(|| unwrapped_width(&shown, mode, theme, window));
         let list = list(
             self.git_diff_list.clone(),
@@ -629,6 +632,7 @@ impl Shell {
                         current,
                         hunk_stage,
                         &stage_keys,
+                        discard_keys.as_deref(),
                         project_id,
                         theme,
                         cx,
@@ -823,6 +827,33 @@ pub(crate) fn hunk_stage_button(
     }))
 }
 
+/// "Discard hunk" after "Stage hunk" on a hunk header of an unstaged modified file: danger
+/// text, asks first. `keys` is the shortcut, shown on the current hunk only (`x` acts there).
+pub(crate) fn hunk_discard_button(
+    project_id: Ulid,
+    hunk: usize,
+    keys: SharedString,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    row_action(
+        SharedString::from(format!("git-hunk-discard-{hunk}")),
+        "Discard hunk",
+        theme,
+    )
+    .h(px(space::XL))
+    .flex()
+    .items_center()
+    .px(px(space::S))
+    .rounded(px(radius::CHIP))
+    .text_color(rgb(theme.danger_text))
+    .tooltip(tooltip(theme, "Discard this hunk (asks first)", keys))
+    .on_click(cx.listener(move |shell, _, window, cx| {
+        window.focus(&shell.git_focus, cx);
+        shell.open_git_hunk_discard(project_id, hunk, window, cx);
+    }))
+}
+
 /// A row of the Discard dialog's preview: Unified, unwrapped, nothing to pick or stage.
 pub(crate) fn git_diff_preview_row(
     shown: &git_view::Shown,
@@ -833,7 +864,7 @@ pub(crate) fn git_diff_preview_row(
 ) -> gpui::Div {
     match shown.rows.get(index) {
         Some(git_view::DiffRow::Line(line)) => unified_line(shown, index, line, None, false, theme),
-        _ => span_row(shown, index, None, None, "", project_id, theme, cx),
+        _ => span_row(shown, index, None, None, "", None, project_id, theme, cx),
     }
 }
 
@@ -851,7 +882,8 @@ fn diff_frame(wrap: bool, theme: &Theme) -> gpui::Div {
 
 /// A row spanning the whole width (both Split halves): a collapsed gap of unchanged lines the
 /// diff does not include, or a hunk header (a 34 px `well` bar: `@@ … @@` and its section in
-/// mono muted text, ▸ on the current hunk, a small Stage hunk button on the right).
+/// mono muted text, ▸ on the current hunk, a small Stage hunk button on the right and a
+/// Discard hunk button after it on unstaged modified files).
 #[allow(clippy::too_many_arguments)]
 fn span_row(
     shown: &git_view::Shown,
@@ -859,6 +891,7 @@ fn span_row(
     current: Option<usize>,
     hunk_stage: Option<git_view::Stage>,
     stage_keys: &str,
+    discard_keys: Option<&str>,
     project_id: Ulid,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
@@ -919,6 +952,14 @@ fn span_row(
                         SharedString::default()
                     };
                     hunk_stage_button(project_id, *at, stage, keys, theme, cx)
+                }))
+                .children(discard_keys.map(|keys| {
+                    let keys = if is_current {
+                        keys.to_owned().into()
+                    } else {
+                        SharedString::default()
+                    };
+                    hunk_discard_button(project_id, *at, keys, theme, cx)
                 }))
         }
         _ => frame,

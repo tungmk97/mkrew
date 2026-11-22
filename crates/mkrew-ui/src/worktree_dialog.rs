@@ -211,6 +211,7 @@ impl WorktreeDialog {
                 worktree_task_id: Some(self.task_id),
                 repo: None,
                 paths: plan.discardable.clone(),
+                hunk: None,
                 confirm: true,
             })),
         }

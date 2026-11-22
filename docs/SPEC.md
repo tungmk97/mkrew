@@ -619,8 +619,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `git.diff` | `project_id`, `path`, `mode`, `staged?` (working mode: index side), `commit?`, `since?` (base mode, as in `git.status`) | `binary`, `too_large`, `added`/`removed`, `hunks[]` (`old/new_start/lines`, `header`, `lines[]` with `kind`, `text`, `old_line?`/`new_line?`, `no_newline`, `crlf`) |
 | `git.viewed` | the params of `git.status` | `ViewedFile[]` (`path`, `staged`): the files of that list (`working` / `base` / the `since` checkpoint) whose viewed mark still stands (ADR 0065). Re-hashes the marked files through the diff cache and deletes marks whose diff text changed |
 | `git.set_viewed` | the params of `git.diff` (no `commit`), `viewed` (bool) | `null`; hashes the file's diff now and stores (`viewed: true`) or removes the mark; `invalid_state` for a file with no diff, `invalid_request` with `commit` |
-| `git.stage` / `git.unstage` | `paths[]` or `hunk` | ok |
-| `git.discard` | `paths[]`, `confirm: true` | ok (destructive; UI always confirms first) |
+| `git.stage` / `git.unstage` | `paths[]` or `hunk` | ok; `invalid_request` for a hunk line holding a line feed (it would add sections to the patch) |
+| `git.discard` | `paths[]` (empty with a hunk) or `hunk` (a `HunkTarget` of the unstaged diff), `confirm: true` | ok (destructive; UI always confirms first). A hunk is reversed in the working tree only (`git apply -R`, the index stays); `invalid_request` for `paths` together with a hunk, for an untracked file or for a hunk line holding a line feed; a hunk that no longer applies fails with git's text |
 | `git.commit` | `message` | new commit hash |
 | `git.log` | `limit`, `path?` | Commit[] |
 | `git.show` | `commit` | commit info + changed files |
@@ -701,6 +701,8 @@ Protocol 53 (ADR 0095): `attachment.save` takes `owner` (`{"session": id}` or `{
 Protocol 54 (Polish spec 2026-11-21 §8): requests `git.branches`, `git.checkout`, `fs.search`.
 
 Protocol 55 (Widget bar spec 2026-11-22 sections 5 and 6, ADR 0102): requests `limits.get` and `limits.report`, events `agent.limits` and `machine.stats`.
+
+Protocol 56 (ADR 0103): `git.discard` takes `hunk`.
 
 Protocol 41: `session.move` and `Session.position`.
 
@@ -1343,6 +1345,9 @@ Only edit this file. When done, for EACH comment run:
   the editor's top line goes to the page's top); scrolling the page moves nothing else. A press
   on the page puts the editor's caret on that block's first line (scrolled into view only when
   it is off screen). The page has its own keyboard focus (selection, Ctrl+C, Ctrl+A); ✎ works as in Preview.
+- **Send selection from the preview** (ADR 0103): `Ctrl+Shift+L` with text selected on the page (Preview, or Split while the editor selects nothing) sends the Markdown source of the blocks the selection touches, with `path:a-b` (§20B.4).
+  A selection inside one block sends that block's whole line range.
+  With nothing selected on the page it sends the editor's selected lines or its caret's line, as before.
 - **Palette Files scope** (`Ctrl+Shift+O`, or the "Search files…" entry at the top of the tree) fuzzy-finds files of the current workspace, in the folder the tree shows (project or task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
 - **Palette Search scope** (`Ctrl+Alt+Shift+F`) finds text in those files.
 - "Open in Zed" opens the file at the caret's line.
@@ -1418,7 +1423,12 @@ Windows (tens of ms, worse with antivirus), so:
   file stops changing (checked with every status refresh). Staging a whole viewed file keeps the
   mark; marks of Against base, a task's changes and Working changes are separate lists.
 - **Stage / unstage** per file or per hunk (daemon builds the patch, runs `git apply --cached`).
-- **Discard** per file: always confirms and shows what will be lost.
+- **Review flow** (ADR 0103): `v` on the selected file that is not viewed marks it and selects the next file below it that is not viewed, wrapping to the top (every file viewed: the selection stays); `v` on a viewed file only clears the mark.
+  `n` past the last hunk of a file selects the next file that is not viewed and its first hunk, `p` before the first hunk the previous such file and its last hunk; there is no wrap and a file without hunks is passed on the next key.
+  On a viewed file's folded diff, whose hunks are hidden, `n` / `p` go straight to the next / previous file that is not viewed; `x` there still discards the file.
+- **Discard** per file or per hunk: always confirms and shows what will be lost.
+  A hunk of a modified file in the Changes group has a "Discard hunk" button after "Stage hunk"; `x` with a current hunk opens the same confirmation for that hunk, else the file's.
+  The daemon reverses the hunk in the working tree only (`git apply -R`); the dialog stays disabled and confirm refuses if a reload changed the hunk, and a hunk that still fails to apply shows git's text and reloads the diff.
 - **Commit:** multi-line message box, Commit button (`Ctrl+Enter`), and ✦: the workspace's
   default agent writes a Conventional Commits message from the staged changes (else the
   unstaged ones) via `ai.generate` (§7); the answer replaces the draft, nothing is committed
@@ -1546,22 +1556,22 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Next / previous file | ↓ / ↑ (or j / k) |
 | Git | Open the selected file's diff | Enter |
 | Git | Close an open menu, else unselect the picked lines, else close the diff | Esc |
-| Git | Next / previous hunk | n / p |
+| Git | Next / previous hunk (past the last / first one: the next / previous file that is not viewed) | n / p |
 | Git | Stage / unstage selected file or hunk | s / u |
 | Git | Toggle Working changes / Against base | b |
 | Git | Toggle History | h |
 | Git | Toggle Unified / Split diff | d |
 | Git | Wrap long diff lines / cut them at the edge | W |
-| Git | Mark the selected file viewed / not viewed | v |
+| Git | Mark the selected file viewed / not viewed (marking opens the next file that is not viewed) | v |
 | Git | Focus commit message / commit | c / Ctrl+Enter |
 | Git | Stage all of the selected file's group (Unstaged + Untracked when a Staged file or nothing is selected) / unstage all | Shift+S / Shift+U |
-| Git | Discard the selected file (asks first) / fetch / push | x / f / Shift+P |
+| Git | Discard the current hunk, else the selected file (asks first) / fetch / push | x / f / Shift+P |
 | Git | Comment on selected lines | Ctrl+Alt+M |
 | Git | Send comments to agent | Ctrl+Shift+S |
 | Agent (v2) | Peek the first session that needs you (↑/↓ cycle, Alt+Y / Alt+N answer, Ctrl+O open the pane, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
 | Agent (v2) | In a prompt box (the composer, the task dialog's Prompt), at the start of a line or after a space: pick the agent's command (§20B.7) / pick a file (§12A); Enter or Tab types the pick, Esc types the character | / / @ |
-| Agent (v2) | Send selection to an agent (Editor, Git diff, terminal) | Ctrl+Shift+L |
+| Agent (v2) | Send selection to an agent (Editor, Markdown preview, Docs, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
 | Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10) |
 
@@ -2067,7 +2077,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
       e2e with the fake agent: a text queued while working and removed is never typed.
 - [ ] Prompt library: samples seeded on first run, variables rendered (unit tests), insertable from
       the palette, the composer and the task dialog.
-- [ ] Send selection from the Editor, Git diff and a terminal opens the right session's composer, prefilled.
+- [ ] Send selection from the Editor (also a Markdown preview selection), Docs, Git diff and a terminal opens the right session's composer, prefilled.
 - [ ] Dropping files types their paths; pasting an image stores it via `attachment.save` and types
       the path; attachments of sessions ended > 7 days ago are deleted.
 - [ ] "Run with…" on a Todo/Review card updates the task's agent and runs it.
@@ -2314,7 +2324,7 @@ context_window = 200000        # tokens, for the % shown
    The picker's last row "Manage prompts…" and the palette's "Global: Manage prompts…" open Settings → Prompts (§14), where prompts are added, edited, renamed and deleted with `mkrew_core::prompt::{validate_name, create, save, rename, delete, read}`.
    A name is at most 64 characters and cannot be empty, start with a dot, contain `/ \ : * ? " < > |` or a control character, end in a space or a dot, or be a Windows reserved name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, also before a first dot); it is unique ignoring case, except that a prompt may be renamed to a new case of its own name.
    `save` writes a temp file in the folder and renames it over the target.
-4. **Send selection to agent.** `Ctrl+Shift+L` in the Editor (the editor's selected lines, else the caret's line), Git diff (picked new-side
+4. **Send selection to agent.** `Ctrl+Shift+L` in the Editor (a Markdown preview's selection as its blocks' source lines; else the editor's selected lines, else the caret's line), Docs (the comment selection), Git diff (picked new-side
    lines) and a terminal (selected text) opens a session picker (default: the task's session for
    Git task changes, else the workspace's most recently active agent session; same list as
    §12's send dialog), then that session's composer prefilled with

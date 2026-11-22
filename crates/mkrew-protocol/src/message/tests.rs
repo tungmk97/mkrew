@@ -1333,11 +1333,6 @@ fn limits() -> AgentLimits {
 }
 
 #[test]
-fn the_widget_bar_protocol_is_version_55() {
-    assert_eq!(crate::PROTOCOL_VERSION, 55);
-}
-
-#[test]
 fn limits_and_machine_stats_have_their_own_wire_shapes() {
     assert_eq!(
         round_trip(&Message::Event(Event::AgentLimits(limits()))),
@@ -1404,4 +1399,9 @@ fn a_report_replaces_an_older_different_one_only() {
     assert!(!older.supersedes(&old), "an older report is ignored");
     assert!(same_time.supersedes(&old), "a tie: the later arrival wins");
     assert!(!old.supersedes(&old), "the same content is no news");
+}
+
+#[test]
+fn the_review_flow_protocol_is_version_56() {
+    assert_eq!(crate::PROTOCOL_VERSION, 56);
 }

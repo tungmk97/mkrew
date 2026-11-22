@@ -43,7 +43,7 @@ impl Shell {
 
     /// Marks `target` viewed or not (the `v` key, a row's box, the toolbar button): shown at
     /// once, then sent; the daemon is asked again afterwards, so a failure puts its truth back
-    /// and a toast says why.
+    /// and a toast says why. Marking the selected file opens the next one that is not viewed.
     pub(crate) fn toggle_git_viewed(
         &mut self,
         project_id: Ulid,
@@ -57,6 +57,13 @@ impl Shell {
         let Some(params) = self.git_view(project_id).toggle_viewed(&target) else {
             return;
         };
+        // Marked: the review goes on with the next file that is not viewed.
+        let next = self.git_view(project_id).next_unviewed(&target);
+        if next.diff.is_some() {
+            self.scroll_diff_to(0);
+            self.reveal_git_selection(project_id);
+        }
+        self.git_requests(project_id, next, window, cx);
         cx.notify();
         let sent = connection.request(Request::GitSetViewed(params));
         cx.spawn_in(window, async move |this, cx| {

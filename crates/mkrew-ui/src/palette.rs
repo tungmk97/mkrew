@@ -646,7 +646,7 @@ pub fn title(command: Command) -> String {
         Command::GitToggleViewed => "Git: Mark file as viewed / not viewed".into(),
         Command::GitStageAll => "Git: Stage all (selected group, else every change)".into(),
         Command::GitUnstageAll => "Git: Unstage all".into(),
-        Command::GitDiscard => "Git: Discard changes to selected file…".into(),
+        Command::GitDiscard => "Git: Discard changes to selected file or hunk…".into(),
         Command::GitFetch => "Git: Fetch".into(),
         Command::GitPush => "Git: Push".into(),
         Command::NewTask => "Task: New task".into(),
@@ -745,7 +745,10 @@ pub fn available(command: Command, context: &Context) -> bool {
         }
         Command::OpenComposer => on_panes && context.agent_pane,
         Command::SendSelection => {
-            in_view(View::Editor) || in_view(View::Diff) || (on_panes && context.terminal)
+            in_view(View::Editor)
+                || in_view(View::Diff)
+                || in_view(View::Docs)
+                || (on_panes && context.terminal)
         }
         Command::RunTask => in_view(View::Board),
         Command::ApproveCard => in_view(View::Board) && context.approve_card,

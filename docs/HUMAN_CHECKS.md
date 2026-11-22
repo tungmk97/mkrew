@@ -21,6 +21,31 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-22 Review flow (ADR 0103, plan docs/superpowers/plans/2026-11-22-review-flow.md)
+
+- [ ] **Restart the daemon first** (protocol 56; a window from before it shows a version mismatch).
+- [ ] **Viewed, then next (dark + light):** Git tab with 3+ changed files and a diff open.
+  `v` on the first file marks it (its row dims) and the second file's diff opens with the list scrolled to it.
+  `v` on a viewed file only clears the mark and moves nothing.
+  Mark every file: the selection stays on the last one.
+  Tick the box of a row that is not selected: that row is marked, the selection stays.
+- [ ] **Hunk stepping:** in a file with 2+ hunks press `n` past the last hunk: the next file that is not viewed opens, its first hunk shows the `▸` marker and is scrolled to.
+  `p` before the first hunk goes back to the previous file's last hunk.
+  Viewed files and a binary file with no hunks are passed; at the first and last file nothing moves.
+  `n` / `p` on a viewed file's folded diff go to the next / previous file that is not viewed.
+- [ ] **Discard hunk (dark + light):** an unstaged modified file with two hunks: each hunk header shows `Stage hunk` and a red `Discard hunk`.
+  No such button on Staged, Untracked, deleted or renamed files, in Against base or in History.
+  Click one: "Discard this hunk?" lists only that hunk's lines; Cancel keeps it; confirm removes that hunk, the other stays and the diff reloads.
+  With a file that also has staged changes the dialog adds "Its staged changes stay."
+  With `n` choosing a hunk, `x` opens the same dialog; with no hunk chosen `x` still opens the file's dialog.
+  Change the file in an editor while the dialog is open: the dialog says the hunk changed and confirm stays off.
+- [ ] **CRLF file:** discard a hunk of a CRLF file (Git for Windows with `core.autocrlf` true, and with false): the other lines keep their line endings.
+- [ ] **Send from a preview:** Files, a `.md` in Preview: select text across two paragraphs, press `Ctrl+Shift+L`.
+  The send dialog names the file as `README.md:3-5` and the composer gets the Markdown source of both blocks.
+  Same in Split with the page selected; with the editor selecting too, the editor's lines go.
+  With nothing selected the caret's line goes, as before.
+- [ ] **Send from Docs:** Docs, click a block (Shift+click extends), press `Ctrl+Shift+L`: the same dialog with the file and line range; in Source mode too.
+
 ### To verify - 2026-11-22 Widget bar (ADR 0102, plan docs/superpowers/plans/2026-11-22-widget-bar.md)
 
 - [ ] The bar in dark and light themes: folder, branch with count, limits, CPU and RAM, version; hover and press feel like the other title bar controls; the text is readable; a long workspace or branch name ends in an ellipsis.

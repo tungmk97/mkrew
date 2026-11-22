@@ -242,14 +242,17 @@ pub struct GitStageParams {
     pub hunk: Option<HunkTarget>,
 }
 
-/// A hunk as shown by `git.diff`; the daemon builds the patch for `git apply --cached [-R]`.
+/// A hunk as shown by `git.diff`; the daemon builds the patch for `git apply` from it:
+/// `--cached` to stage, `--cached -R` to unstage, `-R` on the working tree to discard.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HunkTarget {
     pub path: String,
     pub hunk: Hunk,
 }
 
-/// `git.discard`: destructive; `invalid_request` unless `confirm` is true.
+/// `git.discard`: destructive; `invalid_request` unless `confirm` is true. Whole files
+/// (`paths`) or, with `paths` empty, one hunk of a tracked file's unstaged diff (`hunk`),
+/// which the daemon reverses in the working tree only (the index is kept).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitDiscardParams {
     pub project_id: Ulid,
@@ -260,6 +263,8 @@ pub struct GitDiscardParams {
     #[serde(default)]
     pub repo: Option<String>,
     pub paths: Vec<String>,
+    #[serde(default)]
+    pub hunk: Option<HunkTarget>,
     #[serde(default)]
     pub confirm: bool,
 }
@@ -778,6 +783,7 @@ mod tests {
                 worktree_task_id: wt,
                 repo: None,
                 paths: vec!["a".into()],
+                hunk: None,
                 confirm: true,
             }),
             Request::GitCommit(GitCommitParams {
@@ -953,6 +959,38 @@ mod tests {
         assert_eq!(auto.base_ref, None);
         let missing: GitSetBaseParams = serde_json::from_value(json!({"project_id": id})).unwrap();
         assert_eq!(missing, auto);
+    }
+
+    #[test]
+    fn a_discard_may_name_one_hunk() {
+        let id = sid().to_string();
+        // The old shape still reads: no hunk.
+        let plain: GitDiscardParams =
+            serde_json::from_value(json!({"project_id": id, "paths": ["a"], "confirm": true}))
+                .unwrap();
+        assert_eq!(plain.hunk, None);
+        let params = GitDiscardParams {
+            project_id: sid(),
+            worktree_task_id: None,
+            repo: None,
+            paths: vec![],
+            hunk: Some(HunkTarget {
+                path: "a".into(),
+                hunk: hunk(),
+            }),
+            confirm: true,
+        };
+        let wire = serde_json::to_value(&params).unwrap();
+        assert_eq!(wire["hunk"]["path"], "a");
+        assert_eq!(
+            serde_json::from_value::<GitDiscardParams>(wire).unwrap(),
+            params
+        );
+        let value = round_trip(&Message::Request {
+            id: 1,
+            request: Request::GitDiscard(params),
+        });
+        assert_eq!(value["method"], "git.discard");
     }
 
     #[test]
