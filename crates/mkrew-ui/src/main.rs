@@ -649,7 +649,8 @@ struct Shell {
     desktop: Desktop,
     /// What `desktop` last showed, so only a change reaches the OS.
     attention: Tracker,
-    /// `[ui] close_to_tray`: the window's ✕ hides it while the tray icon is there.
+    /// `[ui] close_to_tray`: the window's ✕ hides it (to the tray icon on Windows, the whole app
+    /// on macOS) instead of quitting. Always false in a machine window.
     close_to_tray: bool,
     /// This computer's `[notify]` settings: the taskbar flash, and a machine window decides its
     /// OS notifications with them.

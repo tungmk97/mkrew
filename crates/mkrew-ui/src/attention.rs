@@ -180,9 +180,16 @@ pub fn entered_needs_input(event: &Event, sessions: &[Session]) -> bool {
             .is_none_or(|s| s.state != SessionState::NeedsInput)
 }
 
-/// Whether the window's ✕ hides it: only with the setting on and a tray icon to bring it back.
-pub fn hide_on_close(close_to_tray: bool, has_tray: bool) -> bool {
-    close_to_tray && has_tray
+/// Whether the window's ✕ hides it: only with the setting on and something to bring it back
+/// (`can_hide`: the tray icon on Windows, the Dock icon on macOS).
+pub fn hide_on_close(close_to_tray: bool, can_hide: bool) -> bool {
+    close_to_tray && can_hide
+}
+
+/// The effective `[ui] close_to_tray`: a machine window (`local` false) always quits on ✕, it
+/// has no tray icon and the Dock icon brings back this computer's window.
+pub fn close_to_tray_for(setting: bool, local: bool) -> bool {
+    setting && local
 }
 
 #[cfg(test)]
@@ -442,5 +449,12 @@ mod tests {
         );
         assert!(!hide_on_close(false, true));
         assert!(!hide_on_close(false, false));
+    }
+
+    #[test]
+    fn a_machine_window_never_closes_to_tray() {
+        assert!(close_to_tray_for(true, true));
+        assert!(!close_to_tray_for(true, false));
+        assert!(!close_to_tray_for(false, true));
     }
 }

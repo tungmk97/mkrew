@@ -431,8 +431,8 @@ pub struct UiSettings {
     /// `[ui] reading_width`: agent panes start at reading width (≈ 120–140 columns, centered);
     /// each pane's Reading width toggle overrides it until restart. Shell panes are full width.
     pub reading_width: bool,
-    /// `[ui] close_to_tray` (SPEC §20J): the window's ✕ hides it to the tray icon instead of
-    /// quitting the UI (Windows, while the tray icon exists). The agents run in the daemon either way.
+    /// `[ui] close_to_tray` (SPEC §20J): the window's ✕ hides Mkrew instead of quitting the UI
+    /// (to the tray icon on Windows, the whole app on macOS). The agents run in the daemon either way.
     pub close_to_tray: bool,
     /// `[ui] board_all_workspaces` (SPEC §10): the Board shows every workspace's tasks, not only
     /// the active workspace's. The Board's `This workspace | All workspaces` switch writes it.

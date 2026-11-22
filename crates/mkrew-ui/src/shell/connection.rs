@@ -41,7 +41,7 @@ impl Shell {
         let ui = settings.ui;
         let diff_mode = ui.diff_mode;
         let diff_wrap = ui.diff_wrap;
-        let close_to_tray = ui.close_to_tray && local;
+        let close_to_tray = attention::close_to_tray_for(ui.close_to_tray, local);
         let reading_default = ui.reading_width;
         let board_all = ui.board_all_workspaces;
         let (md_mode, md_split) = (ui.md_mode, files_view::md_split_share(ui.md_split));
@@ -1036,7 +1036,10 @@ impl Shell {
                 // `diff_mode` / `diff_wrap` / `[features]` applies too (the file
                 // just parsed, so this second read only happens when it changed).
                 if let Ok(settings) = mkrew_core::settings::load(&self.settings_file) {
-                    self.close_to_tray = settings.ui.close_to_tray;
+                    self.close_to_tray = attention::close_to_tray_for(
+                        settings.ui.close_to_tray,
+                        !self.target.is_machine(),
+                    );
                     // Every pane reads it on its next key press: no restart.
                     cx.set_global(mkrew_ui::terminal::input::KeyEnv::current(
                         settings.terminal.option_as_meta,
