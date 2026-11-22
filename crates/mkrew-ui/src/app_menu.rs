@@ -84,10 +84,21 @@ pub fn bindings(os: Os) -> Vec<KeyBinding> {
     ]
 }
 
-/// `keymap_bindings` after the menu-only keys: gpui lets the later binding of a key win, so a
-/// key the user bound in `keymap.toml` beats the menu's.
+/// `keymap_bindings` after the menu-only keys, minus the menu-only keys the user keymap binds
+/// at all (first keystroke, any context). The later binding of a key wins in gpui only at equal
+/// depth, and a context-less menu key counts as the deepest context, so it would beat the
+/// user's key bound to a Terminal or Editor command while focus is there.
 pub fn with_menu_keys(os: Os, keymap_bindings: Vec<KeyBinding>) -> Vec<KeyBinding> {
-    let mut all = bindings(os);
+    let taken = |menu: &KeyBinding| {
+        keymap_bindings.iter().any(|user| {
+            user.keystrokes().first().map(|k| k.inner())
+                == menu.keystrokes().first().map(|k| k.inner())
+        })
+    };
+    let mut all: Vec<KeyBinding> = bindings(os)
+        .into_iter()
+        .filter(|menu| !taken(menu))
+        .collect();
     all.extend(keymap_bindings);
     all
 }
@@ -196,15 +207,19 @@ mod tests {
     }
 
     #[test]
-    fn the_users_keys_come_after_the_menu_keys_so_they_win() {
+    fn a_key_the_user_binds_replaces_the_menu_key() {
         let user = vec![KeyBinding::new("cmd-q", Run(Command::OpenSettings), None)];
         let all = with_menu_keys(Os::Mac, user);
-        assert_eq!(all.len(), 5);
-        assert!(all[0].action().as_any().is::<Quit>());
-        assert!(
-            all[4].action().as_any().is::<Run>(),
-            "the later binding of a key wins in gpui"
+        assert_eq!(
+            all.len(),
+            4,
+            "Hide, Hide Others, Minimize and the user's key"
         );
+        assert!(
+            !all.iter()
+                .any(|binding| binding.action().as_any().is::<Quit>())
+        );
+        assert!(all[3].action().as_any().is::<Run>());
         assert_eq!(
             with_menu_keys(
                 Os::Windows,
@@ -213,5 +228,25 @@ mod tests {
             .len(),
             1
         );
+    }
+
+    #[test]
+    fn a_user_key_in_a_context_also_replaces_the_menu_key() {
+        // A context-less menu key counts as deeper than "Terminal", so it would win there.
+        let user = vec![KeyBinding::new(
+            "cmd-h",
+            Run(Command::PageUp),
+            Some("Terminal"),
+        )];
+        let all = with_menu_keys(Os::Mac, user);
+        assert!(
+            !all.iter()
+                .any(|binding| binding.action().as_any().is::<Hide>())
+        );
+        assert!(
+            all.iter()
+                .any(|binding| binding.action().as_any().is::<HideOthers>())
+        );
+        assert!(all[3].action().as_any().is::<Run>());
     }
 }

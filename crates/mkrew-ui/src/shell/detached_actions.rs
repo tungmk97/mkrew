@@ -323,7 +323,8 @@ impl Shell {
     }
 
     /// The keys of a detached window: only [`detached::handles`]' commands act, on this
-    /// window's tab; the rest do nothing here (spec §4.2).
+    /// window's tab; the rest do nothing here (spec §4.2). Settings (the macOS menu has it in
+    /// every window) opens in the main window.
     pub(crate) fn run_detached(
         &mut self,
         key: WindowKey,
@@ -331,6 +332,13 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if command == Command::OpenSettings {
+            self.in_window(HostId::Main, cx, |shell, window, cx| {
+                window.activate_window();
+                shell.open_settings_dialog(window, cx);
+            });
+            return;
+        }
         if !detached::handles(command) || (self.reconnecting() && !self.modal_open()) {
             return;
         }

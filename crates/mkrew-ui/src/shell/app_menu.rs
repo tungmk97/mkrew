@@ -32,19 +32,29 @@ pub(crate) fn bind_all(keymap: &Keymap, cx: &mut App) {
     }
 }
 
-/// Runs `f` on the main window's shell (nothing when it is gone).
-fn with_main(cx: &mut App, f: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>)) {
-    let Some(main) = cx.try_global::<MainWindow>().map(|main| main.0) else {
-        return;
-    };
-    let _ = main.update(cx, f);
+/// Runs `f` on the main window's shell (nothing when it is gone). Deferred: an action listener
+/// runs while gpui has the dispatching window taken out of the app, so updating that window
+/// right away fails silently.
+fn with_main(
+    cx: &mut App,
+    f: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) + 'static,
+) {
+    cx.defer(move |cx| {
+        let Some(main) = cx.try_global::<MainWindow>().map(|main| main.0) else {
+            return;
+        };
+        let _ = main.update(cx, f);
+    });
 }
 
-/// Runs `f` on the window that is active now.
-fn with_active(cx: &mut App, f: impl FnOnce(&mut Window)) {
-    if let Some(active) = cx.active_window() {
-        let _ = active.update(cx, |_, window, _| f(window));
-    }
+/// Runs `f` on the window that is active now. Deferred for the reason of [`with_main`]; the
+/// active window is read after the dispatch.
+fn with_active(cx: &mut App, f: impl FnOnce(&mut Window) + 'static) {
+    cx.defer(move |cx| {
+        if let Some(active) = cx.active_window() {
+            let _ = active.update(cx, |_, window, _| f(window));
+        }
+    });
 }
 
 /// The handlers of the menu-only actions, and what the app does when it is quit without a
@@ -64,8 +74,12 @@ pub(crate) fn register(cx: &mut App) {
     cx.on_action(|_: &Zoom, cx| with_active(cx, |window| window.zoom_window()));
     // Dock → Quit and log-out end the app without asking (gpui 0.3.7 cannot veto them, its
     // quit hook runs after the decision and gets 200 ms): keep what can be kept.
+    // Not deferred: the app is already quitting, a deferred job would never run. No window is
+    // being dispatched here, so the direct update works.
     cx.on_app_quit(|cx| {
-        with_main(cx, |shell, _, cx| shell.save_before_exit(cx));
+        if let Some(main) = cx.try_global::<MainWindow>().map(|main| main.0) {
+            let _ = main.update(cx, |shell, _, cx| shell.save_before_exit(cx));
+        }
         std::future::ready(())
     })
     .detach();
