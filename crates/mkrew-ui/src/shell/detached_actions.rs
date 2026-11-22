@@ -50,6 +50,7 @@ impl Shell {
         self.sync_panes_if_alive(window, cx);
         let shell = cx.entity();
         let mode = cx.theme().mode;
+        let ui_size = cx.global::<theme::Fonts>().ui_size;
         cx.spawn(async move |this, cx| {
             let options = WindowOptions {
                 window_bounds: Some(if maximized {
@@ -60,10 +61,8 @@ impl Shell {
                 titlebar: Some(TitlebarOptions {
                     title: Some("Mkrew".into()),
                     appears_transparent: CUSTOM_TITLE_BAR,
-                    traffic_light_position: cfg!(target_os = "macos").then(|| {
-                        let (x, y) = theme::MAC_TRAFFIC_LIGHT_POS;
-                        point(px(x), px(y))
-                    }),
+                    traffic_light_position: theme::traffic_light_pos(Os::CURRENT, ui_size)
+                        .map(|(x, y)| point(px(x), px(y))),
                 }),
                 window_min_size: Some(size(
                     px(theme::DETACHED_MIN_WIDTH),

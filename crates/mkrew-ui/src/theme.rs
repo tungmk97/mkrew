@@ -9,6 +9,7 @@ use mkrew_core::settings::Settings;
 pub use mkrew_core::settings::ThemeMode;
 use mkrew_protocol::WORKSPACE_COLORS;
 
+use crate::keymap::Os;
 use crate::theme_catalog::ThemeCatalog;
 
 /// Spacing scale in px: 4 · 8 · 12 · 16 · 24 · 32.
@@ -194,8 +195,11 @@ pub const DETACHED_OFFSET: f32 = 32.0;
 pub const WINDOW_CONTROL_WIDTH: f32 = 46.0;
 /// Room for the macOS traffic lights at the left of the title bar.
 pub const MAC_TRAFFIC_LIGHTS_WIDTH: f32 = 72.0;
-/// Where the macOS traffic lights sit ((x, y) in px).
-pub const MAC_TRAFFIC_LIGHT_POS: (f32, f32) = (12.0, 14.0);
+/// Distance of the macOS traffic lights from the window's left edge, px.
+pub const MAC_TRAFFIC_LIGHT_X: f32 = 12.0;
+/// Height of one traffic light button (AppKit's standard 14 px circle); the lights are
+/// centered on the title bar.
+pub const MAC_TRAFFIC_LIGHT_SIZE: f32 = 14.0;
 /// Longest workspace name / branch chip in the title bar before it truncates.
 pub const TITLE_CHIP_MAX_WIDTH: f32 = 160.0;
 
@@ -2222,6 +2226,31 @@ pub fn rems_px(px: f32) -> Rems {
     rems(px / 13.0)
 }
 
+/// The title bar's height in px when 1 rem is `ui_size` px (`[ui] font_size`):
+/// `TITLE_BAR_HEIGHT` is in rems (ADR 0024).
+pub fn title_bar_px(ui_size: f32) -> f32 {
+    TITLE_BAR_HEIGHT * ui_size / 13.0
+}
+
+/// Where the first traffic light's top left goes, `None` off macOS: `MAC_TRAFFIC_LIGHT_X` from
+/// the left edge, centered on the title bar at this font size.
+pub fn traffic_light_pos(os: Os, ui_size: f32) -> Option<(f32, f32)> {
+    (os == Os::Mac).then(|| {
+        let y = (title_bar_px(ui_size) - MAC_TRAFFIC_LIGHT_SIZE) / 2.0;
+        (MAC_TRAFFIC_LIGHT_X, y.max(0.0))
+    })
+}
+
+/// Left padding of a title bar: room for the macOS traffic lights, none in full screen (AppKit
+/// hides them there and shows them over the menu bar).
+pub fn title_bar_inset(os: Os, fullscreen: bool) -> f32 {
+    if os == Os::Mac && !fullscreen {
+        MAC_TRAFFIC_LIGHTS_WIDTH
+    } else {
+        space::M
+    }
+}
+
 /// Layout heights from the redesign (ADR 0027), in px at the default font size.
 /// The custom title bar (ADR 0034; was the 44 px toolbar of ADR 0027).
 pub const TITLE_BAR_HEIGHT: f32 = 42.0;
@@ -2971,6 +3000,28 @@ mod tests {
             rems_px(TITLE_BAR_HEIGHT).0 * 20.0,
             TITLE_BAR_HEIGHT * 20.0 / 13.0
         );
+    }
+
+    #[test]
+    fn the_traffic_lights_stay_centered_in_the_title_bar_at_any_font_size() {
+        // The default 13 px body: the lights keep the place they always had.
+        assert_eq!(traffic_light_pos(Os::Mac, 13.0), Some((12.0, 14.0)));
+        // 16 px body: the bar is 42 * 16 / 13 = 51.7 px tall, so the lights sit lower.
+        let (x, y) = traffic_light_pos(Os::Mac, 16.0).unwrap();
+        assert_eq!(x, MAC_TRAFFIC_LIGHT_X);
+        assert!((y - 18.846).abs() < 0.01, "{y}");
+        // A tiny font never puts them above the window's top edge.
+        assert!(traffic_light_pos(Os::Mac, 1.0).unwrap().1 >= 0.0);
+        assert_eq!(traffic_light_pos(Os::Windows, 16.0), None);
+        assert_eq!(traffic_light_pos(Os::Linux, 16.0), None);
+    }
+
+    #[test]
+    fn the_title_bar_leaves_room_for_the_lights_except_in_full_screen() {
+        assert_eq!(title_bar_inset(Os::Mac, false), MAC_TRAFFIC_LIGHTS_WIDTH);
+        assert_eq!(title_bar_inset(Os::Mac, true), space::M);
+        assert_eq!(title_bar_inset(Os::Windows, false), space::M);
+        assert_eq!(title_bar_inset(Os::Linux, true), space::M);
     }
 
     #[test]

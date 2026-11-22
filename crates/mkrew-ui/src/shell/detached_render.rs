@@ -39,6 +39,7 @@ impl Shell {
         }
         let now = status::now_ms();
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
+        self.sync_traffic_lights(host, window, cx.global::<theme::Fonts>().ui_size);
         cx.global::<MenuAnchors>()
             .clear(window.window_handle().window_id());
         let scope = self.tab_scope(window);
@@ -156,11 +157,10 @@ impl Shell {
             .flex()
             .items_center()
             .gap(px(space::S))
-            .pl(px(if cfg!(target_os = "macos") {
-                theme::MAC_TRAFFIC_LIGHTS_WIDTH
-            } else {
-                space::M
-            }))
+            .pl(px(theme::title_bar_inset(
+                Os::CURRENT,
+                window.is_fullscreen(),
+            )))
             .bg(rgb(theme.chrome))
             .border_b(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))

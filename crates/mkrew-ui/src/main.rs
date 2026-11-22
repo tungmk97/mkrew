@@ -80,7 +80,7 @@ use mkrew_ui::inspector::{self, PanelTab};
 use mkrew_ui::jira_board::{JiraView, Load, Source};
 use mkrew_ui::keymap::{
     self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, EDITOR_CONTEXT,
-    FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Run,
+    FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Os, Run,
 };
 use mkrew_ui::launch::Launch;
 use mkrew_ui::launcher::Launcher;
@@ -259,10 +259,11 @@ fn main() {
                 titlebar: Some(TitlebarOptions {
                     title: Some(title.into()),
                     appears_transparent: CUSTOM_TITLE_BAR,
-                    traffic_light_position: cfg!(target_os = "macos").then(|| {
-                        let (x, y) = theme::MAC_TRAFFIC_LIGHT_POS;
-                        point(px(x), px(y))
-                    }),
+                    traffic_light_position: theme::traffic_light_pos(
+                        Os::CURRENT,
+                        cx.global::<theme::Fonts>().ui_size,
+                    )
+                    .map(|(x, y)| point(px(x), px(y))),
                 }),
                 window_min_size: Some(size(
                     px(theme::WINDOW_MIN_WIDTH),
@@ -965,6 +966,7 @@ impl Render for Shell {
             .clear(window.window_handle().window_id());
         self.typing_target.ring.set(self.voice_ring(&theme, cx));
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
+        self.sync_traffic_lights(HostId::Main, window, cx.global::<theme::Fonts>().ui_size);
         // A dialog control that vanished while focused (a button swapped for its disabled twin
         // while saving, the next step of a dialog) would leave the keyboard on nothing and Esc
         // would miss the dialog: the dialog itself takes the keyboard back.

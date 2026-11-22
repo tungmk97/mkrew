@@ -359,11 +359,10 @@ impl Shell {
             .flex()
             .items_center()
             .gap(px(space::S))
-            .pl(px(if cfg!(target_os = "macos") {
-                theme::MAC_TRAFFIC_LIGHTS_WIDTH
-            } else {
-                space::M
-            }))
+            .pl(px(theme::title_bar_inset(
+                Os::CURRENT,
+                window.is_fullscreen(),
+            )))
             .bg(rgb(theme.chrome))
             .border_b(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))

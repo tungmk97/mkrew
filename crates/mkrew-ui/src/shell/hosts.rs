@@ -16,6 +16,9 @@ pub(crate) struct HostUi {
     pub(crate) content: Rc<Cell<gpui::Size<Pixels>>>,
     /// The window title last set: `set_window_title` is a system call, made only on a change.
     pub(crate) title: String,
+    /// The macOS traffic light position set last (`sync_traffic_lights`): AppKit relayouts the
+    /// buttons on every call, so only a change is sent.
+    pub(crate) traffic_light: Option<(f32, f32)>,
 }
 
 impl Shell {
@@ -192,6 +195,21 @@ impl Shell {
         ui.maximized = maximized;
         if host != HostId::Main {
             self.windows_dirty = true;
+        }
+    }
+
+    /// Puts `window`'s macOS traffic lights where the title bar's height at `ui_size` wants them
+    /// (`[ui] font_size` scales the bar, the lights do not). macOS only: compiled and linted by
+    /// the macOS CI job; elsewhere `traffic_light_pos` is `None` and nothing happens.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    pub(crate) fn sync_traffic_lights(&mut self, host: HostId, window: &Window, ui_size: f32) {
+        let Some(pos) = theme::traffic_light_pos(Os::CURRENT, ui_size) else {
+            return;
+        };
+        let ui = self.hosts.entry(host).or_default();
+        if ui.traffic_light.replace(pos) != Some(pos) {
+            #[cfg(target_os = "macos")]
+            window.set_traffic_light_position(point(px(pos.0), px(pos.1)));
         }
     }
 

@@ -21,6 +21,12 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-22 macOS app integration (ADR 0100)
+
+- [ ] **Traffic lights (macOS, dark + light):** at the default font size the three lights are centered vertically in the 42 px title bar of the main window and of a detached window.
+  Set `[ui] font_size = 16` (and 20): the title bar grows and the lights follow, still centered, without restarting.
+- [ ] **Full screen (macOS):** with Ctrl+Cmd+F the title bar's logo sits 12 px from the left edge (no empty strip); moving the pointer to the top shows the lights over the menu bar.
+
 ### To verify - 2026-11-22 macOS keyboard (ADR 0098)
 
 - [ ] **On a Mac (US layout):** ⇧⌘P opens the palette, ⌃⌘2 shows the Board, ⌥⌘← moves pane focus, ⌘D splits, ⌘1 switches workspace; Settings → Keyboard shows ⌘ symbols.
