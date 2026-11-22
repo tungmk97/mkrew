@@ -65,6 +65,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   The window grid is a column or two different from before (the cell is slightly wider or taller): resizing the window still fits whole columns.
   On Windows at 100 % and 150 %: the same, and the text looks as before.
   The Files editor text and caret still line up when you click in the middle of a long line.
+  Move a terminal window between a 1x and a 2x display: glyphs stay aligned with the cursor and selection.
 
 ### To verify - 2026-11-22 Theme gallery (plan docs/superpowers/plans/2026-11-22-theme-gallery.md)
 

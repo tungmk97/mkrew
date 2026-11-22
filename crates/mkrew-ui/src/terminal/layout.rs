@@ -300,6 +300,8 @@ pub struct RowCache<T> {
     rows: Vec<Option<CachedRow<T>>>,
     /// Last frame's rows not reused yet this frame, at their old index.
     previous: Vec<Option<CachedRow<T>>>,
+    /// Cell size (width, line height) the cached rows were shaped for.
+    cell: (f32, f32),
 }
 
 struct CachedRow<T> {
@@ -319,11 +321,21 @@ impl<T> Default for RowCache<T> {
         Self {
             rows: Vec::new(),
             previous: Vec::new(),
+            cell: (0.0, 0.0),
         }
     }
 }
 
 impl<T> RowCache<T> {
+    /// Forgets every row when the cell size differs from the one they were shaped for (a window
+    /// moved to a display of another scale): glyph spacing is baked into a shaped row.
+    pub fn clear_if_cell_changed(&mut self, cell: (f32, f32)) {
+        if self.cell != cell {
+            self.clear();
+            self.cell = cell;
+        }
+    }
+
     /// Starts a frame of `len` rows: last frame's rows become reusable at any index.
     pub fn start_frame(&mut self, len: usize) {
         std::mem::swap(&mut self.rows, &mut self.previous);
@@ -551,6 +563,25 @@ mod tests {
         assert_eq!(get(&mut cache, 1, &a, Some(0)), 4, "cursor moved in");
         cache.clear();
         assert_eq!(get(&mut cache, 0, &a, None), 5);
+    }
+
+    #[test]
+    fn a_changed_cell_size_forgets_the_rows() {
+        let mut cache = RowCache::default();
+        let a = row(b"a", 4);
+        let mut builds = 0;
+        let mut get = |cache: &mut RowCache<u32>| {
+            *cache.row(0, &a, None, || {
+                builds += 1;
+                builds
+            })
+        };
+        cache.clear_if_cell_changed((8.0, 16.0));
+        assert_eq!(get(&mut cache), 1);
+        cache.clear_if_cell_changed((8.0, 16.0));
+        assert_eq!(get(&mut cache), 1, "same size: kept");
+        cache.clear_if_cell_changed((7.5, 16.0));
+        assert_eq!(get(&mut cache), 2, "new size: rebuilt");
     }
 
     #[test]

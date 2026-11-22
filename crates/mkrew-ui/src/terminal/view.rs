@@ -1197,6 +1197,7 @@ impl Element for TerminalElement {
             bounds.origin + point(px(theme.terminal_padding_x), px(theme.terminal_padding_y));
 
         let mut rows = self.rows.borrow_mut();
+        rows.clear_if_cell_changed((f32::from(cell_width), f32::from(line_height)));
         rows.start_frame(grid.rows.len());
         let cursor = grid.cursor;
         // Unfocused panes show a hollow block; otherwise the program's shape (a bar by default).
