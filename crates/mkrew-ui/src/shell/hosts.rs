@@ -9,7 +9,8 @@ pub(crate) struct HostUi {
     pub(crate) bounds: Bounds<Pixels>,
     /// What `windows.json` keeps: the restore rect (`Window::window_bounds`).
     pub(crate) restore: Bounds<Pixels>,
-    pub(crate) maximized: bool,
+    /// Windowed, maximized or in full screen (`windows.json` keeps it).
+    pub(crate) placement: Placement,
     /// The tab strip as painted last (window-local), for drops from other windows.
     pub(crate) strip: Rc<RefCell<Option<mkrew_ui::window_place::Strip>>>,
     /// The tab content area as painted last: the size of a window torn off from here.
@@ -183,19 +184,45 @@ impl Shell {
     }
 
     pub(crate) fn record_bounds(&mut self, host: HostId, window: &Window) {
-        let (bounds, maximized) = match window.window_bounds() {
-            gpui::WindowBounds::Maximized(bounds) => (bounds, true),
-            gpui::WindowBounds::Windowed(bounds) | gpui::WindowBounds::Fullscreen(bounds) => {
-                (bounds, false)
-            }
-        };
+        let (placement, restore) = Placement::of(window.window_bounds());
         let ui = self.hosts.entry(host).or_default();
         ui.bounds = window.bounds();
-        ui.restore = bounds;
-        ui.maximized = maximized;
-        if host != HostId::Main {
+        ui.restore = restore;
+        ui.placement = placement;
+        if host == HostId::Main {
+            self.main_dirty = true;
+        } else {
             self.windows_dirty = true;
         }
+    }
+
+    /// Writes `main-window.json`: where the main window restores to and whether it is maximized
+    /// or in full screen (SPEC §20L). Not before its size is known.
+    pub(crate) fn save_main_frame(&mut self) {
+        self.main_dirty = false;
+        let Some(ui) = self.hosts.get(&HostId::Main) else {
+            return;
+        };
+        if ui.restore.size.width <= px(0.0) {
+            return;
+        }
+        let (maximized, fullscreen) = ui.placement.flags();
+        let frame = detached::SavedFrame {
+            bounds: window_place::to_saved(ui.restore),
+            maximized,
+            fullscreen,
+        };
+        if let Err(error) = detached::save_frame(&self.main_frame_path, &frame) {
+            tracing::warn!("cannot save the main window's place: {error}");
+        }
+    }
+
+    /// What every way out of the app does: the places of the detached windows and of the main
+    /// one are written, the machine windows are asked to quit.
+    pub(crate) fn save_before_exit(&mut self, cx: &mut Context<'_, Self>) {
+        self.save_windows(cx);
+        self.save_main_frame();
+        self.close_machines();
     }
 
     /// Puts `window`'s macOS traffic lights where the title bar's height at `ui_size` wants them
@@ -306,15 +333,11 @@ impl Shell {
         let live: Vec<detached::SavedWindow> = (self.detached.windows().iter())
             .filter_map(|window| {
                 let ui = self.hosts.get(&HostId::Detached(window.key))?;
-                let bounds = ui.restore;
+                let (maximized, fullscreen) = ui.placement.flags();
                 Some(detached::SavedWindow {
-                    bounds: detached::SavedBounds {
-                        x: f32::from(bounds.origin.x),
-                        y: f32::from(bounds.origin.y),
-                        width: f32::from(bounds.size.width),
-                        height: f32::from(bounds.size.height),
-                    },
-                    maximized: ui.maximized,
+                    bounds: window_place::to_saved(ui.restore),
+                    maximized,
+                    fullscreen,
                     tabs: window.tabs.clone(),
                     active: window.active,
                 })
@@ -383,8 +406,9 @@ impl Shell {
         let Some(restore) = self.restore.take() else {
             return;
         };
-        let displays: Vec<Bounds<Pixels>> = cx.displays().iter().map(|d| d.bounds()).collect();
-        let primary = cx.primary_display().map(|d| d.bounds());
+        let displays: Vec<Bounds<Pixels>> =
+            cx.displays().iter().map(|d| d.visible_bounds()).collect();
+        let primary = cx.primary_display().map(|d| d.visible_bounds());
         for saved in restore {
             let saved = saved.keeping(|tab| {
                 let DockTab::Terminal { project, tab_id } = *tab;
@@ -393,13 +417,13 @@ impl Shell {
                     .is_some_and(|tabs| tabs.tab(tab_id).is_some())
             });
             let b = saved.bounds.clone();
-            let maximized = saved.maximized;
+            let placement = Placement::from_flags(saved.maximized, saved.fullscreen);
             let Some(key) = self.detached.restore(&[saved]).first().copied() else {
                 continue;
             };
             let bounds = Bounds::new(point(px(b.x), px(b.y)), size(px(b.width), px(b.height)));
             let bounds = mkrew_ui::window_place::fit_on_displays(bounds, &displays, primary);
-            self.open_os_window(key, bounds, maximized, HostId::Main, window, cx);
+            self.open_os_window(key, bounds, placement, HostId::Main, window, cx);
         }
     }
 

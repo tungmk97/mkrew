@@ -160,6 +160,9 @@ impl Shell {
                     if shell.windows_dirty {
                         shell.save_windows(cx);
                     }
+                    if shell.main_dirty {
+                        shell.save_main_frame();
+                    }
                     shell.sync_thread(cx);
                     shell.poll_machines(cx);
                     // Clicks of this window's own notifications where they come back on a
@@ -270,6 +273,9 @@ impl Shell {
         let windows_path = paths
             .data_dir
             .join(detached::windows_file((!local).then_some(id.as_str())));
+        let main_frame_path = paths
+            .data_dir
+            .join(detached::main_file((!local).then_some(id.as_str())));
         // This computer's window is the launcher of the machine windows (spec §4.5); the list
         // is read here, once, and again before each change made on the Machines page.
         let machines = if local {
@@ -528,6 +534,8 @@ impl Shell {
             restored_once: false,
             windows_path,
             windows_save_failed: false,
+            main_dirty: false,
+            main_frame_path,
             pending_jump: jump,
         };
         if let Status::NoMachine(text) = &shell.status {

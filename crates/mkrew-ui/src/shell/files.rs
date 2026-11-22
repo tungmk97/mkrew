@@ -622,8 +622,7 @@ impl Shell {
         }
         // No tray to hide to (macOS, Linux): closing this window ends Mkrew, so the machine
         // windows are asked to quit here, not left to the drop of the `Shell`.
-        self.save_windows(cx);
-        self.close_machines();
+        self.save_before_exit(cx);
         true
     }
 
@@ -631,8 +630,7 @@ impl Shell {
     fn close_when_saved(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let again: AfterSave = Box::new(|shell, window, cx| shell.close_when_saved(window, cx));
         if !self.ask_unsaved(again, window, cx) {
-            self.save_windows(cx);
-            self.close_machines();
+            self.save_before_exit(cx);
             window.remove_window();
         }
     }

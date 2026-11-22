@@ -339,11 +339,12 @@ pub struct SavedBounds {
     pub height: f32,
 }
 
-/// One saved window: restore bounds, maximized, strip, shown tab.
+/// One saved window: restore bounds, maximized or full screen, strip, shown tab.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SavedWindow {
     pub bounds: SavedBounds,
     pub maximized: bool,
+    pub fullscreen: bool,
     pub tabs: Vec<DockTab>,
     pub active: usize,
 }
@@ -397,6 +398,8 @@ struct FileWindow {
     bounds: SavedBounds,
     #[serde(default)]
     maximized: bool,
+    #[serde(default)]
+    fullscreen: bool,
     /// Raw, so a tab kind this build does not know (a newer build's) is skipped, not fatal.
     tabs: Vec<serde_json::Value>,
     #[serde(default)]
@@ -410,6 +413,7 @@ pub fn to_json(windows: &[SavedWindow]) -> String {
             .map(|window| FileWindow {
                 bounds: window.bounds.clone(),
                 maximized: window.maximized,
+                fullscreen: window.fullscreen,
                 tabs: (window.tabs.iter())
                     .filter_map(|tab| serde_json::to_value(tab).ok())
                     .collect(),
@@ -444,6 +448,7 @@ pub fn from_json(text: &str) -> Result<Vec<SavedWindow>, String> {
             (!tabs.is_empty()).then_some(SavedWindow {
                 bounds: window.bounds,
                 maximized: window.maximized,
+                fullscreen: window.fullscreen,
                 tabs,
                 active,
             })
@@ -453,16 +458,60 @@ pub fn from_json(text: &str) -> Result<Vec<SavedWindow>, String> {
 
 /// Writes through `<file>.tmp` and a rename, so a crash never leaves half a file.
 pub fn save(path: &Path, windows: &[SavedWindow]) -> std::io::Result<()> {
+    write_atomic(path, &to_json(windows))
+}
+
+fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let temp = path.with_extension("json.tmp");
-    let result =
-        std::fs::write(&temp, to_json(windows)).and_then(|()| std::fs::rename(&temp, path));
+    let result = std::fs::write(&temp, text).and_then(|()| std::fs::rename(&temp, path));
     if result.is_err() {
         let _ = std::fs::remove_file(&temp);
     }
     result
+}
+
+/// How the main window was left (`main-window.json`): the rect it restores to, and whether it
+/// was maximized or in full screen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedFrame {
+    pub bounds: SavedBounds,
+    #[serde(default)]
+    pub maximized: bool,
+    #[serde(default)]
+    pub fullscreen: bool,
+}
+
+impl SavedFrame {
+    /// `None` for text that is not a frame or holds a size no window can have: the window then
+    /// opens centered as before, never in a broken place.
+    pub fn parse(text: &str) -> Option<Self> {
+        let frame: Self = serde_json::from_str(text).ok()?;
+        let b = &frame.bounds;
+        let finite = [b.x, b.y, b.width, b.height].iter().all(|v| v.is_finite());
+        (finite && b.width >= 1.0 && b.height >= 1.0).then_some(frame)
+    }
+}
+
+/// The main-window file of a window: `main-window.json` for this computer's window (`None`), its
+/// own `main-window-<key>.json` for a machine window (same key as [`windows_file`]).
+pub fn main_file(instance: Option<&str>) -> String {
+    instance.map_or_else(
+        || "main-window.json".to_owned(),
+        |id| format!("main-window-{}.json", crate::desktop::instance_key("", id)),
+    )
+}
+
+/// The saved frame in `path`; missing, unreadable or broken = none.
+pub fn load_frame(path: &Path) -> Option<SavedFrame> {
+    SavedFrame::parse(&std::fs::read_to_string(path).ok()?)
+}
+
+pub fn save_frame(path: &Path, frame: &SavedFrame) -> std::io::Result<()> {
+    // A struct of plain fields always serializes.
+    write_atomic(path, &serde_json::to_string(frame).unwrap_or_default())
 }
 
 #[cfg(test)]

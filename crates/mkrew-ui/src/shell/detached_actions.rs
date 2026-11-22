@@ -17,13 +17,14 @@ impl Shell {
         let source = self.host_of(window);
         let ui = self.hosts.entry(source).or_default();
         let (near, size) = (ui.bounds, ui.content.get());
-        let displays: Vec<Bounds<Pixels>> = cx.displays().iter().map(|d| d.bounds()).collect();
+        let displays: Vec<Bounds<Pixels>> =
+            cx.displays().iter().map(|d| d.visible_bounds()).collect();
         let bounds = mkrew_ui::window_place::new_window_bounds(at, size, near, &displays);
         let from = self.detached.host_of(&tab);
         let emptied = self.detached.move_tab(tab, HostId::Main, None);
         let key = self.detached.open(tab);
         self.after_move(emptied, cx);
-        self.open_os_window(key, bounds, false, from, window, cx);
+        self.open_os_window(key, bounds, Placement::Windowed, from, window, cx);
     }
 
     /// Opens the OS window of `key` (its tabs are in the model already; `origin` is the window
@@ -33,7 +34,7 @@ impl Shell {
         &mut self,
         key: WindowKey,
         bounds: Bounds<Pixels>,
-        maximized: bool,
+        placement: Placement,
         origin: HostId,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -42,7 +43,7 @@ impl Shell {
         let ui = HostUi {
             bounds,
             restore: bounds,
-            maximized,
+            placement,
             ..HostUi::default()
         };
         self.hosts.insert(HostId::Detached(key), ui);
@@ -53,11 +54,7 @@ impl Shell {
         let ui_size = cx.global::<theme::Fonts>().ui_size;
         cx.spawn(async move |this, cx| {
             let options = WindowOptions {
-                window_bounds: Some(if maximized {
-                    WindowBounds::Maximized(bounds)
-                } else {
-                    WindowBounds::Windowed(bounds)
-                }),
+                window_bounds: Some(placement.window_bounds(bounds)),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Mkrew".into()),
                     appears_transparent: CUSTOM_TITLE_BAR,

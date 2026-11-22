@@ -1,4 +1,4 @@
-use gpui::{Bounds, point, px, size};
+use gpui::{Bounds, WindowBounds, point, px, size};
 
 use super::*;
 
@@ -194,5 +194,79 @@ fn bounds_off_every_display_move_to_the_primary() {
         fit_on_displays(saved, &[], None),
         saved,
         "no display known: unchanged"
+    );
+}
+
+#[test]
+fn placement_round_trips_through_the_saved_flags_and_gpui_bounds() {
+    let restore = rect(10.0, 20.0, 800.0, 600.0);
+    for placement in [
+        Placement::Windowed,
+        Placement::Maximized,
+        Placement::Fullscreen,
+    ] {
+        let (maximized, fullscreen) = placement.flags();
+        assert_eq!(Placement::from_flags(maximized, fullscreen), placement);
+        assert_eq!(
+            Placement::of(placement.window_bounds(restore)),
+            (placement, restore)
+        );
+    }
+    assert_eq!(
+        Placement::from_flags(true, true),
+        Placement::Fullscreen,
+        "a file with both: full screen wins"
+    );
+}
+
+#[test]
+fn a_restored_window_is_never_smaller_than_the_minimum_and_never_off_screen() {
+    let primary = rect(0.0, 25.0, 1920.0, 1055.0);
+    let min = size(px(1100.0), px(560.0));
+    // Too small (a hand-edited or corrupt file): grown to the minimum.
+    let opened = restored(
+        rect(100.0, 100.0, 10.0, 10.0),
+        Placement::Windowed,
+        min,
+        &[primary],
+        Some(primary),
+    );
+    assert_eq!(
+        opened,
+        WindowBounds::Windowed(rect(100.0, 100.0, 1100.0, 560.0))
+    );
+    // Its monitor is gone: centered on the primary, in its placement.
+    let opened = restored(
+        rect(5000.0, 0.0, 1200.0, 760.0),
+        Placement::Fullscreen,
+        min,
+        &[primary],
+        Some(primary),
+    );
+    assert_eq!(
+        opened,
+        WindowBounds::Fullscreen(rect(360.0, 172.5, 1200.0, 760.0))
+    );
+}
+
+#[test]
+fn saved_bounds_convert_both_ways() {
+    let bounds = rect(40.0, 30.0, 1300.0, 800.0);
+    assert_eq!(saved_rect(&to_saved(bounds)), bounds);
+}
+
+#[test]
+fn a_new_window_stays_inside_the_visible_area_of_its_display() {
+    // macOS: the menu bar takes the top 25 px and the Dock the bottom 70 (`visible_bounds`).
+    let visible = rect(0.0, 25.0, 1920.0, 985.0);
+    let near = rect(0.0, 25.0, 900.0, 700.0);
+    let wanted = size(px(800.0), px(600.0));
+    let high = new_window_bounds(Some(point(px(100.0), px(5.0))), wanted, near, &[visible]);
+    assert_eq!(high.origin.y, px(25.0), "not under the menu bar");
+    let low = new_window_bounds(Some(point(px(100.0), px(900.0))), wanted, near, &[visible]);
+    assert_eq!(
+        low.origin.y,
+        px(410.0),
+        "not under the Dock: 25 + 985 - 600"
     );
 }

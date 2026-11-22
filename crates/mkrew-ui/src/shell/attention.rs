@@ -93,8 +93,7 @@ impl Shell {
         }
         // The machine windows are asked to quit too (each asks about its own unsaved changes and
         // ends by itself; this process does not wait for them).
-        self.save_windows(cx);
-        self.close_machines();
+        self.save_before_exit(cx);
         self.desktop.remove_tray();
         cx.quit();
     }

@@ -128,6 +128,7 @@ use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
 use mkrew_ui::usage::{self, Usages};
 use mkrew_ui::voice;
 use mkrew_ui::watches;
+use mkrew_ui::window_place::{self, Placement};
 use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
 use mkrew_ui::worktree_dialog::{self, WorktreeDialog};
 use mkrew_ui::worktree_target;
@@ -250,12 +251,31 @@ fn main() {
             cx.set_global(ThemeCatalog::load(&paths.themes_dir()));
             // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
             cx.set_prompt_builder(shell::confirm_prompt::build);
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+            // The place the window was left (a machine window has its own file).
+            let instance = opening.target.is_machine().then_some(opening.id.as_str());
+            let frame = detached::load_frame(&paths.data_dir.join(detached::main_file(instance)));
+            let displays: Vec<Bounds<Pixels>> = cx
+                .displays()
+                .iter()
+                .map(|display| display.visible_bounds())
+                .collect();
+            let primary = cx.primary_display().map(|display| display.visible_bounds());
+            let window_bounds = match frame {
+                Some(frame) => window_place::restored(
+                    window_place::saved_rect(&frame.bounds),
+                    Placement::from_flags(frame.maximized, frame.fullscreen),
+                    size(px(theme::WINDOW_MIN_WIDTH), px(theme::WINDOW_MIN_HEIGHT)),
+                    &displays,
+                    primary,
+                ),
+                None => WindowBounds::Windowed(Bounds::centered(
                     None,
                     size(px(theme::WINDOW_WIDTH), px(theme::WINDOW_HEIGHT)),
                     cx,
-                ))),
+                )),
+            };
+            let options = WindowOptions {
+                window_bounds: Some(window_bounds),
                 titlebar: Some(TitlebarOptions {
                     title: Some(title.into()),
                     appears_transparent: CUSTOM_TITLE_BAR,
@@ -943,6 +963,10 @@ struct Shell {
     windows_path: PathBuf,
     /// The last write of `windows.json` failed (its toast shows once).
     windows_save_failed: bool,
+    /// The main window moved or resized: its place is saved on the next status tick.
+    main_dirty: bool,
+    /// Where `main-window.json` lives: this computer's file, or the machine window's own.
+    main_frame_path: PathBuf,
 }
 
 impl Render for Shell {

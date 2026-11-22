@@ -26,6 +26,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Traffic lights (macOS, dark + light):** at the default font size the three lights are centered vertically in the 42 px title bar of the main window and of a detached window.
   Set `[ui] font_size = 16` (and 20): the title bar grows and the lights follow, still centered, without restarting.
 - [ ] **Full screen (macOS):** with Ctrl+Cmd+F the title bar's logo sits 12 px from the left edge (no empty strip); moving the pointer to the top shows the lights over the menu bar.
+- [ ] **Main window place (every OS):** move and resize the main window, quit, start again: it opens at the same place and size; maximize it, quit, start: it opens maximized.
+  On macOS, enter full screen (Ctrl+Cmd+F), quit with Cmd+Q, start: it opens in full screen; leave full screen: the window returns to its size before.
+- [ ] **Gone monitor:** with a second monitor, put the window on it, quit, unplug it, start: the window is centered on the main display, not off screen.
+- [ ] **Detached window in full screen (macOS):** close Mkrew with a detached window in full screen: the next start reopens it in full screen, not as a screen-sized window under the menu bar.
+- [ ] **Visible area (macOS):** drag a tab out so the new window would start under the menu bar or the Dock: it opens fully inside the visible area.
 
 ### To verify - 2026-11-22 macOS keyboard (ADR 0098)
 

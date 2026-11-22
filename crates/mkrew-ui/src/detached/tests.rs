@@ -260,6 +260,7 @@ fn saved(tabs: Vec<DockTab>) -> SavedWindow {
             height: 760.0,
         },
         maximized: false,
+        fullscreen: false,
         tabs,
         active: 0,
     }
@@ -298,6 +299,7 @@ fn unknown_tab_kinds_are_skipped_and_empty_windows_dropped() {
     assert_eq!(windows[0].tabs, vec![DockTab::Terminal { project, tab_id }]);
     assert_eq!(windows[0].active, 0, "re-based onto the kept tabs");
     assert!(windows[0].maximized);
+    assert!(!windows[0].fullscreen, "an older file has no such key");
 }
 
 #[test]
@@ -462,4 +464,67 @@ fn toasts_go_to_the_first_shown_window_in_activation_order() {
         "nothing shown: the main one"
     );
     assert_eq!(toast_host(&[], |_| true), HostId::Main);
+}
+
+#[test]
+fn a_window_closed_in_full_screen_comes_back_in_full_screen() {
+    let windows = vec![SavedWindow {
+        fullscreen: true,
+        ..saved(vec![term()])
+    }];
+    let json = to_json(&windows);
+    assert!(json.contains("\"fullscreen\":true"), "{json}");
+    assert_eq!(from_json(&json), Ok(windows));
+}
+
+fn frame() -> SavedFrame {
+    SavedFrame {
+        bounds: SavedBounds {
+            x: 40.0,
+            y: 30.0,
+            width: 1300.0,
+            height: 800.0,
+        },
+        maximized: false,
+        fullscreen: true,
+    }
+}
+
+#[test]
+fn the_main_frame_round_trips_through_its_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(main_file(None));
+    save_frame(&path, &frame()).unwrap();
+    assert_eq!(load_frame(&path), Some(frame()));
+    let names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 1, "no temp file is left: {names:?}");
+}
+
+#[test]
+fn a_missing_broken_or_impossible_frame_is_no_frame() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(load_frame(&dir.path().join("none.json")), None);
+    assert_eq!(SavedFrame::parse("not json"), None);
+    assert_eq!(SavedFrame::parse(""), None);
+    let zero = r#"{"bounds":{"x":0,"y":0,"width":0,"height":600}}"#;
+    assert_eq!(SavedFrame::parse(zero), None);
+    let negative = r#"{"bounds":{"x":0,"y":0,"width":800,"height":-5}}"#;
+    assert_eq!(SavedFrame::parse(negative), None);
+    let plain = r#"{"bounds":{"x":0,"y":0,"width":800,"height":600}}"#;
+    let parsed = SavedFrame::parse(plain).unwrap();
+    assert!(
+        !parsed.maximized && !parsed.fullscreen,
+        "flags default to false"
+    );
+}
+
+#[test]
+fn the_main_file_is_per_instance() {
+    assert_eq!(main_file(None), "main-window.json");
+    let a = main_file(Some("machine:a"));
+    assert!(a.starts_with("main-window-") && a.ends_with(".json"), "{a}");
+    assert_ne!(a, main_file(Some("machine:b")));
 }

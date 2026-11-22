@@ -1,8 +1,9 @@
 //! Where a dragged tab lands and where a detached window opens (spec 2026-11-10 §5.1, §6.2).
 //! Screen coordinates are the windows' `bounds()` (gpui's global space).
 
-use gpui::{Bounds, Pixels, Point, Size, point, px, size};
+use gpui::{Bounds, Pixels, Point, Size, WindowBounds, point, px, size};
 
+use crate::detached::SavedBounds;
 use crate::theme;
 
 /// A window's tab strip as painted: the strip and its chips, window-local.
@@ -145,6 +146,89 @@ pub fn fit_on_displays(
     match primary {
         Some(primary) => Bounds::centered_at(primary.center(), bounds.size),
         None => bounds,
+    }
+}
+
+/// How a window sits on its screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Placement {
+    #[default]
+    Windowed,
+    Maximized,
+    /// The OS full screen (macOS: its own Space).
+    Fullscreen,
+}
+
+impl Placement {
+    /// The saved flags; a file with both set means full screen.
+    pub fn from_flags(maximized: bool, fullscreen: bool) -> Self {
+        if fullscreen {
+            Self::Fullscreen
+        } else if maximized {
+            Self::Maximized
+        } else {
+            Self::Windowed
+        }
+    }
+
+    /// `(maximized, fullscreen)`, as `windows.json` and `main-window.json` keep them.
+    pub fn flags(self) -> (bool, bool) {
+        (self == Self::Maximized, self == Self::Fullscreen)
+    }
+
+    /// `Window::window_bounds()` as the placement and the rect the window restores to.
+    pub fn of(bounds: WindowBounds) -> (Self, Bounds<Pixels>) {
+        match bounds {
+            WindowBounds::Windowed(rect) => (Self::Windowed, rect),
+            WindowBounds::Maximized(rect) => (Self::Maximized, rect),
+            WindowBounds::Fullscreen(rect) => (Self::Fullscreen, rect),
+        }
+    }
+
+    /// The gpui bounds that open a window in this placement, restoring to `restore`.
+    pub fn window_bounds(self, restore: Bounds<Pixels>) -> WindowBounds {
+        match self {
+            Self::Windowed => WindowBounds::Windowed(restore),
+            Self::Maximized => WindowBounds::Maximized(restore),
+            Self::Fullscreen => WindowBounds::Fullscreen(restore),
+        }
+    }
+}
+
+/// Where a saved window opens: `saved` grown to at least `min` and moved to the primary display
+/// when no display shows it any more ([`fit_on_displays`]), in `placement`.
+pub fn restored(
+    saved: Bounds<Pixels>,
+    placement: Placement,
+    min: Size<Pixels>,
+    displays: &[Bounds<Pixels>],
+    primary: Option<Bounds<Pixels>>,
+) -> WindowBounds {
+    let grown = Bounds::new(
+        saved.origin,
+        size(
+            saved.size.width.max(min.width),
+            saved.size.height.max(min.height),
+        ),
+    );
+    placement.window_bounds(fit_on_displays(grown, displays, primary))
+}
+
+/// A saved rect as screen bounds.
+pub fn saved_rect(saved: &SavedBounds) -> Bounds<Pixels> {
+    Bounds::new(
+        point(px(saved.x), px(saved.y)),
+        size(px(saved.width), px(saved.height)),
+    )
+}
+
+/// Screen bounds as a saved rect.
+pub fn to_saved(bounds: Bounds<Pixels>) -> SavedBounds {
+    SavedBounds {
+        x: f32::from(bounds.origin.x),
+        y: f32::from(bounds.origin.y),
+        width: f32::from(bounds.size.width),
+        height: f32::from(bounds.size.height),
     }
 }
 
