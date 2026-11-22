@@ -2840,8 +2840,10 @@ macOS only unless a line says "every OS".
    The default shell is started as a login shell.
    If the shell fails or times out, the process's own `PATH` is used.
 8. **`mk` command.**
-   Palette "Global: Install mk command" (listed only in `Mkrew.app`, not in a translocated copy) links `/usr/local/bin/mk`, else `~/.local/bin/mk`, to the bundle's `mk`; a toast names the link and says when its folder is not on `PATH`.
-   A real file named `mk` is never replaced.
+   Palette "Global: Install mk command" (listed only in `Mkrew.app`) links `/usr/local/bin/mk`, else `~/.local/bin/mk`, to the bundle's `mk`; a toast names the link and says when its folder is not on `PATH`.
+   A translocated copy (§20K) links the real bundle's `mk`; it is refused only when that bundle could not be found (the path still holds `/AppTranslocation/`), as the link would dangle.
+   A link already pointing at that `mk` is left as it is; a link to anything but a bundle's `Contents/MacOS/mk`, or a real file named `mk`, is never replaced.
+   The error hint is `sudo mkdir -p /usr/local/bin && sudo ln -s '<mk>' /usr/local/bin/mk`.
 9. **Packaging.**
    `Mkrew.app` has an icon (`Mkrew.icns`) and leaves the Windows-only profiles out of its `agents/` copy.
    The release job signs with Developer ID (hardened runtime, microphone entitlement), notarizes and staples when the repository has the secrets `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_APP_PASSWORD` and `APPLE_TEAM_ID`; otherwise it signs ad-hoc, and Gatekeeper blocks the first open (README: Open Anyway on macOS 15 and later, or `xattr -dr com.apple.quarantine`).

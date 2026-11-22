@@ -36,8 +36,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   A Shell pane starts as a login shell: `echo $PATH` shows `/opt/homebrew/bin` and `[[ -o login ]] && echo login` prints `login`.
 - [ ] **Slow shell:** add `sleep 8` to `~/.zshrc`, open Mkrew from Finder: it still opens (the first agent start may wait up to 5 s) and falls back to the system `PATH`; remove the line afterwards.
 - [ ] **Open in Zed (macOS):**
-  (a) Zed in `/Applications` (or `~/Applications`), no `zed` command on PATH: Workspace → Open in Zed opens the folder, and a file opens at its line.
-  (b) Zed Preview only, or a `Zed.app` copy whose `Contents/MacOS/cli` was removed: the folder opens with `open -a`, a file opens without its line.
+  (a) Zed in `/Applications` or `~/Applications`, or Zed Preview only, no `zed` command: Workspace → Open in Zed opens the folder, and a file opens at its line.
+  (b) A `Zed.app` / `Zed Preview.app` copy whose `Contents/MacOS/cli` was removed: the folder opens with `open -a`, a file opens without its line.
   With Zed removed, the toast says to install it and keep it in `/Applications`.
 - [ ] **Dock badge (macOS):** start an agent that asks for input, switch to another app: the Dock icon shows the Needs-you count in a red badge and the icon bounces once; focusing Mkrew and viewing the pane clears the badge when nothing needs you.
   With `[notify] flash_taskbar = false` the bounce stops, the badge stays.
@@ -52,7 +52,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Hide, minimized and full screen (macOS):** minimize the main window, click the Dock icon: the window comes back (Mkrew's `on_reopen`); press the red button while in full screen: the app hides without a crash (the Space may stay; report what you see).
 - [ ] **Install mk command (macOS):** palette → "Global: Install mk command" in `Mkrew.app` from `/Applications`: a toast names the link; in a new Terminal `mk --version` works and `mk daemon status` finds the app's daemon (the link must not break its sibling lookup).
   Run it again: no error. In a dev build (not in an app) the entry is not listed.
-- [ ] **Translocated copy (macOS):** open a freshly downloaded `Mkrew.app` straight from Downloads (before moving it): the update button opens the release page instead of failing, and "Install mk command" is not listed.
+- [ ] **Translocated copy (macOS):** open a freshly downloaded `Mkrew.app` straight from Downloads (before moving it): the update installs into the real bundle in Downloads and reopens from there, and "Install mk command" links the real bundle's `mk` (`ls -l /usr/local/bin/mk` shows no `AppTranslocation` in the path).
 - [ ] **Icon (macOS, dark + light):** Finder, the Dock, Cmd+Tab and Launchpad show the Mkrew lanes tile, with the usual margin, not the blank app icon.
 - [ ] **Release dry run:** run the Release workflow by hand (`workflow_dispatch`) once without the Apple secrets: the macOS job passes and the zip's `Mkrew.app/Contents/Resources/agents/` has no `cmd.toml`, `powershell.toml` or `git-bash.toml`.
 - [ ] **Signed release (needs your Apple Developer ID):** add the secrets `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_APP_PASSWORD`, `APPLE_TEAM_ID`, run the workflow again: `spctl --assess --type execute -vv Mkrew.app` says "accepted, source=Notarized Developer ID", a downloaded copy opens with a double-click, and voice input still asks for and gets the microphone.

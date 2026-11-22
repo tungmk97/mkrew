@@ -74,7 +74,8 @@ pub fn pick_asset<'a>(os: &str, arch: &str, assets: &'a [Asset]) -> Option<&'a A
 pub enum InstallKind {
     /// Installed by the Inno setup (`<app>\unins000.exe` next to `bin\`).
     Inno { per_user: bool },
-    /// Running from `<bundle>/Contents/MacOS/mkrew` (not from an `AppTranslocation` copy).
+    /// Running from `<bundle>/Contents/MacOS/mkrew`; [`current_install`] maps a Gatekeeper
+    /// `AppTranslocation` copy to the real bundle.
     MacApp { bundle: PathBuf },
     /// Dev build, old MSI install, Linux: the update button opens the release page.
     Manual,
@@ -108,12 +109,7 @@ pub fn install_kind(os: &str, exe: &Path, program_files: &[PathBuf]) -> InstallK
                 (Some(m), Some(c), Some(b))
                     if m.file_name() == Some("MacOS".as_ref())
                         && c.file_name() == Some("Contents".as_ref())
-                        && b.extension() == Some("app".as_ref())
-                        // Gatekeeper's App Translocation runs a quarantined app from a
-                        // read-only copy: it cannot be replaced, a link to it would dangle.
-                        && !b
-                            .components()
-                            .any(|part| part.as_os_str() == "AppTranslocation") =>
+                        && b.extension() == Some("app".as_ref()) =>
                 {
                     InstallKind::MacApp {
                         bundle: b.to_path_buf(),
@@ -559,12 +555,6 @@ mod tests {
         let dev = tmp.path().join("target").join("release").join("mkrew");
         assert_eq!(install_kind("macos", &dev, &[]), InstallKind::Manual);
         assert_eq!(install_kind("linux", &exe, &[]), InstallKind::Manual);
-        // Gatekeeper runs a quarantined app from a read-only random folder: it cannot be
-        // replaced, and a link to it would dangle.
-        let moved = Path::new(
-            "/private/var/folders/xx/T/AppTranslocation/0D2C/d/Mkrew.app/Contents/MacOS/mkrew",
-        );
-        assert_eq!(install_kind("macos", moved, &[]), InstallKind::Manual);
     }
 
     #[test]

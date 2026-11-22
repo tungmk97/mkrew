@@ -134,9 +134,12 @@ pub fn serve_setup(port: u16) -> Result<(), String> {
     }
 }
 
-/// `tailscale <args>`: no stdin, no console window.
+/// `tailscale <args>`: no stdin, no console window. Found like an agent CLI (on macOS the login
+/// shell's `PATH` has Homebrew's); the bare name when not found, so the error says so.
 fn tailscale(args: &[&str]) -> Command {
-    let mut command = Command::new("tailscale");
+    let program = crate::lookup::find(std::ffi::OsStr::new("tailscale"))
+        .unwrap_or_else(|| "tailscale".into());
+    let mut command = Command::new(program);
     command.args(args).stdin(Stdio::null());
     #[cfg(windows)]
     {

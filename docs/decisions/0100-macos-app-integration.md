@@ -38,11 +38,13 @@ Facts checked in `gpui-pre 0.3.7`:
 6. **Dock.** Badge: `NSApp.dockTile.badgeLabel` through safe `objc2` calls, the same count as the Windows overlay, `99+` from 100.
    Bounce: `Window::request_attention` (one bounce) where Windows flashes the taskbar, under the same `[notify] flash_taskbar` setting.
 7. **PATH.** The first lookup asks `$SHELL -l -i -c` (5 s limit, `/bin/zsh` if `$SHELL` is unset) for its `PATH` between markers and merges it before the process's own; the result is cached in a `OnceLock` in `mkrew_core::login_path` and warmed on a thread at start of the UI and of the daemon.
+   This is the only login-shell probe: it needs no `unsafe` (no `set_var`), and programs the UI starts by name are found through `mkrew_core::lookup::find` (`tailscale` included).
    `lookup::find` and the PTY command use it; the process environment is not changed.
    The default shell starts with `-l` on macOS (Terminal.app does too).
 8. **Zed on a Mac** is also looked for in `/usr/local/bin`, `/opt/homebrew/bin`, `~/.local/bin` and inside `Zed.app`; with only the app installed, `open -a <Zed.app> <path>` opens the file (without a line).
-9. **`mk` command.** Palette "Global: Install mk command" (only in a `Mkrew.app` that is not translocated) links `/usr/local/bin/mk`, else `~/.local/bin/mk`, to the bundle's `mk`.
-   A real file named `mk` is never replaced.
+9. **`mk` command.** Palette "Global: Install mk command" (only in a `Mkrew.app`) links `/usr/local/bin/mk`, else `~/.local/bin/mk`, to the bundle's `mk`.
+   A translocated copy links its real bundle's `mk` (the same mapping as the update, §20K) and is refused only when that mapping failed.
+   A link already at that `mk` stays; a link to anything but a bundle's `Contents/MacOS/mk`, or a real file named `mk`, is never replaced.
 10. **Packaging.** `Mkrew.icns` from `packaging/macos/mkrew-1024.png` (the lanes tile, `icon/mkrew-1-lanes/tile-dark.svg`) with `sips` and `iconutil`; `CFBundleIconFile`; Developer ID signing with the hardened runtime and the audio-input entitlement, `notarytool` and `stapler`, all gated on repository secrets, else the ad-hoc signature as before.
     The bundle's `agents/` copy leaves out `cmd.toml`, `powershell.toml` and `git-bash.toml`.
 11. **Not built.**
@@ -54,6 +56,6 @@ Facts checked in `gpui-pre 0.3.7`:
 ## Consequences
 
 - SPEC: §20L added; §4, §8, §10, §20J, §20K, the Zed bullet and two settings comments amended.
-- New dependencies for the macOS target only: `objc2-app-kit` and `objc2-foundation` (versions already in the tree).
-- The repository needs six secrets to sign and notarize (listed in Task 10); without them releases stay ad-hoc signed.
+- New dependencies for the macOS target only: `objc2`, `objc2-app-kit` and `objc2-foundation` (versions already in the tree).
+- The repository needs six secrets to sign and notarize (listed in SPEC §20L item 9); without them releases stay ad-hoc signed.
 - Risk: several behaviors cannot be run on the dev machine; each has a line in `docs/HUMAN_CHECKS.md` "To verify".

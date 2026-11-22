@@ -99,7 +99,7 @@ pub struct Context {
     pub toast: bool,
     /// An update is ready to install.
     pub update_ready: bool,
-    /// Running from `Mkrew.app` (not a translocated copy): "Install mk command" has something to link.
+    /// Running from `Mkrew.app`: "Install mk command" has something to link.
     pub mk_install: bool,
     /// A machine's window: Phone access and the in-app update belong to this computer's.
     pub machine: bool,

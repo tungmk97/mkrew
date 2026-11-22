@@ -51,10 +51,15 @@ fn link_in(target: &Path, dir: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|error| fail("cannot create", error))?;
     match std::fs::symlink_metadata(&link) {
         Ok(meta) if meta.file_type().is_symlink() => {
-            // An earlier install (or a stale one of an older bundle) is replaced; a link to
-            // something that is not an `mk` is somebody else's.
-            let ours =
-                std::fs::read_link(&link).is_ok_and(|to| to.file_name() == Some(OsStr::new("mk")));
+            let to = std::fs::read_link(&link);
+            // Made already (maybe by the root command of the error hint): leave it, so a
+            // root-owned link stays and no second one is made.
+            if to.as_deref().is_ok_and(|to| to == target) {
+                return Ok(link);
+            }
+            // A stale link of an older bundle is replaced; a link to something that is not
+            // the bundle's `mk` is somebody else's.
+            let ours = to.is_ok_and(|to| to.ends_with("Contents/MacOS/mk"));
             if !ours {
                 return Err(format!("{} links elsewhere", link.display()));
             }
@@ -181,6 +186,36 @@ mod tests {
                 .unwrap();
             let linked = install(&target, std::slice::from_ref(&dir), None).unwrap();
             assert_eq!(std::fs::read_link(&linked.link).unwrap(), target);
+        }
+
+        #[test]
+        fn a_link_already_at_the_target_is_left_alone() {
+            use std::os::unix::fs::MetadataExt as _;
+            let tmp = tempfile::tempdir().unwrap();
+            let target = bundle_mk(tmp.path());
+            let dir = tmp.path().join("bin");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::os::unix::fs::symlink(&target, dir.join("mk")).unwrap();
+            let before = std::fs::symlink_metadata(dir.join("mk")).unwrap().ino();
+            let linked = install(&target, std::slice::from_ref(&dir), None).unwrap();
+            assert_eq!(linked.link, dir.join("mk"));
+            let after = std::fs::symlink_metadata(dir.join("mk")).unwrap().ino();
+            assert_eq!(before, after, "not removed and made again");
+        }
+
+        #[test]
+        fn a_link_to_some_other_file_named_mk_is_not_ours() {
+            let tmp = tempfile::tempdir().unwrap();
+            let target = bundle_mk(tmp.path());
+            let dir = tmp.path().join("bin");
+            std::fs::create_dir_all(&dir).unwrap();
+            let theirs = tmp.path().join("other/mk");
+            std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+            std::fs::write(&theirs, b"x").unwrap();
+            std::os::unix::fs::symlink(&theirs, dir.join("mk")).unwrap();
+            let error = install(&target, std::slice::from_ref(&dir), None).unwrap_err();
+            assert!(error.contains("links elsewhere"), "{error}");
+            assert_eq!(std::fs::read_link(dir.join("mk")).unwrap(), theirs);
         }
 
         #[test]
