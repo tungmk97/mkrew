@@ -28,17 +28,23 @@ pub(crate) fn git_bash(
     exists(&bash).then_some(bash)
 }
 
-/// Whether Claude Code runs a status line in a POSIX shell (Git Bash, or `sh` off Windows);
-/// false means PowerShell.
+/// The Git Bash Claude Code runs status lines in, `None` when it falls back to PowerShell.
 #[cfg(windows)]
-pub(crate) fn claude_shell_is_bash() -> bool {
+pub(crate) fn claude_git_bash() -> Option<PathBuf> {
     let env = std::env::var("CLAUDE_CODE_GIT_BASH_PATH").ok();
     let git = std::env::var_os("PATH").and_then(|path| {
         std::env::split_paths(&path)
             .map(|dir| dir.join("git.exe"))
             .find(|file| file.is_file())
     });
-    git_bash(env.as_deref(), git.as_deref(), Path::is_file).is_some()
+    git_bash(env.as_deref(), git.as_deref(), Path::is_file)
+}
+
+/// Whether Claude Code runs a status line in a POSIX shell (Git Bash, or `sh` off Windows);
+/// false means PowerShell.
+#[cfg(windows)]
+pub(crate) fn claude_shell_is_bash() -> bool {
+    claude_git_bash().is_some()
 }
 
 #[cfg(not(windows))]
