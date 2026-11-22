@@ -440,10 +440,14 @@ fn result_text(content: &Value) -> String {
     }
 }
 
-/// A Codex tool output: plain text, or a JSON string `{"output", "metadata": {"exit_code"}}`
-/// whose non-zero exit code makes it an error.
+/// A Codex tool output: a JSON string `{"output", "metadata": {"exit_code"}}`, or plain text.
+/// A non-zero exit code makes it an error: from the metadata, or from the text's
+/// `Exit code: N` / `Process exited with code N` line. An array output (content items) is
+/// read like a result's `content`.
 fn codex_output(output: &Value) -> (String, bool) {
-    let raw = output.as_str().unwrap_or_default();
+    let Some(raw) = output.as_str() else {
+        return (result_text(output), false);
+    };
     if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(raw)
         && let Some(text) = map.get("output").and_then(Value::as_str)
     {
@@ -453,7 +457,14 @@ fn codex_output(output: &Value) -> (String, bool) {
             .is_some_and(|code| code != 0);
         return (text.to_owned(), failed);
     }
-    (raw.to_owned(), false)
+    let failed = raw.lines().any(|line| {
+        ["Exit code: ", "Process exited with code "]
+            .iter()
+            .find_map(|prefix| line.strip_prefix(prefix))
+            .and_then(|rest| rest.trim().parse::<i64>().ok())
+            .is_some_and(|code| code != 0)
+    });
+    (raw.to_owned(), failed)
 }
 
 /// The trimmed text between `<name>` and `</name>`, when non-empty.
@@ -913,7 +924,7 @@ mod tests {
     fn codex_outputs_fill_their_calls() {
         let reader = read(UsageFormat::CodexJsonl, CODEX_CHAT);
         let calls = calls(&reader.turns()[0]);
-        assert_eq!(calls.len(), 3);
+        assert_eq!(calls.len(), 6);
         assert_eq!(calls[0].id, "k1");
         assert!(calls[0].input.contains("\"command\": \"cargo build\""));
         assert_eq!(
@@ -940,6 +951,34 @@ mod tests {
                 is_error: false
             })
         );
+        assert_eq!(
+            calls[3].result,
+            Some(ToolResult {
+                text: "Exit code: 0\nWall time: 0.1 seconds\nOutput:\nok".into(),
+                is_error: false
+            }),
+            "exit code 0 in the plain text"
+        );
+        assert_eq!(
+            calls[4].result,
+            Some(ToolResult {
+                text: "Exit code: 2\nWall time: 0.3 seconds\nOutput:\nnope".into(),
+                is_error: true
+            }),
+            "a non-zero `Exit code:` line"
+        );
+        assert_eq!(
+            calls[5].result,
+            Some(ToolResult {
+                text: "one\ntwo".into(),
+                is_error: false
+            }),
+            "an array of content items keeps its text"
+        );
+        let unified = codex_output(&Value::String(
+            "Chunk ID: 1\nProcess exited with code 3\nOutput:\nx".into(),
+        ));
+        assert!(unified.1, "unified exec exit line");
     }
 
     #[test]

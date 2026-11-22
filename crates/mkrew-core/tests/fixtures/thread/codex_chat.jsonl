@@ -1,7 +1,13 @@
-{"type":"event_msg","payload":{"type":"user_message","message":"Run it"}}
-{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"cargo build\"}","call_id":"k1"}}
-{"type":"response_item","payload":{"type":"function_call_output","call_id":"k1","output":"{\"output\":\"error: boom\",\"metadata\":{\"exit_code\":101,\"duration_seconds\":1.0}}"}}
-{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"ls\"}","call_id":"k2"}}
-{"type":"response_item","payload":{"type":"function_call_output","call_id":"k2","output":"a.rs\nb.rs\n"}}
-{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Add File: a.rs\n","call_id":"k3"}}
-{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"k3","output":"{\"output\":\"Success\",\"metadata\":{\"exit_code\":0}}"}}
+{"timestamp":"2026-01-01T00:00:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"Run it"}}
+{"timestamp":"2026-01-01T00:00:01.000Z","type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"cargo build\"}","call_id":"k1"}}
+{"timestamp":"2026-01-01T00:00:02.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"k1","output":"{\"output\":\"error: boom\",\"metadata\":{\"exit_code\":101,\"duration_seconds\":1.0}}"}}
+{"timestamp":"2026-01-01T00:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"ls\"}","call_id":"k2"}}
+{"timestamp":"2026-01-01T00:00:04.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"k2","output":"a.rs\nb.rs\n"}}
+{"timestamp":"2026-01-01T00:00:05.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Add File: a.rs\n","call_id":"k3"}}
+{"timestamp":"2026-01-01T00:00:06.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"k3","output":"{\"output\":\"Success\",\"metadata\":{\"exit_code\":0}}"}}
+{"timestamp":"2026-01-01T00:00:07.000Z","type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"true\"}","call_id":"k4"}}
+{"timestamp":"2026-01-01T00:00:08.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"k4","output":"Exit code: 0\nWall time: 0.1 seconds\nOutput:\nok\n"}}
+{"timestamp":"2026-01-01T00:00:09.000Z","type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"false\"}","call_id":"k5"}}
+{"timestamp":"2026-01-01T00:00:10.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"k5","output":"Exit code: 2\nWall time: 0.3 seconds\nOutput:\nnope\n"}}
+{"timestamp":"2026-01-01T00:00:11.000Z","type":"response_item","payload":{"type":"function_call","name":"view_image","arguments":"{\"path\":\"a.png\"}","call_id":"k6"}}
+{"timestamp":"2026-01-01T00:00:12.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"k6","output":[{"type":"input_text","text":"one"},{"type":"input_text","text":"two"}]}}
