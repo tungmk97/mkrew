@@ -55,3 +55,9 @@ The facts an operator glances at all day (the folder, the Git branch, the machin
 
   Mkrew Light's golden snapshot moved with it.
   The same amber is the needs-input dot and pane border, now a little darker on light themes.
+  The taskbar badge numeral used to be the dark theme's `bg` on that amber and is now `Theme::badge_ink()` (`bg` or `text`, whichever contrasts better), with a "badge ink" rule in `problems()` (3:1 on `status_needs_input`).
+- A user theme file can now show the "Low contrast" badge because of the "widget bar" rule.
+  Its `status_needs_input` is Mkrew's fixed amber, so only the file's `bg` or its derived `chrome` can fix it.
+- The `statusLine` command is written so that Git Bash and PowerShell both parse it: on Windows the path with forward slashes and no quotes when it has no space or shell character, else its 8.3 short path when that is plain, else the quoted form of the shell Claude Code will use (`'path' statusline` for Git Bash, `& 'path' statusline` for PowerShell).
+  `mk integration status` recognizes every form as Mkrew's.
+- Only a connection that stays 1 second counts as a client of the machine sampler, so `mk statusline` and `mk hook` runs do not reset its throttle.
