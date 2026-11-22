@@ -1055,7 +1055,11 @@ impl Shell {
                     } else {
                         button("run-save", "Save", theme, true)
                             .focus_stop(theme)
-                            .tooltip(tooltip(theme, "Save the run commands", "Ctrl+Enter"))
+                            .tooltip(tooltip(
+                                theme,
+                                "Save the run commands",
+                                mkrew_ui::os_text!("Ctrl+Enter", "⌘↩"),
+                            ))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.save_run_setup(window, cx);
                             }))

@@ -36,6 +36,16 @@ impl Os {
     };
 }
 
+/// A fixed UI text that names keys: `$mac` in a macOS build ("⌘↩ to send"), else `$pc`
+/// ("Ctrl+Enter to send"). Both are `&'static str`. For keys of `keymap.toml` use
+/// [`Keymap::label`] instead, which follows the user's bindings.
+#[macro_export]
+macro_rules! os_text {
+    ($pc:expr, $mac:expr $(,)?) => {
+        if cfg!(target_os = "macos") { $mac } else { $pc }
+    };
+}
+
 /// Something a shortcut does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {

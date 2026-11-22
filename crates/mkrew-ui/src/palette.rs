@@ -231,7 +231,10 @@ impl Extra {
             Self::CheckUpdates => "Global: Check for updates",
             Self::MarkUnread => "Agent: Mark unread",
             Self::WorkspacePin => "Workspace: Pin / Unpin",
-            Self::WorkspaceExplorer => "Workspace: Open in File Explorer",
+            Self::WorkspaceExplorer => crate::os_text!(
+                "Workspace: Open in File Explorer",
+                "Workspace: Reveal in Finder",
+            ),
             Self::WorkspaceDefaultAgent => "Workspace: Set default agent…",
             Self::WorkspaceRemove => "Workspace: Remove…",
             Self::WorkspaceMenu => "Workspace: Open workspace menu",

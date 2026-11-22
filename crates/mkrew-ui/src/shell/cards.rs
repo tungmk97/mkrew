@@ -811,7 +811,7 @@ pub(crate) fn follow_up_field(
     let field = caret_field(
         "card-follow-up",
         draft.map_or(&empty, |draft| draft.text.input()),
-        "Follow up… (Ctrl+Enter sends)",
+        mkrew_ui::os_text!("Follow up… (Ctrl+Enter sends)", "Follow up… (⌘↩ sends)"),
         focused,
         theme,
         cx,

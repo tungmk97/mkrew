@@ -560,7 +560,10 @@ impl Shell {
                             .child(if rewriting {
                                 "Improving the prompt…"
                             } else {
-                                "@ for a file · paste an image or drop a file · Ctrl+Enter to save"
+                                mkrew_ui::os_text!(
+                                    "@ for a file · paste an image or drop a file · Ctrl+Enter to save",
+                                    "@ for a file · paste an image or drop a file · ⌘↩ to save",
+                                )
                             }),
                     ),
             )
@@ -614,7 +617,7 @@ impl Shell {
                     } else {
                         button("task-save", save_label, theme, true)
                             .focus_stop(theme)
-                            .tooltip(tooltip(theme, save_label, "Ctrl+Enter"))
+                            .tooltip(tooltip(theme, save_label, mkrew_ui::os_text!("Ctrl+Enter", "⌘↩")))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.save_task(window, cx);
                             }))

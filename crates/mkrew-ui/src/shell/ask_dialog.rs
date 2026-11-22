@@ -265,9 +265,13 @@ impl Shell {
             .items_center()
             .gap(px(space::S))
             .child(
-                div()
-                    .flex_1()
-                    .child(muted("Enter new line · Ctrl+Enter ask · Esc close".into())),
+                div().flex_1().child(muted(
+                    mkrew_ui::os_text!(
+                        "Enter new line · Ctrl+Enter ask · Esc close",
+                        "Enter new line · ⌘↩ ask · Esc close",
+                    )
+                    .into(),
+                )),
             )
             .children(answer_text.map(|text| {
                 button("ask-copy", "Copy answer", theme, false)
@@ -286,7 +290,11 @@ impl Shell {
             .child(if can_ask {
                 button("ask-send", ask_label, theme, true)
                     .focus_stop(theme)
-                    .tooltip(tooltip(theme, "Ask the question", "Ctrl+Enter"))
+                    .tooltip(tooltip(
+                        theme,
+                        "Ask the question",
+                        mkrew_ui::os_text!("Ctrl+Enter", "⌘↩"),
+                    ))
                     .on_click(cx.listener(|shell, _, window, cx| shell.send_ask(window, cx)))
             } else {
                 disabled_button("ask-send", ask_label, theme, true).tooltip(tooltip(

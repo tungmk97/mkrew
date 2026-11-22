@@ -783,7 +783,11 @@ impl Shell {
                 (
                     "",
                     theme.text_muted,
-                    "Ctrl+Enter to send · @ for a file · Esc to hide".to_owned(),
+                    mkrew_ui::os_text!(
+                        "Ctrl+Enter to send · @ for a file · Esc to hide",
+                        "⌘↩ to send · @ for a file · Esc to hide",
+                    )
+                    .to_owned(),
                 )
             })
         };

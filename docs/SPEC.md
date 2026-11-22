@@ -1057,7 +1057,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
     - Use a monospace font with a precomputed cell size; no per-cell measurement.
 - **Open in Zed:** on task cards, the workspace menu, the file tree menu and Docs; runs
   `zed <path>[:line]`; clear error with install hint if `zed` is missing.
-- **Open in File Explorer:** in the workspace menu and in the file tree's right-click menu
+- **Open in File Explorer** ("Reveal in Finder" on macOS): in the workspace menu and in the file tree's right-click menu
   (§12A). It opens the OS file manager (Explorer, Finder, the Linux file manager): a folder is
   opened, a file is shown selected in its folder.
 - **Terminal links:** while Ctrl (Cmd on macOS) is held over a terminal pane (agents and
@@ -1327,7 +1327,7 @@ Only edit this file. When done, for EACH comment run:
   name field over the tree; Enter creates it in the folder clicked, or next to the file
   clicked; `/` in the name makes subfolders; a new file opens, a new folder opens in the tree),
   "Copy path" (absolute), "Add to .gitignore" (rows only: appends `/path` or `/path/` to the
-  shown folder's `.gitignore`, once), "Open in File Explorer" and "Open in Zed" (§10). The app
+  shown folder's `.gitignore`, once), "Open in File Explorer" ("Reveal in Finder" on macOS) and "Open in Zed" (§10). The app
   does these on the local disk; the watcher's `git.changed` lists the tree again. Failures show
   in the sidebar. A click outside or Esc closes the menu.
   Shift+F10 opens it on the cursor row (on the active tab's menu while the editor has the keyboard).
@@ -1536,12 +1536,12 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Git | Discard the selected file (asks first) / fetch / push | x / f / Shift+P |
 | Git | Comment on selected lines | Ctrl+Alt+M |
 | Git | Send comments to agent | Ctrl+Shift+S |
-| Agent (v2) | Peek the first session that needs you (↑/↓ cycle, Alt+Y / Alt+N answer, Ctrl+O open the pane, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
+| Agent (v2) | Peek the first session that needs you (↑/↓ cycle, Alt+Y / Alt+N answer, Ctrl+O (⌘O on macOS) open the pane, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
 | Agent (v2) | In a prompt box (the composer, the task dialog's Prompt), at the start of a line or after a space: pick the agent's command (§20B.7) / pick a file (§12A); Enter or Tab types the pick, Esc types the character | / / @ |
 | Agent (v2) | Send selection to an agent (Editor, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
-| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10) |
+| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer (Reveal in Finder on macOS), set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10) |
 
 **macOS defaults** (ADR 0098); a command not listed keeps the key of the table above:
 

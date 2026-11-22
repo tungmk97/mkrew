@@ -13,7 +13,7 @@ use mkrew_core::settings::Settings;
 use mkrew_core::settings_fields::{Kind, Page, SETTINGS, Setting};
 
 use crate::editor::Motion;
-use crate::keymap::{Command, Keymap, KeymapError, keys_label};
+use crate::keymap::{Command, Keymap, KeymapError, Os, keys_label};
 use crate::machines::{Field, Invalid, Machine};
 use crate::palette::{self, match_ranges};
 use crate::prompts_page::{PromptAction, PromptsPage, Spot, Written};
@@ -96,7 +96,7 @@ impl Row {
 
 /// Whether `keystroke` may become `command`'s binding. A command that works everywhere would
 /// take a plain key (Enter, Tab, a letter) from the terminal and every text field, so it needs
-/// Ctrl, Alt or Win, or a function key; a command of one view (Git, Files, Board, Docs) takes
+/// Ctrl, Alt or Win (⌃ ⌥ ⌘ on macOS), or a function key; a command of one view (Git, Files, Board, Docs) takes
 /// any key, like its defaults.
 fn bindable(command: Command, keystroke: &Keystroke) -> bool {
     let m = keystroke.modifiers;
@@ -937,7 +937,11 @@ impl SettingsDialog {
             if !bindable(command, keystroke) {
                 self.errors.insert(
                     command.name(),
-                    "Use Ctrl, Alt or Win with the key (or a function key)".to_owned(),
+                    crate::os_text!(
+                        "Use Ctrl, Alt or Win with the key (or a function key)",
+                        "Use ⌃, ⌥ or ⌘ with the key (or a function key)",
+                    )
+                    .to_owned(),
                 );
                 return Effect::None;
             }
@@ -1323,10 +1327,19 @@ pub fn prompts_shortcut(keystroke: &Keystroke) -> Option<PromptAction> {
     }
 }
 
-/// Ctrl+F: the keyboard goes to the search box from anywhere in the dialog.
+/// Ctrl+F (Cmd+F on macOS): the keyboard goes to the search box from anywhere in the dialog.
 pub fn find_shortcut(keystroke: &Keystroke) -> bool {
+    find_shortcut_for(keystroke, Os::CURRENT)
+}
+
+/// [`find_shortcut`] for `os`. On macOS Ctrl+F is the Emacs forward-char key of a field.
+pub fn find_shortcut_for(keystroke: &Keystroke, os: Os) -> bool {
     let m = keystroke.modifiers;
-    keystroke.key == "f" && m.control && !m.shift && !m.alt && !m.platform
+    let mod_ok = match os {
+        Os::Mac => m.platform && !m.control,
+        Os::Windows | Os::Linux => m.control && !m.platform,
+    };
+    keystroke.key == "f" && mod_ok && !m.shift && !m.alt
 }
 
 #[cfg(test)]
@@ -1336,9 +1349,17 @@ mod find_shortcut_tests {
     #[test]
     fn only_plain_ctrl_f_finds() {
         let key = |keys: &str| Keystroke::parse(keys).unwrap();
-        assert!(find_shortcut(&key("ctrl-f")));
-        assert!(!find_shortcut(&key("ctrl-shift-f")));
-        assert!(!find_shortcut(&key("f")));
+        assert!(find_shortcut_for(&key("ctrl-f"), Os::Windows));
+        assert!(!find_shortcut_for(&key("ctrl-shift-f"), Os::Windows));
+        assert!(!find_shortcut_for(&key("f"), Os::Windows));
+    }
+
+    #[test]
+    fn cmd_f_finds_on_mac() {
+        let key = |keys: &str| Keystroke::parse(keys).unwrap();
+        assert!(find_shortcut_for(&key("cmd-f"), Os::Mac));
+        assert!(!find_shortcut_for(&key("ctrl-f"), Os::Mac));
+        assert!(!find_shortcut_for(&key("cmd-shift-f"), Os::Mac));
     }
 }
 

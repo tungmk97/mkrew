@@ -31,7 +31,7 @@ impl Shell {
     }
 
     /// "Open themes folder": makes the folder when it is missing and opens it in the OS file
-    /// manager, like "Open in File Explorer".
+    /// manager, like "Open in File Explorer" ("Reveal in Finder" on macOS).
     pub(crate) fn open_themes_folder(&mut self, cx: &mut Context<'_, Self>) {
         match std::fs::create_dir_all(&self.themes_dir) {
             Ok(()) => cx.open_with_system(&self.themes_dir),

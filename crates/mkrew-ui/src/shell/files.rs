@@ -321,7 +321,7 @@ impl Shell {
         let keystroke = &event.keystroke;
         let m = keystroke.modifiers;
         match keystroke.key.as_str() {
-            "enter" if m.control && m.alt => {
+            "enter" if m.secondary() && m.alt => {
                 return self.replace_all_in_file(project_id, window, cx);
             }
             "tab" if !m.control && !m.alt => {
@@ -419,7 +419,7 @@ impl Shell {
         let keystroke = &event.keystroke;
         let m = keystroke.modifiers;
         match keystroke.key.as_str() {
-            "enter" if m.control && m.alt => {
+            "enter" if m.secondary() && m.alt => {
                 return self.replace_all_in_file(project_id, window, cx);
             }
             "enter" if !m.shift && !m.control => {

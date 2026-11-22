@@ -516,7 +516,11 @@ impl Shell {
                     .tooltip(tooltip(
                         theme,
                         tip,
-                        if letter == 'y' { "Alt+Y" } else { "Alt+N" },
+                        if letter == 'y' {
+                            mkrew_ui::os_text!("Alt+Y", "⌥Y")
+                        } else {
+                            mkrew_ui::os_text!("Alt+N", "⌥N")
+                        },
                     ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.answer_peek(letter, window, cx);
@@ -562,9 +566,17 @@ impl Shell {
                 self.keymap.label(Command::Peek)
             )
         } else if needs_input {
-            "Enter sends · Alt+Y / Alt+N answer · Ctrl+O opens · ↑ ↓ others · Esc closes".to_owned()
+            mkrew_ui::os_text!(
+                "Enter sends · Alt+Y / Alt+N answer · Ctrl+O opens · ↑ ↓ others · Esc closes",
+                "Enter sends · ⌥Y / ⌥N answer · ⌘O opens · ↑ ↓ others · Esc closes",
+            )
+            .to_owned()
         } else {
-            "Enter sends · Ctrl+O opens the pane · ↑ ↓ others that need you · Esc closes".to_owned()
+            mkrew_ui::os_text!(
+                "Enter sends · Ctrl+O opens the pane · ↑ ↓ others that need you · Esc closes",
+                "Enter sends · ⌘O opens the pane · ↑ ↓ others that need you · Esc closes",
+            )
+            .to_owned()
         };
         let panel = div()
             .id("peek")

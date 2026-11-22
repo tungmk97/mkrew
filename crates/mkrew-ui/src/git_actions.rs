@@ -48,8 +48,10 @@ pub enum Begin {
 }
 
 /// The commit box's note while it offers to stage everything.
-pub const STAGE_ALL_OFFER: &str =
-    "Nothing staged. Ctrl+Enter again stages every change and commits.";
+pub const STAGE_ALL_OFFER: &str = crate::os_text!(
+    "Nothing staged. Ctrl+Enter again stages every change and commits.",
+    "Nothing staged. ⌘↩ again stages every change and commits.",
+);
 
 impl CommitBox {
     /// Applies a key; Enter is a new line. Paste is the caller's (see [`CommitBox::insert`]).

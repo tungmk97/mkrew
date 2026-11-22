@@ -70,7 +70,11 @@ impl Shell {
         } else {
             secondary_button("prompt-new", "New prompt", theme).focusable_bordered(theme)
         }
-        .tooltip(tooltip(theme, "Start a new prompt", "Ctrl+N"))
+        .tooltip(tooltip(
+            theme,
+            "Start a new prompt",
+            mkrew_ui::os_text!("Ctrl+N", "⌘N"),
+        ))
         .on_click(cx.listener(|shell, _, window, cx| {
             shell.settings_do(|_, _| Effect::Prompts(PromptAction::New), window, cx);
         }));
@@ -267,7 +271,11 @@ impl Shell {
         let save = if draft.is_dirty() {
             button("prompt-save", "Save", theme, true)
                 .focus_stop(theme)
-                .tooltip(tooltip(theme, "Save the prompt", "Ctrl+S"))
+                .tooltip(tooltip(
+                    theme,
+                    "Save the prompt",
+                    mkrew_ui::os_text!("Ctrl+S", "⌘S"),
+                ))
                 .on_click(cx.listener(|shell, _, window, cx| {
                     shell.settings_do(|_, _| Effect::Prompts(PromptAction::Save), window, cx);
                 }))

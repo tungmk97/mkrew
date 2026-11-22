@@ -867,7 +867,10 @@ impl Shell {
             "Commit"
         };
         let tip = if stage_all {
-            "Stage every change, then commit (Ctrl+Enter twice)"
+            mkrew_ui::os_text!(
+                "Stage every change, then commit (Ctrl+Enter twice)",
+                "Stage every change, then commit (⌘↩ twice)",
+            )
         } else if staged == 0 {
             "Stage changes to commit them"
         } else {
@@ -990,7 +993,7 @@ impl Shell {
                         "Write the message with the workspace's default agent (Conventional Commits)",
                         "",
                     )))
-                    .child(commit.flex_none().tooltip(tooltip(theme, tip, "Ctrl+Enter"))),
+                    .child(commit.flex_none().tooltip(tooltip(theme, tip, mkrew_ui::os_text!("Ctrl+Enter", "⌘↩")))),
             )
     }
 }

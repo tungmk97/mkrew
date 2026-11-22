@@ -33,7 +33,7 @@ impl Shell {
             .keys(key(Command::OpenInZed))
             .row(),
             MenuItem::new(
-                "Open in File Explorer",
+                mkrew_ui::os_text!("Open in File Explorer", "Reveal in Finder"),
                 act(move |shell, _, cx| shell.open_workspace_in_explorer(project_id, cx)),
             )
             .row(),
@@ -101,7 +101,7 @@ impl Shell {
     }
 
     /// The Files tree's right-click menu: New file…, New folder…, Copy path, Add to .gitignore
-    /// (rows only), Open in File Explorer, Open in Zed.
+    /// (rows only), Open in File Explorer (Reveal in Finder on macOS), Open in Zed.
     pub(crate) fn file_menu_rows(&self, menu: &FileMenu) -> Rows {
         let (project_id, target, is_dir) = (menu.project_id, menu.target, menu.is_dir);
         let root = menu.path.is_empty();
@@ -153,7 +153,7 @@ impl Shell {
         rows.push(MenuRow::Separator);
         rows.push(
             MenuItem::new(
-                "Open in File Explorer",
+                mkrew_ui::os_text!("Open in File Explorer", "Reveal in Finder"),
                 act(move |shell, _, cx| {
                     shell.open_path_in_explorer(project_id, target, &explorer, is_dir, cx);
                 }),

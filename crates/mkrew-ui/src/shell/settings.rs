@@ -7,7 +7,7 @@ use mkrew_ui::prompts_page::Spot;
 use mkrew_ui::settings_dialog::{Effect, Focus, Hit, Row, Tab};
 
 impl Shell {
-    /// Ctrl+, and the palette's "Global: Open settings". Needs no daemon.
+    /// Ctrl+, (⌘, on macOS) and the palette's "Global: Open settings". Needs no daemon.
     pub(crate) fn open_settings_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.close_menus();
         let settings =
@@ -297,7 +297,9 @@ impl Shell {
             .on_click(cx.listener(|shell, _, window, cx| {
                 shell.settings_do(|d, keymap| d.click(Focus::Find, keymap), window, cx);
             })),
-            Some(kbd("Ctrl+F".to_owned(), theme, false).into_any_element()),
+            Some(
+                kbd(mkrew_ui::os_text!("Ctrl+F", "⌘F").to_owned(), theme, false).into_any_element(),
+            ),
             dialog.focus == Focus::Find,
             theme,
         );
@@ -439,7 +441,10 @@ impl Shell {
             .child(div().text_color(rgb(theme.text_muted)).child(
                 // The Prompts page saves by itself, so its own keys stay in the hint.
                 if dialog.tab == Tab::Prompts && !dialog.searching() {
-                    "Ctrl+N new · Ctrl+S saves · Esc closes"
+                    mkrew_ui::os_text!(
+                        "Ctrl+N new · Ctrl+S saves · Esc closes",
+                        "⌘N new · ⌘S saves · Esc closes"
+                    )
                 } else {
                     "Changes apply at once."
                 },

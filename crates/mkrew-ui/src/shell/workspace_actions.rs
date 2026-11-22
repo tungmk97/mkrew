@@ -407,7 +407,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// "Open in File Explorer" on a workspace: opens its folder in the OS file manager.
+    /// "Open in File Explorer" ("Reveal in Finder" on macOS) on a workspace: opens its folder in the OS file manager.
     pub(crate) fn open_workspace_in_explorer(
         &mut self,
         project_id: Ulid,
@@ -446,7 +446,7 @@ impl Shell {
         self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
-    /// "Open in File Explorer" on a Files path: a file is shown selected in its folder, a
+    /// "Open in File Explorer" ("Reveal in Finder" on macOS) on a Files path: a file is shown selected in its folder, a
     /// folder is opened.
     pub(crate) fn open_path_in_explorer(
         &mut self,

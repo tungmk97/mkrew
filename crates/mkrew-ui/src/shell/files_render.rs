@@ -644,7 +644,11 @@ impl Shell {
                         )
                         .child(
                             button("file-replace-all", "Replace all", theme, false)
-                                .tooltip(tooltip(theme, "Replace every match", "Ctrl+Alt+Enter"))
+                                .tooltip(tooltip(
+                                    theme,
+                                    "Replace every match",
+                                    mkrew_ui::os_text!("Ctrl+Alt+Enter", "⌥⌘↩"),
+                                ))
                                 .on_click(cx.listener(move |shell, _, window, cx| {
                                     window.focus(&shell.file_replace_focus, cx);
                                     shell.replace_all_in_file(project_id, window, cx);

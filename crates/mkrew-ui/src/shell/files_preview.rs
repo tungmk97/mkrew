@@ -355,6 +355,9 @@ fn block_edit_field(
             div()
                 .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
-                .child("Ctrl+Enter apply · Esc cancel"),
+                .child(mkrew_ui::os_text!(
+                    "Ctrl+Enter apply · Esc cancel",
+                    "⌘↩ apply · Esc cancel"
+                )),
         )
 }
