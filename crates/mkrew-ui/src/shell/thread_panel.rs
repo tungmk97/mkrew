@@ -137,8 +137,8 @@ impl Shell {
                 let mut recap: Option<Option<mkrew_protocol::Recap>> = None;
                 let mut more = false;
                 let page = match read {
-                    Some(Ok(read)) if read.found => {
-                        recap = Some(read.recap.clone());
+                    Some(Ok(mut read)) if read.found => {
+                        recap = Some(read.recap.take());
                         more = !read.data.is_empty()
                             && read.start + (read.data.len() as u64) < read.len;
                         if file.is_none() {

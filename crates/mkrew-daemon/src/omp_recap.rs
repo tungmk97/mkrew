@@ -1,6 +1,8 @@
 //! The newest recap omp wrote for a session (ADR 0105): `session_recaps` of
-//! `<omp root>/history.db`, opened read-only. Anything unexpected (no file, no table, another
-//! shape, a lock that does not clear in time) is no recap, never an error.
+//! `<omp root>/history.db`, opened with `SQLITE_OPEN_READ_ONLY`. On a WAL database SQLite may
+//! create `history.db-wal` / `-shm` beside it when no omp process holds it; omp tolerates them.
+//! Anything unexpected (no file, no table, another shape, a lock that does not clear in time)
+//! is no recap, never an error.
 
 use std::path::Path;
 use std::time::Duration;
@@ -102,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn a_locked_or_foreign_history_db_gives_no_recap() {
+    fn a_foreign_history_db_gives_no_recap() {
         let dir = tempfile::tempdir().unwrap();
         // The table exists with other columns: the query fails, the answer is None.
         let db = Connection::open(dir.path().join("history.db")).unwrap();
