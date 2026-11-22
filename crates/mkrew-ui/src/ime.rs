@@ -196,7 +196,7 @@ mod tests {
 
     use super::{Composing, keys};
     use crate::task_dialog::{DialogKey, dialog_key};
-    use crate::terminal::input::{InputMode, key_to_bytes};
+    use crate::terminal::input::{InputMode, KeyEnv, key_to_bytes};
     use crate::text_box::{Input, TextBox};
 
     /// Windows Vietnamese Telex composing "việt": each step replaces the composing text,
@@ -252,7 +252,8 @@ mod tests {
         // What a shell line editor does with the bytes: DEL (0x7f) erases one char.
         let mut line = String::new();
         for keystroke in telex(&marked) {
-            let bytes = key_to_bytes(&keystroke, InputMode::default()).expect("typed key");
+            let bytes = key_to_bytes(&keystroke, InputMode::default(), KeyEnv::current(false))
+                .expect("typed key");
             if bytes == [0x7f] {
                 line.pop();
             } else {

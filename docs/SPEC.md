@@ -1435,10 +1435,17 @@ only combinations bound in the keymap are intercepted; everything else goes to t
 therefore avoid plain `Ctrl+<letter>` and favor `Ctrl+Shift`/`Alt`, like Windows Terminal.
 Editor-only commands may use plain `Ctrl+<letter>` (no terminal has focus there, ADR 0028); the
 editor's own keys (arrows, Ctrl+Z/Y/A/C/X/V) are not in the keymap.
-One exception: plain Ctrl+C copies while terminal text is selected (ADR 0022); without a selection
+One exception on Windows and Linux: plain Ctrl+C copies while terminal text is selected (ADR 0022); without a selection
 it reaches the agent as ^C. Anything sent to the agent clears the selection.
 Plain Ctrl+V pastes in a terminal pane; ^V reaches the program only when the clipboard holds no
 text, image or files (ADR 0026).
+On macOS neither exception applies (ADR 0099): Ctrl+C is always ^C and Ctrl+V is always ^V.
+Cmd+C is the Copy command: it copies the selection and does nothing without one (never ^C).
+Cmd+V is the Paste command. Other Cmd keys are not sent to the program.
+On macOS Option+key types the layout's character by default (Option+2 is €, Option+E then E is é, German Option+L is @).
+With `[terminal] option_as_meta = true` Option sends ESC plus the key (Option+B is `ESC b`, Option+Shift+B is `ESC B`), so a shell's word moves work.
+Keys that are not text keep their xterm form with Option as Alt (Option+←, Option+Backspace).
+The setting has no effect on Windows and Linux (ADR 0099).
 Every text field of the app (task title and prompt, composer, follow-up, commit box, run setup,
 comments, broadcast, peek reply, the palette, Ask AI, Settings, the filters and
 find bars, the inline rename) edits like a normal text box (ADR 0075): ←/→, Ctrl+←/→ by word,

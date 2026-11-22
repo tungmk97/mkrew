@@ -243,6 +243,9 @@ fn main() {
                 &cx.text_system().all_font_names(),
             ));
             cx.set_global(theme::ThemeNames::from_settings(&settings));
+            cx.set_global(mkrew_ui::terminal::input::KeyEnv::current(
+                settings.terminal.option_as_meta,
+            ));
             // Theme files are read once here (the status tick reads them again when they change).
             cx.set_global(ThemeCatalog::load(&paths.themes_dir()));
             // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).

@@ -1272,7 +1272,7 @@ mod tests {
     use super::*;
     use crate::editor::edit_key_for;
     use crate::task_dialog::dialog_key_for;
-    use crate::terminal::input::{InputMode, key_to_bytes};
+    use crate::terminal::input::{InputMode, KeyEnv, key_to_bytes};
 
     /// The Files find bar's Replace all is Cmd+Option+Enter on macOS: a window or Editor default
     /// on it would run first and Replace all would never fire.
@@ -1703,7 +1703,11 @@ mod tests {
         ] {
             let keystroke = keystroke(keys);
             assert_eq!(keymap.command_for(&keystroke), None, "{keys} is bound");
-            assert_eq!(key_to_bytes(&keystroke, mode), Some(bytes), "{keys}");
+            assert_eq!(
+                key_to_bytes(&keystroke, mode, KeyEnv::current(false)),
+                Some(bytes),
+                "{keys}"
+            );
         }
         // No default is a plain Ctrl+<letter>, except in the Editor view (ADR 0028): no
         // terminal has focus there (SPEC §13).

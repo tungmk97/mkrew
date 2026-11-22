@@ -1008,8 +1008,8 @@ impl Shell {
     }
 
     /// Re-reads `settings.toml` and applies what the UI reads from it: fonts, theme, diff
-    /// layout and wrap, tray, taskbar flash, Jira, reading width, features (§20.0). A file that
-    /// does not parse keeps the last good settings; the palette lists why.
+    /// layout and wrap, tray, taskbar flash, Jira, reading width, Option as Meta, features
+    /// (§20.0). A file that does not parse keeps the last good settings; the palette lists why.
     pub(crate) fn apply_settings_file(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let installed = cx.text_system().all_font_names();
         let last = cx.global::<theme::Fonts>().clone();
@@ -1029,6 +1029,10 @@ impl Shell {
                 // just parsed, so this second read only happens when it changed).
                 if let Ok(settings) = mkrew_core::settings::load(&self.settings_file) {
                     self.close_to_tray = settings.ui.close_to_tray;
+                    // Every pane reads it on its next key press: no restart.
+                    cx.set_global(mkrew_ui::terminal::input::KeyEnv::current(
+                        settings.terminal.option_as_meta,
+                    ));
                     self.notify = settings.notify;
                     if !self.notify.flash_taskbar {
                         self.desktop.flash(false);

@@ -37,7 +37,7 @@ use crate::terminal::emulator::{CopyEnd, Emulator, Grid, Wheel};
 use crate::terminal::find::{FindBar, FindKey, FindStatus, find_key};
 use crate::terminal::hints::{self, Typed};
 use crate::terminal::input::{
-    KeyAction, is_copy_key, key_action, paste_bytes, wheel_bytes, wheel_report_bytes,
+    KeyAction, KeyEnv, is_copy_key, key_action, paste_bytes, wheel_bytes, wheel_report_bytes,
 };
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
 use crate::terminal::links::{self, Target};
@@ -350,9 +350,10 @@ impl TerminalPane {
     }
 
     /// Keys go to the session. Keystrokes bound in the keymap (SPEC §13) never get here: their
-    /// action handler stops them first. Plain Ctrl+C copies a selection instead, also in an
-    /// exited pane (ADR 0022). Plain Ctrl+V pastes (ADR 0026). While copy mode is on every key
-    /// is the UI's.
+    /// action handler stops them first. On Windows and Linux plain Ctrl+C copies a selection
+    /// instead, also in an exited pane (ADR 0022), and plain Ctrl+V pastes (ADR 0026). On macOS
+    /// Option+key without `option_as_meta` is left to the input method (ADR 0099). While copy
+    /// mode is on every key is the UI's.
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.hints.is_some() {
             cx.stop_propagation();
@@ -365,9 +366,11 @@ impl TerminalPane {
             return;
         }
         // Only plain Ctrl+C reads the selection: building its text per keystroke costs O(selection).
-        let selected = is_copy_key(&event.keystroke) && self.emulator.selection_text().is_some();
+        let env = KeyEnv::of(cx);
+        let selected =
+            is_copy_key(&event.keystroke, env.os) && self.emulator.selection_text().is_some();
         let mode = self.emulator.input_mode();
-        match key_action(&event.keystroke, selected, self.exited.is_some(), mode) {
+        match key_action(&event.keystroke, selected, self.exited.is_some(), mode, env) {
             KeyAction::Copy => {
                 cx.stop_propagation();
                 self.copy_selection(cx);
@@ -744,6 +747,8 @@ impl TerminalPane {
             }
             Command::CopyMode if !find_focused => self.toggle_copy_mode(cx),
             Command::LinkHints if !find_focused => self.start_hints(cx),
+            // Never a ^C: without a selection nothing happens and the keystroke is spent here
+            // (macOS Cmd+C is this command, ADR 0099).
             Command::Copy => {
                 self.copy_selection(cx);
             }

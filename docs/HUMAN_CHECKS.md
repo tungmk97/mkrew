@@ -36,6 +36,16 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Its help text fits the row.
   Turning it on writes `option_as_meta = true` under `[terminal]` and keeps the comments.
   Restart the daemon after installing: an older daemon rejects the new key as unknown.
+- [ ] **Copy and paste:** select text in a shell pane and press Cmd+C, the selection clears and Cmd+V in another app pastes it.
+  Cmd+C with nothing selected prints nothing (no `^C` in the shell).
+  Ctrl+C with text selected interrupts a running `sleep 30` (the selection is dropped, nothing is copied).
+  Ctrl+V in a shell prints `^V`.
+  Cmd+V pastes text, and an image (path typed) as before.
+- [ ] **Option, default (US layout):** Option+2 types €, Option+B types ∫, Option+E then E types é in zsh.
+  German layout: Option+L types @, Option+5 types [, Option+7 types |.
+- [ ] **Option as Meta:** turn the switch on in Settings without restarting.
+  Option+B / Option+F move by word in zsh, Option+Backspace deletes a word, and Option+D deletes the next word.
+  Turn it off again: Option+B types ∫ without restarting.
 
 ### To verify - 2026-11-22 Theme gallery (plan docs/superpowers/plans/2026-11-22-theme-gallery.md)
 

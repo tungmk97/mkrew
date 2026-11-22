@@ -2,8 +2,11 @@
 //!
 //! Encodings follow xterm: CSI sequences for cursor/editing keys, `CSI 1;<mod>X` when modified,
 //! SS3 for arrows in application-cursor mode, C0 control bytes for Ctrl+key, ESC prefix for Alt.
+//! macOS Option composes unless `[terminal] option_as_meta` (ADR 0099).
 
-use gpui::Keystroke;
+use gpui::{App, Keystroke};
+
+use crate::keymap::Os;
 
 /// Terminal modes that change what keys and pastes send.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -14,8 +17,41 @@ pub struct InputMode {
     pub bracketed_paste: bool,
 }
 
+/// What the system and `[terminal] option_as_meta` change about key encoding (ADR 0099). A GPUI
+/// global, set at start and whenever `settings.toml` changes, read by every pane on each key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyEnv {
+    pub os: Os,
+    /// macOS: Option sends ESC plus the key (Meta) instead of the character it composes.
+    pub option_as_meta: bool,
+}
+
+impl gpui::Global for KeyEnv {}
+
+impl KeyEnv {
+    /// This computer, with the setting's value.
+    pub const fn current(option_as_meta: bool) -> Self {
+        Self {
+            os: Os::CURRENT,
+            option_as_meta,
+        }
+    }
+
+    /// The global; this computer's default until it is set.
+    pub fn of(cx: &App) -> Self {
+        cx.try_global::<Self>()
+            .copied()
+            .unwrap_or(Self::current(false))
+    }
+}
+
 /// Bytes a key press sends to the PTY, or `None` if the terminal should ignore it.
-pub fn key_to_bytes(keystroke: &Keystroke, mode: InputMode) -> Option<Vec<u8>> {
+///
+/// On macOS an Option+key press is not ours unless `env.option_as_meta`: GPUI puts the composed
+/// character in `key_char` (Option+B is "∫"), and the key must reach the input method so that
+/// dead keys compose (Option+E, then E, is "é"). The input method types the result through
+/// `ime::Typing`.
+pub fn key_to_bytes(keystroke: &Keystroke, mode: InputMode, env: KeyEnv) -> Option<Vec<u8>> {
     let m = keystroke.modifiers;
     if m.platform {
         return None;
@@ -31,6 +67,9 @@ pub fn key_to_bytes(keystroke: &Keystroke, mode: InputMode) -> Option<Vec<u8>> {
             m.alt && !is_csi(&keystroke.key) && !shift_enter,
         ));
     }
+    if env.os == Os::Mac && m.alt && !m.control {
+        return option_bytes(keystroke, env.option_as_meta);
+    }
     // AltGr arrives as Ctrl+Alt with the composed char in `key_char`: send the char as is.
     let altgr = m.control && m.alt;
     let ctrl_only = m.control && !m.alt;
@@ -45,26 +84,54 @@ pub fn key_to_bytes(keystroke: &Keystroke, mode: InputMode) -> Option<Vec<u8>> {
     None
 }
 
-/// Plain Ctrl+C: copies the selection when there is one, else it is ^C for the program
-/// (like Windows Terminal, ADR 0022).
-pub fn is_copy_key(keystroke: &Keystroke) -> bool {
-    let m = keystroke.modifiers;
-    keystroke.key == "c" && m.control && !m.shift && !m.alt && !m.platform
+/// Option+key on macOS (not Ctrl, not a special key): `None` = the input method composes it;
+/// with `option_as_meta`, ESC plus the key as typed without Option (GPUI reports Shift+letter as
+/// shift plus the lowercase letter, and Shift on any other key as the shifted char).
+fn option_bytes(keystroke: &Keystroke, option_as_meta: bool) -> Option<Vec<u8>> {
+    if !option_as_meta {
+        return None;
+    }
+    let key = if keystroke.key == "space" {
+        " "
+    } else {
+        keystroke.key.as_str()
+    };
+    let mut chars = key.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else {
+        return None;
+    };
+    let c = if keystroke.modifiers.shift {
+        c.to_ascii_uppercase()
+    } else {
+        c
+    };
+    let mut bytes = vec![0x1b];
+    bytes.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+    Some(bytes)
 }
 
-/// Plain Ctrl+V: the pane pastes the clipboard; ^V goes to the program only when there is
-/// nothing to paste (ADR 0026).
-pub fn is_paste_key(keystroke: &Keystroke) -> bool {
+/// Plain Ctrl+C on Windows and Linux: copies the selection when there is one, else it is ^C for
+/// the program (like Windows Terminal, ADR 0022). Never on macOS, where Ctrl+C is always ^C and
+/// Cmd+C is the keymap's Copy (ADR 0099).
+pub fn is_copy_key(keystroke: &Keystroke, os: Os) -> bool {
     let m = keystroke.modifiers;
-    keystroke.key == "v" && m.control && !m.shift && !m.alt && !m.platform
+    os != Os::Mac && keystroke.key == "c" && m.control && !m.shift && !m.alt && !m.platform
+}
+
+/// Plain Ctrl+V on Windows and Linux: the pane pastes the clipboard; ^V goes to the program only
+/// when there is nothing to paste (ADR 0026). Never on macOS: Ctrl+V is ^V, Cmd+V pastes.
+pub fn is_paste_key(keystroke: &Keystroke, os: Os) -> bool {
+    let m = keystroke.modifiers;
+    os != Os::Mac && keystroke.key == "v" && m.control && !m.shift && !m.alt && !m.platform
 }
 
 /// What a key press in a terminal pane does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeyAction {
-    /// Copy the selection (plain Ctrl+C while text is selected, also in an exited pane).
+    /// Copy the selection (plain Ctrl+C while text is selected, also in an exited pane; not on
+    /// macOS).
     Copy,
-    /// Paste the clipboard (plain Ctrl+V in a live pane, ADR 0026).
+    /// Paste the clipboard (plain Ctrl+V in a live pane, ADR 0026; not on macOS).
     Paste,
     Send(Vec<u8>),
     Ignore,
@@ -77,14 +144,15 @@ pub fn key_action(
     selected: bool,
     exited: bool,
     mode: InputMode,
+    env: KeyEnv,
 ) -> KeyAction {
-    if selected && is_copy_key(keystroke) {
+    if selected && is_copy_key(keystroke, env.os) {
         return KeyAction::Copy;
     }
-    if !exited && is_paste_key(keystroke) {
+    if !exited && is_paste_key(keystroke, env.os) {
         return KeyAction::Paste;
     }
-    match key_to_bytes(keystroke, mode) {
+    match key_to_bytes(keystroke, mode, env) {
         Some(bytes) if !exited => KeyAction::Send(bytes),
         _ => KeyAction::Ignore,
     }
@@ -269,6 +337,18 @@ mod tests {
         app_cursor: true,
         bracketed_paste: true,
     };
+    const WIN: KeyEnv = KeyEnv {
+        os: Os::Windows,
+        option_as_meta: false,
+    };
+    const MAC: KeyEnv = KeyEnv {
+        os: Os::Mac,
+        option_as_meta: false,
+    };
+    const MAC_META: KeyEnv = KeyEnv {
+        os: Os::Mac,
+        option_as_meta: true,
+    };
 
     fn key(spec: &str, key_char: Option<&str>) -> Keystroke {
         let mut parts: Vec<&str> = spec.split('-').collect();
@@ -291,7 +371,7 @@ mod tests {
     }
 
     fn bytes(spec: &str, key_char: Option<&str>, mode: InputMode) -> Option<Vec<u8>> {
-        key_to_bytes(&key(spec, key_char), mode)
+        key_to_bytes(&key(spec, key_char), mode, WIN)
     }
 
     #[test]
@@ -304,14 +384,17 @@ mod tests {
 
     #[test]
     fn only_plain_ctrl_c_is_the_copy_key() {
-        assert!(is_copy_key(&key("ctrl-c", None)));
+        assert!(is_copy_key(&key("ctrl-c", None), Os::Windows));
         assert!(
-            !is_copy_key(&key("ctrl-shift-c", None)),
+            !is_copy_key(&key("ctrl-shift-c", None), Os::Windows),
             "bound Copy, handled by the keymap"
         );
-        assert!(!is_copy_key(&key("ctrl-alt-c", None)), "AltGr / Alt+^C");
-        assert!(!is_copy_key(&key("c", Some("c"))));
-        assert!(!is_copy_key(&key("ctrl-x", None)));
+        assert!(
+            !is_copy_key(&key("ctrl-alt-c", None), Os::Windows),
+            "AltGr / Alt+^C"
+        );
+        assert!(!is_copy_key(&key("c", Some("c")), Os::Windows));
+        assert!(!is_copy_key(&key("ctrl-x", None), Os::Windows));
         // Without a selection it is still ^C for the program.
         assert_eq!(bytes("ctrl-c", None, NORMAL), Some(vec![0x03]));
     }
@@ -319,17 +402,26 @@ mod tests {
     #[test]
     fn a_selection_is_copied_even_from_an_exited_pane() {
         let ctrl_c = key("ctrl-c", None);
-        assert_eq!(key_action(&ctrl_c, true, false, NORMAL), KeyAction::Copy);
-        assert_eq!(key_action(&ctrl_c, true, true, NORMAL), KeyAction::Copy);
         assert_eq!(
-            key_action(&ctrl_c, false, false, NORMAL),
+            key_action(&ctrl_c, true, false, NORMAL, WIN),
+            KeyAction::Copy
+        );
+        assert_eq!(
+            key_action(&ctrl_c, true, true, NORMAL, WIN),
+            KeyAction::Copy
+        );
+        assert_eq!(
+            key_action(&ctrl_c, false, false, NORMAL, WIN),
             KeyAction::Send(vec![0x03])
         );
-        assert_eq!(key_action(&ctrl_c, false, true, NORMAL), KeyAction::Ignore);
-        let a = key("a", Some("a"));
-        assert_eq!(key_action(&a, true, true, NORMAL), KeyAction::Ignore);
         assert_eq!(
-            key_action(&a, true, false, NORMAL),
+            key_action(&ctrl_c, false, true, NORMAL, WIN),
+            KeyAction::Ignore
+        );
+        let a = key("a", Some("a"));
+        assert_eq!(key_action(&a, true, true, NORMAL, WIN), KeyAction::Ignore);
+        assert_eq!(
+            key_action(&a, true, false, NORMAL, WIN),
             KeyAction::Send(b"a".to_vec())
         );
     }
@@ -337,14 +429,23 @@ mod tests {
     #[test]
     fn plain_ctrl_v_is_paste_only_while_live() {
         let ctrl_v = key("ctrl-v", None);
-        assert_eq!(key_action(&ctrl_v, false, false, NORMAL), KeyAction::Paste);
+        assert_eq!(
+            key_action(&ctrl_v, false, false, NORMAL, WIN),
+            KeyAction::Paste
+        );
         // A selection does not change it (Ctrl+C copies, Ctrl+V pastes).
-        assert_eq!(key_action(&ctrl_v, true, false, NORMAL), KeyAction::Paste);
-        assert_eq!(key_action(&ctrl_v, false, true, NORMAL), KeyAction::Ignore);
+        assert_eq!(
+            key_action(&ctrl_v, true, false, NORMAL, WIN),
+            KeyAction::Paste
+        );
+        assert_eq!(
+            key_action(&ctrl_v, false, true, NORMAL, WIN),
+            KeyAction::Ignore
+        );
         // Ctrl+Shift+V stays the keymap's; AltGr (ctrl-alt) and Win+V are not paste.
         for other in ["ctrl-shift-v", "ctrl-alt-v", "win-v", "v"] {
             assert_ne!(
-                key_action(&key(other, None), false, false, NORMAL),
+                key_action(&key(other, None), false, false, NORMAL, WIN),
                 KeyAction::Paste,
                 "{other}"
             );
@@ -476,6 +577,115 @@ mod tests {
         assert_eq!(
             paste_bytes("x\n\x1b[201~y", APP),
             b"\x1b[200~x\r[201~y\x1b[201~".to_vec()
+        );
+    }
+
+    #[test]
+    fn mac_ctrl_c_and_ctrl_v_are_never_copy_or_paste() {
+        // ADR 0099: on a Mac Ctrl+C interrupts even over a selection, Ctrl+V is ^V.
+        // Cmd+C / Cmd+V are the keymap's Copy and Paste.
+        let ctrl_c = key("ctrl-c", None);
+        assert!(!is_copy_key(&ctrl_c, Os::Mac));
+        assert_eq!(
+            key_action(&ctrl_c, true, false, NORMAL, MAC),
+            KeyAction::Send(vec![0x03])
+        );
+        let ctrl_v = key("ctrl-v", None);
+        assert!(!is_paste_key(&ctrl_v, Os::Mac));
+        assert_eq!(
+            key_action(&ctrl_v, false, false, NORMAL, MAC),
+            KeyAction::Send(vec![0x16])
+        );
+        // Windows and Linux keep ADR 0022 and ADR 0026.
+        for os in [Os::Windows, Os::Linux] {
+            assert!(is_copy_key(&ctrl_c, os), "{os:?}");
+            assert!(is_paste_key(&ctrl_v, os), "{os:?}");
+        }
+    }
+
+    #[test]
+    fn mac_cmd_keys_are_not_for_the_program() {
+        // A bound Cmd key never gets here (the keymap spends it); an unbound one is ignored.
+        for spec in ["win-c", "win-v", "win-k", "win-a"] {
+            let keystroke = key(spec, None);
+            assert_eq!(
+                key_action(&keystroke, true, false, NORMAL, MAC),
+                KeyAction::Ignore,
+                "{spec}"
+            );
+        }
+    }
+
+    #[test]
+    fn mac_option_composes_by_default() {
+        // Option+B is "∫", Option+2 "€", Option+E the dead accent "´": the key press sends
+        // nothing, so GPUI hands it to the input method, which types the result (ime.rs).
+        for (spec, composed) in [("alt-b", "∫"), ("alt-2", "€"), ("alt-e", "´")] {
+            let keystroke = key(spec, Some(composed));
+            assert_eq!(key_to_bytes(&keystroke, NORMAL, MAC), None, "{spec}");
+            assert_eq!(
+                key_action(&keystroke, false, false, NORMAL, MAC),
+                KeyAction::Ignore,
+                "{spec}"
+            );
+        }
+        // Keys that are not text keep their encoding.
+        assert_eq!(
+            key_to_bytes(&key("alt-left", None), NORMAL, MAC),
+            Some(b"\x1b[1;3D".to_vec())
+        );
+        assert_eq!(
+            key_to_bytes(&key("alt-backspace", None), NORMAL, MAC),
+            Some(b"\x1b\x7f".to_vec())
+        );
+        assert_eq!(
+            key_to_bytes(&key("alt-enter", None), NORMAL, MAC),
+            Some(b"\x1b\r".to_vec())
+        );
+        // Windows is unchanged: Alt prefixes ESC.
+        assert_eq!(
+            key_to_bytes(&key("alt-b", Some("b")), NORMAL, WIN),
+            Some(b"\x1bb".to_vec())
+        );
+    }
+
+    #[test]
+    fn mac_option_as_meta_sends_escape_and_the_plain_key() {
+        let cases: [(&str, &str, &[u8]); 6] = [
+            ("alt-b", "∫", b"\x1bb"),
+            ("alt-f", "ƒ", b"\x1bf"),
+            // GPUI reports Shift+letter as shift plus the lowercase letter.
+            ("alt-shift-b", "ı", b"\x1bB"),
+            ("alt-1", "¡", b"\x1b1"),
+            // Shift on a non-letter arrives as the shifted char with shift off.
+            ("alt-!", "⁄", b"\x1b!"),
+            ("alt-space", "\u{a0}", b"\x1b "),
+        ];
+        for (spec, composed, expected) in cases {
+            assert_eq!(
+                key_to_bytes(&key(spec, Some(composed)), NORMAL, MAC_META),
+                Some(expected.to_vec()),
+                "{spec}"
+            );
+        }
+        // Ctrl+Option keeps its C0 form.
+        assert_eq!(
+            key_to_bytes(&key("ctrl-alt-c", None), NORMAL, MAC_META),
+            Some(vec![0x1b, 0x03])
+        );
+        // The setting does nothing on other systems.
+        let win_meta = KeyEnv {
+            os: Os::Windows,
+            option_as_meta: true,
+        };
+        assert_eq!(
+            key_to_bytes(&key("ctrl-alt-q", Some("@")), NORMAL, win_meta),
+            Some(b"@".to_vec()),
+            "AltGr still types"
+        );
+        assert_eq!(
+            key_to_bytes(&key("alt-b", Some("b")), NORMAL, win_meta),
+            Some(b"\x1bb".to_vec())
         );
     }
 }
