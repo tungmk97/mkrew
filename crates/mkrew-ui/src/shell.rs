@@ -68,6 +68,7 @@ pub(crate) mod thread_panel;
 mod toasts;
 mod update;
 mod voice_input;
+mod widget_bar;
 mod workspace;
 mod workspace_actions;
 mod worktrees;

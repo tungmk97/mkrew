@@ -325,6 +325,16 @@ pub enum Request {
     /// has a plan (for a client that connects later).
     #[serde(rename = "session.plan")]
     SessionPlan(ProjectRef),
+    /// Returns `AgentLimits[]`: the newest limits each agent reported, so a client that
+    /// connects later has them at once (spec 2026-11-22 section 5.1).
+    #[serde(rename = "limits.get")]
+    LimitsGet,
+    /// Returns nothing (`null`): the limits an agent's own status line (`mk statusline`)
+    /// saw. `invalid_request` for an agent other than Claude and Codex or a percentage that
+    /// is not a number; the daemon keeps the newest `observed_at` per agent and announces
+    /// each change as `agent.limits`.
+    #[serde(rename = "limits.report")]
+    LimitsReport(AgentLimits),
 }
 
 /// Body of a response: `"result"` on success, `"error"` on failure.
@@ -463,6 +473,12 @@ pub enum Event {
     /// The checklist of a linked plan changed (ADR 0039).
     #[serde(rename = "session.plan")]
     SessionPlan(SessionPlanEvent),
+    /// The newest limits of one agent changed (spec 2026-11-22 section 5.1).
+    #[serde(rename = "agent.limits")]
+    AgentLimits(AgentLimits),
+    /// CPU and RAM of the daemon's machine, sent while a client is connected (section 6).
+    #[serde(rename = "machine.stats")]
+    MachineStats(MachineStats),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -1738,6 +1754,49 @@ pub struct SessionUsageEvent {
     /// UI's: the socket is local, SPEC §3), once located. Sent again when it changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript: Option<String>,
+}
+
+/// One rate-limit window of an agent account (spec 2026-11-22 section 5.1).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct LimitWindow {
+    /// How much of the window is used, 0-100.
+    pub used_percent: f32,
+    /// When the window resets, Unix seconds; `None` when the agent does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<i64>,
+}
+
+/// The newest 5-hour and weekly limits one agent reported. Limits belong to the account, not
+/// to a session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentLimits {
+    /// `Claude` or `Codex`; the daemon refuses the other agents.
+    pub agent: Cli,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub five_hour: Option<LimitWindow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weekly: Option<LimitWindow>,
+    /// When the agent reported them, Unix seconds.
+    pub observed_at: i64,
+}
+
+impl AgentLimits {
+    /// Whether `self` replaces `old`, the stored limits of the same agent: not older, and not
+    /// the same content (so a repeat is no news). The daemon and the UI both use this rule, so
+    /// a late answer never undoes a newer event.
+    pub fn supersedes(&self, old: &AgentLimits) -> bool {
+        self.observed_at >= old.observed_at && self != old
+    }
+}
+
+/// CPU and RAM of the daemon's machine (spec 2026-11-22 section 6).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MachineStats {
+    /// Total CPU use over all cores, 0-100.
+    pub cpu_percent: f32,
+    pub ram_used: u64,
+    /// 0 when the OS reports no total: the client leaves the RAM part out.
+    pub ram_total: u64,
 }
 
 /// A run session's ports (SPEC §10): every port it printed so far, at most 4, in order.

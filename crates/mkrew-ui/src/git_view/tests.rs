@@ -587,6 +587,26 @@ fn in_the_history_n_and_p_move_between_the_commits_files_only() {
 }
 
 #[test]
+fn the_widget_click_steps_to_the_next_file_and_wraps_at_the_end() {
+    let mut view = loaded();
+    let first = target(Group::Staged, "a.rs");
+    assert_eq!(view.selected, Some(first.clone()));
+    for (group, path) in [
+        (Group::Unstaged, "a.rs"),
+        (Group::Unstaged, "b.rs"),
+        (Group::Untracked, "new.txt"),
+    ] {
+        assert_eq!(view.key(Key::NextWrapping).diff, Some(target(group, path)));
+    }
+    assert_eq!(
+        view.key(Key::NextWrapping).diff,
+        Some(first.clone()),
+        "past the last file: the first"
+    );
+    assert_eq!(view.selected, Some(first));
+}
+
+#[test]
 fn git_changed_refreshes_the_status_and_the_shown_diff() {
     let mut view = GitView::new(Ulid::new(), None);
     let changed = |project_id| {

@@ -572,6 +572,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `port.list` | – | `PortRow[]`: every listening TCP port of the daemon's machine (`port`, `addr`, `pid`, `process`, `project_id?`, `worktree_task_id?`, `branch?` without `mkrew/`, `session_id?`, `session_title?`, `run_command?`); a pid under a live session takes that session's workspace, worktree and run command; else a cwd inside a workspace or task worktree folder (the longest wins) takes it; the daemon and its own children (`mk web`) are left out (spec 2026-11-01, ADR 0091) |
 | `port.stop` | `port`, `pid` | ok - lists again first; `not_found` when `pid` no longer holds `port`; a run command's session is killed like `project.run_stop`; any other process is killed with its descendants, never its parents, so a shell pane or an agent stays; `invalid_state` when the OS refuses, when the daemon is among the descendants (it never kills itself), or when `pid` is a session's own root process |
 | `watch.release` | `project_id`, `worktree_task_id?` | ok (`null`) - the UI no longer shows that workspace (or task worktree): it gives back the file watcher that `doc.*`, `fs.*` and `git.status` keep running. The watcher stops unless a session of the project is live; a later request of those kinds keeps it again (ADR 0087) |
+| `limits.get` | - | `AgentLimits[]`: the newest 5-hour and weekly limits each agent reported (`agent` = claude or codex, `five_hour?` / `weekly?` = `{used_percent, resets_at?}`, `observed_at` Unix seconds); kept in daemon memory only (ADR 0102) |
+| `limits.report` | `AgentLimits` | ok (`null`) - from `mk statusline`; the daemon keeps the newest `observed_at` per agent (a tie: the later report) and announces `agent.limits`; `invalid_request` for an agent other than claude and codex or a percentage that is not a number; percentages are clamped to 0-100 |
 | `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task (`list`: Task[], filters `project_id?`/`status?`; `create` = Todo card, `title`, `prompt`, `agent_profile?` (none = project `default_agent` at run time, stored as `''`), `position?` (after the last Todo card); `update`: `title`/`prompt`/`agent_profile`, absent = unchanged, `null` agent = default; `move`: `status` + `position`; `delete` returns ok, `invalid_state` while a session of the task is not exited, its exited sessions stay as history with `task_id` = NULL — ADR 0004) |
 | `task.run` | `task_id`, `cols`, `rows` | `session_id` |
 | `task.undo_preview` | `task_id` | `checkpoint`, `fingerprint` (opaque), `changed[]` (tracked files restored), `added[]` (tracked since the checkpoint, deleted), `created[]` (untracked files created since, deleted), `diff` (≤ 1 MiB) + `diff_truncated`; `invalid_state` without a checkpoint (ADR 0005) |
@@ -642,6 +644,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.exited` | process exited, with `exit_code` |
 | `session.ports` | a run session's port list grew (`session_id`, `ports`): ports are scanned from its screen text (`http(s)://<host>:<port>`, `port(s)[:=] <n>`), first 4 distinct, never removed while it lives |
 | `session.usage` | an agent session's token usage changed at a turn end (§20E.3): `session_id`, `input` (fresh, cache excluded), `output`, `cache_read`, `cache_write`, `context`, `context_window?`, `model?`, `transcript?` |
+| `agent.limits` | an agent's newest limits changed (`AgentLimits`, see `limits.get`); Codex's come from its transcript at a turn end (§20E.3), Claude's from `mk statusline` |
+| `machine.stats` | CPU and RAM of the daemon's machine: `cpu_percent`, `ram_used`, `ram_total` (0 = unknown); sampled every 2 s while a client is connected, sent when CPU moves 1 point or RAM 100 MB, or every 10 s |
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
 | `session.updated` | a session's title, color, pin, position or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.move`, `session.link_plan`): the whole Session |
 | `session.terminal_title` | an agent session's terminal title (OSC 0/2) changed: `session_id`, `title?` — leading glyphs stripped, paths ignored, ≤ 60 chars, once per change; memory only (ADR 0031) |
@@ -696,7 +700,9 @@ Protocol 53 (ADR 0095): `attachment.save` takes `owner` (`{"session": id}` or `{
 
 Protocol 54 (Polish spec 2026-11-21 §8): requests `git.branches`, `git.checkout`, `fs.search`.
 
-Protocol 56 (ADR 0103; 55 is the Widget bar's): `git.discard` takes `hunk`.
+Protocol 55 (Widget bar spec 2026-11-22 sections 5 and 6, ADR 0102): requests `limits.get` and `limits.report`, events `agent.limits` and `machine.stats`.
+
+Protocol 56 (ADR 0103): `git.discard` takes `hunk`.
 
 Protocol 41: `session.move` and `Session.position`.
 
@@ -790,6 +796,7 @@ mk send <session-id> "<text>" [--no-submit]
 mk wait <session-id> --until idle,needs_input,done [--timeout 60000]
 mk integration install|uninstall|status <claude|codex|omp|copilot>
 mk hook <agent> <event>                # called by agent hooks, not by users
+mk statusline                          # Claude Code's status line command (ADR 0102): reports the rate limits, then runs your own status line; set up by `mk integration install claude`
 mk open <project> [file[:line]]        # opens in Zed
 mk comment list [--file <path>] [--project P]  # default project: MKREW_SESSION_ID's, else cwd's
 mk comment reply <comment-id> "<text>" # used by agents to answer review comments
@@ -820,10 +827,12 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 │ ▸ W web       1 idle│                                                                 │
 │ ▸ 2 empty workspaces I D │                                                            │
 │ 📥 Inbox clear     ⇤ │                                                                │
-└──────────────┴────────────────────────────────────────────────────────────────────────┘
+├──────────────┴────────────────────────────────────────────────────────────────────────┤
+│ 📁 api  ⎇ master · 3                  Claude 5h 42% · 7d 18%  CPU 23% · RAM 11/32 GB  v0.5.3 │
+└───────────────────────────────────────────────────────────────────────────────────────┘
 ```
 ADR 0054 simplified this screen: one place per piece of information, color for status only,
-empty things hidden, detail on hover / in menus. There is no status bar.
+empty things hidden, detail on hover / in menus. It removed the old status bar; ADR 0102 adds back a thin widget bar along the bottom (see "Widget bar" below).
 The right panel (below) is a third column right of Terminals, the Editor and the Diff while open.
 Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view bar only while a file tab or a diff is open.
 
@@ -948,6 +957,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   compact toggle in the sidebar footer, its git HEAD in the title bar's repository tooltip, the
   focused agent's context share in the tab strip (single pane) or pane header (split), and the
   other usage fields (tokens, cache, model) on the Session tab's card.
+  The widget bar of ADR 0102 is not that bar: it holds only the folder, branch, limits, machine load and version.
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
   Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`; Esc gives
   the keyboard back and keeps a typed draft on the card, like the composer).
@@ -1126,6 +1136,20 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   `port.list` is asked when it opens, every 2 s while it is open and after each Stop; nothing runs while it is closed; it closes on disconnect.
   `↑` / `↓` select, Enter opens the pane.
 - **Empty states** everywhere (see §14).
+
+### Widget bar (ADR 0102)
+
+- One bar, `WIDGET_BAR_HEIGHT` tall, along the bottom of the main window, below the sidebar and the main area (`theme.chrome`, a 1 px `theme.border` top edge, muted text, the same in dark and light).
+  Detached windows have none.
+- Left: **folder** (the workspace name; tooltip the root path; click opens it in the file explorer) and **Git** (a branch icon and `master`, with ` · 3` when 3 files changed, `2 repos` for several; click opens the Git view, and with Git already open steps to the next changed file, wrapping at the end).
+  Right: **limits** (`Claude 5h 42% · 7d 18% | Codex 5h 10% · 7d 3%`; a window below 80 % is muted, from 80 % amber, from 95 % red; the tooltip gives each reset in local time and as "in 2 h 10 min"; click opens Settings at the Integrations pages), **machine** (`CPU 23% · RAM 11.2/31.8 GB` of the daemon's machine, no click), **version** (`v0.5.3`; click runs the update check).
+- The folder and branch labels end with an ellipsis (`…`) when they pass `WIDGET_BAR_LABEL_MAX_WIDTH` (160 px); the folder's tooltip has its path, the Git tooltip every repository line.
+- A widget with nothing to show is absent: no limits reported yet, no stats yet, no workspace, no repository.
+  A limit window whose reset time passed shows nothing until a new report.
+- A narrow window drops limits first, then machine; folder, Git and version stay.
+- The bar is inert while a dialog is open and while the window is reconnecting: clicks and the right-click menu do nothing and the bar's own menu is not drawn.
+- Right-click anywhere on the bar: one checkable row per widget and "Hide widget bar".
+  `[ui] widget_bar` and `[ui] widgets_hidden` (ids `folder`, `git`, `limits`, `machine`, `version`; unknown ids are kept) remember the choices; Settings has a "Widget bar" switch on Appearance.
 
 ### Detached windows (ADR 0096)
 
@@ -1473,6 +1497,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Toggle full screen | F11 |
 | Global | Toggle sidebar | Ctrl+Shift+B |
 | Global | Toggle compact sidebar | Ctrl+Alt+B |
+| Global | Show / hide the widget bar (ADR 0102) | Ctrl+Alt+Shift+J |
 | Global | Voice input: start / stop recording (§20G) | Ctrl+Shift+D |
 | Global | Ask AI: a question outside every project (§20H) | Ctrl+Shift+G |
 | Global | Focus the sidebar filter with the active row highlighted (shows the sidebar if hidden, widens the compact rail; again returns to the pane) | Alt+0 |
@@ -1654,7 +1679,7 @@ before it (`Theme::classic`).
 | `danger-bg` | #342526 | #F8E8E6 |
 | `danger-text` / `success-text` | #EF8F82 / #6FD39B | #B4382A / #1E6B3A |
 | `status-working` | #8E8CF5 | #5452D0 |
-| `status-needs-input` (attention) | #E4A452 | #A4660F |
+| `status-needs-input` (attention) | #E4A452 | #8B570D |
 | `status-done` (success) | #57C78A | #23854F |
 | `status-exited` (danger) | #EF7B6C | #C2412F |
 | `status-idle` | #7D838C | #8A8F99 |
@@ -1767,7 +1792,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   Palette: "Global: Manage prompts…" (also in a machine window); the prompt picker's last row "Manage prompts…" opens the page too.
 - Machine chip and reconnect banner (ADR 0089) add no tokens; they reuse these.
   Chip: `well` fill, `text-muted` icon and name, `radius::PILL`, `PILL_HEIGHT` (22), `ICON_SIZE_SMALL` (14), `META` text, `space::XS` between parts, `TITLE_CHIP_MAX_WIDTH` (160).
-  Dot (`status_dot`, also on the Machines rows): `status-done` #57C78A / #23854F, `status-needs-input` #E4A452 / #A4660F, `status-exited` #EF7B6C / #C2412F, `text-muted` for a closed window.
+  Dot (`status_dot`, also on the Machines rows): `status-done` #57C78A / #23854F, `status-needs-input` #E4A452 / #8B570D, `status-exited` #EF7B6C / #C2412F, `text-muted` for a closed window.
   Banner: `warning-bg` #322B23 / #F4EDE2 fill, a `BORDER_WIDTH` bottom edge in `divider`, `space::M` x `space::S` padding, `META` text in `text` (the detail line in `text-muted`), **Try now** a primary button.
   The Machines rows and Add card use `space::S` / `space::M`, `radius::MEDIUM` and `surface-raised`; a broken-file error shows `status-exited` ✕ and `text`.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
@@ -2160,6 +2185,8 @@ close_to_tray = true        # §20J; Windows: ✕ hides the window to the tray i
 board_all_workspaces = false # §10; the Board shows every workspace's tasks; its `This workspace | All workspaces` switch writes it
 md_mode = "preview"         # §12A; preview | split | source: how the next .md file opens; switching a file's mode writes it
 md_split = 50               # §12A; the source's share of the Markdown Split view, percent (kept 20-80); dragging the divider writes it
+widget_bar = true          # §10; the widget bar at the bottom of the main window; its menu and Ctrl+Alt+Shift+J write it
+widgets_hidden = []        # §10; ids of hidden widgets: folder, git, limits, machine, version; its menu writes it
 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
@@ -2474,6 +2501,13 @@ and milestone numbers are not reused.
    trusted). A call with no tokens (aborted) changes neither. omp's file does not hold the
    context window: `context_window` in the profile is the only source.
    Unknown/changed format → no usage, one warning in the log.
+4. **Agent limits (ADR 0102).** Limits belong to the account, so the daemon keeps the newest `AgentLimits` per agent in memory (`observed_at` wins, a tie goes to the later report) and announces each change as `agent.limits`; `limits.get` returns them.
+   Codex: `UsageReader` reads `payload.rate_limits` of each `token_count` line (also while `info` is null): `primary` / `secondary` with `window_minutes` 300 are the 5-hour window and 10080 the weekly one, any other length is ignored, `used_percent` and `resets_at` are taken as written, `observed_at` is the line's timestamp; the `track` task passes them on at each turn end.
+   Claude: `mk statusline` reads Claude Code's status line JSON from stdin (at most 1 MB), takes `rate_limits.five_hour` and `rate_limits.seven_day` (`used_percentage`, `resets_at` in Unix seconds) and sends `limits.report` within 300 ms; a failure is silent.
+   It then runs the user's own status line, saved by `mk integration install claude` in `claude-statusline.json` next to `settings.json`, through the shell with the same stdin and a 5 s timeout, and prints its output; any failure prints nothing and exits 0.
+   Install sets `statusLine` to the `mk` path followed by `statusline`, in a form both Git Bash and PowerShell parse (see ADR 0102); uninstall puts the saved line back or removes the key.
+   `mk integration status claude` says "partly installed" when the hooks are in but the status line is not.
+   omp and Copilot record no limits.
 
 **Protocol (M13):** `task.create/update` accept `worktree: bool`; Task carries `worktree`,
 `worktree_path?`, `branch?`, `fanout_of?`; new `task.merge` (`task_id`, `confirm: true`) →

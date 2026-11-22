@@ -52,7 +52,12 @@ ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 [target.'cfg(windows)'.dependencies]
 # `Get/SetConsoleMode`: VT for `mk attach`; `QueryFullProcessImageNameW`: the daemon's exe
 # (`mk daemon stop --only-from`).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dependencies]
+# `mk statusline`: `kill(-pgid, SIGKILL)` for a status line command past its timeout; 1.x is
+# already in the tree through mkrew-daemon.
+rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

@@ -18,7 +18,7 @@ Reviewing an agent's work still took extra steps: marking a file viewed left the
   On a viewed file's folded diff the hunks are hidden, so `n` / `p` go straight to the next / previous file that is not viewed.
   In the History the keys never leave the commit's files.
 - `git.discard` takes `hunk` (a `HunkTarget`) with `paths` empty; the daemon builds the same patch as for a hunk stage and runs `git apply -R` on the working tree.
-  Protocol 56 (55 is the Widget bar's).
+  Protocol 56.
   The daemon refuses an untracked path with `invalid_request`; the UI offers the button only on a modified file of the Changes group, and `x` takes the current hunk, else the file.
   The confirm dialog lists that hunk's rows; its button stays disabled, and a confirm that still arrives is refused, if the reloaded diff no longer has that hunk.
   A failed discard reads the diff again, so the dialog and the page show the file as it is now.
