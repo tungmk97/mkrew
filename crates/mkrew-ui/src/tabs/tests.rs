@@ -983,3 +983,77 @@ fn activate_skipping_moves_off_a_hidden_tab() {
     tabs.activate_skipping(|_| false);
     assert!(tabs.active().is_none(), "nothing to move off");
 }
+
+#[test]
+fn a_pane_keeps_its_chat_mode_in_the_layout_json() {
+    let project = Ulid::new();
+    let [a, b] = [Ulid::new(), Ulid::new()];
+    let split = json!({"split":"vertical","ratio":0.5,"children":[
+        {"session": a.to_string(), "chat": true},
+        pane(b)
+    ]});
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "main", 1.0, split.clone())]);
+    assert_eq!(tabs.chat_of(a), Some(true));
+    assert_eq!(
+        tabs.chat_of(b),
+        None,
+        "layouts of older versions have no flag"
+    );
+    // Any layout write (a divider drag) carries the flag and adds none.
+    assert_eq!(tabs.write_active().unwrap().layout, split);
+
+    let write = tabs.set_chat(b, Some(true)).unwrap();
+    assert_eq!(
+        write.layout["children"][1],
+        json!({"session": b.to_string(), "chat": true})
+    );
+    assert_eq!(
+        tabs.set_chat(b, Some(true)),
+        None,
+        "unchanged: nothing to write"
+    );
+    let write = tabs.set_chat(a, Some(false)).unwrap();
+    assert_eq!(write.layout["children"][0]["chat"], json!(false));
+    assert_eq!(tabs.set_chat(Ulid::new(), Some(true)), None, "no such pane");
+}
+
+#[test]
+fn moving_and_arranging_panes_keeps_their_chat_mode() {
+    let project = Ulid::new();
+    let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];
+    let split = json!({"split":"vertical","ratio":0.5,"children":[
+        {"session": a.to_string(), "chat": true},
+        pane(b)
+    ]});
+    let tab = wire(project, "main", 1.0, split);
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![tab.clone()]);
+    tabs.move_pane(a, b, Axis::Horizontal).unwrap();
+    assert_eq!(tabs.chat_of(a), Some(true), "a moved pane");
+    assert_eq!(tabs.chat_of(b), None);
+    tabs.arrange(tab.id, Preset::Columns3, &[c]).unwrap();
+    assert_eq!(tabs.chat_of(a), Some(true), "a re-arranged pane");
+    assert_eq!(tabs.chat_of(c), None);
+    tabs.close_pane(b);
+    assert_eq!(tabs.chat_of(a), Some(true), "a pane whose sibling closed");
+}
+
+#[test]
+fn a_cross_tab_move_keeps_the_pane_chat_mode() {
+    let project = Ulid::new();
+    let [a, b] = [Ulid::new(), Ulid::new()];
+    let one = wire(
+        project,
+        "one",
+        1.0,
+        json!({"session": a.to_string(), "chat": true}),
+    );
+    let two = wire(project, "two", 2.0, pane(b));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one, two.clone()]);
+    tabs.move_pane(a, b, Axis::Horizontal).unwrap();
+    assert_eq!(tabs.tab_of(a).map(|t| t.id), Some(two.id), "a changed tab");
+    assert_eq!(tabs.chat_of(a), Some(true));
+    assert_eq!(tabs.chat_of(b), None);
+}

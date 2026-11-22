@@ -140,6 +140,9 @@ pub const CONTROL_HEIGHT: f32 = 30.0;
 pub const INPUT_HEIGHT: f32 = 32.0;
 /// One segment of a segmented control.
 pub const SEGMENT_HEIGHT: f32 = 26.0;
+/// A segment of the pane header's `Terminal | Chat` switch: with its padding and border the
+/// switch is as tall as [`CONTROL_HEIGHT`], so headers line up with and without it.
+pub const COMPACT_SEGMENT_HEIGHT: f32 = CONTROL_HEIGHT - 2.0 * (SEGMENT_PADDING + BORDER_WIDTH);
 /// A status pill (Idle, In Progress) and an area chip / Git `M` badge.
 pub const PILL_HEIGHT: f32 = 22.0;
 pub const CHIP_HEIGHT: f32 = 20.0;
@@ -367,6 +370,12 @@ pub const PROMPT_FIELD_HEIGHT: f32 = 140.0;
 
 /// Tallest an agent pane's prompt composer grows (it scrolls past that, ~8 lines; §20B.1).
 pub const COMPOSER_MAX_HEIGHT: f32 = 160.0;
+
+/// Widest share of the Chat page a prompt card takes (it sits at the right).
+pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
+
+/// How far one arrow key scrolls the chat list, in px.
+pub const CHAT_SCROLL_STEP: f32 = 48.0;
 
 /// Tallest the composer's list of queued texts grows (it scrolls past that, ~4 rows; §20B.2).
 pub const COMPOSER_QUEUE_MAX_HEIGHT: f32 = 88.0;

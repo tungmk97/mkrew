@@ -42,6 +42,7 @@ mod send_dialog;
 mod ask_dialog;
 mod attention;
 pub(crate) mod board;
+pub(crate) mod chat_view;
 mod composer;
 mod connection;
 mod dialogs;

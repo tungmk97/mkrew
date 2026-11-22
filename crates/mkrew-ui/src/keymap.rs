@@ -70,6 +70,8 @@ pub enum Command {
     Peek,
     /// Open the prompt composer of the focused agent pane (§20B.1).
     OpenComposer,
+    /// Switch the focused agent pane between Terminal and Chat (ADR 0104).
+    ToggleChat,
     /// Send the picked lines (Files, Git diff) or the terminal selection to an agent's
     /// composer (§20B.4).
     SendSelection,
@@ -296,6 +298,7 @@ impl Command {
             Command::PreviousInbox,
             Command::Peek,
             Command::OpenComposer,
+            Command::ToggleChat,
             Command::SendSelection,
             Command::CopyMode,
             Command::LinkHints,
@@ -408,6 +411,7 @@ impl Command {
             Command::PreviousInbox => "previous_inbox".into(),
             Command::Peek => "peek".into(),
             Command::OpenComposer => "open_composer".into(),
+            Command::ToggleChat => "toggle_chat".into(),
             Command::SendSelection => "send_selection".into(),
             Command::CopyMode => "copy_mode".into(),
             Command::LinkHints => "link_hints".into(),
@@ -532,6 +536,7 @@ impl Command {
             Command::PreviousInbox => "ctrl-alt-i".into(),
             Command::Peek => "ctrl-shift-space".into(),
             Command::OpenComposer => "ctrl-shift-enter".into(),
+            Command::ToggleChat => "ctrl-alt-t".into(),
             Command::SendSelection => "ctrl-shift-l".into(),
             Command::CopyMode => "alt-shift-c".into(),
             Command::LinkHints => "alt-shift-o".into(),
@@ -1186,6 +1191,8 @@ mod tests {
         assert_eq!(bound("ctrl-shift-space"), Some(Command::Peek));
         assert_eq!(keymap.label(Command::Peek), "Ctrl+Shift+Space");
         assert_eq!(bound("ctrl-shift-enter"), Some(Command::OpenComposer));
+        assert_eq!(bound("ctrl-alt-t"), Some(Command::ToggleChat));
+        assert_eq!(keymap.label(Command::ToggleChat), "Ctrl+Alt+T");
         assert_eq!(bound("ctrl-shift-l"), Some(Command::SendSelection));
         assert_eq!(bound("ctrl-shift-1"), Some(Command::ShowTerminals));
         assert_eq!(bound("ctrl-shift-2"), Some(Command::ShowBoard));

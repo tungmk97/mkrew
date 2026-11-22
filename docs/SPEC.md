@@ -1198,6 +1198,15 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   border, the unfocused ones are dimmed. The sidebar session row also puts the badge
   before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
   color, ADR 0058); it also shows on board cards and in agent menus.
+- **Chat mode** (ADR 0104): an agent pane whose profile has a readable transcript (Claude, Codex, omp) has a `Terminal | Chat` switch in its header (for a single pane, in the tab strip next to its status pill) and `Ctrl+Alt+T` toggles it (palette: "Agent: Toggle chat view").
+  The mode is kept per pane in the tab layout: the pane's leaf holds `chat: true` or `chat: false`, and a leaf without the flag follows `[ui] chat_default` (default `false`).
+  Chat draws the last 50 turns of the transcript: the prompt as a right-aligned card, the agent's text as Markdown (selectable inside one message), tool calls as collapsed rows `name target` that open to the arguments and the result (an error result in the danger color), thinking as a collapsed row (Claude, omp), the latest plan as a card, a pending Claude question as a card whose "Answer in terminal" button switches to Terminal, and a tray of the turn's running Claude subagents.
+  The plan comes from Claude `TodoWrite`, Claude's task tools (`TaskCreate`, `TaskUpdate`, `TaskList`, which current Claude Code uses by default) or Codex `update_plan`.
+  A Claude subagent started in the background stays in the tray until its `<task-notification>` arrives.
+  Codex tool output is read in the shapes current Codex writes: a JSON string with `metadata.exit_code`, or text with an `Exit code: N` or `Process exited with code N` line before `Output:`.
+  The tool and thinking row toggles, the "earlier turns" link and "Answer in terminal" are Tab stops (Enter or Space presses them); PageUp, PageDown, Home, End and the arrows scroll the list, and Esc ends a selection, else returns to the composer.
+  The composer is docked under it and always shown.
+  The terminal keeps running underneath and still reports the state.
 - Pane menu (right-click a split pane's header or a sidebar session row, or Shift+F10 with the pane focused): **Pin**, **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise), **Rename** (inline
   like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears). A
   colored pane tints its agent chip and draws a thin line under its header (a single pane: on
@@ -1532,6 +1541,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Panes | Move focus; past the outer pane (or from Board, Docs, Editor, Diff) ← enters the sidebar filter and → the right panel's file tree or Git list, only while on screen (the compact rail widens); from those ← / → come back to the center | Alt+←↑→↓ |
 | Panes | Resize | Alt+Shift+←↑→↓ |
 | Panes | Zoom / unzoom pane | Ctrl+Shift+M |
+| Panes | Toggle Terminal / Chat of the focused agent pane (ADR 0104; works while its composer has the keys) | Ctrl+Alt+T |
 | Panes | Close pane (asks if agent running) | Ctrl+Shift+X |
 | Panes | Rename pane (also: double-click its title) | F2 |
 | Terminal | Copy / paste | Ctrl+Shift+C (or Ctrl+C while text is selected) / Ctrl+V or Ctrl+Shift+V |
@@ -2185,6 +2195,7 @@ close_to_tray = true        # §20J; Windows: ✕ hides the window to the tray i
 board_all_workspaces = false # §10; the Board shows every workspace's tasks; its `This workspace | All workspaces` switch writes it
 md_mode = "preview"         # §12A; preview | split | source: how the next .md file opens; switching a file's mode writes it
 md_split = 50               # §12A; the source's share of the Markdown Split view, percent (kept 20-80); dragging the divider writes it
+chat_default = false         # §11; agent panes without a saved mode open in Chat (Claude, Codex, omp); each pane's Terminal | Chat switch overrides it
 widget_bar = true          # §10; the widget bar at the bottom of the main window; its menu and Ctrl+Alt+Shift+J write it
 widgets_hidden = []        # §10; ids of hidden widgets: folder, git, limits, machine, version; its menu writes it
 
@@ -2295,6 +2306,7 @@ context_window = 200000        # tokens, for the % shown
    `@` opens the palette on its Files scope in insert mode (§13); the pick inserts `composer.file_ref` with `{path}` = the project-relative path, `/` separators, quoted with `"` if it contains spaces.
    `/` opens the agent's command picker (§20B.7).
    Drafts are kept per session in UI memory (lost on UI restart, which is fine).
+   In a pane in Chat mode (§11) the composer is always shown: Enter sends, Shift+Enter is a new line, Esc moves the keys to the chat list instead of hiding it (ADR 0104).
    ✦ (shown while the composer has the keyboard and the draft is not blank) sends the draft to
    the session's own agent profile via `ai.generate` (`enhance_prompt`, §7). The agent may read
    the project folder for context. The rewrite replaces the draft, and the user still sends it.

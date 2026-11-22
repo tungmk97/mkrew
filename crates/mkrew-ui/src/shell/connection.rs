@@ -43,6 +43,7 @@ impl Shell {
         let diff_wrap = ui.diff_wrap;
         let close_to_tray = ui.close_to_tray && local;
         let reading_default = ui.reading_width;
+        let chat_default = ui.chat_default;
         let board_all = ui.board_all_workspaces;
         let (widget_bar, widgets_hidden) = (ui.widget_bar, ui.widgets_hidden);
         let (md_mode, md_split) = (ui.md_mode, files_view::md_split_share(ui.md_split));
@@ -184,8 +185,11 @@ impl Shell {
                     // The recording meter has its own faster redraw (`toggle_voice`).
                     let transcribing = matches!(shell.voice, voice::State::Transcribing);
                     let jira_busy = shell.jira.values().any(JiraView::busy);
-                    let due =
-                        board_due || shell.starting_pane.is_some() || transcribing || jira_busy;
+                    let due = board_due
+                        || shell.starting_pane.is_some()
+                        || transcribing
+                        || jira_busy
+                        || shell.chat_animating();
                     if window.is_visible() && (due || status::redraw_due(sessions, last, now)) {
                         cx.notify();
                     }
@@ -373,6 +377,7 @@ impl Shell {
             collapsed_groups: HashSet::new(),
             reading_default,
             reading_width: HashMap::new(),
+            chat_default,
             run_reveal: None,
             ports: Ports::default(),
             agent_icons: HashMap::new(),
@@ -392,6 +397,8 @@ impl Shell {
             plan_error: None,
             sidebar_layout: sidebar::Layout::from_mode(sidebar_mode),
             right_panel,
+            reads: HashMap::new(),
+            chats: HashMap::new(),
             thread: None,
             inspector_width,
             inspector_dragging: false,
@@ -426,6 +433,7 @@ impl Shell {
             drop_hover: None,
             pane_drop: None,
             composer_focus: cx.focus_handle(),
+            chat_focus: cx.focus_handle(),
             ime_marked: Rc::default(),
             typing_target: Rc::default(),
             voice: voice::State::default(),
@@ -1055,6 +1063,7 @@ impl Shell {
                         self.load_jira(project_id, window, cx);
                     }
                     self.reading_default = settings.ui.reading_width;
+                    self.chat_default = settings.ui.chat_default;
                     self.board_all = settings.ui.board_all_workspaces;
                     self.widget_bar = settings.ui.widget_bar;
                     self.widgets_hidden = settings.ui.widgets_hidden.clone();
@@ -1180,16 +1189,9 @@ impl Shell {
     /// What the window draws now, for [`redraw::event_needs_redraw`].
     pub(crate) fn shown(&self, window: &Window) -> redraw::Shown {
         let view = self.view();
-        let tabs = (self.workspace)
-            .filter(|_| view == View::Terminals)
-            .and_then(|id| self.tabs.get(&id));
-        let mut panes = on_screen(window.is_visible(), tabs);
-        // An idle detached window draws its shown tab's panes too.
-        for DockTab::Terminal { project, tab_id } in self.detached.visible_tabs() {
-            if let Some(tab) = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id)) {
-                panes.extend(tab.shown());
-            }
-        }
+        let panes = (self.hosted_sessions(window.is_visible()).into_iter())
+            .map(|(_, session)| session)
+            .collect();
         redraw::Shown {
             workspace: self.workspace,
             view,
@@ -1351,7 +1353,8 @@ impl Shell {
             let Some(delivery) = self.router.route(incoming) else {
                 continue;
             };
-            let Some(pane) = self.panes.get(&delivery.session_id()).cloned() else {
+            let session = delivery.session_id();
+            let Some(pane) = self.panes.get(&session).cloned() else {
                 continue;
             };
             pane.update(cx, |pane, _| match delivery {
@@ -1359,7 +1362,9 @@ impl Shell {
                 Delivery::Snapshot { snapshot, .. } => pane.load_snapshot(&snapshot),
                 Delivery::Exited { exit_code, .. } => pane.set_exited(exit_code),
             });
-            if !fed.iter().any(|p| p.entity_id() == pane.entity_id()) {
+            // A pane in Chat mode is not painted: it is no content to wait a frame for.
+            if !self.chat_session(session) && !fed.iter().any(|p| p.entity_id() == pane.entity_id())
+            {
                 fed.push(pane);
             }
         }

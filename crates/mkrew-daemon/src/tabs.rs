@@ -168,4 +168,13 @@ mod tests {
         assert_eq!(layout_sessions(&layout), [a, b, c]);
         assert!(layout_sessions(&Value::Null).is_empty());
     }
+
+    #[test]
+    fn a_surviving_pane_keeps_its_chat_flag() {
+        let (a, b) = (Ulid::new(), Ulid::new());
+        let chat = json!({"session": a.to_string(), "chat": true});
+        let layout =
+            json!({"split": "vertical", "ratio": 0.5, "children": [chat.clone(), leaf(b)]});
+        assert_eq!(without_session(&layout, b), Some(chat));
+    }
 }

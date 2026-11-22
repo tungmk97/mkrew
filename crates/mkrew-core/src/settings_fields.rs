@@ -174,6 +174,15 @@ pub const SETTINGS: &[Setting] = &[
         General,
         "Workspace",
         "ui",
+        "chat_default",
+        Bool,
+        "Chat view by default",
+        "Agent panes open as a chat instead of the terminal (Claude, Codex and omp).",
+    ),
+    row(
+        General,
+        "Workspace",
+        "ui",
         "board_all_workspaces",
         Bool,
         "Board shows all workspaces",
@@ -530,6 +539,13 @@ mod tests {
 
     fn setting(id: &str) -> &'static Setting {
         SETTINGS.iter().find(|s| s.id() == id).unwrap()
+    }
+
+    #[test]
+    fn chat_default_is_a_general_switch_off_by_default() {
+        let s = setting("ui.chat_default");
+        assert_eq!(s.current(&Settings::default()), "false");
+        assert_eq!(s.page, Page::General);
     }
 
     #[test]

@@ -50,6 +50,40 @@ pub fn blocks(blocks: &[Block], shown: &Shown, theme: &Theme) -> Vec<AnyElement>
     blocks_in(blocks, shown, None, false, theme)
 }
 
+/// The blocks of a Chat message with `selection` drawn; the painted texts are recorded in
+/// `hits` (cleared first) so a press can find the text under the pointer. Links open from the
+/// folder root, as in [`blocks`].
+pub fn message(
+    shown: &Shown,
+    selection: Option<preview_select::Selection>,
+    hits: &Hits,
+    theme: &Theme,
+) -> Vec<AnyElement> {
+    hits.0.borrow_mut().clear();
+    let bg = Hsla::from(rgb(theme.terminal_selection_bg));
+    shown
+        .blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let pick = Pick {
+                block: index,
+                next: Cell::new(0),
+                selection,
+                hits: hits.clone(),
+                bg,
+            };
+            let element = block_in(block, shown, Some(&pick), false, theme);
+            debug_assert_eq!(
+                pick.next.get(),
+                preview_select::piece_count(block, shown),
+                "preview_select::flat and preview::block disagree on block {index}'s pieces"
+            );
+            element
+        })
+        .collect()
+}
+
 /// `page`: drawn on a file's page, whose links resolve against that file.
 fn blocks_in(
     blocks: &[Block],
@@ -157,14 +191,7 @@ impl Page {
     /// The text point under window position `at`, or the nearest painted one; `None` when no
     /// text is painted.
     pub fn hit(&self, at: gpui::Point<Pixels>) -> Option<preview_select::Point> {
-        let hits = self.hits.0.borrow();
-        let key = nearest(hits.iter().map(|(key, layout)| (*key, layout.bounds())), at)?;
-        let byte = closest_byte(hits.get(&key)?, at);
-        Some(preview_select::Point {
-            block: key.0,
-            piece: key.1,
-            byte,
-        })
+        self.hits.hit(at)
     }
 
     /// Measures every block again: one block changed height (the block edit field).
@@ -272,6 +299,21 @@ pub struct Hits(Rc<RefCell<HashMap<(usize, usize), TextLayout>>>);
 impl std::fmt::Debug for Hits {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Hits({})", self.0.borrow().len())
+    }
+}
+
+impl Hits {
+    /// The text point under window position `at`, or the nearest painted one; `None` when no
+    /// text is painted.
+    pub fn hit(&self, at: gpui::Point<Pixels>) -> Option<preview_select::Point> {
+        let hits = self.0.borrow();
+        let key = nearest(hits.iter().map(|(key, layout)| (*key, layout.bounds())), at)?;
+        let byte = closest_byte(hits.get(&key)?, at);
+        Some(preview_select::Point {
+            block: key.0,
+            piece: key.1,
+            byte,
+        })
     }
 }
 

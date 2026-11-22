@@ -31,7 +31,8 @@ impl Shell {
     }
 
     /// Keys typed in the composer ([`Shell::prompt_key_down`]): Enter is a new line, Ctrl+Enter
-    /// sends, Esc hides it.
+    /// sends, Esc hides it; in Chat Enter sends, Shift+Enter is a new line, Esc goes to the chat
+    /// list.
     pub(crate) fn composer_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -42,10 +43,22 @@ impl Shell {
         let Some(session) = self.composer_session(window) else {
             return;
         };
+        // In Chat a plain Enter sends (the chat convention); Shift+Enter falls through to the
+        // new line. A picker that is open has the keys itself, so this never sees its Enter.
+        let chat = self.chat_session(session);
+        if chat && composer::sends_on_enter(&event.keystroke) {
+            self.send_composer(session, window, cx);
+            return;
+        }
         if self.prompt_key_down(composer::Target::Composer(session), event, window, cx) {
             return;
         }
         match task_dialog::dialog_key(&event.keystroke) {
+            // Chat: Esc moves to the chat list (the composer stays); Terminal: Esc hides it.
+            Some(DialogKey::Cancel) if chat => {
+                window.focus(&self.chat_focus, cx);
+                cx.notify();
+            }
             Some(DialogKey::Cancel) => {
                 self.composers.hide(session);
                 self.focus_pane(window, cx);
@@ -769,7 +782,7 @@ impl Shell {
                 (
                     "",
                     theme.text_muted,
-                    "Ctrl+Enter to send · @ for a file · Esc to hide".to_owned(),
+                    composer::hint(self.chat_session(session)).to_owned(),
                 )
             })
         };
@@ -866,13 +879,21 @@ impl Shell {
                             .children(status.map(|(icon, color, text)| {
                                 div()
                                     .flex()
+                                    .min_w_0()
                                     .gap(px(space::XS))
                                     .text_size(font_size::META)
                                     .when(!icon.is_empty(), |el| {
-                                        el.child(div().text_color(rgb(color)).child(icon))
+                                        el.child(
+                                            div().flex_none().text_color(rgb(color)).child(icon),
+                                        )
                                     })
                                     .child(
+                                        // A narrow pane cuts the key hint with an ellipsis
+                                        // instead of drawing it under the buttons; an error
+                                        // wraps, so it is read in full.
                                         div()
+                                            .min_w_0()
+                                            .when(draft.error.is_none(), |el| el.truncate())
                                             .text_color(rgb(if draft.error.is_some() {
                                                 theme.text
                                             } else {

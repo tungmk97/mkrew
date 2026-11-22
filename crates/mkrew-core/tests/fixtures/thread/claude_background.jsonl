@@ -1,0 +1,11 @@
+{"type":"user","message":{"role":"user","content":"Review in background"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"bg1","name":"Agent","input":{"description":"Review A","subagent_type":"reviewer","run_in_background":true}},{"type":"tool_use","id":"bg2","name":"Agent","input":{"description":"Review B","subagent_type":"reviewer","run_in_background":true}},{"type":"tool_use","id":"bg3","name":"Task","input":{"description":"Review C","subagent_type":"reviewer","run_in_background":true}},{"type":"tool_use","id":"fg1","name":"Task","input":{"description":"Quick look","subagent_type":"Explore"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"bg1","content":"Async agent launched successfully.\nagentId: a111 (internal ID)"}]},"toolUseResult":{"status":"async_launched","agentId":"a111","description":"Review A"}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"bg2","content":"Async agent launched successfully.\nagentId: a222 (use SendMessage with this id)"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"bg3","content":"launched"}]},"toolUseResult":{"status":"async_launched","agentId":"a333"}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"fg1","content":"found it"}]},"toolUseResult":{"status":"completed"}}
+{"type":"user","message":{"role":"user","content":"Next turn"}}
+{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>a111</task-id>\n<tool-use-id>bg1</tool-use-id>\n<status>completed</status>\n<summary>Agent \"Review A\" completed</summary>\n</task-notification>"}}
+{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>a333</task-id>\n<status>failed</status>\n<summary>boom</summary>\n</task-notification>"}}
+{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>a111</task-id>\n<tool-use-id>bg1</tool-use-id>\n<status>completed</status>\n<summary>again</summary>\n</task-notification>"}}
+{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>zzz</task-id>\n<tool-use-id>toolu_none</tool-use-id>\n<status>completed</status>\n<summary>who</summary>\n</task-notification>"}}

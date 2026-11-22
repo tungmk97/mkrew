@@ -2,6 +2,7 @@
 
 - Date: 2026-10-14
 - Status: accepted (extends ADR 0038's session panel)
+- Superseded in part by 0104: the Chat view shows tool output and thinking; the Thread section still does not.
 - Milestone: none (outside the milestone loop; user request, spec
   `docs/superpowers/specs/2026-10-14-thread-view-design.md`)
 
@@ -18,10 +19,12 @@ shows the result as a Thread section.
 
 - A 1 s poll runs only while the panel is open and shows an agent session with a native id and a
   profile with `[usage]`. Each tick is one `metadata` call and reads only the appended bytes, off
-  the UI thread. Closing the panel or focusing another pane drops the task.
-- Bounds: the first read takes the last 4 MiB (from the first line break in that window); at most
-  20 turns are kept. Older turns give "Earlier turns: Open transcript".
-- Thinking, tool output and sub-agent lines are not shown.
+  the UI thread. Closing the panel or focusing another pane drops the task (a Chat pane keeps
+  the shared read, ADR 0104).
+- Bounds: the first read takes the last 4 MiB (from the first line break in that window); the
+  reader keeps 50 turns (ADR 0104) and the section shows the newest 20. Older turns give
+  "Earlier turns: Open transcript".
+- Thinking, tool output and sub-agent lines are not shown. (Chat, ADR 0104, shows them.)
 - No protocol change, no daemon change, no new dependency.
 
 ## Alternatives
@@ -34,4 +37,4 @@ shows the result as a Thread section.
 
 - The UI depends on the agents' file formats, as usage already does; a new format is a new
   `ThreadReader` case. Codex prompts come from `user_message` events.
-- Every change re-parses the Markdown of at most 20 turns; cache by text if it ever shows.
+- Every change re-parses the Markdown of at most 50 turns (ADR 0104; the section shows 20); cache by text if it ever shows.

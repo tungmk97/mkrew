@@ -424,6 +424,10 @@ pub struct UiSettings {
     /// `[ui] reading_width`: agent panes start at reading width (≈ 120–140 columns, centered);
     /// each pane's Reading width toggle overrides it until restart. Shell panes are full width.
     pub reading_width: bool,
+    /// `[ui] chat_default` (ADR 0104): agent panes without a saved mode open in Chat (the
+    /// agent's conversation as a chat) instead of the terminal. Each pane's `Terminal | Chat`
+    /// switch overrides it and is kept in the tab layout.
+    pub chat_default: bool,
     /// `[ui] close_to_tray` (SPEC §20J): the window's ✕ hides it to the tray icon instead of
     /// quitting the UI (Windows, while the tray icon exists). The agents run in the daemon either way.
     pub close_to_tray: bool,
@@ -460,6 +464,7 @@ impl Default for UiSettings {
             sidebar: SidebarMode::Full,
             right_panel: RightPanelMode::Hidden,
             reading_width: true,
+            chat_default: false,
             close_to_tray: true,
             board_all_workspaces: false,
             md_mode: MdMode::Preview,
@@ -646,6 +651,7 @@ pub fn template() -> &'static str {
      # sidebar_width = 280\n\
      # right_panel = \"hidden\"\n\
      # reading_width = true\n\
+     # chat_default = false\n\
      # close_to_tray = true\n\
      # board_all_workspaces = false\n\
      # md_mode = \"preview\"\n\
@@ -846,6 +852,13 @@ mod tests {
     }
 
     #[test]
+    fn chat_default_is_off_and_reads_from_ui() {
+        assert!(!Settings::default().ui.chat_default);
+        let settings = parse(Path::new("settings.toml"), "[ui]\nchat_default = true\n").unwrap();
+        assert!(settings.ui.chat_default);
+    }
+
+    #[test]
     fn full_file_parses() {
         let src = r#"
 [notify]
@@ -909,6 +922,7 @@ push = true
                     sidebar: SidebarMode::Full,
                     right_panel: RightPanelMode::Hidden,
                     reading_width: true,
+                    chat_default: false,
                     close_to_tray: false,
                     board_all_workspaces: false,
                     md_mode: MdMode::Preview,

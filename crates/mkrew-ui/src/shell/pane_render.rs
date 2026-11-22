@@ -148,8 +148,8 @@ impl Shell {
                         .items_center()
                         .gap(px(space::S))
                         .text_size(font_size::META)
-                        .children(self.pane_status(info, now, theme, cx))
-                        .children(self.pane_controls(info, theme, cx))
+                        .children(self.pane_status(info, true, now, theme, cx))
+                        .children(self.pane_controls(info, pane_text::HeaderRoom::ALL, theme, cx))
                         .relative()
                         .child(record_bounds(Anchor::PaneHeader(info.id), cx)),
                 )
@@ -430,10 +430,13 @@ impl Shell {
         let dividers = tab.map(Tab::dividers).unwrap_or_default();
         let several = rects.len() > 1;
         let half_gap = px(theme::PANE_HALF_GAP);
+        // The panes' 0..1 space in px, as laid out in the last frame (`content_canvas`).
+        let area = f32::from(content.get().width) - 2.0 * theme::PANE_HALF_GAP;
         let panes: Vec<_> = rects
             .into_iter()
             .map(|(session, rect)| {
                 let is_focused = focused == Some(session);
+                let width = rect.w as f32 * area - 2.0 * theme::PANE_HALF_GAP;
                 div()
                     .absolute()
                     .left(relative(rect.x as f32))
@@ -444,6 +447,7 @@ impl Shell {
                     .child(self.pane_frame(
                         session,
                         several,
+                        width,
                         is_focused,
                         is_focused && composer_focused,
                         voice_ring.filter(|_| is_focused),
@@ -497,12 +501,14 @@ impl Shell {
     /// One pane: the terminal (or why it is not shown; at reading width, centered, for an agent
     /// pane with it on), its composer, its border. Among several panes it gets a compact header
     /// and the unfocused ones a dim; a single pane has no header (the tab bar shows its status)
-    /// and its color is a 2 px line on top. `voice_ring`: the listening ring over the border.
+    /// and its color is a 2 px line on top. `voice_ring`: the listening ring over the border;
+    /// `width`: the pane's width in px in the last frame (the header's room).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pane_frame(
         &self,
         session: Ulid,
         several: bool,
+        width: f32,
         is_focused: bool,
         composer_focused: bool,
         voice_ring: Option<Hsla>,
@@ -510,16 +516,20 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let content = match self.panes.get(&session) {
-            Some(pane) => pane.clone().into_any_element(),
-            None => {
-                let (sentence, detail) = self.pane_placeholder(session);
-                message(theme, None, sentence, detail)
-                    .size_full()
-                    .into_any_element()
+        let info = self.sidebar.sessions().iter().find(|s| s.id == session);
+        let content = if info.is_some_and(|info| self.chat_on(info)) {
+            self.render_chat(session, is_focused, now, theme, cx)
+        } else {
+            match self.panes.get(&session) {
+                Some(pane) => pane.clone().into_any_element(),
+                None => {
+                    let (sentence, detail) = self.pane_placeholder(session);
+                    message(theme, None, sentence, detail)
+                        .size_full()
+                        .into_any_element()
+                }
             }
         };
-        let info = self.sidebar.sessions().iter().find(|s| s.id == session);
         let border = status::pane_border(theme, info.map(|s| s.state), several, is_focused);
         let reading = info.is_some_and(|info| self.reading_on(info));
         let color = (info.and_then(|info| info.color.as_deref()))
@@ -565,7 +575,7 @@ impl Shell {
             ))
             .child(drop_catcher(DropTarget::Pane(session), cx))
             .when(several, |el| {
-                el.children(info.map(|info| self.pane_header(info, color, now, theme, cx)))
+                el.children(info.map(|info| self.pane_header(info, color, width, now, theme, cx)))
             })
             .when(!several, |el| {
                 el.when_some(color, |el, color| {
@@ -658,10 +668,12 @@ impl Shell {
 
     /// The status of `info`'s pane, each part only when it has something to say: the task
     /// folder, the status pill, the conflict warning, `⧗ N queued` sends and the context share.
-    /// The tab bar shows them for a single pane, the compact header among several.
+    /// The tab bar shows them for a single pane, the compact header among several; `context`:
+    /// whether there is room for the context share.
     pub(crate) fn pane_status(
         &self,
         info: &Session,
+        context: bool,
         now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -712,7 +724,10 @@ impl Shell {
                     .into_any_element(),
             );
         }
-        if let Some(share) = self.usages.get(session).and_then(usage::context_share) {
+        if let Some(share) = (self.usages.get(session))
+            .and_then(usage::context_share)
+            .filter(|_| context)
+        {
             parts.push(
                 div()
                     .id(SharedString::from(format!("pane-context-{session}")))
@@ -763,11 +778,13 @@ impl Shell {
         parts
     }
 
-    /// An agent pane's controls: the Reading width toggle and `Share` (its menu: Follow in Zed).
+    /// An agent pane's controls: the Terminal | Chat switch, the Reading width toggle and `Share`
+    /// (its menu: Follow in Zed), each when `room` has it.
     /// Nothing for a shell or run pane.
     pub(crate) fn pane_controls(
         &self,
         info: &Session,
+        room: pane_text::HeaderRoom,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> Vec<gpui::AnyElement> {
@@ -837,7 +854,17 @@ impl Shell {
                 shell.open_share_menu(session, event.position(), window, cx);
             }),
         );
-        vec![reading_toggle.into_any_element(), share.into_any_element()]
+        let mut controls = Vec::new();
+        if room.switch {
+            controls.extend(self.pane_mode_switch(info, theme, cx));
+        }
+        if room.reading {
+            controls.push(reading_toggle.into_any_element());
+        }
+        if room.share {
+            controls.push(share.into_any_element());
+        }
+        controls
     }
 
     /// The title of `info`'s pane, or the inline rename field while it is renamed (F2 or a
@@ -894,11 +921,21 @@ impl Shell {
         &self,
         info: &Session,
         color: Option<u32>,
+        width: f32,
         now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let session = info.id;
+        let context_chars = (self.usages.get(session))
+            .and_then(usage::context_share)
+            .map_or(0, |share| share.label.chars().count());
+        let room = pane_text::header_room(
+            width,
+            cx.global::<theme::Fonts>().ui_size,
+            context_chars,
+            self.chat_available(info),
+        );
         let header = div()
             .flex_none()
             .flex()
@@ -921,8 +958,8 @@ impl Shell {
                     }),
             )
             .child(self.pane_title(info, theme, cx))
-            .children(self.pane_status(info, now, theme, cx))
-            .children(self.pane_controls(info, theme, cx))
+            .children(self.pane_status(info, room.context, now, theme, cx))
+            .children(self.pane_controls(info, room, theme, cx))
             .relative()
             .child(record_bounds(Anchor::PaneHeader(session), cx))
             .on_mouse_down(
@@ -1079,7 +1116,8 @@ pub(crate) fn drop_catcher(
 }
 
 /// A pane's status pill (SPEC §11): status mark + `Working · 1h 25m` (with the last turn's
-/// summary when done); hovering it shows the status source and last change.
+/// summary when done); hovering it shows the status source and last change. In a narrow header
+/// the text ends with an ellipsis before the controls lose room.
 pub(crate) fn status_pill(
     session: &Session,
     pill: String,
@@ -1088,7 +1126,7 @@ pub(crate) fn status_pill(
     let (state, changed_at) = (session.state, session.state_changed_at);
     div()
         .id(SharedString::from(format!("pane-status-{}", session.id)))
-        .flex_none()
+        .min_w_0()
         .flex()
         .items_center()
         .gap(px(space::XS))
@@ -1105,7 +1143,7 @@ pub(crate) fn status_pill(
             changed_at,
         ))
         .child(status_mark(state, theme))
-        .child(pill)
+        .child(div().min_w_0().truncate().child(pill))
 }
 
 fn divider_cursor(axis: Axis) -> CursorStyle {
@@ -1158,10 +1196,16 @@ fn pane_divider(divider: Divider, theme: &Theme, cx: &mut Context<'_, Shell>) ->
 }
 
 /// Paints nothing; stores the size of its parent (the tab content area) for a window torn
-/// off from here (`HostUi::content`).
+/// off from here (`HostUi::content`) and for the pane headers' room (`render_tab`). A new
+/// size draws the frame again, so the headers never keep the room of an older size.
 fn content_canvas(content: Rc<Cell<gpui::Size<Pixels>>>) -> impl IntoElement {
     canvas(
-        move |bounds, _, _| content.set(bounds.size),
+        move |bounds, window, _| {
+            // `refresh` does nothing while the frame is drawn; this notifies the view after it.
+            if content.replace(bounds.size) != bounds.size {
+                window.request_animation_frame();
+            }
+        },
         |_, _, _, _| {},
     )
     .absolute()

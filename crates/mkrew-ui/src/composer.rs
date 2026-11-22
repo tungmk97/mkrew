@@ -6,12 +6,27 @@
 
 use std::collections::HashMap;
 
-use gpui::ImageFormat;
+use gpui::{ImageFormat, Keystroke};
 use mkrew_protocol::{ErrorBody, ErrorCode, Event, QueuedSend, SessionSendParams};
 use ulid::Ulid;
 
 use crate::task_dialog::DialogKey;
 use crate::text_box::{self, Input, TextBox};
+
+/// Enter alone sends in the docked Chat composer; Shift+Enter keeps its new line and
+/// Ctrl/Cmd+Enter stays `DialogKey::Save` (the Terminal composer sends only on that).
+pub fn sends_on_enter(keystroke: &Keystroke) -> bool {
+    keystroke.key == "enter" && !keystroke.modifiers.modified()
+}
+
+/// The composer's key hint while it has the keyboard.
+pub fn hint(chat: bool) -> &'static str {
+    if chat {
+        "Enter to send · Shift+Enter for a new line · @ for a file · Esc for the chat"
+    } else {
+        "Ctrl+Enter to send · @ for a file · Esc to hide"
+    }
+}
 
 /// A prompt field the pickers type into: a session's composer draft or the task dialog's
 /// prompt. Both take `@` files, library prompts and ✦ the same way (§20B.1).
@@ -93,6 +108,8 @@ pub struct Draft {
     pub busy: bool,
     /// Why the last send or rewrite failed.
     pub error: Option<String>,
+    /// Whether the composer was shown before the pane went to Chat.
+    pub before_chat: Option<bool>,
 }
 
 /// Every session's draft.
@@ -113,6 +130,22 @@ impl Composers {
     pub fn hide(&mut self, session: Ulid) {
         if let Some(draft) = self.drafts.get_mut(&session) {
             draft.shown = false;
+        }
+    }
+
+    /// The pane enters Chat: the composer shows, and whether it was shown is remembered.
+    pub fn enter_chat(&mut self, session: Ulid) {
+        let draft = self.drafts.entry(session).or_default();
+        if draft.before_chat.is_none() {
+            draft.before_chat = Some(draft.shown);
+        }
+        draft.shown = true;
+    }
+
+    /// The pane leaves Chat: the composer is as it was before (hidden when unknown).
+    pub fn leave_chat(&mut self, session: Ulid) {
+        if let Some(draft) = self.drafts.get_mut(&session) {
+            draft.shown = draft.before_chat.take().unwrap_or(false);
         }
     }
 
@@ -414,7 +447,37 @@ mod tests {
     use crate::editor::Motion;
     use crate::text_box::Input;
     use crate::text_box::Outcome;
+    use gpui::Keystroke;
     use mkrew_protocol::SessionQueueEvent;
+
+    #[test]
+    fn plain_enter_sends_in_the_docked_chat_composer_and_modified_enter_does_not() {
+        let enter = |keys: &str| sends_on_enter(&Keystroke::parse(keys).unwrap());
+        assert!(enter("enter"));
+        assert!(!enter("shift-enter"), "Shift+Enter is a new line");
+        assert!(!enter("ctrl-enter"), "Ctrl+Enter keeps meaning Save");
+        assert!(!enter("alt-enter"));
+        assert!(!enter("a"));
+    }
+
+    #[test]
+    fn the_hint_names_the_keys_of_the_composer_in_use() {
+        assert!(hint(true).starts_with("Enter to send"));
+        assert!(hint(true).contains("Shift+Enter"));
+        assert!(hint(false).starts_with("Ctrl+Enter to send"));
+    }
+
+    /// A blank draft never sends, whichever key asked: Enter in Chat on an empty box does nothing.
+    #[test]
+    fn a_blank_or_busy_draft_does_not_begin_a_send() {
+        let session = Ulid::new();
+        let mut composers = Composers::default();
+        composers.open(session);
+        assert_eq!(composers.begin_send(session), None, "blank");
+        composers.insert(session, "go");
+        assert!(composers.begin_send(session).is_some());
+        assert_eq!(composers.begin_send(session), None, "while sending");
+    }
 
     fn type_text(composers: &mut Composers, session: Ulid, text: &str) {
         for (i, line) in text.split('\n').enumerate() {
@@ -849,5 +912,27 @@ mod tests {
         composers.sent(session, Err("session exited".into()));
         composers.hide(session);
         assert_eq!(composers.trigger(session, &slash), None, "hidden");
+    }
+
+    #[test]
+    fn leaving_chat_restores_the_composer_as_it_was() {
+        let session = Ulid::new();
+        let mut composers = Composers::default();
+        // Open in Terminal, enter and leave Chat: still open.
+        composers.open(session);
+        composers.enter_chat(session);
+        composers.enter_chat(session);
+        composers.leave_chat(session);
+        assert!(composers.shown(session).is_some());
+        // Hidden in Terminal: hidden again after Chat, the draft is kept.
+        composers.hide(session);
+        composers.enter_chat(session);
+        assert!(composers.shown(session).is_some());
+        composers.leave_chat(session);
+        assert!(composers.shown(session).is_none());
+        // No record (Chat came from a saved mode): hidden.
+        composers.open(session);
+        composers.leave_chat(session);
+        assert!(composers.shown(session).is_none());
     }
 }

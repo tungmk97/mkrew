@@ -1,0 +1,3 @@
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Look"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hm"},{"type":"toolCall","id":"o1","name":"grep","arguments":{"pattern":"x","path":"src"}}]}}
+{"type":"message","message":{"role":"toolResult","toolCallId":"o1","toolName":"grep","isError":true,"content":[{"type":"text","text":"bad regex"}]}}

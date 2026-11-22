@@ -79,6 +79,8 @@ pub struct Context {
     pub live_session: bool,
     /// The focused agent pane's session has a transcript file.
     pub transcript: bool,
+    /// The focused agent pane can show Chat (a readable transcript format).
+    pub chat: bool,
     /// The focused agent pane's session has a linked plan.
     pub plan_linked: bool,
     /// The focused pane's prompt composer is open.
@@ -602,6 +604,7 @@ pub fn title(command: Command) -> String {
         Command::PreviousInbox => "Inbox: Jump to previous item needing attention".into(),
         Command::Peek => "Agent: Peek the first Inbox entry".into(),
         Command::OpenComposer => "Agent: Open the prompt composer".into(),
+        Command::ToggleChat => "Agent: Toggle chat view".into(),
         Command::SendSelection => "Agent: Send selection to an agent".into(),
         Command::CopyMode => "Terminal: Copy mode (select and copy with the keyboard)".into(),
         Command::LinkHints => "Terminal: Open a link by its label".into(),
@@ -744,6 +747,7 @@ pub fn available(command: Command, context: &Context) -> bool {
             (on_panes && context.terminal) || in_view(View::Editor) || in_view(View::Docs)
         }
         Command::OpenComposer => on_panes && context.agent_pane,
+        Command::ToggleChat => on_panes && context.agent_pane && context.chat,
         Command::SendSelection => {
             in_view(View::Editor)
                 || in_view(View::Diff)

@@ -231,6 +231,7 @@ fn detached_commands_are_an_explicit_list() {
         Command::RenamePane,
         Command::RenameTab,
         Command::OpenComposer,
+        Command::ToggleChat,
         Command::CommandPalette,
         Command::ContextMenu,
         Command::ToggleFullScreen,
