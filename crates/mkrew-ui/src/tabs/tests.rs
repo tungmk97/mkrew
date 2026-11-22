@@ -1038,3 +1038,22 @@ fn moving_and_arranging_panes_keeps_their_chat_mode() {
     tabs.close_pane(b);
     assert_eq!(tabs.chat_of(a), Some(true), "a pane whose sibling closed");
 }
+
+#[test]
+fn a_cross_tab_move_keeps_the_pane_chat_mode() {
+    let project = Ulid::new();
+    let [a, b] = [Ulid::new(), Ulid::new()];
+    let one = wire(
+        project,
+        "one",
+        1.0,
+        json!({"session": a.to_string(), "chat": true}),
+    );
+    let two = wire(project, "two", 2.0, pane(b));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one, two.clone()]);
+    tabs.move_pane(a, b, Axis::Horizontal).unwrap();
+    assert_eq!(tabs.tab_of(a).map(|t| t.id), Some(two.id), "a changed tab");
+    assert_eq!(tabs.chat_of(a), Some(true));
+    assert_eq!(tabs.chat_of(b), None);
+}

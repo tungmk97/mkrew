@@ -657,13 +657,16 @@ impl Tabs {
                 sessions.push(*id);
             }
         }
-        let kept: Vec<(Ulid, Option<bool>)> = sessions
+        let kept: Vec<(Ulid, bool)> = sessions
             .iter()
-            .map(|id| (*id, tab.layout.as_ref().and_then(|node| node.chat_of(*id))))
+            .filter_map(|id| {
+                let chat = tab.layout.as_ref()?.chat_of(*id)?;
+                Some((*id, chat))
+            })
             .collect();
         let mut built = preset.build(&sessions)?;
         for (id, chat) in kept {
-            built.set_chat(id, chat);
+            built.set_chat(id, Some(chat));
         }
         tab.layout = Some(built);
         tab.zoomed = None;
