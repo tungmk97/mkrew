@@ -35,7 +35,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **PATH from Finder (macOS):** quit Mkrew and `mk daemon stop`, open `Mkrew.app` from Finder (not a terminal), start a Claude or Codex pane: the agent starts and the New menu lists it (before this change: "command not found").
   A Shell pane starts as a login shell: `echo $PATH` shows `/opt/homebrew/bin` and `[[ -o login ]] && echo login` prints `login`.
 - [ ] **Slow shell:** add `sleep 8` to `~/.zshrc`, open Mkrew from Finder: it still opens (the first agent start may wait up to 5 s) and falls back to the system `PATH`; remove the line afterwards.
-- [ ] **Open in Zed (macOS):** with Zed installed in `/Applications` but no `zed` command, Workspace → Open in Zed opens the folder in Zed (a file opens without its line).
+- [ ] **Open in Zed (macOS):**
+  (a) Zed in `/Applications` (or `~/Applications`), no `zed` command on PATH: Workspace → Open in Zed opens the folder, and a file opens at its line.
+  (b) Zed Preview only, or a `Zed.app` copy whose `Contents/MacOS/cli` was removed: the folder opens with `open -a`, a file opens without its line.
   With Zed removed, the toast says to install it and keep it in `/Applications`.
 
 ### To verify - 2026-11-22 macOS keyboard (ADR 0098)

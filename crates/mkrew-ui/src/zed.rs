@@ -1,4 +1,6 @@
-//! "Open in Zed" (SPEC §10): runs `zed <path>[:line]`, with `zed` found on `PATH` (and `PATHEXT` on Windows; on macOS also the usual CLI folders and `open -a`). Reading and editing code is Zed's job; Mkrew only hands it the path.
+//! "Open in Zed" (SPEC §10): runs `zed <path>[:line]`, with `zed` found on `PATH` (and
+//! `PATHEXT` on Windows; on macOS also the usual CLI folders and `open -a`). Reading and
+//! editing code is Zed's job; Mkrew only hands it the path.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -80,7 +82,7 @@ fn home() -> Option<PathBuf> {
 }
 
 /// Zed's command-line tool on a Mac when `PATH` has none: the link "cli: install" makes,
-/// Homebrew's, `~/.local/bin`, and the tool inside the app.
+/// Homebrew's, `~/.local/bin`, and the tool inside the app (stable first, then Preview).
 pub fn mac_cli_candidates(home: Option<&Path>) -> Vec<PathBuf> {
     let mut list = vec![
         PathBuf::from("/usr/local/bin/zed"),
@@ -89,14 +91,21 @@ pub fn mac_cli_candidates(home: Option<&Path>) -> Vec<PathBuf> {
     if let Some(home) = home {
         list.push(home.join(".local").join("bin").join("zed"));
     }
-    list.push(PathBuf::from("/Applications/Zed.app/Contents/MacOS/cli"));
+    list.extend(
+        mac_app_dirs(home)
+            .into_iter()
+            .map(|app| app.join("Contents").join("MacOS").join("cli")),
+    );
     list
 }
 
-/// Where Zed's app bundle may be: `/Applications`, then `~/Applications`.
+/// Where Zed's app bundle may be: `/Applications`, then `~/Applications`; stable, then Preview.
 pub fn mac_app_dirs(home: Option<&Path>) -> Vec<PathBuf> {
-    let mut list = vec![PathBuf::from("/Applications/Zed.app")];
-    list.extend(home.map(|home| home.join("Applications").join("Zed.app")));
+    let mut list = Vec::new();
+    for name in ["Zed.app", "Zed Preview.app"] {
+        list.push(Path::new("/Applications").join(name));
+        list.extend(home.map(|home| home.join("Applications").join(name)));
+    }
     list
 }
 
@@ -248,20 +257,28 @@ mod tests {
         assert_eq!(list[0], Path::new("/usr/local/bin/zed"));
         assert!(list.contains(&PathBuf::from("/opt/homebrew/bin/zed")));
         assert!(list.contains(&home.join(".local").join("bin").join("zed")));
+        let apps: Vec<_> = list[3..].iter().map(PathBuf::as_path).collect();
         assert_eq!(
-            list.last().unwrap(),
-            Path::new("/Applications/Zed.app/Contents/MacOS/cli")
+            apps,
+            [
+                Path::new("/Applications/Zed.app/Contents/MacOS/cli"),
+                &home.join("Applications/Zed.app/Contents/MacOS/cli"),
+                Path::new("/Applications/Zed Preview.app/Contents/MacOS/cli"),
+                &home.join("Applications/Zed Preview.app/Contents/MacOS/cli"),
+            ]
         );
         assert_eq!(
             mac_cli_candidates(None).len(),
-            3,
-            "no home: the three system places"
+            4,
+            "no home: two system links, two system apps"
         );
         assert_eq!(
             mac_app_dirs(Some(home)),
             [
                 PathBuf::from("/Applications/Zed.app"),
-                home.join("Applications").join("Zed.app")
+                home.join("Applications").join("Zed.app"),
+                PathBuf::from("/Applications/Zed Preview.app"),
+                home.join("Applications").join("Zed Preview.app"),
             ]
         );
     }
