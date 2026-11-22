@@ -143,7 +143,7 @@ fn rows<'a>(turn_key: u64, turn: &'a PageTurn, open: &HashSet<RowKey>) -> Vec<Ro
     for (item, entry) in turn.items.iter().enumerate() {
         match entry {
             PageItem::Text(_) => rows.push(Row::Text { item }),
-            PageItem::Thinking(text) => {
+            PageItem::Thinking { text, .. } => {
                 let key = (turn_key, item, 0);
                 rows.push(Row::Thinking {
                     key,
@@ -475,11 +475,8 @@ mod tests {
             status: PlanStatus::Pending,
         };
         let turn = |plan| PageTurn {
-            prompt: String::new(),
-            items: Vec::new(),
             plan,
-            question: None,
-            subagents: Vec::new(),
+            ..PageTurn::default()
         };
         let page = Page {
             turns: vec![turn(Some(vec![step])), turn(Some(Vec::new())), turn(None)],

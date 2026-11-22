@@ -300,7 +300,7 @@ impl Shell {
                                         .into_any_element(),
                                 )
                             }
-                            PageItem::Thinking(_) => None,
+                            PageItem::Thinking { .. } => None,
                         }),
                 )
         });

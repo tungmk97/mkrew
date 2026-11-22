@@ -1,0 +1,7 @@
+{"type":"model_change","timestamp":"2026-01-01T00:00:00.000Z","model":"anthropic/claude-opus-5-5"}
+{"type":"thinking_level_change","timestamp":"2026-01-01T00:00:00.100Z","thinkingLevel":"high"}
+{"type":"title","title":"\udb81\udcf9 Check it"}
+{"type":"message","timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Look"}]}}
+{"type":"message","timestamp":"2026-01-01T00:00:05.000Z","message":{"role":"assistant","model":"claude-opus-5-5","usage":{"input":2,"output":120,"cacheRead":1000,"cacheWrite":50},"content":[{"type":"thinking","thinking":"hm"},{"type":"toolCall","id":"o1","name":"grep","arguments":{"pattern":"x"}}]}}
+{"type":"message","timestamp":"2026-01-01T00:00:06.000Z","message":{"role":"toolResult","toolCallId":"o1","content":[{"type":"text","text":"ok"}]}}
+{"type":"message","timestamp":"2026-01-01T00:00:10.000Z","message":{"role":"assistant","model":"claude-opus-5-5","usage":{"input":1,"output":60,"cacheRead":2000,"cacheWrite":0},"content":[{"type":"text","text":"Found."}]}}

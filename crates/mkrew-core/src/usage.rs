@@ -338,7 +338,7 @@ fn codex_limits(value: &Value) -> Option<AgentLimits> {
 }
 
 /// `2026-05-11T17:05:53.772Z` (what Codex writes) as Unix seconds; any other form is `None`.
-fn utc_seconds(stamp: &str) -> Option<i64> {
+pub(crate) fn utc_seconds(stamp: &str) -> Option<i64> {
     let (date, time) = stamp.strip_suffix('Z')?.split_once('T')?;
     let mut d = date.split('-').map(|p| p.parse::<i64>().ok());
     let (year, month, day) = (d.next()??, d.next()??, d.next()??);
