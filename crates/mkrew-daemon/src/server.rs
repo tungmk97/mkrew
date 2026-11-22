@@ -30,7 +30,7 @@ use crate::attach::{self, Attachment};
 use crate::git::GitBackend;
 use crate::git_view::GitCache;
 use crate::launch::LaunchError;
-use crate::machine::{self, ClientGuard};
+use crate::machine;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 use crate::settings::{self, SettingsHolder};
@@ -202,7 +202,7 @@ impl Daemon {
         let mut decoder = FrameDecoder::new();
         let mut buf = vec![0u8; 64 * 1024];
         let mut conn = Conn::default();
-        let mut forwarder: Option<(AbortOnDrop, ClientGuard)> = None;
+        let mut forwarder: Option<(AbortOnDrop, AbortOnDrop)> = None;
         loop {
             while let Some(frame) = decoder.next_frame()? {
                 let Frame::Message(Message::Request { id, request }) = frame else {
@@ -243,7 +243,7 @@ impl Daemon {
                     let events = self.hub.events.subscribe();
                     forwarder = Some((
                         AbortOnDrop(tokio::spawn(forward(events, out.clone()))),
-                        ClientGuard::join(&self.hub),
+                        AbortOnDrop(machine::count_when_it_stays(&self.hub)),
                     ));
                 }
                 let reply = Frame::Message(Message::Response { id, outcome });

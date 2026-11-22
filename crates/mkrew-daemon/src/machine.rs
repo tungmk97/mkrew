@@ -3,8 +3,9 @@
 //! `machine.stats` when a value moved enough ([`should_send`]) or [`HEARTBEAT`] has passed.
 //! With no client connected the task waits and does no work.
 //!
-//! Every connection that said `hello` counts, `mk web`'s relay included; a short-lived `mk`
-//! call connects and leaves before the first sample is due.
+//! A connection that said `hello` counts once it has stayed [`STAY`], `mk web`'s relay included;
+//! a short-lived `mk` call (`mk statusline`, `mk hook`) is gone before that and never moves the
+//! sampler or its throttle.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,6 +18,8 @@ use crate::session::Hub;
 
 pub const SAMPLE_EVERY: Duration = Duration::from_secs(2);
 pub const HEARTBEAT: Duration = Duration::from_secs(10);
+/// How long a connection must stay before it counts as a client.
+pub const STAY: Duration = Duration::from_secs(1);
 /// CPU moves of at least this many percentage points are news.
 const CPU_STEP: f32 = 1.0;
 /// RAM moves of at least this many bytes (100 MiB) are news.
@@ -55,6 +58,17 @@ impl Drop for ClientGuard {
             .clients
             .send_modify(|count| *count = count.saturating_sub(1));
     }
+}
+
+/// A task that counts the calling connection as a client after [`STAY`]; aborting it (the
+/// connection ended) removes the count again.
+pub fn count_when_it_stays(hub: &Arc<Hub>) -> JoinHandle<()> {
+    let hub = Arc::clone(hub);
+    tokio::spawn(async move {
+        tokio::time::sleep(STAY).await;
+        let _client = ClientGuard::join(&hub);
+        std::future::pending::<()>().await;
+    })
 }
 
 fn read(system: &mut sysinfo::System) -> MachineStats {
@@ -222,6 +236,42 @@ mod tests {
         let _client = ClientGuard::join(&hub);
         tokio::time::sleep(SAMPLE_EVERY + Duration::from_millis(500)).await;
         assert_eq!(sent(&mut events), 1, "a rejoin sends again");
+        sampler.abort();
+    }
+
+    /// A connection that leaves within [`STAY`] (`mk statusline`) never counts, so it cannot
+    /// reset the throttle of a client that stays (the UI): its stats keep to the heartbeat.
+    #[tokio::test(start_paused = true)]
+    async fn short_lived_connections_do_not_reset_the_throttle() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = Arc::new(Hub::new(Store::open(&dir.path().join("mkrew.db")).unwrap()));
+        let ui = count_when_it_stays(&hub);
+        let mut events = hub.events.subscribe();
+        let sampler = start(Arc::clone(&hub));
+        tokio::time::sleep(STAY + SAMPLE_EVERY + Duration::from_millis(500)).await;
+        assert_eq!(*hub.clients.borrow(), 1, "the one that stayed");
+        let sent = |events: &mut tokio::sync::broadcast::Receiver<Event>| {
+            std::iter::from_fn(|| events.try_recv().ok())
+                .filter(|e| matches!(e, Event::MachineStats(_)))
+                .count()
+        };
+        assert_eq!(sent(&mut events), 1, "the first reading");
+        // A status line run every second for a while: connect, leave before STAY.
+        for _ in 0..4 {
+            let short = count_when_it_stays(&hub);
+            tokio::time::sleep(STAY / 2).await;
+            short.abort();
+            tokio::time::sleep(STAY / 2).await;
+            assert_eq!(*hub.clients.borrow(), 1);
+        }
+        // The count never moved, so the sampler never saw a change to reset its throttle on.
+        let stay = count_when_it_stays(&hub);
+        tokio::time::sleep(STAY + Duration::from_millis(100)).await;
+        assert_eq!(*hub.clients.borrow(), 2, "one that stays counts");
+        stay.abort();
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        assert_eq!(*hub.clients.borrow(), 1, "and stops counting when it ends");
+        ui.abort();
         sampler.abort();
     }
 }
