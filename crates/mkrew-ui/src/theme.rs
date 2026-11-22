@@ -138,6 +138,9 @@ pub const CONTROL_HEIGHT: f32 = 30.0;
 pub const INPUT_HEIGHT: f32 = 32.0;
 /// One segment of a segmented control.
 pub const SEGMENT_HEIGHT: f32 = 26.0;
+/// A segment of the pane header's `Terminal | Chat` switch: with its padding and border the
+/// switch is as tall as [`CONTROL_HEIGHT`], so headers line up with and without it.
+pub const COMPACT_SEGMENT_HEIGHT: f32 = CONTROL_HEIGHT - 2.0 * (SEGMENT_PADDING + BORDER_WIDTH);
 /// A status pill (Idle, In Progress) and an area chip / Git `M` badge.
 pub const PILL_HEIGHT: f32 = 22.0;
 pub const CHIP_HEIGHT: f32 = 20.0;

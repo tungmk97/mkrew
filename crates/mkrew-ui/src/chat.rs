@@ -216,6 +216,26 @@ pub fn scrolled(offset_y: f32, max_y: f32, delta: f32) -> f32 {
     (offset_y - delta).clamp(-max_y.max(0.0), 0.0)
 }
 
+/// Where Tab goes from the chat page: through its `count` keyboard stops, then back to the
+/// composer; Shift+Tab goes the other way, from the first stop to the list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabTo {
+    Stop(usize),
+    List,
+    Composer,
+}
+
+/// The target of Tab (`forward`) or Shift+Tab from stop `at` (`None`: the list itself).
+pub fn tab_to(count: usize, at: Option<usize>, forward: bool) -> TabTo {
+    match (at, forward) {
+        (None, true) if count > 0 => TabTo::Stop(0),
+        (Some(i), true) if i + 1 < count => TabTo::Stop(i + 1),
+        (None | Some(_), true) | (None, false) => TabTo::Composer,
+        (Some(0), false) => TabTo::List,
+        (Some(i), false) => TabTo::Stop(i - 1),
+    }
+}
+
 /// A message: (turn key, item index); a selection lives inside one of them.
 pub type MsgKey = (u64, usize);
 
@@ -514,6 +534,21 @@ mod tests {
         assert_eq!(scrolled(-290.0, 300.0, 48.0), -300.0, "stops at the end");
         assert_eq!(scrolled(-10.0, 300.0, -48.0), 0.0, "stops at the top");
         assert_eq!(scrolled(0.0, 0.0, 48.0), 0.0, "nothing to scroll");
+        // Home and End pass the extreme deltas.
+        assert_eq!(scrolled(-100.0, 300.0, f32::MIN), 0.0, "Home");
+        assert_eq!(scrolled(-100.0, 300.0, f32::MAX), -300.0, "End");
+    }
+
+    #[test]
+    fn tab_goes_through_the_stops_then_to_the_composer() {
+        use TabTo::*;
+        assert_eq!(tab_to(2, None, true), Stop(0));
+        assert_eq!(tab_to(2, Some(0), true), Stop(1));
+        assert_eq!(tab_to(2, Some(1), true), Composer);
+        assert_eq!(tab_to(0, None, true), Composer, "no stops");
+        assert_eq!(tab_to(2, Some(1), false), Stop(0));
+        assert_eq!(tab_to(2, Some(0), false), List);
+        assert_eq!(tab_to(2, None, false), Composer);
     }
 
     fn at(byte: usize) -> Point {

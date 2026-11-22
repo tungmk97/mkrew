@@ -73,7 +73,13 @@ pub fn message(
                 hits: hits.clone(),
                 bg,
             };
-            block_in(block, shown, Some(&pick), false, theme)
+            let element = block_in(block, shown, Some(&pick), false, theme);
+            debug_assert_eq!(
+                pick.next.get(),
+                preview_select::piece_count(block, shown),
+                "preview_select::flat and preview::block disagree on block {index}'s pieces"
+            );
+            element
         })
         .collect()
 }

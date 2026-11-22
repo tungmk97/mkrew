@@ -8,6 +8,65 @@ use mkrew_ui::thread_view::{Page, PageItem};
 
 use crate::*;
 
+/// A keyboard stop of the chat page (Tab reaches it, Enter / Space press it).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Stop {
+    /// The "earlier turns" link.
+    Earlier,
+    /// The toggle of a tool or thinking row.
+    Row(chat::RowKey),
+    /// "Answer in terminal" of the question card.
+    Answer,
+}
+
+/// The stops drawn last frame in page order, and their focus handles (kept while drawn).
+#[derive(Default)]
+pub(crate) struct Stops {
+    handles: HashMap<Stop, FocusHandle>,
+    order: Vec<Stop>,
+}
+
+impl Stops {
+    fn begin(&mut self) {
+        self.order.clear();
+    }
+
+    /// The handle of `stop`, which is drawn now (the next in page order).
+    fn stop(&mut self, stop: Stop, cx: &mut App) -> FocusHandle {
+        self.order.push(stop);
+        (self.handles.entry(stop))
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone()
+    }
+
+    /// Drops the handles of stops that were not drawn.
+    fn end(&mut self) {
+        let order = &self.order;
+        self.handles.retain(|stop, _| order.contains(stop));
+    }
+
+    /// Where Tab (`forward`) or Shift+Tab goes from the stop that has the keyboard, if any.
+    fn go(
+        &self,
+        window: &Window,
+        forward: bool,
+        list: &FocusHandle,
+        composer: &FocusHandle,
+    ) -> FocusHandle {
+        let handle = |stop: &Stop| self.handles.get(stop);
+        let at = self
+            .order
+            .iter()
+            .position(|stop| handle(stop).is_some_and(|h| h.is_focused(window)));
+        let to = match chat::tab_to(self.order.len(), at, forward) {
+            chat::TabTo::Stop(i) => self.order.get(i).and_then(handle),
+            chat::TabTo::List => Some(list),
+            chat::TabTo::Composer => None,
+        };
+        to.unwrap_or(composer).clone()
+    }
+}
+
 /// What one pane in Chat mode remembers.
 pub(crate) struct ChatUi {
     /// Expanded tool and thinking rows.
@@ -17,6 +76,8 @@ pub(crate) struct ChatUi {
     pub(crate) selecting: Option<(chat::MsgKey, mkrew_ui::preview_select::Selection)>,
     /// Where each message's text was painted last frame (for hit-testing a press).
     pub(crate) hits: RefCell<HashMap<chat::MsgKey, preview::Hits>>,
+    /// The Tab stops of the page.
+    pub(crate) stops: RefCell<Stops>,
 }
 
 impl ChatUi {
@@ -26,7 +87,12 @@ impl ChatUi {
             scroll: ScrollHandle::new(),
             selecting: None,
             hits: RefCell::default(),
+            stops: RefCell::default(),
         }
+    }
+
+    fn stop(&self, stop: Stop, cx: &mut App) -> FocusHandle {
+        self.stops.borrow_mut().stop(stop, cx)
     }
 }
 
@@ -173,8 +239,13 @@ impl Shell {
                         !chat,
                         theme,
                     )
+                    .h(theme::rems_px(theme::COMPACT_SEGMENT_HEIGHT))
                     .child("Terminal")
-                    .tooltip(tooltip(theme, "Show the terminal", ""))
+                    .tooltip(tooltip(
+                        theme,
+                        "Show the terminal",
+                        self.keymap.label(Command::ToggleChat),
+                    ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         if chat {
                             shell.set_chat(session, false, window, cx);
@@ -187,6 +258,7 @@ impl Shell {
                         chat,
                         theme,
                     )
+                    .h(theme::rems_px(theme::COMPACT_SEGMENT_HEIGHT))
                     .child("Chat")
                     .tooltip(tooltip(
                         theme,
@@ -221,8 +293,13 @@ impl Shell {
             .reads
             .get(&session)
             .and_then(|read| read.page.as_deref());
+        ui.stops.borrow_mut().begin();
+        if let Some(page) = page {
+            (ui.hits.borrow_mut()).retain(|key, _| key.0 >= page.first_turn);
+        }
         let view = chat::view(page, &ui.open);
         if view.turns.is_empty() {
+            ui.stops.borrow_mut().end();
             return message(
                 theme,
                 None,
@@ -233,13 +310,18 @@ impl Shell {
             .into_any_element();
         }
         let earlier = view.earlier.then(|| {
-            meta_line(theme, "Earlier turns: Open transcript".into())
-                .id(SharedString::from(format!("chat-earlier-{session}")))
-                .pressable(Look::Text, true, theme)
-                .on_press(
-                    true,
-                    cx.listener(move |shell, _, _, cx| shell.open_transcript(session, cx)),
-                )
+            let stop = ui.stop(Stop::Earlier, cx);
+            keyboard_stop(
+                meta_line(theme, "Earlier turns: Open transcript".into())
+                    .id(SharedString::from(format!("chat-earlier-{session}"))),
+                &stop,
+                theme,
+            )
+            .pressable(Look::Text, true, theme)
+            .on_press(
+                true,
+                cx.listener(move |shell, _, _, cx| shell.open_transcript(session, cx)),
+            )
         });
         let turns: Vec<_> = view
             .turns
@@ -247,10 +329,17 @@ impl Shell {
             .enumerate()
             .map(|(index, turn)| self.chat_turn(session, page, index, turn, theme, cx))
             .collect();
+        let question = view.question.as_ref().map(|question| {
+            let stop = ui.stop(Stop::Answer, cx);
+            chat_question(session, question, &stop, theme, cx)
+        });
+        ui.stops.borrow_mut().end();
         div()
             .size_full()
             .flex()
             .flex_col()
+            .when(is_focused, |el| el.track_focus(&self.chat_focus))
+            .on_key_down(cx.listener(Self::chat_key_down))
             .child(
                 div()
                     .id(SharedString::from(format!("chat-list-{session}")))
@@ -258,8 +347,19 @@ impl Shell {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&ui.scroll)
-                    .when(is_focused, |el| el.track_focus(&self.chat_focus))
-                    .on_key_down(cx.listener(Self::chat_key_down))
+                    // A press on a message stops here; any other press ends the selection, so a
+                    // drag cannot extend an old one.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |shell, _: &MouseDownEvent, _, cx| {
+                            shell.chat_clear_selection(session, cx);
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
+                        if event.dragging() {
+                            shell.chat_drag(session, event.position, cx);
+                        }
+                    }))
                     .flex()
                     .flex_col()
                     .gap(px(space::M))
@@ -273,11 +373,7 @@ impl Shell {
             .when(!view.tray.is_empty(), |el| {
                 el.child(chat_tray(&view.tray, now, theme))
             })
-            .children(
-                view.question
-                    .as_ref()
-                    .map(|question| chat_question(session, question, theme, cx)),
-            )
+            .children(question)
             .into_any_element()
     }
 
@@ -306,10 +402,28 @@ impl Shell {
         if !event.keystroke.modifiers.modified()
             && event.keystroke.key == "escape"
             && let Some(ui) = self.chats.get_mut(&session)
-            && ui.selecting.take().is_some()
+            && ui
+                .selecting
+                .take_if(|(_, selection)| !selection.is_empty())
+                .is_some()
         {
             cx.stop_propagation();
             cx.notify();
+            return;
+        }
+        let m = event.keystroke.modifiers;
+        if event.keystroke.key == "tab" && !(m.control || m.alt || m.platform) {
+            if let Some(ui) = self.chats.get(&session) {
+                let to = (ui.stops.borrow()).go(
+                    window,
+                    !m.shift,
+                    &self.chat_focus,
+                    &self.composer_focus,
+                );
+                cx.stop_propagation();
+                window.focus(&to, cx);
+                cx.notify();
+            }
             return;
         }
         if event.keystroke.modifiers.modified() {
@@ -327,7 +441,9 @@ impl Shell {
             "pagedown" => page,
             "home" => f32::MIN,
             "end" => f32::MAX,
-            "escape" | "enter" | "tab" => {
+            // A stop that has the keyboard presses itself on Enter (gpui clicks it on release).
+            "enter" if !self.chat_focus.is_focused(window) => return,
+            "escape" | "enter" => {
                 cx.stop_propagation();
                 window.focus(&self.composer_focus, cx);
                 cx.notify();
@@ -380,24 +496,28 @@ impl Shell {
         cx.notify();
     }
 
-    fn chat_drag(
-        &mut self,
-        session: Ulid,
-        key: chat::MsgKey,
-        position: Point<Pixels>,
-        cx: &mut Context<'_, Self>,
-    ) {
+    /// A press in the list that is not on a message: no selection to drag from.
+    fn chat_clear_selection(&mut self, session: Ulid, cx: &mut Context<'_, Self>) {
+        if let Some(ui) = self.chats.get_mut(&session)
+            && ui.selecting.take().is_some()
+        {
+            cx.notify();
+        }
+    }
+
+    /// A drag over the list extends the selection to the text nearest the pointer, in the
+    /// selection's own message (so it reaches the message's start or end past its edge).
+    fn chat_drag(&mut self, session: Ulid, position: Point<Pixels>, cx: &mut Context<'_, Self>) {
         let Some(ui) = self.chats.get_mut(&session) else {
             return;
         };
-        let at = ui
-            .hits
-            .borrow()
-            .get(&key)
+        let Some((key, selection)) = ui.selecting.as_mut() else {
+            return;
+        };
+        let at = (ui.hits.borrow())
+            .get(&*key)
             .and_then(|hits| hits.hit(position));
-        if let (Some(at), Some((selected, selection))) = (at, ui.selecting.as_mut())
-            && *selected == key
-        {
+        if let Some(at) = at {
             selection.head = at;
             cx.notify();
         }
@@ -413,6 +533,9 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        let Some(chat_ui) = self.chats.get(&session) else {
+            return div().into_any_element();
+        };
         let rows: Vec<_> = turn
             .rows
             .iter()
@@ -445,30 +568,22 @@ impl Shell {
                                         },
                                     ),
                                 )
-                                .on_mouse_move(cx.listener(
-                                    move |shell, event: &MouseMoveEvent, _, cx| {
-                                        if event.dragging() {
-                                            shell.chat_drag(session, key, event.position, cx);
-                                        }
-                                    },
-                                ))
                                 .into_any_element()
                         }
                         _ => div().into_any_element(),
                     }
                 }
                 chat::Row::Thinking { key, text, open } => chat_disclosure(
-                    session,
-                    *key,
+                    (session, *key),
                     *open,
                     div().italic().child("Thinking").into_any_element(),
                     || mono_block((*text).to_owned(), theme.text_muted, theme).into_any_element(),
+                    &chat_ui.stop(Stop::Row(*key), cx),
                     theme,
                     cx,
                 ),
                 chat::Row::Tool { key, call, open } => chat_disclosure(
-                    session,
-                    *key,
+                    (session, *key),
                     *open,
                     div()
                         .flex()
@@ -490,6 +605,7 @@ impl Shell {
                         )
                         .into_any_element(),
                     || tool_body(call, theme).into_any_element(),
+                    &chat_ui.stop(Stop::Row(*key), cx),
                     theme,
                     cx,
                 ),
@@ -518,11 +634,11 @@ impl Shell {
 /// A row that opens and closes: `head` always, `body` (built only then) while open; a click
 /// on the head toggles.
 fn chat_disclosure(
-    session: Ulid,
-    key: chat::RowKey,
+    (session, key): (Ulid, chat::RowKey),
     open: bool,
     head: gpui::AnyElement,
     body: impl FnOnce() -> gpui::AnyElement,
+    stop: &FocusHandle,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
@@ -531,31 +647,34 @@ fn chat_disclosure(
         .flex_col()
         .gap(px(space::XS))
         .child(
-            div()
-                .id(SharedString::from(format!(
+            keyboard_stop(
+                div().id(SharedString::from(format!(
                     "chat-row-{session}-{}-{}-{}",
                     key.0, key.1, key.2
-                )))
-                .flex()
-                .items_center()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
-                .pressable(Look::Text, true, theme)
-                .on_press(
-                    true,
-                    cx.listener(move |shell, _, _, cx| shell.toggle_chat_row(session, key, cx)),
-                )
-                .child(icon_svg(
-                    if open {
-                        Icon::ChevronDown
-                    } else {
-                        Icon::ChevronRight
-                    },
-                    theme::ICON_SIZE_SMALL,
-                    theme.text_muted,
-                ))
-                .child(head),
+                ))),
+                stop,
+                theme,
+            )
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .pressable(Look::Text, true, theme)
+            .on_press(
+                true,
+                cx.listener(move |shell, _, _, cx| shell.toggle_chat_row(session, key, cx)),
+            )
+            .child(icon_svg(
+                if open {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                },
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ))
+            .child(head),
         )
         .when(open, |el| el.child(body()))
         .into_any_element()
@@ -693,6 +812,7 @@ fn chat_tray(chips: &[chat::Chip<'_>], now: i64, theme: &Theme) -> gpui::AnyElem
 fn chat_question(
     session: Ulid,
     question: &chat::QuestionCard<'_>,
+    stop: &FocusHandle,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
@@ -723,22 +843,40 @@ fn chat_question(
         }))
         .child(
             div().flex().child(
-                div()
-                    .id(SharedString::from(format!("chat-answer-{session}")))
-                    .px(px(space::M))
-                    .py(px(space::XS))
-                    .rounded(px(radius::CHIP))
-                    .bg(rgb(theme.surface_raised))
-                    .text_color(rgb(theme.text))
-                    .pressable(Look::Raised, true, theme)
-                    .on_press(
-                        true,
-                        cx.listener(move |shell, _, window, cx| {
-                            shell.set_chat(session, false, window, cx);
-                        }),
-                    )
-                    .child("Answer in terminal"),
+                keyboard_stop(
+                    div().id(SharedString::from(format!("chat-answer-{session}"))),
+                    stop,
+                    theme,
+                )
+                .px(px(space::M))
+                .py(px(space::XS))
+                .rounded(px(radius::CHIP))
+                .bg(rgb(theme.surface_raised))
+                .text_color(rgb(theme.text))
+                .pressable(Look::Raised, true, theme)
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, window, cx| {
+                        shell.set_chat(session, false, window, cx);
+                    }),
+                )
+                .child("Answer in terminal"),
             ),
         )
         .into_any_element()
+}
+
+/// `el` as a Tab stop on `handle` with the focus ring: a 1 px border, transparent at rest, so
+/// the ring shifts nothing (like `DialogControl::focus_stop`, with a handle the page owns).
+fn keyboard_stop(
+    el: gpui::Stateful<gpui::Div>,
+    handle: &FocusHandle,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let ring = rgb(theme.focus_ring);
+    el.border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::transparent_black())
+        .rounded(px(radius::SMALL))
+        .track_focus(handle)
+        .focus_visible(move |style| style.border_color(ring))
 }
