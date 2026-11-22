@@ -165,6 +165,15 @@ pub const SETTINGS: &[Setting] = &[
         "The Board lists every workspace's tasks (its This workspace | All workspaces switch writes it).",
     ),
     row(
+        General,
+        "Workspace",
+        "terminal",
+        "option_as_meta",
+        Bool,
+        "Option as Meta",
+        "macOS: Option sends Esc + the key (Option+B / F move by word in a shell) instead of typing é, @ or €.",
+    ),
+    row(
         Appearance,
         "Theme",
         "ui",
@@ -602,6 +611,10 @@ mod tests {
     fn values_show_as_their_toml_names() {
         let defaults = Settings::default();
         assert_eq!(setting("ui.theme").current(&defaults), "system");
+        assert_eq!(
+            setting("terminal.option_as_meta").current(&defaults),
+            "false"
+        );
         assert_eq!(setting("ui.diff_wrap").current(&defaults), "true");
         assert_eq!(setting("ui.font_size").current(&defaults), "13");
         assert_eq!(setting("composer.file_ref").current(&defaults), "@{path}");

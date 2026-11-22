@@ -2182,6 +2182,7 @@ md_split = 50               # §12A; the source's share of the Markdown Split vi
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
 font_size = 13              # px, 8–32; also the Editor and Git code views
+option_as_meta = false      # macOS: true = Option sends Esc + the key (Meta); false = Option types the layout's characters (ADR 0099)
 
 [voice]                     # §20G, ADR 0045
 base_url = "https://api.groq.com/openai/v1"  # OpenAI-compatible; POST {base_url}/audio/transcriptions

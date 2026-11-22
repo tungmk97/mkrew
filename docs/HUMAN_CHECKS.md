@@ -29,6 +29,14 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **On a Mac:** in the composer, Option+← / Cmd+← / Option+Backspace / Cmd+Backspace / Ctrl+K / Cmd+Shift+Z do what TextEdit does; Option+B types "∫"; the same in the Editor.
 - [ ] **Look (dark + light) on a Mac:** composer, task dialog, Ask AI, Peek, Run setup, Prompts page, commit box and Replace all show ⌘↩ / ⌘O / ⌥Y / ⌥⌘↩; the workspace menu and the file tree menu say "Reveal in Finder".
 
+### To verify - 2026-11-22 macOS terminal input (ADR 0099, plan docs/superpowers/plans/2026-11-22-macos-2-terminal.md)
+
+- Needs a Mac: the pure parts are unit-tested on Windows, none of this has run on macOS.
+- [ ] **Setting (dark + light):** Settings, General, has a switch "Option as Meta" under "Board shows all workspaces".
+  Its help text fits the row.
+  Turning it on writes `option_as_meta = true` under `[terminal]` and keeps the comments.
+  Restart the daemon after installing: an older daemon rejects the new key as unknown.
+
 ### To verify - 2026-11-22 Theme gallery (plan docs/superpowers/plans/2026-11-22-theme-gallery.md)
 
 - [ ] **Gallery layout (dark + light):** open Settings > Appearance: "Themes" overline, a "Dark" group and a "Light" group of cards, three per row at the default size, then the themes folder line with "New theme from current" and "Open themes folder".

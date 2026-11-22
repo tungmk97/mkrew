@@ -1914,6 +1914,20 @@ mod tests {
     }
 
     #[test]
+    fn option_as_meta_is_a_switch_on_the_general_page() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        focus_on(&mut d, "terminal.option_as_meta", &keymap);
+        assert_eq!(
+            d.key(&typed(" "), None, &keymap),
+            Effect::Write {
+                setting: setting("terminal.option_as_meta"),
+                text: "true".into()
+            }
+        );
+    }
+
+    #[test]
     fn a_broken_file_makes_settings_read_only_but_not_keys() {
         let keymap = Keymap::defaults();
         let mut d = SettingsDialog::new(Err("settings.toml:2:1: oops".into()), Vec::new());

@@ -20,8 +20,8 @@ pub struct Settings {
     pub zed: ZedSettings,
     /// `[ui]`: the app's font and theme (SPEC §14, §20.0).
     pub ui: UiSettings,
-    /// `[terminal]`: the terminal font; also used by the Files and Git code views.
-    pub terminal: FontSettings,
+    /// `[terminal]`: the terminal font (also used by the Files and Git code views) and its keys.
+    pub terminal: TerminalSettings,
     /// `[voice]`: speech to text for voice input (SPEC §20G, ADR 0045).
     pub voice: VoiceSettings,
     /// `[features]`: optional modules, all off by default (ADR 0046).
@@ -220,19 +220,26 @@ impl JiraLayout {
     }
 }
 
-/// `[ui]` / `[terminal]` font. An empty family is the built-in default (SPEC §14).
+/// `[ui] font_size` and `[terminal] font_size` of a new install (SPEC §14).
+pub const DEFAULT_FONT_SIZE: FontSize = FontSize(13);
+
+/// `[terminal]`: the code font (an empty family is the built-in default, SPEC §14) and keys.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct FontSettings {
+pub struct TerminalSettings {
     pub font_family: String,
     pub font_size: FontSize,
+    /// macOS (ADR 0099): Option sends ESC plus the key (Meta) instead of typing the layout's
+    /// character. No effect on other systems.
+    pub option_as_meta: bool,
 }
 
-impl Default for FontSettings {
+impl Default for TerminalSettings {
     fn default() -> Self {
         Self {
             font_family: String::new(),
-            font_size: FontSize(13),
+            font_size: DEFAULT_FONT_SIZE,
+            option_as_meta: false,
         }
     }
 }
@@ -439,10 +446,9 @@ pub struct UiSettings {
 
 impl Default for UiSettings {
     fn default() -> Self {
-        let font = FontSettings::default();
         Self {
-            font_family: font.font_family,
-            font_size: font.font_size,
+            font_family: String::new(),
+            font_size: DEFAULT_FONT_SIZE,
             theme: ThemeMode::System,
             light_theme: DEFAULT_LIGHT_THEME.into(),
             dark_theme: DEFAULT_DARK_THEME.into(),
@@ -635,9 +641,12 @@ pub fn template() -> &'static str {
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
+     # Option as Meta (macOS): true makes Option send Esc plus the key, so Option+B / Option+F\n\
+     # move by word in a shell; false types the layout's characters (é, @, €).\n\
      [terminal]\n\
      # font_family = \"\"\n\
      # font_size = 13\n\
+     # option_as_meta = false\n\
      \n\
      # Voice input (Ctrl+Shift+D): speech to text over an OpenAI-compatible API, Groq by\n\
      # default (OpenAI and local servers work too). The API key is read from the environment\n\
@@ -796,9 +805,10 @@ mod tests {
         assert_eq!(settings.ui.theme, ThemeMode::System);
         assert_eq!(
             settings.terminal,
-            FontSettings {
+            TerminalSettings {
                 font_family: String::new(),
-                font_size: FontSize(13)
+                font_size: FontSize(13),
+                option_as_meta: false,
             }
         );
     }
@@ -851,6 +861,7 @@ close_to_tray = false
 [terminal]
 font_family = "JetBrains Mono"
 font_size = 15
+option_as_meta = true
 
 [features]
 docs = true
@@ -894,9 +905,10 @@ push = true
                     md_mode: MdMode::Preview,
                     md_split: MD_SPLIT_DEFAULT,
                 },
-                terminal: FontSettings {
+                terminal: TerminalSettings {
                     font_family: "JetBrains Mono".into(),
                     font_size: FontSize(15),
+                    option_as_meta: true,
                 },
                 voice: VoiceSettings::default(),
                 features: FeatureSettings {
@@ -910,6 +922,23 @@ push = true
                 },
                 jira: JiraSettings::default(),
             }
+        );
+    }
+
+    #[test]
+    fn option_as_meta_defaults_off_is_a_bool_and_belongs_to_terminal_only() {
+        assert!(!Settings::default().terminal.option_as_meta);
+        let on = parse(
+            Path::new("settings.toml"),
+            "[terminal]\noption_as_meta = true\n",
+        )
+        .unwrap();
+        assert!(on.terminal.option_as_meta);
+        let message = parse_err("[terminal]\noption_as_meta = \"yes\"\n");
+        assert!(message.starts_with("settings.toml:2:"), "{message}");
+        assert!(message.contains("invalid type"), "{message}");
+        assert!(
+            parse_err("[ui]\noption_as_meta = true\n").contains("unknown field `option_as_meta`")
         );
     }
 
