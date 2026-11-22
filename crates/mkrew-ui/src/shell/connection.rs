@@ -377,6 +377,7 @@ impl Shell {
             plan_error: None,
             sidebar_layout: sidebar::Layout::from_mode(sidebar_mode),
             right_panel,
+            reads: HashMap::new(),
             thread: None,
             inspector_width,
             inspector_dragging: false,

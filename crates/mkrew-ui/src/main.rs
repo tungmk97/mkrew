@@ -703,8 +703,10 @@ struct Shell {
     /// The right panel (Files / Session / Git tabs) next to Terminals, the Editor and the Diff;
     /// from `[ui] right_panel`, written by its toggle and tab row (SPEC §10, ADR 0081, ADR 0084).
     right_panel: inspector::RightPanel,
-    /// The session panel's Thread section (ADR 0057): the shown session's reading. `None`
-    /// while the panel is closed or shows no agent with a native id.
+    /// The transcripts being read, one per session (ADR 0104): the session panel's Thread
+    /// section and every pane in Chat mode share them.
+    reads: HashMap<Ulid, ThreadRead>,
+    /// The session panel's Thread section UI state.
     thread: Option<ThreadWatch>,
     /// Its width in px, from `[ui] inspector_width` and the drag.
     inspector_width: f32,
