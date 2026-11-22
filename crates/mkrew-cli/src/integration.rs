@@ -410,17 +410,79 @@ fn claude_status(text: &str, mk: &str) -> anyhow::Result<Installed> {
     })
 }
 
-/// Claude Code's `statusLine` as Mkrew sets it. Claude runs `command` through its shell, so
-/// the path is quoted (it may hold spaces).
+/// Claude Code's `statusLine` as Mkrew sets it.
 fn statusline_value(mk: &str) -> Value {
     json!({"type": "command", "command": statusline_command(mk)})
 }
 
 fn statusline_command(mk: &str) -> String {
-    format!("\"{mk}\" statusline")
+    command_for(
+        mk,
+        cfg!(windows),
+        short_path,
+        crate::claude_shell::claude_shell_is_bash,
+    )
 }
 
-/// Whether a `statusLine` value runs some `mk statusline` (any folder, quoted or bare).
+/// What Claude Code's shell can run to start `mk statusline`. Off Windows `sh` runs the quoted
+/// path. On Windows the shell is Git Bash or PowerShell (they read a quoted path differently),
+/// so the command is the one both accept when there is one: the path with forward slashes and
+/// no quotes when it has nothing the shells treat specially, else its 8.3 short path when that
+/// has none either, else the quoted form of the shell Claude will use (`shell_is_bash`).
+fn command_for(
+    mk: &str,
+    windows: bool,
+    short: impl Fn(&str) -> Option<String>,
+    shell_is_bash: impl Fn() -> bool,
+) -> String {
+    if !windows {
+        return format!("\"{mk}\" statusline");
+    }
+    let plain = |path: &str| {
+        path.chars().enumerate().all(|(at, c)| {
+            c.is_alphanumeric()
+                || matches!(c, '/' | '.' | '_' | '-' | ':' | '+' | '@')
+                || (c == '~' && at > 0)
+        })
+    };
+    let slashed = mk.replace('\\', "/");
+    if plain(&slashed) {
+        return format!("{slashed} statusline");
+    }
+    if let Some(short) = short(mk).map(|short| short.replace('\\', "/"))
+        && plain(&short)
+    {
+        return format!("{short} statusline");
+    }
+    if shell_is_bash() {
+        format!("'{}' statusline", slashed.replace('\'', r"'\''"))
+    } else {
+        format!("& '{}' statusline", slashed.replace('\'', "''"))
+    }
+}
+
+/// The 8.3 short form of the absolute path `path` (`C:\PROGRA~1\...`), when the volume has one.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn short_path(path: &str) -> Option<String> {
+    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+    let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+    let mut buf = vec![0u16; 1024];
+    // SAFETY: `wide` is NUL terminated and `buf` holds `buf.len()` u16s; both outlive the call.
+    let len = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+    let len = usize::try_from(len)
+        .ok()
+        .filter(|len| (1..buf.len()).contains(len))?;
+    String::from_utf16(&buf[..len]).ok()
+}
+
+#[cfg(not(windows))]
+fn short_path(_path: &str) -> Option<String> {
+    None
+}
+
+/// Whether a `statusLine` value runs some `mk statusline` (any folder; bare, quoted or called
+/// with `&`, as [`command_for`] writes it).
 fn statusline_is_ours(value: &Value) -> bool {
     let Some(command) = value["command"].as_str() else {
         return false;
@@ -428,7 +490,8 @@ fn statusline_is_ours(value: &Value) -> bool {
     command
         .trim()
         .strip_suffix(" statusline")
-        .is_some_and(|program| is_mk(program.trim().trim_matches('"')))
+        .map(|program| program.trim().trim_start_matches('&').trim())
+        .is_some_and(|program| is_mk(program.trim_matches(['"', '\''])))
 }
 
 /// What an edit does to the saved status line file.
@@ -955,7 +1018,10 @@ mod tests {
 
     #[test]
     fn the_status_line_command_quotes_the_path() {
-        assert_eq!(statusline_command(MK), format!("\"{MK}\" statusline"));
+        assert_eq!(
+            command_for(MK, false, short_path, || true),
+            format!("\"{MK}\" statusline")
+        );
         assert!(statusline_is_ours(&statusline_value(MK)));
         assert!(statusline_is_ours(&statusline_value(OLD_MK)), "any mk");
         assert!(statusline_is_ours(
@@ -968,6 +1034,74 @@ mod tests {
             &json!({"type": "command", "command": "mk-other statusline"})
         ));
         assert!(!statusline_is_ours(&json!("mk statusline")));
+    }
+
+    #[test]
+    fn on_windows_the_command_is_one_both_shells_accept() {
+        let no_short = |_: &str| None;
+        let never = || -> bool { unreachable!("a plain path needs no shell") };
+        // 1: nothing special in the path: forward slashes, no quotes.
+        assert_eq!(
+            command_for(r"C:\Tools\Mkrew\bin\mk.exe", true, no_short, never),
+            "C:/Tools/Mkrew/bin/mk.exe statusline"
+        );
+        // 2: spaces, but a short path without any: that one.
+        let short = |_: &str| Some(r"C:\PROGRA~1\Mkrew\bin\mk.exe".to_owned());
+        assert_eq!(
+            command_for(r"C:\Program Files\Mkrew\bin\mk.exe", true, short, never),
+            "C:/PROGRA~1/Mkrew/bin/mk.exe statusline"
+        );
+        // 3: no short path: the quoted form of the shell Claude uses.
+        let mk = r"C:\Program Files\Mkrew\bin\mk.exe";
+        assert_eq!(
+            command_for(mk, true, no_short, || true),
+            "'C:/Program Files/Mkrew/bin/mk.exe' statusline"
+        );
+        assert_eq!(
+            command_for(mk, true, no_short, || false),
+            "& 'C:/Program Files/Mkrew/bin/mk.exe' statusline"
+        );
+        // A short path that still holds something special is not used.
+        let odd = |_: &str| Some(r"C:\a b\mk.exe".to_owned());
+        assert_eq!(
+            command_for(mk, true, odd, || false),
+            "& 'C:/Program Files/Mkrew/bin/mk.exe' statusline"
+        );
+        // A quote in the path is escaped for each shell.
+        assert_eq!(
+            command_for(r"C:\O'Neil\mk.exe", true, no_short, || true),
+            r"'C:/O'\''Neil/mk.exe' statusline"
+        );
+        assert_eq!(
+            command_for(r"C:\O'Neil\mk.exe", true, no_short, || false),
+            "& 'C:/O''Neil/mk.exe' statusline"
+        );
+        // Elsewhere `sh` runs the quoted path.
+        assert_eq!(
+            command_for("/opt/Mk rew/bin/mk", false, no_short, never),
+            "\"/opt/Mk rew/bin/mk\" statusline"
+        );
+    }
+
+    #[test]
+    fn every_form_of_the_command_is_recognized_as_mkrews() {
+        for command in [
+            "C:/Tools/Mkrew/bin/mk.exe statusline",
+            "C:/PROGRA~1/Mkrew/bin/mk.exe statusline",
+            "'C:/Program Files/Mkrew/bin/mk.exe' statusline",
+            "& 'C:/Program Files/Mkrew/bin/mk.exe' statusline",
+            r"'C:/O'\''Neil/mk.exe' statusline",
+            "\"/opt/Mk rew/bin/mk\" statusline",
+            "mk statusline",
+        ] {
+            assert!(
+                statusline_is_ours(&json!({"type": "command", "command": command})),
+                "{command}"
+            );
+        }
+        assert!(!statusline_is_ours(
+            &json!({"type": "command", "command": "& 'C:/x/other.exe' statusline"})
+        ));
     }
 
     #[test]

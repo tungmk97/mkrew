@@ -1,6 +1,7 @@
 //! `mk`: the Mkrew command-line client (SPEC §9).
 
 mod attach;
+mod claude_shell;
 mod client;
 mod comment;
 mod daemon;
