@@ -695,6 +695,12 @@ mod tests {
         super::claude_edit(text, install, mk, None).map(|edited| edited.text)
     }
 
+    /// [`run_on`] with the test `mk`, which must succeed (install, reinstall and uninstall
+    /// all report success, also when nothing changes).
+    fn ok(action: Action, agent: Agent, file: &Path) {
+        assert_eq!(run_on(action, agent, file, MK).unwrap(), ExitCode::SUCCESS);
+    }
+
     #[test]
     fn omp_extension_runs_the_daemons_mk() {
         assert!(
@@ -934,10 +940,10 @@ mod tests {
             let ours = owned_contents(agent, MK).unwrap();
             let ours = ours.as_str();
             assert_eq!(owned_status(None, ours), Installed::No);
-            run_on(Action::Install, agent, &file, MK).unwrap();
+            ok(Action::Install, agent, &file);
             let text = fs::read_to_string(&file).unwrap();
             assert_eq!(owned_status(Some(&text), ours), Installed::Yes);
-            run_on(Action::Install, agent, &file, MK).unwrap();
+            ok(Action::Install, agent, &file);
             let backups = || {
                 fs::read_dir(file.parent().unwrap())
                     .unwrap()
@@ -958,12 +964,12 @@ mod tests {
             // An older version is outdated, replaced, and kept as a backup.
             fs::write(&file, "old").unwrap();
             assert_eq!(owned_status(Some("old"), ours), Installed::Partly);
-            run_on(Action::Install, agent, &file, MK).unwrap();
+            ok(Action::Install, agent, &file);
             assert_eq!(fs::read_to_string(&file).unwrap(), ours);
             assert_eq!(backups(), 1);
-            run_on(Action::Uninstall, agent, &file, MK).unwrap();
+            ok(Action::Uninstall, agent, &file);
             assert!(!file.exists());
-            run_on(Action::Uninstall, agent, &file, MK).unwrap();
+            ok(Action::Uninstall, agent, &file);
         }
 
         // The template (`"exec": "mk"`) is an older install: outdated, replaced, backed up.
@@ -972,7 +978,7 @@ mod tests {
         fs::write(&file, COPILOT_HOOKS).unwrap();
         let ours = copilot_hooks(MK);
         assert_eq!(owned_status(Some(COPILOT_HOOKS), &ours), Installed::Partly);
-        run_on(Action::Install, Agent::Copilot, &file, MK).unwrap();
+        ok(Action::Install, Agent::Copilot, &file);
         assert_eq!(fs::read_to_string(&file).unwrap(), ours);
         assert_eq!(fs::read_dir(file.parent().unwrap()).unwrap().count(), 2);
     }
@@ -1192,17 +1198,17 @@ mod tests {
         let user = json!({"type": "command", "command": "line.sh"});
         fs::write(&file, json!({"statusLine": user}).to_string()).unwrap();
 
-        run_on(Action::Install, Agent::Claude, &file, MK).unwrap();
+        ok(Action::Install, Agent::Claude, &file);
         assert_eq!(json(&fs::read_to_string(&saved).unwrap()), user);
         assert_eq!(
             statusline(&fs::read_to_string(&file).unwrap()),
             statusline_value(MK)
         );
         // Installing again does not overwrite the saved line with Mkrew's own.
-        run_on(Action::Install, Agent::Claude, &file, MK).unwrap();
+        ok(Action::Install, Agent::Claude, &file);
         assert_eq!(json(&fs::read_to_string(&saved).unwrap()), user);
 
-        run_on(Action::Uninstall, Agent::Claude, &file, MK).unwrap();
+        ok(Action::Uninstall, Agent::Claude, &file);
         assert_eq!(statusline(&fs::read_to_string(&file).unwrap()), user);
         assert!(!saved.exists(), "the saved file is deleted");
     }
@@ -1212,9 +1218,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
         let saved = dir.path().join(SAVED_STATUSLINE);
-        run_on(Action::Install, Agent::Claude, &file, MK).unwrap();
+        ok(Action::Install, Agent::Claude, &file);
         fs::write(&saved, "{").unwrap();
-        run_on(Action::Uninstall, Agent::Claude, &file, MK).unwrap();
+        ok(Action::Uninstall, Agent::Claude, &file);
         assert_eq!(json(&fs::read_to_string(&file).unwrap()), json("{}"));
         assert_eq!(fs::read_to_string(&saved).unwrap(), "{", "left alone");
     }
