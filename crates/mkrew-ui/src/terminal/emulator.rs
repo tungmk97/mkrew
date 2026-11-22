@@ -136,6 +136,26 @@ pub enum CopyEnd {
     Leave(Option<String>),
 }
 
+/// What a mouse press selects: the clicked cell (single click), the word under it (double
+/// click) or its line (triple click). A drag that follows extends by cells, words or lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Cell,
+    Word,
+    Line,
+}
+
+impl Pick {
+    /// The pick of a press with `clicks` clicks in a row (GPUI's `click_count`).
+    pub fn from_clicks(clicks: usize) -> Self {
+        match clicks {
+            0 | 1 => Pick::Cell,
+            2 => Pick::Word,
+            _ => Pick::Line,
+        }
+    }
+}
+
 /// Terminal state machine fed with a session's output.
 /// What a wheel scroll over the pane does ([`Emulator::wheel`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -416,10 +436,17 @@ impl Emulator {
     }
 
     /// Starts a selection at a visible cell (row 0 = top of the view). `side` = which half of
-    /// the cell was hit, so a click between cells selects nothing.
-    pub fn start_selection(&mut self, row: usize, col: usize, side: Side) {
+    /// the cell was hit, so a click between cells selects nothing. A `Word` pick uses
+    /// alacritty's semantic selection (a bracket selects through its partner), a `Line` pick
+    /// whole lines.
+    pub fn start_selection(&mut self, row: usize, col: usize, side: Side, pick: Pick) {
         let point = self.view_point(row, col);
-        self.term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+        let ty = match pick {
+            Pick::Cell => SelectionType::Simple,
+            Pick::Word => SelectionType::Semantic,
+            Pick::Line => SelectionType::Lines,
+        };
+        self.term.selection = Some(Selection::new(ty, point, side));
         self.changed();
     }
 
@@ -438,11 +465,13 @@ impl Emulator {
         }
     }
 
-    /// Selected text (lines joined with `\n`, trailing blanks trimmed); `None` if nothing is
-    /// selected.
+    /// Selected text (lines joined with `\n`, trailing blanks trimmed, no line break at the end:
+    /// alacritty ends a line selection with one, and pasted into a shell it would run); `None`
+    /// if nothing is selected.
     pub fn selection_text(&self) -> Option<String> {
         self.term
             .selection_to_string()
+            .map(|text| text.trim_end_matches('\n').to_owned())
             .filter(|text| !text.is_empty())
     }
 
@@ -491,10 +520,7 @@ impl Emulator {
             }
             CopyKey::Select(select) => self.copy_select(select),
             CopyKey::Copy => {
-                // A line selection ends with a line break; pasted into a shell it would run.
-                let text = (self.selection_text())
-                    .map(|text| text.trim_end_matches('\n').to_owned())
-                    .filter(|text| !text.is_empty());
+                let text = self.selection_text();
                 self.leave_copy_mode();
                 return CopyEnd::Leave(text);
             }
@@ -742,7 +768,7 @@ mod tests {
         let mut emu = Emulator::new(10, 3);
         emu.advance(b"hello\r\nworld");
         assert_eq!(emu.selection_text(), None);
-        emu.start_selection(0, 1, Side::Left);
+        emu.start_selection(0, 1, Side::Left, Pick::Cell);
         emu.update_selection(1, 2, Side::Right);
         assert_eq!(emu.selection_text().as_deref(), Some("ello\nwor"));
         let grid = emu.grid();
@@ -760,7 +786,7 @@ mod tests {
         emu.advance(b"hello");
         let first = emu.shared_grid();
         assert!(Arc::ptr_eq(&first, &emu.shared_grid()), "unchanged: reused");
-        emu.start_selection(0, 0, Side::Left);
+        emu.start_selection(0, 0, Side::Left, Pick::Cell);
         emu.update_selection(0, 1, Side::Right);
         assert!(emu.shared_grid().rows[0][1].selected);
         emu.clear_selection();
@@ -774,9 +800,54 @@ mod tests {
     fn click_without_drag_selects_nothing() {
         let mut emu = Emulator::new(10, 2);
         emu.advance(b"hello");
-        emu.start_selection(0, 2, Side::Left);
+        emu.start_selection(0, 2, Side::Left, Pick::Cell);
         emu.update_selection(0, 2, Side::Left);
         assert_eq!(emu.selection_text(), None);
+    }
+
+    #[test]
+    fn pick_follows_the_click_count() {
+        assert_eq!(Pick::from_clicks(0), Pick::Cell);
+        assert_eq!(Pick::from_clicks(1), Pick::Cell);
+        assert_eq!(Pick::from_clicks(2), Pick::Word);
+        assert_eq!(Pick::from_clicks(3), Pick::Line);
+        assert_eq!(Pick::from_clicks(4), Pick::Line);
+    }
+
+    #[test]
+    fn a_double_click_selects_the_word_and_a_drag_extends_by_words() {
+        let mut emu = Emulator::new(40, 3);
+        emu.advance(b"cd /usr/local/bin && ls -la\r\nsecond line");
+        // Column 7 is the "/" between "usr" and "local": the word runs to the blanks around it.
+        emu.start_selection(0, 7, Side::Left, Pick::Word);
+        assert_eq!(emu.selection_text().as_deref(), Some("/usr/local/bin"));
+        assert!(emu.grid().rows[0][3].selected && emu.grid().rows[0][16].selected);
+        assert!(!emu.grid().rows[0][2].selected && !emu.grid().rows[0][17].selected);
+        // Dragging into "&&" (columns 18 and 19) takes that whole word too.
+        emu.update_selection(0, 19, Side::Right);
+        assert_eq!(emu.selection_text().as_deref(), Some("/usr/local/bin &&"));
+    }
+
+    #[test]
+    fn a_double_click_on_a_bracket_selects_through_its_partner_and_on_blanks_nothing() {
+        let mut emu = Emulator::new(40, 2);
+        emu.advance(b"f(a, b) x");
+        emu.start_selection(0, 1, Side::Left, Pick::Word);
+        assert_eq!(emu.selection_text().as_deref(), Some("(a, b)"));
+        emu.start_selection(0, 30, Side::Left, Pick::Word);
+        assert_eq!(emu.selection_text(), None, "blank cells copy nothing");
+    }
+
+    #[test]
+    fn a_triple_click_selects_the_line_and_copies_it_without_the_line_break() {
+        let mut emu = Emulator::new(20, 3);
+        emu.advance(b"first line\r\nsecond");
+        emu.start_selection(0, 4, Side::Left, Pick::Line);
+        assert_eq!(emu.selection_text().as_deref(), Some("first line"));
+        assert!(emu.grid().rows[0][0].selected && emu.grid().rows[0][19].selected);
+        assert!(!emu.grid().rows[1][0].selected);
+        emu.update_selection(1, 2, Side::Right);
+        assert_eq!(emu.selection_text().as_deref(), Some("first line\nsecond"));
     }
 
     #[test]
@@ -801,7 +872,7 @@ mod tests {
         let mut emu = Emulator::new(10, 3);
         numbered_lines(&mut emu, 10);
         emu.scroll_page(true);
-        emu.start_selection(0, 0, Side::Left);
+        emu.start_selection(0, 0, Side::Left, Pick::Cell);
         emu.update_selection(0, 4, Side::Right);
         assert_eq!(emu.selection_text().as_deref(), Some("line5"));
         assert!(emu.grid().rows[0][0].selected);
@@ -1172,8 +1243,8 @@ mod tests {
         copy_keys(&mut emu, [CopyKey::Select(Select::Chars)]);
         assert_eq!(emu.selection_text().as_deref(), Some("s"));
         copy_keys(&mut emu, [CopyKey::Select(Select::Lines)]);
-        // alacritty ends a line selection with the line break.
-        assert_eq!(emu.selection_text().as_deref(), Some("second\n"));
+        // A line selection ends with a line break in alacritty; selection_text drops it.
+        assert_eq!(emu.selection_text().as_deref(), Some("second"));
         copy_keys(&mut emu, [CopyKey::Select(Select::Lines)]);
         assert_eq!(emu.selection_text(), None, "the same kind again drops it");
     }
@@ -1297,7 +1368,7 @@ mod tests {
     fn copy_esc_after_a_click_leaves_at_once() {
         let mut emu = Emulator::new(12, 3);
         emu.advance(b"hello");
-        emu.start_selection(0, 1, Side::Left);
+        emu.start_selection(0, 1, Side::Left, Pick::Cell);
         emu.enter_copy_mode();
         assert_eq!(copy_keys(&mut emu, [CopyKey::Cancel]), CopyEnd::Leave(None));
         assert!(!emu.copy_mode());
@@ -1307,7 +1378,7 @@ mod tests {
     fn entering_copy_mode_drops_a_mouse_selection() {
         let mut emu = Emulator::new(12, 3);
         emu.advance(b"hello");
-        emu.start_selection(0, 0, Side::Left);
+        emu.start_selection(0, 0, Side::Left, Pick::Cell);
         emu.update_selection(0, 3, Side::Right);
         assert!(emu.selection_text().is_some());
         emu.enter_copy_mode();

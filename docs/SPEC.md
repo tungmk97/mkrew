@@ -1041,7 +1041,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   "Working…" ends the list while the agent works. The list follows the bottom unless scrolled
   up (ADR 0057).
 - **Terminal rendering:** cell grid from `alacritty_terminal`; 256-color/truecolor, cursor,
-  selection & copy, paste (bracketed), scrollback (UI-side, 1,000 lines like the daemon's, only for
+  selection (a drag; a double-click takes the word, a triple-click the line, and a drag after either extends by words or lines; a bracket selects through its partner) & copy (the copied text never ends with a line break), paste (bracketed), scrollback (UI-side, 1,000 lines like the daemon's, only for
   attached panes; the History replay pane keeps 10,000; ADR 0088),
   wheel (scrolls that history; a program that turned on mouse tracking, like Claude Code's
   full-screen view, gets wheel reports instead, SGR when it asked; a full-screen program with

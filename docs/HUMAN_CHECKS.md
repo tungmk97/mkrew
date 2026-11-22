@@ -54,6 +54,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Dead keys:** US layout, in a shell pane, Option+E then E types é; Option+` then A types à; Option+E then Space types ´.
   (Text fields do not compose Option dead keys yet; see Plan A "Not fixed".)
 - [ ] **Windows (regression):** Telex or Unikey types "việt" in a shell pane, the composer and the find bar exactly as before.
+- [ ] **Double and triple click (dark + light):** double-click a path in `ls` output: the whole path highlights in the selection color, Cmd+C copies it.
+  Triple-click a command line: the whole row highlights; paste into another shell pane: it is not run (no Enter).
+  Double-click on a `(`: the text through the matching `)` highlights.
 
 ### To verify - 2026-11-22 Theme gallery (plan docs/superpowers/plans/2026-11-22-theme-gallery.md)
 

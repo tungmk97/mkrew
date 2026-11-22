@@ -370,7 +370,7 @@ impl<T> RowCache<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::emulator::Emulator;
+    use crate::terminal::emulator::{Emulator, Pick};
 
     fn row(bytes: &[u8], cols: usize) -> Vec<GridCell> {
         let mut emu = Emulator::new(cols, 1);
@@ -574,7 +574,7 @@ mod tests {
         let theme = Theme::dark();
         let mut emu = Emulator::new(10, 1);
         emu.advance(b"a\x1b[7mb\x1b[0;90mc\x1b[0md");
-        emu.start_selection(0, 1, Side::Left);
+        emu.start_selection(0, 1, Side::Left, Pick::Cell);
         emu.update_selection(0, 2, Side::Right);
         let cells = emu.grid().rows.remove(0);
         let layout = layout_row(&cells, None, &theme);
@@ -619,7 +619,7 @@ mod tests {
         // The inverse match reads as body text too.
         assert_eq!(cell_style(&cells[6], false, &theme).fg, theme.text);
         // The selection wins over a match.
-        emu.start_selection(0, 0, Side::Left);
+        emu.start_selection(0, 0, Side::Left, Pick::Cell);
         emu.update_selection(0, 0, Side::Right);
         let cells = emu.grid().rows.remove(0);
         assert_eq!(

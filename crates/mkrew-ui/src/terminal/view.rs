@@ -33,7 +33,7 @@ use crate::icons::{Icon, icon_svg};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::pressable::{Look, Pressable};
 use crate::terminal::copy_mode::{CopyKey, copy_key};
-use crate::terminal::emulator::{CopyEnd, Emulator, Grid, Wheel};
+use crate::terminal::emulator::{CopyEnd, Emulator, Grid, Pick, Wheel};
 use crate::terminal::find::{FindBar, FindKey, FindStatus, find_key};
 use crate::terminal::hints::{self, Typed};
 use crate::terminal::input::{
@@ -643,7 +643,8 @@ impl TerminalPane {
         }
         window.focus(&self.focus_handle, cx);
         if let Some((row, col, side)) = self.cell_at(event.position) {
-            self.emulator.start_selection(row, col, side);
+            let pick = Pick::from_clicks(event.click_count);
+            self.emulator.start_selection(row, col, side, pick);
             self.selecting = true;
             cx.notify();
         }
