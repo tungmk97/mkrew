@@ -285,7 +285,7 @@ The same `[notify]` switches and the 30-second limit as the desktop notification
    - Windows: Settings → Apps → Installed apps → Mkrew → Uninstall (removes the files, the
      `PATH` entry and the shortcut).
    - tar.gz: delete the extracted folder and its `PATH` line.
-   - macOS: drag `Mkrew.app` to the Trash, and delete the `mk` link if you made one (`rm /usr/local/bin/mk ~/.local/bin/mk`).
+   - macOS: drag `Mkrew.app` to the Trash, and delete the `mk` link if you made one (`rm -f /usr/local/bin/mk ~/.local/bin/mk`).
    - From source: `cargo uninstall mkrew-ui mkrew-cli mkrew-daemon`.
 4. Optionally delete your data and settings (below).
 

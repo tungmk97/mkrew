@@ -333,8 +333,11 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         if command == Command::OpenSettings {
-            // The main window's own guard: no Settings over another dialog or the palette.
-            if !self.modal_open() {
+            // The main window's own guards: no Settings over another dialog or the palette
+            // (the key goes on, as in the rest of this function), none while reconnecting.
+            if self.modal_open() {
+                cx.propagate();
+            } else if !self.reconnecting() {
                 self.in_window(HostId::Main, cx, |shell, window, cx| {
                     window.activate_window();
                     shell.open_settings_dialog(window, cx);

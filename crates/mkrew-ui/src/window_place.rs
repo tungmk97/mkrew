@@ -196,7 +196,9 @@ impl Placement {
 }
 
 /// Where a saved window opens: `saved` grown to at least `min` and moved to the primary display
-/// when no display shows it any more ([`fit_on_displays`]), in `placement`.
+/// when no display shows it any more ([`fit_on_displays`]); then its size is cut to the display it
+/// is mostly on (never below `min`) and its top-left corner pulled onto that display; in
+/// `placement`.
 pub fn restored(
     saved: Bounds<Pixels>,
     placement: Placement,

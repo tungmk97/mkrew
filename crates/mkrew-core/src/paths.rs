@@ -37,7 +37,7 @@ impl Paths {
     pub fn resolve(var: impl Fn(&str) -> Option<String>) -> Result<Self, NoHomeDir> {
         // `BaseDirs` + "mkrew" (not `ProjectDirs`, which adds `config`/`data` on Windows)
         // gives `%APPDATA%\mkrew\` (Windows), `~/.config/mkrew/` and `~/.local/share/mkrew/`
-        // (Linux) and `~/Library/Application Support/mkrew/` for both (macOS), as SPEC §1 lists them.
+        // (Linux) and `~/Library/Application Support/mkrew/` for both (macOS) (SPEC §1 gives examples).
         let dirs = || directories::BaseDirs::new().ok_or(NoHomeDir);
         let data_dir = match var(ENV_DATA_DIR) {
             Some(dir) => PathBuf::from(dir),

@@ -46,8 +46,8 @@ pub fn set_dock_badge(count: usize) {
     dock::set_badge(badge_label(count).as_deref());
 }
 
-/// Bounces the Dock icon once (macOS) unless `window`'s app is the active one; Windows flashes
-/// the taskbar through [`Desktop::flash`], Linux does nothing.
+/// Bounces the Dock icon once (macOS; gpui skips the bounce when `window` itself is the active
+/// window); Windows flashes the taskbar through [`Desktop::flash`], Linux does nothing.
 pub fn request_attention(window: &gpui::Window) {
     if cfg!(target_os = "macos") {
         window.request_attention();

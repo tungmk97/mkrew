@@ -85,6 +85,7 @@ windows = { version = "0.62", features = [
 # The Dock badge and the About panel (SPEC §20L, ADR 0100): safe objc2 wrappers, so
 # `unsafe_code = "deny"` holds. The versions gpui-pre-macos already builds with, so the tree
 # gains no package.
+objc2 = { version = "0.6", default-features = false, features = ["std"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSResponder"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString"] }
 # `statfs` finds the real bundle behind a Gatekeeper-translocated copy (in-app update); 0.2 is

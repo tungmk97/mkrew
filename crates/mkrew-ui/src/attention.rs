@@ -441,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn closing_hides_only_while_the_tray_icon_is_there() {
+    fn closing_can_hide_only_while_the_tray_icon_is_there() {
         assert!(hide_on_close(true, true));
         assert!(
             !hide_on_close(true, false),

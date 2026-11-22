@@ -105,6 +105,10 @@ PLIST
       --wait --output-format json > "$stage/notary.json"
     grep -Eq '"status" *: *"Accepted"' "$stage/notary.json" || {
       cat "$stage/notary.json" >&2
+      # Apple's reason for the rejection is in the submission log, not in the submit answer.
+      id="$(sed -n 's/.*"id" *: *"\([^"]*\)".*/\1/p' "$stage/notary.json" | head -n 1)"
+      [ -z "$id" ] || xcrun notarytool log "$id" --apple-id "$MKREW_NOTARY_APPLE_ID" \
+        --password "$MKREW_NOTARY_PASSWORD" --team-id "$MKREW_NOTARY_TEAM_ID" >&2 || true
       echo "package: Apple did not accept the notarization" >&2
       exit 1
     }

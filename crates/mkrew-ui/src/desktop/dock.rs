@@ -2,11 +2,8 @@
 //! wrappers. Main thread only: gpui runs the UI and its actions there, and `MainThreadMarker`
 //! refuses anything else.
 
+use objc2::MainThreadMarker;
 use objc2_app_kit::NSApplication;
-// objc2-foundation 0.3.2 re-exports it as deprecated (`objc2::MainThreadMarker` moved); importing
-// from `objc2` would add a third dependency line, so allow it here.
-#[allow(deprecated)]
-use objc2_foundation::MainThreadMarker;
 use objc2_foundation::NSString;
 
 /// Sets the Dock icon's badge to `label`, or clears it.
