@@ -344,6 +344,7 @@ impl Shell {
                 | Command::ZoomPane
                 | Command::MoveTabLeft
                 | Command::MoveTabRight
+                | Command::ToggleChat
                 | Command::ClosePane => return,
                 _ => {}
             }
