@@ -157,6 +157,8 @@ struct Structured {
     task_id: Option<String>,
     /// `tasks` of a `TaskList` result.
     tasks: Option<Vec<Task>>,
+    /// Every `tasks` entry is deleted or has an id and a subject.
+    tasks_whole: bool,
     /// `agentId` of a background launch.
     agent_id: Option<String>,
     /// `status == "async_launched"`.
@@ -405,11 +407,12 @@ impl ThreadReader {
                     });
                 } else if let Some(tasks) = structured.as_ref().and_then(|s| s.tasks.as_ref())
                     && !result.is_error
-                    // Without a turn the call is unknown: the `tasks` list is specific enough.
-                    && self
-                        .turns
-                        .last()
-                        .is_none_or(|turn| turn.call(id).is_some_and(|c| c.name == "TaskList"))
+                    // Without a turn the call is unknown: a `tasks` list is accepted only when
+                    // every entry reads, so a foreign `tasks` field cannot blank the checklist.
+                    && self.turns.last().map_or(
+                        structured.as_ref().is_some_and(|s| s.tasks_whole),
+                        |turn| turn.call(id).is_some_and(|c| c.name == "TaskList"),
+                    )
                 {
                     self.checklist.clone_from(tasks);
                 } else {
@@ -557,6 +560,11 @@ fn structured_of(value: &Value) -> Option<Structured> {
     value.as_object()?;
     Some(Structured {
         task_id: id_str(&value["task"]["id"]),
+        tasks_whole: value["tasks"].as_array().is_some_and(|tasks| {
+            tasks.iter().all(|t| {
+                t["status"] == "deleted" || (id_str(&t["id"]).is_some() && t["subject"].is_string())
+            })
+        }),
         tasks: value["tasks"].as_array().map(|tasks| {
             tasks
                 .iter()
@@ -1719,6 +1727,37 @@ mod tests {
         assert_eq!(
             reader.turns()[0].plan,
             Some(vec![step("Design", PlanStatus::Done)])
+        );
+    }
+
+    /// Before the first turn a list result is accepted only when every entry reads.
+    #[test]
+    fn a_list_before_the_first_turn_needs_every_entry_to_read() {
+        let result = |tasks: &str| {
+            format!(
+                "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"tool_result\",\"tool_use_id\":\"l\",\"content\":\"x\"}}]}},\"toolUseResult\":{{\"tasks\":{tasks}}}}}\n"
+            )
+        };
+        let first_plan = |tasks: &str| {
+            let mut reader = claude();
+            reader.feed(&slice(CLAUDE_TASKS, 1, 3));
+            reader.feed(result(tasks).as_bytes());
+            reader.feed(&slice(CLAUDE_TASKS, 11, 12));
+            let update = "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"u9\",\"name\":\"TaskUpdate\",\"input\":{\"taskId\":\"1\",\"status\":\"completed\"}}]}}\n";
+            reader.feed(update.as_bytes());
+            reader.turns()[0].plan.clone()
+        };
+        assert_eq!(
+            first_plan(
+                "[{\"id\":\"1\",\"subject\":\"Plan\"},{\"id\":\"2\",\"subject\":\"Old\",\"status\":\"deleted\"}]"
+            ),
+            Some(vec![step("Plan", PlanStatus::Done)]),
+            "a whole list replaces the checklist"
+        );
+        assert_eq!(
+            first_plan("[{\"id\":\"1\",\"subject\":\"Plan\"},{\"nope\":true}]"),
+            Some(vec![step("Design", PlanStatus::Done)]),
+            "a list with an unreadable entry is ignored"
         );
     }
 
