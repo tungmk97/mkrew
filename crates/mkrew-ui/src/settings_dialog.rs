@@ -1313,11 +1313,21 @@ pub fn binding_error(error: &KeymapError) -> String {
     }
 }
 
-/// Ctrl+N (new prompt) and Ctrl+S (save) of the Prompts page; Cmd on macOS. They are page keys
+/// Ctrl+N (new prompt) and Ctrl+S (save) of the Prompts page; Cmd+N / Cmd+S on macOS, where
+/// Ctrl+N stays the next-line key of a field. They are page keys
 /// of the dialog, not commands of `keymap.toml`.
 pub fn prompts_shortcut(keystroke: &Keystroke) -> Option<PromptAction> {
+    prompts_shortcut_for(keystroke, Os::CURRENT)
+}
+
+/// [`prompts_shortcut`] for `os`. On macOS Ctrl+N is the Emacs next-line key of a field.
+pub fn prompts_shortcut_for(keystroke: &Keystroke, os: Os) -> Option<PromptAction> {
     let m = keystroke.modifiers;
-    if !(m.control || m.platform) || m.alt || m.shift {
+    let mod_ok = match os {
+        Os::Mac => m.platform && !m.control,
+        Os::Windows | Os::Linux => m.control && !m.platform,
+    };
+    if !mod_ok || m.alt || m.shift {
         return None;
     }
     match keystroke.key.as_str() {
@@ -2235,8 +2245,21 @@ mod tests {
         );
         assert_eq!(d.key(&key("ctrl-shift-n"), None, &keymap), Effect::None);
         assert_eq!(d.key(&key("alt-s"), None, &keymap), Effect::None);
-        assert_eq!(prompts_shortcut(&key("ctrl-n")), Some(PromptAction::New));
-        assert_eq!(prompts_shortcut(&key("n")), None);
+        let win = |keys: &str| prompts_shortcut_for(&key(keys), Os::Windows);
+        assert_eq!(win("ctrl-n"), Some(PromptAction::New));
+        assert_eq!(win("ctrl-s"), Some(PromptAction::Save));
+        assert_eq!(win("cmd-n"), None);
+        assert_eq!(win("n"), None);
+    }
+
+    #[test]
+    fn mac_prompts_page_keys_are_cmd_not_ctrl() {
+        let key = |keys: &str| Keystroke::parse(keys).unwrap();
+        let mac = |keys: &str| prompts_shortcut_for(&key(keys), Os::Mac);
+        assert_eq!(mac("cmd-n"), Some(PromptAction::New));
+        assert_eq!(mac("cmd-s"), Some(PromptAction::Save));
+        assert_eq!(mac("ctrl-n"), None, "Ctrl+N is next-line in a field");
+        assert_eq!(mac("ctrl-s"), None);
     }
 
     #[test]

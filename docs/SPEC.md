@@ -1330,7 +1330,7 @@ Only edit this file. When done, for EACH comment run:
   shown folder's `.gitignore`, once), "Open in File Explorer" ("Reveal in Finder" on macOS) and "Open in Zed" (§10). The app
   does these on the local disk; the watcher's `git.changed` lists the tree again. Failures show
   in the sidebar. A click outside or Esc closes the menu.
-  Shift+F10 opens it on the cursor row (on the active tab's menu while the editor has the keyboard).
+  Shift+F10 (⌃⌘M on macOS) opens it on the cursor row (on the active tab's menu while the editor has the keyboard).
 - **Open at a line:** Ctrl+Click on a file path in a terminal (§10) opens that file in the Editor with the
   caret on the line, scrolled into view. A path in another task's worktree switches to
   that worktree (asking about unsaved text first).
@@ -1338,7 +1338,7 @@ Only edit this file. When done, for EACH comment run:
   opens the bar, `Ctrl+H` opens it with the replace row. A selection on one line becomes the
   query. Case-insensitive; matches highlighted, Enter / Shift+Enter move between them and select
   the match, Tab / Shift+Tab switch find ↔ replace. In the replace field Enter replaces the
-  current match and goes to the next; Ctrl+Alt+Enter (in either field) or "Replace all" replaces
+  current match and goes to the next; Ctrl+Alt+Enter (⌥⌘↩ on macOS; in either field) or "Replace all" replaces
   every match as one undo step. Replacing does not save. Esc closes the bar and returns to the
   editor.
 
@@ -1452,7 +1452,7 @@ Shift+Enter sends `ESC CR` (the Alt+Enter form), which agents read as a new line
 kitty / win32-input keyboard mode, so this is the one form every agent gets through ConPTY.
 On macOS (ADR 0098) fields and the Editor follow the Mac text keys instead: Option+←/→ by word, Cmd+←/→ to the line's start / end, Cmd+↑/↓ to the text's start / end, Option+Backspace / Option+Delete the word before / after the caret, Cmd+Backspace / Cmd+Delete to the line's start / end, Cmd+A / C / X / V / Z, Cmd+Shift+Z (and Cmd+Y) redo, Cmd+Enter or Ctrl+Enter save or send, and the Emacs keys Ctrl+A / E (line start / end), Ctrl+B / F / P / N (← → ↑ ↓), Ctrl+D (Delete), Ctrl+H (Backspace) and Ctrl+K (delete to the line's end); Ctrl+←/→ are left to macOS (Spaces).
 An Option + character key types the character macOS composed (Option+B types "∫").
-On macOS the defaults use Cmd where the table says Ctrl, and never need Option with a character key (Option types characters on a Mac), Shift with a digit or symbol (macOS reports the shifted character, so such a binding never matches), an F-key or PgUp / PgDn (Fn on a MacBook); "macOS defaults" below lists every difference (ADR 0098).
+On macOS most defaults use Cmd where the table says Ctrl (Ctrl+Option keys stay), and never need Option with a character key (Option types characters on a Mac), Shift with a digit or symbol (macOS reports the shifted character, so such a binding never matches), an F-key or PgUp / PgDn (Fn on a MacBook); "macOS defaults" below lists every difference (ADR 0098).
 Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (⇧⌘P).
 
 | Group | Action | Default |
@@ -1519,7 +1519,7 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | File tree | Toggle ignored files (while the tree has the keyboard; the palette entry works anywhere in a workspace) | Ctrl+Shift+H |
 | File tree | Open the tree's cursor file in a kept tab (Enter opens a transient one) | Alt+Enter |
 | Editor | Save the opened file | Ctrl+S |
-| Editor | Find / replace in the opened file (replace all: Ctrl+Alt+Enter in the bar) | Ctrl+F / Ctrl+H |
+| Editor | Find / replace in the opened file (replace all: Ctrl+Alt+Enter in the bar, ⌥⌘↩ on macOS) | Ctrl+F / Ctrl+H |
 | Editor | Close the active file tab (asks about unsaved text; ADR 0080) | Ctrl+W |
 | Git | Next / previous file | ↓ / ↑ (or j / k) |
 | Git | Open the selected file's diff | Enter |
@@ -1541,7 +1541,7 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Agent (v2) | In a prompt box (the composer, the task dialog's Prompt), at the start of a line or after a space: pick the agent's command (§20B.7) / pick a file (§12A); Enter or Tab types the pick, Esc types the character | / / @ |
 | Agent (v2) | Send selection to an agent (Editor, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
-| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer (Reveal in Finder on macOS), set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10) |
+| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer (Reveal in Finder on macOS), set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10, ⌃⌘M on macOS) |
 
 **macOS defaults** (ADR 0098); a command not listed keeps the key of the table above:
 
@@ -1560,6 +1560,7 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Docs source / send comments / next / previous comment | ⇧⌘E / ⇧⌘S / ⌘] / ⌘[ |
 | File tree: show ignored | ⇧⌘H |
 | Editor: save / find / replace / close tab / preview | ⌘S / ⌥⇧⌘F / ⌥⌘F / ⌘W / ⇧⌘V |
+| Editor find bar: replace all | ⌥⌘↩ |
 | Search in files | ⇧⌘F |
 | Quick open / new task / run task (Board) | ⌘P / ⌘N / ⌘↩ |
 | Run start / restart / stop | ⌘R / ⌃⌘R / ⌘. |

@@ -24,7 +24,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 ### To verify - 2026-11-22 macOS keyboard (ADR 0098)
 
 - [ ] **On a Mac (US layout):** ⇧⌘P opens the palette, ⌃⌘2 shows the Board, ⌥⌘← moves pane focus, ⌘D splits, ⌘1 switches workspace; Settings → Keyboard shows ⌘ symbols.
-- [ ] **On a Mac (German layout):** Option+5 / Option+6 type `[` / `]` in a terminal and in the composer; ⌘] / ⌘[ step through comments.
+- [ ] **On a Mac (German layout):** Option+5 / Option+6 type `[` / `]` in the composer and the Editor (the terminal comes with the terminal plan); ⌘] / ⌘[ step through comments.
 - [ ] **Look (dark + light) on a Mac:** tooltips and the palette show ⇧⌘P style shortcuts, never "Ctrl".
 - [ ] **On a Mac:** in the composer, Option+← / Cmd+← / Option+Backspace / Cmd+Backspace / Ctrl+K / Cmd+Shift+Z do what TextEdit does; Option+B types "∫"; the same in the Editor.
 - [ ] **Look (dark + light) on a Mac:** composer, task dialog, Ask AI, Peek, Run setup, Prompts page, commit box and Replace all show ⌘↩ / ⌘O / ⌥Y / ⌥⌘↩; the workspace menu and the file tree menu say "Reveal in Finder".

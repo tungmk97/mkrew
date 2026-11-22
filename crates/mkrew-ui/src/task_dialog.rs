@@ -53,7 +53,8 @@ pub enum DialogKey {
     DeleteLine {
         forward: bool,
     },
-    /// Arrows, Home/End (Ctrl: by word, to the text's start/end); Shift extends the selection.
+    /// Arrows, Home/End (Ctrl: by word, to the text's start/end; macOS: Option by word, Cmd to
+    /// the line's / text's ends); Shift extends the selection.
     /// Only fields that draw their caret ([`crate::text_box::Input::edit`]) use it.
     Move {
         motion: Motion,
@@ -138,7 +139,7 @@ fn mac_dialog_key(keystroke: &Keystroke) -> Option<DialogKey> {
     match keystroke.key.as_str() {
         "escape" => Some(DialogKey::Cancel),
         "enter" if plain_cmd || emacs => Some(DialogKey::Save),
-        "enter" if plain => Some(DialogKey::Enter),
+        "enter" if plain || opt => Some(DialogKey::Enter),
         "tab" if plain => Some(DialogKey::SwitchField),
         "backspace" if cmd => Some(DialogKey::DeleteLine { forward: false }),
         "backspace" if opt => Some(DialogKey::DeleteWord),
@@ -665,6 +666,7 @@ mod tests {
         assert_eq!(mac("cmd-v", None), Some(DialogKey::Paste));
         assert_eq!(mac("cmd-enter", None), Some(DialogKey::Save));
         assert_eq!(mac("shift-enter", Some("\n")), Some(DialogKey::Enter));
+        assert_eq!(mac("alt-enter", None), Some(DialogKey::Enter));
         assert_eq!(mac("cmd-shift-enter", None), None, "the composer key");
         assert_eq!(
             mac("cmd-alt-enter", None),

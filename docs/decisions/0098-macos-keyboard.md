@@ -8,7 +8,7 @@
 
 SPEC §13 said "On macOS, `Ctrl` becomes `Cmd`", but the code had one set of defaults, all Ctrl and Alt.
 On a Mac, Option types characters, so `alt-1..9` and `alt-arrows` took `[ ] { } | ~` and the word jump away from every field and terminal.
-macOS reports Shift + digit or symbol as the shifted character and gpui-pre-macos does not fold it back, so 13 defaults such as `ctrl-shift-2` never matched.
+macOS reports Shift + digit or symbol as the shifted character and gpui-pre-macos does not fold it back, so 15 defaults such as `ctrl-shift-2` never matched.
 A MacBook needs Fn for F-keys and PgUp / PgDn, F11 is Show Desktop, and Ctrl + arrows switch Spaces.
 Labels said "Ctrl", "Alt" and "Win", and text fields used Windows caret keys.
 

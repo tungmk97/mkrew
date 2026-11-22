@@ -1281,7 +1281,8 @@ mod tests {
         let replace_all = keystroke("cmd-alt-enter");
         for (command, keys) in Keymap::defaults_for(Os::Mac).bindings() {
             let context = command.context();
-            if context.is_none() || context == Some(EDITOR_CONTEXT) {
+            if context.is_none() || context == Some(EDITOR_CONTEXT) || context == Some(FIND_CONTEXT)
+            {
                 assert!(
                     !same_keys(keys, &replace_all),
                     "{command:?} shadows Replace all"
@@ -1303,7 +1304,8 @@ mod tests {
                     "{command:?} takes a text-field key"
                 );
             }
-            if context.is_none() || context == Some(EDITOR_CONTEXT) {
+            if context.is_none() || context == Some(EDITOR_CONTEXT) || context == Some(FIND_CONTEXT)
+            {
                 assert_eq!(
                     edit_key_for(keys, Os::Mac),
                     None,

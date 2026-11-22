@@ -78,7 +78,8 @@ impl Shell {
         }
         cx.stop_propagation();
         let key = task_dialog::dialog_key(&event.keystroke);
-        // Ctrl+N and Ctrl+S of the Prompts page work from a button too, and so does Ctrl+F.
+        // Ctrl+N and Ctrl+S of the Prompts page (Cmd on macOS) work from a button too, and so does
+        // Ctrl+F (Cmd+F).
         let find_key = settings_dialog::find_shortcut(&event.keystroke);
         let page_key = settings_dialog::prompts_shortcut(&event.keystroke).is_some();
         let control = self.dialog_control_focused(window);

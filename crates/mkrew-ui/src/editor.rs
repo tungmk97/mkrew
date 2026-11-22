@@ -626,7 +626,8 @@ pub fn selected_cells(line: &str, index: usize, selection: &Range<Pos>) -> Optio
 }
 
 /// The editor meaning of `keystroke` on this OS. `None` means the key is not the editor's:
-/// window shortcuts like Ctrl+Shift+Z, Alt+arrows and Ctrl+S go on to the keymap.
+/// window shortcuts like Ctrl+Shift+Z (on macOS Cmd+Shift+Z is redo), Alt+arrows and Ctrl+S go
+/// on to the keymap.
 pub fn edit_key(keystroke: &Keystroke) -> Option<EditKey> {
     edit_key_for(keystroke, Os::CURRENT)
 }
