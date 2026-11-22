@@ -31,7 +31,8 @@ impl Shell {
     }
 
     /// Keys typed in the composer ([`Shell::prompt_key_down`]): Enter is a new line, Ctrl+Enter
-    /// sends, Esc hides it.
+    /// sends, Esc hides it; in Chat Enter sends, Shift+Enter is a new line, Esc goes to the chat
+    /// list.
     pub(crate) fn composer_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -42,10 +43,22 @@ impl Shell {
         let Some(session) = self.composer_session(window) else {
             return;
         };
+        // In Chat a plain Enter sends (the chat convention); Shift+Enter falls through to the
+        // new line. A picker that is open has the keys itself, so this never sees its Enter.
+        let chat = self.chat_session(session);
+        if chat && composer::sends_on_enter(&event.keystroke) {
+            self.send_composer(session, window, cx);
+            return;
+        }
         if self.prompt_key_down(composer::Target::Composer(session), event, window, cx) {
             return;
         }
         match task_dialog::dialog_key(&event.keystroke) {
+            // Chat: Esc moves to the chat list (the composer stays); Terminal: Esc hides it.
+            Some(DialogKey::Cancel) if chat => {
+                window.focus(&self.chat_focus, cx);
+                cx.notify();
+            }
             Some(DialogKey::Cancel) => {
                 self.composers.hide(session);
                 self.focus_pane(window, cx);
@@ -783,7 +796,7 @@ impl Shell {
                 (
                     "",
                     theme.text_muted,
-                    "Ctrl+Enter to send · @ for a file · Esc to hide".to_owned(),
+                    composer::hint(self.chat_session(session)).to_owned(),
                 )
             })
         };

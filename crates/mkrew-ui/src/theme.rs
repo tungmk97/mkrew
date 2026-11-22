@@ -352,6 +352,9 @@ pub const COMPOSER_MAX_HEIGHT: f32 = 160.0;
 /// Widest share of the Chat page a prompt card takes (it sits at the right).
 pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
 
+/// How far one arrow key scrolls the chat list, in px.
+pub const CHAT_SCROLL_STEP: f32 = 48.0;
+
 /// Tallest the composer's list of queued texts grows (it scrolls past that, ~4 rows; §20B.2).
 pub const COMPOSER_QUEUE_MAX_HEIGHT: f32 = 88.0;
 

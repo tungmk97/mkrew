@@ -208,6 +208,12 @@ pub fn wanted_reads(
     wanted
 }
 
+/// The scroll offset after moving `delta` px down (negative: up): gpui offsets are 0 at the top
+/// and `-max_y` at the end.
+pub fn scrolled(offset_y: f32, max_y: f32, delta: f32) -> f32 {
+    (offset_y - delta).clamp(-max_y.max(0.0), 0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,5 +461,14 @@ mod tests {
             "an incapable pane is always Terminal"
         );
         assert!(!effective(false, None, true));
+    }
+
+    #[test]
+    fn scrolling_stays_between_the_top_and_the_end() {
+        // Offsets are 0 at the top and -max at the end (gpui's scroll offsets are negative).
+        assert_eq!(scrolled(0.0, 300.0, 48.0), -48.0);
+        assert_eq!(scrolled(-290.0, 300.0, 48.0), -300.0, "stops at the end");
+        assert_eq!(scrolled(-10.0, 300.0, -48.0), 0.0, "stops at the top");
+        assert_eq!(scrolled(0.0, 0.0, 48.0), 0.0, "nothing to scroll");
     }
 }

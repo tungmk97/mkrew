@@ -253,6 +253,7 @@ impl Shell {
                     .overflow_y_scroll()
                     .track_scroll(&ui.scroll)
                     .when(is_focused, |el| el.track_focus(&self.chat_focus))
+                    .on_key_down(cx.listener(Self::chat_key_down))
                     .flex()
                     .flex_col()
                     .gap(px(space::M))
@@ -272,6 +273,47 @@ impl Shell {
                     .map(|question| chat_question(session, question, theme, cx)),
             )
             .into_any_element()
+    }
+
+    /// Keys of the chat list: arrows, PageUp / PageDown, Home and End scroll; Esc, Enter and Tab
+    /// go back to the composer. Other keys (shortcuts) go on to the keymap.
+    pub(crate) fn chat_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(session) = self.focused_session(window) else {
+            return;
+        };
+        if event.keystroke.modifiers.modified() {
+            return;
+        }
+        let Some(ui) = self.chats.get(&session) else {
+            return;
+        };
+        let page = f32::from(ui.scroll.bounds().size.height);
+        let step = theme::CHAT_SCROLL_STEP;
+        let delta = match event.keystroke.key.as_str() {
+            "up" => -step,
+            "down" => step,
+            "pageup" => -page,
+            "pagedown" => page,
+            "home" => f32::MIN,
+            "end" => f32::MAX,
+            "escape" | "enter" | "tab" => {
+                cx.stop_propagation();
+                window.focus(&self.composer_focus, cx);
+                cx.notify();
+                return;
+            }
+            _ => return,
+        };
+        cx.stop_propagation();
+        let (offset, max) = (ui.scroll.offset(), ui.scroll.max_offset());
+        let y = chat::scrolled(f32::from(offset.y), f32::from(max.y), delta);
+        ui.scroll.set_offset(point(offset.x, px(y)));
+        cx.notify();
     }
 
     /// One turn: the prompt card (right), then its rows, then the plan card if it has one.
