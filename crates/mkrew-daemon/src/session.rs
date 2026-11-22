@@ -505,6 +505,10 @@ impl Hub {
             .map_err(&mut kill_on_error)?;
         // Writes block while the child does not read its input, so they get their own thread
         // too: a big paste then only waits in the connection that sent it.
+        // ponytail: a write still blocked when the child exits stays blocked on Linux (the
+        // kernel never wakes it; likely macOS too), so this thread and its PTY leak until the
+        // daemon exits; the waiting request is released by the session's end
+        // (`session_input`). Drain the slave after the exit if such leaks ever add up.
         let (input, mut input_rx) = mpsc::channel::<Vec<u8>>(INPUT_CHANNEL_CHUNKS);
         let writer_id = session.id;
         thread::Builder::new()

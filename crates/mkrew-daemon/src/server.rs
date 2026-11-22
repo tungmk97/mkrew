@@ -1566,13 +1566,21 @@ impl Daemon {
     /// Queues `data` for the session's PTY writer thread. A child that does not read its
     /// input makes this wait (in this connection only), never the session task.
     async fn session_input(&self, session_id: Ulid, data: &[u8]) -> Outcome {
-        let Some(input) = self.hub.input(session_id) else {
+        let (Some(input), Some(session)) =
+            (self.hub.input(session_id), self.hub.sender(session_id))
+        else {
             return self.not_live(session_id);
         };
         let input = input.lock().await;
         for chunk in data.chunks(INPUT_CHUNK_BYTES) {
-            if input.send(chunk.to_vec()).await.is_err() {
-                return self.not_live(session_id);
+            // Linux (likely macOS too) never wakes a PTY write blocked on a child that exited
+            // without reading, so the writer never takes the rest: the session's end (its
+            // command channel closing) releases this request instead.
+            tokio::select! {
+                sent = input.send(chunk.to_vec()) => if sent.is_err() {
+                    return self.not_live(session_id);
+                },
+                () = session.closed() => return self.not_live(session_id),
             }
         }
         ok(&())
