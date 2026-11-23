@@ -484,7 +484,9 @@ fn restart_resumes_running_tasks_with_their_native_session_id() {
         .unwrap();
     let run: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
     let layout = json!({"split": "vertical", "ratio": 0.5, "children": [
-        {"session": Ulid::new().to_string()}, {"session": run.session_id.to_string()}
+        {"session": Ulid::new().to_string()},
+        // A pane switched to Chat (ADR 0105) stays in Chat after the resume.
+        {"session": run.session_id.to_string(), "chat": true}
     ]});
     client
         .call(Request::TabSetLayout(TabSetLayoutParams {
