@@ -265,9 +265,10 @@ impl Shell {
     /// Board and Docs icons, Split (while Terminals shows in the main window, always in a
     /// detached one) and the panel toggle; on Windows minimize, maximize, close. A detached
     /// window (`host` is not `Main`) has no left group, no workspace controls and no limits
-    /// chip. Every icon is gray: color is for status only. Without a workspace only the
-    /// sidebar toggle, the limits chip, the drag area and the controls show, so the window can
-    /// always be moved and closed.
+    /// chip. A 1 px rule sets each group apart (left, tab area, right); the drag area sits
+    /// between the last two. Every icon is gray: color is for status only. Without a workspace
+    /// only the sidebar toggle, the limits chip, the drag area and the controls show, so the
+    /// window can always be moved and closed.
     pub(crate) fn render_title_bar(
         &self,
         host: HostId,
@@ -330,6 +331,7 @@ impl Shell {
                     }),
                 )
             });
+        let has_tabs = tab_area.is_some();
         let mut bar = div()
             .flex_none()
             .h(theme::rems_px(theme::TITLE_BAR_HEIGHT))
@@ -345,6 +347,9 @@ impl Shell {
             .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
             .child(left.when(modal, |el| el.relative().child(inert_layer())))
+            // Rules set the groups apart: left | tabs | drag | right (never drag or press
+            // targets, the drag area stays its own sibling).
+            .when(main && has_tabs, |el| el.child(title_rule(theme)))
             .children(tab_area.map(|area| {
                 div()
                     .min_w_0()
@@ -356,49 +361,56 @@ impl Shell {
                     .child(area)
                     .when(modal, |el| el.relative().child(inert_layer()))
             }))
+            .when(has_tabs, |el| el.child(title_rule(theme)))
             .child(drag);
         let controls = DRAWN_CONTROLS && !window.is_fullscreen();
-        let mut right = div()
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(space::XS))
-            .when(!controls, |el| el.pr(px(space::M)))
-            // The sidebar footer shows voice input; with the sidebar hidden it shows here, so a
-            // live microphone is never unmarked.
-            .when(self.sidebar_layout.hidden(), |el| {
-                el.children(self.voice_status(false, theme))
-            });
+        let mut right: Vec<gpui::AnyElement> = Vec::new();
+        // The sidebar footer shows voice input; with the sidebar hidden it shows here, so a
+        // live microphone is never unmarked.
+        if self.sidebar_layout.hidden() {
+            right.extend((self.voice_status(false, theme)).map(IntoElement::into_any_element));
+        }
         if main {
-            right = right.children(self.render_limits_chip(theme, cx));
+            right.extend(
+                self.render_limits_chip(theme, cx)
+                    .map(IntoElement::into_any_element),
+            );
         }
         if let Some(project_id) = workspace {
-            right = right.child(self.render_run_button(project_id, theme, cx));
+            right.push(
+                self.render_run_button(project_id, theme, cx)
+                    .into_any_element(),
+            );
         }
         if main {
-            right = right.children(self.render_update_button(theme, cx));
+            right.extend(
+                self.render_update_button(theme, cx)
+                    .map(IntoElement::into_any_element),
+            );
         }
         if workspace.is_some() {
-            right = right
-                .child(self.view_icon(View::Board, Icon::SquareKanban, view, theme, cx))
-                .children(
-                    self.features
-                        .docs
-                        .then(|| self.view_icon(View::Docs, Icon::BookOpen, view, theme, cx)),
-                );
+            right.push(
+                self.view_icon(View::Board, Icon::SquareKanban, view, theme, cx)
+                    .into_any_element(),
+            );
+            right.extend(self.features.docs.then(|| {
+                self.view_icon(View::Docs, Icon::BookOpen, view, theme, cx)
+                    .into_any_element()
+            }));
         }
         if let HostId::Detached(key) = host {
-            right = right.child(
+            right.push(
                 icon_button("move-all-back", Icon::Minimize2, theme)
                     .tooltip(tooltip(theme, "Move all tabs back to the main window", ""))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.move_all_back(key, window, cx);
-                    })),
+                    }))
+                    .into_any_element(),
             );
         }
         // Split acts on the shown terminal tab: only while Terminals shows in the main window.
         if !main || (workspace.is_some() && view == View::Terminals) {
-            right = right.child(
+            right.push(
                 icon_button("tab-split", Icon::Columns2, theme)
                     .tooltip(tooltip(
                         theme,
@@ -407,13 +419,24 @@ impl Shell {
                     ))
                     .on_click(cx.listener(|shell, event: &gpui::ClickEvent, window, cx| {
                         shell.open_layout_menu(event.position(), window, cx);
-                    })),
+                    }))
+                    .into_any_element(),
             );
         }
         if workspace.is_some() {
-            right = right.child(self.inspector_toggle(theme, cx));
+            right.push(self.inspector_toggle(theme, cx).into_any_element());
         }
-        bar = bar.child(right.when(modal, |el| el.relative().child(inert_layer())));
+        let has_right = !right.is_empty();
+        let right = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .when(!controls, |el| el.pr(px(space::M)))
+            .children(right);
+        bar = bar
+            .when(has_right, |el| el.child(title_rule(theme)))
+            .child(right.when(modal, |el| el.relative().child(inert_layer())));
         if controls {
             // No click handlers: Windows hit-tests these areas (`HTMINBUTTON` / `HTMAXBUTTON` /
             // `HTCLOSE`) and runs the action itself; `HTMAXBUTTON` also brings the Snap
