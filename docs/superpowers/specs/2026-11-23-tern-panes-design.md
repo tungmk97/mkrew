@@ -126,6 +126,7 @@ The sidebar and the right panel keep their colors.
 - `FilesView.tabs` and the file tab strip (ADR 0080) go.
   What each `FileTab` held today (editor state, preview page and selection, block edit, dirty flag, disk stamp, load error, scroll, cursor) moves into `Doc`, keyed by the stored path, in one `Documents` per workspace (`Shell.documents: HashMap<Ulid, Documents>`).
 - `FilesView` keeps the tree, its filter, its selection and the right panel; it no longer knows about open files.
+- View state that is one per workspace on `Shell` today (the editor focus handle, scroll handles, the find bar, the preview list state) holds gpui types, so it does not go into the pure store: it moves into `shell::doc_view::DocView`, one per open file, in `Shell.doc_views: HashMap<(Ulid, String), DocView>` keyed like the store, so two file panes shown at once never share it.
 - A leaf whose `Doc` is missing (after a restart, or in a window that never drew it) loads it with `fs.read` the first time it is drawn, through the same path as today's Retry.
 - A `Doc` is dropped when its leaf leaves every layout and it is not dirty.
 - Detached windows draw file leaves from the same store, so file tabs tear off like terminal tabs; "Plan 2 (Editor file tabs)" of the detached windows work is no longer needed.
@@ -136,6 +137,8 @@ The sidebar and the right panel keep their colors.
 - `GitView.open` goes: the diff is open when a Diff leaf is in a layout of the workspace.
   `open_diff` places a leaf (section 6.1), `close_diff` removes it.
 - When everything is committed, the diff leaf shows the Diff empty state instead of closing itself (a leaf the user placed does not vanish).
+- The diff list's scroll and layout state (`git_diff_list` and the other `git_diff_*` fields, one set on `Shell` today) moves into a per-workspace map, so a diff pane in a detached window and one in the main window never share it.
+- Comment context, picked lines and the comment palette commands that test `View::Diff` today test "the focused pane is the Diff leaf" instead.
 
 ### 4.5 Daemon and protocol
 
@@ -159,7 +162,7 @@ The sidebar and the right panel keep their colors.
 - File and diff panes use the same `pane_frame` as terminal panes: stripe, dim, badges, drag strip.
 - A file pane shows today's editor header (breadcrumb, Markdown mode buttons, `Ln, Col`), then the editor, the preview or the split.
 - A diff pane shows today's diff toolbar (file, Unified / Split, Wrap, Viewed, Open in Zed, Discard, Stage file, `…`, ✕), then the diff.
-- `EDITOR_CONTEXT` key bindings apply while a file pane is focused; the diff bindings while the diff pane is focused.
+- `EDITOR_CONTEXT` is set on the file pane's own element (today it sits on the window root while the Editor view shows); the `"Git"` diff bindings are set on the diff pane's element.
 - Tab chip: the focused pane decides the title and icon (as today for sessions).
   A file shows its file-type icon and file name, a dot when dirty, and italics while it is the preview tab; the diff shows the diff icon and `Diff`.
 - Find, save (Ctrl+S) and every editor command act on the focused file pane.
@@ -175,7 +178,7 @@ Every place that opens a file calls `Shell::open_document(target, place)`; the d
 | `Place` | Used by | Result |
 |---|---|---|
 | `Preview` | Single click on a file in the Files tree | Replace the file of the workspace's preview tab; with no preview tab, open a new tab with `preview: true`. |
-| `NewTab` | Every other open | A new tab right after the active tab. |
+| `NewTab` | Every other open | A new tab right after the active tab: the UI computes the position (midpoint between the active tab and the next one in its pin group, as `Tabs::move_tab` does) and passes it in `tab.create`. |
 | `Split(PaneKey, Edge)` | A drop on a pane | Split that pane at that edge (section 6.2). |
 
 If the target is already open, any `place` only activates its tab and focuses its pane (section 4.2); `path:line:col` still jumps to the line.
@@ -247,15 +250,15 @@ On hover or keyboard focus it grows to the right, on the same line, into:
 
 ### 7.2 New note
 
-- Setting `[notes] folder` (string, default empty), in the Settings dialog under General, with a folder picker.
+- Setting `[notes] folder` (string, default empty), in the Settings dialog under General, as a text field like the other path settings (the dialog has no folder picker kind).
   Empty means the workspace root; a relative path is relative to the root; an absolute path is used as is, for every workspace.
-  It is a global setting in `settings.toml`, which the daemon already reads (`SettingsHolder`), so the daemon and the UI agree on the folder.
-- File name: `note-YYYYMMDD-HHMMSS.md` in local time.
-  If it exists (two notes in the same second), add `-2`, `-3`, ...
-- The note is created empty through the daemon's `fs.create`, so a remote machine workspace works too; missing folders on the way are created.
-- Daemon access today: `fs.read`, `fs.write` and `fs.create` accept only root-relative paths (`docs::relative_path`).
-  They gain one exception: an absolute path inside the configured absolute notes folder (after normalizing, no `..`) is accepted; any other absolute path is still refused with today's error.
-  The wire shape does not change; the meaning does, which the protocol bump to 60 covers.
+  It lives in `settings.toml`, which the daemon reads (`SettingsHolder`); a remote machine uses its own `settings.toml`.
+- New request `fs.new_note { project_id, worktree_task_id }` returns `FsCreated { path }`.
+  The daemon resolves the folder from its own settings, makes the name `note-YYYYMMDD-HHMMSS.md` in local time, adds `-2`, `-3`, ... while the name exists, creates missing folders, and writes an empty file (`file_ops::create`).
+  `path` is relative to the root when the note is inside it, else absolute.
+- `fs.read` and `fs.write` accept only root-relative paths today (`docs::relative_path`).
+  They gain one exception: an absolute path inside the daemon's absolute notes folder (normalized, no `..`) is accepted; any other absolute path is still refused with today's error.
+  The protocol bump to 60 covers the new request and the new meaning.
 - The note opens kept (not preview), in source mode, with the cursor in the editor.
 - Errors (no write access, disk full, bad folder) show `toast_error` with the reason; nothing opens.
 - `Command::NewNote` in the palette ("New note"); its default key is chosen in the plan after checking the keymap for conflicts.
@@ -276,7 +279,7 @@ Clean cutover, no aliases:
 | Case | Behavior |
 |---|---|
 | A leaf's file was deleted on disk | The pane shows "This file was removed." with a Close button. |
-| A file renamed in the Files tree | Open leaves follow the new path (as file tabs do today). |
+| The notes folder setting changed while a note is open from the old folder | The note's read is refused; the pane shows today's error state with the reason and Close. |
 | Read error (too large, not UTF-8, I/O) | Today's error state with Retry, inside the pane. |
 | A stored leaf does not parse | Dropped with `warn!`; the rest loads. |
 | The workspace of a tab is closed | Its tabs, file tabs included, stay stored and come back with it. |
@@ -294,9 +297,9 @@ Pure logic, with unit tests next to it (no gpui):
 - `documents.rs`: load on first draw, drop when unused and clean, keep when dirty.
 - `status.rs`: `pane_stripe` precedence table.
 - `theme.rs`: `pane_gap` contrast rule over every theme.
-- `mkrew-core` settings: `[notes] folder` resolution (empty, relative, absolute); note file name and the `-2` suffix.
+- `mkrew-core` settings: `[notes] folder` parses, defaults to empty, and appears in the settings table and template.
 - Daemon: `cut` and `layout_sessions` skip file and diff leaves; `tab.close` of a tab with only file leaves removes no session (e2e in `crates/mkrew-daemon/tests/daemon`).
-- Daemon: `fs.read` / `fs.write` / `fs.create` accept an absolute path inside the notes folder and refuse one outside it, `..` included; `fs.create` makes missing parent folders of a note.
+- Daemon: `fs.new_note` makes the name, adds `-2` on a clash, creates missing folders, answers a relative path inside the root and an absolute one outside it; `fs.read` / `fs.write` accept an absolute path inside the notes folder and refuse one outside it, `..` included.
 
 Smoke on the real app (PrintWindow screenshots, dark and light), saved to `docs/screenshots/tern-panes-<view>-<theme>.png`:
 
@@ -309,8 +312,8 @@ Smoke on the real app (PrintWindow screenshots, dark and light), saved to `docs/
 
 ## 11. Docs
 
-- ADR 0108 "Tern panes": typed leaves, the Documents store, one pane per file per workspace, the four-edge drops, the `+` row, notes and the notes folder exception of `fs.*`, protocol 60; supersedes ADR 0080 and the chip and "Alternatives" parts of ADR 0106; amends ADR 0041.
-- SPEC: §5 (`terminal_tab.layout`), §7 (protocol 60; `fs.read` / `fs.write` / `fs.create` accept the notes folder), §10 (Views, Title bar, Terminals: file and diff tabs, drops, `+` row), §12A (Editor becomes the file pane; no file tab strip), §12B (Diff becomes the diff pane), §13 (removed file tab keys, `NewNote`), §14 (`pane_gap`, `pane_focus_stripe`, the stripe table, gap 8, the `+` row), §20.0 (`[notes] folder`), §20B.5 (drag and drop).
+- ADR 0108 "Tern panes": typed leaves, the Documents store, one pane per file per workspace, the four-edge drops, the `+` row, notes (`fs.new_note`, the notes folder exception of `fs.read` / `fs.write`), protocol 60; supersedes ADR 0080 and the chip and "Alternatives" parts of ADR 0106; amends ADR 0041.
+- SPEC: §5 (`terminal_tab.layout`), §7 (protocol 60; `fs.new_note`; `fs.read` / `fs.write` accept the notes folder), §10 (Views, Title bar, Terminals: file and diff tabs, drops, `+` row), §12A (Editor becomes the file pane; no file tab strip), §12B (Diff becomes the diff pane), §13 (removed file tab keys, `NewNote`), §14 (`pane_gap`, `pane_focus_stripe`, the stripe table, gap 8, the `+` row), §20.0 (`[notes] folder`), §20B.5 (drag and drop).
 - `docs/HUMAN_CHECKS.md`: "2026-11-23 Tern panes" with the smoke list above.
 - `docs/PROGRESS.md`: one note line when the work lands.
 
