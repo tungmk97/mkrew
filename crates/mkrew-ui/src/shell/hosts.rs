@@ -13,6 +13,11 @@ pub(crate) struct HostUi {
     pub(crate) placement: Placement,
     /// The tab strip as painted last (window-local), for drops from other windows.
     pub(crate) strip: Rc<RefCell<Option<mkrew_ui::window_place::Strip>>>,
+    /// Scrolls the tab area of this window's title bar.
+    pub(crate) scroll: ScrollHandle,
+    /// The chip last scrolled into view (a tab or view key): it scrolls again only when the
+    /// active chip changes, so the wheel is free in between.
+    pub(crate) scrolled: RefCell<Option<SharedString>>,
     /// The tab content area as painted last: the size of a window torn off from here.
     pub(crate) content: Rc<Cell<gpui::Size<Pixels>>>,
     /// The window title last set: `set_window_title` is a system call, made only on a change.

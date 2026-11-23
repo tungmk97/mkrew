@@ -578,6 +578,47 @@ pub(crate) fn segment_in(
         })
 }
 
+/// A tab of the top bar (a terminal tab, the Editor / Diff chip), Tern style: the shown one is
+/// a solid `card` with full text and no border; the others are transparent and muted and get
+/// the `pressable` hover fill. `id` is also the hover group of a ✕ inside.
+pub(crate) fn tab_frame(id: SharedString, shown: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id.clone())
+        .group(id)
+        .relative()
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .h(theme::rems_px(theme::CONTROL_HEIGHT))
+        .pl(px(space::M))
+        .pr(px(space::S))
+        .rounded(px(radius::MEDIUM))
+        // The same (transparent) border as the rename field, so the bar does not shift while
+        // a tab is renamed.
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::transparent_black())
+        .whitespace_nowrap()
+        .text_size(font_size::BODY)
+        .when(shown, |el| {
+            el.bg(rgb(theme.card))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text))
+        })
+        .when(!shown, |el| el.text_color(rgb(theme.text_muted)))
+        // The shown tab is picked, not disabled: the pointer for the double-click rename.
+        .pressable_unless(shown, Look::Chip, theme)
+}
+
+/// The 1 px rule between two groups of the tab area.
+pub(crate) fn title_rule(theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .w(px(theme::BORDER_WIDTH))
+        .h(theme::rems_px(theme::TITLE_RULE_HEIGHT))
+        .mx(px(space::XS))
+        .bg(rgb(theme.divider))
+}
+
 /// A status pill: a 6 px dot in `color` (hollow = a ring) and `label` in `fg` on `bg`.
 pub(crate) fn status_pill(
     label: impl IntoElement,

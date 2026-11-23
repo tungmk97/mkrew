@@ -375,7 +375,6 @@ impl Shell {
             run_setup_drag: scrollbar::Drag::default(),
             run_menu: None,
             workspace_switcher: false,
-            repo_menu: false,
             new_menu: false,
             empty_workspaces_open: false,
             collapsed_groups: HashSet::new(),

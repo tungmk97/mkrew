@@ -109,8 +109,8 @@ use mkrew_ui::split::{Axis, Direction, Divider, Preset, drop_axis};
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{
-    FIRST_TAB_TITLE, Tab, TabKind, Tabs, double_click_renames, newest_unplaced, on_screen,
-    rename_params, session_label, tab_kind,
+    AreaItem, FIRST_TAB_TITLE, Tab, TabKind, Tabs, area_items, double_click_renames,
+    newest_unplaced, on_screen, rename_params, scroll_index, session_label, tab_kind,
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
@@ -618,8 +618,6 @@ struct Shell {
     run_menu: Option<Ulid>,
     /// The title bar's workspace dropdown is open.
     workspace_switcher: bool,
-    /// The title bar's repository dropdown (the branch chip, several repositories) is open.
-    repo_menu: bool,
     /// The title bar's "+ New" dropdown is open.
     new_menu: bool,
     /// The sidebar's "N empty workspaces" line is expanded (in memory only).
@@ -1080,7 +1078,7 @@ impl Render for Shell {
                 }
             }))
             .child(tear_off_catcher(cx))
-            .child(self.render_title_bar(self.view(), now, &theme, window, cx))
+            .child(self.render_title_bar(HostId::Main, now, &theme, window, cx))
             .children(self.render_reconnect_banner(&theme, cx))
             .child(
                 div()

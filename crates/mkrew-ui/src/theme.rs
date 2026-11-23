@@ -2272,16 +2272,6 @@ pub fn next_mode(mode: ThemeMode) -> ThemeMode {
     }
 }
 
-/// The toggle's icon: sun and moon (follows the OS) / sun / moon.
-pub fn mode_icon(mode: ThemeMode) -> crate::icons::Icon {
-    use crate::icons::Icon;
-    match mode {
-        ThemeMode::System => Icon::SunMoon,
-        ThemeMode::Light => Icon::Sun,
-        ThemeMode::Dark => Icon::Moon,
-    }
-}
-
 /// Marks a pinned workspace or tab (SPEC §10). Plain text like the other glyphs:
 /// on Windows GPUI draws it as a color emoji through DirectWrite's font fallback (Segoe UI
 /// Emoji), so it ignores `text_color`.
@@ -2321,6 +2311,8 @@ pub fn title_bar_inset(os: Os, fullscreen: bool) -> f32 {
 /// Layout heights from the redesign (ADR 0027), in px at the default font size.
 /// The custom title bar (ADR 0034; was the 44 px toolbar of ADR 0027).
 pub const TITLE_BAR_HEIGHT: f32 = 42.0;
+/// The Editor's file tab strip, the right panel's tab row and the sidebar's filter row (the
+/// terminal tabs are in the title bar).
 pub const TAB_STRIP_HEIGHT: f32 = 44.0;
 /// The Git view's repository tabs (multi-repo workspaces): a tab strip.
 pub const GIT_REPO_STRIP_HEIGHT: f32 = 42.0;
@@ -2347,6 +2339,8 @@ pub const PULSE_MIN_OPACITY: f32 = 0.35;
 pub const STATUS_PILL_HEIGHT: f32 = 24.0;
 /// Longest tab title before it truncates.
 pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
+/// Narrowest a terminal tab chip gets: the chips shrink to this before the tab area scrolls.
+pub const TAB_MIN_WIDTH: f32 = 120.0;
 /// Reading width of an agent pane: the terminal is at most this wide (≈ 120–140 columns at
 /// the default font) and centered, so the program wraps there (the PTY gets fewer columns).
 pub const READING_WIDTH: f32 = 960.0;

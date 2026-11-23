@@ -125,7 +125,6 @@ impl Shell {
         self.file_tab_menu = None;
         self.run_menu = None;
         self.workspace_switcher = false;
-        self.repo_menu = false;
         self.new_menu = false;
         self.run_with = None;
         self.fan_out = None;

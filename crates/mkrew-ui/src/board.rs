@@ -44,17 +44,6 @@ impl View {
         View::Diff,
     ];
 
-    /// The view bar's views: Docs while `[features] docs` is on, Editor while files are
-    /// open, Diff while a diff is open.
-    pub fn bar(docs: bool, editor: bool, diff: bool) -> impl Iterator<Item = View> {
-        View::ALL.into_iter().filter(move |&view| match view {
-            View::Docs => docs,
-            View::Editor => editor,
-            View::Diff => diff,
-            View::Board | View::Terminals => true,
-        })
-    }
-
     pub fn title(self) -> &'static str {
         match self {
             View::Board => "Board",

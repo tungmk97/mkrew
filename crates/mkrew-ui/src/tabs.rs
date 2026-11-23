@@ -10,6 +10,7 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
+use crate::board::View;
 use crate::split::{Axis, Direction, Divider, Node, Preset, RESIZE_STEP, Rect};
 
 /// Title of a workspace's first tab; later ones are numbered.
@@ -848,6 +849,50 @@ pub fn double_click_renames(tab: &Tab, sessions: &[Session]) -> Option<Ulid> {
     mkrew_core::run::command_name(session)
         .is_none()
         .then_some(focused)
+}
+
+/// One child of the title bar's tab area, in paint order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AreaItem {
+    /// The Editor or Diff chip.
+    View(View),
+    /// The 1 px rule between two groups.
+    Rule,
+    /// The `n`th terminal tab this window draws (detached tabs are not counted).
+    Tab(usize),
+}
+
+/// The children of the tab area: the Editor / Diff chips (each only while open), a rule, the
+/// tabs (`pinned[n]` is whether the `n`th drawn tab is pinned; pinned ones lead), and a rule
+/// between the pinned tabs and the rest. A rule only sits between two groups.
+pub fn area_items(editor: bool, diff: bool, pinned: &[bool]) -> Vec<AreaItem> {
+    let mut items = Vec::new();
+    if editor {
+        items.push(AreaItem::View(View::Editor));
+    }
+    if diff {
+        items.push(AreaItem::View(View::Diff));
+    }
+    for (at, &pin) in pinned.iter().enumerate() {
+        let after_chips = at == 0 && !items.is_empty();
+        let after_pinned = at > 0 && pinned[at - 1] && !pin;
+        if after_chips || after_pinned {
+            items.push(AreaItem::Rule);
+        }
+        items.push(AreaItem::Tab(at));
+    }
+    items
+}
+
+/// The index in `items` of the child to scroll into view: the active tab (`active` is its
+/// drawn slot) while Terminals shows, else the chip of the shown view. `None` for Board and
+/// Docs, which are icons on the right.
+pub fn scroll_index(items: &[AreaItem], shown: View, active: Option<usize>) -> Option<usize> {
+    items.iter().position(|item| match *item {
+        AreaItem::View(view) => view == shown,
+        AreaItem::Tab(at) => shown == View::Terminals && active == Some(at),
+        AreaItem::Rule => false,
+    })
 }
 
 /// Sessions to attach (in `after` only) and to detach (in `before` only) when the visible

@@ -109,6 +109,7 @@ icons! {
         SquareTerminal => "square-terminal",
         SquareX => "square-x",
         SquareCheck => "square-check",
+        SquareKanban => "square-kanban",
         Sun => "sun",
         SunMoon => "sun-moon",
         Terminal => "terminal",

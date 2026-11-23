@@ -159,47 +159,6 @@ impl Shell {
         cx.notify();
     }
 
-    /// The title bar's phone icon (gray, like every title bar icon): a green dot on its corner
-    /// while `mk web` runs. The tooltip says what it is. Hidden without a daemon connection
-    /// (the dialog needs it).
-    pub(crate) fn render_phone_button(
-        &self,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<gpui::Stateful<gpui::Div>> {
-        // Phone access belongs to this computer's window.
-        if self.target.is_machine() {
-            return None;
-        }
-        // Kept (inert) while the last screen is kept, so the title bar does not jump.
-        if !self.shows_workspaces() {
-            return None;
-        }
-        let on = self.phone.running();
-        let text = if on {
-            "Phone access: on. Open Mkrew from your phone's browser to watch and answer sessions"
-        } else {
-            "Phone access: off. Use Mkrew from your phone's browser to watch and answer sessions"
-        };
-        Some(
-            icon_button("phone-access", Icon::Smartphone, theme)
-                .relative()
-                .when(on, |el| {
-                    el.child(
-                        div()
-                            .absolute()
-                            .top(px(space::XS))
-                            .right(px(space::XS))
-                            .child(status_dot(theme.status_done, false)),
-                    )
-                })
-                .tooltip(tooltip(theme, text, ""))
-                .on_click(cx.listener(|shell, _, window, cx| {
-                    shell.open_phone_access(window, cx);
-                })),
-        )
-    }
-
     /// The dialog: Status, Tailscale, then the link (QR, text, Copy link) while it is on.
     pub(crate) fn render_phone_access(
         &self,

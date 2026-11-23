@@ -3,55 +3,53 @@
 use crate::*;
 
 impl Shell {
-    /// The tab strip: the tabs (kind icon, title, status dot, pin, ×) and `+`; on the right
-    /// the notices, the split / layout button and the ⋯ menu. A pane's status, its controls and
-    /// the zoom notice are in its header.
-    pub(crate) fn render_tab_bar(
+    /// The tab area of the main window's title bar: the Editor / Diff chips (while open), the
+    /// pinned tabs, the other tabs, a rule between groups; then `+` outside the scrolled part.
+    /// With a view other than Terminals shown, its chip is the active one and every terminal
+    /// tab looks inactive. A click on a tab shows Terminals (`tab_chip`).
+    pub(crate) fn render_tab_area(
         &self,
         project_id: Ulid,
         tabs: &Tabs,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
+        let view = self.view();
         let active = tabs.active().map(|tab| tab.id);
-        // Pinned tabs lead the strip; each kind is dragged among its own.
+        // `place` counts the tabs of other windows too: it is the reorder index.
+        let drawn: Vec<(usize, &Tab)> = tabs
+            .tabs()
+            .iter()
+            .enumerate()
+            .filter(|(_, tab)| self.terminal_host(project_id, tab.id) == HostId::Main)
+            .collect();
         let pinned_count = tabs.tabs().iter().filter(|tab| tab.pinned).count();
+        let pinned: Vec<bool> = drawn.iter().map(|(_, tab)| tab.pinned).collect();
+        let items = area_items(
+            self.has_file_tabs(project_id),
+            self.diff_open(project_id),
+            &pinned,
+        );
         let strip = (self.hosts.get(&HostId::Main))
             .map(|ui| ui.strip.clone())
             .unwrap_or_default();
-        div()
-            .flex_none()
-            .relative()
-            .h(theme::rems_px(theme::TAB_STRIP_HEIGHT))
-            .flex()
-            .items_center()
-            .gap(px(space::XS))
-            .px(px(space::S))
-            .bg(rgb(theme.surface))
-            .border_b(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
-            .font_family(theme.ui_font_family.clone())
-            .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
-                shell.drop_reordered(item, window, cx);
-            }))
-            // First: the strip records before its chips (prepaint goes parent first).
-            .child(record_strip(strip.clone(), None))
-            .children(
-                tabs.tabs()
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, tab)| self.terminal_host(project_id, tab.id) == HostId::Main)
-                    .enumerate()
-                    .map(|(slot, (place, tab))| {
-                        let tab_id = tab.id;
-                        let is_active = active == Some(tab_id);
-                        // The tab's own rename field takes its place; a pane is renamed in
-                        // its header.
-                        if let Some(renaming) = (self.renaming.as_ref())
-                            .filter(|r| r.target == RenameTarget::Tab(tab_id))
-                        {
-                            return self.render_rename(&renaming.draft, theme, cx);
-                        }
+        let chips: Vec<gpui::AnyElement> = items
+            .iter()
+            .map(|item| match *item {
+                AreaItem::View(chip) => self
+                    .view_chip(chip, project_id, view, theme, cx)
+                    .into_any_element(),
+                AreaItem::Rule => title_rule(theme).into_any_element(),
+                AreaItem::Tab(slot) => {
+                    let (place, tab) = drawn[slot];
+                    let tab_id = tab.id;
+                    // The tab's own rename field takes its place; a pane is renamed in its
+                    // header.
+                    if let Some(renaming) =
+                        (self.renaming.as_ref()).filter(|r| r.target == RenameTarget::Tab(tab_id))
+                    {
+                        self.render_rename(&renaming.draft, theme, cx)
+                    } else {
                         // The focused pane's title stands in for a default tab name.
                         let label = session_label(tab, self.sidebar.sessions());
                         let item = DraggedItem {
@@ -69,70 +67,189 @@ impl Shell {
                             }
                         };
                         let chip = self
-                            .tab_chip(project_id, tab, is_active, None, select, theme, cx)
+                            .tab_chip(
+                                project_id,
+                                tab,
+                                active == Some(tab_id) && view == View::Terminals,
+                                None,
+                                select,
+                                theme,
+                                cx,
+                            )
                             .child(record_strip(strip.clone(), Some(slot)));
                         self.reorderable(chip.into_any_element(), item, true, space::XS, theme, cx)
-                    }),
-            )
-            .child(
-                icon_button("new-tab", Icon::Plus, theme)
-                    .tooltip(tooltip(
-                        theme,
-                        &format!(
-                            "New empty tab ({} starts an agent tab, {} a shell tab)",
-                            self.keymap.label(Command::NewAgentTab),
-                            self.keymap.label(Command::NewShellTab)
-                        ),
-                        "",
-                    ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.create_tab(project_id, None, window, cx);
-                    })),
-            )
-            // Pushes the notices and the split / ⋯ group to the right.
-            .child(div().flex_1())
-            .children(
-                (self.tab_error.as_ref())
-                    .filter(|(host, _)| *host == HostId::Main)
-                    .map(|(_, error)| notice(theme.text, format!("✕ {error}"))),
-            )
-            .children(
-                (self.tab_notice.as_ref())
-                    .filter(|(host, _)| *host == HostId::Main)
-                    .map(|(_, text)| notice(theme.text_muted, text.clone())),
-            )
-            .children(
-                lifecycle::running_warning(self.sidebar.sessions(), project_id)
-                    .map(|warning| notice(theme.text_muted, format!("⚠ {warning}"))),
-            )
-            .child(
-                icon_button("tab-split", Icon::Columns2, theme)
-                    .tooltip(tooltip(
-                        theme,
-                        "Split or pick a layout",
-                        self.keymap.label(Command::SplitRight),
-                    ))
-                    .on_click(cx.listener(|shell, event: &gpui::ClickEvent, window, cx| {
-                        shell.open_layout_menu(event.position(), window, cx);
-                    })),
-            )
-            .when_some(active, |bar, tab_id| {
-                bar.child(
-                    icon_button("tab-menu-button", Icon::Ellipsis, theme)
-                        .tooltip(tooltip(theme, "Tab and pane menu", ""))
-                        .on_click(cx.listener(
-                            move |shell, event: &gpui::ClickEvent, window, cx| {
-                                shell.open_tab_menu(tab_id, event.position(), window, cx);
-                            },
-                        )),
-                )
+                    }
+                }
             })
-            .children(self.drop_hint_line(HostId::Main, theme))
+            .collect();
+        let active_slot = active.and_then(|id| drawn.iter().position(|(_, tab)| tab.id == id));
+        let key = SharedString::from(format!("{view:?}/{active:?}"));
+        let scroll_to = scroll_index(&items, view, active_slot).map(|index| (key, index));
+        let new_tab = icon_button("new-tab", Icon::Plus, theme)
+            .tooltip(tooltip(
+                theme,
+                &format!(
+                    "New empty tab ({} starts an agent tab, {} a shell tab)",
+                    self.keymap.label(Command::NewAgentTab),
+                    self.keymap.label(Command::NewShellTab)
+                ),
+                "",
+            ))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.show_view(View::Terminals, window, cx);
+                shell.create_tab(project_id, None, window, cx);
+            }));
+        self.tab_area_frame(
+            HostId::Main,
+            chips,
+            scroll_to,
+            Some(new_tab.into_any_element()),
+            theme,
+            cx,
+        )
     }
 
-    /// One tab of a strip (main or detached): kind icon, title, status dot, pin, ×. `select`
-    /// makes it the shown tab of its window (a click); `prefix` (the workspace name, in a
-    /// detached strip) leads the title. The caller wraps it for drag and drop.
+    /// The frame both windows' tab areas share: `chips` in a sideways-scrolling row (the chip
+    /// at `active.1` scrolls into view when `active.0` changes), then `trailing` (the `+`)
+    /// outside the scrolled part. It records the strip and its chip slots for drops from other
+    /// windows (`HostUi::strip`), takes tab drops and draws the drop line.
+    pub(crate) fn tab_area_frame(
+        &self,
+        host: HostId,
+        chips: Vec<gpui::AnyElement>,
+        active: Option<(SharedString, usize)>,
+        trailing: Option<gpui::AnyElement>,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
+        let ui = self.hosts.get(&host);
+        let strip = ui.map(|ui| ui.strip.clone()).unwrap_or_default();
+        let scroll = ui.map(|ui| ui.scroll.clone()).unwrap_or_default();
+        if let (Some(ui), Some((key, index))) = (ui, active) {
+            let mut seen = ui.scrolled.borrow_mut();
+            if seen.as_ref() != Some(&key) {
+                scroll.scroll_to_item(index);
+                *seen = Some(key);
+            }
+        }
+        div()
+            .relative()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .font_family(theme.ui_font_family.clone())
+            .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
+                shell.drop_reordered(item, window, cx);
+            }))
+            // First: the strip records before its chips (prepaint goes parent first).
+            .child(record_strip(strip, None))
+            .child(
+                div()
+                    .id("tab-area-scroll")
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
+                    .overflow_x_scroll()
+                    .track_scroll(&scroll)
+                    .children(chips),
+            )
+            .children(trailing)
+            .children(self.drop_hint_line(host, theme))
+    }
+
+    /// The Editor / Diff chip: icon, name and ✕ (all file tabs / the diff). The chip of the
+    /// shown view takes the active tab look. Not draggable.
+    fn view_chip(
+        &self,
+        chip: View,
+        project_id: Ulid,
+        shown: View,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let active = chip == shown;
+        let name = chip.title();
+        let (glyph, close_tip) = match chip {
+            View::Diff => (Icon::FileDiff, "Close diff"),
+            _ => (Icon::Code, "Close all files"),
+        };
+        let group = SharedString::from(format!("view-{name}"));
+        tab_frame(group.clone(), active, theme)
+            .flex_none()
+            .tooltip(tooltip(theme, name, self.keymap.label(chip.command())))
+            .on_press(
+                true,
+                cx.listener(move |shell, _, window, cx| shell.show_view(chip, window, cx)),
+            )
+            .child(icon_svg(
+                glyph,
+                theme::ICON_SIZE_SMALL,
+                if active { theme.text } else { theme.text_muted },
+            ))
+            .child(name)
+            .child(
+                row_action(
+                    SharedString::from(format!("view-close-{name}")),
+                    icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
+                    theme,
+                )
+                // Always on the shown chip, on hover for the other.
+                .when(!active, |el| {
+                    el.opacity(opacity::HIDDEN)
+                        .group_hover(group, |style| style.opacity(opacity::FULL))
+                })
+                .tooltip(tooltip(theme, close_tip, ""))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    cx.stop_propagation();
+                    match chip {
+                        View::Diff => shell.close_git_diff(project_id, window, cx),
+                        _ => {
+                            let path = (shell.files.get(&project_id))
+                                .and_then(FilesView::file)
+                                .map(str::to_owned);
+                            if let Some(path) = path {
+                                // Pinned file tabs stay (`Close::All`), as in the tab menu.
+                                shell.close_file_tabs(project_id, &path, Close::All, window, cx);
+                            }
+                        }
+                    }
+                })),
+            )
+    }
+
+    /// The Board / Docs icon on the right of the title bar: accent while that view shows (a
+    /// second click goes back to Terminals).
+    pub(crate) fn view_icon(
+        &self,
+        target: View,
+        glyph: Icon,
+        shown: View,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let on = target == shown;
+        icon_button_in(
+            SharedString::from(format!("view-{}", target.title())),
+            glyph,
+            if on { theme.accent } else { theme.text_muted },
+            theme,
+        )
+        .tooltip(tooltip(
+            theme,
+            target.title(),
+            self.keymap.label(target.command()),
+        ))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.show_view(if on { View::Terminals } else { target }, window, cx);
+        }))
+    }
+
+    /// One tab of the title bar's tab area (main or detached): kind icon, title, status dot, pin,
+    /// ×. `select` makes it the shown tab of its window (a click); `prefix` (the workspace name,
+    /// in a detached strip) leads the title. The caller wraps it for drag and drop.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn tab_chip(
         &self,
@@ -173,35 +290,19 @@ impl Shell {
             ),
             TabKind::Empty => None,
         };
-        div()
-            .id(group.clone())
-            .group(group.clone())
-            .relative()
-            .flex()
-            .items_center()
-            .gap(px(space::XS))
-            .h(theme::rems_px(theme::CONTROL_HEIGHT))
-            .pl(px(space::M))
-            .pr(px(space::S))
-            .rounded(px(radius::MEDIUM))
-            // Same box as the rename field, so the bar does not shift while renaming.
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(gpui::transparent_black())
-            .whitespace_nowrap()
-            .text_size(font_size::BODY)
-            .when(is_active, |el| {
-                el.bg(rgb(theme.card))
-                    .border_color(rgb(theme.selected))
-                    .font_weight(FontWeight(weight::MEDIUM))
-                    .text_color(rgb(theme.text))
-            })
-            .when(!is_active, |el| el.text_color(rgb(theme.text_muted)))
-            // The shown tab is picked, not disabled: the pointer for the double-click rename.
-            .pressable_unless(is_active, Look::Chip, theme)
+        tab_frame(group.clone(), is_active, theme)
+            // Shrinks to `TAB_MIN_WIDTH` before the tab area scrolls.
+            .flex_shrink_1()
+            .min_w(px(theme::TAB_MIN_WIDTH))
             .on_press(
                 true,
                 cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
                     select(shell);
+                    // A tab of the main window shows its terminals, also from Board, Docs,
+                    // the Editor or the Diff.
+                    if shell.host_of(window) == HostId::Main {
+                        shell.show_view(View::Terminals, window, cx);
+                    }
                     shell.sync_panes(window, cx);
                     if event.click_count() == 2 {
                         match rename_pane {
@@ -241,6 +342,7 @@ impl Shell {
             }))
             .child(
                 div()
+                    .min_w_0()
                     .max_w(px(theme::TAB_TITLE_MAX_WIDTH))
                     .truncate()
                     .child(label.unwrap_or(&tab.title).to_owned()),

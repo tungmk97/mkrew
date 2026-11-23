@@ -1,4 +1,4 @@
-//! Window chrome: the main area, title bar, view tabs, branch chip, workspace switcher.
+//! Window chrome: the main area, title bar, branch-less workspace switcher.
 
 use crate::*;
 
@@ -13,33 +13,6 @@ impl Shell {
         self.begin_menu(window, cx);
         self.new_menu = true;
         self.finish_menu(window.last_input_was_keyboard(), window, cx);
-    }
-
-    pub(crate) fn open_repo_menu(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.begin_menu(window, cx);
-        self.repo_menu = true;
-        self.finish_menu(window.last_input_was_keyboard(), window, cx);
-    }
-
-    /// The branch chip's dropdown (several repositories): each one in `git.repos` order with
-    /// its branch and Clean / N changes; a click shows it in the Git tab and the diff.
-    pub(crate) fn repo_menu_rows(&self, project_id: Ulid) -> Rows {
-        let mut rows: Rows = vec![MenuRow::Heading("Repositories".into())];
-        let workspace = self.workspace_name(project_id);
-        let repos = self.git_summary().map_or(&[][..], |summary| &summary.repos);
-        rows.extend(repos.iter().map(|repo| {
-            let name = repo.repo.clone();
-            MenuItem::new(
-                repo.label(workspace).to_owned(),
-                act(move |shell, window, cx| {
-                    shell.review_diff(project_id, name.clone(), window, cx);
-                }),
-            )
-            .sub(repo.branch_name().to_owned())
-            .detail(repo.state())
-            .row()
-        }));
-        rows
     }
 
     /// Every workspace (the shown one checked), then "Add workspace…".
@@ -191,14 +164,6 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        // The tab strip is hit-tested by drops from other windows: not while it is not painted.
-        let strip_shown =
-            (self.workspace.filter(|_| self.shows_workspaces())).is_some_and(|project| {
-                self.view() == View::Terminals && self.tabs.contains_key(&project)
-            });
-        if !strip_shown && let Some(ui) = self.hosts.get(&HostId::Main) {
-            *ui.strip.borrow_mut() = None;
-        }
         // The last screen stays while a lost connection is down (`reconnecting`).
         let Some(project_id) = self.workspace.filter(|_| self.shows_workspaces()) else {
             let (sentence, detail) = self.status_line();
@@ -242,14 +207,8 @@ impl Shell {
                 let every_tab_detached = !tabs.tabs().is_empty()
                     && (tabs.tabs().iter())
                         .all(|tab| self.terminal_host(project_id, tab.id) != HostId::Main);
-                let terminals = div()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .child(self.render_tab_bar(project_id, tabs, theme, cx))
-                    .child(if every_tab_detached {
+                let terminals = div().flex_1().min_w_0().h_full().flex().flex_col().child(
+                    if every_tab_detached {
                         empty_state(
                             theme,
                             Some(">_"),
@@ -271,7 +230,8 @@ impl Shell {
                                 .unwrap_or_default(),
                             cx,
                         )
-                    });
+                    },
+                );
                 main.child(
                     div()
                         .flex_1()
@@ -294,65 +254,73 @@ impl Shell {
         .into_any_element()
     }
 
-    /// The title bar above everything (SPEC §10, ADR 0034): logo, sidebar toggle, workspace
-    /// switcher (with the repository label) and views on the left; a drag area; the limits chip (from 80% of an agent limit), the Run pill,
-    /// History, the theme toggle, the phone icon (Phone access, ADR 0053), the session panel
-    /// toggle and "+ New" (Agent / Shell); on Windows minimize, maximize, close. Every icon is
-    /// gray: color is for status only. Without a workspace only the logo, the sidebar toggle,
-    /// the drag area and the controls show, so the window can always be moved and closed.
+    /// The title bar above everything (SPEC §10, ADR 0106), one `TITLE_BAR_HEIGHT` bar: on the
+    /// left (main window) the machine chip, the sidebar toggle and the workspace switcher; the
+    /// tab area (Editor / Diff chips, the terminal tabs, `+`); a drag area; on the right the
+    /// voice status, the limits chip (only at 80% or more; it shows without a workspace too),
+    /// the Run pill, the update button, the Board and Docs icons, Split (while Terminals shows
+    /// in the main window), the panel toggle and "+ New"; on Windows minimize, maximize, close.
+    /// A detached window (`host` is not `Main`) has no left group, no workspace controls and no
+    /// limits chip. Every icon is gray: color is for status only. Without a workspace only the
+    /// sidebar toggle, the limits chip, the drag area and the controls show, so the window can
+    /// always be moved and closed.
     pub(crate) fn render_title_bar(
         &self,
-        shown: View,
+        host: HostId,
         now: i64,
         theme: &Theme,
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let workspace = self.workspace.filter(|_| self.shows_workspaces());
-        let mode = format!(
-            "Theme: {} · {}",
-            match theme.mode {
-                theme::ThemeMode::System => "System",
-                theme::ThemeMode::Light => "Light",
-                theme::ThemeMode::Dark => "Dark",
-            },
-            theme.name
-        );
+        let main = host == HostId::Main;
+        let workspace = self.workspace.filter(|_| main && self.shows_workspaces());
+        let view = self.view();
         // An open dialog keeps the mouse too: the bar's controls are inert, only the drag area
         // and the window controls stay live (they never touch the app's state).
         let modal = self.modal_open() || self.reconnecting();
-        let mut left = div()
-            .min_w_0()
-            .flex()
-            .items_center()
-            .gap(px(space::S))
-            .child(app_logo(theme))
-            .children(self.machine_chip(theme))
-            .child(self.sidebar_toggle(theme, cx));
+        let mut left = div().min_w_0().flex().items_center().gap(px(space::S));
+        if main {
+            left = left
+                .children(self.machine_chip(theme))
+                .child(self.sidebar_toggle(theme, cx));
+        }
         if let Some(project_id) = workspace {
             left = left.child(self.render_workspace_switcher(project_id, theme, cx));
         }
-        // Siblings of the controls, never their parent: the first area a hit test finds wins.
-        // Two of them, so the views sit centered between the left and right groups.
-        let drag = |cx: &mut Context<'_, Self>| {
-            div()
-                .flex_1()
-                .min_w_0()
-                .h_full()
-                .window_control_area(WindowControlArea::Drag)
-                .when(cfg!(target_os = "macos"), |el| {
-                    el.on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_, event: &MouseDownEvent, window, _| {
-                            if event.click_count == 2 {
-                                window.titlebar_double_click();
-                            } else {
-                                window.start_window_move();
-                            }
-                        }),
-                    )
-                })
-        };
+        // The tab area; its strip is only recorded (for drops from other windows) while it is
+        // painted.
+        let tab_area = workspace.and_then(|project_id| {
+            let tabs = self.tabs.get(&project_id)?;
+            Some(
+                self.render_tab_area(project_id, tabs, theme, cx)
+                    .into_any_element(),
+            )
+        });
+        if main
+            && tab_area.is_none()
+            && let Some(ui) = self.hosts.get(&HostId::Main)
+        {
+            *ui.strip.borrow_mut() = None;
+        }
+        // The only drag region: the tab area is a sibling, so a click on a tab never moves
+        // the window.
+        let drag = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .window_control_area(WindowControlArea::Drag)
+            .when(cfg!(target_os = "macos"), |el| {
+                el.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, event: &MouseDownEvent, window, _| {
+                        if event.click_count == 2 {
+                            window.titlebar_double_click();
+                        } else {
+                            window.start_window_move();
+                        }
+                    }),
+                )
+            });
         let mut bar = div()
             .flex_none()
             .h(theme::rems_px(theme::TITLE_BAR_HEIGHT))
@@ -368,17 +336,16 @@ impl Shell {
             .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
             .child(left.when(modal, |el| el.relative().child(inert_layer())))
-            .child(drag(cx));
-        if workspace.is_some() {
-            bar = bar
-                .child(
-                    div()
-                        .flex_none()
-                        .child(self.render_view_tabs(shown, theme, cx))
-                        .when(modal, |el| el.relative().child(inert_layer())),
-                )
-                .child(drag(cx));
-        }
+            .children(tab_area.map(|area| {
+                div()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .child(area)
+                    .when(modal, |el| el.relative().child(inert_layer()))
+            }))
+            .child(drag);
         let controls = DRAWN_CONTROLS && !window.is_fullscreen();
         let mut right = div()
             .flex_none()
@@ -391,36 +358,38 @@ impl Shell {
             .when(self.sidebar_layout.hidden(), |el| {
                 el.children(self.voice_status(false, theme))
             });
-        right = right.children(self.render_limits_chip(theme, cx));
+        if main {
+            right = right.children(self.render_limits_chip(theme, cx));
+        }
         if let Some(project_id) = workspace {
+            right = right.child(self.render_run_button(project_id, theme, cx));
+        }
+        if main {
+            right = right.children(self.render_update_button(theme, cx));
+        }
+        if workspace.is_some() {
             right = right
-                .child(self.render_run_button(project_id, theme, cx))
-                .child(
-                    icon_button("history", Icon::History, theme)
-                        .tooltip(tooltip(
-                            theme,
-                            "History: logs of the workspace's finished sessions",
-                            "",
-                        ))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.show_history(project_id, window, cx);
-                        })),
+                .child(self.view_icon(View::Board, Icon::SquareKanban, view, theme, cx))
+                .children(
+                    self.features
+                        .docs
+                        .then(|| self.view_icon(View::Docs, Icon::BookOpen, view, theme, cx)),
                 );
         }
-        right = right
-            .child(
-                icon_button("toggle-theme", theme::mode_icon(theme.mode), theme)
+        // Split acts on the shown terminal tab: only while Terminals shows in the main window.
+        if !main || (workspace.is_some() && view == View::Terminals) {
+            right = right.child(
+                icon_button("tab-split", Icon::Columns2, theme)
                     .tooltip(tooltip(
                         theme,
-                        &mode,
-                        self.keymap.label(Command::ToggleTheme),
+                        "Split or pick a layout",
+                        self.keymap.label(Command::SplitRight),
                     ))
-                    .on_click(cx.listener(|shell, _, window, cx| {
-                        shell.toggle_theme(window, cx);
+                    .on_click(cx.listener(|shell, event: &gpui::ClickEvent, window, cx| {
+                        shell.open_layout_menu(event.position(), window, cx);
                     })),
-            )
-            .children(self.render_update_button(theme, cx))
-            .children(self.render_phone_button(theme, cx));
+            );
+        }
         if workspace.is_some() {
             right = right.child(self.inspector_toggle(theme, cx)).child(
                 div()
@@ -516,38 +485,8 @@ impl Shell {
         )
     }
 
-    /// The views as a segmented control; Editor and Diff only while open.
-    pub(crate) fn render_view_tabs(
-        &self,
-        shown: View,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> impl IntoElement {
-        let editor = self.workspace.is_some_and(|id| self.has_file_tabs(id));
-        let diff = self.workspace.is_some_and(|id| self.diff_open(id));
-        segmented(theme).children(View::bar(self.features.docs, editor, diff).map(|view| {
-            segment(
-                SharedString::from(format!("view-{}", view.title())),
-                view == shown,
-                theme,
-            )
-            .tooltip(tooltip(
-                theme,
-                view.title(),
-                self.keymap.label(view.command()),
-            ))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.show_view(view, window, cx);
-            }))
-            .child(view.title())
-        }))
-    }
-
     /// The workspace name with ▾: opens a dropdown of every workspace (click switches) and
-    /// "Add workspace…". After it, muted, the repository label `⎇ master` / `⎇ 2 repos ▾` (its
-    /// only place; tooltip: one line per repository). A click opens the Git tab and the diff
-    /// (one repository) or a dropdown of each repository's branch (several). Hidden while the
-    /// summary is not loaded or the folder holds no repository.
+    /// "Add workspace…".
     pub(crate) fn render_workspace_switcher(
         &self,
         project_id: Ulid,
@@ -609,77 +548,6 @@ impl Shell {
                 theme.text_muted,
             ))
             .child(record_bounds(Anchor::Switcher, cx));
-        let repos = self.git_summary().and_then(|summary| {
-            let label = summary.branch_label()?;
-            let tip = summary.branch_tooltip().unwrap_or_default();
-            let many = summary.repos.len() > 1;
-            Some(
-                div()
-                    .id("title-branch")
-                    .min_w_0()
-                    .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
-                    .flex()
-                    .items_center()
-                    .gap(px(space::XS))
-                    .h(theme::rems_px(theme::PILL_HEIGHT))
-                    .px(px(space::S))
-                    .rounded(px(radius::PILL))
-                    .bg(rgb(theme.well))
-                    .whitespace_nowrap()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .pressable(Look::Chip, true, theme)
-                    .when(!self.repo_menu, |el| {
-                        el.tooltip(tooltip(
-                            theme,
-                            &tip,
-                            self.keymap.label(Command::ShowGitPanel),
-                        ))
-                    })
-                    // An open menu already closed on this mouse down (outside it): the click
-                    // reopens it.
-                    .on_press(
-                        true,
-                        cx.listener(move |shell, _, window, cx| {
-                            if many {
-                                shell.open_repo_menu(window, cx);
-                            } else if let Some(id) = shell.workspace {
-                                shell.open_git(id, window, cx);
-                            }
-                        }),
-                    )
-                    .child(icon_svg(
-                        Icon::GitBranch,
-                        theme::ICON_SIZE_SMALL,
-                        theme.text_muted,
-                    ))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(label),
-                    )
-                    .when(many, |el| {
-                        el.child(icon_svg(
-                            Icon::ChevronDown,
-                            theme::ICON_SIZE_SMALL,
-                            theme.text_muted,
-                        ))
-                    }),
-            )
-        });
-        let repo_menu = (self.repo_menu && !self.modal_open()).then(|| {
-            render_menu(
-                self.menu_state(),
-                "repo-menu-panel",
-                self.repo_menu_rows(project_id),
-                None,
-                Place::Dropdown,
-                theme,
-                cx,
-            )
-        });
         let menu = (self.workspace_switcher && !self.modal_open()).then(|| {
             render_menu(
                 self.menu_state(),
@@ -693,11 +561,8 @@ impl Shell {
         });
         div()
             .min_w_0()
-            .flex()
-            .items_center()
-            .gap(px(space::XS))
-            .child(div().child(button).children(menu))
-            .child(div().min_w_0().children(repos).children(repo_menu))
+            .child(button)
+            .children(menu)
             .into_any_element()
     }
 

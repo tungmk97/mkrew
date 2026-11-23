@@ -563,8 +563,8 @@ impl Shell {
                             cx.notify();
                         }))
                 };
-            // The filter row lines up with the tab strip on its right: same height, same
-            // bottom divider.
+            // The filter row has the height of the right panel's tab row and the Editor's file
+            // tab strip: same height, same bottom divider.
             div()
                 .flex_none()
                 .flex()

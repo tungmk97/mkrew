@@ -1178,3 +1178,51 @@ fn a_new_pane_is_born_with_the_given_mode() {
         (Some(true), Some(false))
     );
 }
+
+/// The tab area's children, in paint order: the view chips, a rule, the tabs, a rule between
+/// the pinned tabs and the rest; never a rule at an end.
+#[test]
+fn the_tab_area_orders_view_chips_pinned_tabs_and_the_rest() {
+    use AreaItem::{Rule, Tab, View as Chip};
+    assert_eq!(area_items(false, false, &[]), []);
+    assert_eq!(
+        area_items(false, false, &[true, true, false]),
+        [Tab(0), Tab(1), Rule, Tab(2)]
+    );
+    assert_eq!(
+        area_items(false, false, &[true, true]),
+        [Tab(0), Tab(1)],
+        "no rule after the last group"
+    );
+    assert_eq!(
+        area_items(true, true, &[false, false]),
+        [Chip(View::Editor), Chip(View::Diff), Rule, Tab(0), Tab(1)]
+    );
+    assert_eq!(
+        area_items(false, true, &[true, false]),
+        [Chip(View::Diff), Rule, Tab(0), Rule, Tab(1)]
+    );
+    assert_eq!(
+        area_items(false, true, &[]),
+        [Chip(View::Diff)],
+        "no tabs, no rule"
+    );
+}
+
+/// The child to scroll into view: the active tab while Terminals shows, else the chip of the
+/// shown view; nothing for Board and Docs (they are icons, not children).
+#[test]
+fn the_scroll_target_is_the_shown_chip_or_the_active_tab() {
+    let items = area_items(true, false, &[true, false, false]);
+    // [Editor, Rule, Tab(0), Rule, Tab(1), Tab(2)]
+    assert_eq!(scroll_index(&items, View::Terminals, Some(2)), Some(5));
+    assert_eq!(scroll_index(&items, View::Terminals, Some(0)), Some(2));
+    assert_eq!(scroll_index(&items, View::Editor, Some(2)), Some(0));
+    assert_eq!(scroll_index(&items, View::Board, Some(2)), None);
+    assert_eq!(scroll_index(&items, View::Terminals, None), None);
+    assert_eq!(
+        scroll_index(&items, View::Diff, Some(1)),
+        None,
+        "no Diff chip"
+    );
+}
