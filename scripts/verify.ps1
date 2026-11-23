@@ -16,5 +16,6 @@ function Step($name, [scriptblock]$cmd) {
 $env:INSTA_UPDATE = 'no'
 Step 'cargo fmt --check' { cargo fmt --all -- --check }
 Step 'cargo clippy'      { cargo clippy --workspace --all-targets -- -D warnings }
+Step 'fetch conpty'      { & (Join-Path $PSScriptRoot 'fetch-conpty.ps1') }
 Step 'cargo test'        { cargo test --workspace }
 Write-Host "`nverify: OK"

@@ -2,6 +2,8 @@
 # The installer asks "for me only" (no admin) or "for all users" (admin).
 # Needs Inno Setup 6 (`winget install JRSoftware.InnoSetup --scope user`) and, for the release
 # build, fxc.exe from the Windows SDK on PATH or in GPUI_FXC_PATH (gpui compiles its shaders).
+# conpty.dll and OpenConsole.exe (ADR 0107) are fetched from the pinned NuGet package into BinDir
+# (scripts/fetch-conpty.ps1) and installed next to the daemon.
 # Usage: scripts/package-setup.ps1 [-NoBuild] [-BinDir DIR] [-Out DIR]
 # Prints the setup path. Nothing is published.
 param(
@@ -30,8 +32,9 @@ if (-not $NoBuild) {
   cargo build --release --locked -p mkrew-ui -p mkrew-cli -p mkrew-daemon
   if ($LASTEXITCODE -ne 0) { throw 'package-setup: cargo build failed' }
 }
-foreach ($bin in 'mkrew', 'mk', 'mkrew-daemon') {
-  if (-not (Test-Path (Join-Path $BinDir "$bin.exe"))) { throw "package-setup: missing $bin.exe in $BinDir" }
+& (Join-Path $PSScriptRoot 'fetch-conpty.ps1') -Dest $BinDir
+foreach ($file in 'mkrew.exe', 'mk.exe', 'mkrew-daemon.exe', 'conpty.dll', 'OpenConsole.exe') {
+  if (-not (Test-Path (Join-Path $BinDir $file))) { throw "package-setup: missing $file in $BinDir" }
 }
 
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
