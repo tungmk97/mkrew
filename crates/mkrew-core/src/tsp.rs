@@ -4,6 +4,7 @@
 //! [`doc`] holds the node tree the frames build. Both are pure: no I/O, no clock.
 
 pub mod doc;
+pub mod engine;
 pub mod wire;
 
 /// The committed omp 18.13.2 startup record, for tests of every layer.
