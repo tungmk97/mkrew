@@ -32,12 +32,18 @@ With a real omp, a real Claude Code and a real Codex session, dark and light the
 - [ ] **Markdown cards and pills:** a code block is a card with its language (or "text") and a Copy button that says "Copied" for about 1.5 s; inline code has the raised background (square corners, no padding: a text highlight); a file path shows the folder muted and the name bold; the same cards show in the Docs view, the Files preview, the Thread section and Ask AI (their headings keep their own color).
 - [ ] **Path pills:** in Chat a path (`src/main.rs:12`) opens the file at that line in the Editor view (also from a task worktree session); `v1.2` and `cargo test` are not clickable; a path outside the workspace shows "That file is outside this workspace".
 - [ ] **omp recap:** after an omp turn ends and omp is idle, its recap line (history icon, italic) shows after the last turn; sending a new prompt hides it; a Claude or Codex session never shows one.
-- [ ] **Composer card:** a floating rounded card with the context meter above it (turns to the warning color at 80 %), the session title in quotes as the placeholder, chips for model, effort, permission and branch (branch only for a session at the workspace root, not for a task worktree, which has no folder chip either), then `74K`, `tok/s` and the elapsed time (counting live while the agent works), and a round send button (faded while the draft is blank; its tooltip has the key hint). The meter and the header ctx% update at a turn end (they come from `session.usage`). Compare the numbers with Tern.
+- [ ] **Composer card:** a floating rounded card with the context meter above it (turns to the warning color at 80 %), the session title in quotes as the placeholder, chips for model, effort, permission and branch (branch only for a session at the workspace root, not for a task worktree, which has no folder chip either), then `74K`, `tok/s` and the elapsed time (counting live while the agent works), and a round send button (faded while the draft is blank; its tooltip has the key hint).
+  The meter's used value comes from the transcript first; only its window comes from `session.usage` (updated at a turn end).
+  The header ctx% updates at a turn end too.
+  Compare the numbers with Tern.
 - [ ] **Card border (dark + light):** the card border is subtle, with no bright outline, in both themes.
 - [ ] **Model chip:** a click switches the pane to Terminal and the agent's own model picker opens (`/model` is typed and sent); on an exited session the chip is disabled.
 - [ ] **Copy in a detached Chat pane:** tear a Chat pane off into its own window; a code block's Copy button there copies the code and shows "Copied".
 - [ ] **Narrow pane:** dragging a split divider drops chips in this order: stats, permission, effort, branch; the model chip and the send button stay; nothing is drawn under them.
-- [ ] **Collapsed pill:** with the draft empty, clicking another pane shrinks the card to a one-line pill with the placeholder; a click on it opens the card and puts the caret in it. A draft, a queued text or an error keeps the card open.
+  With `[ui] font_size` 16 and 20 the chips drop earlier, before Prompts or the send button would overflow.
+- [ ] **Collapsed pill:** with the draft empty, clicking another pane shrinks the card to a one-line pill with the placeholder.
+  A click on it opens the card and puts the caret in it.
+  A draft, a queued text or an error keeps the card open.
 - [ ] **Slash picker:** typing `/` in the composer shows the current model next to `/model` and "context N% used" next to `/compact`.
 - [ ] **Terminal mode** keeps today's docked composer and its key hint.
 

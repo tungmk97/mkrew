@@ -1014,8 +1014,8 @@ fn code_card(
     } else {
         space::XS
     };
-    let key = code_key(text);
-    let done = copied() == Some(key);
+    // Hashed only while a "Copied" mark exists, not for every block on every render.
+    let done = copied().is_some_and(|key| key == code_key(text));
     let copy_text = text.to_owned();
     div()
         .flex()

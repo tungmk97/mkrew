@@ -1181,8 +1181,10 @@ impl Shell {
                     )
             });
         // Room for the chips: the pane's width, capped by the column, less the page padding
-        // and the card's own padding.
-        let room = width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M;
+        // and the card's own padding. The chip widths are in rems (`theme::rems_px`, designed
+        // at 13 px), so the room is measured in the same unit.
+        let room = (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M)
+            / (cx.global::<theme::Fonts>().ui_size / 13.0);
         let shown = chat::fit_chips(chat::Chips::wanted(&stats), room);
         let quiet = |el: gpui::Div| {
             el.flex()

@@ -609,10 +609,15 @@ impl Shell {
                     let head = div()
                         .flex()
                         .items_center()
+                        .min_w_0()
                         .gap(px(space::XS))
-                        .children(thought.clone().map(|t| div().italic().child(t)))
-                        .when(thought.is_some() && !summary.is_empty(), |el| el.child("·"))
-                        .when(!summary.is_empty(), |el| el.child(summary.clone()))
+                        .children(thought.clone().map(|t| div().flex_none().italic().child(t)))
+                        .when(thought.is_some() && !summary.is_empty(), |el| {
+                            el.child(div().flex_none().child("·"))
+                        })
+                        .when(!summary.is_empty(), |el| {
+                            el.child(div().flex_1().min_w_0().truncate().child(summary.clone()))
+                        })
                         .into_any_element();
                     let body = open.then(|| {
                         let rows: Vec<_> = children
@@ -691,7 +696,16 @@ impl Shell {
                             .flex()
                             .flex_col()
                             .gap(px(space::XS))
-                            .child(mono_block((*text).to_owned(), theme.text_muted, theme))
+                            .child(
+                                div()
+                                    .p(px(space::S))
+                                    .rounded(px(radius::SMALL))
+                                    .bg(rgb(theme.surface))
+                                    .italic()
+                                    .text_size(font_size::META)
+                                    .text_color(rgb(theme.text_muted))
+                                    .child((*text).to_owned()),
+                            )
                             .children(link)
                             .into_any_element()
                     },

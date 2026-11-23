@@ -30,7 +30,8 @@ pub fn effective(available: bool, saved: Option<bool>, default: bool) -> bool {
     available && saved.unwrap_or(default)
 }
 
-/// A row that opens and closes: (turn key, item index, call index; 0 for thinking).
+/// A row that opens and closes: (turn key, item index, call index; 0 for thinking,
+/// `usize::MAX` for an activity row).
 pub type RowKey = (u64, usize, usize);
 
 /// A row of a turn.
@@ -117,15 +118,6 @@ impl Counts {
         .map(|(n, one, many)| format!("{n} {}", if n == 1 { one } else { many }))
         .collect::<Vec<_>>()
         .join(", ")
-    }
-}
-
-/// The whole label of an activity row: the italic part, then ` · ` and the counts.
-pub fn activity_label(thought: Option<&str>, summary: &str) -> String {
-    match (thought, summary.is_empty()) {
-        (Some(thought), true) => thought.to_owned(),
-        (Some(thought), false) => format!("{thought} · {summary}"),
-        (None, _) => summary.to_owned(),
     }
 }
 
@@ -741,6 +733,15 @@ mod tests {
     use super::*;
     use mkrew_core::UsageFormat;
     use mkrew_core::thread::CHAT_TURNS;
+
+    /// The whole label of an activity row: the italic part, then ` · ` and the counts.
+    fn activity_label(thought: Option<&str>, summary: &str) -> String {
+        match (thought, summary.is_empty()) {
+            (Some(thought), true) => thought.to_owned(),
+            (Some(thought), false) => format!("{thought} · {summary}"),
+            (None, _) => summary.to_owned(),
+        }
+    }
 
     use crate::docs::Shown;
     use crate::preview_select::{Point, Selection};

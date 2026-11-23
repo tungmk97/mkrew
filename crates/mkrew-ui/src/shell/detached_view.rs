@@ -70,7 +70,6 @@ impl Render for DetachedWindow {
             .update(cx, |shell, cx| shell.render_host(key, window, cx))
             .unwrap_or_else(|_| div().into_any_element());
         let shell = self.shell.clone();
-        let open_path = self.shell.clone();
         // The window's key context is a focused pane's while no pane has focus; a pane's own
         // `key_context` (set by its element) is inside it.
         div()
@@ -80,12 +79,32 @@ impl Render for DetachedWindow {
             .on_action(cx.listener(move |_, action: &Run, window, cx| {
                 let _ = shell.update(cx, |shell, cx| shell.run(action, window, cx));
             }))
-            .on_action(
-                cx.listener(move |_, action: &preview::OpenPath, window, cx| {
+            .on_action(cx.listener({
+                let shell = self.shell.clone();
+                move |_, action: &preview::OpenPath, window, cx| {
+                    let _ = shell.update(cx, |shell, cx| shell.open_chat_path(action, window, cx));
+                }
+            }))
+            .on_action(cx.listener({
+                let shell = self.shell.clone();
+                move |_, action: &preview::CopyCode, window, cx| {
                     let _ =
-                        open_path.update(cx, |shell, cx| shell.open_chat_path(action, window, cx));
-                }),
-            )
+                        shell.update(cx, |shell, cx| shell.copy_preview_code(action, window, cx));
+                }
+            }))
+            .on_action(cx.listener({
+                let shell = self.shell.clone();
+                move |_, action: &preview::OpenLink, window, cx| {
+                    let _ =
+                        shell.update(cx, |shell, cx| shell.open_preview_link(action, window, cx));
+                }
+            }))
+            .on_action(cx.listener({
+                let shell = self.shell.clone();
+                move |_, action: &preview::ExpandDiagram, window, cx| {
+                    let _ = shell.update(cx, |shell, cx| shell.expand_diagram(action, window, cx));
+                }
+            }))
             .child(content)
     }
 }
