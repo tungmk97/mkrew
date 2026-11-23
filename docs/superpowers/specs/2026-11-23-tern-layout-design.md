@@ -139,11 +139,19 @@ The duplicate bar and strip code in `detached_render.rs` is deleted.
 
 The first design gave every pane a compact header without a title; the second UI feedback round removed the header entirely (ADR 0106).
 
-- `pane_header`, `pane_controls`, `pane_status`, `pane_rename`, `header_room`, `PANE_HEADER_FIXED` and the pane status pill, elapsed time, context share and agent chip are deleted. The context share stays in the composer.
-- Transient signals are a stack of floating badges in the pane's top-right corner (`pane_badges`), drawn only while they apply, over the terminal and taking clicks only on themselves: the conflict warning (`conflict_badge`), `N queued`, Copy mode with its hint, and while zoomed `⤢ Pane zoomed` with the Show all panes button.
-- The agent controls are icon toggles in the title bar right group, before Board, acting on the focused agent pane (`pane_toggles`): Terminal | Chat (`MessageSquare`, only when `chat_available`, accent while Chat shows, Ctrl+Alt+T), Reading width (`AlignCenter`, accent while on) and Share (`Share2`, only with `[features] share`, default false). The palette keeps "Agent: Toggle chat view" and "Pane: Reading width (on / off)"; `[ui] chat_default` is the setting for the mode of new agent panes.
-- The header's right-click pane menu is deleted from the pane. The tab menu (right-click a tab) has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane; the palette has Pin / Unpin and Mark unread; the sidebar session row keeps the pane menu; Shift+F10 on a terminal opens it under the pane's top edge (`Anchor::Pane`).
-- In a split tab each pane has a strip along its top edge, `PANE_GRIP_HEIGHT` (6 px) tall. Hovering it shows a slim grip (`group_hover`); dragging it starts the pane drag the header used (`draggable_pane`). A lone pane has no strip.
+- `pane_header`, `pane_controls`, `pane_status`, `pane_rename`, `header_room`, `PANE_HEADER_FIXED` and the pane status pill, elapsed time, context share and agent chip are deleted.
+- The context share stays in the composer.
+- Transient signals are a stack of floating badges in the pane's top-right corner (`pane_badges`), drawn only while they apply, over the terminal.
+- They are the conflict warning (`conflict_badge`), `N queued`, Copy mode with its hint, and while zoomed `⤢ Pane zoomed` with the Show all panes button.
+- Badges that only show text let clicks pass through to the terminal; the conflict Dismiss and Show all panes buttons take their own clicks.
+- The agent controls are icon toggles in the title bar right group, before Board, acting on the focused agent pane (`pane_toggles`): Terminal | Chat (`MessageSquare`, only when `chat_available`, accent while Chat shows, Ctrl+Alt+T), Reading width (`AlignCenter`, accent while on) and Share (`Share2`, only with `[features] share`, default false).
+- The palette keeps "Agent: Toggle chat view" and "Pane: Reading width (on / off)"; `[ui] chat_default` is the setting for the mode of new agent panes.
+- The header's right-click pane menu is deleted from the pane.
+- The tab menu (right-click a tab) has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane; the palette has Pin / Unpin and Mark unread.
+- The sidebar session row keeps the pane menu; Shift+F10 on a terminal opens it under the pane's top edge (`Anchor::Pane`).
+- In a split tab each pane has a strip along its top edge, `PANE_GRIP_HEIGHT` (8 px) tall, that occludes the mouse so the terminal under it gets no click.
+- Hovering it shows a slim grip (`group_hover`); dragging it starts the pane drag the header used (`draggable_pane`).
+- A lone pane has no strip.
 - A pane with a color has a 2 px line of it at the top; the focus border stays.
 - Renaming a pane: F2 or a double-click on the tab while the tab keeps its default name (section 4.1); the field shows in the tab chip, `tab_renaming`.
 

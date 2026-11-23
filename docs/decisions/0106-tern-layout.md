@@ -28,11 +28,21 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
 - Removed from the bar: logo, branch chip and repo menu (the Git panel has the repository strip), History, theme toggle, phone button, `⋯` tab menu button (right-click on a tab opens the same menu).
   All stay in the palette, their shortcuts and Settings.
 - The strip's notices become toasts: errors `toast_error`, notices `toast_info`, and the running warning one `toast_info` when the count rises above `RUNNING_WARN_ABOVE` (again only after it dropped back).
-- Panes have no header (UI feedback round 2): the status pill, elapsed time, context share, agent chip and task folder are gone from the pane; the status lives in the tab icon and its tooltip, and the context share in the composer.
-  Transient signals are a small stack of floating badges in the pane's top-right corner, drawn only while they apply: the conflict warning, `N queued`, Copy mode with its hint, and while zoomed "Pane zoomed" with "Show all panes".
-  The agent controls move to the title bar right group, before Board, as icon toggles that act on the focused agent pane: Terminal | Chat (only when the pane can chat), Reading width, and Share (only with `[features] share`, default false; the code stays and Follow in Zed stays in the tab menu and the palette).
-  The header's right-click pane menu is gone from the pane: the tab menu has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane, the palette has Pin and Mark unread; the sidebar session row keeps the pane menu, and Shift+F10 on a terminal opens it under the pane's top edge.
-  A pane in a split tab has a 6 px strip along its top edge (`PANE_GRIP_HEIGHT`) that shows a grip on hover and drags the pane onto another; a lone pane has none.
+- Panes have no header (UI feedback round 2).
+  The status pill, elapsed time, context share, agent chip and task folder are gone from the pane.
+  The status lives in the tab icon and its tooltip, and the context share in the composer.
+  Transient signals are a small stack of floating badges in the pane's top-right corner, drawn only while they apply.
+  They are the conflict warning, `N queued`, Copy mode with its hint, and while zoomed "Pane zoomed" with "Show all panes".
+  Badges that only show text let clicks pass through to the terminal; the conflict Dismiss and "Show all panes" buttons take their own clicks.
+  The agent controls move to the title bar right group, before Board, as icon toggles that act on the focused agent pane.
+  They are Terminal | Chat (only when the pane can chat), Reading width, and Share (only with `[features] share`, default false).
+  The Share code stays, and Follow in Zed stays in the tab menu and the palette.
+  The header's right-click pane menu is gone from the pane.
+  The tab menu has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane, and the palette has Pin and Mark unread.
+  The sidebar session row keeps the pane menu, and Shift+F10 on a terminal opens it under the pane's top edge.
+  A pane in a split tab has an 8 px strip along its top edge (`PANE_GRIP_HEIGHT`) that shows a grip on hover and drags the pane onto another.
+  The strip occludes the mouse, so the terminal under it gets no click; a press just below it selects text.
+  A lone pane has no strip.
   A pane with a color has a 2 px line of it at the top; the focus border stays.
   A pane is renamed in its tab chip (F2, or a double-click on a tab that keeps its default name).
 - The tab title follows the focused pane: a tab that keeps its default name shows the focused pane's session title, a name the user gave always wins.
@@ -50,7 +60,8 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
   Then one icon per pane: a shell is `SquareTerminal` and a run pane is `Play`, both `text_muted`; an agent is its brand logo (claude, codex, copilot, omp) in its brand color, and an agent without a logo (fake) its glyph in `text_muted`.
   The active tab shows every pane in pane order, at most three and then `+N`; an inactive tab shows its focused pane's icon.
   The tab tooltip gives the title, the status in words, the elapsed time and the turns of the most urgent pane, so color is never the only signal.
-  Brand colors are theme tokens (`brand_claude`, `brand_codex`, `brand_copilot`, `brand_omp`) for every theme; a `theme::problems()` rule ("brand logo") needs 3:1 on `chrome`, and a palette theme darkens or lightens its token until it meets it.
+  Brand colors are theme tokens (`brand_claude`, `brand_codex`, `brand_copilot`, `brand_omp`) for every theme.
+  A `theme::problems()` rule ("brand logo") needs 3:1 on `chrome` and on `tab_active`, and a palette theme darkens or lightens its token until it meets both.
   `TAB_MIN_WIDTH` is 120: an inactive chip shows the status icon, one icon and about five letters.
 - A 1 px rule sets the title bar groups apart: left group, tab area, drag space, right group (the rule before the window controls stays).
 - The sidebar's filter row is gone: the All / Working / Needs you control is its top, the filter box shows only while it is focused or holds text (Alt+0 and `/` show it), and Remove idle agents and terminals, Collapse all and Expand all workspaces are palette entries.

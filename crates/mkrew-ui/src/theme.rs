@@ -236,7 +236,7 @@ pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
 pub const PANE_ACCENT_WIDTH: f32 = 2.0;
 /// Height of the strip along the top edge of a pane in a split tab: hovering it shows a grip,
 /// dragging it moves the pane (ADR 0106).
-pub const PANE_GRIP_HEIGHT: f32 = 6.0;
+pub const PANE_GRIP_HEIGHT: f32 = 8.0;
 
 /// Thickness of the accent line marking where a dragged sidebar row or tab will land.
 pub const DROP_LINE_WIDTH: f32 = 2.0;
@@ -1654,6 +1654,8 @@ impl Theme {
             add_word,
             del_word,
         ];
+        // A brand logo sits on `chrome` and, in the shown tab, on `tab_active`.
+        let brand_grounds = [p.chrome, mix(p.chrome, p.fg, 0.12)];
         let text = |color| readable(color, p.fg, &grounds, 4.5);
         let on_accent = if contrast(p.bg, p.accent) >= contrast(p.fg, p.accent) {
             p.bg
@@ -1725,10 +1727,10 @@ impl Theme {
             syntax_function: text(p.blue),
             teal: text(p.cyan),
             folder: text(p.blue),
-            brand_claude: readable(base.brand_claude, p.fg, &[p.chrome], 3.0),
-            brand_codex: readable(base.brand_codex, p.fg, &[p.chrome], 3.0),
-            brand_copilot: readable(base.brand_copilot, p.fg, &[p.chrome], 3.0),
-            brand_omp: readable(base.brand_omp, p.fg, &[p.chrome], 3.0),
+            brand_claude: readable(base.brand_claude, p.fg, &brand_grounds, 3.0),
+            brand_codex: readable(base.brand_codex, p.fg, &brand_grounds, 3.0),
+            brand_copilot: readable(base.brand_copilot, p.fg, &brand_grounds, 3.0),
+            brand_omp: readable(base.brand_omp, p.fg, &brand_grounds, 3.0),
             ansi: p.ansi,
             dark: p.dark,
             ..base
@@ -2540,9 +2542,12 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
     // text must read on it.
     check("active tab", t.tab_active, t.chrome, 1.1);
     check("active tab", t.text, t.tab_active, 4.5);
-    // An agent's brand logo in a tab chip is an icon on `chrome` (WCAG 1.4.11, 3:1).
+    // An agent's brand logo in a tab chip is an icon on `chrome` and, in the shown tab, on
+    // `tab_active` (WCAG 1.4.11, 3:1).
     for logo in crate::icons::AgentLogo::ALL {
-        check("brand logo", t.brand_color(*logo), t.chrome, 3.0);
+        for ground in [t.chrome, t.tab_active] {
+            check("brand logo", t.brand_color(*logo), ground, 3.0);
+        }
     }
     found
 }
@@ -2760,6 +2765,13 @@ mod tests {
                 "brand logo",
                 Theme {
                     brand_claude: t.chrome,
+                    ..t.clone()
+                },
+            ),
+            (
+                "brand logo",
+                Theme {
+                    tab_active: t.brand_codex,
                     ..t.clone()
                 },
             ),

@@ -276,8 +276,8 @@ pub fn controls(live: bool, configured: bool) -> &'static [Control] {
     }
 }
 
-/// The pane header title: a live run session shows `name · :port …`, an exited one its name,
-/// any other session its own title.
+/// The title of a pane (the drag chip, the tab tooltip): a live run session shows `name · :port …`,
+/// an exited one its name, any other session its own title.
 pub fn pane_title(session: &Session, ports: &[u16]) -> Option<String> {
     let Some(name) = command_name(session) else {
         return crate::history::title(session).map(str::to_owned);

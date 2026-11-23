@@ -897,7 +897,8 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
 - **Color:** the workspace menu's swatches give a workspace one of 9 colors, shown as a letter
   avatar tinted with the color before its name and a 3 px stripe on its sidebar card
   (decoration only, ADR 0020, ADR 0027, ADR 0062).
-  A pane has its own color too: right-click its tab, Change color (the sidebar row menu has it as well; same palette; ADR 0037). A colored pane has a 2 px line of its color at its top.
+  A pane has its own color too: right-click its tab, Change color (the sidebar row menu has it as well; same palette; ADR 0037).
+  A colored pane has a 2 px line of its color at its top.
 - **Pin:** the workspace menu, the pane menu (right-click a sidebar session row; Shift+F10 on a terminal) and the tab menu have Pin / Unpin
   (the palette has "Pane: Pin / Unpin" for the focused pane; `project.update` `pinned`, `session.pin`, `tab.pin`, §7). A
   pinned workspace leads the sidebar, a pinned session leads its workspace's list and a pinned tab
@@ -972,7 +973,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   Shift+F10 on the selected card opens its menu: Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents… (each as its hover button; the buttons stay and call the same functions).
 - **Terminals:** the tabs are in the title bar (above); each tab is a split tree of panes; each pane is a session with no header of its own (ADR 0106): the terminal fills it.
   Each tab chip starts with a status icon only when the user should notice (§11): an hourglass in `status-working` while an agent works, a bell in `status-needs-input` when a pane needs input (needs input wins); none for idle, done, exited and starting.
-  Then come the pane icons, all 14 px: `square-terminal` in `text-muted` for a shell, `play` in `text-muted` for a run pane, an agent's brand logo (claude, codex, copilot, omp) in its brand color (`brand-claude`, `brand-codex`, `brand-copilot`, `brand-omp`; each 3:1 on `chrome`, a `theme::problems()` rule), and an agent without a logo its glyph in `text-muted`.
+  Then come the pane icons, all 14 px: `square-terminal` in `text-muted` for a shell, `play` in `text-muted` for a run pane, an agent's brand logo (claude, codex, copilot, omp) in its brand color (`brand-claude`, `brand-codex`, `brand-copilot`, `brand-omp`; each 3:1 on `chrome` and `tab-active`, a `theme::problems()` rule), and an agent without a logo its glyph in `text-muted`.
   The active tab shows one icon per pane in pane order, at most three, then `+N`; an inactive tab shows only its focused pane's icon; a tab without panes shows none.
   Next come 📌 when pinned, the title and a ✕ (always on the active tab, on hover for the others); closing never
   activates the tab first.
@@ -998,7 +999,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   among the pinned or the unpinned tabs only; tabs and sidebar rows share one drag look: a small
   title chip follows the pointer, the item stays dim in place and an accent line marks the gap
   it lands in.
-  Drag a tab onto a pane of the shown tab, or a pane by the grip on its top edge (a 6 px strip that shows a grip on hover; only in a split tab) onto
+  Drag a tab onto a pane of the shown tab, or a pane by the grip on its top edge (an 8 px strip that shows a grip on hover; only in a split tab) onto
   another pane, to split that pane: the half under the pointer lights up (the right half when
   the pointer is further right than down, else the bottom half) and the drop puts the dragged
   panes there, a tab keeping its layout. A pane moves within its tab or out of another one; an
@@ -1168,8 +1169,10 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
 
 ## §11 UI: per-session status
 
-Status shows in two places: the tab status icon (and its tooltip) and the sidebar row. A pane has no header and shows no status pill, elapsed time or context share (the composer shows the context share).
-The tab icon shows only a pane that needs input (bell) or an agent that works (hourglass); the tooltip gives the status in words, the time and the turns, so color is never the only signal.
+Status shows in two places: the tab status icon (and its tooltip) and the sidebar row.
+A pane has no header and shows no status pill, elapsed time or context share (the composer shows the context share).
+The tab icon shows only a pane that needs input (bell) or an agent that works (hourglass).
+The tooltip gives the status in words, the time and the turns, so color is never the only signal.
 
 | State | Icon | Extra |
 | --- | --- | --- |
@@ -1182,11 +1185,19 @@ The tab icon shows only a pane that needs input (bell) or an agent that works (h
 | unknown | · | |
 
 - Each state's mark has its own color (`status_working`, `status_needs_input`, `status_done`, `status_exited`, `status_idle`; dark and light), drawn beside its icon or text, never alone. Nothing loops while an agent works: the dot is still and the time text moves (ADR 0086). The loading mark (a pane being started, a transcription, a Jira fetch) is three dots taking turns on the status tick.
-- Pane signals (ADR 0054, ADR 0106): a pane has no header. Transient signals are a small stack of floating badges in the pane's top-right corner, drawn only while they apply and taking clicks only on themselves: a conflict warning, `⧗ N queued`, `Copy mode` with the key hints, and while the pane is zoomed `⤢ Pane zoomed` with a "Show all panes" button. Nothing is drawn in the normal case.
-  The agent controls (Terminal | Chat, Reading width, `Share`) are icon toggles in the title bar (§10), acting on the focused agent pane; `Share` (its menu has "Follow in Zed", ✓ while on) shows only with `[features] share`. "Turns…" and "Follow in Zed" are in the tab menu (right-click a tab).
+- Pane signals (ADR 0054, ADR 0106): a pane has no header.
+  Transient signals are a small stack of floating badges in the pane's top-right corner, drawn only while they apply: a conflict warning, `⧗ N queued`, `Copy mode` with the key hints, and while the pane is zoomed `⤢ Pane zoomed` with a "Show all panes" button.
+  Nothing is drawn in the normal case.
+  The badges that only show text let clicks pass through to the terminal; the conflict warning's Dismiss and the "Show all panes" button take their own clicks.
+  The agent controls (Terminal | Chat, Reading width, `Share`) are icon toggles in the title bar (§10), acting on the focused agent pane.
+  `Share` (its menu has "Follow in Zed", ✓ while on) shows only with `[features] share`.
+  "Turns…" and "Follow in Zed" are in the tab menu (right-click a tab).
   A pane is renamed with F2, the tab menu's "Rename pane" or a double-click on a tab that keeps its default name: the field shows in the tab chip (Enter saves, Esc cancels, blank clears; run panes keep their command name, ADR 0031).
-  A tab still named `Terminal` / `Terminal N` shows its focused pane's session title (cut with `…`, full on hover) and follows the focus to another pane; a name the user gave the tab always wins; a double-click on a default-named tab renames the focused pane, on a named tab the tab.
-  Without a title an agent pane shows the title its agent gave the terminal, e.g. Claude's conversation summary; everywhere a session is named the order is: user title > terminal title > agent name.
+  A tab still named `Terminal` / `Terminal N` shows its focused pane's session title (cut with `…`, full on hover) and follows the focus to another pane.
+  A name the user gave the tab always wins.
+  A double-click on a default-named tab renames the focused pane, on a named tab the tab.
+  Without a title an agent pane shows the title its agent gave the terminal, e.g. Claude's conversation summary.
+  Everywhere a session is named the order is: user title > terminal title > agent name.
   The active tab has a solid card fill (the Tern chip look); in a split the panes keep only their thin
   border, the unfocused ones are dimmed. The sidebar session row also puts the badge
   before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
@@ -1204,8 +1215,10 @@ The tab icon shows only a pane that needs input (bell) or an agent that works (h
   The composer is a floating card in the same column (§20B).
   The terminal keeps running underneath and still reports the state.
 - Pane menu (right-click a sidebar session row, or Shift+F10 with a terminal focused; a pane has no header to right-click): **Pin**, **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise), **Rename** (inline
-  like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears). The tab menu has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane, and the palette has "Pane: Pin / Unpin" and "Agent: Mark unread". A
-  colored pane draws a 2 px line of its color at its top; the border still shows state (ADR 0037).
+  like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears).
+  The tab menu has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane.
+  The palette has "Pane: Pin / Unpin" and "Agent: Mark unread".
+  A colored pane draws a 2 px line of its color at its top; the border still shows state (ADR 0037).
 - Tab icon: a bell while any pane needs input, else an hourglass while an agent works, else none (§10, Terminals).
 - Workspace row: `● N working` (a pill, a still dot) while an agent works, else `N idle`; amber
   `? N` while N need input; no token total (the Session tab shows usage). Sidebar session rows
@@ -1738,7 +1751,11 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the Editor's file-tab strip and the right panel tab row 44, Git repo strip 42 (px at 13 px body).
 - Tab chip (Tern look, ADR 0106): height `CONTROL_HEIGHT`, radius 8 (`radius::MEDIUM`), no border; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
   Chips shrink to `TAB_MIN_WIDTH` (120, room for the status icon, a pane icon, about five title letters and the ×) before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
-- Pane (ADR 0106): no header. A pane in a split tab has a `PANE_GRIP_HEIGHT` (6 px) strip along its top edge that shows a grip on hover and drags the pane; floating badges (`pane_badges`: `surface_raised` fill, 1 px `border`, radius 8, META text) sit in its top-right corner `space::S` from the edges, at most `PANE_BADGE_MAX_WIDTH` wide; a colored pane has a `PANE_ACCENT_WIDTH` (2 px) line of its color at the top. The title bar's pane toggles are 30 px icon buttons, accent while on.
+- Pane (ADR 0106): no header.
+  A pane in a split tab has a `PANE_GRIP_HEIGHT` (8 px) strip along its top edge that shows a grip on hover and drags the pane.
+  Floating badges (`pane_badges`: `surface_raised` fill, 1 px `border`, radius 8, META text) sit in its top-right corner `space::S` from the edges, at most `PANE_BADGE_MAX_WIDTH` wide.
+  A colored pane has a `PANE_ACCENT_WIDTH` (2 px) line of its color at the top.
+  The title bar's pane toggles are 30 px icon buttons, accent while on.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
   buttons, 30 px icon button, search box, status pill, tinted chip, overline, key hint.
 - UI font = Inter when installed, else the system font (Segoe UI Variable / SF), unless
@@ -2749,7 +2766,7 @@ sidebar chip's count (§10, ADR 0036): needs input, plus finished and not yet vi
    starting Mkrew again (same exe, same daemon socket) show it. `false`, or no tray icon: ✕ quits the UI as before
    (unsaved Editor changes ask first). `Quit UI` shows the window if unsaved Editor changes need an
    answer, then ends the UI; the daemon and every agent keep running (§2.2).
-5. **Mark unread.** Pane menu (right-click a split pane's header or a sidebar session row) **Mark
+5. **Mark unread.** Pane menu (right-click a sidebar session row, or Shift+F10 with a terminal focused; a pane has no header to right-click) **Mark
    unread** and palette "Agent: Mark unread" (no key) put a finished agent session (done, or idle
    after work) back into Needs you — chip, row tint, Inbox, badge, tray — until its pane is focused
    again in the active window or its state changes. Greyed for a session that already needs you,

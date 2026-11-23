@@ -778,7 +778,8 @@ impl Shell {
     /// The transient signals of `info`'s pane as a stack of floating badges in its top-right
     /// corner, each drawn only while it applies: the conflict warning, `⧗ N queued` sends,
     /// Copy mode with its hint and, while `zoomed`, "Pane zoomed" with "Show all panes".
-    /// `None` in the normal case. Only the badges take clicks: the terminal keeps the rest.
+    /// `None` in the normal case. The text badges have no mouse handling, so clicks pass through
+    /// to the terminal; only the conflict Dismiss and "Show all panes" buttons take clicks.
     pub(crate) fn pane_badges(
         &self,
         info: &Session,
@@ -791,16 +792,22 @@ impl Shell {
         let paths = self.conflicts.for_session(session);
         if !paths.is_empty() {
             badges.push(
-                badge_frame(theme)
-                    .max_w(px(theme::PANE_BADGE_MAX_WIDTH))
-                    .child(conflict_badge(
-                        format!("pane-{session}"),
-                        &paths,
-                        theme,
-                        move |shell| shell.conflicts.dismiss_session(session),
-                        cx,
-                    ))
-                    .into_any_element(),
+                conflict_badge(
+                    format!("pane-{session}"),
+                    &paths,
+                    theme,
+                    move |shell| shell.conflicts.dismiss_session(session),
+                    cx,
+                )
+                .flex_none()
+                .max_w(px(theme::PANE_BADGE_MAX_WIDTH))
+                .px(px(space::S))
+                .py(px(space::XS))
+                .rounded(px(radius::MEDIUM))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.border))
+                .bg(rgb(theme.surface_raised))
+                .into_any_element(),
             );
         }
         let queued = self.composers.queue(session).len();
@@ -874,8 +881,11 @@ impl Shell {
 
     /// The top edge of a pane: it records the anchor of the pane's keyboard menu and, among
     /// `several` panes, is a slim handle (`PANE_GRIP_HEIGHT` tall, a grip shows on hover) that
-    /// drags the pane onto another. A lone pane has nothing to rearrange: the edge draws
-    /// nothing and takes no mouse.
+    /// drags the pane onto another.
+    /// The handle occludes the mouse: gpui hit-tests every hitbox until one blocks, so without
+    /// `.occlude()` the terminal under it would also get the mouse down and start a selection.
+    /// A lone pane has nothing to rearrange: its edge is an empty div, only the Shift+F10 menu
+    /// anchor, with no hitbox and no mouse handling.
     fn pane_edge(
         &self,
         info: &Session,
@@ -899,6 +909,7 @@ impl Shell {
         let group = SharedString::from(format!("pane-grip-{}", info.id));
         let handle = self.draggable_pane(edge.group(group.clone()), info, theme);
         grip_hover(handle, theme)
+            .occlude()
             .cursor(CursorStyle::OpenHand)
             .child(
                 div()

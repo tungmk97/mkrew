@@ -31,19 +31,38 @@ Screenshots: `docs/screenshots/tern-layout-<view>-<dark|light>.png`.
 - [ ] **Many tabs:** open 10 or more tabs in an 1100 px wide window: the area scrolls sideways, the active tab stays in view when you switch with Ctrl+Tab, `+ ▾` stays visible, chips shrink to a minimum before scrolling.
 - [ ] **`+ ▾`:** rows are the agent profiles (default first with a check and Ctrl+Shift+A), Shell (Ctrl+Shift+T), Empty tab; each opens a new tab and shows Terminals, also from Board; the button shows the spinner while the agent starts; Alt+Shift+A and Alt+Shift+S add a pane to the current tab instead.
 - [ ] **Window drag:** drag the empty space: the window moves; double-click it: maximize and restore; a click or a drag on a tab never moves the window (Windows and macOS); with many tabs the empty space keeps at least 32 px, so the window stays movable.
-- [ ] **No pane header (dark + light):** panes have no header row: a single pane is the terminal alone and a split shows only the thin borders; the status pill, elapsed time and context % are not in the pane (the context % is in the composer).
+- [ ] **No pane header (dark + light):** panes have no header row.
+  A single pane is the terminal alone and a split shows only the thin borders.
+  The status pill, elapsed time and context % are not in the pane (the context % is in the composer).
   The tab shows the focused pane's title, and its tooltip gives the title, the status in words and the time.
-  Double-click a default-named tab, or press F2: the focused pane's rename field shows in the tab chip (Enter saves, Esc cancels); in a detached window too.
-- [ ] **Tab title:** a tab named `Terminal` shows the focused pane's session title and follows when you move focus in a split; rename the tab (F2 on a named tab, or double-click): the name wins; double-click a default-named tab: the focused pane's rename field shows in its tab chip.
-- [ ] **Top bar Chat and Reading toggles (dark + light):** focus a Claude pane: a Chat icon and a Reading width icon show before Board; Chat is accent while the chat view shows and Ctrl+Alt+T flips it; Reading is accent while on and narrows the terminal.
+  Double-click a default-named tab, or press F2: the focused pane's rename field shows in the tab chip (Enter saves, Esc cancels), in a detached window too.
+- [ ] **Tab title:** a tab named `Terminal` shows the focused pane's session title and follows when you move focus in a split.
+  Rename the tab (F2 on a named tab, or double-click): the name wins.
+  Double-click a default-named tab: the focused pane's rename field shows in its tab chip.
+- [ ] **Top bar Chat and Reading toggles (dark + light):** focus a Claude pane: a Chat icon and a Reading width icon show before Board.
+  Chat is accent while the chat view shows and Ctrl+Alt+T flips it; Reading is accent while on and narrows the terminal.
   Focus a shell pane, a Copilot pane, or the Board: the Chat toggle is gone (Reading too for a shell); a detached window shows them too.
-  Both tooltips say what a click does; the palette has "Agent: Toggle chat view" and "Pane: Reading width (on / off)"; Settings > General > "Chat view by default" sets the mode of new agent panes.
+  Both tooltips say what a click does.
+  The palette has "Agent: Toggle chat view" and "Pane: Reading width (on / off)".
+  Settings > General > "Chat view by default" sets the mode of new agent panes.
 - [ ] **Floating badges:** nothing is drawn over a quiet pane.
-  Zoom a pane (Ctrl+Shift+M): a `Pane zoomed` badge with "Show all panes" shows at the top-right and the button restores the split; queue a send to a busy agent: `⧗ 1 queued`; Alt+Shift+C: `Copy mode` with its hints; two agents editing one file: a conflict badge whose Dismiss works.
-  Several badges stack downward; clicks anywhere else in the pane still reach the terminal (select text under and beside a badge).
-- [ ] **Top-edge drag strip (dark + light):** in a split tab, hover the top edge of a pane: a slim grip shows and the cursor is a hand; drag it onto another pane: the drop overlay shows and the pane moves; a lone pane has no strip; selecting terminal text below the first 6 px is unaffected; a colored pane (tab menu > Change color) has a 2 px line of its color at its top.
-- [ ] **Pane actions without a header:** right-click a tab: Rename pane, Close pane, Zoom pane / Show all panes (several panes), Follow in Zed and Turns… (agent), and the Change color swatches act on the focused pane; Shift+F10 in a terminal opens the pane menu under its top edge; a sidebar session row's menu is unchanged.
-- [ ] **Share hidden:** with `[features] share` unset or `false` no Share button shows anywhere; "Follow in Zed" is in the tab menu and the palette; set `share = true` in `settings.toml` (or Settings > Features > Share button): a Share icon shows with the other toggles, accent while following, and opens the Follow in Zed menu.
+  Zoom a pane (Ctrl+Shift+M): a `Pane zoomed` badge with "Show all panes" shows at the top-right and the button restores the split.
+  Queue a send to a busy agent: `⧗ 1 queued`.
+  Alt+Shift+C: `Copy mode` with its hints.
+  Two agents editing one file: a conflict badge whose Dismiss works.
+  Several badges stack downward.
+  Select text beside and under a text badge: clicks pass through to the terminal.
+- [ ] **Top-edge drag strip (dark + light):** in a split tab, hover the top edge of a pane: a slim grip shows and the cursor is a hand.
+  Drag the strip onto another pane edge: the drop overlay shows and the pane moves.
+  A press just below the strip (about 10 px from the top) still starts a terminal text selection.
+  A lone pane has no strip.
+  A colored pane (tab menu > Change color) has a 2 px line of its color at its top.
+- [ ] **Pane actions without a header:** right-click a tab: Rename pane, Close pane, Zoom pane / Show all panes (several panes), Follow in Zed and Turns… (agent), and the Change color swatches act on the focused pane.
+  Shift+F10 in a terminal opens the pane menu under its top edge.
+  A sidebar session row's menu is unchanged.
+- [ ] **Share hidden:** with `[features] share` unset or `false` no Share button shows anywhere.
+  "Follow in Zed" is in the tab menu and the palette.
+  Set `share = true` in `settings.toml` (or Settings > Features > Share button): a Share icon shows with the other toggles, accent while following, and opens the Follow in Zed menu.
 - [ ] **Notices as toasts:** a failed action that used to print in the strip (close a tab while the daemon is down, open links with none on screen) shows a toast; open 13 sessions in one workspace: one toast "sessions running", not repeated until the count drops to 12 or fewer and rises again.
 - [ ] **Limits chip:** with no data or below 80 % there is no chip; report 85 % (amber `⚠ Claude 5h 85%`), then 96 % (red); the tooltip lists the windows with reset times in local time; a click opens Settings > Integrations; it is inert behind a dialog.
 - [ ] **Detached window:** drag a tab out: same bar with the workspace name on its chip, Move all back, Split; no switcher, `+ ▾`, view chips, Board, Docs or limits chip; drag a tab out and back onto the main tab area (drop line shows); a click on its chip does not move the window.
@@ -59,7 +78,7 @@ Screenshots: `docs/screenshots/tern-layout-<view>-<dark|light>.png`.
   The tooltip gives the title, then the status in words with the time (`Working · 2m`, `Needs input · 10s`).
   Then come the pane icons: a terminal icon (shell) and a play icon (run pane) in muted gray, an agent's brand logo in its color (Claude orange, Codex green, Copilot purple, omp teal), the fake agent its glyph in gray.
   The active tab shows one per pane, at most three then `+N` (open a tab with 5 panes); an inactive tab shows only its focused pane's icon; an empty tab shows none; a pinned tab keeps its pin before the title.
-  Each brand color reads on the title bar in every theme.
+  Each brand color reads on the title bar and on the shown tab's fill in every theme.
   At the minimum chip width an inactive tab still shows both icons and about five letters of the title; check a detached window too.
 - [ ] **Title bar separators (dark + light):** a thin rule sits between the left group and the tabs, between `+ ▾` and the drag space, and before the Run pill group, besides the one before the window controls; dragging the space moves the window and the rules are inert (a click or drag on a rule does nothing); a detached window has the rules between its tabs, the drag space and its right group only; the drag space keeps 32 px with many tabs.
 - [ ] **Sidebar without the filter row (dark + light):** the All / Working / Needs you control is the top of the sidebar; there is no filter box, Remove idle, collapse or `+` button; without workspaces the "Workspaces" header with `+` and the empty state stay.
@@ -659,7 +678,7 @@ Say so if one is wrong.
   - Open the Board: a card's token total updates live when its agent ends a turn. Switch to Files, let the agent end another turn, come back to Board: the total is current.
   - Link a plan (`.md` checklist) to the focused agent: the Plan card and the selected sidebar row's bar update while you tick items; switch the panel to Files, tick more, switch back to Session: current.
   - Start a run command that prints a port: the title bar Run pill shows `:PORT` in every view (also Editor); the full sidebar's RUN group of the other expanded workspace shows its ports too.
-  - Queue a send to a busy agent (`⧗ 1 queued` in its pane header), then split so the pane is hidden in another tab: switch back, the count is current.
+  - Queue a send to a busy agent (`⧗ 1 queued` in the pane's floating badge), then split so the pane is hidden in another tab: switch back, the count is current.
   - Git tab: Generate a commit message while on the Git tab: the text appears without touching the mouse. Diff view: an agent reply to a diff comment shows up at once.
   - The footer `N need you` count, the sidebar dots and the OS notifications still follow every agent, also with the window on another workspace, on the Editor and with the compact rail. Focus a `done` pane: it leaves the count at once.
 - [ ] **CPU (Task 2):** Task Manager > Details > `mkrew.exe`, 3 agents in `working` (long tasks), window visible on Terminals, read CPU over 60 s. Before: build of the commit before this plan (copy its `target\release\mkrew.exe` aside first). After: this task's build. Before ___ % / after ___ % of one core. (The drop is the avoided renders from other sessions' and hidden panes' events; the 500 ms working-dot tick and output frames are other tasks.)
@@ -747,7 +766,7 @@ Say so if one is wrong.
   Not run (2026-10-27 smoke): no key may be sent to the app; the sandbox had no changed file with 2+ hunks open, dark and light both unseen.
 - [ ] **Text fields keep Shift+↑/↓:** in the Docs filter, a comment draft and the Git commit box (two lines typed), Shift+↑ / Shift+↓ select text and pick no lines.
   Not run (2026-10-27 smoke): needs a person at the keyboard.
-- [ ] **Copy mode (dark + light):** a shell pane with a few screens of output: Alt+Shift+C shows a block cursor and a "Copy mode" chip with the key hints in the tab bar (single pane) or pane header (split).
+- [ ] **Copy mode (dark + light):** a shell pane with a few screens of output: Alt+Shift+C shows a block cursor and a "Copy mode" floating badge with the key hints at the pane's top-right.
   `h j k l`, `w b e`, `0 $`, `g G`, PgUp / PgDn move the cursor.
   `v` / `V` select (selection color readable); a click-selection made before is gone.
   `y` copies (paste elsewhere to check) and leaves; Ctrl+Shift+C copies and stays in copy mode.
@@ -840,7 +859,7 @@ Say so if one is wrong.
   A letter selects the next row starting with it; a repeated letter goes on to the following one.
 - [ ] **Run menu by keyboard:** open the Run menu, select a command row and press Enter: it starts, or restarts when it already ran.
   While it runs, the "Stop <name>" row stops it.
-- [ ] **Shift+F10 per owner:** terminal pane (menu under the pane header), file tree cursor row, Editor (active tab's menu), sidebar filter with a highlighted row, Board with a selected card (card menu), anything else (workspace menu under the title bar switcher).
+- [ ] **Shift+F10 per owner:** terminal pane (menu under the pane's top edge), file tree cursor row, Editor (active tab's menu), sidebar filter with a highlighted row, Board with a selected card (card menu), anything else (workspace menu under the title bar switcher).
   Each menu sits at the owner's bottom-left.
   Esc returns typing to where you were (the terminal types again).
 - [ ] **Shift+F10 toggles:** with any menu open, Shift+F10 closes it and the keyboard goes back to where it was.
@@ -881,7 +900,8 @@ Say so if one is wrong.
 ### To verify - 2026-10-27 Drag a tab or pane onto a pane to split it (SPEC §10)
 
 - [ ] **Tab onto pane (dark + light):** with 2+ tabs, drag a tab off the strip onto a pane of the shown tab. The right half of the pane lights up when the pointer is right of the diagonal, the bottom half when it is below. Drop: the tab's panes (keeping their layout) sit right of / below that pane, the dragged tab is gone from the strip, and its sessions keep running (also after a UI restart).
-- [ ] **Pane onto pane:** with 3+ panes, drag a pane by its header onto another pane: it moves there; the pane headers' buttons, double-click rename and right-click menu still work.
+- [ ] **Pane onto pane:** with 3+ panes, drag a pane by the grip on its top edge onto another pane: it moves there.
+  Double-click rename on the tab and the tab right-click menu still work.
 - [ ] **No-ops:** dragging a pane onto itself or a tab onto its own pane shows no overlay; dragging a tab along the strip still reorders it with the accent line.
 
 ### To verify - 2026-10-27 Files tree in the right panel (ADR 0081)
@@ -1305,7 +1325,7 @@ by telling the agent.
 - [ ] **Second launch:** starting `mkrew.exe` again (Start menu) while it is hidden shows the
   running window and opens no second tray icon. A dev build (`target\debug\mkrew.exe`) next to
   the installed one runs on its own, and so does the same exe with another `MKREW_SOCKET`.
-- [ ] **Mark unread (dark + light):** right-click a finished session's row (and its pane header) →
+- [ ] **Mark unread (dark + light):** right-click a finished session's sidebar row →
   **Mark unread**: the row is tinted, the Needs you chip, the badge and the tray count go up by
   one; it stays while that pane keeps the keyboard; focusing another pane and coming back clears
   it, and so does Alt+Tab away and back. Palette "Agent: Mark unread" does the same on the focused pane. The item is greyed for a
@@ -1350,11 +1370,11 @@ by telling the agent.
 ### To verify — 2026-10-15 Agent logos in chips (ADR 0058)
 
 - [ ] **Logos (dark + light):** claude, codex, copilot and omp sessions show their real logo (no
-  border) in the sidebar row (full + compact), tab, pane header, board card, session panel and
+  border) in the sidebar row (full + compact), tab, board card, session panel and
   the agent menu; the four look about the same size and sit centered. Other profiles (pwsh, Git
   Bash, shells, your own) keep the bordered glyph/letter chip.
 - [ ] **States:** a working agent's row chip gets the accent fill and working ring with the logo
-  in accent text; a colored pane's header chip gets the tint and colored ring.
+  in accent text; a colored pane gets a 2 px line of its color at its top.
 
 ### To verify — 2026-10-15 Drag to reorder tabs and sidebar rows, Close others / to the right
 
@@ -1590,7 +1610,7 @@ by telling the agent.
 - [ ] **Font size:** set `[ui] font_size = 18`, restart: icons grow with the text and stay
   centered; nothing clips; the Run button's two halves keep one height.
 - [ ] **Icons beside text (dark + light):** the title bar's `+ ▾` and split (superseded by ADR 0106: no tab strip, no Close pane icon, no `⋯` there);
-  pane header Share and Turns…; title bar idle Run (▶ icon) and its ▾, switcher
+  title bar Share (with `[features] share`); tab menu Turns…; title bar idle Run (▶ icon) and its ▾, switcher
   ▾; empty states (New agent, New shell, Add workspace, New task, Open prompts folder); card
   Undo / Changes / Compare / Run with… / Several agents…; Docs and Git Comment, Send to agent,
   Open in Zed; Files Review in Docs, Save, Find; Git Discard… (red icon), Push, Generate,
@@ -1692,7 +1712,7 @@ by telling the agent.
 
 - [ ] **Defaults off:** without `[features]` in `settings.toml`, the view rail has no Docs tab,
   Ctrl+Shift+3 does nothing, the palette has no `View: Docs` / `Agent: Turns…`, a `.md` file in
-  Files has no "Review in Docs", agent pane headers show `Share` but no "Turns…".
+  Files has no "Review in Docs", the tab menu has no "Turns…".
 - [ ] **Live switch:** add `[features]` `docs = true` and save → the Docs tab appears within ~1 s;
   set it back to `false` while on Docs → the workspace shows Terminals.
 - [ ] **Turns:** `turns = true`, start a new agent session, let it edit a file → "Turns…" lists the
@@ -1885,14 +1905,14 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   - Switch workspaces back and forth: each shows its own branch; with the Terminals view shown (Git view never opened), a commit made in a terminal updates the chip.
 - [ ] **Layout after the title bar:** sidebar header is "Workspaces +" (no logo), the sidebar and the main area reach the window bottom, no clipped tab strip; the Peek popover, quick open and the palette still open centered and the Run ▾ menu and the workspace menu (⋯) still drop below their buttons.
 - [ ] **Usage cache split (Claude, Codex):** after one turn in each, restart the daemon, run another
-  turn, hover the pane header `ctx N%`: the text reads `… tokens used (X in, Y cached, Z out)`, `X`
+  turn, hover the composer's `ctx N%`: the text reads `… tokens used (X in, Y cached, Z out)`, `X`
   is small (fresh input only) and `Y` is most of the input. `ctx N%` and the total on the task
   card equal what they were before this change for the same session (compare with
   Claude `/context` and Codex `/status`). A session that had no turn end since the upgrade still
   shows its old `ctx` and total, with no `cached` in the hover. The model name is not shown yet
   (the status bar of a later task shows it).
 - [ ] **omp usage:** run `mk integration install omp` if not done, start an omp agent pane, finish one
-  turn: the pane header shows `ctx N%` and a token total on the task card. If it only
+  turn: the composer shows `ctx N%` and a token total on the task card. If it only
   appears after the NEXT turn, omp's turn-end hook fires before the last line is flushed: note it
   here (the reader keeps its offset, so nothing is lost). Interrupt a turn with Esc: ctx % and total
   do not drop to 0. Compare `ctx N%` with omp's own context figure. `context_window` in
@@ -1913,8 +1933,8 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   hash; a new repo with no commit shows nothing; after `git commit` the hash changes without
   reopening the Git view.
 - [ ] **Status bar agent fields:** focus a claude / codex / omp pane: after a turn the bar shows
-  the context meter and `ctx N%`, `in … · out …`, cache and the model (no elapsed time; the pane
-  header's `working · 12s` still counts up). A fresh
+  the context meter and `ctx N%`, `in … · out …`, cache and the model (no elapsed time; the tab
+  tooltip's `Working · 12s` still counts up). A fresh
   agent with no turn yet shows no usage fields at all (no `0`). A shell pane, and the Board / Docs
   / Files / Git views, show none. An agent whose profile has no `[usage]` shows no usage fields.
 - [ ] **Status bar redraw:** with Task Manager open and every pane idle, the app's CPU stays at
@@ -1965,19 +1985,19 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
 - [ ] **Shortcuts close menus:** open the tab `⋯` menu, the Run ▾ menu and the workspace switcher
   (one at a time), press Ctrl+Shift+P or Ctrl+Shift+1 → the menu closes (no menu floats over the
   palette or the Board).
-- [ ] **Pane header (item 5):** `<workspace> › <agent>` after the agent chip (an agent started on a
+- [ ] **Pane header (item 5, superseded by ADR 0106: panes have no header; skip):** `<workspace> › <agent>` after the agent chip (an agent started on a
   worktree task shows `<workspace> › <branch> › <agent>`); one pill `Working · 1m` with the three
   dots, then the pane title; no status/time text at the right, only `⧗ queued`, the context share,
   Share and Turns…; the pill turns `Needs input` / `Idle · 3m` / `Done · 2 files · 1m` with the
   state; hovering it shows `working · from hook · 12s ago`. Narrow a pane (2×2 split): the
   breadcrumb is clipped with `…`, the pill and the buttons stay whole.
-- [ ] **Pane menu (item 5):** right-click a pane header → Rename / Change color; Rename edits the title
-  in place (Enter saves, Esc cancels; the menu closes); on a Run pane Rename is greyed. Pick a color:
-  the agent chip is tinted, a thin line of that color shows under the header, the border and pill are
+- [ ] **Pane menu (item 5):** right-click a sidebar session row (or Shift+F10 in a terminal) → Rename / Change color; Rename edits the title
+  in the tab chip (Enter saves, Esc cancels; the menu closes); on a Run pane Rename is greyed. Pick a color:
+  a 2 px line of that color shows at the pane's top, the border is
   unchanged; the first swatch (empty ring) clears it. Colors look distinct in light and dark.
   Restart the daemon (`mk daemon stop`, reopen): the color and name come back on the resumed pane.
   Open the same pane from the sidebar and from a second UI window: the color shows in both.
-- [ ] **Share menu:** agent pane header: `Share` opens a menu at the click with "Follow in Zed";
+- [ ] **Share menu (only with `[features] share = true`):** the title bar Share icon of an agent pane opens a menu at the click with "Follow in Zed";
   clicking it turns following on (✓ next time, button highlighted), again turns it off; a click
   outside closes the menu (dark and light).
 - [ ] **Pin workspace:** right-click a workspace row → Pin: it jumps to the top of the sidebar with
@@ -1985,7 +2005,7 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   the pin is still there. The next / previous workspace shortcuts follow the new order.
 - [ ] **Pin session:** right-click a sidebar session row → the pane menu opens at the pointer with
   Pin, Rename, Change color; Pin moves the row above newer ones with 📌; Unpin returns it.
-  Right-clicking a pane header shows the same Pin / Unpin. Stop and restart the daemon: the
+  The pane menu (Shift+F10 in a terminal) shows the same Pin / Unpin. Stop and restart the daemon: the
   resumed pane is still pinned.
 - [ ] **Pin tab:** right-click a tab (or its `⋯`) → Pin: the tab moves to the far left with 📌;
   Unpin returns it to its old place; Ctrl+Tab visits tabs in the shown order.
@@ -2223,9 +2243,9 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   `… copilot`, restart the agents and the daemon. Claude: prompt → a still dot; a permission
   prompt → amber `?` + amber pane border; turn ends → `✓ done` + Inbox entry; later `○ idle`.
   Hover a status: source `hook`. Without the install `done` never appears (SPEC §6).
-- [ ] **Working dot:** a working session shows one still dot in the working color in the sidebar row, the workspace pill, the tab, the pane header, the Inbox and board cards; rows with other states line up with it.
+- [ ] **Working dot:** a working session shows one still dot in the working color in the sidebar row, the workspace pill, the Inbox and board cards; rows with other states line up with it.
 - [ ] **File drop:** drag 2 files (one path with a space) from Explorer onto (1) the terminal,
-  (2) the open composer (Ctrl+Shift+Enter), (3) the pane header → paths typed, the spaced one
+  (2) the open composer (Ctrl+Shift+Enter), (3) the top-edge strip of a split pane → paths typed, the spaced one
   quoted, no Enter; with the composer open they go into the draft and it keeps the keyboard.
   (4) Type a letter in a pane, Alt+Tab to Explorer overlapping Mkrew, drop without moving over
   Mkrew first → still typed. (5) Drag over a pane, release outside the window, click the pane →
@@ -2236,7 +2256,7 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   Explorer copy of 2 files → 2 paths; empty clipboard in vim → Ctrl+V starts block visual. In the
   composer, an image clipboard + Ctrl+V → path in the draft. No visible stall on a 4K screenshot.
 - [ ] **Agent icons:** after a daemon restart + UI reconnect, your existing profiles show ✻ claude,
-  ⌬ codex, π omp, ⊙ copilot, >_ shell as bordered chips in the sidebar rows, pane headers, Inbox
+  ⌬ codex, π omp, ⊙ copilot, >_ shell as bordered chips in the sidebar rows, Inbox
   rows, board cards and the Run with… / default agent menus (glyphs, not boxes; light + dark).
 - [ ] **Theme:** the toolbar toggle (superseded by ADR 0034/0036) cycles System (◐) → Light (☀) → Dark (☾); every surface
   updates at once, no dark pieces left in light or the reverse; `settings.toml` gets
@@ -2264,7 +2284,7 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   Explorer onto a Claude pane and a pwsh pane → both paths typed, the spaced one quoted, no Enter.
   Mkrew must not run as administrator: Windows blocks Explorer drops into elevated windows.
 - [ ] **Agent badges:** the sample profiles show ✻ claude, ⌬ codex, π omp, ⊙ copilot, >_ shell
-  in the sidebar rows and pane headers (light + dark; check the glyphs render, not boxes). Your
+  in the sidebar rows (light + dark; check the glyphs render, not boxes). Your
   existing `%APPDATA%\mkrew\agents\*.toml` [INFERENCE: `dirs` config dir] are not updated: they
   show claude `C`, codex `C`, omp `O`, copilot `C` until you add `icon = "…"` to each; the change
   shows after the next refresh (reconnect or restart the UI). `icon = "claude"` → the profile
@@ -2561,13 +2581,13 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   your notification server.
 
 - [ ] (T3.6) **Per-session status, dark and light** (§11, §14): spawn the fake agent and a
-  shell in split panes. Each pane header shows icon, agent, title and `working · Ns` with
+  shell in split panes. A working agent shows an hourglass on its tab and `working · Ns` with
   a still dot, then `needs input` with an amber pane border; the tab label shows the
   most urgent state's icon (needs input over done over working); the sidebar row text matches;
-  the workspace row shows the working count and `?`. Hover the status in a pane header and in
+  the workspace row shows the working count and `?`. Hover the status in the tab tooltip and in
   the sidebar → "<state> · from hook|screen|daemon · Ns ago". Idle shows `idle · Nm`; an
-  exited session shows `exited (code)`. Check contrast and that the header does not crowd the
-  terminal.
+  exited session shows `exited (code)`. Check contrast of the tab icons and
+  that the tab tooltip reads well.
 
 - [ ] (T3.7) **Inbox and notification click** (§10, §11): with two workspaces, let the fake
   agent ask in workspace A while B is shown → the Inbox lists `A: fake` with `?  needs input`;
@@ -2585,7 +2605,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   claude` done.
   - **Claude approval → needs_input in ≤ 2 s** (criterion 2): in a Mkrew pane run `claude` and ask
     for something that needs a tool approval (e.g. "create a file hello.txt"). From the moment
-    the approval prompt appears: within 2 s the pane header shows `? needs input` (hover: "from
+    the approval prompt appears: within 2 s the tab shows a bell and its tooltip `Needs input` (hover: "from
     hook" or "from screen" — the screen pattern may win the race; note which, both pass), the
     sidebar Inbox lists the session, and one OS toast appears. Approve → `working` (from screen:
     no hook fires on approval), turn ends → `done` (from hook). If it takes longer, note the time and whether the first `mk hook` run
@@ -2652,7 +2672,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
 
 - [ ] (T5.7) **Conflict badges.** Run two tasks in one workspace whose agents edit the same file
   within 60 s (e.g. with Claude hooks installed, or one working at a time): both cards on the
-  Board and both pane headers show "⚠ Conflict: <path>", the tooltip names the file(s); hover
+  Board and both panes (a badge at the top right) show "⚠ Conflict: <path>", the tooltip names the file(s); hover
   the badge → "Dismiss" clears it on both cards and panes; without dismissing, approving/moving
   one card to Review clears that card only. Long paths ellipsize; the ⚠ renders as a monochrome
   amber glyph (not a color emoji); hovering Dismiss shows its own tooltip; dark + light
@@ -2674,7 +2694,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   - **Real Claude/Codex resume across a daemon restart** (criterion 1): run a Board task with
     `claude` and one with `codex` (`agents/claude.toml` `resume = "claude --resume {session_id}"`,
     `agents/codex.toml` `resume = "codex resume {session_id}"`); after the first turn, check a
-    hook arrived (the pane header status hover says "from hook"; `mk session list` does not
+    hook arrived (the sidebar status hover says "from hook"; `mk session list` does not
     print the native id). `mk daemon stop`
     while both are running/needs_input, start the app → each task gets a new session in the
     same tab slot, and the agent shows the SAME conversation (scroll back: the earlier prompt
@@ -2690,7 +2710,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   - **History viewable after a restart** (criterion 5): the T5.9 check above, with a real
     Claude session's log (alternate screen, colors, wide glyphs).
   - **§14 design check**: dark + light screenshots of the Undo dialog, a conflict badge on a
-    card and a pane header, and the History dialog.
+    card and a pane's conflict badge, and the History dialog.
 - [ ] (T6.8) **Docs view** (logic covered by `docs.rs` unit tests + `tests/docs_view.rs`
   against the real daemon; rendering never seen): add a workspace with a `PLAN.md` using
   headings, nested lists, `- [ ]`/`- [x]` items, a table with `:-:`/`--:` columns, a fenced
@@ -2939,7 +2959,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
     Enter, Esc → the terminal has the keyboard again. Repeat once with a real Claude permission
     prompt (numbered choices, not y/n: answer through the typed input, e.g. `1` + Enter).
   - **Turn summary** (criterion 3): fake agent `edit_files` with 2 paths (or Claude editing 2
-    files in one prompt) → Inbox row and pane header show `done · 2 files · …`.
+    files in one prompt) → Inbox row and tab tooltip show `done · 2 files · …`.
   - **Sound** (criterion 4): `notify.sound = true` → a needs_input toast plays the sound on
     Windows (macOS/Linux if available); `sound = false` → silent; `notify.done = false` → no toast
     on done; `notify.needs_input = false` → no toast on needs_input.
@@ -2954,7 +2974,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
     screen line (e.g. the `(y/n)` prompt) under its name.
   - **§14 design check**: dark + light screenshots of the peek popover (needs_input with `y`/`n`
     and a plain one), the broadcast dialog after a send with mixed results, an Inbox row with last
-    line + turn summary, and a pane header with the summary.
+    line + turn summary, and a tab tooltip with the summary.
 - [ ] (T10.10) **M10 wrap-up — the unticked M10 criteria.** The send queue criterion is ticked.
   The backend of every other criterion is covered by automated tests (daemon e2e
   `a_queued_text_removed_while_working_is_never_typed`,
@@ -2999,7 +3019,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   no real agent ran a turn. Restart the daemon first (protocol v21), with `mk` on PATH and `zed`
   on PATH. Details: the "Questions with assumed defaults" entries T11.1–T11.7.
   - **Turns + restore** (criterion 2): Claude in a git project, two prompts that each edit a
-    file (one prompt also creates a new file) → pane header "Turns…" lists both newest first
+    file (one prompt also creates a new file) → the tab menu "Turns…" lists both newest first
     with time, files and +/−; "Restore before turn 2" → preview lists the changed file and the
     new file as deleted → confirm → files are back as before turn 2, `git status` shows HEAD,
     branch and index unchanged; while Claude works the button is disabled. Cancel in the preview
@@ -3007,7 +3027,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   - **Since turn / Changed by** (criterion 4): "Diff since" on a Turns row → Git view header
     `Since turn n of claude #k` with only the files changed since then (incl. untracked);
     with two agents editing different files → "Changed by" chips filter the list per session.
-  - **Follow in Zed** (criterion 5, the unticked one): `Share` → "Follow in Zed" in a Claude pane header
+  - **Follow in Zed** (criterion 5, the unticked one): the tab menu's "Follow in Zed" for a Claude pane
     (and the palette command) → while Claude edits several files, Zed opens the last edited file
     ~1.5 s after the edits stop (`zed.follow_debounce_ms`), at the edited line (checks the
     undocumented `structuredPatch` line, T11.5); off again → no more opens. Without `zed` on PATH
@@ -3017,7 +3037,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
     your machine (and with a large real repo: a turn start should not feel slower).
   - **§14 design check**: dark + light screenshots of the Turns dialog (a working session with
     restore disabled, and an idle one), the restore-before-turn preview, the Git view in Since
-    turn mode with the Changed by chips, and the pane header with `Share` highlighted (following).
+    turn mode with the Changed by chips, and the title bar Share icon highlighted (following; `[features] share`).
 - [ ] (T13.11) **M13 wrap-up — the M13 views with real agents.** The first four M13 criteria are
   ticked: their backend is covered by automated tests (daemon real-git tests in the worktree,
   merge and remove modules, e2e with the fake agent for worktree run/resume, `fs.*`/`git.*` on a
@@ -3046,7 +3066,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
     moves to Review; close the other child's terminal → "Remove the other worktree" (plural
     with more children) removes it.
   - **Usage** (criterion 4): with the hook-enabled sample profiles (usage needs the native
-    session id from a hook), after a few Claude and Codex turns, the pane header shows `ctx N%`
+    session id from a hook), after a few Claude and Codex turns, the composer shows `ctx N%`
     (amber `⚠` from 80 %), cards `12.3k tok`, sidebar rows a total; compare the numbers with
     Claude's `/cost` / `/context` and Codex's `/status`. Check `context_window` in the sample
     profiles against your models (T13.9).
@@ -3058,7 +3078,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   - **§14 design check**: dark + light screenshots of the task dialog with the worktree
     checkbox, a card with `⎇ mkrew/…` and `tok`, the worktree target chips, the Merge back and
     Remove worktree dialogs (incl. conflict and discard steps), the fan-out picker, a group card,
-    the Compare modal, and a pane header with `ctx` normal and amber.
+    the Compare modal, and a composer with `ctx` normal and amber.
 - [ ] **History, Thread, New file through the daemon (this computer's window):** History of an ended
   session replays as before (cut notice on a long one); the session panel's Thread follows a running
   Claude Code session; Files → New file, New folder and Add to .gitignore work in a project and in
@@ -3137,9 +3157,9 @@ _Decisions the agent made on its own. Override them here if you disagree._
   mouse-only like "Changed by" (no palette command / focus ring yet). Check that `⎇` renders
   (font fallback) on Windows in both themes.
 
-- (T11.6) **"Turns…" in the pane header:** panes have no header menu yet, so §20C.2's "pane
-  header menu Turns…" is a quiet "Turns…" button on every agent pane header (always shown, not
-  hover-only) plus the palette command "Agent: Turns…". The dialog lists turns newest first
+- (T11.6) **"Turns…":** ADR 0106 removed the pane header, so "Turns…" is in the tab menu (right-click a tab)
+  and the palette command "Agent: Turns…" (with `[features] turns`).
+  The dialog lists turns newest first
   (↑/↓, Enter restores before the selected one); "Restore before" opens the task-undo preview
   and confirm (titled "Restore before turn n?"); Cancel goes back to the list. The "Diff since"
   entry moves to T11.7, which builds the Git view's "Since turn" mode it opens.
@@ -3349,7 +3369,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
   (side by side); an empty active tab is filled with the workspace's newest live session not
   in any tab (keeps the old "opens the newest session" behaviour, also for `mk` spawns).
   Clicking a workspace row shows it; clicking the shown one expands/collapses it. Deferred:
-  close tab / split / new pane actions (T2.6/T2.7), tab status labels + pane headers (§11),
+  close tab / split / new pane actions (T2.6/T2.7), tab status labels (§11),
   focus ring on tabs, a primary action in the empty-tab state, detaching panes while the
   window is minimized (§10), not stealing focus back on every layout event.
 - (T2.6) Pane lifecycle: closing a **live shell** pane kills the shell without asking (§10 only
@@ -4084,7 +4104,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
   once per entry appearance (`session.read lines=1`), so it does not follow later output; the row
   grows by one line when the read returns. To verify: run a fake agent `ask` scenario → the
   Inbox row shows the `(y/n)` line under the name; a fake agent that edits 2 files → Inbox row
-  and pane header show `✓ done · 2 files · …`.
+  and tab tooltip show `✓ done · 2 files · …`.
 - (T9.9, ADR 0012) **Peek popover:** the lines are plain monospace text (`session.read` has no
   colors; SPEC said "colors kept"). ↑/↓ cycle only from an Inbox peek. A hover peek does not take the keyboard (a terminal
   keeps typing); clicking its reply field does. It closes ~150 ms after the mouse leaves both the
@@ -4218,7 +4238,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
   sidebar rows, details on hover). A card shows its newest session that reported usage (a just
   resumed run keeps showing the earlier one until its first turn ends); a group (fan-out
   original) card shows none. A sidebar workspace row adds, per task, that same session plus
-  every session without a task. The pane header shows `ctx 62%` only when the profile sets
+  every session without a task. The composer shows `ctx 62%` only when the profile sets
   `context_window`; from 80 % it turns amber with `⚠` (`status_needs_input`, as conflict
   warnings; no separate warning token). Each workspace's `session.usage` is read once, when it
   first appears in the lists (events keep it live after); a failed read is logged and retried on
