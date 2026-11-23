@@ -147,7 +147,7 @@ impl Shell {
     }
 
     /// Pane `moved` was dropped on `target`'s pane: it moves there, saved at once.
-    fn drop_pane(
+    pub(crate) fn drop_pane(
         &mut self,
         moved: Ulid,
         target: Ulid,
@@ -179,7 +179,7 @@ impl Shell {
     }
 
     /// A tab was dropped on `target`'s pane: its panes move there, then the emptied tab closes.
-    fn drop_tab_on_pane(
+    pub(crate) fn drop_tab_on_pane(
         &mut self,
         item: &DraggedItem,
         target: Ulid,

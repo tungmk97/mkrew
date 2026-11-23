@@ -100,7 +100,7 @@ With a real omp, a real Claude Code and a real Codex session, dark and light the
 - [ ] **omp recap:** after an omp turn ends and omp is idle, its recap line (history icon, italic) shows after the last turn; sending a new prompt hides it; a Claude or Codex session never shows one.
 - [ ] **Composer card:** a floating rounded card with the context meter above it (turns to the warning color at 80 %), the session title in quotes as the placeholder, chips for model, effort, permission and branch (branch only for a session at the workspace root, not for a task worktree, which has no folder chip either), then `74K`, `tok/s`, the elapsed time (counting live while the agent works) and the time the last turn ended, and a round send button (neutral while the draft is blank or the agent is busy, accent when it can send; its tooltip has the key hint).
   The meter's used value comes from the transcript first; only its window comes from `session.usage` (updated at a turn end).
-  The header ctx% updates at a turn end too.
+  The composer's ctx% updates at a turn end too.
   Compare the numbers with Tern.
 - [ ] **Card border (dark + light):** the card border is subtle, with no bright outline, in both themes.
 - [ ] **Model chip:** a click switches the pane to Terminal and the agent's own model picker opens (`/model` is typed and sent); on an exited session the chip is disabled.
@@ -123,7 +123,7 @@ With a real omp, a real Claude Code and a real Codex session, dark and light the
 - [ ] **Scroll to the end (dark + light):** scroll a long chat up: a small round down-arrow button appears at the column's right edge above the composer; a click jumps to the end and it disappears; it never shows at the end; hover and press react.
 - [ ] **Terminal / Chat is kept per pane:** switch one pane to Chat and another to Terminal, restart the UI: each comes back as it was.
   Stop the daemon (`mk daemon stop`) and start it again so it resumes the agent panes: each pane still has its mode.
-- [ ] **Last pick is the default:** pick Chat (header switch, `Ctrl+Alt+T` or the palette "Agent: Toggle chat view"), open a new agent pane: it opens in Chat; pick Terminal: the next new pane opens in Terminal.
+- [ ] **Last pick is the default:** pick Chat (title bar toggle, `Ctrl+Alt+T` or the palette "Agent: Toggle chat view"), open a new agent pane: it opens in Chat; pick Terminal: the next new pane opens in Terminal.
   Settings > General "Chat view by default" shows the same value and `settings.toml` has `[ui] chat_default`.
   An older pane you did not touch keeps its look (it does not flip).
   Legacy panes in a workspace you did not open since the update follow the new default; panes opened or created after the update keep their mode.
@@ -234,12 +234,12 @@ With a real Claude Code session, a real Codex session (and omp if installed), da
   Tab walks the tool and thinking row toggles, the "earlier turns" link and "Answer in terminal" (a focus ring shows on each; Enter or Space presses it), then goes back to the composer; Shift+Tab goes the other way.
   Enter sends and Shift+Enter adds a newline in the composer; queued texts show under it.
 - [ ] **Selection and copy:** text inside one message selects with the mouse (double click takes a word), dragging past the message's edge reaches its start or end, a click elsewhere in the list ends the selection, Esc ends a selection first (a second Esc returns to the composer), and Ctrl+C copies the selected text.
-- [ ] The terminal keeps running while in Chat: the status pill, the Inbox and the notifications still change; switching back shows the terminal at the right size.
+- [ ] The terminal keeps running while in Chat: the tab icon, the Inbox and the notifications still change; switching back shows the terminal at the right size.
 - [ ] `[ui] chat_default = true` (Settings, General) opens agent panes in Chat; a pane switched to Terminal stays Terminal.
 - [ ] The empty state "No messages yet. Type below to start." shows before the first message; an exited session's chat stays readable.
 - [ ] Opening Chat, and clicking into the pane afterwards, shows the last message in full above the subagent tray; a list scrolled up stays where it is when the pane gains or loses the keyboard.
 - [ ] In a narrow pane the composer's key hint ends with an ellipsis and never draws under the "Prompts..." button.
-- [ ] Drag a split divider so an agent pane narrows: its header drops whole parts, never cuts one: first `ctx`, then Share, then the reading toggle, then `Terminal | Chat` (Ctrl+Alt+T still switches); the status pill ends with an ellipsis. Widening brings them back in the same order, also after hiding the sidebar or the right panel.
+- [ ] Superseded by ADR 0106 (panes have no header, so nothing drops parts): drag a split divider so an agent pane narrows; the title bar toggles stay and the composer keeps working.
 
 ### To verify - 2026-11-22 Review flow (ADR 0103, plan docs/superpowers/plans/2026-11-22-review-flow.md)
 
@@ -1473,8 +1473,8 @@ by telling the agent.
 
 - [ ] **Tab name (dark + light):** a `Terminal` / `Terminal N` tab with one pane (or a zoomed
   pane) shows that session's title (your name, else the agent's terminal title), cut with `…`
-  when long, full title on hover. Split it → the tab goes back to `Terminal N`, the headers show
-  the titles. A tab you renamed (e.g. `Backend`) keeps its name; an untitled session keeps
+  when long, full title on hover. Split it → ADR 0106: the tab shows the focused pane's title and follows the focus (panes have no header).
+  A tab you renamed (e.g. `Backend`) keeps its name; an untitled session keeps
   `Terminal N`.
 - [ ] **Rename:** double-click such a tab (or F2) → the field sits in the tab's place and renames
   the session; a split tab's double-click still renames the tab.
@@ -2196,16 +2196,16 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   WindowsApps app-execution alias, check it still shows as installed in the menu (the lookup uses
   `is_file`).
 - [ ] **Rename pane (ADR 0031):**
-  - Focus an agent pane and press F2: the header title becomes a field. Type `Fix login` and
-    press Enter. The header, the sidebar row, the Inbox entry (when it needs input) and its OS
+  - Focus an agent pane and press F2: the tab chip becomes a field (ADR 0106: panes have no header). Type `Fix login` and
+    press Enter. The tab, the sidebar row, the Inbox entry (when it needs input) and its OS
     notification all show `Fix login`.
   - F2, then Esc: nothing changes. F2, clear the text, Enter: the pane has no title again.
-  - Double-click the header title, or the empty space after the agent name: the same field opens.
+  - Double-click the tab (while it keeps its default name): the same field opens.
   - Stop and restart the daemon (`mk daemon stop`, reopen Mkrew): the resumed pane keeps its name.
   - On a Run pane (`▶ Run`), F2 and double-click do nothing.
   - A TUI in a pane (vim, htop) no longer gets F2; rebind `rename_pane` in keymap.toml if needed.
 - [ ] **Auto pane name (ADR 0031):** restart the daemon first (protocol bumped, now 32).
-  - Start a claude pane and ask it to fix something. Within a turn, the header, the sidebar row
+  - Start a claude pane and ask it to fix something. Within a turn, the tab, the sidebar row
     and the palette's "Go to session" show Claude's conversation title without the spinner glyph,
     and it does not flicker while Claude works.
   - F2, type `Mine`, Enter: `Mine` shows everywhere and stays while Claude keeps working.
@@ -2612,7 +2612,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
     was the slow part (first run can take seconds).
   - **Notification click focuses the pane** (criterion 3): the T3.7 click check, but with a real
     Claude approval toast and Mkrew minimized behind another app.
-  - **Status on header, tab and sidebar** (criterion 4): the T3.6 check with real Claude in one
+  - **Status on tab and sidebar** (criterion 4): the T3.6 check with real Claude in one
     pane and a shell in another, dark and light OS theme (§11, §14 design check); also
     `Ctrl+Shift+I` cycles through Inbox entries (T3.7a).
   - **Real omp working ↔ idle** (criterion 5): run `omp` in a Mkrew pane (`agents/omp.toml`,
@@ -2988,7 +2988,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   - **Composer feel** (criterion 1): Claude pane → Ctrl+Shift+Enter → type 3 lines (Enter) →
     Ctrl+Enter → Claude receives one paste (one prompt, not 3) + Enter. Type a draft, Esc, focus
     another pane and come back, Ctrl+Shift+Enter → draft intact. Send while Claude works → the
-    text is listed with ✕, header `⧗ 1 queued`, typed once Claude is idle.
+    text is listed with ✕, the pane's floating badge shows `⧗ 1 queued`, typed once Claude is idle.
   - **`@` picker** (criterion 1): in the composer type `@` → quick-open over the workspace → pick
     a file with a space in its path → `@"dir/my file.md"` typed; Esc on the picker types `@`;
     `composer.file_ref = "{path}"` in `settings.toml` → the next pick types the bare path.
@@ -4152,7 +4152,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
   session runs in a task worktree. Removing a queued text has no keyboard path (✕ click only);
   an unqueue error is only logged. Queues are not re-fetched after a daemon reconnect.
   To verify: composer → `@` → pick `docs/my notes.md` → `@"docs/my notes.md"` typed; make the
-  agent work, send twice → both listed with ✕ and the header shows `⧗ 2 queued`; ✕ one → it is
+  agent work, send twice → both listed with ✕ and the pane's floating badge shows `⧗ 2 queued`; ✕ one → it is
   never typed.
 - (T10.8) **Drop files / paste image:** works on every live terminal pane (agent or plain
   shell), not only agent panes. Paths are typed as one paste (bracketed when the program asked

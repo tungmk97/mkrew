@@ -1184,7 +1184,9 @@ The tooltip gives the status in words, the time and the turns, so color is never
 | exited | ✕ | exit code (History); its sidebar row and pane close (ADR 0033) |
 | unknown | · | |
 
-- Each state's mark has its own color (`status_working`, `status_needs_input`, `status_done`, `status_exited`, `status_idle`; dark and light), drawn beside its icon or text, never alone. Nothing loops while an agent works: the dot is still and the time text moves (ADR 0086). The loading mark (a pane being started, a transcription, a Jira fetch) is three dots taking turns on the status tick.
+- Each state's mark has its own color (`status_working`, `status_needs_input`, `status_done`, `status_exited`, `status_idle`; dark and light), drawn beside its icon or text, never alone.
+  Nothing loops while an agent works: the dot is still and the time text moves (ADR 0086).
+  The loading mark (a pane being started, a transcription, a Jira fetch) is three dots taking turns on the status tick.
 - Pane signals (ADR 0054, ADR 0106): a pane has no header.
   Transient signals are a small stack of floating badges in the pane's top-right corner, drawn only while they apply: a conflict warning, `⧗ N queued`, `Copy mode` with the key hints, and while the pane is zoomed `⤢ Pane zoomed` with a "Show all panes" button.
   Nothing is drawn in the normal case.
@@ -2397,7 +2399,7 @@ context_window = 200000        # tokens, for the % shown
    and sends.
 5. **Drop files / paste images.** Dropping files from the OS onto an agent pane (gpui
    `ExternalPaths`) types their absolute paths, each quoted with `"` if needed, separated by spaces,
-   with no Enter. The whole pane accepts the drop (header, terminal, composer). While the pane's
+   with no Enter. The whole pane accepts the drop (terminal, composer, and the top-edge drag strip). While the pane's
    composer is shown, the paths go into its draft instead of the terminal. `Ctrl+V` /
    `Ctrl+Shift+V` with an image on the clipboard (gpui `ClipboardEntry::Image`; a BMP image is
    re-encoded as PNG) saves it through `attachment.save` and types the returned path the same

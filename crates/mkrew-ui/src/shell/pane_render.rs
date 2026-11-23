@@ -755,7 +755,7 @@ impl Shell {
                 .unwrap_or(&self.reading_default)
     }
 
-    /// Reading width on / off for `session`'s pane (its header button, and the palette).
+    /// Reading width on / off for `session`'s pane (the title bar toggle, and the palette).
     pub(crate) fn toggle_reading_width(&mut self, session: Ulid, cx: &mut Context<'_, Self>) {
         let on = (self.sidebar.sessions().iter())
             .find(|s| s.id == session)
@@ -874,6 +874,7 @@ impl Shell {
                 .flex_col()
                 .items_end()
                 .gap(px(space::XS))
+                .font_family(theme.ui_font_family.clone())
                 .children(badges)
                 .into_any_element()
         })
@@ -882,8 +883,10 @@ impl Shell {
     /// The top edge of a pane: it records the anchor of the pane's keyboard menu and, among
     /// `several` panes, is a slim handle (`PANE_GRIP_HEIGHT` tall, a grip shows on hover) that
     /// drags the pane onto another.
-    /// The handle occludes the mouse: gpui hit-tests every hitbox until one blocks, so without
-    /// `.occlude()` the terminal under it would also get the mouse down and start a selection.
+    /// The handle blocks the mouse (not the wheel): gpui hit-tests every hitbox until one blocks,
+    /// so without it the terminal under it would also get the mouse down and start a selection.
+    /// Drops are delivered to the hovered hitbox only, so the strip repeats the pane frame's drop
+    /// handlers (the frame's drag-move still sets the half that lights up).
     /// A lone pane has nothing to rearrange: its edge is an empty div, only the Shift+F10 menu
     /// anchor, with no hitbox and no mouse handling.
     fn pane_edge(
@@ -906,10 +909,25 @@ impl Shell {
         if !several {
             return edge.into_any_element();
         }
+        let session = info.id;
+        let edge = edge
+            .on_drop(cx.listener(move |shell, pane: &DraggedPane, window, cx| {
+                shell.drop_pane(pane.session, session, window, cx);
+            }))
+            .on_drop(cx.listener(move |shell, item: &DraggedItem, window, cx| {
+                shell.drop_tab_on_pane(item, session, window, cx);
+            }))
+            .on_drop(
+                cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
+                    if shell.workspace == Some(dragged.project_id) {
+                        shell.drop_tree_path(session, dragged, window, cx);
+                    }
+                }),
+            );
         let group = SharedString::from(format!("pane-grip-{}", info.id));
         let handle = self.draggable_pane(edge.group(group.clone()), info, theme);
         grip_hover(handle, theme)
-            .occlude()
+            .block_mouse_except_scroll()
             .cursor(CursorStyle::OpenHand)
             .child(
                 div()
