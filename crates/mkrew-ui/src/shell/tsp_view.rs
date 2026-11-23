@@ -47,7 +47,7 @@ pub(crate) struct TspUi {
     failures: u32,
     retry_at: Option<Instant>,
     /// A frame could not be applied (a gap): the mirror is behind and wants a snapshot.
-    stale: bool,
+    resync: tsp::Resync,
     /// A selection inside one `md` or `code` node (key: node id) and where each was painted.
     selecting: Option<(String, mkrew_ui::preview_select::Selection)>,
     hits: RefCell<HashMap<String, preview::Hits>>,
@@ -75,7 +75,7 @@ impl TspUi {
             fetch: None,
             failures: 0,
             retry_at: None,
-            stale: false,
+            resync: tsp::Resync::default(),
             selecting: None,
             hits: RefCell::new(HashMap::new()),
             todo_open: None,
@@ -125,6 +125,7 @@ impl Shell {
         if ui.fetch.is_some() || ui.retry_at.is_some_and(|at| Instant::now() < at) {
             return;
         }
+        ui.resync.begin();
         ui.fetch = Some(cx.spawn(async move |this, cx| {
             let reply = connection
                 .call::<TspSnapshot>(Request::TspSnapshot(TspSnapshotParams {
@@ -139,11 +140,11 @@ impl Shell {
                 match reply {
                     Ok(snapshot) => {
                         ui.mirror = Some(Mirror::from_snapshot(snapshot));
-                        ui.stale = false;
                         ui.failures = 0;
                         ui.retry_at = None;
                     }
                     Err(error) => {
+                        ui.resync.failed();
                         ui.failures = ui.failures.saturating_add(1);
                         ui.retry_at = Some(Instant::now() + tsp::retry_wait(ui.failures));
                         tracing::warn!(%session, "tsp.snapshot failed: {error:#}");
@@ -165,7 +166,7 @@ impl Shell {
             return;
         };
         if mirror.apply(update) == MirrorResult::Gap {
-            ui.stale = true;
+            ui.resync.gap();
             // The frame is lost with the gap and the snapshot does not replay it: the toasts it
             // adds are shown now (a `set` on a toast cannot be told from another node's).
             let toasts = match &update.change {
@@ -337,7 +338,7 @@ impl Shell {
                 self.fetch_tsp(session, cx);
                 continue;
             };
-            let fetch = ui.mirror.is_none() || ui.stale;
+            let fetch = ui.resync.wanted(ui.mirror.is_some());
             let theme_to = (ui.sent_dark != Some(dark) && ui.pending_dark != Some(dark))
                 .then(|| ui.mirror.as_ref().and_then(Mirror::inline_id))
                 .flatten()
@@ -596,10 +597,32 @@ struct Paint<'a> {
     session: Ulid,
     doc: &'a Document,
     mirror: &'a Mirror,
+    /// The id of the surface `doc` belongs to.
+    shown_id: &'a str,
     ui: &'a TspUi,
     now: i64,
     theme: &'a Theme,
     focused: bool,
+}
+
+/// The width of one terminal cell, measured once per font and size.
+fn cell_width(text_system: &gpui::TextSystem, theme: &Theme) -> Pixels {
+    thread_local! {
+        static CELL: RefCell<Option<(String, u32, Pixels)>> = const { RefCell::new(None) };
+    }
+    let size = theme.terminal_font_size.to_bits();
+    CELL.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if let Some((family, have, width)) = cell.as_ref()
+            && *have == size
+            && *family == *theme.terminal_font_family
+        {
+            return *width;
+        }
+        let (width, _) = cell_size_in(text_system, theme);
+        *cell = Some((theme.terminal_font_family.to_string(), size, width));
+        width
+    })
 }
 
 fn str_prop<'a>(node: &'a Node, key: &str) -> Option<&'a str> {
@@ -753,9 +776,10 @@ impl Shell {
         };
         // The grid is never painted, so nothing else sizes the PTY: omp gets its `resize` from the
         // pane's width as soon as the pane has one (the starting state included).
-        let (cell_width, _) = cell_size_in(cx.text_system(), theme);
-        let cols = tsp::cols_for(tsp::column_px(width), f32::from(cell_width));
-        pane.update(cx, |pane, cx| pane.fit_cols(cols, cx));
+        let cell_width = cell_width(cx.text_system(), theme);
+        if let Some(cols) = tsp::fit_width(width, f32::from(cell_width)) {
+            pane.update(cx, |pane, cx| pane.fit_cols(cols, cx));
+        }
         let handle = pane.read(cx).focus_handle();
         let exited = self
             .is_exited(session)
@@ -765,7 +789,7 @@ impl Shell {
             .tsps
             .get(&session)
             .and_then(|ui| (ui.mirror.as_ref()).and_then(|m| m.shown().map(|s| (ui, m, s))));
-        let Some((ui, mirror, (_, doc))) = shown else {
+        let Some((ui, mirror, (meta, doc))) = shown else {
             return root
                 .items_center()
                 .justify_center()
@@ -778,6 +802,7 @@ impl Shell {
             session,
             doc,
             mirror,
+            shown_id: &meta.id,
             ui,
             now,
             theme,
@@ -1155,17 +1180,13 @@ impl Shell {
         match node.kind.as_str() {
             "md" | "code" => {
                 let text = str_prop(node, "text").unwrap_or("");
-                // The cache hashes the borrowed text (and the language); a fence is built on a
-                // miss only.
+                // The cache keys on the node's revision; a fence is built on a miss only.
                 let (kind, lang) = (node.kind.as_str(), str_prop(node, "lang"));
-                let shown = p
-                    .ui
-                    .md
-                    .borrow_mut()
-                    .get(&node.id, lang.unwrap_or(""), text, |text| match kind {
-                        "code" => docs::Shown::from_text(&tsp::code_fence(lang, text)),
-                        _ => docs::Shown::from_text(text),
-                    });
+                let rev = p.mirror.rev(p.shown_id, &node.id);
+                let shown = p.ui.md.borrow_mut().get(&node.id, rev, || match kind {
+                    "code" => docs::Shown::from_text(&tsp::code_fence(lang, text)),
+                    _ => docs::Shown::from_text(text),
+                });
                 // Selectable inside this node as in Chat: the painted texts go to `hits`.
                 let hits =
                     p.ui.hits

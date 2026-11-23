@@ -3,7 +3,6 @@
 //! the UI keeps of the daemon's documents. `shell/tsp_view.rs` draws it.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 
 use mkrew_core::tsp::doc::{Document, Node};
@@ -400,6 +399,52 @@ pub struct Mirror {
     opened: HashMap<String, u64>,
     next_open: u64,
     blobs: HashMap<String, TspBlob>,
+    /// Per surface, the revision of the nodes a frame touched (see [`Mirror::rev`]).
+    node_revs: HashMap<String, HashMap<String, u64>>,
+    /// Per surface, the revision it was (re)loaded at: every node is at least this new.
+    bases: HashMap<String, u64>,
+}
+
+/// Revisions are unique across mirrors (a snapshot builds a new one): a counter, never hashing.
+static REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_revision() -> u64 {
+    REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Every node id a frame's `add`, `set`, `text` and `splice` ops write (an added tree counts all
+/// its nodes).
+fn touched_ids(ops: &[Value]) -> Vec<String> {
+    fn tree(node: &Value, out: &mut Vec<String>) {
+        if let Some(id) = node.get("id").and_then(Value::as_str) {
+            out.push(id.to_owned());
+        }
+        for child in node
+            .get("c")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            tree(child, out);
+        }
+    }
+    let mut out = Vec::new();
+    for op in ops {
+        let Some(op) = op.as_array() else { continue };
+        match op.first().and_then(Value::as_str) {
+            Some("add") => {
+                if let Some(node) = op.get(4) {
+                    tree(node, &mut out);
+                }
+                out.extend(op.get(1).and_then(Value::as_str).map(str::to_owned));
+            }
+            Some("set" | "text" | "splice") => {
+                out.extend(op.get(1).and_then(Value::as_str).map(str::to_owned));
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 impl Mirror {
@@ -428,6 +473,8 @@ impl Mirror {
     fn insert(&mut self, surface: TspSurface, doc: Document) {
         self.opened.insert(surface.id.clone(), self.next_open);
         self.next_open += 1;
+        self.bases.insert(surface.id.clone(), next_revision());
+        self.node_revs.remove(&surface.id);
         self.surfaces.insert(surface.id.clone(), (surface, doc));
     }
 
@@ -468,6 +515,10 @@ impl Mirror {
                 // A failing op was already skipped by the daemon; the rest still run here too.
                 doc.apply(ops);
                 meta.seq = *seq;
+                let revs = self.node_revs.entry(update.surface.clone()).or_default();
+                for id in touched_ids(ops) {
+                    revs.insert(id, next_revision());
+                }
                 for blob in blobs {
                     self.blobs.insert(blob.id.clone(), blob.clone());
                 }
@@ -488,10 +539,24 @@ impl Mirror {
             TspChange::Closed { keep: false } => {
                 self.surfaces.remove(&update.surface);
                 self.opened.remove(&update.surface);
+                self.bases.remove(&update.surface);
+                self.node_revs.remove(&update.surface);
                 self.prune_blobs();
             }
         }
         MirrorResult::Applied
+    }
+
+    /// A number that changes whenever node `id` of `surface` is added or its props or text are
+    /// written (or the surface is loaded again), and never otherwise: caches key on it instead of
+    /// hashing the text every frame.
+    pub fn rev(&self, surface: &str, id: &str) -> u64 {
+        let base = self.bases.get(surface).copied().unwrap_or(0);
+        let node = (self.node_revs.get(surface))
+            .and_then(|revs| revs.get(id))
+            .copied()
+            .unwrap_or(0);
+        base.max(node)
     }
 
     pub fn surface(&self, id: &str) -> Option<&(TspSurface, Document)> {
@@ -741,6 +806,13 @@ pub fn column_px(pane_width: f32) -> f32 {
     pane_width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * theme::CHAT_COLUMN_PADDING
 }
 
+/// The PTY columns for a pane `pane_width` wide; `None` while the width is unknown (not laid out
+/// yet, or no room for one cell): the PTY keeps its size then, it is never sized to a guess.
+pub fn fit_width(pane_width: f32, cell_px: f32) -> Option<u16> {
+    let column = column_px(pane_width);
+    (pane_width > 0.0 && cell_px > 0.0 && column >= cell_px).then(|| cols_for(column, cell_px))
+}
+
 /// The widest an `overlay` of `size` is.
 pub fn overlay_width(size: Option<&str>) -> f32 {
     match size {
@@ -750,13 +822,12 @@ pub fn overlay_width(size: Option<&str>) -> f32 {
     }
 }
 
-/// Parsed values by node id, kept while the node's text is unchanged. The key is the node id plus
-/// the text's length and hash, so a streaming `text append` re-parses only the node it grew and a
-/// same-length rewrite is not mistaken for no change.
+/// Parsed values by node id, kept while the node's revision ([`Mirror::rev`]) is unchanged: a
+/// streaming `text append` re-parses only the node it grew, and nothing is hashed per frame.
 // ponytail: entries of deleted nodes stay until the pane's state is dropped; prune if a session
 // ever streams millions of distinct nodes.
 pub struct TextCache<T> {
-    entries: HashMap<String, (usize, u64, Rc<T>)>,
+    entries: HashMap<String, (u64, Rc<T>)>,
 }
 
 impl<T> Default for TextCache<T> {
@@ -768,27 +839,49 @@ impl<T> Default for TextCache<T> {
 }
 
 impl<T> TextCache<T> {
-    /// `salt` is part of the key next to the text (the `lang` of a `code` node), so the caller
-    /// builds nothing per frame: `make` gets the text and runs on a miss only.
-    pub fn get(&mut self, id: &str, salt: &str, text: &str, make: impl FnOnce(&str) -> T) -> Rc<T> {
-        let mut hasher = DefaultHasher::new();
-        salt.hash(&mut hasher);
-        text.hash(&mut hasher);
-        let key = (text.len(), hasher.finish());
-        if let Some((len, hash, value)) = self.entries.get(id)
-            && (*len, *hash) == key
+    /// The value of node `id` at revision `rev`; `make` runs on a miss only.
+    pub fn get(&mut self, id: &str, rev: u64, make: impl FnOnce() -> T) -> Rc<T> {
+        if let Some((have, value)) = self.entries.get(id)
+            && *have == rev
         {
             return value.clone();
         }
-        let value = Rc::new(make(text));
-        self.entries
-            .insert(id.to_owned(), (key.0, key.1, value.clone()));
+        let value = Rc::new(make());
+        self.entries.insert(id.to_owned(), (rev, value.clone()));
         value
     }
 
     /// The parse last made for node `id`, whatever its text was.
     pub fn peek(&self, id: &str) -> Option<Rc<T>> {
-        self.entries.get(id).map(|(_, _, value)| value.clone())
+        self.entries.get(id).map(|(_, value)| value.clone())
+    }
+}
+
+/// When a mirror needs a snapshot: it has none yet, or a gap was seen after the last request
+/// began (a reply already in flight cannot clear a later gap).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Resync {
+    stale: bool,
+}
+
+impl Resync {
+    /// A frame could not be applied.
+    pub fn gap(&mut self) {
+        self.stale = true;
+    }
+
+    /// A snapshot request starts: it answers the gaps seen so far.
+    pub fn begin(&mut self) {
+        self.stale = false;
+    }
+
+    /// The request failed: the gap it was to answer is still open.
+    pub fn failed(&mut self) {
+        self.stale = true;
+    }
+
+    pub fn wanted(self, has_mirror: bool) -> bool {
+        !has_mirror || self.stale
     }
 }
 
@@ -2209,22 +2302,6 @@ mod tests {
     }
 
     #[test]
-    fn the_cache_keys_on_the_salt_too_so_a_changed_language_reparses() {
-        let mut cache = TextCache::default();
-        let mut parses = 0;
-        let mut get = |cache: &mut TextCache<usize>, salt: &str| {
-            cache.get("n", salt, "abc", |t| {
-                parses += 1;
-                t.len()
-            })
-        };
-        get(&mut cache, "rust");
-        get(&mut cache, "rust");
-        get(&mut cache, "bash");
-        assert_eq!(parses, 2);
-    }
-
-    #[test]
     fn a_failed_snapshot_is_retried_after_a_doubling_wait_up_to_30_seconds() {
         let waits: Vec<u64> = (1..=7).map(|n| retry_wait(n).as_secs()).collect();
         assert_eq!(waits, [2, 4, 8, 16, 30, 30, 30]);
@@ -2449,25 +2526,95 @@ mod tests {
     }
 
     #[test]
-    fn the_text_cache_reparses_only_when_the_text_of_that_node_changed() {
+    fn the_text_cache_reparses_only_when_the_revision_of_that_node_changed() {
         let mut cache = TextCache::default();
         let mut parses = 0;
-        let mut get = |cache: &mut TextCache<usize>, id: &str, text: &str| {
-            cache.get(id, "", text, |t| {
+        let mut get = |cache: &mut TextCache<usize>, id: &str, rev: u64| {
+            cache.get(id, rev, || {
                 parses += 1;
-                t.len()
+                0
             })
         };
-        let a = get(&mut cache, "n", "abc");
-        let b = get(&mut cache, "n", "abc");
-        assert!(Rc::ptr_eq(&a, &b), "unchanged text is the same parse");
-        get(&mut cache, "n", "abd");
-        get(&mut cache, "n", "abdd");
-        get(&mut cache, "other", "abdd");
-        assert_eq!(
-            parses, 4,
-            "same length different text, a longer text and another node each parse"
+        let a = get(&mut cache, "n", 1);
+        let b = get(&mut cache, "n", 1);
+        assert!(Rc::ptr_eq(&a, &b), "same revision is the same parse");
+        get(&mut cache, "n", 2);
+        get(&mut cache, "other", 2);
+        assert_eq!(parses, 3);
+    }
+
+    fn rev_mirror() -> Mirror {
+        let d = doc(vec![
+            json!(["add", "main", "s:1", null, {"id": "main", "k": "col"}]),
+            json!(["add", "a", "main", null, {"id": "a", "k": "md", "p": {"text": "x"}}]),
+            json!(["add", "b", "main", null, {"id": "b", "k": "md", "p": {"text": "y"}}]),
+        ]);
+        mirror(vec![surface("s:1", "inline", 1, &d)])
+    }
+
+    fn apply_frame(m: &mut Mirror, seq: u64, ops: Vec<Value>) {
+        assert_eq!(m.apply(&frame("s:1", seq, ops)), MirrorResult::Applied);
+    }
+
+    #[test]
+    fn a_revision_changes_for_the_node_a_frame_writes_and_no_other() {
+        let mut m = rev_mirror();
+        let (a0, b0) = (m.rev("s:1", "a"), m.rev("s:1", "b"));
+        apply_frame(&mut m, 2, vec![json!(["text", "a", "append", "z"])]);
+        let (a1, b1) = (m.rev("s:1", "a"), m.rev("s:1", "b"));
+        assert!(a1 > a0, "text");
+        assert_eq!(b1, b0);
+        apply_frame(&mut m, 3, vec![json!(["splice", "a", 0, 1, "q"])]);
+        assert!(m.rev("s:1", "a") > a1, "splice");
+        let a2 = m.rev("s:1", "a");
+        apply_frame(&mut m, 4, vec![json!(["set", "b", {"text": "w"}])]);
+        assert!(m.rev("s:1", "b") > b1, "set");
+        assert_eq!(m.rev("s:1", "a"), a2);
+        apply_frame(
+            &mut m,
+            5,
+            vec![
+                json!(["add", "c", "main", null, {"id": "c", "k": "col", "c": [
+                    {"id": "c1", "k": "md", "p": {"text": "n"}}
+                ]}]),
+            ],
         );
+        assert!(m.rev("s:1", "c1") > b1, "a node inside an added tree");
+        assert_eq!(m.rev("s:1", "a"), a2);
+    }
+
+    #[test]
+    fn a_new_snapshot_never_reuses_a_revision() {
+        let (m1, m2) = (rev_mirror(), rev_mirror());
+        assert_ne!(m1.rev("s:1", "a"), m2.rev("s:1", "a"));
+    }
+
+    #[test]
+    fn a_gap_during_a_snapshot_request_keeps_a_new_one_wanted() {
+        let mut r = Resync::default();
+        assert!(r.wanted(false), "no mirror");
+        assert!(!r.wanted(true));
+        r.gap();
+        assert!(r.wanted(true));
+        r.begin();
+        assert!(!r.wanted(true), "the request answers it");
+        r.gap();
+        assert!(r.wanted(true), "a gap while the reply is in flight stays");
+        r.begin();
+        r.failed();
+        assert!(r.wanted(true), "a failed request leaves it open");
+    }
+
+    #[test]
+    fn the_pty_is_never_fitted_to_an_unknown_width() {
+        assert_eq!(fit_width(-24.0, 8.0), None, "before the first layout");
+        assert_eq!(fit_width(0.0, 8.0), None);
+        assert_eq!(fit_width(40.0, 8.0), None, "no room for one cell");
+        assert_eq!(fit_width(500.0, 0.0), None);
+        assert_eq!(fit_width(500.0, f32::NAN), None);
+        let cols = fit_width(500.0, 8.0).unwrap();
+        assert_eq!(cols, cols_for(column_px(500.0), 8.0));
+        assert!(cols >= 20);
     }
 
     #[test]
@@ -2592,7 +2739,7 @@ mod tests {
     fn the_cache_can_be_read_without_parsing() {
         let mut cache = TextCache::default();
         assert!(cache.peek("n").is_none());
-        let made = cache.get("n", "", "abc", |t| t.len());
+        let made = cache.get("n", 1, || 3);
         assert!(Rc::ptr_eq(&made, &cache.peek("n").unwrap()));
         assert!(cache.peek("other").is_none());
     }
