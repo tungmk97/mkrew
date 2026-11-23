@@ -110,9 +110,6 @@ pub struct Hub {
     pub plans: crate::plan::Plans,
     /// The newest limits of each agent (spec 2026-11-22 section 5.1); memory only.
     limits: Mutex<crate::limits::Limits>,
-    /// Connections that said `hello` and receive events; the machine sampler runs while it is
-    /// above 0 ([`crate::machine`]).
-    pub clients: tokio::sync::watch::Sender<usize>,
 }
 
 /// Idle time owed by flood handling: 1/[`PACE_IDLE_DIVISOR`] of the time spent, minus the idle
@@ -349,7 +346,6 @@ impl Hub {
             terminal_titles: Mutex::default(),
             plans: crate::plan::Plans::default(),
             limits: Mutex::default(),
-            clients: tokio::sync::watch::channel(0).0,
         }
     }
 

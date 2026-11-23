@@ -30,7 +30,6 @@ use crate::attach::{self, Attachment};
 use crate::git::GitBackend;
 use crate::git_view::GitCache;
 use crate::launch::LaunchError;
-use crate::machine;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 use crate::settings::{self, SettingsHolder};
@@ -130,14 +129,12 @@ impl Daemon {
             self.paths.attachments_dir(),
             self.paths.sessions_dir(),
         );
-        let machine = machine::start(Arc::clone(&self.hub));
         let hub = Arc::clone(&self.hub);
         tokio::task::spawn_blocking(move || crate::turns::delete_expired_refs(&hub, now_ms()));
         self.resume_sessions().await;
         self.autostart_runs().await;
         Arc::clone(&self).accept(listener).await;
         backups.abort();
-        machine.abort();
         keep_awake.abort();
         // Awaited: dropping the task kills `mk web`, and that must have happened before the
         // daemon returns.
@@ -202,7 +199,7 @@ impl Daemon {
         let mut decoder = FrameDecoder::new();
         let mut buf = vec![0u8; 64 * 1024];
         let mut conn = Conn::default();
-        let mut forwarder: Option<(AbortOnDrop, AbortOnDrop)> = None;
+        let mut forwarder: Option<AbortOnDrop> = None;
         loop {
             while let Some(frame) = decoder.next_frame()? {
                 let Frame::Message(Message::Request { id, request }) = frame else {
@@ -241,10 +238,7 @@ impl Daemon {
                 if conn.greeted && forwarder.is_none() {
                     // Subscribed before the hello reply goes out: no event is missed.
                     let events = self.hub.events.subscribe();
-                    forwarder = Some((
-                        AbortOnDrop(tokio::spawn(forward(events, out.clone()))),
-                        AbortOnDrop(machine::count_when_it_stays(&self.hub)),
-                    ));
+                    forwarder = Some(AbortOnDrop(tokio::spawn(forward(events, out.clone()))));
                 }
                 let reply = Frame::Message(Message::Response { id, outcome });
                 let new_attachment = conn.new_attachment.take();

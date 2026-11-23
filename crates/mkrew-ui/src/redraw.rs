@@ -97,8 +97,8 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
         Event::AiGenerated(_) => {
             shown.view == View::Terminals || shown.panel == Some(PanelTab::Git)
         }
-        // The widget bar's limits and CPU / RAM (ADR 0102).
-        Event::AgentLimits(_) | Event::MachineStats(_) => shown.widget_bar,
+        // The widget bar's limits (ADR 0102).
+        Event::AgentLimits(_) => shown.widget_bar,
         Event::SessionState(_)
         | Event::SessionExited(_)
         | Event::SessionUpdated(_)
@@ -133,9 +133,9 @@ fn tasks_drawn(shown: &Shown, project_id: Ulid) -> bool {
 mod tests {
     use mkrew_protocol::{
         AgentLimits, AiGeneratedEvent, Cli, CommentId, CommentStatus, ConflictDetectedEvent,
-        DocComment, MachineStats, SessionExitedEvent, SessionKind, SessionPlanEvent,
-        SessionPortsEvent, SessionQueueEvent, SessionState, SessionStateEvent, SessionTurnEvent,
-        SessionUsageEvent, StateSource, TaskDeletedEvent,
+        DocComment, SessionExitedEvent, SessionKind, SessionPlanEvent, SessionPortsEvent,
+        SessionQueueEvent, SessionState, SessionStateEvent, SessionTurnEvent, SessionUsageEvent,
+        StateSource, TaskDeletedEvent,
     };
 
     use super::*;
@@ -536,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn limits_and_machine_stats_redraw_only_while_the_bar_is_drawn() {
+    fn limits_redraw_only_while_the_bar_is_drawn() {
         let w = world();
         let mut s = terminals(&w);
         let limits = Event::AgentLimits(AgentLimits {
@@ -545,15 +545,8 @@ mod tests {
             weekly: None,
             observed_at: 1,
         });
-        let stats = Event::MachineStats(MachineStats {
-            cpu_percent: 1.0,
-            ram_used: 1,
-            ram_total: 2,
-        });
         assert!(!redraws(&w, &s, &limits), "bar hidden");
-        assert!(!redraws(&w, &s, &stats), "bar hidden");
         s.widget_bar = true;
         assert!(redraws(&w, &s, &limits));
-        assert!(redraws(&w, &s, &stats));
     }
 }

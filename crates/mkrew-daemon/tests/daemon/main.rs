@@ -50,6 +50,7 @@ mod docs;
 mod fs_ai;
 mod git;
 mod io;
+mod limits;
 mod ports;
 mod remote_reads;
 mod runs;
@@ -59,7 +60,6 @@ mod tabs_tasks;
 mod task_runs;
 mod turns;
 mod web;
-mod widgets;
 mod workspaces;
 mod worktrees;
 

@@ -2,17 +2,16 @@
 //! colors, which drop when the window is narrow and how a hide toggle edits `widgets_hidden`.
 //! Pure and tested headlessly; `shell/widget_bar.rs` draws it.
 
-use mkrew_protocol::{AgentLimits, Cli, Event, LimitWindow, MachineStats};
+use mkrew_protocol::{AgentLimits, Cli, Event, LimitWindow};
 
 use crate::git_summary::GitSummary;
 
-/// The five widgets of the bar.
+/// The four widgets of the bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WidgetId {
     Folder,
     Git,
     Limits,
-    Machine,
     Version,
 }
 
@@ -23,12 +22,11 @@ pub enum Side {
 }
 
 impl WidgetId {
-    /// Bar order: folder and git on the left, limits, machine and version on the right.
-    pub const ALL: [WidgetId; 5] = [
+    /// Bar order: folder and git on the left, limits and version on the right.
+    pub const ALL: [WidgetId; 4] = [
         WidgetId::Folder,
         WidgetId::Git,
         WidgetId::Limits,
-        WidgetId::Machine,
         WidgetId::Version,
     ];
 
@@ -38,7 +36,6 @@ impl WidgetId {
             WidgetId::Folder => "folder",
             WidgetId::Git => "git",
             WidgetId::Limits => "limits",
-            WidgetId::Machine => "machine",
             WidgetId::Version => "version",
         }
     }
@@ -49,7 +46,6 @@ impl WidgetId {
             WidgetId::Folder => "Folder",
             WidgetId::Git => "Git branch",
             WidgetId::Limits => "Agent limits",
-            WidgetId::Machine => "CPU and RAM",
             WidgetId::Version => "Version",
         }
     }
@@ -57,7 +53,7 @@ impl WidgetId {
     pub fn side(self) -> Side {
         match self {
             WidgetId::Folder | WidgetId::Git => Side::Left,
-            WidgetId::Limits | WidgetId::Machine | WidgetId::Version => Side::Right,
+            WidgetId::Limits | WidgetId::Version => Side::Right,
         }
     }
 }
@@ -95,8 +91,6 @@ pub enum Click {
     OpenLimits,
     /// The update check.
     CheckUpdate,
-    /// No click, no pointer (the machine widget).
-    None,
 }
 
 /// A run of label text in one color.
@@ -135,19 +129,17 @@ impl Widget {
     }
 }
 
-/// What the daemon told the bar: the newest limits per agent and the machine's load.
+/// What the daemon told the bar: the newest limits per agent.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WidgetData {
     limits: Vec<AgentLimits>,
-    machine: Option<MachineStats>,
 }
 
 impl WidgetData {
-    /// Takes in `agent.limits` and `machine.stats`; returns whether anything changed.
+    /// Takes in `agent.limits`; returns whether anything changed.
     pub fn apply(&mut self, event: &Event) -> bool {
         match event {
             Event::AgentLimits(limits) => self.offer(limits.clone()),
-            Event::MachineStats(stats) => self.machine.replace(*stats) != Some(*stats),
             _ => false,
         }
     }
@@ -161,23 +153,13 @@ impl WidgetData {
     }
 
     /// The new connection's list is about to replace the limits (events since the connect
-    /// stay in the daemon's answer). The machine figures are not touched: the next
-    /// `machine.stats` would take a sample interval to refill them.
+    /// stay in the daemon's answer).
     pub fn clear_limits(&mut self) {
         self.limits.clear();
     }
 
-    /// A lost connection: those figures belong to the daemon that went away.
-    pub fn clear_machine(&mut self) {
-        self.machine = None;
-    }
-
     pub fn limits(&self) -> &[AgentLimits] {
         &self.limits
-    }
-
-    pub fn machine(&self) -> Option<&MachineStats> {
-        self.machine.as_ref()
     }
 
     fn offer(&mut self, new: AgentLimits) -> bool {
@@ -202,8 +184,6 @@ pub struct Input<'a> {
     /// Its Git summary (already polled for the title bar).
     pub git: Option<&'a GitSummary>,
     pub data: &'a WidgetData,
-    /// "This computer", or the machine window's name.
-    pub machine_name: &'a str,
     /// `env!("CARGO_PKG_VERSION")`.
     pub version: &'a str,
     /// `[ui] widgets_hidden`; unknown ids are ignored.
@@ -221,7 +201,6 @@ pub fn widget_list(input: &Input<'_>, utc_offset: impl Fn(i64) -> i32) -> Vec<Wi
             WidgetId::Folder => folder(input),
             WidgetId::Git => git(input),
             WidgetId::Limits => limits(input, &utc_offset),
-            WidgetId::Machine => machine(input),
             WidgetId::Version => Some(version(input)),
         })
         .collect()
@@ -316,41 +295,6 @@ fn percent_of(window: &LimitWindow) -> u32 {
     window.used_percent.clamp(0.0, 100.0).round() as u32
 }
 
-fn machine(input: &Input<'_>) -> Option<Widget> {
-    let stats = input.data.machine()?;
-    // A CPU reading that is not a number is left out, never shown as "NaN%".
-    let mut label = String::new();
-    let mut tooltip = input.machine_name.to_owned();
-    if stats.cpu_percent.is_finite() {
-        let cpu = stats.cpu_percent.clamp(0.0, 100.0).round();
-        label = format!("CPU {cpu:.0}%");
-        tooltip.push_str(&format!("\nCPU {cpu:.0}% of all cores"));
-    }
-    // No total from the OS: the RAM part is left out.
-    if stats.ram_total > 0 {
-        let (used, total) = (gib(stats.ram_used), gib(stats.ram_total));
-        if !label.is_empty() {
-            label.push_str(" · ");
-        }
-        label.push_str(&format!("RAM {used}/{total} GB"));
-        tooltip.push_str(&format!("\nRAM {used} of {total} GB used"));
-    }
-    if label.is_empty() {
-        return None;
-    }
-    Some(Widget {
-        id: WidgetId::Machine,
-        parts: vec![Part::muted(label)],
-        tooltip,
-        click: Click::None,
-    })
-}
-
-/// One decimal, in 1024-based units (what Task Manager calls GB).
-fn gib(bytes: u64) -> String {
-    format!("{:.1}", bytes as f64 / 1_073_741_824.0)
-}
-
 fn version(input: &Input<'_>) -> Widget {
     Widget {
         id: WidgetId::Version,
@@ -391,14 +335,11 @@ pub fn list_width(list: &[Widget], em: f32) -> f32 {
     widgets + gaps + BAR_PAD_EM * em
 }
 
-/// Drops widgets from the middle outward while `list` is wider than `available` px: limits
-/// first, then machine. Folder, git and version stay.
+/// Drops the limits widget while `list` is wider than `available` px. Folder, git and version
+/// stay.
 pub fn fit(mut list: Vec<Widget>, available: f32, em: f32) -> Vec<Widget> {
-    for dropped in [WidgetId::Limits, WidgetId::Machine] {
-        if list_width(&list, em) <= available {
-            break;
-        }
-        list.retain(|widget| widget.id != dropped);
+    if list_width(&list, em) > available {
+        list.retain(|widget| widget.id != WidgetId::Limits);
     }
     list
 }
@@ -461,7 +402,6 @@ mod tests {
     use crate::git_summary::RepoSummary;
 
     const NOW: i64 = 1_778_519_153;
-    const GIB: f64 = 1_073_741_824.0;
 
     fn plus_seven(_: i64) -> i32 {
         25_200
@@ -493,20 +433,9 @@ mod tests {
         }
     }
 
-    fn stats(cpu: f32, used: f64, total: f64) -> MachineStats {
-        MachineStats {
-            cpu_percent: cpu,
-            ram_used: (used * GIB) as u64,
-            ram_total: (total * GIB) as u64,
-        }
-    }
-
-    fn data(list: Vec<AgentLimits>, machine: Option<MachineStats>) -> WidgetData {
+    fn data(list: Vec<AgentLimits>) -> WidgetData {
         let mut data = WidgetData::default();
         data.load_limits(list);
-        if let Some(machine) = machine {
-            data.apply(&Event::MachineStats(machine));
-        }
         data
     }
 
@@ -521,7 +450,6 @@ mod tests {
                 workspace,
                 git,
                 data,
-                machine_name: "This computer",
                 version: "0.5.3",
                 hidden,
                 now_secs: NOW,
@@ -538,21 +466,18 @@ mod tests {
         let git = GitSummary {
             repos: vec![repo(Some("master"), 2, 1)],
         };
-        let data = data(
-            vec![
-                limits(
-                    Cli::Claude,
-                    window(42.4, Some(7_800)),
-                    window(18.0, Some(3 * 86_400)),
-                ),
-                limits(
-                    Cli::Codex,
-                    window(10.0, Some(4 * 3600)),
-                    window(3.0, Some(6 * 86_400)),
-                ),
-            ],
-            Some(stats(23.4, 11.2, 31.8)),
-        );
+        let data = data(vec![
+            limits(
+                Cli::Claude,
+                window(42.4, Some(7_800)),
+                window(18.0, Some(3 * 86_400)),
+            ),
+            limits(
+                Cli::Codex,
+                window(10.0, Some(4 * 3600)),
+                window(3.0, Some(6 * 86_400)),
+            ),
+        ]);
         list(Some(&git), &data, &[], Some(("api", "C:/work/api")))
     }
 
@@ -574,7 +499,6 @@ mod tests {
                 "api",
                 "master · 3",
                 "Claude 5h 42% · 7d 18% | Codex 5h 10% · 7d 3%",
-                "CPU 23% · RAM 11.2/31.8 GB",
                 "v0.5.3"
             ]
         );
@@ -585,7 +509,6 @@ mod tests {
                 Click::OpenFolder,
                 Click::Git,
                 Click::OpenLimits,
-                Click::None,
                 Click::CheckUpdate
             ]
         );
@@ -623,11 +546,7 @@ mod tests {
             "{limits}"
         );
         assert!(limits.ends_with("Click: open Settings"), "{limits}");
-        assert_eq!(
-            list[3].tooltip,
-            "This computer\nCPU 23% of all cores\nRAM 11.2 of 31.8 GB used"
-        );
-        assert_eq!(list[4].tooltip, "Mkrew 0.5.3\nClick: check for updates");
+        assert_eq!(list[3].tooltip, "Mkrew 0.5.3\nClick: check for updates");
     }
 
     #[test]
@@ -677,10 +596,7 @@ mod tests {
     #[test]
     fn limit_colors_follow_the_shown_percent() {
         let level_of = |percent: f32| {
-            let data = data(
-                vec![limits(Cli::Claude, window(percent, Some(600)), None)],
-                None,
-            );
+            let data = data(vec![limits(Cli::Claude, window(percent, Some(600)), None)]);
             let widgets = list(None, &data, &[], None);
             let widget = widgets.iter().find(|w| w.id == WidgetId::Limits).unwrap();
             widget
@@ -707,7 +623,7 @@ mod tests {
     #[test]
     fn a_window_past_its_reset_shows_nothing_until_a_new_report() {
         let label = |five: Option<LimitWindow>, weekly: Option<LimitWindow>| {
-            let data = data(vec![limits(Cli::Claude, five, weekly)], None);
+            let data = data(vec![limits(Cli::Claude, five, weekly)]);
             list(None, &data, &[], None)
                 .iter()
                 .find(|w| w.id == WidgetId::Limits)
@@ -737,24 +653,11 @@ mod tests {
 
     #[test]
     fn only_claude_and_codex_are_listed() {
-        let data = data(vec![limits(Cli::Omp, window(50.0, Some(60)), None)], None);
+        let data = data(vec![limits(Cli::Omp, window(50.0, Some(60)), None)]);
         assert_eq!(ids(&list(None, &data, &[], None)), [WidgetId::Version]);
-        let data = self::data(vec![limits(Cli::Codex, window(50.0, Some(60)), None)], None);
+        let data = self::data(vec![limits(Cli::Codex, window(50.0, Some(60)), None)]);
         let widgets = list(None, &data, &[], None);
         assert_eq!(widgets[0].label(), "Codex 5h 50%");
-    }
-
-    #[test]
-    fn ram_is_left_out_when_the_os_reports_no_total() {
-        let no_total = MachineStats {
-            cpu_percent: 23.4,
-            ram_used: 5,
-            ram_total: 0,
-        };
-        let data = data(vec![], Some(no_total));
-        let widgets = list(None, &data, &[], None);
-        assert_eq!(widgets[0].label(), "CPU 23%");
-        assert_eq!(widgets[0].tooltip, "This computer\nCPU 23% of all cores");
     }
 
     #[test]
@@ -764,16 +667,10 @@ mod tests {
             let git = GitSummary {
                 repos: vec![repo(Some("m"), 0, 0)],
             };
-            let data = data(
-                vec![limits(Cli::Claude, window(1.0, Some(60)), None)],
-                Some(stats(1.0, 1.0, 2.0)),
-            );
+            let data = data(vec![limits(Cli::Claude, window(1.0, Some(60)), None)]);
             list(Some(&git), &data, &hidden, Some(("api", "/api")))
         };
-        assert_eq!(
-            ids(&widgets),
-            [WidgetId::Folder, WidgetId::Machine, WidgetId::Version]
-        );
+        assert_eq!(ids(&widgets), [WidgetId::Folder, WidgetId::Version]);
         assert!(is_hidden(&hidden, WidgetId::Git));
         assert!(!is_hidden(&hidden, WidgetId::Folder));
     }
@@ -790,29 +687,22 @@ mod tests {
             toggled(&toggled(&hidden, WidgetId::Limits), WidgetId::Limits),
             hidden
         );
-        assert_eq!(toggled(&[], WidgetId::Machine), ["machine"]);
+        assert_eq!(toggled(&[], WidgetId::Version), ["version"]);
     }
 
     #[test]
-    fn a_narrow_window_drops_limits_first_then_the_machine() {
+    fn a_narrow_window_drops_limits() {
         let list = full();
         let em = 13.0;
         let all = list_width(&list, em);
         assert_eq!(fit(list.clone(), f32::MAX, em), list);
-        let without = |drop: &[WidgetId]| -> Vec<Widget> {
-            list.iter()
-                .filter(|w| !drop.contains(&w.id))
-                .cloned()
-                .collect()
-        };
-        let no_limits = without(&[WidgetId::Limits]);
-        let no_machine_either = without(&[WidgetId::Limits, WidgetId::Machine]);
+        let no_limits: Vec<Widget> = list
+            .iter()
+            .filter(|w| w.id != WidgetId::Limits)
+            .cloned()
+            .collect();
         assert!(list_width(&no_limits, em) < all);
         assert_eq!(fit(list.clone(), all - 1.0, em), no_limits);
-        assert_eq!(
-            fit(list.clone(), list_width(&no_limits, em) - 1.0, em),
-            no_machine_either
-        );
         // Folder, git and version stay however narrow.
         assert_eq!(
             ids(&fit(list, 0.0, em)),
@@ -866,35 +756,9 @@ mod tests {
     }
 
     #[test]
-    fn a_cpu_reading_that_is_not_a_number_is_left_out_and_ram_stays() {
-        for cpu in [f32::NAN, f32::INFINITY] {
-            let data = data(vec![], Some(stats(cpu, 1.0, 2.0)));
-            let widgets = list(None, &data, &[], None);
-            assert_eq!(widgets[0].label(), "RAM 1.0/2.0 GB");
-            assert_eq!(widgets[0].tooltip, "This computer\nRAM 1.0 of 2.0 GB used");
-            let no_total = MachineStats {
-                cpu_percent: cpu,
-                ram_used: 5,
-                ram_total: 0,
-            };
-            let data = self::data(vec![], Some(no_total));
-            assert_eq!(ids(&list(None, &data, &[], None)), [WidgetId::Version]);
-        }
-    }
-
-    #[test]
     fn the_folder_and_git_sit_left_and_the_rest_right() {
         let sides: Vec<Side> = WidgetId::ALL.into_iter().map(WidgetId::side).collect();
-        assert_eq!(
-            sides,
-            [
-                Side::Left,
-                Side::Left,
-                Side::Right,
-                Side::Right,
-                Side::Right
-            ]
-        );
+        assert_eq!(sides, [Side::Left, Side::Left, Side::Right, Side::Right]);
     }
 
     #[test]
@@ -918,10 +782,6 @@ mod tests {
         );
         assert_eq!(data.limits(), [newer]);
 
-        let one = stats(1.0, 1.0, 2.0);
-        assert!(data.apply(&Event::MachineStats(one)));
-        assert!(!data.apply(&Event::MachineStats(one)));
-        assert!(data.apply(&Event::MachineStats(stats(2.0, 1.0, 2.0))));
         assert!(
             !data.apply(&Event::SessionState(mkrew_protocol::SessionStateEvent {
                 session_id: ulid::Ulid::nil(),
@@ -931,17 +791,12 @@ mod tests {
             }))
         );
         data.clear_limits();
-        assert_eq!(
-            (data.limits().len(), data.machine()),
-            (0, Some(&stats(2.0, 1.0, 2.0)))
-        );
-        data.clear_machine();
-        assert_eq!((data.limits().len(), data.machine()), (0, None));
+        assert!(data.limits().is_empty());
     }
 
     #[test]
     fn every_widget_has_a_menu_row_state_and_a_title() {
-        let hidden = vec!["machine".to_owned(), "clock".to_owned()];
+        let hidden = vec!["limits".to_owned(), "clock".to_owned()];
         let rows: Vec<(&str, bool)> = WidgetId::ALL
             .into_iter()
             .map(|id| (id.title(), !is_hidden(&hidden, id)))
@@ -951,8 +806,7 @@ mod tests {
             [
                 ("Folder", true),
                 ("Git branch", true),
-                ("Agent limits", true),
-                ("CPU and RAM", false),
+                ("Agent limits", false),
                 ("Version", true)
             ]
         );

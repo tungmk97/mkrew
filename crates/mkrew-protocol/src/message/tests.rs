@@ -1334,7 +1334,7 @@ fn limits() -> AgentLimits {
 }
 
 #[test]
-fn limits_and_machine_stats_have_their_own_wire_shapes() {
+fn limits_have_their_own_wire_shapes() {
     assert_eq!(
         round_trip(&Message::Event(Event::AgentLimits(limits()))),
         json!({
@@ -1345,17 +1345,6 @@ fn limits_and_machine_stats_have_their_own_wire_shapes() {
                 "weekly": {"used_percent": 46.0},
                 "observed_at": 1_778_519_153
             }
-        })
-    );
-    assert_eq!(
-        round_trip(&Message::Event(Event::MachineStats(MachineStats {
-            cpu_percent: 23.5,
-            ram_used: 11,
-            ram_total: 31,
-        }))),
-        json!({
-            "type": "event", "event": "machine.stats",
-            "data": {"cpu_percent": 23.5, "ram_used": 11, "ram_total": 31}
         })
     );
     let get = round_trip(&Message::Request {
@@ -1403,8 +1392,8 @@ fn a_report_replaces_an_older_different_one_only() {
 }
 
 #[test]
-fn the_chat_look_protocol_is_version_57() {
-    assert_eq!(crate::PROTOCOL_VERSION, 57);
+fn the_tern_layout_protocol_is_version_58() {
+    assert_eq!(crate::PROTOCOL_VERSION, 58);
 }
 
 /// ADR 0105: the recap travels with the transcript reply; a reply without it (an older

@@ -1,4 +1,4 @@
-//! Agent limits and machine stats (spec 2026-11-22 sections 5 and 6) over the real socket.
+//! Agent limits (spec 2026-11-22 section 5) over the real socket.
 
 use super::*;
 use mkrew_protocol::{AgentLimits, Cli, LimitWindow};
@@ -91,25 +91,6 @@ fn a_percentage_beyond_the_scale_is_clamped() {
     assert_eq!(
         listed(&mut client)[0].five_hour.map(|w| w.used_percent),
         Some(100.0)
-    );
-    client.stop();
-}
-
-#[test]
-fn machine_stats_arrive_while_a_client_is_connected() {
-    let env = Env::new();
-    let (_daemon, mut client) = env.start();
-    // Real `sysinfo` on this machine, nothing else: the first reading comes about 3 s in (the
-    // connection counts after 1 s, then one 2 s sampling period).
-    let Event::MachineStats(stats) =
-        client.wait_event_where(|e| matches!(e, Event::MachineStats(_)))
-    else {
-        unreachable!()
-    };
-    assert!((0.0..=100.0).contains(&stats.cpu_percent), "{stats:?}");
-    assert!(
-        stats.ram_total == 0 || stats.ram_used <= stats.ram_total,
-        "{stats:?}"
     );
     client.stop();
 }

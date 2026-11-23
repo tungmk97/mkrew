@@ -69,7 +69,6 @@ fn icon_of(id: WidgetId) -> Icon {
         WidgetId::Folder => Icon::Folder,
         WidgetId::Git => Icon::GitBranch,
         WidgetId::Limits => Icon::Bot,
-        WidgetId::Machine => Icon::Server,
         WidgetId::Version => Icon::Info,
     }
 }
@@ -93,7 +92,6 @@ impl Shell {
             workspace: project.map(|p| (p.name.as_str(), p.path.as_str())),
             git: self.git_summary(),
             data: &self.widget_data,
-            machine_name: self.machine_name().unwrap_or("This computer"),
             version: env!("CARGO_PKG_VERSION"),
             hidden: &self.widgets_hidden,
             now_secs: status::now_ms() / 1000,
@@ -154,7 +152,7 @@ impl Shell {
     }
 
     /// One widget: an icon and its label in a `pressable` element (hover, press and focus from
-    /// `widgets.rs`), with its tooltip. The machine widget has no click and no pointer.
+    /// `widgets.rs`), with its tooltip.
     fn render_widget(
         &self,
         widget: Widget,
@@ -202,9 +200,6 @@ impl Shell {
                     .gap(px(space::XS))
                     .children(parts),
             );
-        if click == Click::None {
-            return element.into_any_element();
-        }
         element
             .pressable(Look::Text, true, theme)
             .on_press(
@@ -222,7 +217,6 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         match click {
-            Click::None => {}
             Click::OpenFolder => {
                 if let Some(project_id) = self.workspace {
                     self.open_workspace_in_explorer(project_id, cx);

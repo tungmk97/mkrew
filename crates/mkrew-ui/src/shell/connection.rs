@@ -747,9 +747,6 @@ impl Shell {
                 shell.status = Status::Disconnected;
                 shell.report_machine_state(MachineState::Reconnecting);
                 shell.connection = None;
-                // The load figures belong to the daemon that went away; the limits stay
-                // until the new connection's list replaces them (`reset_connection_state`).
-                shell.widget_data.clear_machine();
                 // Kept with its draft: `save_task` / `delete_task` do nothing without a
                 // connection, and an in-flight save is not waited for.
                 if let Some(dialog) = shell.task_dialog.as_mut() {
