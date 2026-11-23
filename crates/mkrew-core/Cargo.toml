@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 # Shares `SessionState` with the wire format (no tokio/GPUI/SQLite there either, SPEC §4).
 mkrew-protocol = { version = "0.7.0", path = "../mkrew-protocol" }
+base64 = "0.22"
 directories = "6"
 globset = "0.4.20"
 regex = "1.13"
