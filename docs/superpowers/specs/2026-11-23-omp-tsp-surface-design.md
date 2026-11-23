@@ -111,13 +111,13 @@ When the PTY is resized, the daemon sends `{"ev":"resize","cols":N}` to a live s
 
 ### 6.3 Document (`mkrew_core::tsp::doc`, pure)
 
-- `Surfaces` holds one `Document` per open surface id (`s:1` inline, more for `screen` surfaces), plus the newest theme message and the inline blobs.
+- `Surfaces` holds one `Document` per open surface id (`s:1` inline, more for `screen` surfaces) and the inline blobs (images); omp's `t` palette message is read and dropped (section 7.2).
 - `Document` is an arena `id -> Node { kind, props (JSON object), children }` with the roots `main`, `dock`, `layer` added by omp's first frame.
 - `apply(frame)` runs every op of section 3.2 of the reference (`add set text splice move del settle focus reveal scroll`, plus `suspend`/`resume` as no-ops).
   A failing op (unknown id, duplicate id, bad index, splice outside the text, unknown kind for `add`) is skipped; the rest of the frame still runs, as omp's own reference document does.
   Each frame with failures sends one `{"ev":"error","msg":…}` and logs a `warn`.
 - `x {keep:false}` closes a surface and drops its document; `x {keep:true}` keeps it read-only.
-- Bounds: at most 50,000 nodes and 32 MiB of text per document.
+- Bounds: at most 50,000 nodes and 6 MiB of text per document, and 4 MiB of images per session (the oldest images go first; a snapshot carries only images an `image` node still uses), so a `tsp.snapshot` reply stays under the 16 MiB protocol frame limit.
   Past either, the daemon evicts whole top-level children of `main`, oldest first, until the document is under 80% of both, and sends `{"ev":"gone","ids":[…]}` for them; omp then never sends ops for those ids again (reference §3.5).
   `main` gets one synthetic first row "Earlier messages were trimmed" (kind `text`, an id under a reserved `mkrew.` prefix that omp never uses), so the UI shows the cut.
   The dock, the layer and `screen` surfaces are never evicted.
@@ -126,8 +126,8 @@ When the PTY is resized, the daemon sends `{"ev":"resize","cols":N}` to a live s
 
 | Message | Kind | Content |
 |---|---|---|
-| `tsp.snapshot` | request -> reply | `{session_id}` -> `{surfaces: [{id, mode, role, title, root: Node, read_only}], theme}`; empty when no surface is live. |
-| `tsp.update` | event | `{session_id, surface, seq, ops}` after the daemon applied a frame (`seq` is omp's frame `s`; the ops are the frame's ops minus the failed ones), or `{session_id, surface, closed: {keep}}`. |
+| `tsp.snapshot` | request -> reply | `{session_id}` -> `{state, surfaces: [{id, mode, role, title, read_only, seq, root: Node}], blobs}`; no surfaces when none is open. |
+| `tsp.update` | event | `{session_id, surface, change}` where `change` is `frame {seq, ops, blobs}` after the daemon applied a frame (`seq` is omp's frame `s`; `ops` are the frame's ops minus the failed ones, plus the daemon's own eviction ops; `blobs` the images that frame needs), `open {surface}` when omp opens a surface, or `closed {keep}`. |
 | `tsp.event` | request | `{session_id, surface, event}`; the daemon checks the `ev` against the P1 list (section 7.4) and writes it to the PTY input. |
 | `Session.tsp` | field | `"off" | "waiting" | "live" | "fallback"` in session info and `session.updated`, so the UI and `mk web` know what to draw. |
 
@@ -137,7 +137,7 @@ A UI sends `{"ev":"theme","dark":…}` through `tsp.event` when it attaches and 
 ### 6.5 State
 
 The state scanner (`scan.rs`) watches screen text, which stays still while a surface is live.
-For a session whose `tsp` is `live`, state comes from omp's hooks only (`mk integration install omp`); without hooks the state is `unknown` and the pane shows the existing "Install hooks" hint.
+For a session whose `tsp` is `live`, state comes from omp's hooks only (`mk integration install omp`); without hooks the state stays `unknown` (SPEC §6 already documents the hooks as the setup for omp state; P1 adds no new hint).
 When the surface closes or the session falls back, screen detection resumes.
 
 ## 7. UI
@@ -171,7 +171,8 @@ Kinds omp sends whatever the hello says (`agent chart diff math prefs`) and any 
 - `main` is a scrolling list in the Chat page's centered column (`CHAT_COLUMN_WIDTH`), following the end like Chat, with the scroll-to-end button; `reveal` and `scroll` ops move it.
 - `dock` sits under it in the same column, always visible.
 - `layer` children and `overlay` nodes draw as a modal inside the pane; a `screen` surface covers the whole pane until omp closes it.
-- Text is selectable inside one node as in Chat; Ctrl+C copies a selection.
+- Text of `md` and `code` nodes (omp's answers, prose and code) is selectable inside one node as in Chat; Ctrl+C copies a selection and Esc clears it; with no selection both keys go to omp, as in a terminal pane (ADR 0022).
+  Labels and status text (`text`, `ansi`, `rows`) are not selectable in P1.
 - Tooltips: a node's `title` shows as the Mkrew tooltip; `hovercard` is ignored in P1.
 - Keys: while the pane has focus every key goes to the PTY, exactly like a terminal pane (Mkrew's own shortcuts first); paste, image paste and file drops type paths into the PTY as in a terminal pane.
 
