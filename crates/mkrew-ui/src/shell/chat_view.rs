@@ -573,7 +573,13 @@ impl Shell {
                                 .flex()
                                 .flex_col()
                                 .gap(px(space::XS))
-                                .children(preview::message(shown, selection, &hits, theme))
+                                .children(preview::message(
+                                    shown,
+                                    selection,
+                                    &hits,
+                                    preview::Flavor::Chat { session },
+                                    theme,
+                                ))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(

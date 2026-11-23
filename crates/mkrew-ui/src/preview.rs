@@ -8,6 +8,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use ulid::Ulid;
 
 use gpui::prelude::*;
 use gpui::{
@@ -23,7 +26,7 @@ use crate::diagram::Diagram;
 use crate::docs::{Shown, gutter};
 use crate::highlight::{Code, Token};
 use crate::icons::{self, Icon};
-use crate::markdown::{Alert, Align, Block, BlockKind, Item, Row, Run, Style};
+use crate::markdown::{Alert, Align, Block, BlockKind, Item, Row, Run, Style, path_pill};
 use crate::pressable::{Look, Pressable};
 use crate::preview_select;
 use crate::scrollbar::{self, Source};
@@ -44,10 +47,60 @@ pub fn inline(runs: &[Run]) -> (String, Vec<(Range<usize>, Style, bool)>) {
     (text, styled)
 }
 
+/// Where a preview is drawn (ADR 0105). `Doc` is the Docs and Files views, the Thread section
+/// and Ask AI; `Chat` is a message of the Chat page of `session` (its own headings, spacing,
+/// and file paths that open the file).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flavor {
+    Doc,
+    Chat { session: Ulid },
+}
+
+/// How one block is drawn: on a file's page (its links resolve against that file), and the
+/// flavor.
+#[derive(Debug, Clone, Copy)]
+struct Ctx {
+    page: bool,
+    flavor: Flavor,
+}
+
+/// The code block whose Copy button says "Copied" (its [`code_key`]; 0 = none). Set by the
+/// shell for [`theme::COPIED_FEEDBACK`] after a click; read while the blocks are built (they
+/// have no `cx`). One process-wide mark: two blocks with the same text both show it.
+static COPIED: AtomicU64 = AtomicU64::new(0);
+
+/// A stable, never zero key of a code block's text.
+pub fn code_key(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish() | 1
+}
+
+pub fn set_copied(key: Option<u64>) {
+    COPIED.store(key.unwrap_or(0), Ordering::Relaxed);
+}
+
+pub fn copied() -> Option<u64> {
+    match COPIED.load(Ordering::Relaxed) {
+        0 => None,
+        key => Some(key),
+    }
+}
+
 /// The rendered preview of `blocks`, top to bottom, outside a page (a thread message, an
 /// answer): their links open only from the folder root.
-pub fn blocks(blocks: &[Block], shown: &Shown, theme: &Theme) -> Vec<AnyElement> {
-    blocks_in(blocks, shown, None, false, theme)
+pub fn blocks(blocks: &[Block], shown: &Shown, flavor: Flavor, theme: &Theme) -> Vec<AnyElement> {
+    blocks_in(
+        blocks,
+        shown,
+        None,
+        Ctx {
+            page: false,
+            flavor,
+        },
+        theme,
+    )
 }
 
 /// The blocks of a Chat message with `selection` drawn; the painted texts are recorded in
@@ -57,6 +110,7 @@ pub fn message(
     shown: &Shown,
     selection: Option<preview_select::Selection>,
     hits: &Hits,
+    flavor: Flavor,
     theme: &Theme,
 ) -> Vec<AnyElement> {
     hits.0.borrow_mut().clear();
@@ -73,7 +127,16 @@ pub fn message(
                 hits: hits.clone(),
                 bg,
             };
-            let element = block_in(block, shown, Some(&pick), false, theme);
+            let element = block_in(
+                block,
+                shown,
+                Some(&pick),
+                Ctx {
+                    page: false,
+                    flavor,
+                },
+                theme,
+            );
             debug_assert_eq!(
                 pick.next.get(),
                 preview_select::piece_count(block, shown),
@@ -84,17 +147,16 @@ pub fn message(
         .collect()
 }
 
-/// `page`: drawn on a file's page, whose links resolve against that file.
 fn blocks_in(
     blocks: &[Block],
     shown: &Shown,
     pick: Option<&Pick>,
-    page: bool,
+    ctx: Ctx,
     theme: &Theme,
 ) -> Vec<AnyElement> {
     blocks
         .iter()
-        .filter_map(|block| block_in(block, shown, pick, page, theme))
+        .filter_map(|block| block_in(block, shown, pick, ctx, theme))
         .collect()
 }
 
@@ -228,43 +290,73 @@ pub struct ToggleTask(pub u32);
 #[action(namespace = mkrew, no_json)]
 pub struct CopyCode(pub String);
 
+/// Asks the window to open the file a Chat pill names: `text` is the pill's code span
+/// (`src/a.rs:12`), `session` the Chat pane it is in (ADR 0105).
+#[derive(Debug, Clone, PartialEq, gpui::Action)]
+#[action(namespace = mkrew, no_json)]
+pub struct OpenPath {
+    pub session: Ulid,
+    pub text: String,
+}
+
 /// The links of a piece of text: their byte ranges and destinations, whether it is on a page,
-/// and an id for its clickable element (the address of its runs, stable while they live).
+/// and an id for its clickable element (the address of its runs, stable while they live). In a
+/// Chat message a code span that looks like a path is one too (`is_path`): it asks for
+/// [`OpenPath`] of `path_of`'s session instead of [`OpenLink`].
 struct Links {
     id: usize,
     ranges: Rc<[Range<usize>]>,
     dests: Rc<[String]>,
+    is_path: Rc<[bool]>,
     on_page: bool,
+    path_of: Option<Ulid>,
 }
 
-fn links(runs: &[Run], on_page: bool) -> Option<Links> {
+fn links(runs: &[Run], ctx: Ctx) -> Option<Links> {
+    let path_of = match ctx.flavor {
+        Flavor::Chat { session } => Some(session),
+        Flavor::Doc => None,
+    };
     let mut at = 0;
-    let (mut ranges, mut dests) = (Vec::new(), Vec::new());
+    let (mut ranges, mut dests, mut is_path) = (Vec::new(), Vec::new(), Vec::new());
     for run in runs {
         let range = at..at + run.text.len();
         at = range.end;
-        if let Some(dest) = &run.link {
-            ranges.push(range);
-            dests.push(dest.clone());
+        match &run.link {
+            Some(dest) => {
+                ranges.push(range);
+                dests.push(dest.clone());
+                is_path.push(false);
+            }
+            None if path_of.is_some() && run.style.code && path_pill(&run.text).is_some() => {
+                ranges.push(range);
+                dests.push(run.text.clone());
+                is_path.push(true);
+            }
+            None => {}
         }
     }
     (!ranges.is_empty()).then(|| Links {
         id: runs.as_ptr() as usize,
         ranges: ranges.into(),
         dests: dests.into(),
-        on_page,
+        is_path: is_path.into(),
+        on_page: ctx.page,
+        path_of,
     })
 }
 
-/// `styled` with its links clickable: a pointing hand over them, a click asks for [`OpenLink`].
-/// A press on a link is the link's alone: it starts no text selection, block pick or caret
-/// move (gpui's `InteractiveText` lets it through).
+/// `styled` with its links clickable: a pointing hand over them, a click asks for [`OpenLink`]
+/// (or [`OpenPath`] for a path pill). A press on a link is the link's alone: it starts no text
+/// selection, block pick or caret move (gpui's `InteractiveText` lets it through).
 fn linked(styled: StyledText, links: Option<Links>) -> AnyElement {
     let Some(Links {
         id,
         ranges,
         dests,
+        is_path,
         on_page,
+        path_of,
     }) = links
     else {
         return styled.into_any_element();
@@ -282,9 +374,21 @@ fn linked(styled: StyledText, links: Option<Links>) -> AnyElement {
         .child(InteractiveText::new(("md-link", id), styled).on_click(
             ranges.to_vec(),
             move |index, window, cx| {
-                if let Some(dest) = dests.get(index) {
-                    let dest = dest.clone();
-                    window.dispatch_action(Box::new(OpenLink { dest, on_page }), cx);
+                let Some(dest) = dests.get(index) else {
+                    return;
+                };
+                let dest = dest.clone();
+                match (path_of, is_path.get(index)) {
+                    (Some(session), Some(true)) => {
+                        window.dispatch_action(
+                            Box::new(OpenPath {
+                                session,
+                                text: dest,
+                            }),
+                            cx,
+                        );
+                    }
+                    _ => window.dispatch_action(Box::new(OpenLink { dest, on_page }), cx),
                 }
             },
         ))
@@ -471,12 +575,14 @@ pub fn closest_byte(layout: &TextLayout, position: gpui::Point<Pixels>) -> usize
 /// `DOC_PREVIEW_MAX_WIDTH`, in a virtual list (only the blocks on screen are laid out), with a
 /// scroll bar on the right. `opening` names this opening of the file, so another one starts at
 /// the top; `fonts` are the current ones (block heights follow them).
+#[allow(clippy::too_many_arguments)]
 pub fn page(
     page: &Page,
     opening: u64,
     shown: &Rc<Shown>,
     wrap: Option<Wrap>,
     select: Option<Selecting>,
+    flavor: Flavor,
     fonts: &theme::Fonts,
     theme: &Theme,
 ) -> Div {
@@ -503,7 +609,13 @@ pub fn page(
             hits: hits.clone(),
             bg,
         });
-        let element = block_in(block, &shown, pick.as_ref(), true, item_theme);
+        let element = block_in(
+            block,
+            &shown,
+            pick.as_ref(),
+            Ctx { page: true, flavor },
+            item_theme,
+        );
         if let Some(pick) = &pick {
             debug_assert_eq!(
                 pick.next.get(),
@@ -549,34 +661,48 @@ pub fn page(
 
 /// `None` for blocks without anything to show (a text-less task item's paragraph).
 pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> {
-    block_in(block, shown, None, false, theme)
+    block_in(
+        block,
+        shown,
+        None,
+        Ctx {
+            page: false,
+            flavor: Flavor::Doc,
+        },
+        theme,
+    )
 }
 
 fn block_in(
     block: &Block,
     shown: &Shown,
     pick: Option<&Pick>,
-    page: bool,
+    ctx: Ctx,
     theme: &Theme,
 ) -> Option<AnyElement> {
     let element = match &block.kind {
         BlockKind::Heading { level, runs } => {
-            let size = (theme::doc::HEADINGS.get(usize::from(*level).saturating_sub(1)))
+            let chat = matches!(ctx.flavor, Flavor::Chat { .. });
+            // Chat headings are one step smaller (h1 uses the h2 size), accent colored, and
+            // have no rule under them.
+            let step = usize::from(*level).saturating_sub(1) + usize::from(chat);
+            let size = theme::doc::HEADINGS
+                .get(step.min(theme::doc::HEADINGS.len() - 1))
                 .copied()
                 .unwrap_or(theme::doc::BODY);
-            let major = *level <= 2;
+            let major = *level <= 2 && !chat;
             div()
                 .pt(px(if major { space::L } else { space::S }))
                 .text_size(px(size))
                 .line_height(relative(theme::doc::HEADING_LINE_HEIGHT))
                 .font_weight(FontWeight(weight::SEMIBOLD))
-                .text_color(rgb(theme.text))
+                .text_color(rgb(if chat { theme.accent_text } else { theme.text }))
                 .when(major, |el| {
                     el.pb(px(space::XS))
                         .border_b_1()
                         .border_color(rgb(theme.border))
                 })
-                .child(selectable(pick, links(runs, page), |sel, bg| {
+                .child(selectable(pick, links(runs, ctx), |sel, bg| {
                     text(runs, theme, sel, bg)
                 }))
                 .into_any_element()
@@ -584,7 +710,7 @@ fn block_in(
         BlockKind::Paragraph(runs) if runs.is_empty() => return None,
         BlockKind::Paragraph(runs) => div()
             .text_color(rgb(theme.text))
-            .child(selectable(pick, links(runs, page), |sel, bg| {
+            .child(selectable(pick, links(runs, ctx), |sel, bg| {
                 text(runs, theme, sel, bg)
             }))
             .into_any_element(),
@@ -594,7 +720,7 @@ fn block_in(
             .gap(px(space::XS))
             .children(items.iter().enumerate().map(|(index, item)| {
                 let number = start.map(|first| first + index as u64);
-                list_item(item, number, shown, pick, page, theme)
+                list_item(item, number, shown, pick, ctx, theme)
             }))
             .into_any_element(),
         BlockKind::Quote { alert, blocks } => {
@@ -629,19 +755,21 @@ fn block_in(
                                 .child(icons::icon_svg(icon, theme::ICON_SIZE_SMALL, color))
                                 .child(title)
                         }))
-                        .children(blocks_in(blocks, shown, pick, page, theme)),
+                        .children(blocks_in(blocks, shown, pick, ctx, theme)),
                 )
                 .into_any_element()
         }
         BlockKind::Code { lang, text } => {
             let start = block.lines.start;
             let source = || {
-                let element = match shown.code.get(&start) {
-                    Some(highlighted) => code_block(lang.as_deref(), highlighted, pick, theme),
-                    None => code(text, theme.text, theme),
+                let body = match shown.code.get(&start) {
+                    Some(highlighted) => code_lines(highlighted, pick, theme),
+                    None => plain_lines(text, theme),
                 };
-                // The Files preview (selectable) has ✎ at each block's top-right corner.
-                with_copy(element, text, pick.is_some(), theme)
+                // The Files preview (selectable) has ✎ at each block's top-right corner; a
+                // Chat message is selectable too but has none.
+                let beside_edit = pick.is_some() && ctx.flavor == Flavor::Doc;
+                code_card(lang.as_deref(), body, text, beside_edit, theme)
             };
             match shown.diagrams.get(&start) {
                 Some(Ok(diagram)) => diagram_view(diagram, start, theme).into_any_element(),
@@ -670,12 +798,12 @@ fn block_in(
             .border_color(rgb(theme.border))
             .overflow_hidden()
             .child(
-                table_row(head, aligns, pick, page, theme)
+                table_row(head, aligns, pick, ctx, theme)
                     .bg(rgb(theme.surface_raised))
                     .font_weight(FontWeight(weight::SEMIBOLD)),
             )
             .children(rows.iter().map(|row| {
-                table_row(row, aligns, pick, page, theme)
+                table_row(row, aligns, pick, ctx, theme)
                     .border_t_1()
                     .border_color(rgb(theme.border))
             }))
@@ -695,7 +823,7 @@ fn list_item(
     number: Option<u64>,
     shown: &Shown,
     pick: Option<&Pick>,
-    page: bool,
+    ctx: Ctx,
     theme: &Theme,
 ) -> gpui::Div {
     let marker = match (item.checked, number) {
@@ -744,8 +872,10 @@ fn list_item(
             .child(format!("{number}."))
             .into_any_element(),
         (None, None) => div()
-            .text_color(rgb(theme.text_muted))
-            .child("•")
+            .mt(px(space::S))
+            .size(px(theme::doc::BULLET_SIZE))
+            .rounded(px(radius::PILL))
+            .bg(rgb(theme.accent))
             .into_any_element(),
     };
     div()
@@ -769,7 +899,7 @@ fn list_item(
                 .when(item.checked == Some(true), |el| {
                     el.text_color(rgb(theme.text_muted))
                 })
-                .children(blocks_in(&item.blocks, shown, pick, page, theme)),
+                .children(blocks_in(&item.blocks, shown, pick, ctx, theme)),
         )
 }
 
@@ -777,7 +907,7 @@ fn table_row(
     row: &Row,
     aligns: &[Align],
     pick: Option<&Pick>,
-    page: bool,
+    ctx: Ctx,
     theme: &Theme,
 ) -> gpui::Div {
     div()
@@ -795,7 +925,7 @@ fn table_row(
                     Align::Right => el.text_right(),
                     Align::Default | Align::Left => el,
                 })
-                .child(selectable(pick, links(cell, page), |sel, bg| {
+                .child(selectable(pick, links(cell, ctx), |sel, bg| {
                     text(cell, theme, sel, bg)
                 }))
         }))
@@ -868,89 +998,111 @@ fn front_matter(text: &str, theme: &Theme) -> gpui::Div {
         )
 }
 
-/// A code block with "Copy" on hover at its top-right, left of the Files preview's ✎ when
-/// `beside_edit` (that takes the corner); it asks for [`CopyCode`] with the block's text.
-fn with_copy(element: gpui::Div, text: &str, beside_edit: bool, theme: &Theme) -> gpui::Div {
+/// A fenced code block as a card (ADR 0105): the language (or "text") muted on the left of a
+/// header row, a Copy button always visible on the right ("Copied" for
+/// [`theme::COPIED_FEEDBACK`] after a click), the code below with `space::M` padding.
+/// `beside_edit` leaves room for the Files preview's ✎.
+fn code_card(
+    lang: Option<&str>,
+    body: gpui::Div,
+    text: &str,
+    beside_edit: bool,
+    theme: &Theme,
+) -> gpui::Div {
     let right = if beside_edit {
         space::XS + theme::ICON_BUTTON_SIZE + space::XS
     } else {
         space::XS
     };
-    // Unique per text: many thread messages can hold a code block on the same line.
-    let id = text.as_ptr() as usize;
-    let group = SharedString::from(format!("code-{id}"));
-    let copied = text.to_owned();
-    element.group(group.clone()).relative().child(
-        div()
-            .id(("code-copy", id))
-            .absolute()
-            .top(px(space::XS))
-            .right(px(right))
-            .flex()
-            .items_center()
-            .gap(px(space::XS))
-            .px(px(space::S))
-            .py(px(space::XS))
-            .rounded(px(radius::SMALL))
-            .bg(rgb(theme.surface))
-            .text_size(font_size::META)
-            .text_color(rgb(theme.text_muted))
-            .opacity(theme::opacity::HIDDEN)
-            .group_hover(group, |style| style.opacity(theme::opacity::FULL))
-            .pressable(Look::Raised, true, theme)
-            .child(icons::icon_svg(
-                Icon::Copy,
-                theme::ICON_SIZE_SMALL,
-                theme.text_muted,
-            ))
-            .child("Copy")
-            // Not a press on the page (text selection) or a pick of the block (Docs).
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_press(true, move |_, window, cx| {
-                cx.stop_propagation();
-                window.dispatch_action(Box::new(CopyCode(copied.clone())), cx);
-            }),
-    )
-}
-
-/// A fenced code block: its language muted above, then its lines with syntax colors in the
-/// monospaced font on a raised surface (long lines wrap).
-fn code_block(lang: Option<&str>, code: &Code, pick: Option<&Pick>, theme: &Theme) -> gpui::Div {
+    let key = code_key(text);
+    let done = copied() == Some(key);
+    let copy_text = text.to_owned();
     div()
         .flex()
         .flex_col()
-        .gap(px(space::XS))
-        .p(px(space::M))
         .rounded(px(radius::MEDIUM))
         .bg(rgb(theme.surface_raised))
-        .children(lang.map(|lang| {
-            div()
-                .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
-                .child(lang.to_owned())
-        }))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.divider))
+        .overflow_hidden()
         .child(
             div()
                 .flex()
-                .flex_col()
-                .font_family(theme.terminal_font_family.clone())
-                .text_size(px(theme::doc::CODE))
-                .line_height(relative(theme::doc::CODE_LINE_HEIGHT))
-                .text_color(rgb(theme.text))
-                .children(code.lines.iter().zip(&code.spans).map(|(line, spans)| {
-                    // An empty line still takes a line's height.
-                    let line = if line.is_empty() {
-                        " ".to_owned()
-                    } else {
-                        line.clone()
-                    };
-                    div().child(selectable(pick, None, |sel, bg| {
-                        let highlights =
-                            with_selection(code_highlights(spans, &[], theme), sel, &line, bg);
-                        StyledText::new(line).with_highlights(highlights)
-                    }))
-                })),
+                .items_center()
+                .justify_between()
+                .gap(px(space::S))
+                .pl(px(space::M))
+                .pr(px(right))
+                .py(px(space::XS))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .child(lang.filter(|l| !l.is_empty()).unwrap_or("text").to_owned()),
+                )
+                .child(
+                    div()
+                        .id(("code-copy", text.as_ptr() as usize))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::XS))
+                        .px(px(space::S))
+                        .py(px(space::XS))
+                        .rounded(px(radius::SMALL))
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .pressable(Look::Raised, true, theme)
+                        .child(icons::icon_svg(
+                            if done { Icon::Check } else { Icon::Copy },
+                            theme::ICON_SIZE_SMALL,
+                            theme.text_muted,
+                        ))
+                        .child(if done { "Copied" } else { "Copy" })
+                        // Not a press on the page (text selection) or a pick of the block.
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_press(true, move |_, window, cx| {
+                            cx.stop_propagation();
+                            window.dispatch_action(Box::new(CopyCode(copy_text.clone())), cx);
+                        }),
+                ),
         )
+        .child(body.p(px(space::M)))
+}
+
+/// The highlighted lines of a code block, one selectable piece per line (long lines wrap).
+fn code_lines(code: &Code, pick: Option<&Pick>, theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .font_family(theme.terminal_font_family.clone())
+        .text_size(px(theme::doc::CODE))
+        .line_height(relative(theme::doc::CODE_LINE_HEIGHT))
+        .text_color(rgb(theme.text))
+        .children(code.lines.iter().zip(&code.spans).map(|(line, spans)| {
+            // An empty line still takes a line's height.
+            let line = if line.is_empty() {
+                " ".to_owned()
+            } else {
+                line.clone()
+            };
+            div().child(selectable(pick, None, |sel, bg| {
+                let highlights = with_selection(code_highlights(spans, &[], theme), sel, &line, bg);
+                StyledText::new(line).with_highlights(highlights)
+            }))
+        }))
+}
+
+/// A code block that has no highlighting: its text verbatim in the monospaced font.
+fn plain_lines(text: &str, theme: &Theme) -> gpui::Div {
+    div()
+        .font_family(theme.terminal_font_family.clone())
+        .text_size(px(theme::doc::CODE))
+        .line_height(relative(theme::doc::CODE_LINE_HEIGHT))
+        .text_color(rgb(theme.text))
+        .child(SharedString::from(text.to_owned()))
 }
 
 /// Asks the window to show `0` large, in a dialog (the ⤢ on a diagram card).
@@ -1028,9 +1180,11 @@ fn text(runs: &[Run], theme: &Theme, selected: Option<Range<usize>>, bg: Hsla) -
         .map(|(range, _, _)| (range.clone(), theme.terminal_font_family.clone()))
         .collect();
     let accent = Hsla::from(rgb(theme.accent));
+    let muted = Hsla::from(rgb(theme.text_muted));
     let code_bg = Hsla::from(rgb(theme.surface_raised));
-    let highlights = styled.into_iter().map(move |(range, style, link)| {
-        let highlight = HighlightStyle {
+    let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+    for (range, style, link) in styled {
+        let base = HighlightStyle {
             color: link.then_some(accent),
             font_weight: style.bold.then_some(FontWeight(weight::SEMIBOLD)),
             font_style: style.italic.then_some(FontStyle::Italic),
@@ -1046,9 +1200,36 @@ fn text(runs: &[Run], theme: &Theme, selected: Option<Range<usize>>, bg: Hsla) -
             }),
             fade_out: None,
         };
-        (range, highlight)
-    });
-    let highlights = with_selection(highlights.collect(), selected, &text, bg);
+        // A code span that looks like a path: the folder muted, the file name semibold.
+        let pill = (style.code && !link)
+            .then(|| path_pill(&text[range.clone()]))
+            .flatten();
+        let Some(pill) = pill else {
+            highlights.push((range, base));
+            continue;
+        };
+        let dir_end = range.start + pill.dir.len();
+        let name_end = dir_end + pill.name.len();
+        let parts = [
+            (
+                range.start..dir_end,
+                HighlightStyle {
+                    color: Some(muted),
+                    ..base
+                },
+            ),
+            (
+                dir_end..name_end,
+                HighlightStyle {
+                    font_weight: Some(FontWeight(weight::SEMIBOLD)),
+                    ..base
+                },
+            ),
+            (name_end..range.end, base),
+        ];
+        highlights.extend(parts.into_iter().filter(|(part, _)| !part.is_empty()));
+    }
+    let highlights = with_selection(highlights, selected, &text, bg);
     StyledText::new(text)
         .with_highlights(highlights)
         .with_font_family_overrides(mono)
@@ -1591,5 +1772,24 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn code_keys_are_stable_never_zero_and_tell_blocks_apart() {
+        let key = code_key("fn a() {}");
+        assert_eq!(key, code_key("fn a() {}"));
+        assert_ne!(key, code_key("fn b() {}"));
+        assert_ne!(key, 0);
+        assert_ne!(code_key(""), 0);
+    }
+
+    #[test]
+    fn the_copied_mark_is_set_and_cleared() {
+        assert_eq!(copied(), None);
+        let key = code_key("x");
+        set_copied(Some(key));
+        assert_eq!(copied(), Some(key));
+        set_copied(None);
+        assert_eq!(copied(), None);
     }
 }

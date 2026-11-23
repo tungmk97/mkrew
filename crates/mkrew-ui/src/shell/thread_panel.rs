@@ -250,7 +250,12 @@ impl Shell {
                                     .flex_col()
                                     .gap(px(space::XS))
                                     .text_size(font_size::BODY)
-                                    .children(preview::blocks(&shown.blocks, shown, theme))
+                                    .children(preview::blocks(
+                                        &shown.blocks,
+                                        shown,
+                                        preview::Flavor::Doc,
+                                        theme,
+                                    ))
                                     .into_any_element(),
                             ),
                             PageItem::Tools(calls) => {

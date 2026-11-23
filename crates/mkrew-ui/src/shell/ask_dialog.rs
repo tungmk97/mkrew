@@ -250,7 +250,12 @@ impl Shell {
                     .bg(rgb(theme.card))
                     .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
-                    .children(preview::blocks(&shown.blocks, shown, theme))
+                    .children(preview::blocks(
+                        &shown.blocks,
+                        shown,
+                        preview::Flavor::Doc,
+                        theme,
+                    ))
                     .into_any_element(),
             ),
         };

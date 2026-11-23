@@ -87,6 +87,9 @@ pub const TOAST_MAX_LINES: usize = 4;
 /// (SPEC §11, §14).
 pub const STATUS_TICK: Duration = Duration::from_millis(500);
 
+/// A code block's Copy button reads "Copied" this long after a click (ADR 0105).
+pub const COPIED_FEEDBACK: Duration = Duration::from_millis(1500);
+
 /// The Phone access poll clock (ADR 0053): while its dialog is open `daemon.status` and
 /// Tailscale are read on every tick; closed, `daemon.status` alone every [`PHONE_POLL_IDLE`]
 /// (it keeps the title bar icon true).
@@ -576,6 +579,8 @@ pub mod doc {
     pub const CODE_LINE_HEIGHT: f32 = 1.45;
     /// The marker column of list items (bullets, numbers, check boxes line up).
     pub const MARKER_WIDTH: f32 = 20.0;
+    /// The accent dot before an unnumbered list item (ADR 0105).
+    pub const BULLET_SIZE: f32 = 6.0;
 }
 
 /// Width of the peek popover next to a session row (§20A.1).

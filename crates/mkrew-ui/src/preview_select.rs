@@ -398,6 +398,20 @@ mod tests {
         assert_eq!(copy_text(&page, &selection), "Việt có dấu");
     }
 
+    /// A regression pin, not a red-first test: ADR 0105's code card (language label, Copy) and
+    /// path pills draw no piece of their own, so a paragraph is one piece and a highlighted code
+    /// block one piece per line, as before. The real guard is the `debug_assert_eq!` in
+    /// `preview::message` and `preview::page`, which runs whenever the pieces are drawn.
+    #[test]
+    fn pills_and_code_cards_add_no_pieces() {
+        let page =
+            shown("Open `src/a.rs:3` and `v1.2` now.\n\n```rust\nfn a() {}\nfn b() {}\n```\n");
+        assert_eq!(piece_count(&page.blocks[0], &page), 1);
+        assert_eq!(piece_count(&page.blocks[1], &page), 2);
+        let untagged = shown("```\nplain\n```\n");
+        assert_eq!(piece_count(&untagged.blocks[0], &untagged), 1);
+    }
+
     #[test]
     fn an_empty_selection_copies_nothing() {
         let page = shown("abc\n");

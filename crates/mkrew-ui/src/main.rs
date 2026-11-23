@@ -1070,6 +1070,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::open_preview_link))
             .on_action(cx.listener(Self::toggle_preview_task))
             .on_action(cx.listener(Self::copy_preview_code))
+            .on_action(cx.listener(Self::open_chat_path))
             // `/` focuses the sidebar filter while nothing else has the keyboard (a terminal or
             // a field keeps its `/`).
             .on_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
