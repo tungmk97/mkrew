@@ -18,10 +18,10 @@ use ulid::Ulid;
 
 use crate::files::{
     AiGenerateParams, AiGeneratedEvent, FsCreateParams, FsFindParams, FsIgnoreParams, FsListParams,
-    FsReadParams, FsSearchParams, FsWriteParams, GitBranchesParams, GitChangedEvent,
-    GitCheckoutParams, GitCommitParams, GitDiffParams, GitDiscardParams, GitLogParams,
-    GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams,
-    GitStatusParams, ProjectRef, WatchReleaseParams,
+    FsNewNoteParams, FsReadParams, FsSearchParams, FsWriteParams, GitBranchesParams,
+    GitChangedEvent, GitCheckoutParams, GitCommitParams, GitDiffParams, GitDiscardParams,
+    GitLogParams, GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams,
+    GitStageParams, GitStatusParams, ProjectRef, WatchReleaseParams,
 };
 
 /// One JSON frame.
@@ -269,6 +269,10 @@ pub enum Request {
     /// Returns [`FsCreated`]: a new empty file or folder (spec 2026-10-29 §5).
     #[serde(rename = "fs.create")]
     FsCreate(FsCreateParams),
+    /// Returns [`FsCreated`]: a new empty note in the notes folder (Tern panes spec 2026-11-23
+    /// section 7.2).
+    #[serde(rename = "fs.new_note")]
+    FsNewNote(FsNewNoteParams),
     /// Adds a path to the target's `.gitignore`; returns `null` (spec 2026-10-29 §5).
     #[serde(rename = "fs.ignore")]
     FsIgnore(FsIgnoreParams),

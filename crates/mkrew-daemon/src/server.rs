@@ -472,6 +472,7 @@ impl Daemon {
             Request::FsRead(params) => (self.fs_read(params).await, After::Continue),
             Request::FsWrite(params) => (self.fs_write(params).await, After::Continue),
             Request::FsCreate(params) => (self.fs_create(params).await, After::Continue),
+            Request::FsNewNote(params) => (self.fs_new_note(params).await, After::Continue),
             Request::FsIgnore(params) => (self.fs_ignore(params).await, After::Continue),
             Request::FsFind(params) => (self.fs_find(params).await, After::Continue),
             Request::SlashList(params) => (self.slash_list(params).await, After::Continue),

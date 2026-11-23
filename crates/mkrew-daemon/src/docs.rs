@@ -56,6 +56,22 @@ pub fn relative_path(file_path: &str) -> Option<(String, PathBuf)> {
         .then_some((normalized, path))
 }
 
+/// A client-supplied absolute path inside `folder` (the notes folder, as
+/// [`mkrew_core::notes::folder`] normalized it), with `/` separators, and the same path for
+/// joining; `None` for a relative path, `folder` itself, a path outside it and one that steps
+/// out of it with `..`. The exception to [`relative_path`] for `fs.read` / `fs.write` of notes
+/// (Tern panes spec 2026-11-23 section 7.2).
+// ponytail: compared component by component, so `c:/notes` and `C:/notes` differ; the daemon
+// answers the folder in the spelling of the setting, which is what the client sends back.
+pub fn notes_file(file_path: &str, folder: &Path) -> Option<(String, PathBuf)> {
+    let normalized = file_path.trim().replace('\\', "/");
+    let path = PathBuf::from(&normalized);
+    let mut inside = path.strip_prefix(folder).ok()?.components().peekable();
+    inside.peek()?;
+    (path.is_absolute() && inside.all(|c| matches!(c, Component::Normal(_))))
+        .then_some((normalized, path))
+}
+
 /// The file's text.
 pub fn read(path: &Path) -> Result<String, ReadError> {
     let meta = match path.metadata() {
@@ -241,6 +257,50 @@ mod tests {
         assert_eq!(relative_path(r"C:\x.md"), None);
         assert_ne!(hash(b"a"), hash(b"b"));
         assert_eq!(hash(b"a"), hash(b"a"));
+    }
+
+    #[test]
+    fn notes_file_accepts_absolute_paths_inside_the_folder_only() {
+        let (root, other) = if cfg!(windows) {
+            ("C:/notes", "C:/other")
+        } else {
+            ("/notes", "/other")
+        };
+        let folder = Path::new(root);
+        let inside = |path: &str| notes_file(path, folder).map(|(shown, _)| shown);
+        assert_eq!(
+            inside(&format!("{root}/a.md")),
+            Some(format!("{root}/a.md"))
+        );
+        assert_eq!(
+            inside(&format!("{root}\\sub\\a.md")),
+            Some(format!("{root}/sub/a.md"))
+        );
+        assert_eq!(
+            inside(&format!("  {root}/a.md ")),
+            Some(format!("{root}/a.md"))
+        );
+        let (_, joined) = notes_file(&format!("{root}/sub/a.md"), folder).unwrap();
+        assert_eq!(joined, Path::new(root).join("sub").join("a.md"));
+        for bad in [
+            String::new(),
+            "a.md".into(),
+            "notes/a.md".into(),
+            root.into(),
+            format!("{root}/"),
+            format!("{root}/../a.md"),
+            format!("{root}/sub/../../a.md"),
+            format!("{other}/../notes/a.md"),
+            format!("{root}x/a.md"),
+            format!("{other}/a.md"),
+        ] {
+            assert_eq!(inside(&bad), None, "{bad:?}");
+        }
+        #[cfg(windows)]
+        {
+            assert!(inside("C:\\notes\\a.md").is_some());
+            assert_eq!(inside("D:/notes/a.md"), None);
+        }
     }
 
     #[test]

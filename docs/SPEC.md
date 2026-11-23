@@ -2230,6 +2230,9 @@ file_ref = "@{path}"        # §20B.1; how a picked file is typed; "{path}" alon
 [zed]
 follow_debounce_ms = 1500   # §20C.4
 
+[notes]                     # Tern panes spec 2026-11-23 §7.2; where New note saves its file
+folder = ""                 # "" = the workspace root; relative = below it; absolute = used as is (not ~; no ..), for every workspace; the daemon reads it
+
 [ui]
 font_family = ""            # §14; "" = system UI font; other UI sizes keep their ratio to it
 font_size = 13              # px, 8–32

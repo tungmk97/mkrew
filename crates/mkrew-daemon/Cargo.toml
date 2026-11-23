@@ -12,6 +12,9 @@ workspace = true
 # Headless emulator per session (SPEC §8); same version as the M0 spike.
 alacritty_terminal = "0.26"
 anyhow = "1"
+# `fs.new_note` names a note by the local time (`Local::now()`); same version and `clock` feature
+# as mkrew-ui, so the tree gains no package.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # Canonical paths without `\\?\`: an 8.3 / case variant of the project folder is still inside
 # it (plan links, hook edits); already in the tree through mkrew-cli.
 dunce = "1.0.5"
