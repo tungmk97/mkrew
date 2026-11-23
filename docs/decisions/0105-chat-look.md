@@ -26,6 +26,8 @@ So Tern and Mkrew have the same architecture; the gap is the drawing and a few f
 - The data path is unchanged: the UI's `ThreadReader` reads the transcript through `session.transcript`.
   No new reader, no RPC, no ACP.
 - omp's recap is read by the daemon from `history.db`, opened `SQLITE_OPEN_READ_ONLY` with a 200 ms busy timeout, and added to the `session.transcript` reply as `recap { text, at }` (protocol 57).
+- When a hook reports a new native session id, the daemon also sends `session.updated` with the session.
+  Before, the id reached clients only with the next session list, so a Chat pane or the Thread section opened before the agent's first hook stayed "No messages yet" until the UI reconnected.
   A missing file, table or row, or any SQLite error, is no recap.
   The UI shows it after the last turn when it is not older than that turn's prompt and the agent is not working.
   A machine window gets the recap of that machine's daemon.
