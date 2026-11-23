@@ -1,0 +1,2519 @@
+//! The pure half of the omp native surface in the UI (ADR 0107, spec 7.2): the theme mapping of
+//! TSP tokens, tones and icons, the ANSI line parser, the pane state table, and the `Mirror`
+//! the UI keeps of the daemon's documents. `shell/tsp_view.rs` draws it.
+
+use std::collections::{BTreeMap, HashMap};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::rc::Rc;
+
+use mkrew_core::tsp::doc::{Document, Node};
+use mkrew_protocol::{TspBlob, TspChange, TspSnapshot, TspState, TspSurface, TspUpdate};
+use serde_json::{Map, Value, json};
+
+use crate::icons::Icon;
+use crate::theme::{Theme, space};
+
+/// The one table from omp's span tokens and node tones to theme fields (spec 7.2). `None`: not a
+/// color token (a modifier, omp's own palette name, or nothing), the text draws in `theme.text`.
+pub fn color(token: &str, theme: &Theme) -> Option<u32> {
+    Some(match token {
+        "accent" | "info" | "link" | "user" => theme.accent,
+        "muted" | "dim" => theme.text_muted,
+        "error" => theme.danger_text,
+        "warning" | "pending" => theme.status_needs_input,
+        "success" => theme.status_done,
+        "text" | "neutral" => theme.text,
+        _ => return None,
+    })
+}
+
+/// The foreground of a node `tone`; an unknown tone is plain text.
+pub fn tone_color(tone: &str, theme: &Theme) -> u32 {
+    color(tone, theme).unwrap_or(theme.text)
+}
+
+/// How one span draws. `mono` is the terminal font with the glyph fallbacks (code, paths and the
+/// private-use icon glyphs omp forces while a surface is live).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SpanStyle {
+    pub color: Option<u32>,
+    pub bold: bool,
+    pub italic: bool,
+    pub strike: bool,
+    pub mono: bool,
+    pub mark: bool,
+}
+
+/// A span's space separated `s` tokens (reference 6.1).
+pub fn span_style(tokens: &str, theme: &Theme) -> SpanStyle {
+    let mut style = SpanStyle::default();
+    for token in tokens.split_whitespace() {
+        match token {
+            "strong" => style.bold = true,
+            "em" => style.italic = true,
+            "del" => style.strike = true,
+            "mark" => style.mark = true,
+            "mono" | "code" | "path" | "icon" => style.mono = true,
+            _ => {}
+        }
+        if style.color.is_none() {
+            style.color = color(token, theme);
+        }
+    }
+    style
+}
+
+/// The Mkrew icon of a TSP icon name; a name without an entry draws nothing.
+pub fn icon(name: &str) -> Option<Icon> {
+    Some(match name {
+        "copy" => Icon::Copy,
+        "x" => Icon::X,
+        "eye" => Icon::Eye,
+        "model" | "wand" => Icon::Sparkles,
+        "chev" => Icon::ChevronDown,
+        "jobs" | "context.compaction" => Icon::Layers,
+        "job" => Icon::Zap,
+        "history" => Icon::History,
+        "link" => Icon::Link,
+        "open" => Icon::ExternalLink,
+        "rewind" => Icon::Undo2,
+        "check" => Icon::Check,
+        "lightbulb" => Icon::Lightbulb,
+        "loop" => Icon::RotateCw,
+        "back" => Icon::ChevronLeft,
+        "users" | "agents" => Icon::Users,
+        "agent" => Icon::Bot,
+        "bash" => Icon::Terminal,
+        "session" => Icon::SquareTerminal,
+        "time" => Icon::Clock,
+        "folder" => Icon::Folder,
+        "plus" => Icon::Plus,
+        "wrench" => Icon::Settings,
+        "x-circle" => Icon::SquareX,
+        "send" => Icon::Send,
+        _ => return None,
+    })
+}
+
+/// A string prop, or an array of `{t, s?}` spans, as styled runs. Entries without `t` are skipped.
+pub fn spans_of(value: &Value, theme: &Theme) -> Vec<(String, SpanStyle)> {
+    match value {
+        Value::String(text) => vec![(text.clone(), SpanStyle::default())],
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                let text = item.get("t")?.as_str()?;
+                let tokens = item.get("s").and_then(Value::as_str).unwrap_or("");
+                Some((text.to_owned(), span_style(tokens, theme)))
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The text of a text-like node: its `spans`, else its `text`.
+pub fn node_spans(props: &Map<String, Value>, theme: &Theme) -> Vec<(String, SpanStyle)> {
+    match props.get("spans").or_else(|| props.get("text")) {
+        Some(value) => spans_of(value, theme),
+        None => Vec::new(),
+    }
+}
+
+/// The one muted line an unknown kind draws (spec 7.1): its first non-blank text-like prop.
+pub fn generic_line(props: &Map<String, Value>, theme: &Theme) -> Option<String> {
+    ["text", "title", "head", "label", "name"]
+        .iter()
+        .filter_map(|key| props.get(*key))
+        .map(|value| {
+            spans_of(value, theme)
+                .into_iter()
+                .map(|(text, _)| text)
+                .collect::<String>()
+        })
+        .find(|line| !line.trim().is_empty())
+}
+
+/// A `gap` token in px.
+pub fn gap_px(name: Option<&str>) -> f32 {
+    match name {
+        Some("xs") => space::XS,
+        Some("sm") => space::S,
+        Some("md") => space::M,
+        Some("lg") => space::L,
+        _ => 0.0,
+    }
+}
+
+/// The pen of the SGR parser.
+#[derive(Clone, Copy, Default)]
+struct Pen {
+    fg: Option<u32>,
+    bold: bool,
+    dim: bool,
+    italic: bool,
+    strike: bool,
+    reverse: bool,
+}
+
+impl Pen {
+    fn style(self, theme: &Theme) -> SpanStyle {
+        SpanStyle {
+            color: self.fg.or(self.dim.then_some(theme.text_muted)),
+            bold: self.bold,
+            italic: self.italic,
+            strike: self.strike,
+            mono: false,
+            mark: self.reverse,
+        }
+    }
+}
+
+/// The color of palette index `n`: 0..16 are the theme's ANSI colors, then the 6x6x6 cube and the
+/// 24 grays of xterm.
+fn indexed(n: u32, theme: &Theme) -> u32 {
+    match n {
+        0..=15 => theme.ansi[n as usize],
+        16..=231 => {
+            let cube = n - 16;
+            let level = |v: u32| if v == 0 { 0 } else { 55 + 40 * v };
+            (level(cube / 36) << 16) | (level(cube % 36 / 6) << 8) | level(cube % 6)
+        }
+        _ => {
+            let gray = (8 + 10 * (n.min(255) - 232)).min(255);
+            (gray << 16) | (gray << 8) | gray
+        }
+    }
+}
+
+/// The color after `38` or `48`: `5;n` or `2;r;g;b`. Consumes exactly its own parameters.
+fn extended(params: &mut impl Iterator<Item = u32>, theme: &Theme) -> Option<u32> {
+    match params.next()? {
+        5 => Some(indexed(params.next()?, theme)),
+        2 => {
+            let (r, g, b) = (params.next()?, params.next()?, params.next()?);
+            Some((r.min(255) << 16) | (g.min(255) << 8) | b.min(255))
+        }
+        _ => None,
+    }
+}
+
+fn sgr(pen: &mut Pen, params: &str, theme: &Theme) {
+    if params.is_empty() {
+        *pen = Pen::default();
+        return;
+    }
+    let mut params = params
+        .split([';', ':'])
+        .map(|p| p.parse::<u32>().unwrap_or(0));
+    while let Some(code) = params.next() {
+        match code {
+            0 => *pen = Pen::default(),
+            1 => pen.bold = true,
+            2 => pen.dim = true,
+            3 => pen.italic = true,
+            7 => pen.reverse = true,
+            9 => pen.strike = true,
+            22 => {
+                pen.bold = false;
+                pen.dim = false;
+            }
+            23 => pen.italic = false,
+            27 => pen.reverse = false,
+            29 => pen.strike = false,
+            30..=37 => pen.fg = Some(theme.ansi[(code - 30) as usize]),
+            90..=97 => pen.fg = Some(theme.ansi[(code - 90) as usize + 8]),
+            39 => pen.fg = None,
+            38 => pen.fg = extended(&mut params, theme),
+            // Backgrounds are dropped (reference 6.1) but their parameters are consumed.
+            48 => {
+                extended(&mut params, theme);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn push_run(runs: &mut Vec<(String, SpanStyle)>, text: &mut String, style: SpanStyle) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some((last, last_style)) = runs.last_mut()
+        && *last_style == style
+    {
+        last.push_str(text);
+    } else {
+        runs.push((text.clone(), style));
+    }
+    text.clear();
+}
+
+/// One line of ANSI text as styled runs: SGR 0 1 2 3 7 9 22 23 27 29 30-37 38 39 90-97 are
+/// applied, every other CSI, OSC and escape is dropped, equal neighbours merge.
+pub fn ansi_runs(line: &str, theme: &Theme) -> Vec<(String, SpanStyle)> {
+    let mut runs = Vec::new();
+    let mut text = String::new();
+    let mut pen = Pen::default();
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            text.push(c);
+            continue;
+        }
+        match chars.peek() {
+            Some('[') => {
+                chars.next();
+                let mut params = String::new();
+                let mut last = None;
+                for c in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&c) {
+                        last = Some(c);
+                        break;
+                    }
+                    params.push(c);
+                }
+                if last == Some('m') {
+                    push_run(&mut runs, &mut text, pen.style(theme));
+                    sgr(&mut pen, &params, theme);
+                }
+            }
+            Some(']') => {
+                chars.next();
+                while let Some(c) = chars.next() {
+                    if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            Some(_) => {
+                chars.next();
+            }
+            None => {}
+        }
+    }
+    push_run(&mut runs, &mut text, pen.style(theme));
+    runs
+}
+
+/// The PTY columns that fit `width_px` at `cell_px` per cell; never below 20 (omp's layout needs
+/// room) and never wrapping around.
+pub fn cols_for(width_px: f32, cell_px: f32) -> u16 {
+    if cell_px.is_nan() || cell_px <= 0.0 || width_px.is_nan() || width_px <= 0.0 {
+        return MIN_COLS;
+    }
+    // `as` saturates for floats, NaN is already excluded.
+    ((width_px / cell_px).floor() as u16).max(MIN_COLS)
+}
+
+const MIN_COLS: u16 = 20;
+
+/// What a pane of an agent shows (spec 7.3 table).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneView {
+    /// Today's terminal grid.
+    Terminal,
+    /// TSP is on but no surface yet: the starting state.
+    Starting,
+    /// The live surface.
+    Surface,
+    /// The last document of an exited session.
+    ReadOnly,
+}
+
+/// An exited session keeps its last `tsp` value, so `exited` is part of the gate: a waiting
+/// session that exited shows the terminal, a live one that exited keeps its last document.
+pub fn pane_view(state: TspState, exited: bool, has_surface: bool) -> PaneView {
+    match (state, exited, has_surface) {
+        (TspState::Waiting, false, _) => PaneView::Starting,
+        (TspState::Live, false, true) => PaneView::Surface,
+        // Live, the snapshot is still on its way.
+        (TspState::Live, false, false) => PaneView::Starting,
+        (TspState::Live, true, true) => PaneView::ReadOnly,
+        _ => PaneView::Terminal,
+    }
+}
+
+/// Whether a session went from waiting for, or showing, a surface to drawing as text.
+pub fn enters_fallback(before: Option<TspState>, after: TspState) -> bool {
+    matches!(before, Some(TspState::Waiting | TspState::Live)) && after == TspState::Fallback
+}
+
+/// The toast text for a fallback; `reason` is the daemon's (`TspSnapshot.reason`).
+pub fn fallback_toast(reason: Option<&str>) -> String {
+    match reason.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(reason) => format!("omp is drawing as text: {reason}"),
+        None => "omp is drawing as text".to_owned(),
+    }
+}
+
+/// Whether a [`Mirror::apply`] changed the mirror or needs a new snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirrorResult {
+    Applied,
+    Gap,
+}
+
+/// The UI's copy of a session's surfaces: loaded from `tsp.snapshot`, kept current by
+/// `tsp.update` events (spec 6.4).
+#[derive(Debug, Default)]
+pub struct Mirror {
+    surfaces: BTreeMap<String, (TspSurface, Document)>,
+    blobs: HashMap<String, TspBlob>,
+}
+
+impl Mirror {
+    pub fn from_snapshot(snapshot: TspSnapshot) -> Self {
+        Self {
+            surfaces: snapshot
+                .surfaces
+                .into_iter()
+                .map(|surface| {
+                    let doc = Document::from_tree(&surface.root);
+                    (surface.id.clone(), (surface, doc))
+                })
+                .collect(),
+            blobs: snapshot
+                .blobs
+                .into_iter()
+                .map(|b| (b.id.clone(), b))
+                .collect(),
+        }
+    }
+
+    /// Applies one update. A frame at or below the surface's seq was already in the snapshot and
+    /// is ignored; the next one applies; any other is a [`MirrorResult::Gap`] (ask for a new
+    /// snapshot, nothing is applied).
+    pub fn apply(&mut self, update: &TspUpdate) -> MirrorResult {
+        match &update.change {
+            TspChange::Frame { seq, ops, blobs } => {
+                let Some((meta, doc)) = self.surfaces.get_mut(&update.surface) else {
+                    return MirrorResult::Gap;
+                };
+                if *seq <= meta.seq {
+                    return MirrorResult::Applied;
+                }
+                if *seq != meta.seq + 1 {
+                    return MirrorResult::Gap;
+                }
+                // A failing op was already skipped by the daemon; the rest still run here too.
+                doc.apply(ops);
+                meta.seq = *seq;
+                for blob in blobs {
+                    self.blobs.insert(blob.id.clone(), blob.clone());
+                }
+            }
+            TspChange::Open { surface } => {
+                let doc = Document::from_tree(&surface.root);
+                self.surfaces
+                    .insert(update.surface.clone(), (surface.clone(), doc));
+            }
+            TspChange::Closed { keep: true } => {
+                if let Some((meta, _)) = self.surfaces.get_mut(&update.surface) {
+                    meta.read_only = true;
+                }
+            }
+            TspChange::Closed { keep: false } => {
+                self.surfaces.remove(&update.surface);
+            }
+        }
+        MirrorResult::Applied
+    }
+
+    pub fn surface(&self, id: &str) -> Option<&(TspSurface, Document)> {
+        self.surfaces.get(id)
+    }
+
+    /// The surface the pane draws: a `screen` one covers the inline one.
+    pub fn shown(&self) -> Option<&(TspSurface, Document)> {
+        (self
+            .surfaces
+            .values()
+            .rev()
+            .find(|(meta, _)| meta.mode == "screen"))
+        .or_else(|| {
+            self.surfaces
+                .values()
+                .find(|(meta, _)| meta.mode == "inline")
+        })
+    }
+
+    /// The inline surface's id: the target of `theme` events.
+    pub fn inline_id(&self) -> Option<&str> {
+        (self
+            .surfaces
+            .values()
+            .find(|(meta, _)| meta.mode == "inline"))
+        .map(|(m, _)| m.id.as_str())
+    }
+
+    pub fn blob(&self, id: &str) -> Option<&TspBlob> {
+        self.blobs.get(id)
+    }
+}
+
+/// Whether anything in `doc` changes with time: a spinner, a running `elapsed` (no `stopped`), a
+/// shimmer, a rate or a checklist with an active item. The status tick redraws only while this
+/// is true (ADR 0086).
+pub fn animating(doc: &Document) -> bool {
+    let mut stack = vec![doc.root()];
+    while let Some(id) = stack.pop() {
+        for node in doc.children(id) {
+            let live = match node.kind.as_str() {
+                "spinner" | "shimmer" | "rate" => true,
+                "elapsed" => !node.props.contains_key("stopped"),
+                "checklist" => Checklist::from_props(&node.props).has_active(),
+                _ => false,
+            };
+            if live {
+                return true;
+            }
+            stack.push(&node.id);
+        }
+    }
+    false
+}
+
+/// The surface roots omp adds itself; a node whose id is `<root>.<keypath>` belongs to the root,
+/// not to a component, so omp cannot route an event for it (reference section 5).
+const ROOTS: [&str; 3] = ["main", "dock", "layer"];
+
+pub fn root_owned(id: &str) -> bool {
+    id.contains('.')
+        && id
+            .split('.')
+            .next()
+            .is_some_and(|base| ROOTS.contains(&base))
+}
+
+/// `select` (a click) or `activate` (a double click) of `item` in `list`.
+pub fn select_event(list: &str, item: &str, double: bool) -> Value {
+    json!({"ev": if double { "activate" } else { "select" }, "id": list, "item": item})
+}
+
+/// `toggle` of a collapsible node; `None` for a node omp cannot route.
+pub fn toggle_event(id: &str, collapsed: bool) -> Option<Value> {
+    (!root_owned(id)).then(|| json!({"ev": "toggle", "id": id, "collapsed": collapsed}))
+}
+
+/// The event a click (or double click) on `node` sends (spec 7.4); `None` when the node has no
+/// action or omp cannot route it. The daemon adds `sf`.
+pub fn click_event(doc: &Document, node: &Node, double: bool) -> Option<Value> {
+    if root_owned(&node.id) {
+        return None;
+    }
+    if node.kind == "item"
+        && let Some(list) = node
+            .parent
+            .as_deref()
+            .and_then(|id| doc.get(id))
+            .filter(|list| list.kind == "list")
+    {
+        return (!root_owned(&list.id)).then(|| select_event(&list.id, &node.id, double));
+    }
+    if matches!(node.kind.as_str(), "editor" | "input") {
+        return Some(json!({"ev": "focus", "id": node.id}));
+    }
+    let act = node
+        .props
+        .get("actions")?
+        .get(if double { "dblclick" } else { "click" })?
+        .as_str()?;
+    Some(json!({"ev": "action", "id": node.id, "act": act}))
+}
+
+/// Index among `main`'s children of the row that holds `id`: what a `reveal` op scrolls to.
+pub fn reveal_index(doc: &Document, id: &str) -> Option<usize> {
+    let mut at = doc.get(id)?;
+    loop {
+        let parent = at.parent.as_deref()?;
+        if parent == "main" {
+            return doc.children("main").position(|row| row.id == at.id);
+        }
+        at = doc.get(parent)?;
+    }
+}
+
+/// The texts of the toasts a frame's ops add or change (`toast` goes to Mkrew's toast layer, spec
+/// 7.1). `doc` is the document after the ops, used to tell a toast from another node.
+pub fn toast_texts(doc: &Document, ops: &[Value]) -> Vec<String> {
+    ops.iter()
+        .filter_map(|op| {
+            let op = op.as_array()?;
+            let text = match op.first()?.as_str()? {
+                "add" => {
+                    let node = op.get(4)?;
+                    if node.get("k")?.as_str()? != "toast" {
+                        return None;
+                    }
+                    node.get("p")?.get("text")?
+                }
+                "set" => {
+                    if doc.get(op.get(1)?.as_str()?)?.kind != "toast" {
+                        return None;
+                    }
+                    op.get(2)?.get("text")?
+                }
+                _ => return None,
+            };
+            Some(text.as_str()?.to_owned())
+        })
+        .filter(|text| !text.is_empty())
+        .collect()
+}
+
+/// Parsed values by node id, kept while the node's text is unchanged. The key is the node id plus
+/// the text's length and hash, so a streaming `text append` re-parses only the node it grew and a
+/// same-length rewrite is not mistaken for no change.
+// ponytail: entries of deleted nodes stay until the pane's state is dropped; prune if a session
+// ever streams millions of distinct nodes.
+pub struct TextCache<T> {
+    entries: HashMap<String, (usize, u64, Rc<T>)>,
+}
+
+impl<T> Default for TextCache<T> {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+}
+
+impl<T> TextCache<T> {
+    pub fn get(&mut self, id: &str, text: &str, make: impl FnOnce(&str) -> T) -> Rc<T> {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        let key = (text.len(), hasher.finish());
+        if let Some((len, hash, value)) = self.entries.get(id)
+            && (*len, *hash) == key
+        {
+            return value.clone();
+        }
+        let value = Rc::new(make(text));
+        self.entries
+            .insert(id.to_owned(), (key.0, key.1, value.clone()));
+        value
+    }
+
+    /// The parse last made for node `id`, whatever its text was.
+    pub fn peek(&self, id: &str) -> Option<Rc<T>> {
+        self.entries.get(id).map(|(_, _, value)| value.clone())
+    }
+}
+
+/// A fenced code block of `text`, its fence longer than any backtick run inside.
+pub fn code_fence(lang: Option<&str>, text: &str) -> String {
+    let (mut longest, mut run) = (0, 0);
+    for c in text.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let fence = "`".repeat((longest + 1).max(3));
+    format!("{fence}{}\n{text}\n{fence}", lang.unwrap_or(""))
+}
+
+/// The byte offset of UTF-16 unit `index` of `text` (omp's editor offsets); inside a surrogate
+/// pair it snaps to the character's start, past the end it clamps.
+pub fn byte_at_utf16(text: &str, index: usize) -> usize {
+    let mut units = 0;
+    for (byte, c) in text.char_indices() {
+        units += c.len_utf16();
+        if index < units {
+            return byte;
+        }
+    }
+    text.len()
+}
+
+/// Filled blocks of 4 for a thinking level.
+pub fn effort_steps(level: &str) -> usize {
+    match level {
+        "minimal" | "low" => 1,
+        "medium" => 2,
+        "high" => 3,
+        "xhigh" | "max" => 4,
+        _ => 0,
+    }
+}
+
+/// The tone of a meter at `value` given omp's `{warn, bad}` thresholds.
+pub fn meter_tone(value: f64, thresholds: Option<&Value>) -> &'static str {
+    let at = |key: &str| thresholds.and_then(|t| t.get(key)).and_then(Value::as_f64);
+    match (at("bad"), at("warn")) {
+        (Some(bad), _) if value >= bad => "error",
+        (_, Some(warn)) if value >= warn => "warning",
+        _ => "accent",
+    }
+}
+
+pub fn rate_label(value: f64, unit: &str) -> String {
+    if value >= 10.0 {
+        format!("{value:.0} {unit}")
+    } else {
+        format!("{value:.1} {unit}")
+    }
+}
+
+/// An `elapsed` node's value: `stopped` once set, else `age` plus the time since this UI first
+/// saw that `age`.
+pub fn elapsed_ms(age: u64, stopped: Option<u64>, since_seen_ms: u64) -> u64 {
+    stopped.unwrap_or(age + since_seen_ms)
+}
+
+pub fn elapsed_label(ms: u64) -> String {
+    let secs = ms / 1000;
+    match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m {:02}s", secs / 60, secs % 60),
+        _ => format!("{}h {:02}m", secs / 3600, secs % 3600 / 60),
+    }
+}
+
+/// What a key does in a TSP pane that may hold a selection (Ctrl+C): copy it, or let the key
+/// reach omp as in a terminal pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyOrSend {
+    Copy,
+    Send,
+}
+
+pub fn copy_decision(has_selection: bool, is_copy_key: bool) -> CopyOrSend {
+    if has_selection && is_copy_key {
+        CopyOrSend::Copy
+    } else {
+        CopyOrSend::Send
+    }
+}
+
+/// Esc clears a selection (and is not sent); without one omp gets it.
+pub fn escape_clears(has_selection: bool, is_escape: bool) -> bool {
+    has_selection && is_escape
+}
+
+/// A press on node `key`: a double click takes the word, Shift extends the selection of the same
+/// node, anything else puts a caret (the Chat rule, `chat::press`, with a node id as the key).
+pub fn press(
+    current: Option<(String, crate::preview_select::Selection)>,
+    key: &str,
+    shown: &crate::docs::Shown,
+    at: crate::preview_select::Point,
+    extend: bool,
+    clicks: usize,
+) -> (String, crate::preview_select::Selection) {
+    use crate::preview_select::Selection;
+    let selection = match current {
+        _ if clicks == 2 => crate::preview_select::word_at(shown, at),
+        Some((was, selection)) if extend && was == key => Selection {
+            head: at,
+            ..selection
+        },
+        _ => Selection::caret(at),
+    };
+    (key.to_owned(), selection)
+}
+
+/// Status of one todo item as omp sends it (`vbe` in `tools/todo.ts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TodoStatus {
+    Active,
+    Pending,
+    Done,
+    Blocked,
+    Dropped,
+}
+
+impl TodoStatus {
+    /// An unknown status is pending.
+    pub fn parse(status: &str) -> Self {
+        match status {
+            "active" => Self::Active,
+            "done" => Self::Done,
+            "blocked" => Self::Blocked,
+            "dropped" => Self::Dropped,
+            _ => Self::Pending,
+        }
+    }
+
+    /// Counted in `done/total` and collapses its phase.
+    pub fn finished(self) -> bool {
+        matches!(self, Self::Done | Self::Dropped)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoItem {
+    pub id: String,
+    pub text: String,
+    pub status: TodoStatus,
+    /// A blocked item's blocker.
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoPhase {
+    pub id: String,
+    pub title: String,
+    /// omp's own `collapsed`.
+    pub collapsed: bool,
+    pub items: Vec<TodoItem>,
+}
+
+/// What a phase's header mark shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhaseMark {
+    /// Loading dots: an item is active.
+    Working,
+    /// A filled `status_done` circle: every item is finished.
+    Done,
+    /// A `text_muted` ring.
+    Open,
+}
+
+impl TodoPhase {
+    /// `(finished, all)` items.
+    pub fn counts(&self) -> (usize, usize) {
+        (
+            self.items.iter().filter(|i| i.status.finished()).count(),
+            self.items.len(),
+        )
+    }
+
+    fn all_finished(&self) -> bool {
+        !self.items.is_empty() && self.items.iter().all(|i| i.status.finished())
+    }
+
+    pub fn mark(&self) -> PhaseMark {
+        if self.items.iter().any(|i| i.status == TodoStatus::Active) {
+            PhaseMark::Working
+        } else if self.all_finished() {
+            PhaseMark::Done
+        } else {
+            PhaseMark::Open
+        }
+    }
+
+    /// The reminder's one phase has a blank name: no header is drawn.
+    pub fn headerless(&self) -> bool {
+        self.title.trim().is_empty()
+    }
+
+    /// Header only, before the user clicks it: omp said `collapsed`, or every item is finished.
+    /// A phase without a header is never collapsed (nothing could reopen it).
+    pub fn default_collapsed(&self) -> bool {
+        !self.headerless() && (self.collapsed || self.all_finished())
+    }
+}
+
+/// A click on a header (UI state only) flips the default.
+pub fn collapsed_now(default: bool, toggled: bool) -> bool {
+    default != toggled
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChecklistMode {
+    Full,
+    Reminder,
+    Hud,
+}
+
+/// The `checklist` node of omp's todo (spec 7.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checklist {
+    pub mode: ChecklistMode,
+    pub phases: Vec<TodoPhase>,
+    pub note: Option<String>,
+}
+
+/// The hud's mark: loading dots (working), a ring (waiting), a filled circle (nothing left).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HudMark {
+    Dots,
+    Ring,
+    Done,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HudLine {
+    pub mark: HudMark,
+    pub text: String,
+    pub done: usize,
+    pub total: usize,
+}
+
+pub const ALL_DONE: &str = "All done";
+
+impl Checklist {
+    pub fn from_props(props: &Map<String, Value>) -> Self {
+        let mode = match props.get("mode").and_then(Value::as_str) {
+            Some("hud") => ChecklistMode::Hud,
+            Some("reminder") => ChecklistMode::Reminder,
+            _ => ChecklistMode::Full,
+        };
+        let text =
+            |value: &Value, key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
+        let phases = (props.get("phases").and_then(Value::as_array))
+            .map(|phases| {
+                phases
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, phase)| phase.is_object())
+                    .map(|(at, phase)| TodoPhase {
+                        id: text(phase, "id").unwrap_or_else(|| format!("p{at}")),
+                        title: text(phase, "title").unwrap_or_default(),
+                        collapsed: phase.get("collapsed").and_then(Value::as_bool) == Some(true),
+                        items: (phase.get("items").and_then(Value::as_array))
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, item)| item.is_object())
+                                    .map(|(at, item)| TodoItem {
+                                        id: text(item, "id").unwrap_or_else(|| format!("i{at}")),
+                                        text: text(item, "text").unwrap_or_default(),
+                                        status: TodoStatus::parse(
+                                            item.get("status")
+                                                .and_then(Value::as_str)
+                                                .unwrap_or(""),
+                                        ),
+                                        note: text(item, "note").filter(|n| !n.trim().is_empty()),
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            mode,
+            phases,
+            note: props
+                .get("note")
+                .and_then(Value::as_str)
+                .filter(|n| !n.trim().is_empty())
+                .map(str::to_owned),
+        }
+    }
+
+    /// `(finished, all)` over every phase.
+    pub fn counts(&self) -> (usize, usize) {
+        self.phases
+            .iter()
+            .map(TodoPhase::counts)
+            .fold((0, 0), |(d, t), (pd, pt)| (d + pd, t + pt))
+    }
+
+    pub fn has_active(&self) -> bool {
+        self.first(TodoStatus::Active).is_some()
+    }
+
+    fn first(&self, status: TodoStatus) -> Option<&TodoItem> {
+        self.phases
+            .iter()
+            .flat_map(|p| p.items.iter())
+            .find(|i| i.status == status)
+    }
+
+    /// The hud's one line (spec 7.7): the active item, else the first pending one, else (a
+    /// blocked item must not read as done) the first blocked one, else "All done".
+    pub fn hud_line(&self) -> Option<HudLine> {
+        let (done, total) = self.counts();
+        if total == 0 {
+            return None;
+        }
+        let (mark, text) = if let Some(item) = self.first(TodoStatus::Active) {
+            (HudMark::Dots, item.text.clone())
+        } else if let Some(item) = self.first(TodoStatus::Pending) {
+            (HudMark::Ring, item.text.clone())
+        } else if let Some(item) = self.first(TodoStatus::Blocked) {
+            (HudMark::Ring, item.text.clone())
+        } else {
+            (HudMark::Done, ALL_DONE.to_owned())
+        };
+        Some(HudLine {
+            mark,
+            text,
+            done,
+            total,
+        })
+    }
+}
+
+/// A phase number in Roman numerals; 0 and numbers past 3999 stay digits.
+pub fn roman(n: usize) -> String {
+    if n == 0 || n > 3999 {
+        return n.to_string();
+    }
+    const TABLE: [(usize, &str); 13] = [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ];
+    let (mut n, mut out) = (n, String::new());
+    for (value, symbol) in TABLE {
+        while n >= value {
+            out.push_str(symbol);
+            n -= value;
+        }
+    }
+    out
+}
+
+/// The mark of an item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemMark {
+    /// A ring around a dot.
+    Active,
+    Ring,
+    Check,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemLook {
+    pub mark: ItemMark,
+    pub mark_color: u32,
+    pub text_color: u32,
+    pub strike: bool,
+    /// Appended to the text.
+    pub suffix: &'static str,
+}
+
+pub fn item_look(status: TodoStatus, theme: &Theme) -> ItemLook {
+    let (mark, mark_color, text_color, strike, suffix) = match status {
+        TodoStatus::Active => (ItemMark::Active, theme.accent, theme.accent, false, ""),
+        TodoStatus::Pending => (ItemMark::Ring, theme.text_muted, theme.text, false, ""),
+        TodoStatus::Done => (
+            ItemMark::Check,
+            theme.status_done,
+            theme.text_muted,
+            false,
+            "",
+        ),
+        TodoStatus::Dropped => (ItemMark::Ring, theme.text_muted, theme.text_muted, true, ""),
+        TodoStatus::Blocked => (
+            ItemMark::Ring,
+            theme.status_needs_input,
+            theme.status_needs_input,
+            false,
+            " (blocked)",
+        ),
+    };
+    ItemLook {
+        mark,
+        mark_color,
+        text_color,
+        strike,
+        suffix,
+    }
+}
+
+/// A node's `role` prop.
+pub fn role_of(node: &Node) -> Option<&str> {
+    node.props.get("role").and_then(Value::as_str)
+}
+
+/// The role specific looks of omp's `ask` card (spec 7.6). Roles match whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskLook {
+    /// `omp.editor.ask`: the composer card.
+    Card,
+    /// `omp.editor.ask.hidden`: the one line version.
+    Hidden,
+    /// `omp.ask.head`: the row of the tabs.
+    Head,
+    /// `omp.ask.questions`.
+    Tabs,
+    /// `omp.ask.question`.
+    Question,
+    /// `omp.ask.options`.
+    Options,
+    /// `omp.ask.option`: a radio row.
+    Choice,
+    /// `omp.ask.check`: a check box row.
+    Check,
+    /// `omp.ask.other`: the radio row for a typed answer.
+    Other,
+    /// `omp.ask.other.check`.
+    OtherCheck,
+    /// `omp.ask.preview`.
+    Preview,
+    /// `omp.ask.notice`.
+    Notice,
+    /// `omp.ask.answers`.
+    Answers,
+    /// `omp.ask.summary`: the one line "Question ..." of the hidden card.
+    Summary,
+    /// `omp.actions`: the bottom row.
+    Actions,
+    /// `omp.btn`: a pill button.
+    Button,
+}
+
+pub fn ask_look(role: &str) -> Option<AskLook> {
+    Some(match role {
+        "omp.editor.ask" => AskLook::Card,
+        "omp.editor.ask.hidden" => AskLook::Hidden,
+        "omp.ask.head" => AskLook::Head,
+        "omp.ask.questions" => AskLook::Tabs,
+        "omp.ask.question" => AskLook::Question,
+        "omp.ask.options" => AskLook::Options,
+        "omp.ask.option" => AskLook::Choice,
+        "omp.ask.check" => AskLook::Check,
+        "omp.ask.other" => AskLook::Other,
+        "omp.ask.other.check" => AskLook::OtherCheck,
+        "omp.ask.preview" => AskLook::Preview,
+        "omp.ask.notice" => AskLook::Notice,
+        "omp.ask.answers" => AskLook::Answers,
+        "omp.ask.summary" => AskLook::Summary,
+        "omp.actions" => AskLook::Actions,
+        "omp.btn" => AskLook::Button,
+        _ => return None,
+    })
+}
+
+impl AskLook {
+    /// A row of the options list.
+    pub fn is_choice(self) -> bool {
+        matches!(
+            self,
+            Self::Choice | Self::Check | Self::Other | Self::OtherCheck
+        )
+    }
+
+    /// A check box (several answers allowed) rather than a radio.
+    pub fn boxed(self) -> bool {
+        matches!(self, Self::Check | Self::OtherCheck)
+    }
+}
+
+/// omp marks the picked rows with `tone: "accent"`.
+pub fn choice_filled(node: &Node) -> bool {
+    node.props.get("tone").and_then(Value::as_str) == Some("accent")
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::theme::{Theme, space};
+
+    #[test]
+    fn tokens_map_to_theme_fields_and_unknown_ones_to_none() {
+        let t = Theme::dark();
+        assert_eq!(color("accent", &t), Some(t.accent));
+        assert_eq!(color("info", &t), Some(t.accent));
+        assert_eq!(color("muted", &t), Some(t.text_muted));
+        assert_eq!(color("dim", &t), Some(t.text_muted));
+        assert_eq!(color("error", &t), Some(t.danger_text));
+        assert_eq!(color("warning", &t), Some(t.status_needs_input));
+        assert_eq!(color("pending", &t), Some(t.status_needs_input));
+        assert_eq!(color("success", &t), Some(t.status_done));
+        assert_eq!(color("text", &t), Some(t.text));
+        assert_eq!(
+            color("statusLineModel", &t),
+            None,
+            "omp's own palette names"
+        );
+        assert_eq!(color("strong", &t), None, "a modifier is not a color");
+        assert_eq!(color("", &t), None);
+    }
+
+    #[test]
+    fn tones_follow_the_reference_table_and_an_unknown_tone_is_text() {
+        let t = Theme::light();
+        assert_eq!(tone_color("success", &t), t.status_done);
+        assert_eq!(tone_color("warning", &t), t.status_needs_input);
+        assert_eq!(tone_color("pending", &t), t.status_needs_input);
+        assert_eq!(tone_color("error", &t), t.danger_text);
+        assert_eq!(tone_color("muted", &t), t.text_muted);
+        assert_eq!(tone_color("accent", &t), t.accent);
+        assert_eq!(tone_color("info", &t), t.accent);
+        assert_eq!(tone_color("user", &t), t.accent);
+        assert_eq!(tone_color("neutral", &t), t.text);
+        assert_eq!(tone_color("no-such-tone", &t), t.text);
+    }
+
+    #[test]
+    fn span_tokens_set_weight_slant_strike_mark_font_and_the_first_color() {
+        let t = Theme::dark();
+        let s = span_style("strong em del mark", &t);
+        assert!(s.bold && s.italic && s.strike && s.mark && !s.mono);
+        assert_eq!(s.color, None);
+        for token in ["mono", "code", "path", "icon"] {
+            assert!(span_style(token, &t).mono, "{token}");
+        }
+        let s = span_style("dim mono", &t);
+        assert_eq!((s.color, s.mono), (Some(t.text_muted), true));
+        let s = span_style("error accent", &t);
+        assert_eq!(s.color, Some(t.danger_text), "the first color token wins");
+        assert_eq!(span_style("nonsense", &t), SpanStyle::default());
+        assert_eq!(span_style("", &t), SpanStyle::default());
+    }
+
+    #[test]
+    fn every_icon_name_of_the_fixture_and_the_reference_resolves_and_others_do_not() {
+        use crate::icons::Icon;
+        // Names in the committed startup record (node icons and seg icons).
+        for name in [
+            "lightbulb",
+            "model",
+            "chev",
+            "session",
+            "time",
+            "context.compaction",
+        ] {
+            assert!(icon(name).is_some(), "{name}");
+        }
+        // Names of the reference list (section 4, kind `icon`, and item icons).
+        for name in [
+            "users", "agents", "agent", "job", "jobs", "model", "chev", "copy", "x", "eye",
+            "check", "history", "link", "open", "rewind", "loop", "back", "wand", "bash", "folder",
+            "plus", "wrench", "x-circle", "send",
+        ] {
+            assert!(icon(name).is_some(), "{name}");
+        }
+        assert_eq!(icon("users").map(Icon::path), Some(Icon::Users.path()));
+        assert_eq!(icon("chev").map(Icon::path), Some(Icon::ChevronDown.path()));
+        assert_eq!(icon("x").map(Icon::path), Some(Icon::X.path()));
+        for name in ["eye-off", "gauge", "pause", "definitely-not-an-icon", ""] {
+            assert!(icon(name).is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn spans_accept_a_string_or_an_array_and_skip_malformed_entries() {
+        let t = Theme::dark();
+        assert_eq!(
+            spans_of(&json!("plain"), &t),
+            vec![("plain".to_owned(), SpanStyle::default())]
+        );
+        let spans = spans_of(
+            &json!([{"t": "a", "s": "strong"}, {"t": "b"}, {"s": "em"}, 7, {"t": "c", "s": "error"}]),
+            &t,
+        );
+        assert_eq!(spans.len(), 3);
+        assert!(spans[0].1.bold);
+        assert_eq!(spans[1], ("b".to_owned(), SpanStyle::default()));
+        assert_eq!(spans[2].1.color, Some(t.danger_text));
+        assert!(spans_of(&json!(null), &t).is_empty());
+        assert!(spans_of(&json!(12), &t).is_empty());
+    }
+
+    #[test]
+    fn node_spans_prefer_spans_over_text() {
+        let t = Theme::dark();
+        let props = json!({"spans": [{"t": "from spans"}], "text": "from text"});
+        let props = props.as_object().cloned().unwrap_or_default();
+        assert_eq!(node_spans(&props, &t)[0].0, "from spans");
+        let props = json!({"text": "from text"})
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(node_spans(&props, &t)[0].0, "from text");
+    }
+
+    #[test]
+    fn an_unknown_kind_draws_its_first_text_like_prop() {
+        let t = Theme::dark();
+        let props = |v: serde_json::Value| v.as_object().cloned().unwrap_or_default();
+        assert_eq!(
+            generic_line(&props(json!({"name": "n", "title": "T"})), &t).as_deref(),
+            Some("T"),
+            "text, title, head, label, name in that order"
+        );
+        assert_eq!(
+            generic_line(
+                &props(json!({"head": [{"t": "He"}, {"t": "ad", "s": "strong"}]})),
+                &t
+            )
+            .as_deref(),
+            Some("Head")
+        );
+        assert_eq!(
+            generic_line(&props(json!({"text": "  ", "label": "L"})), &t).as_deref(),
+            Some("L"),
+            "a blank prop is skipped"
+        );
+        assert_eq!(generic_line(&props(json!({"size": 3})), &t), None);
+    }
+
+    #[test]
+    fn gap_tokens_come_from_the_spacing_scale() {
+        assert_eq!(gap_px(None), 0.0);
+        assert_eq!(gap_px(Some("none")), 0.0);
+        assert_eq!(gap_px(Some("xs")), space::XS);
+        assert_eq!(gap_px(Some("sm")), space::S);
+        assert_eq!(gap_px(Some("md")), space::M);
+        assert_eq!(gap_px(Some("lg")), space::L);
+        assert_eq!(gap_px(Some("huge")), 0.0);
+    }
+
+    fn run(text: &str, style: SpanStyle) -> (String, SpanStyle) {
+        (text.to_owned(), style)
+    }
+
+    #[test]
+    fn sgr_sets_attributes_and_zero_resets_them() {
+        let t = Theme::dark();
+        assert_eq!(
+            ansi_runs("\x1b[1;31mred\x1b[0m ok", &t),
+            vec![
+                run(
+                    "red",
+                    SpanStyle {
+                        bold: true,
+                        color: Some(t.ansi[1]),
+                        ..Default::default()
+                    }
+                ),
+                run(" ok", SpanStyle::default()),
+            ]
+        );
+        assert_eq!(
+            ansi_runs("\x1b[1mA\x1b[mB", &t),
+            vec![
+                run(
+                    "A",
+                    SpanStyle {
+                        bold: true,
+                        ..Default::default()
+                    }
+                ),
+                run("B", SpanStyle::default()),
+            ],
+            "an empty parameter list is a reset"
+        );
+    }
+
+    #[test]
+    fn sgr_italic_reverse_strike_and_their_off_codes() {
+        let t = Theme::dark();
+        let runs = ansi_runs("\x1b[3mI\x1b[23mn\x1b[7;9mM\x1b[27;29mm", &t);
+        assert_eq!(
+            runs,
+            vec![
+                run(
+                    "I",
+                    SpanStyle {
+                        italic: true,
+                        ..Default::default()
+                    }
+                ),
+                run("n", SpanStyle::default()),
+                run(
+                    "M",
+                    SpanStyle {
+                        mark: true,
+                        strike: true,
+                        ..Default::default()
+                    }
+                ),
+                run("m", SpanStyle::default()),
+            ]
+        );
+    }
+
+    #[test]
+    fn sgr_dim_uses_the_muted_color_and_22_clears_bold_and_dim() {
+        let t = Theme::dark();
+        let runs = ansi_runs("\x1b[1;2mD\x1b[22mN", &t);
+        assert_eq!(
+            runs,
+            vec![
+                run(
+                    "D",
+                    SpanStyle {
+                        bold: true,
+                        color: Some(t.text_muted),
+                        ..Default::default()
+                    }
+                ),
+                run("N", SpanStyle::default()),
+            ]
+        );
+        let runs = ansi_runs("\x1b[2;31mX", &t);
+        assert_eq!(
+            runs[0].1.color,
+            Some(t.ansi[1]),
+            "an explicit color beats dim"
+        );
+    }
+
+    #[test]
+    fn sgr_basic_bright_and_default_foregrounds() {
+        let t = Theme::dark();
+        let colors: Vec<_> = ansi_runs("\x1b[30mA\x1b[37mB\x1b[90mC\x1b[97mD\x1b[39mE", &t)
+            .into_iter()
+            .map(|(_, s)| s.color)
+            .collect();
+        assert_eq!(
+            colors,
+            vec![
+                Some(t.ansi[0]),
+                Some(t.ansi[7]),
+                Some(t.ansi[8]),
+                Some(t.ansi[15]),
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn sgr_256_and_true_color() {
+        let t = Theme::dark();
+        let colors: Vec<_> = ansi_runs(
+            "\x1b[38;5;196mA\x1b[38;5;1mB\x1b[38;5;244mC\x1b[38;2;1;2;3mD",
+            &t,
+        )
+        .into_iter()
+        .map(|(_, s)| s.color)
+        .collect();
+        assert_eq!(
+            colors,
+            vec![
+                Some(0xFF0000),
+                Some(t.ansi[1]),
+                Some(0x808080),
+                Some(0x010203)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_background_sequence_swallows_its_own_parameters_only() {
+        let t = Theme::dark();
+        let runs = ansi_runs("\x1b[48;5;4;31mX\x1b[48;2;9;9;9;1mY", &t);
+        assert_eq!(
+            runs[0].1.color,
+            Some(t.ansi[1]),
+            "48;5;4 must not eat the 31"
+        );
+        assert!(runs[1].1.bold, "48;2;r;g;b must not eat the 1");
+        assert_eq!(
+            runs[1].1.color, runs[0].1.color,
+            "backgrounds are dropped, the pen stays"
+        );
+    }
+
+    #[test]
+    fn other_csi_and_osc_sequences_are_stripped() {
+        let t = Theme::dark();
+        assert_eq!(
+            ansi_runs("a\x1b[2Kb\x1b[10;5Hc\x1b[?25ld", &t),
+            vec![run("abcd", SpanStyle::default())]
+        );
+        assert_eq!(
+            ansi_runs(
+                "\x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\ \x1b]0;title\x07end",
+                &t
+            ),
+            vec![run("link end", SpanStyle::default())]
+        );
+        assert_eq!(
+            ansi_runs("a\x1b7b\x1b8c", &t),
+            vec![run("abc", SpanStyle::default())]
+        );
+    }
+
+    #[test]
+    fn equal_neighbouring_styles_merge_and_empty_input_is_empty() {
+        let t = Theme::dark();
+        assert_eq!(
+            ansi_runs("\x1b[1ma\x1b[1mb\x1b[0m\x1b[1mc", &t),
+            vec![run(
+                "abc",
+                SpanStyle {
+                    bold: true,
+                    ..Default::default()
+                }
+            )]
+        );
+        assert!(ansi_runs("", &t).is_empty());
+        assert!(ansi_runs("\x1b[31m\x1b[0m", &t).is_empty());
+    }
+
+    #[test]
+    fn a_truncated_escape_never_panics_and_drops_only_the_escape() {
+        let t = Theme::dark();
+        assert_eq!(
+            ansi_runs("ok\x1b", &t),
+            vec![run("ok", SpanStyle::default())]
+        );
+        assert_eq!(
+            ansi_runs("ok\x1b[31", &t),
+            vec![run("ok", SpanStyle::default())]
+        );
+        assert_eq!(
+            ansi_runs("ok\x1b]0;never ends", &t),
+            vec![run("ok", SpanStyle::default())]
+        );
+        assert_eq!(
+            ansi_runs("\x1b[999;?;;mtext", &t),
+            vec![run("text", SpanStyle::default())],
+            "garbage parameters are zeros, i.e. a reset"
+        );
+    }
+
+    use mkrew_core::tsp::doc::Document;
+    use mkrew_protocol::{TspChange, TspSnapshot, TspState, TspSurface, TspUpdate};
+    use ulid::Ulid;
+
+    fn doc(ops: Vec<serde_json::Value>) -> Document {
+        let mut d = Document::new("s:1");
+        let applied = d.apply(&ops);
+        assert!(applied.errors.is_empty(), "{:?}", applied.errors);
+        d
+    }
+
+    fn main_added() -> Vec<serde_json::Value> {
+        vec![json!(["add", "main", "s:1", null, {"id": "main", "k": "col"}])]
+    }
+
+    /// A document with `main` and one node under it.
+    fn with_node(node: serde_json::Value) -> Document {
+        let mut ops = main_added();
+        ops.push(json!(["add", node["id"].clone(), "main", null, node]));
+        doc(ops)
+    }
+
+    fn surface(id: &str, mode: &str, seq: u64, d: &Document) -> TspSurface {
+        TspSurface {
+            id: id.into(),
+            mode: mode.into(),
+            role: None,
+            title: None,
+            read_only: false,
+            seq,
+            root: d.to_tree(),
+        }
+    }
+
+    fn mirror(surfaces: Vec<TspSurface>) -> Mirror {
+        Mirror::from_snapshot(TspSnapshot {
+            state: TspState::Live,
+            surfaces,
+            blobs: Vec::new(),
+            reason: None,
+        })
+    }
+
+    fn update(surface: &str, change: TspChange) -> TspUpdate {
+        TspUpdate {
+            session_id: Ulid::new(),
+            surface: surface.into(),
+            change,
+        }
+    }
+
+    fn frame(surface: &str, seq: u64, ops: Vec<serde_json::Value>) -> TspUpdate {
+        update(
+            surface,
+            TspChange::Frame {
+                seq,
+                ops,
+                blobs: Vec::new(),
+            },
+        )
+    }
+
+    fn add_x() -> Vec<serde_json::Value> {
+        vec![json!(["add", "x", "main", null, {"id": "x", "k": "text", "p": {"text": "hi"}}])]
+    }
+
+    #[test]
+    fn cols_follow_the_width_and_never_go_below_twenty() {
+        assert_eq!(cols_for(800.0, 8.0), 100);
+        assert_eq!(cols_for(805.0, 8.0), 100, "whole columns only");
+        assert_eq!(cols_for(100.0, 8.0), 20, "12 columns is below the minimum");
+        assert_eq!(cols_for(0.0, 8.0), 20);
+        assert_eq!(cols_for(-5.0, 8.0), 20);
+        assert_eq!(cols_for(800.0, 0.0), 20, "no cell width measured yet");
+        assert_eq!(cols_for(f32::NAN, 8.0), 20);
+        assert_eq!(cols_for(1.0e9, 1.0), u16::MAX, "never wraps around");
+    }
+
+    #[test]
+    fn the_pane_shows_what_the_session_state_says() {
+        use PaneView::{ReadOnly, Starting, Surface, Terminal};
+        use TspState::{Fallback, Live, Off, Waiting};
+        let table = [
+            // (state, exited, has_surface, shown)
+            (Off, false, false, Terminal),
+            (Off, false, true, Terminal),
+            (Off, true, true, Terminal),
+            (Waiting, false, false, Starting),
+            (Waiting, false, true, Starting),
+            (Waiting, true, false, Terminal),
+            (Live, false, true, Surface),
+            (Live, false, false, Starting),
+            (Live, true, true, ReadOnly),
+            (Live, true, false, Terminal),
+            (Fallback, false, false, Terminal),
+            (Fallback, false, true, Terminal),
+            (Fallback, true, true, Terminal),
+        ];
+        for (state, exited, has_surface, shown) in table {
+            assert_eq!(
+                pane_view(state, exited, has_surface),
+                shown,
+                "{state:?} {exited} {has_surface}"
+            );
+        }
+    }
+
+    #[test]
+    fn fallback_is_announced_only_on_the_transition_into_it() {
+        use TspState::{Fallback, Live, Off, Waiting};
+        assert!(enters_fallback(Some(Waiting), Fallback));
+        assert!(enters_fallback(Some(Live), Fallback));
+        assert!(!enters_fallback(Some(Fallback), Fallback), "already told");
+        assert!(!enters_fallback(Some(Off), Fallback));
+        assert!(
+            !enters_fallback(None, Fallback),
+            "first time the session is listed"
+        );
+        assert!(!enters_fallback(Some(Waiting), Live));
+        assert!(!enters_fallback(Some(Live), Off));
+    }
+
+    #[test]
+    fn the_fallback_toast_names_the_reason_when_there_is_one() {
+        assert_eq!(
+            fallback_toast(Some("no TSP reply from the terminal layer")),
+            "omp is drawing as text: no TSP reply from the terminal layer"
+        );
+        assert_eq!(fallback_toast(None), "omp is drawing as text");
+        assert_eq!(
+            fallback_toast(Some("  ")),
+            "omp is drawing as text",
+            "a blank reason is none"
+        );
+    }
+
+    #[test]
+    fn a_frame_already_in_the_snapshot_is_ignored_not_applied_twice_and_not_a_gap() {
+        let d = doc(main_added());
+        let mut m = mirror(vec![surface("s:1", "inline", 5, &d)]);
+        assert_eq!(m.apply(&frame("s:1", 5, add_x())), MirrorResult::Applied);
+        assert_eq!(m.apply(&frame("s:1", 3, add_x())), MirrorResult::Applied);
+        let (meta, doc) = m.surface("s:1").unwrap();
+        assert!(doc.get("x").is_none(), "a stale frame changes nothing");
+        assert_eq!(meta.seq, 5);
+    }
+
+    #[test]
+    fn the_next_frame_applies_and_a_skipped_one_is_a_gap_that_changes_nothing() {
+        let d = doc(main_added());
+        let mut m = mirror(vec![surface("s:1", "inline", 5, &d)]);
+        assert_eq!(m.apply(&frame("s:1", 6, add_x())), MirrorResult::Applied);
+        let (meta, doc) = m.surface("s:1").unwrap();
+        assert!(doc.get("x").is_some());
+        assert_eq!(meta.seq, 6);
+        assert_eq!(
+            m.apply(&frame("s:1", 8, vec![json!(["del", "x"])])),
+            MirrorResult::Gap
+        );
+        let (meta, doc) = m.surface("s:1").unwrap();
+        assert!(doc.get("x").is_some(), "a gap frame is not applied");
+        assert_eq!(meta.seq, 6);
+        assert_eq!(
+            m.apply(&frame("s:1", 7, vec![json!(["del", "x"])])),
+            MirrorResult::Applied
+        );
+        assert!(m.surface("s:1").unwrap().1.get("x").is_none());
+    }
+
+    #[test]
+    fn a_frame_for_an_unknown_surface_is_a_gap() {
+        let mut m = mirror(Vec::new());
+        assert_eq!(m.apply(&frame("s:9", 1, Vec::new())), MirrorResult::Gap);
+    }
+
+    #[test]
+    fn a_failing_op_does_not_stop_the_rest_of_the_frame() {
+        let d = doc(main_added());
+        let mut m = mirror(vec![surface("s:1", "inline", 0, &d)]);
+        let ops = vec![json!(["del", "nope"]), add_x().remove(0)];
+        assert_eq!(m.apply(&frame("s:1", 1, ops)), MirrorResult::Applied);
+        assert!(m.surface("s:1").unwrap().1.get("x").is_some());
+    }
+
+    #[test]
+    fn open_of_an_existing_surface_replaces_its_document_and_resets_the_seq() {
+        let mut old = doc(main_added());
+        old.apply(&add_x());
+        let mut m = mirror(vec![surface("s:1", "inline", 4, &old)]);
+        assert!(m.surface("s:1").unwrap().1.get("x").is_some());
+        // omp restarted in the pane (daemon startup resume): the same id, an empty root.
+        let fresh = Document::new("s:1");
+        let open = TspChange::Open {
+            surface: surface("s:1", "inline", 0, &fresh),
+        };
+        assert_eq!(m.apply(&update("s:1", open)), MirrorResult::Applied);
+        let (meta, doc) = m.surface("s:1").unwrap();
+        assert!(
+            doc.get("x").is_none() && doc.get("main").is_none(),
+            "replaced, not merged"
+        );
+        assert_eq!(meta.seq, 0);
+        assert_eq!(
+            m.apply(&frame("s:1", 1, main_added())),
+            MirrorResult::Applied
+        );
+        assert!(m.surface("s:1").unwrap().1.get("main").is_some());
+    }
+
+    #[test]
+    fn closed_without_keep_removes_the_surface_and_with_keep_makes_it_read_only() {
+        let d = doc(main_added());
+        let mut m = mirror(vec![
+            surface("s:1", "inline", 1, &d),
+            surface("s:2", "screen", 1, &Document::new("s:2")),
+        ]);
+        assert_eq!(
+            m.apply(&update("s:2", TspChange::Closed { keep: false })),
+            MirrorResult::Applied
+        );
+        assert!(m.surface("s:2").is_none());
+        assert!(m.surface("s:1").is_some());
+        assert!(!m.surface("s:1").unwrap().0.read_only);
+        assert_eq!(
+            m.apply(&update("s:1", TspChange::Closed { keep: true })),
+            MirrorResult::Applied
+        );
+        let (meta, doc) = m.surface("s:1").unwrap();
+        assert!(meta.read_only, "kept read-only");
+        assert!(doc.get("main").is_some(), "its document stays");
+        assert_eq!(
+            m.apply(&update("s:7", TspChange::Closed { keep: false })),
+            MirrorResult::Applied,
+            "closing an unknown surface is harmless"
+        );
+    }
+
+    #[test]
+    fn a_screen_surface_covers_the_inline_one_until_it_closes() {
+        let d = doc(main_added());
+        let mut m = mirror(vec![surface("s:1", "inline", 1, &d)]);
+        assert_eq!(m.shown().unwrap().0.id, "s:1");
+        assert_eq!(m.inline_id(), Some("s:1"));
+        let open = TspChange::Open {
+            surface: surface("s:2", "screen", 0, &Document::new("s:2")),
+        };
+        m.apply(&update("s:2", open));
+        assert_eq!(m.shown().unwrap().0.id, "s:2");
+        assert_eq!(
+            m.inline_id(),
+            Some("s:1"),
+            "theme events still go to the inline surface"
+        );
+        m.apply(&update("s:2", TspChange::Closed { keep: false }));
+        assert_eq!(m.shown().unwrap().0.id, "s:1");
+        assert!(mirror(Vec::new()).shown().is_none());
+    }
+
+    #[test]
+    fn blobs_arrive_with_the_snapshot_and_with_applied_frames_only() {
+        let d = doc(main_added());
+        let blob = |id: &str| TspBlob {
+            id: id.into(),
+            mime: "image/png".into(),
+            data: vec![1, 2],
+        };
+        let mut m = Mirror::from_snapshot(TspSnapshot {
+            state: TspState::Live,
+            surfaces: vec![surface("s:1", "inline", 3, &d)],
+            blobs: vec![blob("a")],
+            reason: None,
+        });
+        assert!(m.blob("a").is_some());
+        let with_blob = |seq, id: &str| {
+            update(
+                "s:1",
+                TspChange::Frame {
+                    seq,
+                    ops: Vec::new(),
+                    blobs: vec![blob(id)],
+                },
+            )
+        };
+        m.apply(&with_blob(2, "stale"));
+        assert!(m.blob("stale").is_none());
+        m.apply(&with_blob(4, "b"));
+        assert!(m.blob("b").is_some());
+    }
+
+    #[test]
+    fn only_spinner_running_elapsed_shimmer_and_rate_animate() {
+        let anim = |node| animating(&with_node(node));
+        assert!(anim(json!({"id": "n", "k": "spinner"})));
+        assert!(anim(json!({"id": "n", "k": "elapsed", "p": {"age": 1000}})));
+        assert!(!anim(
+            json!({"id": "n", "k": "elapsed", "p": {"age": 1000, "stopped": 5000}})
+        ));
+        assert!(anim(json!({"id": "n", "k": "shimmer", "p": {"text": "x"}})));
+        assert!(anim(
+            json!({"id": "n", "k": "rate", "p": {"value": 3.0, "unit": "tok/s"}})
+        ));
+        assert!(!anim(json!({"id": "n", "k": "text", "p": {"text": "x"}})));
+        assert!(!anim(json!({"id": "n", "k": "meter", "p": {"value": 0.5}})));
+        assert!(
+            anim(json!({
+                "id": "n", "k": "col",
+                "c": [{"id": "n1", "k": "col", "c": [{"id": "n2", "k": "spinner"}]}]
+            })),
+            "found deep in the tree"
+        );
+        assert!(!animating(&doc(main_added())));
+    }
+
+    /// `dock` holding a send button, a list with an item, a root-owned row and an editor.
+    fn dock_doc() -> Document {
+        doc(vec![
+            json!(["add", "dock", "s:1", null, {"id": "dock", "k": "col"}]),
+            json!(["add", "3.bar/send", "dock", null, {
+                "id": "3.bar/send", "k": "kbd",
+                "p": {"keys": ["enter"], "actions": {"click": "submit"}}
+            }]),
+            json!(["add", "3.list", "dock", null, {
+                "id": "3.list", "k": "list",
+                "c": [{"id": "3.list/a", "k": "item"}]
+            }]),
+            json!(["add", "dock.x", "dock", null, {
+                "id": "dock.x", "k": "row", "p": {"actions": {"click": "x"}}
+            }]),
+            json!(["add", "3.line/input", "dock", null, {"id": "3.line/input", "k": "editor", "p": {"text": ""}}]),
+            json!(["add", "3.plain", "dock", null, {"id": "3.plain", "k": "col"}]),
+            json!(["add", "dock.list", "dock", null, {
+                "id": "dock.list", "k": "list",
+                "c": [{"id": "dock.list/a", "k": "item"}]
+            }]),
+        ])
+    }
+
+    #[test]
+    fn nodes_owned_by_a_surface_root_have_no_component() {
+        assert!(root_owned("main.0"));
+        assert!(root_owned("dock.x/y"));
+        assert!(root_owned("layer.^ov"));
+        assert!(!root_owned("3.bar/send"));
+        assert!(!root_owned("k.line/input"));
+        assert!(!root_owned("mainframe.x"), "only the exact base counts");
+        assert!(
+            !root_owned("main"),
+            "the root itself has no dot: not a node of a component either"
+        );
+    }
+
+    #[test]
+    fn a_click_sends_the_nodes_own_action_and_only_that() {
+        let d = dock_doc();
+        let send = d.get("3.bar/send").unwrap();
+        assert_eq!(
+            click_event(&d, send, false),
+            Some(json!({"ev": "action", "id": "3.bar/send", "act": "submit"}))
+        );
+        assert_eq!(
+            click_event(&d, send, true),
+            None,
+            "no dblclick action on that node"
+        );
+        assert_eq!(
+            click_event(&d, d.get("3.plain").unwrap(), false),
+            None,
+            "no actions"
+        );
+    }
+
+    #[test]
+    fn items_of_a_list_select_on_click_and_activate_on_double_click() {
+        let d = dock_doc();
+        let item = d.get("3.list/a").unwrap();
+        assert_eq!(
+            click_event(&d, item, false),
+            Some(json!({"ev": "select", "id": "3.list", "item": "3.list/a"}))
+        );
+        assert_eq!(
+            click_event(&d, item, true),
+            Some(json!({"ev": "activate", "id": "3.list", "item": "3.list/a"}))
+        );
+        assert_eq!(
+            select_event("t", "a", false),
+            json!({"ev": "select", "id": "t", "item": "a"})
+        );
+    }
+
+    #[test]
+    fn events_on_root_owned_nodes_are_not_sent_and_editors_send_focus() {
+        let d = dock_doc();
+        assert_eq!(click_event(&d, d.get("dock.x").unwrap(), false), None);
+        assert_eq!(click_event(&d, d.get("dock.list/a").unwrap(), false), None);
+        assert_eq!(
+            click_event(&d, d.get("3.line/input").unwrap(), false),
+            Some(json!({"ev": "focus", "id": "3.line/input"}))
+        );
+        assert_eq!(toggle_event("main.4", true), None);
+        assert_eq!(
+            toggle_event("k.card", true),
+            Some(json!({"ev": "toggle", "id": "k.card", "collapsed": true}))
+        );
+    }
+
+    #[test]
+    fn reveal_targets_the_top_level_row_of_main_that_holds_the_node() {
+        let d = doc(vec![
+            json!(["add", "main", "s:1", null, {"id": "main", "k": "col"}]),
+            json!(["add", "dock", "s:1", null, {"id": "dock", "k": "col"}]),
+            json!(["add", "0", "main", null, {"id": "0", "k": "spacer"}]),
+            json!(["add", "1", "main", null, {"id": "1", "k": "col", "c": [{"id": "1.x", "k": "col", "c": [{"id": "1.x/y", "k": "text"}]}]}]),
+            json!(["add", "d1", "dock", null, {"id": "d1", "k": "text"}]),
+        ]);
+        assert_eq!(reveal_index(&d, "0"), Some(0));
+        assert_eq!(reveal_index(&d, "1"), Some(1));
+        assert_eq!(reveal_index(&d, "1.x/y"), Some(1));
+        assert_eq!(reveal_index(&d, "d1"), None, "the dock does not scroll");
+        assert_eq!(reveal_index(&d, "main"), None);
+        assert_eq!(reveal_index(&d, "nope"), None);
+    }
+
+    #[test]
+    fn toasts_come_from_added_toasts_and_text_sets_on_toasts_only() {
+        let mut d = doc(main_added());
+        let ops = vec![
+            json!(["add", "u", "main", null, {"id": "u", "k": "toast", "p": {"text": "hello"}}]),
+            json!(["add", "q", "main", null, {"id": "q", "k": "toast", "p": {"text": ""}}]),
+            json!(["add", "t", "main", null, {"id": "t", "k": "text", "p": {"text": "not a toast"}}]),
+            json!(["set", "u", {"text": "bye", "ttl": 1}]),
+            json!(["set", "t", {"text": "still not"}]),
+            json!(["set", "u", {"ttl": 5}]),
+            json!(["set", "u", {"text": null}]),
+            json!(["set", "gone", {"text": "unknown id"}]),
+        ];
+        d.apply(&ops);
+        assert_eq!(
+            toast_texts(&d, &ops),
+            vec!["hello".to_owned(), "bye".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_text_cache_reparses_only_when_the_text_of_that_node_changed() {
+        let mut cache = TextCache::default();
+        let mut parses = 0;
+        let mut get = |cache: &mut TextCache<usize>, id: &str, text: &str| {
+            cache.get(id, text, |t| {
+                parses += 1;
+                t.len()
+            })
+        };
+        let a = get(&mut cache, "n", "abc");
+        let b = get(&mut cache, "n", "abc");
+        assert!(Rc::ptr_eq(&a, &b), "unchanged text is the same parse");
+        get(&mut cache, "n", "abd");
+        get(&mut cache, "n", "abdd");
+        get(&mut cache, "other", "abdd");
+        assert_eq!(
+            parses, 4,
+            "same length different text, a longer text and another node each parse"
+        );
+    }
+
+    #[test]
+    fn a_code_fence_is_longer_than_any_backtick_run_inside() {
+        assert_eq!(code_fence(Some("bash"), "ls"), "```bash\nls\n```");
+        assert_eq!(code_fence(None, "ls"), "```\nls\n```");
+        assert_eq!(code_fence(Some("md"), "a ``` b"), "````md\na ``` b\n````");
+        assert_eq!(
+            code_fence(Some("md"), "``````"),
+            "```````md\n``````\n```````"
+        );
+    }
+
+    #[test]
+    fn utf16_offsets_map_to_byte_offsets_and_never_split_a_character() {
+        assert_eq!(byte_at_utf16("abc", 0), 0);
+        assert_eq!(byte_at_utf16("abc", 2), 2);
+        assert_eq!(byte_at_utf16("abc", 3), 3);
+        assert_eq!(byte_at_utf16("abc", 99), 3, "past the end clamps");
+        // "é" is 2 bytes, 1 unit; "😀" is 4 bytes, 2 units.
+        assert_eq!(byte_at_utf16("éa", 1), 2);
+        assert_eq!(byte_at_utf16("a😀b", 1), 1);
+        assert_eq!(
+            byte_at_utf16("a😀b", 2),
+            1,
+            "inside the pair snaps to its start"
+        );
+        assert_eq!(byte_at_utf16("a😀b", 3), 5);
+        assert_eq!(byte_at_utf16("", 4), 0);
+    }
+
+    #[test]
+    fn effort_fills_four_blocks_by_level() {
+        assert_eq!(effort_steps("off"), 0);
+        assert_eq!(effort_steps("minimal"), 1);
+        assert_eq!(effort_steps("low"), 1);
+        assert_eq!(effort_steps("medium"), 2);
+        assert_eq!(effort_steps("high"), 3);
+        assert_eq!(effort_steps("xhigh"), 4);
+        assert_eq!(effort_steps("max"), 4);
+        assert_eq!(effort_steps("surprise"), 0);
+    }
+
+    #[test]
+    fn a_meter_changes_tone_at_its_thresholds() {
+        let thresholds = json!({"warn": 0.15, "bad": 0.5});
+        assert_eq!(meter_tone(0.014, Some(&thresholds)), "accent");
+        assert_eq!(meter_tone(0.15, Some(&thresholds)), "warning");
+        assert_eq!(meter_tone(0.49, Some(&thresholds)), "warning");
+        assert_eq!(meter_tone(0.5, Some(&thresholds)), "error");
+        assert_eq!(meter_tone(0.99, None), "accent");
+        assert_eq!(meter_tone(0.99, Some(&json!({"warn": "x"}))), "accent");
+    }
+
+    #[test]
+    fn rate_and_elapsed_labels() {
+        assert_eq!(rate_label(3.26, "tok/s"), "3.3 tok/s");
+        assert_eq!(rate_label(9.96, "tok/s"), "10.0 tok/s");
+        assert_eq!(rate_label(42.4, "tok/s"), "42 tok/s");
+        assert_eq!(
+            elapsed_ms(1000, None, 500),
+            1500,
+            "ticks locally from when it was seen"
+        );
+        assert_eq!(elapsed_ms(1000, Some(4000), 9999), 4000, "stopped is final");
+        assert_eq!(elapsed_label(0), "0s");
+        assert_eq!(elapsed_label(59_999), "59s");
+        assert_eq!(elapsed_label(60_000), "1m 00s");
+        assert_eq!(elapsed_label(3_725_000), "1h 02m");
+    }
+
+    #[test]
+    fn ctrl_c_copies_only_with_a_selection_otherwise_it_reaches_omp() {
+        assert_eq!(copy_decision(true, true), CopyOrSend::Copy);
+        assert_eq!(
+            copy_decision(false, true),
+            CopyOrSend::Send,
+            "an interrupt for omp"
+        );
+        assert_eq!(
+            copy_decision(true, false),
+            CopyOrSend::Send,
+            "other keys are never swallowed"
+        );
+        assert_eq!(copy_decision(false, false), CopyOrSend::Send);
+    }
+
+    #[test]
+    fn escape_clears_a_selection_and_otherwise_reaches_omp() {
+        assert!(escape_clears(true, true));
+        assert!(!escape_clears(false, true), "omp needs its Esc");
+        assert!(!escape_clears(true, false));
+    }
+
+    #[test]
+    fn a_press_makes_a_caret_shift_extends_in_the_same_node_and_a_double_click_takes_a_word() {
+        use crate::preview_select::{Point, Selection};
+        let shown = crate::docs::Shown::from_text("hello world");
+        let at = |byte| Point {
+            block: 0,
+            piece: 0,
+            byte,
+        };
+        let (key, first) = press(None, "n", &shown, at(2), false, 1);
+        assert_eq!(key, "n");
+        assert_eq!(first, Selection::caret(at(2)));
+        let (_, extended) = press(Some((key.clone(), first)), "n", &shown, at(8), true, 1);
+        assert_eq!((extended.anchor, extended.head), (at(2), at(8)));
+        let (other, fresh) = press(Some((key, extended)), "m", &shown, at(8), true, 1);
+        assert_eq!(other, "m");
+        assert_eq!(
+            fresh,
+            Selection::caret(at(8)),
+            "shift does not extend across nodes"
+        );
+        let (_, word) = press(None, "n", &shown, at(7), false, 2);
+        assert!(!word.is_empty(), "a word is selected");
+        assert!(word.anchor <= at(7) && at(7) <= word.head);
+    }
+
+    #[test]
+    fn the_cache_can_be_read_without_parsing() {
+        let mut cache = TextCache::default();
+        assert!(cache.peek("n").is_none());
+        let made = cache.get("n", "abc", |t| t.len());
+        assert!(Rc::ptr_eq(&made, &cache.peek("n").unwrap()));
+        assert!(cache.peek("other").is_none());
+    }
+
+    fn checklist(props: serde_json::Value) -> Checklist {
+        let props = props.as_object().cloned().unwrap_or_default();
+        Checklist::from_props(&props)
+    }
+
+    /// The hud props as `interactive-mode.ts` builds them (`collapsed` only on a finished phase).
+    fn hud_props() -> serde_json::Value {
+        json!({
+            "mode": "hud", "role": "omp.hud.todo",
+            "phases": [
+                {"id": "0", "title": "Thu thập context", "collapsed": true, "items": [
+                    {"id": "0.0", "text": "Đọc spec", "status": "done"},
+                    {"id": "0.1", "text": "Đọc code", "status": "dropped"}
+                ]},
+                {"id": "1", "title": "Cài đặt", "items": [
+                    {"id": "1.0", "text": "Viết test", "status": "done"},
+                    {"id": "1.1", "text": "Viết code", "status": "active"},
+                    {"id": "1.2", "text": "Chạy verify", "status": "pending"},
+                    {"id": "1.3", "text": "Release", "status": "blocked", "note": "waiting for review"}
+                ]}
+            ]
+        })
+    }
+
+    /// The reminder as `todo-reminder.ts` builds it: one phase with a blank name.
+    fn reminder_props() -> serde_json::Value {
+        json!({
+            "mode": "reminder", "role": "omp.notice.todo", "note": "reminder 1/3",
+            "phases": [{"id": "p0", "title": "", "collapsed": false, "items": [
+                {"id": "p0.0", "text": "Write the plan", "status": "pending"},
+                {"id": "p0.1", "text": "Run it", "status": "pending"}
+            ]}]
+        })
+    }
+
+    #[test]
+    fn a_checklist_is_read_from_the_props_omp_sends() {
+        let list = checklist(hud_props());
+        assert_eq!(list.mode, ChecklistMode::Hud);
+        assert_eq!(list.note, None);
+        assert_eq!(list.phases.len(), 2);
+        assert_eq!(list.phases[0].title, "Thu thập context");
+        assert!(list.phases[0].collapsed && !list.phases[1].collapsed);
+        let items = &list.phases[1].items;
+        assert_eq!(
+            items.iter().map(|i| i.status).collect::<Vec<_>>(),
+            [
+                TodoStatus::Done,
+                TodoStatus::Active,
+                TodoStatus::Pending,
+                TodoStatus::Blocked
+            ]
+        );
+        assert_eq!(items[3].note.as_deref(), Some("waiting for review"));
+        assert_eq!(items[0].note, None);
+        let list = checklist(reminder_props());
+        assert_eq!(
+            (list.mode, list.note.as_deref()),
+            (ChecklistMode::Reminder, Some("reminder 1/3"))
+        );
+    }
+
+    #[test]
+    fn a_checklist_with_missing_or_odd_props_still_reads() {
+        assert_eq!(
+            checklist(json!({"phases": []})).mode,
+            ChecklistMode::Full,
+            "no mode is full"
+        );
+        assert_eq!(
+            checklist(json!({"mode": "future", "phases": []})).mode,
+            ChecklistMode::Full
+        );
+        let list = checklist(json!({"mode": "full", "phases": [
+            "junk", 7,
+            {"title": "T", "items": [{"text": "a", "status": "wat"}, {"id": "x", "status": "done"}, 3]}
+        ]}));
+        assert_eq!(list.phases.len(), 1, "non-object phases are skipped");
+        assert_eq!(
+            list.phases[0].id, "p2",
+            "a missing id falls back to the entry's index"
+        );
+        let items = &list.phases[0].items;
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            (items[0].id.as_str(), items[0].status),
+            ("i0", TodoStatus::Pending),
+            "unknown status is pending"
+        );
+        assert_eq!(
+            (items[1].text.as_str(), items[1].status),
+            ("", TodoStatus::Done)
+        );
+        assert!(checklist(json!({})).phases.is_empty());
+        assert_eq!(
+            checklist(json!({"note": ""})).note,
+            None,
+            "a blank note is none"
+        );
+    }
+
+    #[test]
+    fn done_and_dropped_count_as_finished() {
+        let list = checklist(hud_props());
+        assert_eq!(list.counts(), (3, 6));
+        assert_eq!(list.phases[0].counts(), (2, 2));
+        assert_eq!(list.phases[1].counts(), (1, 4));
+        assert_eq!(checklist(json!({"phases": []})).counts(), (0, 0));
+    }
+
+    #[test]
+    fn the_hud_line_names_the_active_item_then_the_first_pending_one_then_done() {
+        let line = checklist(hud_props()).hud_line().unwrap();
+        assert_eq!(
+            line,
+            HudLine {
+                mark: HudMark::Dots,
+                text: "Viết code".into(),
+                done: 3,
+                total: 6
+            }
+        );
+        // No active item: the first pending one, in phase order, with a ring.
+        let list = checklist(json!({"mode": "hud", "phases": [
+            {"id": "0", "title": "A", "items": [{"id": "0.0", "text": "first", "status": "done"}]},
+            {"id": "1", "title": "B", "items": [
+                {"id": "1.0", "text": "second", "status": "pending"},
+                {"id": "1.1", "text": "third", "status": "pending"}
+            ]}
+        ]}));
+        let line = list.hud_line().unwrap();
+        assert_eq!(
+            (line.mark, line.text.as_str(), line.done, line.total),
+            (HudMark::Ring, "second", 1, 3)
+        );
+        // Active beats an earlier pending item.
+        let list = checklist(
+            json!({"mode": "hud", "phases": [{"id": "0", "title": "A", "items": [
+                {"id": "0.0", "text": "later", "status": "pending"},
+                {"id": "0.1", "text": "now", "status": "active"}
+            ]}]}),
+        );
+        assert_eq!(list.hud_line().unwrap().text, "now");
+    }
+
+    #[test]
+    fn the_hud_line_says_all_done_only_when_nothing_is_left() {
+        let list = checklist(
+            json!({"mode": "hud", "phases": [{"id": "0", "title": "A", "collapsed": true, "items": [
+                {"id": "0.0", "text": "a", "status": "done"},
+                {"id": "0.1", "text": "b", "status": "dropped"}
+            ]}]}),
+        );
+        assert_eq!(
+            list.hud_line().unwrap(),
+            HudLine {
+                mark: HudMark::Done,
+                text: "All done".into(),
+                done: 2,
+                total: 2
+            }
+        );
+        // A blocked item is not done: it is named, not hidden behind "All done".
+        let list = checklist(
+            json!({"mode": "hud", "phases": [{"id": "0", "title": "A", "items": [
+                {"id": "0.0", "text": "a", "status": "done"},
+                {"id": "0.1", "text": "stuck", "status": "blocked", "note": "why"}
+            ]}]}),
+        );
+        let line = list.hud_line().unwrap();
+        assert_eq!((line.mark, line.text.as_str()), (HudMark::Ring, "stuck"));
+        assert_eq!(
+            checklist(json!({"mode": "hud", "phases": []})).hud_line(),
+            None
+        );
+        assert_eq!(
+            checklist(json!({"mode": "hud", "phases": [{"id": "0", "title": "A", "items": []}]}))
+                .hud_line(),
+            None,
+            "a phase with no items has nothing to show"
+        );
+    }
+
+    #[test]
+    fn roman_numerals_cover_the_phase_numbers_and_fall_back_to_digits() {
+        let cases = [
+            (1, "I"),
+            (2, "II"),
+            (3, "III"),
+            (4, "IV"),
+            (5, "V"),
+            (9, "IX"),
+            (14, "XIV"),
+            (40, "XL"),
+            (90, "XC"),
+            (400, "CD"),
+            (1994, "MCMXCIV"),
+            (3999, "MMMCMXCIX"),
+        ];
+        for (n, want) in cases {
+            assert_eq!(roman(n), want, "{n}");
+        }
+        assert_eq!(roman(0), "0");
+        assert_eq!(roman(4000), "4000");
+    }
+
+    #[test]
+    fn a_phase_shows_working_done_or_open() {
+        let list = checklist(hud_props());
+        assert_eq!(list.phases[0].mark(), PhaseMark::Done);
+        assert_eq!(
+            list.phases[1].mark(),
+            PhaseMark::Working,
+            "it has an active item"
+        );
+        let list = checklist(json!({"phases": [
+            {"id": "a", "title": "A", "items": [{"id": "a0", "text": "x", "status": "pending"}]},
+            {"id": "b", "title": "B", "items": [{"id": "b0", "text": "x", "status": "blocked"}]},
+            {"id": "c", "title": "C", "items": []}
+        ]}));
+        assert!(
+            list.phases.iter().all(|p| p.mark() == PhaseMark::Open),
+            "an empty phase is not done"
+        );
+    }
+
+    #[test]
+    fn a_phase_starts_collapsed_when_omp_says_so_or_when_it_is_finished() {
+        let list = checklist(hud_props());
+        assert!(list.phases[0].default_collapsed());
+        assert!(!list.phases[1].default_collapsed());
+        // omp's `full` mode sends `collapsed` itself; a finished phase collapses even without it.
+        let list = checklist(json!({"mode": "full", "phases": [
+            {"id": "a", "title": "A", "items": [{"id": "a0", "text": "x", "status": "done"}]},
+            {"id": "b", "title": "B", "collapsed": true, "items": [{"id": "b0", "text": "x", "status": "pending"}]},
+            {"id": "c", "title": "C", "items": []}
+        ]}));
+        let collapsed: Vec<_> = list
+            .phases
+            .iter()
+            .map(TodoPhase::default_collapsed)
+            .collect();
+        assert_eq!(collapsed, [true, true, false], "an empty phase stays open");
+    }
+
+    #[test]
+    fn the_reminders_untitled_phase_has_no_header_and_is_never_collapsed() {
+        let list = checklist(reminder_props());
+        assert!(list.phases[0].headerless());
+        assert!(!list.phases[0].default_collapsed());
+        let all_done = checklist(
+            json!({"phases": [{"id": "p0", "title": "  ", "collapsed": true, "items": [
+                {"id": "p0.0", "text": "x", "status": "done"}
+            ]}]}),
+        );
+        assert!(
+            !all_done.phases[0].default_collapsed(),
+            "no header, nothing to click to reopen it"
+        );
+        let line = list.hud_line().unwrap();
+        assert_eq!(
+            (line.mark, line.text.as_str()),
+            (HudMark::Ring, "Write the plan")
+        );
+    }
+
+    #[test]
+    fn a_click_on_a_header_flips_its_default_and_a_second_click_flips_it_back() {
+        assert!(collapsed_now(true, false));
+        assert!(
+            !collapsed_now(true, true),
+            "a finished phase opened by the user"
+        );
+        assert!(
+            collapsed_now(false, true),
+            "an open phase closed by the user"
+        );
+        assert!(!collapsed_now(false, false));
+    }
+
+    #[test]
+    fn each_item_status_has_its_own_mark_color_and_text() {
+        let t = Theme::dark();
+        let look = |s| item_look(s, &t);
+        let active = look(TodoStatus::Active);
+        assert_eq!(
+            (active.mark, active.mark_color, active.text_color),
+            (ItemMark::Active, t.accent, t.accent)
+        );
+        assert!(!active.strike && active.suffix.is_empty());
+        let pending = look(TodoStatus::Pending);
+        assert_eq!(
+            (pending.mark, pending.mark_color, pending.text_color),
+            (ItemMark::Ring, t.text_muted, t.text)
+        );
+        let done = look(TodoStatus::Done);
+        assert_eq!(
+            (done.mark, done.mark_color, done.text_color),
+            (ItemMark::Check, t.status_done, t.text_muted)
+        );
+        assert!(!done.strike);
+        let dropped = look(TodoStatus::Dropped);
+        assert_eq!(
+            (dropped.mark, dropped.text_color),
+            (ItemMark::Ring, t.text_muted)
+        );
+        assert!(dropped.strike, "dropped is struck through");
+        let blocked = look(TodoStatus::Blocked);
+        assert_eq!(
+            (blocked.mark_color, blocked.text_color, blocked.suffix),
+            (t.status_needs_input, t.status_needs_input, " (blocked)")
+        );
+    }
+
+    #[test]
+    fn a_checklist_with_an_active_item_animates_and_a_finished_one_does_not() {
+        let node = |props: serde_json::Value| json!({"id": "n", "k": "checklist", "p": props});
+        assert!(
+            animating(&with_node(node(hud_props()))),
+            "the dots step on the status tick"
+        );
+        let calm = json!({"mode": "full", "phases": [{"id": "p0", "title": "A", "items": [
+            {"id": "p0.0", "text": "x", "status": "pending"}, {"id": "p0.1", "text": "y", "status": "done"}
+        ]}]});
+        assert!(!animating(&with_node(node(calm))));
+    }
+
+    /// The dock card of a one-question `ask`, as `ask-dialog.ts` and `overlay.ts` build it.
+    fn ask_tree() -> Document {
+        with_node(
+            json!({"id": "7", "k": "col", "p": {"role": "omp.editor.ask", "gap": "md"}, "c": [
+                {"id": "7.head", "k": "row", "p": {"role": "omp.ask.head", "align": "center"}, "c": [
+                    {"id": "7.head/tabs", "k": "tabs", "p": {
+                        "items": [{"id": "0", "label": [{"t": "✓ ", "s": "success"}, {"t": "Color"}]}, {"id": "submit", "label": [{"t": "Review"}]}],
+                        "active": "0", "role": "omp.ask.questions", "actions": {"click": "select"}
+                    }}
+                ]},
+                {"id": "7.question", "k": "md", "p": {"text": "Which color?", "role": "omp.ask.question"}},
+                {"id": "7.q0", "k": "list", "p": {"selected": "b", "role": "omp.ask.options"}, "c": [
+                    {"id": "7.q0/a", "k": "item", "p": {"label": [{"t": "Red"}], "role": "omp.ask.option", "value": [{"t": "Recommended"}]}},
+                    {"id": "7.q0/b", "k": "item", "p": {"label": [{"t": "Blue"}], "role": "omp.ask.option", "detail": [{"t": "calm"}], "tone": "accent"}},
+                    {"id": "7.q0/c", "k": "item", "p": {"label": [{"t": "Green"}], "role": "omp.ask.check", "tone": "accent", "icon": "check"}},
+                    {"id": "7.q0/other", "k": "item", "p": {"label": [{"t": "Other"}], "role": "omp.ask.other"}},
+                    {"id": "7.q0/otherc", "k": "item", "p": {"label": [{"t": "Other"}], "role": "omp.ask.other.check"}}
+                ]},
+                {"id": "7.preview", "k": "md", "p": {"text": "preview", "role": "omp.ask.preview"}},
+                {"id": "7.notice", "k": "text", "p": {"spans": [{"t": "1 unanswered", "s": "warning"}], "role": "omp.ask.notice"}},
+                {"id": "7.answers", "k": "kv", "p": {"items": [{"k": "Color", "v": "Blue"}], "role": "omp.ask.answers"}},
+                {"id": "7.actions", "k": "row", "p": {"role": "omp.actions", "gap": "sm", "align": "center"}, "c": [
+                    {"id": "7.actions/timer", "k": "meter", "p": {"style": "ring", "size": "sm", "label": "12s", "value": 0.4}},
+                    {"id": "7.actions/hide", "k": "row", "p": {"role": "omp.btn", "gap": "xs", "align": "center", "actions": {"click": "hide"}, "title": "Hide  ctrl+h"}, "c": [
+                        {"id": "7.actions/hide/0", "k": "text", "p": {"text": "Hide"}}
+                    ]},
+                    {"id": "7.actions/sp", "k": "spacer", "p": {"grow": 1}},
+                    {"id": "7.actions/submit", "k": "row", "p": {"role": "omp.btn", "gap": "xs", "align": "center", "actions": {"click": "submit"}, "title": "Submit  enter", "tone": "accent"}, "c": [
+                        {"id": "7.actions/submit/0", "k": "text", "p": {"text": "Submit"}},
+                        {"id": "7.actions/submit/1", "k": "kbd", "p": {"keys": ["enter"]}}
+                    ]}
+                ]}
+            ]}),
+        )
+    }
+
+    fn look_of(d: &Document, id: &str) -> Option<AskLook> {
+        d.get(id).and_then(role_of).and_then(ask_look)
+    }
+
+    #[test]
+    fn every_node_of_omps_ask_card_has_its_look() {
+        let d = ask_tree();
+        let want = [
+            ("7", Some(AskLook::Card)),
+            ("7.head", Some(AskLook::Head)),
+            ("7.head/tabs", Some(AskLook::Tabs)),
+            ("7.question", Some(AskLook::Question)),
+            ("7.q0", Some(AskLook::Options)),
+            ("7.q0/a", Some(AskLook::Choice)),
+            ("7.q0/b", Some(AskLook::Choice)),
+            ("7.q0/c", Some(AskLook::Check)),
+            ("7.q0/other", Some(AskLook::Other)),
+            ("7.q0/otherc", Some(AskLook::OtherCheck)),
+            ("7.preview", Some(AskLook::Preview)),
+            ("7.notice", Some(AskLook::Notice)),
+            ("7.answers", Some(AskLook::Answers)),
+            ("7.actions", Some(AskLook::Actions)),
+            ("7.actions/hide", Some(AskLook::Button)),
+            ("7.actions/submit", Some(AskLook::Button)),
+            ("7.actions/timer", None),
+            ("7.actions/sp", None),
+        ];
+        for (id, look) in want {
+            assert_eq!(look_of(&d, id), look, "{id}");
+        }
+    }
+
+    #[test]
+    fn the_roles_are_matched_whole_so_neighbours_do_not_collide() {
+        assert_eq!(ask_look("omp.editor.ask.hidden"), Some(AskLook::Hidden));
+        assert_eq!(ask_look("omp.editor.ask"), Some(AskLook::Card));
+        assert_eq!(ask_look("omp.ask.summary"), Some(AskLook::Summary));
+        assert_eq!(
+            ask_look("omp.editor"),
+            None,
+            "the ordinary composer is not an ask card"
+        );
+        assert_eq!(ask_look("omp.editor.bash"), None);
+        assert_eq!(
+            ask_look("omp.ask.future"),
+            None,
+            "an unknown ask role draws as its kind"
+        );
+        assert_eq!(ask_look("omp.ask.other.checkbox"), None);
+        assert_eq!(ask_look("omp.hud.todo"), None);
+        assert_eq!(ask_look(""), None);
+    }
+
+    #[test]
+    fn choice_rows_are_radios_or_check_boxes_and_filled_by_tone() {
+        assert!(AskLook::Choice.is_choice() && AskLook::Other.is_choice());
+        assert!(AskLook::Check.is_choice() && AskLook::OtherCheck.is_choice());
+        assert!(!AskLook::Button.is_choice() && !AskLook::Options.is_choice());
+        assert!(AskLook::Check.boxed() && AskLook::OtherCheck.boxed());
+        assert!(!AskLook::Choice.boxed() && !AskLook::Other.boxed());
+        let d = ask_tree();
+        assert!(!choice_filled(d.get("7.q0/a").unwrap()), "not picked");
+        assert!(choice_filled(d.get("7.q0/b").unwrap()));
+        assert!(choice_filled(d.get("7.q0/c").unwrap()));
+    }
+
+    #[test]
+    fn the_ask_card_sends_what_omp_reads_back() {
+        let d = ask_tree();
+        assert_eq!(
+            click_event(&d, d.get("7.q0/a").unwrap(), false),
+            Some(json!({"ev": "select", "id": "7.q0", "item": "7.q0/a"}))
+        );
+        assert_eq!(
+            click_event(&d, d.get("7.q0/c").unwrap(), true),
+            Some(json!({"ev": "activate", "id": "7.q0", "item": "7.q0/c"}))
+        );
+        assert_eq!(
+            click_event(&d, d.get("7.actions/submit").unwrap(), false),
+            Some(json!({"ev": "action", "id": "7.actions/submit", "act": "submit"}))
+        );
+        assert_eq!(
+            click_event(&d, d.get("7.actions/hide").unwrap(), false),
+            Some(json!({"ev": "action", "id": "7.actions/hide", "act": "hide"}))
+        );
+        assert_eq!(
+            click_event(&d, d.get("7.question").unwrap(), false),
+            None,
+            "text sends nothing"
+        );
+        assert_eq!(
+            click_event(&d, d.get("7.actions/timer").unwrap(), false),
+            None
+        );
+    }
+}
