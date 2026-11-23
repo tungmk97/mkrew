@@ -58,6 +58,7 @@ mod slash;
 mod states;
 mod tabs_tasks;
 mod task_runs;
+mod tsp;
 mod turns;
 mod web;
 mod workspaces;

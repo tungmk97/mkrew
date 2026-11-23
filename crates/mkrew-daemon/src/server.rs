@@ -51,6 +51,7 @@ mod session_read;
 mod slash;
 mod target;
 mod task_worktree;
+mod tsp;
 mod turn;
 
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -369,6 +370,7 @@ impl Daemon {
                 let sessions = sessions.map(|mut sessions| {
                     for session in &mut sessions {
                         session.terminal_title = self.hub.terminal_title(session.id);
+                        session.tsp = self.hub.tsp_state(session.id);
                     }
                     sessions
                 });
@@ -508,6 +510,8 @@ impl Daemon {
                     After::Continue,
                 ),
             },
+            Request::TspSnapshot(params) => (self.tsp_snapshot(params).await, After::Continue),
+            Request::TspEvent(params) => (self.tsp_event(params).await, After::Continue),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (
@@ -932,6 +936,11 @@ impl Daemon {
             banner: start.banner,
             env: start.env,
             turn_snapshots: self.settings.current().features.turns,
+            // System counts as dark until a UI reports its theme (`tsp.event` theme).
+            dark: !matches!(
+                self.settings.current().ui.theme,
+                mkrew_core::settings::ThemeMode::Light
+            ),
         };
         match self.hub.spawn(spec) {
             Ok(()) => Ok(session_id),
@@ -1405,6 +1414,7 @@ impl Daemon {
             return store_outcome::<()>(Err(e));
         }
         session.terminal_title = self.hub.terminal_title(session.id);
+        session.tsp = self.hub.tsp_state(session.id);
         let _ = self
             .hub
             .events

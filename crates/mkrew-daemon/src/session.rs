@@ -12,13 +12,15 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use mkrew_core::state::PATTERN_TAIL_LINES;
+use mkrew_core::tsp::engine::{Engine, Step as TspStep};
 use mkrew_core::turn::{TurnEvent, TurnTracker};
 use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
     AgentLimits, ConflictDetectedEvent, DocChangedEvent, DocComment, Event, GitChangedEvent,
     HookReportParams, QueuedSend, Session, SessionAttachResult, SessionEditedEvent,
     SessionExitedEvent, SessionKind, SessionPortsEvent, SessionQueueEvent, SessionReadResult,
-    SessionState, SessionStateEvent, SessionTerminalTitleEvent, StateSource,
+    SessionState, SessionStateEvent, SessionTerminalTitleEvent, StateSource, TspSnapshot, TspState,
+    TspUpdate,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -106,6 +108,10 @@ pub struct Hub {
     /// the daemon stops, so exited sessions keep their name in `session.list`.
     // ponytail: one ≤ 60-char string per titled agent session; prune on exit if it grows.
     pub terminal_titles: Mutex<HashMap<Ulid, String>>,
+    /// The TSP state of every TSP session (`waiting`, `live`, `fallback`); memory only, kept
+    /// until the daemon stops so exited sessions list their last state.
+    // ponytail: one enum per TSP session; prune on exit if it grows.
+    pub tsp_states: Mutex<HashMap<Ulid, TspState>>,
     /// Linked plans of live sessions, each with its file watcher (ADR 0039).
     pub plans: crate::plan::Plans,
     /// The newest limits of each agent (spec 2026-11-22 section 5.1); memory only.
@@ -285,6 +291,17 @@ pub enum Command {
         file: Option<PathBuf>,
         reply: oneshot::Sender<Session>,
     },
+    /// `tsp.snapshot`: the engine's surfaces; `off` and empty when the session has no TSP.
+    TspSnapshot {
+        reply: oneshot::Sender<TspSnapshot>,
+    },
+    /// `tsp.event`: checked by the engine and written to the PTY input while the surface is
+    /// live. `reply` gets why an event was refused.
+    TspEvent {
+        surface: String,
+        event: serde_json::Value,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// What a session task receives from its PTY threads.
@@ -313,6 +330,8 @@ pub struct SpawnSpec {
     pub env: Vec<(String, String)>,
     /// `[features] turns` when the session starts: take turn snapshots (ADR 0046).
     pub turn_snapshots: bool,
+    /// The UI theme the TSP hello reports (`[ui] theme`; System counts as dark, spec 6.2).
+    pub dark: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -344,6 +363,7 @@ impl Hub {
             usage_warned: Mutex::default(),
             ports: Mutex::default(),
             terminal_titles: Mutex::default(),
+            tsp_states: Mutex::default(),
             plans: crate::plan::Plans::default(),
             limits: Mutex::default(),
         }
@@ -362,6 +382,11 @@ impl Hub {
     /// The cleaned terminal title of agent session `id`, if its program set one.
     pub fn terminal_title(&self, id: Ulid) -> Option<String> {
         lock(&self.terminal_titles).get(&id).cloned()
+    }
+
+    /// The TSP state of session `id`; `off` for a session without TSP.
+    pub fn tsp_state(&self, id: Ulid) -> TspState {
+        lock(&self.tsp_states).get(&id).copied().unwrap_or_default()
     }
 
     /// The newest limits each agent reported, for `limits.get`.
@@ -415,7 +440,7 @@ impl Hub {
 
     fn spawn_watched(self: &std::sync::Arc<Self>, spec: SpawnSpec) -> Result<(), SpawnError> {
         let SpawnSpec {
-            session,
+            mut session,
             profile,
             cwd,
             project_dir,
@@ -425,12 +450,16 @@ impl Hub {
             banner,
             env,
             turn_snapshots,
+            dark,
         } = spec;
         let mut cmd = launch::command(&profile).map_err(SpawnError::Launch)?;
         cmd.cwd(&cwd);
         for (key, value) in &env {
             cmd.env(key, value);
         }
+        // omp draws through TSP only when told to; `0` also keeps it from probing the
+        // terminal (a 300 ms first-paint wait) in any shell-started omp (spec 5).
+        cmd.env("PI_TUI_NATIVE", if profile.tsp { "1" } else { "0" });
         cmd.env("MKREW_SESSION_ID", session.id.to_string());
         cmd.env(mkrew_core::paths::ENV_SOCKET, &socket);
         cmd.env(mkrew_core::paths::ENV_MK, crate::spawn::mk_exe());
@@ -438,6 +467,11 @@ impl Hub {
         // A Mkrew PTY is never omp's own shell; an inherited OMPCODE disables the omp extension.
         cmd.env_remove("OMPCODE");
         let machine = StateMachine::new(&profile.state).context("compile state patterns")?;
+        let tsp = profile.tsp.then(|| Engine::new(session.cols, dark));
+        if tsp.is_some() {
+            session.tsp = TspState::Waiting;
+            lock(&self.tsp_states).insert(session.id, TspState::Waiting);
+        }
         let log = SessionLog::create(&log_file)
             .with_context(|| format!("create {}", log_file.display()))?;
 
@@ -610,6 +644,7 @@ impl Hub {
             hook_reply: None,
             usage,
             ports: run_ports,
+            tsp,
         };
         if let Some(banner) = banner {
             actor.on_banner(&banner);
@@ -1117,6 +1152,9 @@ struct Actor {
     usage: Option<mpsc::UnboundedSender<String>>,
     /// `Some` for a run session: the ports it printed so far.
     ports: Option<Vec<u16>>,
+    /// `Some(..)` for a session whose profile has `tsp`: splits the output into plain bytes and
+    /// TSP messages, answers the hello and keeps the surfaces (spec 6).
+    tsp: Option<Engine>,
 }
 
 impl Actor {
@@ -1137,6 +1175,11 @@ impl Actor {
                 .next_deadline()
                 .map(tokio::time::Instant::from_std);
             let scan_at = self.scan.deadline().map(tokio::time::Instant::from_std);
+            let tsp_at = self
+                .tsp
+                .as_ref()
+                .and_then(Engine::deadline)
+                .map(tokio::time::Instant::from_std);
             tokio::select! {
                 event = output.recv(), if waiting.is_none() => match event {
                     Some(PtyEvent::Output(mut bytes)) => {
@@ -1267,6 +1310,22 @@ impl Actor {
                         );
                         let _ = reply.send(self.session.clone());
                     }
+                    Some(Command::TspSnapshot { reply }) => {
+                        let snapshot = match &self.tsp {
+                            Some(engine) => engine.snapshot(),
+                            None => TspSnapshot {
+                                state: TspState::Off,
+                                surfaces: Vec::new(),
+                                blobs: Vec::new(),
+                                reason: None,
+                            },
+                        };
+                        // The caller may have gone away; nothing to do then.
+                        let _ = reply.send(snapshot);
+                    }
+                    Some(Command::TspEvent { surface, event, reply }) => {
+                        let _ = reply.send(self.tsp_event(&surface, event));
+                    }
                     None => commands_open = false,
                 },
                 () = sleep_until(scan_at), if scan_at.is_some() => {
@@ -1290,6 +1349,15 @@ impl Actor {
                     }
                     self.deliver();
                 }
+                () = sleep_until(tsp_at), if tsp_at.is_some() => {
+                    // No hello within the engine's wait after the first output: it falls back.
+                    let steps = self
+                        .tsp
+                        .as_mut()
+                        .map(|engine| engine.on_deadline(Instant::now()))
+                        .unwrap_or_default();
+                    self.apply_steps(steps);
+                }
                 () = sleep_until(kill_at), if kill_at.is_some() => {
                     tracing::warn!(id = %self.session.id, "no exit after closing the pty; killing");
                     kill_at = None;
@@ -1311,6 +1379,48 @@ impl Actor {
     }
 
     fn on_output(&mut self, bytes: &[u8]) {
+        let Some(engine) = self.tsp.as_mut() else {
+            self.on_plain(bytes);
+            return;
+        };
+        let steps = engine.on_output(Instant::now(), bytes);
+        self.apply_steps(steps);
+    }
+
+    /// Carries out what the TSP engine decided, strictly in its order: the hello reply is
+    /// written before the emulator answers whatever plain bytes follow it (omp waits behind a
+    /// DA1 query for the hello reply, reference 2.3).
+    fn apply_steps(&mut self, steps: Vec<TspStep>) {
+        for step in steps {
+            match step {
+                TspStep::Plain(bytes) => self.on_plain(&bytes),
+                TspStep::Reply(bytes) => self.send_tsp(bytes),
+                TspStep::Update(update) => {
+                    let _ = self.hub.events.send(Event::TspUpdate(Box::new(TspUpdate {
+                        session_id: self.session.id,
+                        surface: update.surface,
+                        change: update.change,
+                    })));
+                }
+                TspStep::State(state) => self.set_tsp_state(state),
+                TspStep::Warn(message) => {
+                    tracing::warn!(id = %self.session.id, "tsp: {message}");
+                }
+            }
+        }
+    }
+
+    /// Writes a TSP message to the PTY input without waiting, like a DSR reply: a full queue
+    /// means the child is not reading, and omp resumes after its own 5 s ack stall.
+    fn send_tsp(&self, bytes: Vec<u8>) {
+        if self.input.try_send(bytes).is_err() {
+            tracing::warn!(id = %self.session.id, "input queue full or closed; TSP message dropped");
+        }
+    }
+
+    /// Output that is not TSP (all of it for a session without TSP): the log, the emulator,
+    /// attached clients and the state scan, exactly as before TSP existed.
+    fn on_plain(&mut self, bytes: &[u8]) {
         if let Err(e) = self.log.write(bytes) {
             tracing::warn!(id = %self.session.id, "session log write failed: {e}");
         }
@@ -1343,6 +1453,44 @@ impl Actor {
             self.queue.on_output();
         }
         self.deliver();
+    }
+
+    /// Records, announces and applies a new TSP state: while the surface is live the screen
+    /// text stands still, so only hooks may drive the session state (spec 6.5). The scan
+    /// already resets its fingerprint while the machine ignores the screen.
+    fn set_tsp_state(&mut self, state: TspState) {
+        if self.session.tsp == state {
+            return;
+        }
+        tracing::info!(id = %self.session.id, ?state, "tsp state");
+        self.session.tsp = state;
+        lock(&self.hub.tsp_states).insert(self.session.id, state);
+        let guess_dropped = self.machine.set_hook_only(state == TspState::Live);
+        let _ = self
+            .hub
+            .events
+            .send(Event::SessionUpdated(Box::new(self.session.clone())));
+        // A screen guess (`working`) made before the surface opened would never end now.
+        if let Some(next) = guess_dropped {
+            self.set_state(next, StateSource::Daemon);
+        }
+    }
+
+    /// `tsp.event`: the engine validates and encodes it (and keeps a `theme` for the next
+    /// hello); the bytes go to the agent only while its surface is live, never to a program
+    /// that does not speak TSP.
+    fn tsp_event(&mut self, surface: &str, event: serde_json::Value) -> Result<(), String> {
+        let Some(engine) = self.tsp.as_mut() else {
+            return Err("this session does not use TSP".into());
+        };
+        let live = engine.state() == TspState::Live;
+        let bytes = engine.event(surface, event).map_err(|e| e.to_string())?;
+        if !live {
+            return Ok(());
+        }
+        self.input
+            .try_send(bytes)
+            .map_err(|_| "the agent is not reading its input".to_owned())
     }
 
     /// Records the report as a `hook` session event, takes the agent's session id and lets
@@ -1451,6 +1599,10 @@ impl Actor {
         }
         self.session.cols = cols;
         self.session.rows = rows;
+        // `e resize` only while a surface is live (the engine answers `None` otherwise).
+        if let Some(bytes) = self.tsp.as_mut().and_then(|engine| engine.resize(cols)) {
+            self.send_tsp(bytes);
+        }
         self.save();
     }
 
