@@ -83,7 +83,11 @@ impl Shell {
             })
             .collect();
         let active_slot = active.and_then(|id| drawn.iter().position(|(_, tab)| tab.id == id));
-        let key = SharedString::from(format!("{view:?}/{active:?}"));
+        // The key is the scroll target only: the shown chip, or the active tab.
+        let key = SharedString::from(match view {
+            View::Terminals => format!("tab/{active:?}"),
+            other => format!("view/{other:?}"),
+        });
         let scroll_to = scroll_index(&items, view, active_slot).map(|index| (key, index));
         let new_tab = icon_button("new-tab", Icon::Plus, theme)
             .tooltip(tooltip(
@@ -125,11 +129,16 @@ impl Shell {
         let ui = self.hosts.get(&host);
         let strip = ui.map(|ui| ui.strip.clone()).unwrap_or_default();
         let scroll = ui.map(|ui| ui.scroll.clone()).unwrap_or_default();
-        if let (Some(ui), Some((key, index))) = (ui, active) {
+        if let Some(ui) = ui {
             let mut seen = ui.scrolled.borrow_mut();
-            if seen.as_ref() != Some(&key) {
-                scroll.scroll_to_item(index);
-                *seen = Some(key);
+            match active {
+                Some((key, index)) if seen.as_ref() != Some(&key) => {
+                    scroll.scroll_to_item(index);
+                    *seen = Some(key);
+                }
+                Some(_) => {}
+                // No target (Board, Docs): the next target scrolls again.
+                None => *seen = None,
             }
         }
         div()

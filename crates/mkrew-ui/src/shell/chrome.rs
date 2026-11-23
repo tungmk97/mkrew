@@ -306,7 +306,8 @@ impl Shell {
         // the window.
         let drag = div()
             .flex_1()
-            .min_w_0()
+            // A drag region always remains: the tab area shrinks first.
+            .min_w(px(space::XXL))
             .h_full()
             .window_control_area(WindowControlArea::Drag)
             .when(cfg!(target_os = "macos"), |el| {

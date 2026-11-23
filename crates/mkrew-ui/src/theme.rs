@@ -2263,7 +2263,7 @@ pub fn refresh(mode: ThemeMode, window: &Window, cx: &mut App) {
     cx.set_global(theme.with_fonts(&fonts));
 }
 
-/// System → Light → Dark → System (the title bar toggle, `ToggleTheme`).
+/// System → Light → Dark → System (the `ToggleTheme` command; the toggle left the title bar).
 pub fn next_mode(mode: ThemeMode) -> ThemeMode {
     match mode {
         ThemeMode::System => ThemeMode::Light,
