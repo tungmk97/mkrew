@@ -107,6 +107,10 @@ pub struct Context {
     pub detached_window: bool,
     /// `[features]` (ADR 0046): Docs and Turns entries are listed only when on.
     pub features: FeatureSettings,
+    /// Idle agents and terminals the sidebar could remove (`Sidebar::idle_agents_and_terminals`).
+    pub idle_removable: usize,
+    /// Some workspace is expanded in the sidebar (`Sidebar::any_expanded`).
+    pub workspaces_open: bool,
 }
 
 /// A palette-only action: no key is bound to it.
@@ -163,10 +167,14 @@ pub enum Extra {
     /// The Appearance gallery's two buttons (ADR 0101), for the keyboard.
     NewThemeFromCurrent,
     OpenThemesFolder,
+    /// The sidebar's former header buttons: Remove idle (shown while something is idle) and
+    /// Collapse / Expand all.
+    SidebarRemoveIdle,
+    SidebarToggleAll,
 }
 
 impl Extra {
-    pub const ALL: [Self; 50] = [
+    pub const ALL: [Self; 52] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -217,6 +225,8 @@ impl Extra {
         Self::InstallMkCommand,
         Self::NewThemeFromCurrent,
         Self::OpenThemesFolder,
+        Self::SidebarRemoveIdle,
+        Self::SidebarToggleAll,
     ];
 
     pub fn title(self) -> &'static str {
@@ -274,6 +284,21 @@ impl Extra {
             Self::InstallMkCommand => "Global: Install mk command",
             Self::NewThemeFromCurrent => "Theme: New theme from current",
             Self::OpenThemesFolder => "Theme: Open themes folder",
+            Self::SidebarRemoveIdle => "Sidebar: Remove idle agents and terminals",
+            Self::SidebarToggleAll => "Sidebar: Collapse / Expand all workspaces",
+        }
+    }
+
+    /// The title shown in the palette: [`Self::title`], with the count of the idle agents and
+    /// terminals the sidebar action removes, and the toggle named for what it does now.
+    pub fn label(self, context: &Context) -> String {
+        match self {
+            Self::SidebarRemoveIdle => format!("{} ({})", self.title(), context.idle_removable),
+            Self::SidebarToggleAll if context.workspaces_open => {
+                "Sidebar: Collapse all workspaces".to_owned()
+            }
+            Self::SidebarToggleAll => "Sidebar: Expand all workspaces".to_owned(),
+            _ => self.title().to_owned(),
         }
     }
 
@@ -340,6 +365,8 @@ impl Extra {
             Self::History => context.workspace,
             Self::InstallUpdate => context.update_ready,
             Self::InstallMkCommand => context.mk_install,
+            Self::SidebarRemoveIdle => context.idle_removable > 0,
+            Self::SidebarToggleAll => context.workspaces > 0,
         }
     }
 }
@@ -947,7 +974,7 @@ pub fn entries(
         Extra::ALL
             .into_iter()
             .filter(|extra| extra.available(context))
-            .map(|extra| Entry::new(Action::Extra(extra), extra.title(), "")),
+            .map(|extra| Entry::new(Action::Extra(extra), extra.label(context), "")),
     );
     let workspace = |id: Ulid| {
         projects
