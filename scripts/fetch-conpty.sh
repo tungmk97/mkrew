@@ -3,7 +3,7 @@
 # Microsoft.Windows.Console.ConPTY NuGet package, MIT) next to the Mkrew binaries. portable-pty
 # loads a conpty.dll found next to the exe, and that newer ConPTY passes omp's TSP escape
 # sequences through (ADR 0107).
-# Usage: scripts/fetch-conpty.sh [--dest DIR]   (default: target/debug and target/release)
+# Usage: scripts/fetch-conpty.sh [--dest DIR]   (default: cargo's target dir, /debug and /release)
 # The package is cached in ${LOCALAPPDATA:-$HOME/.cache}/mkrew/conpty; the package and both files
 # are checked by SHA-256. Safe to run again. Does nothing off Windows.
 set -euo pipefail
@@ -26,7 +26,12 @@ case "$(uname -s)" in
 esac
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-dests=("$root/target/debug" "$root/target/release")
+# cargo's real target dir (shared worktree config, CARGO_TARGET_DIR); JSON escapes \ as \\
+tdir=$(cd "$root" && cargo metadata --format-version 1 --no-deps 2>/dev/null |
+  sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p' | sed 's/\\\\/\//g') || tdir=
+[ -n "$tdir" ] || tdir="$root/target"
+if command -v cygpath >/dev/null; then tdir=$(cygpath -u "$tdir"); fi
+dests=("$tdir/debug" "$tdir/release")
 case "${1:-}" in
   "") ;;
   --dest)
@@ -60,6 +65,7 @@ else
   mv -f "$nupkg.part" "$nupkg"
 fi
 
+command -v unzip >/dev/null || { echo "fetch-conpty: unzip not found (needed to read the package)" >&2; exit 1; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 for f in "${FILES[@]}"; do

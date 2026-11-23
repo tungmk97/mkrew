@@ -2,7 +2,7 @@
 # Microsoft.Windows.Console.ConPTY NuGet package, MIT) next to the Mkrew binaries. portable-pty
 # loads a conpty.dll found next to the exe, and that newer ConPTY passes omp's TSP escape
 # sequences through (ADR 0107).
-# Usage: scripts/fetch-conpty.ps1 [-Dest DIR]   (default: target\debug and target\release)
+# Usage: scripts/fetch-conpty.ps1 [-Dest DIR]   (default: cargo's target dir, \debug and \release)
 # The package is cached in %LOCALAPPDATA%\mkrew\conpty (the same file scripts/fetch-conpty.sh
 # uses); the package and both files are checked by SHA-256. Safe to run again. Does nothing off
 # Windows.
@@ -21,7 +21,13 @@ $files = @(
 function Sha($path) { (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLower() }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$dests = if ($Dest) { @($Dest) } else { @((Join-Path $root 'target\debug'), (Join-Path $root 'target\release')) }
+$tdir = $null
+try {
+  Push-Location $root
+  $tdir = (cargo metadata --format-version 1 --no-deps 2>$null | ConvertFrom-Json).target_directory
+} catch {} finally { Pop-Location }
+if (-not $tdir) { $tdir = Join-Path $root 'target' }
+$dests = if ($Dest) { @($Dest) } else { @((Join-Path $tdir 'debug'), (Join-Path $tdir 'release')) }
 $base = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $HOME '.cache' }
 $cache = Join-Path $base 'mkrew\conpty'
 $nupkg = Join-Path $cache "$version.nupkg"

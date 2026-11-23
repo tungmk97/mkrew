@@ -13,7 +13,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-if (-not $BinDir) { $BinDir = Join-Path $root 'target\release' }
+if (-not $BinDir) {
+  $tdir = $null
+  try {
+    Push-Location $root
+    $tdir = (cargo metadata --format-version 1 --no-deps 2>$null | ConvertFrom-Json).target_directory
+  } catch {} finally { Pop-Location }
+  if (-not $tdir) { $tdir = Join-Path $root 'target' }
+  $BinDir = Join-Path $tdir 'release'
+}
 if (-not $Out) { $Out = Join-Path $root 'dist' }
 
 $match = Select-String -Path (Join-Path $root 'Cargo.toml') -Pattern '^version = "(.*)"$' | Select-Object -First 1
