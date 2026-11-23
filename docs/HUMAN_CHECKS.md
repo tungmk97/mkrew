@@ -180,7 +180,7 @@ With a real omp, a real Claude Code and a real Codex session, dark and light the
 ### To verify - 2026-11-22 Chat view (ADR 0104, plan docs/superpowers/plans/2026-11-22-chat-view.md)
 
 With a real Claude Code session, a real Codex session (and omp if installed), dark and light themes:
-- [ ] The pane header shows `Terminal | Chat` for Claude, Codex and omp; a shell pane and a Copilot pane show none. In a single pane it sits next to the status pill in the tab strip. In a split, the header is as tall with the switch as without it.
+- [ ] The pane header shows `Terminal | Chat` for Claude, Codex and omp; a shell pane and a Copilot pane show none. A single pane has the same compact header as a split pane (ADR 0106). In a split, the header is as tall with the switch as without it.
 - [ ] Ctrl+Alt+T and the palette entry "Agent: Toggle chat view" switch the pane, also while the composer has the keys; the choice survives restarting the UI and moving the pane. Both segments' tooltips show Ctrl+Alt+T. From the Board or Docs view the key does nothing.
 - [ ] Chat shows the prompt card on the right, the agent text as Markdown, tool rows that open to arguments and result; a failing command shows its result in the error color.
 - [ ] Thinking rows (Claude, omp) are collapsed and open to the text.
@@ -619,7 +619,7 @@ Say so if one is wrong.
 ### To verify - 2026-10-30 Title bar 42 px, right panel tab row as a strip
 
 - [ ] **Look (dark + light):** the title bar is a little lower (42 px at the default font, was 48); its controls still sit centered and the menus open just under it.
-  The right panel's `Files │ Git` row has the same height, surface and bottom divider as the terminal tab strip and the sidebar filter row, so the three lines meet in one straight line.
+  The right panel's `Files │ Git` row has the same height, surface and bottom divider as the sidebar filter row, so the two lines meet in one straight line (superseded by ADR 0106: the terminal tabs moved into the title bar).
 
 ### To verify - 2026-10-28 Session tab behind `[features] session`
 
@@ -809,7 +809,7 @@ Say so if one is wrong.
 ### To verify - 2026-10-27 Keyboard context menus (ADR 0085, wave 1)
 
 - Every check in this entry is done in both dark and light.
-- [ ] **Selected row:** open each menu (tab, layout, pane, share, workspace, file, file tab, Run, switcher, + New, Run with, fan-out, card, Git By:, ⋯, Repositories) and press ↓.
+- [ ] **Selected row:** open each menu (tab, layout, pane, share, workspace, file, file tab, Run, switcher, `+ ▾`, Run with, fan-out, card, Git By:, ⋯, Repositories) and press ↓.
   The selected row has the `selected` fill and stays readable, including the swatch ring (accent) on the color rows.
 - [ ] **Navigation keys:** in a menu with several rows, ↑ on the first row wraps to the last and ↓ on the last wraps to the first.
   Home / End select the first / last enabled row; disabled rows, separators and notes are skipped.
@@ -844,7 +844,7 @@ Say so if one is wrong.
 ### To verify - 2026-10-27 Git in the right panel (ADR 0084)
 
 - [ ] **Git tab (dark + light):** `Files │ Session │ Git 3` fits the tab row; at 240 px the header, branch card, segments, filter (with "By:" wrapped) and commit box fit without clipping; the repo strip falls back to one tab when crowded.
-- [ ] **Diff view:** a click shows `Diff` in the view bar and the diff with its × at the toolbar's end; `Esc` / × hide it and Terminals shows; the diff card has the same frame as before.
+- [ ] **Diff view:** a click shows the `Diff` chip in the title bar's tab area and the diff with its × at the toolbar's end; `Esc` / × hide it and Terminals shows; the diff card has the same frame as before.
 - [ ] **Keys with the panel hidden:** in the Diff view with the panel closed, `n` / `p` / `d` / `s` still act.
 - [ ] **Restart:** the panel comes back on the Git tab when left there.
 - [ ] **Filter with no match:** the diff closes on the next status refresh when the filter matches no file (Terminals shows); the keyboard stays in the filter / list.
@@ -865,7 +865,7 @@ Say so if one is wrong.
 ### To verify - 2026-10-27 Files tree in the right panel (ADR 0081)
 
 - [ ] **Panel (dark + light):** `◨` opens the right panel on `Files │ Session`; the tab row, tree rows, markers and search fit 240 px without clipping; dragging the edge resizes both tabs.
-- [ ] **Editor:** clicking a tree file shows `Editor` in the view bar and the file; closing every tab hides it and shows Terminals; the tree keeps the keyboard after a click.
+- [ ] **Editor:** clicking a tree file shows the `Editor` chip in the title bar's tab area and the file; closing every tab hides it and shows Terminals; the tree keeps the keyboard after a click.
 - [ ] **Drag:** dragging a file / folder onto a Claude pane types `@path ` / `@folder/ `; onto a shell the bare path; the pane shows an accent ring while hovered; a plain click still opens.
 - [ ] **Restart:** the panel comes back on the tab it was left on, or hidden.
 
@@ -884,7 +884,7 @@ Say so if one is wrong.
 ### To verify — 2026-10-27 UX packs 2 and 3 (branch `feat/ux-pack-2-3`)
 
 - [ ] **Viewed survives restart:** finish an agent, focus its pane (leaves Needs you), restart the UI → it stays out of Needs you; same for an idle-after-work agent; a "Mark unread" pane is still unread. Delete or garble `%APPDATA%\..\mkrew\ui_viewed.json` (data dir) → the UI starts, finished agents are back in Needs you.
-- [ ] **+ New ▾ (dark + light):** one row per installed agent with its chip, the default first with ✓ and Alt+Shift+A, Shell last; clicking a row starts that agent. Palette "Agent: New <Name> pane" per profile.
+- [ ] **`+ ▾` (dark + light):** one row per installed agent with its chip, the default first with ✓ and Ctrl+Shift+A, Shell last (superseded by ADR 0106: the button is the title bar's `+ ▾`, Alt+Shift+A adds a pane to the current tab); clicking a row starts that agent. Palette "Agent: New <Name> pane" per profile.
 - [ ] **Board keys (dark + light):** ↑↓←→ move the selected-card ring; Shift+←/→ moves the card (a refused move shows in the card notice); Enter opens a running card's terminal, a Todo/finished card's edit dialog; E edits; nothing acts while typing in the follow-up, a dialog, the sidebar filter, or with Jira shown. Known limit: the selected card is not scrolled into view.
 - [ ] **Git keys:** in the list Shift+S / Shift+U / x / f / Shift+P; Fetch, Push, Discard and the group-header Stage all / Unstage all tooltips show the keys. Palette on Board with a Review/Done worktree card: Merge back / Remove worktree open the same dialogs as the buttons.
 - [ ] **Toasts:** hover an error toast for > 4 s → it stays; leave → gone ~4 s later; click its text → clipboard has the full text and a "Copied" toast shows. Open in Zed with `zed` missing → a toast, no line in the sidebar.
@@ -905,7 +905,7 @@ Say so if one is wrong.
 - [ ] **Run keys:** Ctrl+F5 starts (or opens Run setup with no commands), Ctrl+Shift+F5 restarts, Ctrl+Alt+F5 stops; nothing happens with nothing running; the Run menu shows the three keys (dark + light). Keyboard settings list `run_start` / `run_restart` / `run_stop` / `previous_inbox`.
 - [ ] **First run (dark + light):** with no workspace, the main area shows "Add workspace" with Ctrl+Shift+K on the button; it opens the dialog.
 - [ ] **Reconnect / Retry:** in a sandbox (`MKREW_DATA_DIR`, `MKREW_CONFIG_DIR`, `MKREW_SOCKET` set to temp values), start a dev `mkrew.exe`, then stop that sandbox daemon (`mk daemon stop` with the same variables) → "The daemon connection closed." with Reconnect; Reconnect shows "Connecting…", starts the daemon again and brings the workspaces back. "Cannot reach the daemon." (e.g. `mkrew-daemon.exe` missing next to the dev build) shows Retry.
-- [ ] **Tooltips:** tab strip `+` names the agent / shell tab keys; split shows Alt+Shift+=; title bar `+ New` shows Alt+Shift+A / Alt+Shift+S.
+- [ ] **Tooltips:** the title bar's `+` names the agent / shell tab keys; split shows Alt+Shift+= (superseded by ADR 0106: the old tab strip and `+ New` button are gone).
 
 ### To verify — 2026-10-26 Files view tabs (ADR 0080)
 
@@ -1007,7 +1007,7 @@ Say so if one is wrong.
   `choco install innosetup` (never run here).
 - [ ] **Windows end to end:** install release N "for me only", open 2 agent panes (one working)
   and a shell, publish N+1 → within 6 h, or at once via palette "Global: Check for updates", a
-  toast "Mkrew N+1 is available" and the ⬆ button left of the phone icon (accent, tooltip
+  toast "Mkrew N+1 is available" and the ⬆ button in the title bar's right group (accent, tooltip
   `Update to Mkrew N+1 (you have N)`; dark + light). Click → the prompt says "1 agent is
   working…" → Update → button dims, no UAC, Mkrew closes and reopens at N+1 (`mk --version`),
   both agent panes resume their conversation, the shell pane is gone.
@@ -1461,9 +1461,9 @@ by telling the agent.
 - [ ] **Sidebar:** `/` focuses the filter (not while typing in a terminal); × clears it; the RUN
   group lists commands with ports and opens a running one's pane; "N empty workspaces" expands and
   its rows open their workspace; footer Inbox jumps to the next entry; compact toggle works.
-- [ ] **Panes:** a single pane has no header and its pill / Share / ctx % sit in the tab strip;
-  F2 renames it there; split panes show compact headers, no accent line on the focused pane;
-  the active tab has a 2 px accent line along its bottom, inset from its rounded corners.
+- [ ] **Panes:** every pane, a single one too, has the compact header with its pill, Share and ctx % (superseded by ADR 0106: no pill in a tab strip);
+  F2 renames it there; split panes show no accent line on the focused pane;
+  the active tab is a solid `selected` chip (superseded by ADR 0106: no 2 px accent line along its bottom).
 - [ ] **Reading width:** an agent pane wraps at about 130 columns, centered; 📖 switches it to full
   width and back (the agent redraws); shells stay full width; `[ui] reading_width = false` makes
   agents start full width.
@@ -1508,8 +1508,8 @@ by telling the agent.
 
 ### To verify — 2026-10-12 Phone access from the UI (plan docs/superpowers/plans/2026-10-12-phone-access-ui.md, ADR 0053)
 
-- [ ] **Dialog, dark and light:** palette → "Global: Phone access…" and the title bar phone icon both
-  open "Phone access". Check Off / On / `✕ Not running` rows, the Tailscale row, the QR panel (dark
+- [ ] **Dialog, dark and light:** palette → "Global: Phone access…" opens (superseded by ADR 0106: the title bar phone icon is gone)
+  "Phone access". Check Off / On / `✕ Not running` rows, the Tailscale row, the QR panel (dark
   modules on white in both themes), the link line and Copy link in dark and light; no clipped text at
   the 520 px width; Esc closes.
 - [ ] **Start → icon accent:** Start → the row shows "Starting…" then `● On`, the title bar icon turns
@@ -1567,8 +1567,8 @@ by telling the agent.
   graph), also at `[ui] font_size = 18`.
 - [ ] **Font size:** set `[ui] font_size = 18`, restart: icons grow with the text and stay
   centered; nothing clips; the Run button's two halves keep one height.
-- [ ] **Icons beside text (dark + light):** tab strip ends with Close pane (square ✕), +, split,
-  ⋯; pane header Share and Turns…; title bar `+ New ▾`, idle Run (▶ icon) and its ▾, switcher
+- [ ] **Icons beside text (dark + light):** the title bar's `+ ▾` and split (superseded by ADR 0106: no tab strip, no Close pane icon, no `⋯` there);
+  pane header Share and Turns…; title bar idle Run (▶ icon) and its ▾, switcher
   ▾; empty states (New agent, New shell, Add workspace, New task, Open prompts folder); card
   Undo / Changes / Compare / Run with… / Several agents…; Docs and Git Comment, Send to agent,
   Open in Zed; Files Review in Docs, Save, Find; Git Discard… (red icon), Push, Generate,
@@ -1637,7 +1637,7 @@ by telling the agent.
 
 ### To verify — 2026-10-11 title bar / sidebar / status bar polish
 
-- [ ] **Title bar (dark + light):** History is a `◷` icon button (tooltip "History: …", opens the
+- [ ] **Title bar (dark + light), superseded by ADR 0106 (History is a palette command, `+ New ▾` is the tab area's `+ ▾`):** History is a `◷` icon button (tooltip "History: …", opens the
   dialog; glyph renders, not a box). "+ Agent" / "+ Shell" are one `+ New ▾` button: its dropdown
   lists Agent and Shell with their shortcuts; each starts its pane (switching to Terminals); a click
   outside, Esc-less shortcuts (Ctrl+Shift+P) and switching workspace close it. While a pane starts

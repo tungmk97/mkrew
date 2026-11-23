@@ -19,7 +19,7 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
 - The tab strip lives in the tab area: Editor and Diff chips (only while open), pinned tabs, other tabs, and a `+ ▾` button.
   The area scrolls sideways; a chip shrinks to `TAB_MIN_WIDTH` first; `+ ▾` stays visible.
   Only the spacer drags the window, so a click on a tab never moves it.
-- Tab chip look (Tern): the active tab has a solid `card` fill and radius 8 without a border; inactive tabs are transparent with muted text and a hover fill.
+- Tab chip look (Tern): the active tab has a solid `tab_active` fill (a new theme token: `card` equals `chrome` in Mkrew Light and Classic light, and `selected` is nearly `chrome` in One Light) and radius 8 without a border; inactive tabs are transparent with muted text and a hover fill.
   A click on a tab also shows Terminals.
 - The view switch is removed.
   Terminals: any tab; Board and Docs: icons that return to Terminals on a second click; Editor and Diff: their chips.
@@ -52,8 +52,9 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
 
 - The terminal area gains the 44 px of the old strip and the 24 px of the widget bar, minus one pane header row for a single pane.
 - Protocol 58: a UI from before it shows a version mismatch with an old daemon; the user restarts the daemon.
-- An old daemon never sends `machine.stats`; a new daemon never does either.
+- A UI from before protocol 58 cannot connect to the new daemon (the version check blocks the connection), so no `machine.stats` event ever reaches a client that cannot read it.
 - The title bar height is 42 everywhere; SPEC section 10 said 44 and section 14 said 48.
 - The widget bar rule of `theme::problems()` (ADR 0102) is now the limits chip rule: `status_needs_input` and `danger_text` need 4.5:1 on `chrome`; the themes already meet it, so the amber darkening of ADR 0102 stays.
+- A `theme::problems()` rule ("active tab") reports a theme whose `tab_active` is within 1.1:1 of `chrome` or whose `text` does not read on it, so the active tab chip always shows.
 - With many tabs the area scrolls and the active tab is scrolled into view; the drop line and window drops use the recorded strip bounds, which now cover the scrolling area only.
 - The Editor view's own file-tab strip and the sidebar are unchanged.

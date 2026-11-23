@@ -914,10 +914,10 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   - **Tab area:** the Editor and Diff chips (icon, name, × that closes all file tabs or the diff; only while open; a click shows the view), a 1 px rule, the pinned tabs, a rule, the other tabs, and `+ ▾` (below).
     The area scrolls sideways when the tabs do not fit; the active tab is scrolled into view; a chip shrinks to `TAB_MIN_WIDTH` before the area scrolls, `TAB_TITLE_MAX_WIDTH` is its maximum; `+ ▾` stays visible after the scrolled tabs.
     Only the drag space moves the window, so a click on a tab never does.
-    A tab shows its kind icon, 📌 when pinned, its title, a status dot and ×; the active tab has a solid `card` fill with radius 8 and no border, the others are transparent with muted text and a hover fill; a click activates the tab and shows Terminals.
+    A tab shows its kind icon, 📌 when pinned, its title, a status dot and ×; the active tab has a solid `tab_active` fill (never equal to `chrome`, a `theme::problems()` rule) with radius 8 and no border, the others are transparent with muted text and a hover fill; a click activates the tab and shows Terminals.
   - **`+ ▾`:** one row per installed agent profile (the workspace's default first with ✓ and Ctrl+Shift+A), "Agent" when none is listed, Shell (Ctrl+Shift+T), Empty tab; each row opens a new tab and shows Terminals; while a session starts the button shows the starting spinner.
     Alt+Shift+A and Alt+Shift+S add a pane to the current tab instead.
-  - **Right group:** the limits chip (only at 80% or more, see "Limits chip"), the voice status while the sidebar is hidden, the Run pill, the update button (only when an update is known), Board (`LayoutGrid`), Docs (`BookOpen`, only with `[features] docs`), Split ▾ (`◫`: Split right, Split down, Equalize panes, layouts, as before; in the main window only while Terminals show, a detached window always has it) and the right panel toggle (`◨`, ADR 0038, ADR 0081).
+  - **Right group:** the voice status while the sidebar is hidden, the limits chip (main window, only at 80% or more, see "Limits chip"), the Run pill, the update button (only when an update is known), Board (`SquareKanban`), Docs (`BookOpen`, only with `[features] docs`), Split ▾ (`◫`: Split right, Split down, Equalize panes, layouts, as before; in the main window only while Terminals show, a detached window always has it) and the right panel toggle (`◨`, ADR 0038, ADR 0081).
     Board and Docs show in the accent color while their view is shown.
   - History (palette "Global: History…"), the theme toggle (Ctrl+Shift+J, palette, Settings > Appearance), Phone access (palette "Global: Phone access…"), the branch chip and repository menu (the Git panel, Ctrl+Shift+4) and the logo are not in the bar.
   - Every icon is gray (`text-muted`, `text` on hover): color only for status.
@@ -926,7 +926,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
     **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering □ shows the Windows 11 Snap Layouts flyout), all edges resize; ✕ and Alt+F4 hide the window to the tray while `[ui] close_to_tray` is on (§20J); the controls are hidden in full screen.
     **macOS:** native traffic lights at the left, centered in the bar at any `[ui] font_size` (no gap is left for them in full screen), drag and double-click as the OS does.
     **Linux:** the OS title bar stays. Minimum window size 1100 × 560.
-    Without a workspace only the sidebar toggle, the drag space and the window controls show.
+    Without a workspace only the sidebar toggle, the limits chip, the drag space and the window controls show.
 - **Machine windows** (ADR 0089, `mkrew-ui --machine <name>`; this computer's window is unchanged):
   - The OS window title is `Mkrew - <name>`.
     The **machine chip** is the first element of the bar (after the macOS inset): Lucide `server`, the machine name (cut with `…` at `TITLE_CHIP_MAX_WIDTH`) and a status dot.
@@ -1737,7 +1737,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Radius 5 (area chips, key hints), 6 (chips, segments, tree rows), 8 (buttons, inputs, rows),
   9 (segmented container), 10 (cards), 12 (dialogs, palette), 999 (pills); 4 for old badges.
 - Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the Editor's file-tab strip and the sidebar and right panel tab rows 44, Git repo strip 42 (px at 13 px body).
-- Tab chip (Tern look, ADR 0106): height `CONTROL_HEIGHT`, radius 8 (`radius::MEDIUM`), no border; the active chip has a solid `card` fill and `text`; the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
+- Tab chip (Tern look, ADR 0106): height `CONTROL_HEIGHT`, radius 8 (`radius::MEDIUM`), no border; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
   Chips shrink to `TAB_MIN_WIDTH` before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
   buttons, 30 px icon button, search box, status pill, tinted chip, overline, key hint.
@@ -1767,8 +1767,8 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   spec names for those buttons map to Lucide: `+` plus, `▾ ▸ ‹ ›` chevrons, `⋯` ellipsis, `◷`
   history, `⌫` delete, `◐ ☀ ☾` sun-moon / sun / moon, `─ □ ❐ ✕` minus / square / copy / x, `⌕`
   search, `◫` columns-2, `◧ ◨` panel-left / panel-right, `⇤ ⇥` panel-left-close / -open,
-  `↻ ■ ▶` rotate-cw / circle-stop / play, `✦` sparkles, Fetch `↓` arrow-down-to-line. Close
-  pane is an icon-only `square-x` in the pane header. Frequent toolbar, header, card and
+  `↻ ■ ▶` rotate-cw / circle-stop / play, `✦` sparkles, Fetch `↓` arrow-down-to-line. The pane
+  header has no close button: Close pane is in the pane menu (right-click the header) and the tab menu. Frequent toolbar, header, card and
   empty-state actions carry a 14 px icon before their text (Share, idle Run, Save, Find,
   Comment, Send to agent, Open in Zed, Push, …; the list is in ADR 0051); a `▾` after a label
   is a chevron-down icon. Dialog footers, Retry, thread actions, row actions and danger buttons
