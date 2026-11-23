@@ -704,22 +704,12 @@ impl Chips {
 
 /// What else of the chip row takes room: whether ✦ shows (the draft is not blank), whether the
 /// loading dots sit in the model pill (the agent works), and the branch chip's width.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct FitCtx {
     pub typing: bool,
     pub working: bool,
     /// [`branch_width`] of the shown branch (0 without one).
     pub branch: f32,
-}
-
-impl Default for FitCtx {
-    fn default() -> Self {
-        Self {
-            typing: false,
-            working: false,
-            branch: 0.0,
-        }
-    }
 }
 
 /// The room of the branch chip (gap included): its icon, then `name *N` in the terminal font,
