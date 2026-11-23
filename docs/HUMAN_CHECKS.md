@@ -48,6 +48,20 @@ With a real omp, a real Claude Code and a real Codex session, dark and light the
   A draft, a queued text or an error keeps the card open.
 - [ ] **Slash picker:** typing `/` in the composer shows the current model next to `/model` and "context N% used" next to `/compact`.
 - [ ] **Terminal mode** keeps today's docked composer and its key hint.
+- [ ] **Tern-style tables (dark + light):** in Chat a Markdown table has no outer border, no rounded corners and no header fill; the header is muted regular text; a thin line sits under the header and between rows; no vertical lines; the first column starts at the paragraph's left edge.
+  The same table in the Docs view and the Files preview keeps its border and header fill.
+- [ ] **Inline code color (dark + light):** inline code in Chat is the accent color on the raised background; a path shows the folder muted and the name bold; Docs view code is unchanged.
+- [ ] **Chip row (dark + light):** left to right: the model as a bordered pill with a chevron (accent text; loading dots before the name while the agent works), permission with a lightning icon in the needs-input color, the branch with `name *N` in the string color, the context tokens with a database icon (keyword color), `tok/s` in the text color, the elapsed time with a clock icon, and the end time `HH:MM:SS` of the last turn in the subtle color with a clock icon (matches your wall clock; hidden while the agent works).
+  Stats and the branch are in the terminal font.
+  Narrow the pane: the end time drops first, then stats, permission, effort, branch.
+- [ ] **Placeholder:** italic muted, a small sparkle before it, still the session title in quotes; the caret shows before it while the field has the keyboard.
+- [ ] **Send button (dark + light):** neutral (raised, thin border, muted corner-arrow icon) with an empty draft or while sending; type something and it turns accent with a light icon; Enter and a click send.
+- [ ] **Scroll to the end (dark + light):** scroll a long chat up: a small round down-arrow button appears at the column's right edge above the composer; a click jumps to the end and it disappears; it never shows at the end; hover and press react.
+- [ ] **Terminal / Chat is kept per pane:** switch one pane to Chat and another to Terminal, restart the UI: each comes back as it was.
+  Stop the daemon (`mk daemon stop`) and start it again so it resumes the agent panes: each pane still has its mode.
+- [ ] **Last pick is the default:** pick Chat (header switch, `Ctrl+Alt+T` or the palette "Agent: Toggle chat view"), open a new agent pane: it opens in Chat; pick Terminal: the next new pane opens in Terminal.
+  Settings > General "Chat view by default" shows the same value and `settings.toml` has `[ui] chat_default`.
+  An older pane you did not touch keeps its look (it does not flip).
 
 ### To verify - 2026-11-22 macOS app integration (ADR 0100)
 
