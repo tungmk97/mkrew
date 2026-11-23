@@ -15,6 +15,7 @@ pub mod link;
 pub mod log_tail;
 pub mod login_path;
 pub mod lookup;
+pub mod notes;
 pub mod paths;
 pub mod plan;
 pub mod profile;

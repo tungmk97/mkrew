@@ -175,6 +175,15 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         General,
+        "Workspace",
+        "notes",
+        "folder",
+        Text,
+        "Notes folder",
+        "Where New note saves its file: empty is the workspace root, a relative path is below it, a full path (not ~) is used as is.",
+    ),
+    row(
+        General,
         "Terminal",
         "terminal",
         "option_as_meta",
@@ -549,6 +558,13 @@ mod tests {
         let s = setting("ui.chat_default");
         assert_eq!(s.current(&Settings::default()), "false");
         assert_eq!(s.page, Page::General);
+    }
+
+    #[test]
+    fn the_notes_folder_is_a_general_text_field_empty_by_default() {
+        let s = setting("notes.folder");
+        assert_eq!((s.page, s.kind), (Page::General, Kind::Text));
+        assert_eq!(s.current(&Settings::default()), "");
     }
 
     #[test]
