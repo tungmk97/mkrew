@@ -332,16 +332,6 @@ impl Shell {
             .children(chip_elements)
             // Pushes the notices and the layout / ⋯ group to the right.
             .child(div().flex_1())
-            .children(
-                (self.tab_error.as_ref())
-                    .filter(|(host, _)| *host == HostId::Detached(key))
-                    .map(|(_, error)| notice(theme.text, format!("✕ {error}"))),
-            )
-            .children(
-                (self.tab_notice.as_ref())
-                    .filter(|(host, _)| *host == HostId::Detached(key))
-                    .map(|(_, text)| notice(theme.text_muted, text.clone())),
-            )
             .child(
                 icon_button("tab-split", Icon::Columns2, theme)
                     .tooltip(tooltip(

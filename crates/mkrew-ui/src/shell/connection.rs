@@ -158,6 +158,7 @@ impl Shell {
                     if shell.toasts.expire(Instant::now()) {
                         cx.notify();
                     }
+                    shell.warn_running_sessions(cx);
                     if shell.windows_dirty {
                         shell.save_windows(cx);
                     }
@@ -311,8 +312,7 @@ impl Shell {
             loading_tabs: HashSet::new(),
             early_tab_events: Vec::new(),
             reveal: None,
-            tab_error: None,
-            tab_notice: None,
+            running_warned: HashSet::new(),
             starting_pane: None,
             router: Router::default(),
             panes: HashMap::new(),
@@ -845,7 +845,7 @@ impl Shell {
         self.loading_tabs.clear();
         self.early_tab_events.clear();
         self.reveal = None;
-        self.tab_error = None;
+        self.running_warned.clear();
         self.router.clear();
         self.panes.clear();
         self.link_subscriptions.clear();

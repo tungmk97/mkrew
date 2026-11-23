@@ -86,8 +86,7 @@ pub(crate) fn empty_state(
         }))
 }
 
-/// A one-line notice (tab bar, pane header), shortened to fit; `color` sets errors apart from
-/// warnings.
+/// A one-line notice, shortened to fit; `color` sets errors apart from warnings.
 pub(crate) fn notice(color: u32, text: String) -> gpui::Div {
     div()
         .min_w_0()

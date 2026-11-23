@@ -11,6 +11,7 @@ impl Shell {
         &self,
         project_id: Ulid,
         tabs: &Tabs,
+        now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
@@ -89,25 +90,11 @@ impl Shell {
             other => format!("view/{other:?}"),
         });
         let scroll_to = scroll_index(&items, view, active_slot).map(|index| (key, index));
-        let new_tab = icon_button("new-tab", Icon::Plus, theme)
-            .tooltip(tooltip(
-                theme,
-                &format!(
-                    "New empty tab ({} starts an agent tab, {} a shell tab)",
-                    self.keymap.label(Command::NewAgentTab),
-                    self.keymap.label(Command::NewShellTab)
-                ),
-                "",
-            ))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.show_view(View::Terminals, window, cx);
-                shell.create_tab(project_id, None, window, cx);
-            }));
         self.tab_area_frame(
             HostId::Main,
             chips,
             scroll_to,
-            Some(new_tab.into_any_element()),
+            Some(self.render_new_tab_button(now, theme, cx)),
             theme,
             cx,
         )

@@ -480,11 +480,8 @@ struct Shell {
     /// The session a `mkrew://` link asked for when it started this UI (ADR 0079); shown
     /// after the first session list.
     pending_jump: Option<(Ulid, Ulid)>,
-    /// Last failure of a tab action (new tab), with the window that shows it.
-    tab_error: Option<(HostId, String)>,
-    /// A one-line notice in the tab bar that goes away by itself (link hints found none), with
-    /// the window whose strip shows it.
-    tab_notice: Option<(HostId, String)>,
+    /// Workspaces already warned about their running sessions (`lifecycle::running_alert`).
+    running_warned: HashSet<Ulid>,
     /// The kind of pane `session.spawn` is starting (large agent exes can take seconds on a
     /// cold start): its buttons show a loading mark and further starts are ignored meanwhile.
     starting_pane: Option<SessionKind>,
@@ -618,7 +615,7 @@ struct Shell {
     run_menu: Option<Ulid>,
     /// The title bar's workspace dropdown is open.
     workspace_switcher: bool,
-    /// The title bar's "+ New" dropdown is open.
+    /// The tab area's `+ ▾` dropdown is open.
     new_menu: bool,
     /// The sidebar's "N empty workspaces" line is expanded (in memory only).
     empty_workspaces_open: bool,

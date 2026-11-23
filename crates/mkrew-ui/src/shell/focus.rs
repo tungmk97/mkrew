@@ -379,9 +379,8 @@ impl Shell {
                 .detach();
                 cx.subscribe(&pane, |_, _, _: &CopyModeChanged, cx| cx.notify())
                     .detach();
-                cx.subscribe(&pane, move |shell, _, _: &NoLinks, cx| {
-                    let host = shell.session_host(session);
-                    shell.show_tab_notice(host, "No links on screen.", cx);
+                cx.subscribe(&pane, |shell, _, _: &NoLinks, cx| {
+                    shell.toast_info("No links on screen.", cx);
                 })
                 .detach();
                 shell.panes.insert(session, pane);

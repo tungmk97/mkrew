@@ -1,6 +1,8 @@
 //! Pane lifecycle decisions (SPEC §10): what a new pane spawns, what closing a pane does to its
 //! session, and when a workspace runs too many sessions. Pure and tested headlessly.
 
+use std::collections::HashSet;
+
 use mkrew_protocol::{
     AgentProfileInfo, Request, Session, SessionKind, SessionRenameParams, SessionSetColorParams,
     SessionSpawnParams, SessionState, Task, TaskFanoutParams, TaskRunParams, TaskUpdateParams,
@@ -9,7 +11,7 @@ use ulid::Ulid;
 
 use crate::workspace_menu::Agents;
 
-/// Above this many running sessions in one workspace the tab bar shows a warning.
+/// Above this many running sessions in one workspace a toast warns.
 pub const RUNNING_WARN_ABOVE: usize = 12;
 
 /// Size a new session starts with; its pane resizes it once laid out.
@@ -161,7 +163,7 @@ pub fn kind_noun(kind: SessionKind) -> &'static str {
     }
 }
 
-/// Start of the tab bar note shown while a pane is still starting ("Still starting an agent…").
+/// Start of the toast shown while a pane is still starting ("Still starting an agent…").
 pub const STILL_STARTING: &str = "Still starting";
 
 /// What closing the pane of a session does.
@@ -222,6 +224,23 @@ pub fn running_warning(sessions: &[Session], project_id: Ulid) -> Option<String>
     (running > RUNNING_WARN_ABOVE).then(|| {
         format!("{running} sessions running in this workspace. Close the ones you no longer need.")
     })
+}
+
+/// The warning to toast for `project_id` now: its text the first time the running count is
+/// above [`RUNNING_WARN_ABOVE`], then `None` until the count has been at or below it (`warned`
+/// remembers the workspaces already told).
+pub fn running_alert(
+    sessions: &[Session],
+    project_id: Ulid,
+    warned: &mut HashSet<Ulid>,
+) -> Option<String> {
+    match running_warning(sessions, project_id) {
+        Some(text) => warned.insert(project_id).then_some(text),
+        None => {
+            warned.remove(&project_id);
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -441,5 +460,54 @@ mod tests {
         let warning = running_warning(&sessions, project).unwrap();
         assert!(warning.starts_with("13 sessions running"), "{warning}");
         assert_eq!(running_warning(&sessions, other), None);
+    }
+
+    /// One alert per upward crossing of the limit: not repeated while the count stays above
+    /// it, armed again once it is back at or below the limit; per workspace.
+    #[test]
+    fn the_running_alert_fires_once_per_crossing_and_rearms_at_the_limit() {
+        let (project, other) = (Ulid::new(), Ulid::new());
+        let mut sessions: Vec<Session> = (0..RUNNING_WARN_ABOVE)
+            .map(|_| session(project, SessionKind::Agent, SessionState::Working))
+            .collect();
+        let mut warned = HashSet::new();
+        assert_eq!(
+            running_alert(&sessions, project, &mut warned),
+            None,
+            "at the limit"
+        );
+
+        sessions.push(session(project, SessionKind::Agent, SessionState::Working));
+        let text = running_alert(&sessions, project, &mut warned).unwrap();
+        assert!(text.starts_with("13 sessions running"), "{text}");
+        assert_eq!(
+            running_alert(&sessions, project, &mut warned),
+            None,
+            "not repeated"
+        );
+        sessions.push(session(project, SessionKind::Agent, SessionState::Working));
+        assert_eq!(
+            running_alert(&sessions, project, &mut warned),
+            None,
+            "still above"
+        );
+
+        sessions.truncate(RUNNING_WARN_ABOVE);
+        assert_eq!(
+            running_alert(&sessions, project, &mut warned),
+            None,
+            "back at the limit"
+        );
+        sessions.push(session(project, SessionKind::Agent, SessionState::Working));
+        assert!(
+            running_alert(&sessions, project, &mut warned).is_some(),
+            "armed again"
+        );
+
+        assert_eq!(
+            running_alert(&sessions, other, &mut warned),
+            None,
+            "another workspace"
+        );
     }
 }

@@ -35,7 +35,7 @@ impl Shell {
         }
     }
 
-    /// A new tab in the shown workspace with an agent or a shell in it.
+    /// A new tab in the shown workspace with the default agent or shell in it.
     pub(crate) fn new_tab(
         &mut self,
         kind: SessionKind,
@@ -45,7 +45,23 @@ impl Shell {
         if let Some(project_id) = self.workspace
             && self.tabs.contains_key(&project_id)
         {
-            self.create_tab(project_id, Some(kind), window, cx);
+            self.create_tab(project_id, Some((kind, None)), window, cx);
+        }
+    }
+
+    /// A row of the `+ ▾` menu: a new tab in the shown workspace (`None` = an empty one,
+    /// else a kind and an agent profile), and Terminals shows it.
+    pub(crate) fn open_new_tab(
+        &mut self,
+        start: Option<(SessionKind, Option<String>)>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some(project_id) = self.workspace
+            && self.tabs.contains_key(&project_id)
+        {
+            self.show_view(View::Terminals, window, cx);
+            self.create_tab(project_id, start, window, cx);
         }
     }
 
@@ -80,17 +96,15 @@ impl Shell {
         else {
             return;
         };
-        self.tab_error = None;
         if have > preset.panes() {
-            self.tab_error = Some((
-                self.host_of(window),
+            self.toast_error(
                 format!(
                     "This tab has {have} panes; the {} layout holds {}. Close panes first.",
                     preset.label(),
                     preset.panes()
                 ),
-            ));
-            cx.notify();
+                cx,
+            );
             return;
         }
         let missing = preset.panes() - have;
@@ -107,12 +121,11 @@ impl Shell {
         let focused = (self.focused_session(window))
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let kind = lifecycle::split_kind(focused);
-        if self.still_starting(window, cx) || self.ask_for_default(project_id, kind, window, cx) {
+        if self.still_starting(cx) || self.ask_for_default(project_id, kind, window, cx) {
             return;
         }
         self.starting_pane = Some(kind);
         cx.notify();
-        let host = self.host_of(window);
         cx.spawn_in(window, async move |this, cx| {
             let mut started = Vec::new();
             let mut failed = None;
@@ -131,9 +144,6 @@ impl Shell {
             }
             let _ = this.update_in(cx, |shell, window, cx| {
                 shell.starting_pane = None;
-                shell
-                    .tab_error
-                    .take_if(|(_, error)| error.starts_with(lifecycle::STILL_STARTING));
                 let write = (shell.tabs.get_mut(&project_id))
                     .and_then(|tabs| tabs.arrange(tab_id, preset, &started));
                 match write {
@@ -157,7 +167,7 @@ impl Shell {
                 if let Some(error) = failed {
                     tracing::warn!(%project_id, "session.spawn failed: {error}");
                     let what = lifecycle::kind_noun(kind);
-                    shell.tab_error = Some((host, format!("Cannot start {what}: {error}")));
+                    shell.toast_error(format!("Cannot start {what}: {error}"), cx);
                 }
                 shell.sync_panes(window, cx);
                 cx.notify();
@@ -467,7 +477,7 @@ impl Shell {
     }
 
     /// Sends a `tab.rename` / `session.rename` / `session.set_color` / `session.pin` / `tab.pin`; `shown` applies the
-    /// reply, a failure goes to the tab bar's error line after `failure`.
+    /// reply, a failure toasts after `failure`.
     pub(crate) fn send_edit<T: serde::de::DeserializeOwned + Send + 'static>(
         &mut self,
         request: Request,
@@ -479,9 +489,7 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        self.tab_error = None;
         let edited = connection.call::<T>(request);
-        let host = self.host_of(window);
         cx.spawn_in(window, async move |this, cx| {
             let edited = edited.await;
             let _ = this.update(cx, |shell, cx| {
@@ -489,7 +497,7 @@ impl Shell {
                     Ok(edited) => shown(shell, edited),
                     Err(error) => {
                         tracing::warn!("{failure}: {error:#}");
-                        shell.tab_error = Some((host, format!("{failure}: {error:#}")));
+                        shell.toast_error(format!("{failure}: {error:#}"), cx);
                     }
                 }
                 cx.notify();
@@ -678,7 +686,6 @@ impl Shell {
                 cx,
             )
         });
-        self.tab_error = None;
         cx.spawn_in(window, async move |this, cx| {
             if let Some(answer) = answer
                 && !task_dialog::confirms_delete(answer.await.ok())
@@ -706,9 +713,7 @@ impl Shell {
                         }
                         Err(error) => {
                             tracing::warn!(%tab_id, "tab.close failed: {error:#}");
-                            let host = shell.host_of(window);
-                            shell.tab_error =
-                                Some((host, format!("Cannot close the tab: {error:#}")));
+                            shell.toast_error(format!("Cannot close the tab: {error:#}"), cx);
                         }
                     }
                     cx.notify();
@@ -826,7 +831,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// `session.kill`; a failure is shown in the tab bar.
+    /// `session.kill`; a failure toasts.
     pub(crate) fn kill(
         &mut self,
         session_id: Ulid,
@@ -840,13 +845,11 @@ impl Shell {
             session_id,
             force: false,
         }));
-        let host = self.host_of(window);
         cx.spawn_in(window, async move |this, cx| {
             if let Err(error) = killed.await {
                 tracing::warn!(%session_id, "session.kill failed: {error:#}");
                 let _ = this.update(cx, |shell, cx| {
-                    shell.tab_error = Some((host, format!("Cannot kill the session: {error:#}")));
-                    cx.notify();
+                    shell.toast_error(format!("Cannot kill the session: {error:#}"), cx);
                 });
             }
         })

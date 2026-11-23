@@ -46,8 +46,10 @@ impl Shell {
         rows
     }
 
-    /// One row per installed agent profile (the default first and checked, with its shortcut),
-    /// the plain "Agent" row while none is listed, then "Shell".
+    /// The `+ ▾` menu: one row per installed agent profile (the default first and checked,
+    /// with the agent tab shortcut), the plain "Agent" row while none is listed, "Shell" and
+    /// "Empty tab". Every row opens a new tab and shows Terminals; a new pane in the current
+    /// tab comes from Split.
     pub(crate) fn new_menu_rows(&self) -> Rows {
         let mut rows: Rows = Vec::new();
         for agent in self.pane_agents() {
@@ -55,11 +57,8 @@ impl Shell {
             let item = MenuItem::new(
                 agent.name.clone(),
                 act(move |shell, window, cx| {
-                    shell.show_view(View::Terminals, window, cx);
-                    shell.new_pane_with(
-                        SessionKind::Agent,
-                        Some(profile.clone()),
-                        Axis::Vertical,
+                    shell.open_new_tab(
+                        Some((SessionKind::Agent, Some(profile.clone()))),
                         window,
                         cx,
                     );
@@ -72,7 +71,7 @@ impl Shell {
             .checked(agent.default);
             rows.push(
                 if agent.default {
-                    item.keys(self.keymap.label(Command::SplitAgent))
+                    item.keys(self.keymap.label(Command::NewAgentTab))
                 } else {
                     item
                 }
@@ -84,24 +83,28 @@ impl Shell {
                 MenuItem::new(
                     "Agent",
                     act(|shell, window, cx| {
-                        shell.show_view(View::Terminals, window, cx);
-                        shell.new_pane(SessionKind::Agent, Axis::Vertical, window, cx);
+                        shell.open_new_tab(Some((SessionKind::Agent, None)), window, cx);
                     }),
                 )
-                .keys(self.keymap.label(Command::SplitAgent))
+                .keys(self.keymap.label(Command::NewAgentTab))
                 .row(),
             );
         }
         rows.push(
             MenuItem::new(
                 "Shell",
-                // The title bar shows it in every view; the new pane is seen in Terminals.
                 act(|shell, window, cx| {
-                    shell.show_view(View::Terminals, window, cx);
-                    shell.new_pane(SessionKind::Shell, Axis::Vertical, window, cx);
+                    shell.open_new_tab(Some((SessionKind::Shell, None)), window, cx);
                 }),
             )
-            .keys(self.keymap.label(Command::SplitShell))
+            .keys(self.keymap.label(Command::NewShellTab))
+            .row(),
+        );
+        rows.push(
+            MenuItem::new(
+                "Empty tab",
+                act(|shell, window, cx| shell.open_new_tab(None, window, cx)),
+            )
             .row(),
         );
         rows
@@ -292,7 +295,7 @@ impl Shell {
         let tab_area = workspace.and_then(|project_id| {
             let tabs = self.tabs.get(&project_id)?;
             Some(
-                self.render_tab_area(project_id, tabs, theme, cx)
+                self.render_tab_area(project_id, tabs, now, theme, cx)
                     .into_any_element(),
             )
         });
@@ -392,11 +395,7 @@ impl Shell {
             );
         }
         if workspace.is_some() {
-            right = right.child(self.inspector_toggle(theme, cx)).child(
-                div()
-                    .pl(px(space::XS))
-                    .child(self.render_new_button(now, theme, cx)),
-            );
+            right = right.child(self.inspector_toggle(theme, cx));
         }
         bar = bar.child(right.when(modal, |el| el.relative().child(inert_layer())));
         if controls {
@@ -567,46 +566,73 @@ impl Shell {
             .into_any_element()
     }
 
-    /// "+ New ▾": a dropdown of "Agent" and "Shell" (each with its shortcut) starting a new pane
-    /// with the workspace's default agent or shell. While a pane starts it shows the loading
-    /// mark instead (one start at a time).
-    pub(crate) fn render_new_button(
+    /// `+ ▾` after the last tab: a dropdown to start a tab with an agent profile, the shell or
+    /// nothing (`new_menu_rows`). While a pane starts it shows the loading dots instead (one
+    /// start at a time).
+    pub(crate) fn render_new_tab_button(
         &self,
         now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         if let Some(kind) = self.starting_pane {
-            return starting_button("new-pane", kind, now, theme, true);
+            let what = match kind {
+                SessionKind::Agent => "Starting agent",
+                SessionKind::Shell => "Starting shell",
+            };
+            return div()
+                .id("new-tab")
+                .flex_none()
+                .min_w(theme::rems_px(theme::CONTROL_HEIGHT))
+                .h(theme::rems_px(theme::CONTROL_HEIGHT))
+                .px(px(space::S))
+                .flex()
+                .items_center()
+                .justify_center()
+                .tooltip(tooltip(theme, what, ""))
+                .child(loading_dots(now, rgb(theme.text_muted)))
+                .into_any_element();
         }
-        let button = button(
-            "new-pane",
-            icon_text(Icon::Plus, "New", theme.on_accent).child(icon_svg(
+        let button = div()
+            .id("new-tab")
+            .flex_none()
+            .h(theme::rems_px(theme::CONTROL_HEIGHT))
+            .px(px(space::S))
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .rounded(px(radius::MEDIUM))
+            .text_color(rgb(theme.text_muted))
+            .pressable(Look::Icon, true, theme)
+            // Not while its dropdown is open: the tooltip would cover the rows.
+            .when(!self.new_menu, |el| {
+                el.tooltip(tooltip(
+                    theme,
+                    "New tab: agent, shell or empty",
+                    format!(
+                        "{} / {}",
+                        self.keymap.label(Command::NewAgentTab),
+                        self.keymap.label(Command::NewShellTab)
+                    ),
+                ))
+            })
+            // An open menu already closed on this mouse down (outside it): the click reopens it.
+            .on_press(
+                true,
+                cx.listener(|shell, _, window, cx| {
+                    shell.open_new_menu(window, cx);
+                }),
+            )
+            .child(icon_svg(Icon::Plus, theme::ICON_SIZE, theme.text_muted))
+            .child(icon_svg(
                 Icon::ChevronDown,
                 theme::ICON_SIZE_SMALL,
-                theme.on_accent,
-            )),
-            theme,
-            true,
-        )
-        .flex_none()
-        .tooltip(tooltip(
-            theme,
-            "New agent or shell pane",
-            format!(
-                "{} / {}",
-                self.keymap.label(Command::SplitAgent),
-                self.keymap.label(Command::SplitShell)
-            ),
-        ))
-        // An open menu already closed on this mouse down (outside it): the click reopens it.
-        .on_click(cx.listener(|shell, _, window, cx| {
-            shell.open_new_menu(window, cx);
-        }));
+                theme.text_muted,
+            ));
         let menu = (self.new_menu && !self.modal_open()).then(|| {
             render_menu(
                 self.menu_state(),
-                "new-pane-panel",
+                "new-tab-panel",
                 self.new_menu_rows(),
                 None,
                 Place::Dropdown,
@@ -614,6 +640,10 @@ impl Shell {
                 cx,
             )
         });
-        div().child(button).children(menu).into_any_element()
+        div()
+            .flex_none()
+            .child(button)
+            .children(menu)
+            .into_any_element()
     }
 }
