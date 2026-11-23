@@ -719,6 +719,8 @@ fn a_tab_shows_pane_icons_active_all_inactive_focused() {
     );
     // A pane no session is known for has no icon.
     assert!(tab_icons(tab, &[], true).panes.is_empty());
+    // The fake agent has no brand logo: the chip draws its glyph in `text_muted`.
+    assert!(crate::icons::AgentLogo::of("fake").is_none());
 }
 
 /// A tab without panes shows nothing; more than three panes end in `+N`; a run pane has its
@@ -764,10 +766,10 @@ fn a_tab_cuts_pane_icons_after_three_and_has_none_when_empty() {
     assert_eq!(tab_icons(tab, &sessions, false).more, 0);
 }
 
-/// The status is the most urgent pane's: needs input, exited, working agent, done; idle and
-/// starting show none; a live run process counts as done.
+/// The status icon shows only a state to notice: needs input beats a working agent; idle, done,
+/// exited, starting and a live run process show none.
 #[test]
-fn a_tab_status_follows_its_most_urgent_pane() {
+fn a_tab_status_shows_needs_input_then_working_and_nothing_else() {
     let (tabs, a, b) = two_panes();
     let project = tabs.project_id();
     let tab = tabs.active().unwrap();
@@ -787,13 +789,18 @@ fn a_tab_status_follows_its_most_urgent_pane() {
         status(Working, NeedsInput, false),
         Some(TabStatus::NeedsInput)
     );
-    assert_eq!(status(Done, Working, false), Some(TabStatus::Done));
-    assert_eq!(status(Working, Idle, false), Some(TabStatus::Working));
-    assert_eq!(status(Exited, Exited, false), Some(TabStatus::Exited));
+    assert_eq!(
+        status(NeedsInput, Working, false),
+        Some(TabStatus::NeedsInput)
+    );
+    assert_eq!(status(Done, Working, false), Some(TabStatus::Working));
+    assert_eq!(status(Idle, Idle, false), None);
+    assert_eq!(status(Done, Done, false), None);
+    assert_eq!(status(Exited, Exited, false), None);
     assert_eq!(status(Idle, Starting, false), None);
-    assert_eq!(status(Idle, Idle, true), Some(TabStatus::Done));
-    // An exited run process is not live.
-    assert_eq!(status(Idle, Exited, true), None);
+    assert_eq!(status(Idle, Idle, true), None, "a live run process");
+    // A working shell or run process is not an agent at work.
+    assert_eq!(status(Idle, Working, true), None);
 }
 
 /// A tab that keeps its default name shows the session title of its focused pane, also among

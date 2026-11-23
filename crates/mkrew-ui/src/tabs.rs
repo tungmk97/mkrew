@@ -792,13 +792,11 @@ pub fn rename_params(tab: &Tab, draft: &str) -> Option<TabRenameParams> {
     })
 }
 
-/// The status icon in front of a tab chip (SPEC §11): the most urgent state of its panes.
+/// The status icon in front of a tab chip: only a state the user should notice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabStatus {
     Working,
     NeedsInput,
-    Done,
-    Exited,
 }
 
 /// The icon of one pane in a tab chip.
@@ -813,7 +811,7 @@ pub enum PaneIcon {
 /// What a tab chip shows in front of its title.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TabIcons {
-    /// `None` while idle, starting or without panes.
+    /// `None` unless a pane needs input or an agent works.
     pub status: Option<TabStatus>,
     pub panes: Vec<PaneIcon>,
     /// Panes beyond [`MAX_PANE_ICONS`], shown as `+N`.
@@ -823,26 +821,25 @@ pub struct TabIcons {
 /// Most pane icons an active tab chip shows before `+N`.
 pub const MAX_PANE_ICONS: usize = 3;
 
-/// The icons of `tab`'s chip. Status: needs input, exited, working (an agent), then done (or a
-/// live run process); idle and starting show none. Pane icons: the active tab shows one per
-/// pane in pane order (at most [`MAX_PANE_ICONS`], then `more`), an inactive tab only its
-/// focused pane. Panes without a known session are skipped.
+/// The icons of `tab`'s chip. Status: needs input beats a working agent; every other state
+/// (idle, done, exited, starting) shows none. Pane icons: the active tab shows one per pane in
+/// pane order (at most [`MAX_PANE_ICONS`], then `more`), an inactive tab only its focused
+/// pane. Panes without a known session are skipped.
 pub fn tab_icons(tab: &Tab, sessions: &[Session], active: bool) -> TabIcons {
     let ids = tab.sessions();
     let known = |id: &Ulid| sessions.iter().find(|s| s.id == *id);
-    let urgent = crate::status::most_urgent(sessions, &ids);
-    let run_live = ids
-        .iter()
-        .filter_map(known)
-        .any(|s| s.state != SessionState::Exited && mkrew_core::run::command_name(s).is_some());
-    let status = urgent.and_then(|s| match s.state {
-        SessionState::NeedsInput => Some(TabStatus::NeedsInput),
-        SessionState::Exited => Some(TabStatus::Exited),
-        SessionState::Working if s.kind == SessionKind::Agent => Some(TabStatus::Working),
-        _ if run_live => Some(TabStatus::Done),
-        SessionState::Done => Some(TabStatus::Done),
-        _ => None,
-    });
+    let state = |wanted: SessionState| {
+        ids.iter().filter_map(known).any(|s| {
+            s.state == wanted && (wanted != SessionState::Working || s.kind == SessionKind::Agent)
+        })
+    };
+    let status = if state(SessionState::NeedsInput) {
+        Some(TabStatus::NeedsInput)
+    } else if state(SessionState::Working) {
+        Some(TabStatus::Working)
+    } else {
+        None
+    };
     let icon = |s: &Session| match s.kind {
         SessionKind::Agent => PaneIcon::Agent(s.agent_profile.clone()),
         _ if mkrew_core::run::command_name(s).is_some() => PaneIcon::Run,

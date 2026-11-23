@@ -44,6 +44,7 @@ icons! {
         ArrowDownToLine => "arrow-down-to-line",
         ArrowUp => "arrow-up",
         ArrowUpFromLine => "arrow-up-from-line",
+        Bell => "bell",
         Bot => "bot",
         BookOpen => "book-open",
         Check => "check",

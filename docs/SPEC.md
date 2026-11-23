@@ -970,8 +970,8 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   Show Board (Ctrl+Shift+2) again switches Tasks / Jira, and the card keys walk the Jira rows.
   Shift+F10 on the selected card opens its menu: Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents… (each as its hover button; the buttons stay and call the same functions).
 - **Terminals:** the tabs are in the title bar (above); each tab is a split tree of panes; each pane is a session with its own header.
-  Each tab chip starts with a status icon of its most urgent pane (§11: hourglass in `status-working` while an agent works, a circle with `?` in `status-needs-input`, a check in `status-done` for done or a live run process, `x` in `status-exited`; none while idle or starting).
-  Then come unframed `text-muted` pane icons: the agent's badge or logo, `square-terminal` for a shell, `play` for a run pane.
+  Each tab chip starts with a status icon only when the user should notice (§11): an hourglass in `status-working` while an agent works, a bell in `status-needs-input` when a pane needs input (needs input wins); none for idle, done, exited and starting.
+  Then come the pane icons, all 14 px: `square-terminal` in `text-muted` for a shell, `play` in `text-muted` for a run pane, an agent's brand logo (claude, codex, copilot, omp) in its brand color (`brand-claude`, `brand-codex`, `brand-copilot`, `brand-omp`; each 3:1 on `chrome`, a `theme::problems()` rule), and an agent without a logo its glyph in `text-muted`.
   The active tab shows one icon per pane in pane order, at most three, then `+N`; an inactive tab shows only its focused pane's icon; a tab without panes shows none.
   Next come 📌 when pinned, the title and a ✕ (always on the active tab, on hover for the others); closing never
   activates the tab first.
@@ -1745,7 +1745,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   9 (segmented container), 10 (cards), 12 (dialogs, palette), 999 (pills); 4 for old badges.
 - Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the Editor's file-tab strip and the right panel tab row 44, Git repo strip 42 (px at 13 px body).
 - Tab chip (Tern look, ADR 0106): height `CONTROL_HEIGHT`, radius 8 (`radius::MEDIUM`), no border; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
-  Chips shrink to `TAB_MIN_WIDTH` (140, room for the status icon, a pane icon, a few title letters and the ×) before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
+  Chips shrink to `TAB_MIN_WIDTH` (120, room for the status icon, a pane icon, about five title letters and the ×) before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
 - Pane header: every pane header has the same height, `CONTROL_HEIGHT` scaled with `[ui] font_size` plus the fixed `PANE_HEADER_FIXED` (2 × `space::XS` padding and the accent line), so side-by-side panes line up whether or not they have the agent controls.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
   buttons, 30 px icon button, search box, status pill, tinted chip, overline, key hint.

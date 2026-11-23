@@ -857,6 +857,12 @@ pub struct Theme {
     pub status_done: u32,
     pub status_exited: u32,
     pub status_idle: u32,
+    /// The tint of an agent's brand logo in a tab chip (the logo's own color, readable on
+    /// `chrome`: 3:1 as an icon, checked by `problems`).
+    pub brand_claude: u32,
+    pub brand_codex: u32,
+    pub brand_copilot: u32,
+    pub brand_omp: u32,
     pub diff_add_bg: u32,
     pub diff_add_text: u32,
     pub diff_del_bg: u32,
@@ -1009,6 +1015,17 @@ impl Theme {
         }
     }
 
+    /// The tint of `logo` in a tab chip.
+    pub fn brand_color(&self, logo: crate::icons::AgentLogo) -> u32 {
+        use crate::icons::AgentLogo;
+        match logo {
+            AgentLogo::Claude => self.brand_claude,
+            AgentLogo::Codex => self.brand_codex,
+            AgentLogo::Copilot => self.brand_copilot,
+            AgentLogo::Omp => self.brand_omp,
+        }
+    }
+
     /// The pre-restyle palette for the sidebar's session list (see [`Theme::classic`]).
     pub fn classic(&self) -> &Theme {
         self.classic.as_deref().unwrap_or(self)
@@ -1055,6 +1072,10 @@ impl Theme {
             status_done: 0x57C78A,
             status_exited: 0xEF7B6C,
             status_idle: 0x7D838C,
+            brand_claude: 0xD97757,
+            brand_codex: 0x10A37F,
+            brand_copilot: 0xA371F7,
+            brand_omp: 0x56B6C2,
             // Removed / added lines: danger / success at 9 % over the diff card (`surface`).
             diff_add_bg: 0x182422,
             diff_add_text: 0x6FD39B,
@@ -1151,6 +1172,10 @@ impl Theme {
             status_done: 0x23854F,
             status_exited: 0xC2412F,
             status_idle: 0x8A8F99,
+            brand_claude: 0xBF5B3A,
+            brand_codex: 0x0B7F62,
+            brand_copilot: 0x7C4DD6,
+            brand_omp: 0x0E7490,
             diff_add_bg: 0xE7EFEC,
             diff_add_text: 0x1E6B3A,
             diff_del_bg: 0xF5E9E9,
@@ -1399,6 +1424,10 @@ impl Theme {
             status_done: 0,
             status_exited: 0,
             status_idle: 0,
+            brand_claude: 0,
+            brand_codex: 0,
+            brand_copilot: 0,
+            brand_omp: 0,
             diff_add_bg: 0,
             diff_add_text: 0,
             diff_del_bg: 0,
@@ -1703,6 +1732,10 @@ impl Theme {
             syntax_function: text(p.blue),
             teal: text(p.cyan),
             folder: text(p.blue),
+            brand_claude: readable(base.brand_claude, p.fg, &[p.chrome], 3.0),
+            brand_codex: readable(base.brand_codex, p.fg, &[p.chrome], 3.0),
+            brand_copilot: readable(base.brand_copilot, p.fg, &[p.chrome], 3.0),
+            brand_omp: readable(base.brand_omp, p.fg, &[p.chrome], 3.0),
             ansi: p.ansi,
             dark: p.dark,
             ..base
@@ -2349,8 +2382,9 @@ pub const STATUS_PILL_HEIGHT: f32 = 24.0;
 /// Longest tab title before it truncates.
 pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
 /// Narrowest a terminal tab chip gets: the chips shrink to this before the tab area scrolls.
-/// Room for the status icon, a pane icon, a few title letters and the ×.
-pub const TAB_MIN_WIDTH: f32 = 140.0;
+/// An inactive chip shows the status icon, one pane icon (14 px each), about five title letters
+/// and the ×.
+pub const TAB_MIN_WIDTH: f32 = 120.0;
 /// Reading width of an agent pane: the terminal is at most this wide (≈ 120–140 columns at
 /// the default font) and centered, so the program wraps there (the PTY gets fewer columns).
 pub const READING_WIDTH: f32 = 960.0;
@@ -2513,6 +2547,10 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
     // text must read on it.
     check("active tab", t.tab_active, t.chrome, 1.1);
     check("active tab", t.text, t.tab_active, 4.5);
+    // An agent's brand logo in a tab chip is an icon on `chrome` (WCAG 1.4.11, 3:1).
+    for logo in crate::icons::AgentLogo::ALL {
+        check("brand logo", t.brand_color(*logo), t.chrome, 3.0);
+    }
     found
 }
 
@@ -2722,6 +2760,13 @@ mod tests {
                 "active tab",
                 Theme {
                     tab_active: t.chrome,
+                    ..t.clone()
+                },
+            ),
+            (
+                "brand logo",
+                Theme {
+                    brand_claude: t.chrome,
                     ..t.clone()
                 },
             ),

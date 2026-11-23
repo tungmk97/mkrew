@@ -271,26 +271,27 @@ impl Shell {
         let label = session_label(tab, self.sidebar.sessions());
         // A double-click renames that pane while the tab keeps its default name, else the tab.
         let rename_pane = double_click_renames(tab, self.sidebar.sessions());
-        // The most urgent state among the tab's panes (SPEC §11), as one status icon.
+        // The most urgent pane (SPEC §11): the tooltip states its status in words.
         let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
         let icons = tab_icons(tab, self.sidebar.sessions(), is_active);
         let group = SharedString::from(format!("tab-{tab_id}"));
+        // Only a state to notice: Working or Needs input.
         let status_icon = icons.status.map(|status| {
             let (glyph, color) = match status {
                 TabStatus::Working => (Icon::Hourglass, theme.status_working),
-                TabStatus::NeedsInput => (Icon::CircleHelp, theme.status_needs_input),
-                TabStatus::Done => (Icon::Check, theme.status_done),
-                TabStatus::Exited => (Icon::X, theme.status_exited),
+                TabStatus::NeedsInput => (Icon::Bell, theme.status_needs_input),
             };
             icon_svg(glyph, theme::ICON_SIZE_SMALL, color)
         });
+        // Every icon is `ICON_SIZE_SMALL`: a brand logo in its brand color, an agent without
+        // a logo as its glyph, shell and run panes in `text_muted`.
         let pane_icons: Vec<gpui::AnyElement> = icons
             .panes
             .iter()
             .map(|pane| match pane {
                 PaneIcon::Agent(profile) => match self.agent_badge(profile) {
                     sidebar::Badge::Logo(logo) => {
-                        icons::logo_svg(logo, theme::AGENT_LOGO_SIZE, theme.text_muted)
+                        icons::logo_svg(logo, theme::ICON_SIZE_SMALL, theme.brand_color(logo))
                             .into_any_element()
                     }
                     sidebar::Badge::Text(text) => div()
@@ -310,6 +311,20 @@ impl Shell {
                     .into_any_element(),
             })
             .collect();
+        let title = label.unwrap_or(&tab.title);
+        let tip = match urgent {
+            Some(pane) => format!(
+                "{title}\n{}",
+                pane_text::pill_text(
+                    pane.state,
+                    pane.exit_code,
+                    pane.state_changed_at,
+                    status::now_ms(),
+                    self.turns.get(pane.id),
+                )
+            ),
+            None => title.to_owned(),
+        };
         tab_frame(group.clone(), is_active, theme)
             // Shrinks to `TAB_MIN_WIDTH` before the tab area scrolls.
             .flex_shrink_1()
@@ -348,22 +363,9 @@ impl Shell {
                     .text_color(rgb(theme.text_muted))
                     .child(format!("+{}", icons.more))
             }))
-            // The tooltip states the status in words: color is never the only signal.
-            .when_some(urgent, |el, session| match icons.status {
-                // A live run process counts as done while its pane is idle.
-                Some(TabStatus::Done) if session.state != SessionState::Done => {
-                    el.tooltip(tooltip(theme, "Run process live", ""))
-                }
-                _ => el.tooltip(status_tooltip(
-                    theme,
-                    session.state,
-                    session.state_source,
-                    session.state_changed_at,
-                )),
-            })
-            .when_some(label.filter(|_| urgent.is_none()), |el, label| {
-                el.tooltip(tooltip(theme, label, ""))
-            })
+            // The tooltip states the status in words and the time: color is never the only
+            // signal.
+            .tooltip(tooltip(theme, &tip, ""))
             .when(tab.pinned, |el| el.child(pin_mark()))
             .children(prefix.map(|name| {
                 div()

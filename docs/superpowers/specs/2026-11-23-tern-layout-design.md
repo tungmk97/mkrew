@@ -77,7 +77,7 @@ Tab chip, Tern style:
 
 - Active: solid `theme.card` background, radius 8 (`radius::M`), no `selected` border.
 - Inactive: transparent background, `text_muted` title; hover gives a background through `.pressable(..)` (rule 11 of the UI design skill).
-- Contents as today: kind icon, 📌 when pinned, title, status dot, ×. The × shows on the active tab and on hover for the others.
+- Contents: a status icon only while an agent works (hourglass) or a pane needs input (bell; it wins), then pane icons (shell `SquareTerminal`, run `Play`, an agent's brand logo in its brand color, or its glyph when it has no logo; all 14 px), 📌 when pinned, title, ×. The active tab shows one icon per pane (at most three, then `+N`), an inactive tab its focused pane's icon. The tooltip gives the title, the status in words, the time and the turns. The × shows on the active tab and on hover for the others.
 - Behavior as today: drag to reorder, drag to another window, right-click tab menu, double-click to rename, F2.
 - A click activates the tab and switches the view to Terminals.
 

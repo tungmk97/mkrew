@@ -43,11 +43,13 @@ Screenshots: `docs/screenshots/tern-layout-<view>-<dark|light>.png`.
   A status line you had before still prints in Claude Code; `mk integration uninstall claude` brings it back.
 - [ ] On Windows, check that your own status line still prints with Git for Windows installed (it runs through Git Bash); without Git Bash it runs through PowerShell.
 - [ ] The daemon no longer samples CPU or RAM: its CPU use at idle with a window open is 0 %.
-- [ ] **Tab icons (dark + light):** each tab chip starts with a status icon of its most urgent pane: hourglass (working, indigo), a `?` circle (needs input, amber), a check (done or a live run process, green), `x` (exited, red), none while idle or starting.
-  The tooltip names the status in words.
-  Then come muted pane icons: the agent's logo, a terminal icon for a shell, a play icon for a run pane.
+- [ ] **Tab icons (dark + light, Mkrew Light, Classic and one palette theme):** every icon in a chip is 14 px, the same stroke, centered with the title, one gap apart.
+  A status icon leads the chip only for an agent that works (hourglass, indigo) or a pane that needs input (bell, amber; it wins when both happen); idle, done, exited and starting panes show none.
+  The tooltip gives the title, then the status in words with the time (`Working · 2m`, `Needs input · 10s`).
+  Then come the pane icons: a terminal icon (shell) and a play icon (run pane) in muted gray, an agent's brand logo in its color (Claude orange, Codex green, Copilot purple, omp teal), the fake agent its glyph in gray.
   The active tab shows one per pane, at most three then `+N` (open a tab with 5 panes); an inactive tab shows only its focused pane's icon; an empty tab shows none; a pinned tab keeps its pin before the title.
-  At the minimum chip width an inactive tab still shows both icons and a few letters of the title; check a detached window too.
+  Each brand color reads on the title bar in every theme.
+  At the minimum chip width an inactive tab still shows both icons and about five letters of the title; check a detached window too.
 - [ ] **Title bar separators (dark + light):** a thin rule sits between the left group and the tabs, between `+ ▾` and the drag space, and before the Run pill group, besides the one before the window controls; dragging the space moves the window and the rules are inert (a click or drag on a rule does nothing); a detached window has the rules between its tabs, the drag space and its right group only; the drag space keeps 32 px with many tabs.
 - [ ] **Sidebar without the filter row (dark + light):** the All / Working / Needs you control is the top of the sidebar; there is no filter box, Remove idle, collapse or `+` button; without workspaces the "Workspaces" header with `+` and the empty state stay.
 - [ ] **Sidebar filter on demand:** Alt+0 and `/` show the filter box and focus it (also from a hidden or compact sidebar); typing filters; Esc on an empty box hides it and gives the keyboard back to the pane; Esc on a box with text clears it and does the same; with text left in an unfocused box the box stays visible with its `×`; Alt+0 again returns to the pane.
