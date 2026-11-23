@@ -400,6 +400,10 @@ pub const COMPOSER_CHIP_PERMISSION_WIDTH: f32 = 104.0;
 pub const COMPOSER_CHIP_BRANCH_WIDTH: f32 = 120.0;
 pub const COMPOSER_CHIP_STATS_WIDTH: f32 = 168.0;
 pub const COMPOSER_FIXED_WIDTH: f32 = 176.0;
+/// The Chat composer's round send button.
+pub const SEND_BUTTON_SIZE: f32 = 28.0;
+/// The thin context meter above the Chat composer card.
+pub const CONTEXT_METER_HEIGHT: f32 = 2.0;
 
 /// Width of the "Undo task" dialog (wider: it shows a diff).
 pub const UNDO_DIALOG_WIDTH: f32 = 720.0;

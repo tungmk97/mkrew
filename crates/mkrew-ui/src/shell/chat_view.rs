@@ -156,13 +156,16 @@ impl Shell {
         changed
     }
 
-    /// A subagent runs in a visible Chat pane: its loading dots move on the status tick.
+    /// An agent works or a subagent runs in a visible Chat pane: the elapsed time of the
+    /// composer and the loading dots move on the status tick (ADR 0086: no looping animation).
     pub(crate) fn chat_animating(&self) -> bool {
         self.chats.keys().any(|id| {
             !self.is_exited(*id)
-                && (self.reads.get(id))
-                    .and_then(|read| read.page.as_ref())
-                    .is_some_and(|page| chat::subagent_runs(page))
+                && ((self.sidebar.sessions().iter())
+                    .any(|s| s.id == *id && s.state == SessionState::Working)
+                    || (self.reads.get(id))
+                        .and_then(|read| read.page.as_ref())
+                        .is_some_and(|page| chat::subagent_runs(page)))
         })
     }
 
