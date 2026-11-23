@@ -11,6 +11,7 @@ use mkrew_protocol::{
 use ulid::Ulid;
 
 use crate::board::View;
+use crate::documents::{Doc, Documents};
 use crate::split::{
     Axis, Direction, Divider, Edge, Leaf, Node, PaneKey, Preset, RESIZE_STEP, Rect,
 };
@@ -901,6 +902,8 @@ pub enum PaneIcon {
     Agent(String),
     Shell,
     Run,
+    /// A file pane; its stored path (the caller draws the file icon).
+    File(String),
 }
 
 /// What a tab chip shows in front of its title.
@@ -940,14 +943,16 @@ pub fn tab_icons(tab: &Tab, sessions: &[Session], active: bool) -> TabIcons {
         _ if mkrew_core::run::command_name(s).is_some() => PaneIcon::Run,
         _ => PaneIcon::Shell,
     };
+    let pane_icon = |key: &PaneKey| match key {
+        PaneKey::Session(id) => known(id).map(icon),
+        PaneKey::File(path) => Some(PaneIcon::File(path.clone())),
+        // Task 5 adds the diff icon.
+        PaneKey::Diff => None,
+    };
     let mut panes: Vec<PaneIcon> = if active {
-        ids.iter().filter_map(known).map(icon).collect()
+        tab.keys().iter().filter_map(pane_icon).collect()
     } else {
-        tab.focused_session()
-            .iter()
-            .filter_map(known)
-            .map(icon)
-            .collect()
+        tab.focused().into_iter().filter_map(pane_icon).collect()
     };
     let more = panes.len().saturating_sub(MAX_PANE_ICONS);
     panes.truncate(MAX_PANE_ICONS);
@@ -980,6 +985,38 @@ pub fn session_label<'a>(tab: &Tab, sessions: &'a [Session]) -> Option<&'a str> 
         .iter()
         .find(|s| s.id == focused)
         .and_then(crate::history::title)
+}
+
+/// What a tab chip shows for a focused file pane: its name, a dot while it has unsaved text,
+/// italics while it is the preview tab (SPEC §5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileLabel {
+    pub name: String,
+    pub dirty: bool,
+    pub preview: bool,
+}
+
+/// The file label of `tab`: its focused pane is a file and the tab keeps its default name (a
+/// name the user gave the tab always wins, as for [`session_label`]).
+pub fn file_label(tab: &Tab, docs: Option<&Documents>) -> Option<FileLabel> {
+    if !has_default_title(tab) {
+        return None;
+    }
+    let key = tab.focused()?;
+    let PaneKey::File(path) = key else {
+        return None;
+    };
+    let preview = matches!(
+        tab.layout()?.leaf_of(key),
+        Some(Leaf::File { preview: true, .. })
+    );
+    Some(FileLabel {
+        name: path.rsplit('/').next().unwrap_or(path).to_owned(),
+        dirty: docs
+            .and_then(|docs| docs.get(path))
+            .is_some_and(Doc::is_dirty),
+        preview,
+    })
 }
 
 /// The pane a double-click on `tab` renames (SPEC §11): its focused pane while the tab keeps

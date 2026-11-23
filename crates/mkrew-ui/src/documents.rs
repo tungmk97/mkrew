@@ -9,12 +9,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use mkrew_core::settings::MdMode;
 use mkrew_protocol::{FsContent, FsWritten};
+use ulid::Ulid;
 
 use crate::docs;
 use crate::editor::{Editor, Pos};
 use crate::highlight::Code;
 use crate::markdown::{self, Lines};
 use crate::preview_select::{self, Point, Selection};
+use crate::split::{Edge, Leaf, PaneKey};
+use crate::tabs::{Tab, Tabs};
 use crate::task_dialog::DialogKey;
 use crate::text_box::TextBox;
 
@@ -872,6 +875,135 @@ impl Documents {
         }
         reads.sort();
         reads
+    }
+}
+
+/// Where an opened file or the diff goes (SPEC §6.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Place {
+    /// A single click in the Files tree: replaces the workspace's preview tab.
+    Preview,
+    /// A new tab right after the active one.
+    NewTab,
+    /// A drop: split that pane at that edge.
+    Split(PaneKey, Edge),
+}
+
+/// What opening `key` does to the layouts.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Resolution {
+    /// It is open already, in whatever tab or window: only focus it.
+    Focus(PaneKey),
+    /// Replace the preview tab's leaf `old` with it, in place.
+    Reuse {
+        old: PaneKey,
+    },
+    /// A new tab at `position` (`None`: no tabs yet).
+    NewTab {
+        position: Option<f64>,
+    },
+    Split {
+        target: PaneKey,
+        edge: Edge,
+    },
+}
+
+/// Decides where `key` goes. A key that is open anywhere is focused, never opened twice
+/// (one pane per file per workspace). `Preview` reuses the preview tab only for a file, and
+/// never one whose text is unsaved.
+pub fn resolve_place(
+    tabs: &Tabs,
+    docs: Option<&Documents>,
+    key: &PaneKey,
+    place: &Place,
+) -> Resolution {
+    if tabs.tab_with(key).is_some() {
+        return Resolution::Focus(key.clone());
+    }
+    let new_tab = || Resolution::NewTab {
+        position: tabs.position_after_active(),
+    };
+    match place {
+        Place::Preview if matches!(key, PaneKey::File(_)) => {
+            match replaceable_preview(tabs, docs) {
+                Some(old) => Resolution::Reuse { old },
+                None => new_tab(),
+            }
+        }
+        Place::Preview | Place::NewTab => new_tab(),
+        Place::Split(target, edge) => Resolution::Split {
+            target: target.clone(),
+            edge: *edge,
+        },
+    }
+}
+
+/// The preview leaf a single click may replace: clean, in the workspace's preview tab.
+fn replaceable_preview(tabs: &Tabs, docs: Option<&Documents>) -> Option<PaneKey> {
+    let tab = tabs.preview_tab()?;
+    let layout = tab.layout()?;
+    tab.keys().into_iter().find(|key| {
+        let PaneKey::File(path) = key else {
+            return false;
+        };
+        matches!(layout.leaf_of(key), Some(Leaf::File { preview: true, .. }))
+            && !docs
+                .and_then(|docs| docs.get(path))
+                .is_some_and(Doc::is_dirty)
+    })
+}
+
+/// The stored paths of every file leaf of `tabs` (all tabs, all windows).
+pub fn open_paths(tabs: &Tabs) -> HashSet<String> {
+    open_paths_without(tabs, &[], &[])
+}
+
+/// [`open_paths`] as it would be once the tabs `skip_tabs` and the leaves `skip_keys` are
+/// gone: what a close leaves open.
+pub fn open_paths_without(
+    tabs: &Tabs,
+    skip_tabs: &[Ulid],
+    skip_keys: &[PaneKey],
+) -> HashSet<String> {
+    (tabs.tabs().iter())
+        .filter(|tab| !skip_tabs.contains(&tab.id))
+        .flat_map(Tab::keys)
+        .filter(|key| !skip_keys.contains(key))
+        .filter_map(|key| match key {
+            PaneKey::File(path) => Some(path),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The files to ask "Save changes?" about when the open set goes from `before` to `after`:
+/// those that left every layout with unsaved text, by path. A move leaves the file in `after`,
+/// so it never asks.
+pub fn needs_save_question(
+    before: &HashSet<String>,
+    after: &HashSet<String>,
+    docs: &Documents,
+) -> Vec<String> {
+    let mut leaving: Vec<String> = before
+        .difference(after)
+        .filter(|path| docs.get(path).is_some_and(Doc::is_dirty))
+        .cloned()
+        .collect();
+    leaving.sort();
+    leaving
+}
+
+/// The preview leaf becomes a kept one (an edit, a double click, a pin, a drag).
+pub fn keep_leaf(leaf: &mut Leaf) {
+    if let Leaf::File { preview, .. } = leaf {
+        *preview = false;
+    }
+}
+
+/// The leaf remembers the pane's Markdown mode across restarts.
+pub fn set_leaf_mode(leaf: &mut Leaf, mode: MdMode) {
+    if let Leaf::File { md, .. } = leaf {
+        *md = Some(mode);
     }
 }
 

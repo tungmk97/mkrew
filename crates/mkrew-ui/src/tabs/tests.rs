@@ -1855,3 +1855,82 @@ fn position_after_active_of_a_pinned_tab_goes_first_among_the_unpinned() {
     assert!(tabs.activate(ids[1]));
     assert_eq!(tabs.position_after_active(), Some(1.0));
 }
+
+#[test]
+fn a_file_leaf_names_and_marks_its_tab_chip() {
+    let project = Ulid::new();
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![
+        wire(
+            project,
+            "Terminal",
+            1.0,
+            json!({"file": "src/a.rs", "preview": true}),
+        ),
+        wire(project, "Terminal 2", 2.0, json!({"file": "b.md"})),
+    ]);
+    let mut docs = crate::documents::Documents::new();
+    let label = file_label(&tabs.tabs()[0], Some(&docs)).expect("a file is focused");
+    assert_eq!(
+        (label.name.as_str(), label.dirty, label.preview),
+        ("a.rs", false, true)
+    );
+    // Unsaved text shows as a dot; a kept file is not italic.
+    docs.ensure("b.md", crate::documents::MdMode::Source);
+    let kept = file_label(&tabs.tabs()[1], Some(&docs)).expect("a file is focused");
+    assert_eq!(
+        (kept.name.as_str(), kept.dirty, kept.preview),
+        ("b.md", false, false)
+    );
+    assert!(docs.begin_read("b.md"));
+    let content = mkrew_protocol::FsContent {
+        path: "b.md".into(),
+        content: Some("a".into()),
+        size: 1,
+        binary: false,
+        too_large: false,
+        language: None,
+        hash: Some("#a".into()),
+        index_text: None,
+    };
+    docs.read("b.md", Ok((content, crate::highlight::Code::plain("a"))));
+    docs.get_mut("b.md")
+        .unwrap()
+        .editor_mut()
+        .unwrap()
+        .insert("x");
+    let dirty = file_label(&tabs.tabs()[1], Some(&docs)).expect("a file is focused");
+    assert!(dirty.dirty);
+}
+
+#[test]
+fn a_name_the_user_gave_the_tab_wins_over_the_file_label() {
+    let project = Ulid::new();
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "Notes", 1.0, file("a.rs"))]);
+    assert_eq!(file_label(&tabs.tabs()[0], None), None);
+}
+
+#[test]
+fn a_session_pane_has_no_file_label() {
+    let project = Ulid::new();
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "Terminal", 1.0, pane(Ulid::new()))]);
+    assert_eq!(file_label(&tabs.tabs()[0], None), None);
+}
+
+#[test]
+fn file_panes_have_chip_icons_and_unknown_sessions_none() {
+    let project = Ulid::new();
+    let split = split("vertical", pane(Ulid::new()), file("src/a.rs"));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "Terminal", 1.0, split)]);
+    let tab = tabs.active().expect("a tab");
+    // The unknown session is skipped, as before; the file shows.
+    assert_eq!(
+        tab_icons(tab, &[], true).panes,
+        [PaneIcon::File("src/a.rs".into())]
+    );
+    // An inactive tab shows its focused leaf only: the first (session) leaf, unknown here.
+    assert!(tab_icons(tab, &[], false).panes.is_empty());
+}

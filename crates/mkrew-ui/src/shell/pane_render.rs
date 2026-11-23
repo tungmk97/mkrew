@@ -307,6 +307,8 @@ impl Shell {
                 .into_any_element(),
                 PaneIcon::Run => icon_svg(Icon::Play, theme::ICON_SIZE_SMALL, theme.text_muted)
                     .into_any_element(),
+                PaneIcon::File(_) => icon_svg(Icon::File, theme::ICON_SIZE_SMALL, theme.text_muted)
+                    .into_any_element(),
             })
             .collect();
         let title = label.unwrap_or(&tab.title);

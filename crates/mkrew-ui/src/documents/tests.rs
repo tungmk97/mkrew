@@ -982,3 +982,240 @@ fn a_missing_file_is_told_from_other_read_errors() {
         "Cannot read: stream did not contain valid UTF-8"
     ));
 }
+
+use mkrew_protocol::TerminalTab;
+use serde_json::json;
+
+fn wire(project: Ulid, position: f64, layout: serde_json::Value) -> TerminalTab {
+    TerminalTab {
+        id: Ulid::new(),
+        project_id: project,
+        title: "Terminal".to_owned(),
+        position,
+        layout,
+        pinned: false,
+    }
+}
+
+/// One tab per layout, the first one active.
+fn tabs_of(layouts: Vec<serde_json::Value>) -> Tabs {
+    let project = Ulid::new();
+    let mut tabs = Tabs::new(project);
+    let wires = (layouts.into_iter().enumerate())
+        .map(|(at, layout)| wire(project, at as f64 + 1.0, layout))
+        .collect();
+    tabs.load(wires);
+    tabs
+}
+
+fn file(path: &str) -> serde_json::Value {
+    json!({"file": path})
+}
+
+fn preview(path: &str) -> serde_json::Value {
+    json!({"file": path, "preview": true})
+}
+
+fn key(path: &str) -> PaneKey {
+    PaneKey::File(path.to_owned())
+}
+
+#[test]
+fn opening_what_is_open_focuses_it_whatever_the_place() {
+    let tabs = tabs_of(vec![file("a.rs"), file("b.rs")]);
+    for place in [
+        Place::Preview,
+        Place::NewTab,
+        Place::Split(key("a.rs"), Edge::Left),
+    ] {
+        // b.rs sits in the second tab: it is focused there, never opened a second time.
+        assert_eq!(
+            resolve_place(&tabs, None, &key("b.rs"), &place),
+            Resolution::Focus(key("b.rs"))
+        );
+    }
+}
+
+#[test]
+fn a_single_click_reuses_the_preview_tab_and_otherwise_opens_one() {
+    let tabs = tabs_of(vec![file("a.rs"), preview("p.rs")]);
+    assert_eq!(
+        resolve_place(&tabs, None, &key("c.rs"), &Place::Preview),
+        Resolution::Reuse { old: key("p.rs") }
+    );
+    let none = tabs_of(vec![file("a.rs")]);
+    assert_eq!(
+        resolve_place(&none, None, &key("c.rs"), &Place::Preview),
+        Resolution::NewTab {
+            position: none.position_after_active()
+        }
+    );
+}
+
+#[test]
+fn a_kept_open_never_takes_the_preview_tab() {
+    let tabs = tabs_of(vec![file("a.rs"), preview("p.rs")]);
+    assert_eq!(
+        resolve_place(&tabs, None, &key("c.rs"), &Place::NewTab),
+        Resolution::NewTab {
+            position: tabs.position_after_active()
+        }
+    );
+}
+
+#[test]
+fn a_new_tab_goes_right_after_the_active_one() {
+    let tabs = tabs_of(vec![file("a.rs"), file("b.rs")]);
+    let position = tabs.position_after_active().expect("two tabs");
+    let second = tabs.tabs()[1].position;
+    assert!(position > tabs.tabs()[0].position && position < second);
+    assert_eq!(
+        resolve_place(&tabs, None, &key("c.rs"), &Place::NewTab),
+        Resolution::NewTab {
+            position: Some(position)
+        }
+    );
+}
+
+#[test]
+fn a_drop_splits_the_target_at_the_edge() {
+    let tabs = tabs_of(vec![file("a.rs")]);
+    assert_eq!(
+        resolve_place(
+            &tabs,
+            None,
+            &key("c.rs"),
+            &Place::Split(key("a.rs"), Edge::Top)
+        ),
+        Resolution::Split {
+            target: key("a.rs"),
+            edge: Edge::Top
+        }
+    );
+}
+
+#[test]
+fn the_diff_never_takes_a_preview_tab() {
+    let tabs = tabs_of(vec![preview("p.rs")]);
+    assert_eq!(
+        resolve_place(&tabs, None, &PaneKey::Diff, &Place::Preview),
+        Resolution::NewTab {
+            position: tabs.position_after_active()
+        }
+    );
+}
+
+#[test]
+fn a_preview_with_unsaved_text_is_not_replaced() {
+    let tabs = tabs_of(vec![preview("p.rs")]);
+    let mut docs = Documents::new();
+    read_ok(&mut docs, "p.rs", "a\n");
+    docs.get_mut("p.rs")
+        .unwrap()
+        .editor_mut()
+        .unwrap()
+        .insert("x");
+    assert_eq!(
+        resolve_place(&tabs, Some(&docs), &key("c.rs"), &Place::Preview),
+        Resolution::NewTab {
+            position: tabs.position_after_active()
+        }
+    );
+}
+
+/// An edit keeps the preview tab: the leaf stops being a preview, so the next single click
+/// opens another tab instead of replacing the file being edited.
+#[test]
+fn an_edit_flips_the_preview_leaf_to_kept_once() {
+    let mut tabs = tabs_of(vec![preview("p.rs")]);
+    assert!(tabs.preview_tab().is_some());
+    let write = tabs.update_leaf(&key("p.rs"), keep_leaf);
+    assert!(write.is_some(), "the layout is saved");
+    assert!(tabs.preview_tab().is_none());
+    assert!(
+        tabs.update_leaf(&key("p.rs"), keep_leaf).is_none(),
+        "nothing changed: no write"
+    );
+    assert_eq!(
+        resolve_place(&tabs, None, &key("c.rs"), &Place::Preview),
+        Resolution::NewTab {
+            position: tabs.position_after_active()
+        }
+    );
+}
+
+#[test]
+fn the_markdown_mode_is_kept_in_the_leaf() {
+    let mut tabs = tabs_of(vec![file("a.md")]);
+    let set = |leaf: &mut Leaf| set_leaf_mode(leaf, MdMode::Split);
+    assert!(tabs.update_leaf(&key("a.md"), set).is_some());
+    assert!(tabs.update_leaf(&key("a.md"), set).is_none());
+    let layout = tabs.tabs()[0].layout().expect("a layout");
+    assert_eq!(
+        layout.leaf_of(&key("a.md")),
+        Some(&Leaf::File {
+            file: "a.md".into(),
+            md: Some(MdMode::Split),
+            preview: false
+        })
+    );
+}
+
+fn dirty_store(paths: &[&str]) -> Documents {
+    let mut docs = Documents::new();
+    for path in paths {
+        read_ok(&mut docs, path, "a\n");
+        docs.get_mut(path)
+            .unwrap()
+            .editor_mut()
+            .unwrap()
+            .insert("x");
+    }
+    docs
+}
+
+fn set(paths: &[&str]) -> HashSet<String> {
+    paths.iter().map(|path| (*path).to_owned()).collect()
+}
+
+#[test]
+fn closing_a_leaf_with_unsaved_text_asks_and_moving_it_never_does() {
+    let docs = dirty_store(&["a.rs", "b.rs"]);
+    // Close: b.rs leaves every layout.
+    assert_eq!(
+        needs_save_question(&set(&["a.rs", "b.rs"]), &set(&["a.rs"]), &docs),
+        ["b.rs"]
+    );
+    // Move (drag, tear-off, merge): the leaf is somewhere else afterwards, still open.
+    assert!(
+        needs_save_question(&set(&["a.rs", "b.rs"]), &set(&["a.rs", "b.rs"]), &docs).is_empty()
+    );
+    // A clean file closes without a question.
+    let clean = Documents::new();
+    assert!(needs_save_question(&set(&["a.rs"]), &set(&[]), &clean).is_empty());
+    // Several leaving at once are asked in path order.
+    assert_eq!(
+        needs_save_question(&set(&["b.rs", "a.rs"]), &set(&[]), &docs),
+        ["a.rs", "b.rs"]
+    );
+}
+
+#[test]
+fn closing_tabs_and_panes_are_told_from_moves_by_the_remaining_open_set() {
+    let tabs = tabs_of(vec![
+        file("a.rs"),
+        json!({"split": "vertical", "ratio": 0.5, "children": [file("b.rs"), file("c.rs")]}),
+    ]);
+    let second = tabs.tabs()[1].id;
+    assert_eq!(open_paths(&tabs), set(&["a.rs", "b.rs", "c.rs"]));
+    // "Close others" of the first tab: b.rs and c.rs go.
+    assert_eq!(open_paths_without(&tabs, &[second], &[]), set(&["a.rs"]));
+    // Closing one pane.
+    assert_eq!(
+        open_paths_without(&tabs, &[], &[key("c.rs")]),
+        set(&["a.rs", "b.rs"])
+    );
+    // A pane moved to the first tab is in both sets: the difference is empty.
+    let docs = dirty_store(&["b.rs"]);
+    assert!(needs_save_question(&open_paths(&tabs), &open_paths(&tabs), &docs).is_empty());
+}
