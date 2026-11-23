@@ -691,11 +691,10 @@ fn attach_diff_lists_new_and_hidden_sessions() {
     assert_eq!(attach_diff(&[a], &[a]), (vec![], vec![]));
 }
 
-/// The icon of a tab follows its focused pane: an agent shows its profile, a shell `>_`,
-/// a tab without panes (or with a pane no session is known for) no icon.
+/// An active tab shows one icon per pane in pane order, an inactive one its focused pane's.
 #[test]
-fn a_tab_shows_the_kind_of_its_focused_pane() {
-    let (mut tabs, a, b) = two_panes(); // focused on b
+fn a_tab_shows_pane_icons_active_all_inactive_focused() {
+    let (mut tabs, a, b) = two_panes(); // a | b, focused on b
     let project = tabs.project_id();
     let mut agent = session(project, SessionState::Idle, 1);
     agent.id = a;
@@ -703,18 +702,98 @@ fn a_tab_shows_the_kind_of_its_focused_pane() {
     shell.id = b;
     shell.kind = SessionKind::Shell;
     let sessions = [agent, shell];
+    let tab = tabs.active().unwrap();
 
-    assert_eq!(tab_kind(tabs.active().unwrap(), &sessions), TabKind::Shell);
-    tabs.focus(a);
+    let active = tab_icons(tab, &sessions, true);
     assert_eq!(
-        tab_kind(tabs.active().unwrap(), &sessions),
-        TabKind::Agent("fake".into())
+        active.panes,
+        [PaneIcon::Agent("fake".into()), PaneIcon::Shell]
     );
-    assert_eq!(tab_kind(tabs.active().unwrap(), &[]), TabKind::Empty);
+    assert_eq!(active.more, 0);
+    assert_eq!(tab_icons(tab, &sessions, false).panes, [PaneIcon::Shell]);
+    tabs.focus(a);
+    let tab = tabs.active().unwrap();
+    assert_eq!(
+        tab_icons(tab, &sessions, false).panes,
+        [PaneIcon::Agent("fake".into())]
+    );
+    // A pane no session is known for has no icon.
+    assert!(tab_icons(tab, &[], true).panes.is_empty());
+}
 
+/// A tab without panes shows nothing; more than three panes end in `+N`; a run pane has its
+/// own icon.
+#[test]
+fn a_tab_cuts_pane_icons_after_three_and_has_none_when_empty() {
+    let project = Ulid::new();
     let mut empty = Tabs::new(project);
     empty.load(vec![wire(project, "new", 1.0, serde_json::Value::Null)]);
-    assert_eq!(tab_kind(empty.active().unwrap(), &sessions), TabKind::Empty);
+    let icons = tab_icons(empty.active().unwrap(), &[], true);
+    assert_eq!(
+        icons,
+        TabIcons {
+            status: None,
+            panes: vec![],
+            more: 0
+        }
+    );
+
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "main", 1.0, serde_json::Value::Null)]);
+    let mut sessions = Vec::new();
+    for n in 0..5 {
+        let mut s = session(project, SessionState::Idle, n);
+        if n == 1 {
+            s.kind = SessionKind::Shell;
+            s.title = Some(mkrew_core::run::session_title("dev"));
+        }
+        tabs.split_focused(Axis::Vertical, s.id).unwrap();
+        sessions.push(s);
+    }
+    let tab = tabs.active().unwrap();
+    let active = tab_icons(tab, &sessions, true);
+    assert_eq!(
+        active.panes,
+        [
+            PaneIcon::Agent("fake".into()),
+            PaneIcon::Run,
+            PaneIcon::Agent("fake".into())
+        ]
+    );
+    assert_eq!(active.more, 2);
+    assert_eq!(tab_icons(tab, &sessions, false).more, 0);
+}
+
+/// The status is the most urgent pane's: needs input, exited, working agent, done; idle and
+/// starting show none; a live run process counts as done.
+#[test]
+fn a_tab_status_follows_its_most_urgent_pane() {
+    let (tabs, a, b) = two_panes();
+    let project = tabs.project_id();
+    let tab = tabs.active().unwrap();
+    let status = |first: SessionState, second: SessionState, run: bool| {
+        let mut one = session(project, first, 1);
+        one.id = a;
+        let mut two = session(project, second, 2);
+        two.id = b;
+        if run {
+            two.kind = SessionKind::Shell;
+            two.title = Some(mkrew_core::run::session_title("dev"));
+        }
+        tab_icons(tab, &[one, two], true).status
+    };
+    use SessionState::*;
+    assert_eq!(
+        status(Working, NeedsInput, false),
+        Some(TabStatus::NeedsInput)
+    );
+    assert_eq!(status(Done, Working, false), Some(TabStatus::Done));
+    assert_eq!(status(Working, Idle, false), Some(TabStatus::Working));
+    assert_eq!(status(Exited, Exited, false), Some(TabStatus::Exited));
+    assert_eq!(status(Idle, Starting, false), None);
+    assert_eq!(status(Idle, Idle, true), Some(TabStatus::Done));
+    // An exited run process is not live.
+    assert_eq!(status(Idle, Exited, true), None);
 }
 
 /// A tab that keeps its default name shows the session title of its focused pane, also among

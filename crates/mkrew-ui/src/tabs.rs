@@ -792,27 +792,73 @@ pub fn rename_params(tab: &Tab, draft: &str) -> Option<TabRenameParams> {
     })
 }
 
-/// What a tab's icon shows (SPEC §10).
+/// The status icon in front of a tab chip (SPEC §11): the most urgent state of its panes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabStatus {
+    Working,
+    NeedsInput,
+    Done,
+    Exited,
+}
+
+/// The icon of one pane in a tab chip.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TabKind {
+pub enum PaneIcon {
     /// An agent pane; the profile id (its badge is looked up by the caller).
     Agent(String),
     Shell,
-    Empty,
+    Run,
 }
 
-/// The kind of the tab's focused pane (`fix_focus` keeps one focused whenever the tab has
-/// panes). `Empty` without panes or when no session is known for the focused one.
-pub fn tab_kind(tab: &Tab, sessions: &[Session]) -> TabKind {
-    let focused = tab
-        .focused()
-        .and_then(|id| sessions.iter().find(|s| s.id == id));
-    match focused {
-        Some(session) if session.kind == SessionKind::Agent => {
-            TabKind::Agent(session.agent_profile.clone())
-        }
-        Some(_) => TabKind::Shell,
-        None => TabKind::Empty,
+/// What a tab chip shows in front of its title.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabIcons {
+    /// `None` while idle, starting or without panes.
+    pub status: Option<TabStatus>,
+    pub panes: Vec<PaneIcon>,
+    /// Panes beyond [`MAX_PANE_ICONS`], shown as `+N`.
+    pub more: usize,
+}
+
+/// Most pane icons an active tab chip shows before `+N`.
+pub const MAX_PANE_ICONS: usize = 3;
+
+/// The icons of `tab`'s chip. Status: needs input, exited, working (an agent), then done (or a
+/// live run process); idle and starting show none. Pane icons: the active tab shows one per
+/// pane in pane order (at most [`MAX_PANE_ICONS`], then `more`), an inactive tab only its
+/// focused pane. Panes without a known session are skipped.
+pub fn tab_icons(tab: &Tab, sessions: &[Session], active: bool) -> TabIcons {
+    let ids = tab.sessions();
+    let known = |id: &Ulid| sessions.iter().find(|s| s.id == *id);
+    let urgent = crate::status::most_urgent(sessions, &ids);
+    let run_live = ids
+        .iter()
+        .filter_map(known)
+        .any(|s| s.state != SessionState::Exited && mkrew_core::run::command_name(s).is_some());
+    let status = urgent.and_then(|s| match s.state {
+        SessionState::NeedsInput => Some(TabStatus::NeedsInput),
+        SessionState::Exited => Some(TabStatus::Exited),
+        SessionState::Working if s.kind == SessionKind::Agent => Some(TabStatus::Working),
+        _ if run_live => Some(TabStatus::Done),
+        SessionState::Done => Some(TabStatus::Done),
+        _ => None,
+    });
+    let icon = |s: &Session| match s.kind {
+        SessionKind::Agent => PaneIcon::Agent(s.agent_profile.clone()),
+        _ if mkrew_core::run::command_name(s).is_some() => PaneIcon::Run,
+        _ => PaneIcon::Shell,
+    };
+    let mut panes: Vec<PaneIcon> = if active {
+        ids.iter().filter_map(known).map(icon).collect()
+    } else {
+        tab.focused().iter().filter_map(known).map(icon).collect()
+    };
+    let more = panes.len().saturating_sub(MAX_PANE_ICONS);
+    panes.truncate(MAX_PANE_ICONS);
+    TabIcons {
+        status,
+        panes,
+        more,
     }
 }
 

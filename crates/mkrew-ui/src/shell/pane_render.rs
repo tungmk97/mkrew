@@ -252,8 +252,8 @@ impl Shell {
         }))
     }
 
-    /// One tab of the title bar's tab area (main or detached): kind icon, title, status dot, pin,
-    /// ×. `select` makes it the shown tab of its window (a click); `prefix` (the workspace name,
+    /// One tab of the title bar's tab area (main or detached): status icon, pane icons, pin,
+    /// title, ×. `select` makes it the shown tab of its window (a click); `prefix` (the workspace name,
     /// in a detached strip) leads the title. The caller wraps it for drag and drop.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn tab_chip(
@@ -271,30 +271,45 @@ impl Shell {
         let label = session_label(tab, self.sidebar.sessions());
         // A double-click renames that pane while the tab keeps its default name, else the tab.
         let rename_pane = double_click_renames(tab, self.sidebar.sessions());
-        // The most urgent state among the tab's panes (SPEC §11), as one dot.
+        // The most urgent state among the tab's panes (SPEC §11), as one status icon.
         let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
-        let dot = self.tab_dot(tab, urgent, theme);
+        let icons = tab_icons(tab, self.sidebar.sessions(), is_active);
         let group = SharedString::from(format!("tab-{tab_id}"));
-        let icon = match tab_kind(tab, self.sidebar.sessions()) {
-            TabKind::Agent(profile) => {
-                Some(agent_chip(self.agent_badge(&profile), theme.text, theme))
-            }
-            // The `>_` icon in a chip-sized box, so shell and agent tabs line up.
-            TabKind::Shell => Some(
-                div()
-                    .flex_none()
-                    .size(theme::rems_px(theme::AGENT_CHIP_SIZE))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(icon_svg(
-                        Icon::Terminal,
-                        theme::ICON_SIZE_SMALL,
-                        theme.text_muted,
-                    )),
-            ),
-            TabKind::Empty => None,
-        };
+        let status_icon = icons.status.map(|status| {
+            let (glyph, color) = match status {
+                TabStatus::Working => (Icon::Hourglass, theme.status_working),
+                TabStatus::NeedsInput => (Icon::CircleHelp, theme.status_needs_input),
+                TabStatus::Done => (Icon::Check, theme.status_done),
+                TabStatus::Exited => (Icon::X, theme.status_exited),
+            };
+            icon_svg(glyph, theme::ICON_SIZE_SMALL, color)
+        });
+        let pane_icons: Vec<gpui::AnyElement> = icons
+            .panes
+            .iter()
+            .map(|pane| match pane {
+                PaneIcon::Agent(profile) => match self.agent_badge(profile) {
+                    sidebar::Badge::Logo(logo) => {
+                        icons::logo_svg(logo, theme::AGENT_LOGO_SIZE, theme.text_muted)
+                            .into_any_element()
+                    }
+                    sidebar::Badge::Text(text) => div()
+                        .flex_none()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .child(text)
+                        .into_any_element(),
+                },
+                PaneIcon::Shell => icon_svg(
+                    Icon::SquareTerminal,
+                    theme::ICON_SIZE_SMALL,
+                    theme.text_muted,
+                )
+                .into_any_element(),
+                PaneIcon::Run => icon_svg(Icon::Play, theme::ICON_SIZE_SMALL, theme.text_muted)
+                    .into_any_element(),
+            })
+            .collect();
         tab_frame(group.clone(), is_active, theme)
             // Shrinks to `TAB_MIN_WIDTH` before the tab area scrolls.
             .flex_shrink_1()
@@ -324,14 +339,27 @@ impl Shell {
                     shell.open_tab_menu(tab_id, event.position, window, cx);
                 }),
             )
-            .children(icon)
-            .when_some(urgent, |el, session| {
-                el.tooltip(status_tooltip(
+            .children(status_icon)
+            .children(pane_icons)
+            .children((icons.more > 0).then(|| {
+                div()
+                    .flex_none()
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_muted))
+                    .child(format!("+{}", icons.more))
+            }))
+            // The tooltip states the status in words: color is never the only signal.
+            .when_some(urgent, |el, session| match icons.status {
+                // A live run process counts as done while its pane is idle.
+                Some(TabStatus::Done) if session.state != SessionState::Done => {
+                    el.tooltip(tooltip(theme, "Run process live", ""))
+                }
+                _ => el.tooltip(status_tooltip(
                     theme,
                     session.state,
                     session.state_source,
                     session.state_changed_at,
-                ))
+                )),
             })
             .when_some(label.filter(|_| urgent.is_none()), |el, label| {
                 el.tooltip(tooltip(theme, label, ""))
@@ -352,7 +380,6 @@ impl Shell {
                     .truncate()
                     .child(label.unwrap_or(&tab.title).to_owned()),
             )
-            .children(dot.map(|(color, hollow)| status_dot(color, hollow)))
             .child(
                 row_action(
                     SharedString::from(format!("tab-close-{tab_id}")),
@@ -1049,37 +1076,6 @@ impl Shell {
                 }),
             );
         self.draggable_pane(header, info, theme)
-    }
-
-    /// A tab's status dot from its most urgent pane, always still and one color per state:
-    /// amber needs input, red exited, indigo while an agent works, green for done or a live run
-    /// process, else a hollow gray ring (idle, starting). `(color, hollow)`; `None` for an
-    /// empty tab.
-    pub(crate) fn tab_dot(
-        &self,
-        tab: &Tab,
-        urgent: Option<&Session>,
-        theme: &Theme,
-    ) -> Option<(u32, bool)> {
-        let urgent = urgent?;
-        let sessions = self.sidebar.sessions();
-        let run_live = tab.sessions().iter().any(|id| {
-            sessions.iter().any(|s| {
-                s.id == *id
-                    && s.state != SessionState::Exited
-                    && mkrew_core::run::command_name(s).is_some()
-            })
-        });
-        Some(match urgent.state {
-            SessionState::NeedsInput => (theme.status_needs_input, false),
-            SessionState::Exited => (theme.status_exited, false),
-            SessionState::Working if urgent.kind == SessionKind::Agent => {
-                (theme.status_working, false)
-            }
-            _ if run_live => (theme.status_done, false),
-            SessionState::Done => (theme.status_done, false),
-            _ => (theme.status_idle, true),
-        })
     }
 
     /// Why a pane on screen has no terminal yet.

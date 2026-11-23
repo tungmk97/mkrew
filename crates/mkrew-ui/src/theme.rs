@@ -2344,7 +2344,8 @@ pub const STATUS_PILL_HEIGHT: f32 = 24.0;
 /// Longest tab title before it truncates.
 pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
 /// Narrowest a terminal tab chip gets: the chips shrink to this before the tab area scrolls.
-pub const TAB_MIN_WIDTH: f32 = 120.0;
+/// Room for the status icon, a pane icon, a few title letters and the ×.
+pub const TAB_MIN_WIDTH: f32 = 140.0;
 /// Reading width of an agent pane: the terminal is at most this wide (≈ 120–140 columns at
 /// the default font) and centered, so the program wraps there (the PTY gets fewer columns).
 pub const READING_WIDTH: f32 = 960.0;
