@@ -21,7 +21,7 @@ Test fixture (omp's own record of a real startup): `docs/superpowers/specs/2026-
 - `runtimes/win-x64/native/conpty.dll` SHA-256 `39fba2713e2495117b1591ae8c32a3b904bea7aa66069cf7815e2844c76d75d8`; `build/native/runtimes/x64/OpenConsole.exe` SHA-256 `b7fd936c2668b87b9ecf7b3366dc6568afc1c6f981874cba3e955a1c35cf8160` (byte-identical to Tern's copies and to the spike's passing configuration).
 - Profile key `tsp` (bool, optional): absent means on when `[usage] format = "omp_jsonl"`, off otherwise; every session gets `PI_TUI_NATIVE=1` when `tsp` is on, `PI_TUI_NATIVE=0` otherwise.
 - Hello reply: `{"r":"hello","v":1,"term":"mkrew","kinds":<P1_KINDS>,"features":[],"apc":65536,"credits":2,"cols":<pty cols>,"dark":<bool>,"reduceMotion":false,"hour12":false}`.
-- P1 kinds: `col row card section rule spacer overlay toast text md code ansi rows shimmer kv table list item tabs badge kbd icon status seg spinner elapsed progress rate meter effort editor input image`; not advertised: `picker tree tool checklist media prefs`.
+- P1 kinds: `col row card section rule spacer overlay toast text md code ansi rows shimmer kv table list item tabs badge kbd icon status seg spinner elapsed progress rate meter effort editor input image checklist`; not advertised: `picker tree tool media prefs`.
 - P1 events sent by the UI: `action toggle select activate focus theme`; by the daemon: `ack resize gone error`.
 - Hello wait: 2 s from the session's first output, then `fallback`; document bounds 50,000 nodes and 6 MiB text (evicting the oldest `main` rows to 80%), images 4 MiB per session, so a `tsp.snapshot` fits the 16 MiB frame limit.
 - UI: every color, spacing, radius and font size from `crates/mkrew-ui/src/theme.rs` (SPEC §14); dark and light; no looping animation (ADR 0086, the 500 ms status tick); omp's `t` palette is ignored.
@@ -84,6 +84,12 @@ These settle what the spec leaves open; every task follows them.
 - UI selection: `md` and `code` nodes are selectable through `preview::message`; Ctrl+C copies and Esc clears only when a selection exists, otherwise both go to omp.
 - `mk web`: the relay drops `tsp.update` events (the page never draws them).
 - Daemon: `pub mod conpty;` (avoids `dead_code` on non-Windows clippy); the system ConPTY case logs at `info`.
+- Spec 7.6 (omp `ask` card) and 7.7 (`checklist` todo) are in P1: no protocol change, `checklist` is in `P1_KINDS` and the hello (the ADR, SPEC and HUMAN_CHECKS move it from P2 to P1); the colors of the ask looks and the checklist marks are quoted from spec 7.6 and 7.7, and if Task 9 or 10 name a token differently the SPEC table follows the code.
+- UI todo hud: `hud_line` returns `Option<HudLine>`; when no item is `active` or `pending` but one is `blocked`, the hud line shows the first blocked item (ring mark) instead of "All done", because "All done" next to an unfinished blocked item would be false.
+- UI todo: a finished item is `done` or `dropped`; it counts in `done/total` and collapses its phase, which matches omp's `zw` predicate in `tools/todo.ts` (`completed || abandoned`).
+- UI ask timeout: the `meter style=ring` draws a ring with the seconds label only; the arc for the remaining fraction is not drawn (gpui has no arc primitive used elsewhere in the crate).
+- UI ask card: its fill is `theme.surface`, so the selected row (`surface_raised`) and the active tab (`card`) stay visible on it.
+- UI todo popover: a `deferred(anchored())` panel above the hud chip, closed by `on_mouse_down_out` or Esc; its height is capped at 60% of the main list's height (`render_tsp` does not know the pane height), so at most 60% of the pane.
 
 ## Task order
 
@@ -4547,7 +4553,7 @@ pub const HELLO_WAIT: Duration = Duration::from_secs(2);
 pub const P1_KINDS: &[&str] = &[
     "col", "row", "card", "section", "rule", "spacer", "overlay", "toast", "text", "md", "code", "ansi", "rows",
     "shimmer", "kv", "table", "list", "item", "tabs", "badge", "kbd", "icon", "status", "seg", "spinner", "elapsed",
-    "progress", "rate", "meter", "effort", "editor", "input", "image",
+    "progress", "rate", "meter", "effort", "editor", "input", "image", "checklist",
 ];
 
 /// The events a client may send in P1 (spec 7.4).
@@ -6262,6 +6268,8 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(daemon): TSP output path, 
   - Mirror: `Mirror::{from_snapshot, apply, surface, shown, inline_id, blob}`, `MirrorResult { Applied, Gap }`, `animating(&Document) -> bool`, `reveal_index(&Document, &str) -> Option<usize>`, `toast_texts(&Document, &[Value]) -> Vec<String>`.
   - Events: `root_owned(&str) -> bool`, `click_event(&Document, &Node, double) -> Option<Value>`, `select_event(list, item, double) -> Value`, `toggle_event(id, collapsed) -> Option<Value>`.
   - Helpers: `TextCache<T>`, `code_fence`, `byte_at_utf16`, `effort_steps`, `meter_tone`, `rate_label`, `elapsed_ms`, `elapsed_label`.
+  - Todo (spec 7.7): `TodoStatus {Active, Pending, Done, Blocked, Dropped}` (`parse`, `finished`), `TodoItem {id, text, status, note}`, `TodoPhase {id, title, collapsed, items}` (`counts`, `mark`, `headerless`, `default_collapsed`), `PhaseMark {Working, Done, Open}`, `collapsed_now(default, toggled) -> bool`, `ChecklistMode {Full, Reminder, Hud}`, `Checklist {mode, phases, note}` (`from_props(&Map)`, `counts`, `has_active`, `hud_line() -> Option<HudLine>`), `HudLine {mark: HudMark, text, done, total}`, `HudMark {Dots, Ring, Done}`, `ALL_DONE`, `roman(usize) -> String`, `ItemMark {Active, Ring, Check}`, `ItemLook {mark, mark_color, text_color, strike, suffix}`, `item_look(TodoStatus, &Theme) -> ItemLook`.
+  - Ask (spec 7.6): `role_of(&Node) -> Option<&str>`, `AskLook {Card, Hidden, Head, Tabs, Question, Options, Choice, Check, Other, OtherCheck, Preview, Notice, Answers, Summary, Actions, Button}` (`is_choice`, `boxed`), `ask_look(role) -> Option<AskLook>`, `choice_filled(&Node) -> bool`.
 
 Style rule (mkrew-ui-design): no color, spacing or size literal lives in this file except the pure math of the SGR 256-color cube; every color comes from a `Theme` field and every gap from `theme::space`.
 
@@ -6588,7 +6596,7 @@ pub fn gap_px(name: Option<&str>) -> f32 {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p mkrew-ui --lib tsp::`
-Expected: PASS (8 tests). Unused import warnings for items of later cycles are expected until Step 16.
+Expected: PASS (8 tests). Unused import warnings for items of later cycles are expected until Step 24.
 
 - [ ] **Step 5: Write the failing ANSI tests**
 
@@ -7787,7 +7795,752 @@ impl<T> TextCache<T> {
 }
 ```
 
-- [ ] **Step 16: Run the tests, then fmt and clippy**
+- [ ] **Step 16: Write the failing checklist tests**
+
+Append inside `mod tests` of `crates/mkrew-ui/src/tsp.rs` (the file's test imports already bring `json`, `Theme`, `Document` and the `with_node` helper into scope):
+
+```rust
+    fn checklist(props: serde_json::Value) -> Checklist {
+        let props = props.as_object().cloned().unwrap_or_default();
+        Checklist::from_props(&props)
+    }
+
+    /// The hud props as `interactive-mode.ts` builds them (`collapsed` only on a finished phase).
+    fn hud_props() -> serde_json::Value {
+        json!({
+            "mode": "hud", "role": "omp.hud.todo",
+            "phases": [
+                {"id": "0", "title": "Thu thập context", "collapsed": true, "items": [
+                    {"id": "0.0", "text": "Đọc spec", "status": "done"},
+                    {"id": "0.1", "text": "Đọc code", "status": "dropped"}
+                ]},
+                {"id": "1", "title": "Cài đặt", "items": [
+                    {"id": "1.0", "text": "Viết test", "status": "done"},
+                    {"id": "1.1", "text": "Viết code", "status": "active"},
+                    {"id": "1.2", "text": "Chạy verify", "status": "pending"},
+                    {"id": "1.3", "text": "Release", "status": "blocked", "note": "waiting for review"}
+                ]}
+            ]
+        })
+    }
+
+    /// The reminder as `todo-reminder.ts` builds it: one phase with a blank name.
+    fn reminder_props() -> serde_json::Value {
+        json!({
+            "mode": "reminder", "role": "omp.notice.todo", "note": "reminder 1/3",
+            "phases": [{"id": "p0", "title": "", "collapsed": false, "items": [
+                {"id": "p0.0", "text": "Write the plan", "status": "pending"},
+                {"id": "p0.1", "text": "Run it", "status": "pending"}
+            ]}]
+        })
+    }
+
+    #[test]
+    fn a_checklist_is_read_from_the_props_omp_sends() {
+        let list = checklist(hud_props());
+        assert_eq!(list.mode, ChecklistMode::Hud);
+        assert_eq!(list.note, None);
+        assert_eq!(list.phases.len(), 2);
+        assert_eq!(list.phases[0].title, "Thu thập context");
+        assert!(list.phases[0].collapsed && !list.phases[1].collapsed);
+        let items = &list.phases[1].items;
+        assert_eq!(
+            items.iter().map(|i| i.status).collect::<Vec<_>>(),
+            [TodoStatus::Done, TodoStatus::Active, TodoStatus::Pending, TodoStatus::Blocked]
+        );
+        assert_eq!(items[3].note.as_deref(), Some("waiting for review"));
+        assert_eq!(items[0].note, None);
+        let list = checklist(reminder_props());
+        assert_eq!((list.mode, list.note.as_deref()), (ChecklistMode::Reminder, Some("reminder 1/3")));
+    }
+
+    #[test]
+    fn a_checklist_with_missing_or_odd_props_still_reads() {
+        assert_eq!(checklist(json!({"phases": []})).mode, ChecklistMode::Full, "no mode is full");
+        assert_eq!(checklist(json!({"mode": "future", "phases": []})).mode, ChecklistMode::Full);
+        let list = checklist(json!({"mode": "full", "phases": [
+            "junk", 7,
+            {"title": "T", "items": [{"text": "a", "status": "wat"}, {"id": "x", "status": "done"}, 3]}
+        ]}));
+        assert_eq!(list.phases.len(), 1, "non-object phases are skipped");
+        assert_eq!(list.phases[0].id, "p2", "a missing id falls back to the entry's index");
+        let items = &list.phases[0].items;
+        assert_eq!(items.len(), 2);
+        assert_eq!((items[0].id.as_str(), items[0].status), ("i0", TodoStatus::Pending), "unknown status is pending");
+        assert_eq!((items[1].text.as_str(), items[1].status), ("", TodoStatus::Done));
+        assert!(checklist(json!({})).phases.is_empty());
+        assert_eq!(checklist(json!({"note": ""})).note, None, "a blank note is none");
+    }
+
+    #[test]
+    fn done_and_dropped_count_as_finished() {
+        let list = checklist(hud_props());
+        assert_eq!(list.counts(), (3, 6));
+        assert_eq!(list.phases[0].counts(), (2, 2));
+        assert_eq!(list.phases[1].counts(), (1, 4));
+        assert_eq!(checklist(json!({"phases": []})).counts(), (0, 0));
+    }
+
+    #[test]
+    fn the_hud_line_names_the_active_item_then_the_first_pending_one_then_done() {
+        let line = checklist(hud_props()).hud_line().unwrap();
+        assert_eq!(
+            line,
+            HudLine { mark: HudMark::Dots, text: "Viết code".into(), done: 3, total: 6 }
+        );
+        // No active item: the first pending one, in phase order, with a ring.
+        let list = checklist(json!({"mode": "hud", "phases": [
+            {"id": "0", "title": "A", "items": [{"id": "0.0", "text": "first", "status": "done"}]},
+            {"id": "1", "title": "B", "items": [
+                {"id": "1.0", "text": "second", "status": "pending"},
+                {"id": "1.1", "text": "third", "status": "pending"}
+            ]}
+        ]}));
+        let line = list.hud_line().unwrap();
+        assert_eq!((line.mark, line.text.as_str(), line.done, line.total), (HudMark::Ring, "second", 1, 3));
+        // Active beats an earlier pending item.
+        let list = checklist(json!({"mode": "hud", "phases": [{"id": "0", "title": "A", "items": [
+            {"id": "0.0", "text": "later", "status": "pending"},
+            {"id": "0.1", "text": "now", "status": "active"}
+        ]}]}));
+        assert_eq!(list.hud_line().unwrap().text, "now");
+    }
+
+    #[test]
+    fn the_hud_line_says_all_done_only_when_nothing_is_left() {
+        let list = checklist(json!({"mode": "hud", "phases": [{"id": "0", "title": "A", "collapsed": true, "items": [
+            {"id": "0.0", "text": "a", "status": "done"},
+            {"id": "0.1", "text": "b", "status": "dropped"}
+        ]}]}));
+        assert_eq!(
+            list.hud_line().unwrap(),
+            HudLine { mark: HudMark::Done, text: "All done".into(), done: 2, total: 2 }
+        );
+        // A blocked item is not done: it is named, not hidden behind "All done".
+        let list = checklist(json!({"mode": "hud", "phases": [{"id": "0", "title": "A", "items": [
+            {"id": "0.0", "text": "a", "status": "done"},
+            {"id": "0.1", "text": "stuck", "status": "blocked", "note": "why"}
+        ]}]}));
+        let line = list.hud_line().unwrap();
+        assert_eq!((line.mark, line.text.as_str()), (HudMark::Ring, "stuck"));
+        assert_eq!(checklist(json!({"mode": "hud", "phases": []})).hud_line(), None);
+        assert_eq!(
+            checklist(json!({"mode": "hud", "phases": [{"id": "0", "title": "A", "items": []}]})).hud_line(),
+            None,
+            "a phase with no items has nothing to show"
+        );
+    }
+
+    #[test]
+    fn roman_numerals_cover_the_phase_numbers_and_fall_back_to_digits() {
+        let cases = [
+            (1, "I"), (2, "II"), (3, "III"), (4, "IV"), (5, "V"), (9, "IX"), (14, "XIV"),
+            (40, "XL"), (90, "XC"), (400, "CD"), (1994, "MCMXCIV"), (3999, "MMMCMXCIX"),
+        ];
+        for (n, want) in cases {
+            assert_eq!(roman(n), want, "{n}");
+        }
+        assert_eq!(roman(0), "0");
+        assert_eq!(roman(4000), "4000");
+    }
+
+    #[test]
+    fn a_phase_shows_working_done_or_open() {
+        let list = checklist(hud_props());
+        assert_eq!(list.phases[0].mark(), PhaseMark::Done);
+        assert_eq!(list.phases[1].mark(), PhaseMark::Working, "it has an active item");
+        let list = checklist(json!({"phases": [
+            {"id": "a", "title": "A", "items": [{"id": "a0", "text": "x", "status": "pending"}]},
+            {"id": "b", "title": "B", "items": [{"id": "b0", "text": "x", "status": "blocked"}]},
+            {"id": "c", "title": "C", "items": []}
+        ]}));
+        assert!(list.phases.iter().all(|p| p.mark() == PhaseMark::Open), "an empty phase is not done");
+    }
+
+    #[test]
+    fn a_phase_starts_collapsed_when_omp_says_so_or_when_it_is_finished() {
+        let list = checklist(hud_props());
+        assert!(list.phases[0].default_collapsed());
+        assert!(!list.phases[1].default_collapsed());
+        // omp's `full` mode sends `collapsed` itself; a finished phase collapses even without it.
+        let list = checklist(json!({"mode": "full", "phases": [
+            {"id": "a", "title": "A", "items": [{"id": "a0", "text": "x", "status": "done"}]},
+            {"id": "b", "title": "B", "collapsed": true, "items": [{"id": "b0", "text": "x", "status": "pending"}]},
+            {"id": "c", "title": "C", "items": []}
+        ]}));
+        let collapsed: Vec<_> = list.phases.iter().map(TodoPhase::default_collapsed).collect();
+        assert_eq!(collapsed, [true, true, false], "an empty phase stays open");
+    }
+
+    #[test]
+    fn the_reminders_untitled_phase_has_no_header_and_is_never_collapsed() {
+        let list = checklist(reminder_props());
+        assert!(list.phases[0].headerless());
+        assert!(!list.phases[0].default_collapsed());
+        let all_done = checklist(json!({"phases": [{"id": "p0", "title": "  ", "collapsed": true, "items": [
+            {"id": "p0.0", "text": "x", "status": "done"}
+        ]}]}));
+        assert!(!all_done.phases[0].default_collapsed(), "no header, nothing to click to reopen it");
+        let line = list.hud_line().unwrap();
+        assert_eq!((line.mark, line.text.as_str()), (HudMark::Ring, "Write the plan"));
+    }
+
+    #[test]
+    fn a_click_on_a_header_flips_its_default_and_a_second_click_flips_it_back() {
+        assert!(collapsed_now(true, false));
+        assert!(!collapsed_now(true, true), "a finished phase opened by the user");
+        assert!(collapsed_now(false, true), "an open phase closed by the user");
+        assert!(!collapsed_now(false, false));
+    }
+
+    #[test]
+    fn each_item_status_has_its_own_mark_color_and_text() {
+        let t = Theme::dark();
+        let look = |s| item_look(s, &t);
+        let active = look(TodoStatus::Active);
+        assert_eq!((active.mark, active.mark_color, active.text_color), (ItemMark::Active, t.accent, t.accent));
+        assert!(!active.strike && active.suffix.is_empty());
+        let pending = look(TodoStatus::Pending);
+        assert_eq!((pending.mark, pending.mark_color, pending.text_color), (ItemMark::Ring, t.text_muted, t.text));
+        let done = look(TodoStatus::Done);
+        assert_eq!((done.mark, done.mark_color, done.text_color), (ItemMark::Check, t.status_done, t.text_muted));
+        assert!(!done.strike);
+        let dropped = look(TodoStatus::Dropped);
+        assert_eq!((dropped.mark, dropped.text_color), (ItemMark::Ring, t.text_muted));
+        assert!(dropped.strike, "dropped is struck through");
+        let blocked = look(TodoStatus::Blocked);
+        assert_eq!(
+            (blocked.mark_color, blocked.text_color, blocked.suffix),
+            (t.status_needs_input, t.status_needs_input, " (blocked)")
+        );
+    }
+
+    #[test]
+    fn a_checklist_with_an_active_item_animates_and_a_finished_one_does_not() {
+        let node = |props: serde_json::Value| json!({"id": "n", "k": "checklist", "p": props});
+        assert!(animating(&with_node(node(hud_props()))), "the dots step on the status tick");
+        let calm = json!({"mode": "full", "phases": [{"id": "p0", "title": "A", "items": [
+            {"id": "p0.0", "text": "x", "status": "pending"}, {"id": "p0.1", "text": "y", "status": "done"}
+        ]}]});
+        assert!(!animating(&with_node(node(calm))));
+    }
+```
+
+- [ ] **Step 17: Run the tests to verify they fail**
+
+Run: `cargo test -p mkrew-ui --lib tsp::`
+Expected: FAIL to compile, "cannot find type `Checklist` in this scope" (and `TodoStatus`, `HudLine`, `roman`, `item_look`).
+
+- [ ] **Step 18: Write the checklist model**
+
+Insert before `#[cfg(test)]` in `crates/mkrew-ui/src/tsp.rs` (after the helpers of Step 15):
+
+```rust
+/// Status of one todo item as omp sends it (`vbe` in `tools/todo.ts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TodoStatus {
+    Active,
+    Pending,
+    Done,
+    Blocked,
+    Dropped,
+}
+
+impl TodoStatus {
+    /// An unknown status is pending.
+    pub fn parse(status: &str) -> Self {
+        match status {
+            "active" => Self::Active,
+            "done" => Self::Done,
+            "blocked" => Self::Blocked,
+            "dropped" => Self::Dropped,
+            _ => Self::Pending,
+        }
+    }
+
+    /// Counted in `done/total` and collapses its phase.
+    pub fn finished(self) -> bool {
+        matches!(self, Self::Done | Self::Dropped)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoItem {
+    pub id: String,
+    pub text: String,
+    pub status: TodoStatus,
+    /// A blocked item's blocker.
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoPhase {
+    pub id: String,
+    pub title: String,
+    /// omp's own `collapsed`.
+    pub collapsed: bool,
+    pub items: Vec<TodoItem>,
+}
+
+/// What a phase's header mark shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhaseMark {
+    /// Loading dots: an item is active.
+    Working,
+    /// A filled `status_done` circle: every item is finished.
+    Done,
+    /// A `text_muted` ring.
+    Open,
+}
+
+impl TodoPhase {
+    /// `(finished, all)` items.
+    pub fn counts(&self) -> (usize, usize) {
+        (self.items.iter().filter(|i| i.status.finished()).count(), self.items.len())
+    }
+
+    fn all_finished(&self) -> bool {
+        !self.items.is_empty() && self.items.iter().all(|i| i.status.finished())
+    }
+
+    pub fn mark(&self) -> PhaseMark {
+        if self.items.iter().any(|i| i.status == TodoStatus::Active) {
+            PhaseMark::Working
+        } else if self.all_finished() {
+            PhaseMark::Done
+        } else {
+            PhaseMark::Open
+        }
+    }
+
+    /// The reminder's one phase has a blank name: no header is drawn.
+    pub fn headerless(&self) -> bool {
+        self.title.trim().is_empty()
+    }
+
+    /// Header only, before the user clicks it: omp said `collapsed`, or every item is finished.
+    /// A phase without a header is never collapsed (nothing could reopen it).
+    pub fn default_collapsed(&self) -> bool {
+        !self.headerless() && (self.collapsed || self.all_finished())
+    }
+}
+
+/// A click on a header (UI state only) flips the default.
+pub fn collapsed_now(default: bool, toggled: bool) -> bool {
+    default != toggled
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChecklistMode {
+    Full,
+    Reminder,
+    Hud,
+}
+
+/// The `checklist` node of omp's todo (spec 7.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checklist {
+    pub mode: ChecklistMode,
+    pub phases: Vec<TodoPhase>,
+    pub note: Option<String>,
+}
+
+/// The hud's mark: loading dots (working), a ring (waiting), a filled circle (nothing left).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HudMark {
+    Dots,
+    Ring,
+    Done,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HudLine {
+    pub mark: HudMark,
+    pub text: String,
+    pub done: usize,
+    pub total: usize,
+}
+
+pub const ALL_DONE: &str = "All done";
+
+impl Checklist {
+    pub fn from_props(props: &Map<String, Value>) -> Self {
+        let mode = match props.get("mode").and_then(Value::as_str) {
+            Some("hud") => ChecklistMode::Hud,
+            Some("reminder") => ChecklistMode::Reminder,
+            _ => ChecklistMode::Full,
+        };
+        let text = |value: &Value, key: &str| {
+            value.get(key).and_then(Value::as_str).map(str::to_owned)
+        };
+        let phases = (props.get("phases").and_then(Value::as_array))
+            .map(|phases| {
+                phases
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, phase)| phase.is_object())
+                    .map(|(at, phase)| TodoPhase {
+                        id: text(phase, "id").unwrap_or_else(|| format!("p{at}")),
+                        title: text(phase, "title").unwrap_or_default(),
+                        collapsed: phase.get("collapsed").and_then(Value::as_bool) == Some(true),
+                        items: (phase.get("items").and_then(Value::as_array))
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, item)| item.is_object())
+                                    .map(|(at, item)| TodoItem {
+                                        id: text(item, "id").unwrap_or_else(|| format!("i{at}")),
+                                        text: text(item, "text").unwrap_or_default(),
+                                        status: TodoStatus::parse(
+                                            item.get("status").and_then(Value::as_str).unwrap_or(""),
+                                        ),
+                                        note: text(item, "note").filter(|n| !n.trim().is_empty()),
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            mode,
+            phases,
+            note: props
+                .get("note")
+                .and_then(Value::as_str)
+                .filter(|n| !n.trim().is_empty())
+                .map(str::to_owned),
+        }
+    }
+
+    /// `(finished, all)` over every phase.
+    pub fn counts(&self) -> (usize, usize) {
+        self.phases.iter().map(TodoPhase::counts).fold((0, 0), |(d, t), (pd, pt)| (d + pd, t + pt))
+    }
+
+    pub fn has_active(&self) -> bool {
+        self.first(TodoStatus::Active).is_some()
+    }
+
+    fn first(&self, status: TodoStatus) -> Option<&TodoItem> {
+        self.phases.iter().flat_map(|p| p.items.iter()).find(|i| i.status == status)
+    }
+
+    /// The hud's one line (spec 7.7): the active item, else the first pending one, else (a
+    /// blocked item must not read as done) the first blocked one, else "All done".
+    pub fn hud_line(&self) -> Option<HudLine> {
+        let (done, total) = self.counts();
+        if total == 0 {
+            return None;
+        }
+        let (mark, text) = if let Some(item) = self.first(TodoStatus::Active) {
+            (HudMark::Dots, item.text.clone())
+        } else if let Some(item) = self.first(TodoStatus::Pending) {
+            (HudMark::Ring, item.text.clone())
+        } else if let Some(item) = self.first(TodoStatus::Blocked) {
+            (HudMark::Ring, item.text.clone())
+        } else {
+            (HudMark::Done, ALL_DONE.to_owned())
+        };
+        Some(HudLine { mark, text, done, total })
+    }
+}
+
+/// A phase number in Roman numerals; 0 and numbers past 3999 stay digits.
+pub fn roman(n: usize) -> String {
+    if n == 0 || n > 3999 {
+        return n.to_string();
+    }
+    const TABLE: [(usize, &str); 13] = [
+        (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"), (50, "L"),
+        (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+    ];
+    let (mut n, mut out) = (n, String::new());
+    for (value, symbol) in TABLE {
+        while n >= value {
+            out.push_str(symbol);
+            n -= value;
+        }
+    }
+    out
+}
+
+/// The mark of an item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemMark {
+    /// A ring around a dot.
+    Active,
+    Ring,
+    Check,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemLook {
+    pub mark: ItemMark,
+    pub mark_color: u32,
+    pub text_color: u32,
+    pub strike: bool,
+    /// Appended to the text.
+    pub suffix: &'static str,
+}
+
+pub fn item_look(status: TodoStatus, theme: &Theme) -> ItemLook {
+    let (mark, mark_color, text_color, strike, suffix) = match status {
+        TodoStatus::Active => (ItemMark::Active, theme.accent, theme.accent, false, ""),
+        TodoStatus::Pending => (ItemMark::Ring, theme.text_muted, theme.text, false, ""),
+        TodoStatus::Done => (ItemMark::Check, theme.status_done, theme.text_muted, false, ""),
+        TodoStatus::Dropped => (ItemMark::Ring, theme.text_muted, theme.text_muted, true, ""),
+        TodoStatus::Blocked => (
+            ItemMark::Ring,
+            theme.status_needs_input,
+            theme.status_needs_input,
+            false,
+            " (blocked)",
+        ),
+    };
+    ItemLook { mark, mark_color, text_color, strike, suffix }
+}
+```
+
+Then in the same file replace this line inside `animating` (Step 11):
+
+```rust
+                "elapsed" => !node.props.contains_key("stopped"),
+```
+
+with:
+
+```rust
+                "elapsed" => !node.props.contains_key("stopped"),
+                "checklist" => Checklist::from_props(&node.props).has_active(),
+```
+
+- [ ] **Step 19: Run the tests to verify they pass**
+
+Run: `cargo test -p mkrew-ui --lib tsp::`
+Expected: PASS (the checklist tests included).
+
+- [ ] **Step 20: Write the failing ask-look tests**
+
+Append inside `mod tests` of `crates/mkrew-ui/src/tsp.rs`:
+
+```rust
+    /// The dock card of a one-question `ask`, as `ask-dialog.ts` and `overlay.ts` build it.
+    fn ask_tree() -> Document {
+        with_node(json!({"id": "7", "k": "col", "p": {"role": "omp.editor.ask", "gap": "md"}, "c": [
+            {"id": "7.head", "k": "row", "p": {"role": "omp.ask.head", "align": "center"}, "c": [
+                {"id": "7.head/tabs", "k": "tabs", "p": {
+                    "items": [{"id": "0", "label": [{"t": "✓ ", "s": "success"}, {"t": "Color"}]}, {"id": "submit", "label": [{"t": "Review"}]}],
+                    "active": "0", "role": "omp.ask.questions", "actions": {"click": "select"}
+                }}
+            ]},
+            {"id": "7.question", "k": "md", "p": {"text": "Which color?", "role": "omp.ask.question"}},
+            {"id": "7.q0", "k": "list", "p": {"selected": "b", "role": "omp.ask.options"}, "c": [
+                {"id": "7.q0/a", "k": "item", "p": {"label": [{"t": "Red"}], "role": "omp.ask.option", "value": [{"t": "Recommended"}]}},
+                {"id": "7.q0/b", "k": "item", "p": {"label": [{"t": "Blue"}], "role": "omp.ask.option", "detail": [{"t": "calm"}], "tone": "accent"}},
+                {"id": "7.q0/c", "k": "item", "p": {"label": [{"t": "Green"}], "role": "omp.ask.check", "tone": "accent", "icon": "check"}},
+                {"id": "7.q0/other", "k": "item", "p": {"label": [{"t": "Other"}], "role": "omp.ask.other"}},
+                {"id": "7.q0/otherc", "k": "item", "p": {"label": [{"t": "Other"}], "role": "omp.ask.other.check"}}
+            ]},
+            {"id": "7.preview", "k": "md", "p": {"text": "preview", "role": "omp.ask.preview"}},
+            {"id": "7.notice", "k": "text", "p": {"spans": [{"t": "1 unanswered", "s": "warning"}], "role": "omp.ask.notice"}},
+            {"id": "7.answers", "k": "kv", "p": {"items": [{"k": "Color", "v": "Blue"}], "role": "omp.ask.answers"}},
+            {"id": "7.actions", "k": "row", "p": {"role": "omp.actions", "gap": "sm", "align": "center"}, "c": [
+                {"id": "7.actions/timer", "k": "meter", "p": {"style": "ring", "size": "sm", "label": "12s", "value": 0.4}},
+                {"id": "7.actions/hide", "k": "row", "p": {"role": "omp.btn", "gap": "xs", "align": "center", "actions": {"click": "hide"}, "title": "Hide  ctrl+h"}, "c": [
+                    {"id": "7.actions/hide/0", "k": "text", "p": {"text": "Hide"}}
+                ]},
+                {"id": "7.actions/sp", "k": "spacer", "p": {"grow": 1}},
+                {"id": "7.actions/submit", "k": "row", "p": {"role": "omp.btn", "gap": "xs", "align": "center", "actions": {"click": "submit"}, "title": "Submit  enter", "tone": "accent"}, "c": [
+                    {"id": "7.actions/submit/0", "k": "text", "p": {"text": "Submit"}},
+                    {"id": "7.actions/submit/1", "k": "kbd", "p": {"keys": ["enter"]}}
+                ]}
+            ]}
+        ]}))
+    }
+
+    fn look_of(d: &Document, id: &str) -> Option<AskLook> {
+        d.get(id).and_then(role_of).and_then(ask_look)
+    }
+
+    #[test]
+    fn every_node_of_omps_ask_card_has_its_look() {
+        let d = ask_tree();
+        let want = [
+            ("7", Some(AskLook::Card)),
+            ("7.head", Some(AskLook::Head)),
+            ("7.head/tabs", Some(AskLook::Tabs)),
+            ("7.question", Some(AskLook::Question)),
+            ("7.q0", Some(AskLook::Options)),
+            ("7.q0/a", Some(AskLook::Choice)),
+            ("7.q0/b", Some(AskLook::Choice)),
+            ("7.q0/c", Some(AskLook::Check)),
+            ("7.q0/other", Some(AskLook::Other)),
+            ("7.q0/otherc", Some(AskLook::OtherCheck)),
+            ("7.preview", Some(AskLook::Preview)),
+            ("7.notice", Some(AskLook::Notice)),
+            ("7.answers", Some(AskLook::Answers)),
+            ("7.actions", Some(AskLook::Actions)),
+            ("7.actions/hide", Some(AskLook::Button)),
+            ("7.actions/submit", Some(AskLook::Button)),
+            ("7.actions/timer", None),
+            ("7.actions/sp", None),
+        ];
+        for (id, look) in want {
+            assert_eq!(look_of(&d, id), look, "{id}");
+        }
+    }
+
+    #[test]
+    fn the_roles_are_matched_whole_so_neighbours_do_not_collide() {
+        assert_eq!(ask_look("omp.editor.ask.hidden"), Some(AskLook::Hidden));
+        assert_eq!(ask_look("omp.editor.ask"), Some(AskLook::Card));
+        assert_eq!(ask_look("omp.ask.summary"), Some(AskLook::Summary));
+        assert_eq!(ask_look("omp.editor"), None, "the ordinary composer is not an ask card");
+        assert_eq!(ask_look("omp.editor.bash"), None);
+        assert_eq!(ask_look("omp.ask.future"), None, "an unknown ask role draws as its kind");
+        assert_eq!(ask_look("omp.ask.other.checkbox"), None);
+        assert_eq!(ask_look("omp.hud.todo"), None);
+        assert_eq!(ask_look(""), None);
+    }
+
+    #[test]
+    fn choice_rows_are_radios_or_check_boxes_and_filled_by_tone() {
+        assert!(AskLook::Choice.is_choice() && AskLook::Other.is_choice());
+        assert!(AskLook::Check.is_choice() && AskLook::OtherCheck.is_choice());
+        assert!(!AskLook::Button.is_choice() && !AskLook::Options.is_choice());
+        assert!(AskLook::Check.boxed() && AskLook::OtherCheck.boxed());
+        assert!(!AskLook::Choice.boxed() && !AskLook::Other.boxed());
+        let d = ask_tree();
+        assert!(!choice_filled(d.get("7.q0/a").unwrap()), "not picked");
+        assert!(choice_filled(d.get("7.q0/b").unwrap()));
+        assert!(choice_filled(d.get("7.q0/c").unwrap()));
+    }
+
+    #[test]
+    fn the_ask_card_sends_what_omp_reads_back() {
+        let d = ask_tree();
+        assert_eq!(
+            click_event(&d, d.get("7.q0/a").unwrap(), false),
+            Some(json!({"ev": "select", "id": "7.q0", "item": "7.q0/a"}))
+        );
+        assert_eq!(
+            click_event(&d, d.get("7.q0/c").unwrap(), true),
+            Some(json!({"ev": "activate", "id": "7.q0", "item": "7.q0/c"}))
+        );
+        assert_eq!(
+            click_event(&d, d.get("7.actions/submit").unwrap(), false),
+            Some(json!({"ev": "action", "id": "7.actions/submit", "act": "submit"}))
+        );
+        assert_eq!(
+            click_event(&d, d.get("7.actions/hide").unwrap(), false),
+            Some(json!({"ev": "action", "id": "7.actions/hide", "act": "hide"}))
+        );
+        assert_eq!(click_event(&d, d.get("7.question").unwrap(), false), None, "text sends nothing");
+        assert_eq!(click_event(&d, d.get("7.actions/timer").unwrap(), false), None);
+    }
+```
+
+- [ ] **Step 21: Run the tests to verify they fail**
+
+Run: `cargo test -p mkrew-ui --lib tsp::`
+Expected: FAIL to compile, "cannot find type `AskLook` in this scope" (and `role_of`, `ask_look`, `choice_filled`).
+
+- [ ] **Step 22: Write the ask look table**
+
+Insert before `#[cfg(test)]` in `crates/mkrew-ui/src/tsp.rs`:
+
+```rust
+/// A node's `role` prop.
+pub fn role_of(node: &Node) -> Option<&str> {
+    node.props.get("role").and_then(Value::as_str)
+}
+
+/// The role specific looks of omp's `ask` card (spec 7.6). Roles match whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskLook {
+    /// `omp.editor.ask`: the composer card.
+    Card,
+    /// `omp.editor.ask.hidden`: the one line version.
+    Hidden,
+    /// `omp.ask.head`: the row of the tabs.
+    Head,
+    /// `omp.ask.questions`.
+    Tabs,
+    /// `omp.ask.question`.
+    Question,
+    /// `omp.ask.options`.
+    Options,
+    /// `omp.ask.option`: a radio row.
+    Choice,
+    /// `omp.ask.check`: a check box row.
+    Check,
+    /// `omp.ask.other`: the radio row for a typed answer.
+    Other,
+    /// `omp.ask.other.check`.
+    OtherCheck,
+    /// `omp.ask.preview`.
+    Preview,
+    /// `omp.ask.notice`.
+    Notice,
+    /// `omp.ask.answers`.
+    Answers,
+    /// `omp.ask.summary`: the one line "Question ..." of the hidden card.
+    Summary,
+    /// `omp.actions`: the bottom row.
+    Actions,
+    /// `omp.btn`: a pill button.
+    Button,
+}
+
+pub fn ask_look(role: &str) -> Option<AskLook> {
+    Some(match role {
+        "omp.editor.ask" => AskLook::Card,
+        "omp.editor.ask.hidden" => AskLook::Hidden,
+        "omp.ask.head" => AskLook::Head,
+        "omp.ask.questions" => AskLook::Tabs,
+        "omp.ask.question" => AskLook::Question,
+        "omp.ask.options" => AskLook::Options,
+        "omp.ask.option" => AskLook::Choice,
+        "omp.ask.check" => AskLook::Check,
+        "omp.ask.other" => AskLook::Other,
+        "omp.ask.other.check" => AskLook::OtherCheck,
+        "omp.ask.preview" => AskLook::Preview,
+        "omp.ask.notice" => AskLook::Notice,
+        "omp.ask.answers" => AskLook::Answers,
+        "omp.ask.summary" => AskLook::Summary,
+        "omp.actions" => AskLook::Actions,
+        "omp.btn" => AskLook::Button,
+        _ => return None,
+    })
+}
+
+impl AskLook {
+    /// A row of the options list.
+    pub fn is_choice(self) -> bool {
+        matches!(self, Self::Choice | Self::Check | Self::Other | Self::OtherCheck)
+    }
+
+    /// A check box (several answers allowed) rather than a radio.
+    pub fn boxed(self) -> bool {
+        matches!(self, Self::Check | Self::OtherCheck)
+    }
+}
+
+/// omp marks the picked rows with `tone: "accent"`.
+pub fn choice_filled(node: &Node) -> bool {
+    node.props.get("tone").and_then(Value::as_str) == Some("accent")
+}
+```
+
+- [ ] **Step 23: Run the tests to verify they pass**
+
+Run: `cargo test -p mkrew-ui --lib tsp::`
+Expected: PASS.
+
+- [ ] **Step 24: Run the tests, then fmt and clippy**
 
 Run: `cargo test -p mkrew-ui --lib tsp::`
 Expected: PASS.
@@ -7795,7 +8548,7 @@ Expected: PASS.
 Run: `cargo fmt --all && cargo clippy -p mkrew-ui --all-targets -- -D warnings`
 Expected: no warnings. If clippy flags `!(cell_px > 0.0)` (neg_cmp_op_on_partial_ord), rewrite as `if cell_px.is_nan() || cell_px <= 0.0 || width_px.is_nan() || width_px <= 0.0`.
 
-- [ ] **Step 17: Commit**
+- [ ] **Step 25: Commit**
 
 ```bash
 git add crates/mkrew-ui/src/tsp.rs crates/mkrew-ui/src/lib.rs
@@ -7813,11 +8566,12 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): pure TSP module (them
 - Modify: `crates/mkrew-ui/src/shell.rs:70` (`pub(crate) mod tsp_view;`), `crates/mkrew-ui/src/main.rs:155` (`use shell::tsp_view::*;`), `main.rs:764` (field `tsps`)
 - Modify: `crates/mkrew-ui/src/shell/connection.rs:407` (init), `:168` (`sync_tsps`), `:189-197` (`tsp_animating`), `:1295` (fallback toast), `:1351-1364` (TspUpdate arm), `:1406-1409` (`fed` rule)
 - Modify: `crates/mkrew-ui/src/shell/pane_render.rs:447-457` (width into `pane_frame` is already passed), `:519-531` (`pane_frame` branch)
-- Test: `chat.rs` (`chat::available` gate), `redraw.rs` (arm). The view itself is verified by Task 12's smoke and the manual check in Step 20.
+- Modify: `crates/mkrew-ui/src/theme.rs:385` (five `TSP_*` tokens after `CHAT_COLUMN_WIDTH`)
+- Test: `chat.rs` (`chat::available` gate), `redraw.rs` (arm). The view itself is verified by Task 12's smoke and the manual check in Step 24.
 
 **Interfaces:**
-- Consumes: everything Task 9 produces; `Session.tsp: TspState`, `Request::{TspSnapshot, TspEvent}`, `TspSnapshotParams { session_id }`, `TspEventParams { session_id, surface, event }`, `Event::TspUpdate(Box<TspUpdate>)` (Task 2); existing `Shell` items: `chat_column` (`chat_view.rs:1138`), `thread_panel::at_bottom`, `loading_dots` (`widgets.rs:1226`), `tooltip` (`widgets.rs:1338`), `message` (`widgets.rs:25`), `toast_info` (`toasts.rs:14`), `typing` (`focus.rs:256`), `focused_session` (`hosts.rs:112`), `is_exited` (`workspace.rs:224`), `preview::blocks`, `docs::Shown::from_text`, `Pressable`/`Look`, `icon_svg`.
-- Produces: `Shell.tsps: HashMap<Ulid, TspUi>`; `TspUi`; `Shell::{render_tsp, tsp_send, sync_tsps, tsp_animating, tsp_pane_view, tsp_covers, tsp_update}`; `chat::available(kind, profile, has_transcript, tsp)`; `TerminalPane::{focus_handle, fit_cols}` and `pub key_down`, `pub terminal_font`.
+- Consumes: everything Task 9 produces, in particular `mkrew_ui::tsp::{Checklist, ChecklistMode, HudMark, PhaseMark, ItemMark, TodoPhase, AskLook, ask_look, role_of, choice_filled, collapsed_now, item_look, roman}` (Task 9), `widgets::{floating_panel, status_dot}`; `Session.tsp: TspState`, `Request::{TspSnapshot, TspEvent}`, `TspSnapshotParams { session_id }`, `TspEventParams { session_id, surface, event }`, `Event::TspUpdate(Box<TspUpdate>)` (Task 2); existing `Shell` items: `chat_column` (`chat_view.rs:1138`), `thread_panel::at_bottom`, `loading_dots` (`widgets.rs:1226`), `tooltip` (`widgets.rs:1338`), `message` (`widgets.rs:25`), `toast_info` (`toasts.rs:14`), `typing` (`focus.rs:256`), `focused_session` (`hosts.rs:112`), `is_exited` (`workspace.rs:224`), `preview::blocks`, `docs::Shown::from_text`, `Pressable`/`Look`, `icon_svg`.
+- Produces: `Shell.tsps: HashMap<Ulid, TspUi>`; `TspUi`; `Shell::{render_tsp, tsp_send, sync_tsps, tsp_animating, tsp_pane_view, tsp_covers, tsp_update, tsp_checklist, tsp_ask, tsp_status_hud}`; `TspUi.todo_open: Option<String>` (the node id of the hud whose popover is open) and `TspUi.todo_toggled: HashSet<(String, String)>` (node id, phase id: headers the user clicked); the `omp.hud.status` row, the todo popover and the ask card (`omp.editor.ask`, spec 7.6 and 7.7); `chat::available(kind, profile, has_transcript, tsp)`; `TerminalPane::{focus_handle, fit_cols}` and `pub key_down`, `pub terminal_font`.
 
 Hard rules in force (mkrew-ui-design): every color, size, spacing, radius comes from `theme.rs` tokens; every clickable element is `.pressable(..)` + `.on_press(..)` (text fields are exempt and use `on_mouse_down`); selected rows use `pressable_unless`; no looping animation (the status tick redraws, `loading_dots` steps on it); dark and light work because only `Theme` fields are read; the empty state of a list is its `empty` prop, the empty state of the pane is the Starting message.
 
@@ -7865,7 +8619,31 @@ pub fn terminal_font(theme: &Theme) -> Font {
 
 (replace the line above it only if it already has a doc comment; the existing `GLYPH_FALLBACKS` static stays private.)
 
-- [ ] **Step 2: Write the failing `chat::available` gate test**
+- [ ] **Step 2: Add the theme tokens for the todo popover and the ask card**
+
+In `crates/mkrew-ui/src/theme.rs`, after `pub const CHAT_COLUMN_WIDTH: f32 = 760.0;` (current line 385) add:
+
+```rust
+
+/// Width of the todo popover an omp pane opens from its hud (TSP `checklist`, ADR 0107).
+pub const TSP_POPOVER_WIDTH: f32 = 420.0;
+
+/// Tallest share of the pane's list area the todo popover takes; it scrolls past that.
+pub const TSP_POPOVER_MAX_FRACTION: f32 = 0.6;
+
+/// Shortest height the popover is capped at, before the list has been laid out.
+pub const TSP_POPOVER_MIN_HEIGHT: f32 = 120.0;
+
+/// The accent bar on the left of the picked row of an omp `ask` card.
+pub const TSP_ASK_BAR_WIDTH: f32 = 2.0;
+
+/// The ring of an omp `ask` timeout.
+pub const TSP_RING_SIZE: f32 = 24.0;
+```
+
+No test (constants); `cargo check` in Step 21 covers it.
+
+- [ ] **Step 3: Write the failing `chat::available` gate test**
 
 In `crates/mkrew-ui/src/chat.rs`, replace the test `only_agents_with_a_readable_transcript_can_chat` (current lines 1726-1741) with:
 
@@ -7906,7 +8684,7 @@ In `crates/mkrew-ui/src/chat.rs`, replace the test `only_agents_with_a_readable_
 Run: `cargo test -p mkrew-ui --lib chat::tests::a_pane_with_tsp_on_has_no_chat`
 Expected: FAIL to compile, "this function takes 3 arguments but 4 arguments were supplied".
 
-- [ ] **Step 3: Implement the gate**
+- [ ] **Step 4: Implement the gate**
 
 In `crates/mkrew-ui/src/chat.rs`, replace lines 17-27 (the `available` doc comment and function; add `TspState` to the file's existing `use mkrew_protocol::{...}` import):
 
@@ -7941,7 +8719,7 @@ and change `fn visible_sessions(&self)` (line 99) to `pub(crate) fn visible_sess
 Run: `cargo test -p mkrew-ui --lib chat::`
 Expected: PASS. This one gate also removes the Terminal | Chat switch (`pane_mode_switch` returns `None`), its header room, its palette entry and `toggle_chat`, and makes `chat_session` false so `focus_pane` never routes a TSP pane to the composer: no edit to `focus.rs`.
 
-- [ ] **Step 4: Write the failing redraw test**
+- [ ] **Step 5: Write the failing redraw test**
 
 In `crates/mkrew-ui/src/redraw.rs`, add to the `use mkrew_protocol::{...}` list of `mod tests` (current lines 134-139) `TspChange, TspUpdate`, add this helper after `queue` (current line 249-254):
 
@@ -7973,7 +8751,7 @@ and this test after `turns_and_queues_need_a_visible_pane` (current line 351-360
 Run: `cargo test -p mkrew-ui --lib redraw::tests::tsp_updates`
 Expected: if Task 2 already added the arm, PASS (nothing more to do in this step). Otherwise FAIL to compile with "non-exhaustive patterns: `&Event::TspUpdate(_)` not covered".
 
-- [ ] **Step 5: Add the redraw arm if Task 2 did not**
+- [ ] **Step 6: Add the redraw arm if Task 2 did not**
 
 Run: `grep -n "TspUpdate" crates/mkrew-ui/src/redraw.rs`
 If the only hits are in the test module, add in `event_needs_redraw` after the `Event::SessionQueue(e) => on_pane(e.session_id),` line (current line 74):
@@ -7986,7 +8764,7 @@ If the only hits are in the test module, add in `event_needs_redraw` after the `
 Run: `cargo test -p mkrew-ui --lib redraw::`
 Expected: PASS.
 
-- [ ] **Step 6: Create `shell/tsp_view.rs` part 1: state, fetch, update, send, sync**
+- [ ] **Step 7: Create `shell/tsp_view.rs` part 1: state, fetch, update, send, sync**
 
 Create `crates/mkrew-ui/src/shell/tsp_view.rs`:
 
@@ -8000,7 +8778,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use gpui::{FontStyle, FontWeight, StrikethroughStyle, StyledText, TextRun};
+use gpui::{
+    Corner, FontStyle, FontWeight, StrikethroughStyle, StyledText, TextRun, anchored, deferred,
+};
 use mkrew_core::tsp::doc::{Document, Node};
 use mkrew_protocol::{
     Request, TspChange, TspEventParams, TspSnapshot, TspSnapshotParams, TspState, TspSurface,
@@ -8034,6 +8814,10 @@ pub(crate) struct TspUi {
     /// A selection inside one `md` or `code` node (key: node id) and where each was painted.
     selecting: Option<(String, mkrew_ui::preview_select::Selection)>,
     hits: RefCell<HashMap<String, preview::Hits>>,
+    /// The hud `checklist` node whose popover is open (UI only, nothing is sent to omp).
+    todo_open: Option<String>,
+    /// Phase headers the user clicked: (checklist node id, phase id). Flips the phase's default.
+    todo_toggled: HashSet<(String, String)>,
 }
 
 impl TspUi {
@@ -8050,6 +8834,8 @@ impl TspUi {
             fetch: None,
             selecting: None,
             hits: RefCell::new(HashMap::new()),
+            todo_open: None,
+            todo_toggled: HashSet::new(),
         }
     }
 }
@@ -8122,6 +8908,9 @@ impl Shell {
             return;
         };
         let toasts = tsp::toast_texts(doc, ops);
+        if (ui.todo_open.as_deref()).is_some_and(|id| doc.get(id).is_none()) {
+            ui.todo_open = None;
+        }
         let reveal = ops.iter().rev().find_map(|op| {
             let op = op.as_array()?;
             if op.first()?.as_str()? != "reveal" {
@@ -8269,7 +9058,17 @@ impl Shell {
             return;
         }
         let escape = !event.keystroke.modifiers.modified() && event.keystroke.key == "escape";
+        let popover = (self.tsps.get(&session)).is_some_and(|ui| ui.todo_open.is_some());
+        if tsp::escape_clears(popover, escape) {
+            cx.stop_propagation();
+            if let Some(ui) = self.tsps.get_mut(&session) {
+                ui.todo_open = None;
+            }
+            cx.notify();
+            return;
+        }
         if tsp::escape_clears(selected.is_some(), escape) {
+```
             cx.stop_propagation();
             if let Some(ui) = self.tsps.get_mut(&session) {
                 ui.selecting = None;
@@ -8362,9 +9161,39 @@ impl Shell {
         .detach();
     }
 }
+
+impl Shell {
+    /// Opens the hud's todo popover (UI only).
+    fn tsp_todo_open(&mut self, session: Ulid, id: &str, cx: &mut Context<'_, Self>) {
+        if let Some(ui) = self.tsps.get_mut(&session) {
+            ui.todo_open = Some(id.to_owned());
+            cx.notify();
+        }
+    }
+
+    fn tsp_todo_close(&mut self, session: Ulid, cx: &mut Context<'_, Self>) {
+        if let Some(ui) = self.tsps.get_mut(&session)
+            && ui.todo_open.take().is_some()
+        {
+            cx.notify();
+        }
+    }
+
+    /// A click on a phase header: opens or closes that phase (UI only).
+    fn tsp_todo_phase(&mut self, session: Ulid, node: &str, phase: &str, cx: &mut Context<'_, Self>) {
+        let Some(ui) = self.tsps.get_mut(&session) else {
+            return;
+        };
+        let key = (node.to_owned(), phase.to_owned());
+        if !ui.todo_toggled.remove(&key) {
+            ui.todo_toggled.insert(key);
+        }
+        cx.notify();
+    }
+}
 ```
 
-- [ ] **Step 7: Append part 2: the pane (`render_tsp`, surface, layer, starting state)**
+- [ ] **Step 8: Append part 2: the pane (`render_tsp`, surface, layer, starting state)**
 
 Append to `crates/mkrew-ui/src/shell/tsp_view.rs`:
 
@@ -8400,12 +9229,24 @@ fn styled_runs(
     all_mono: bool,
     theme: &Theme,
 ) -> StyledText {
+    styled_runs_w(runs, base, all_mono, weight::REGULAR, theme)
+}
+
+/// [`styled_runs`] with `regular` as the weight of runs that are not `strong`.
+fn styled_runs_w(
+    runs: &[(String, SpanStyle)],
+    base: u32,
+    all_mono: bool,
+    regular: f32,
+    theme: &Theme,
+) -> StyledText {
     let ui_font = gpui::font(theme.ui_font_family.clone());
     let mono_font = terminal_font(theme);
     let mut text = String::new();
     let mut text_runs = Vec::new();
     for (part, style) in runs.iter().filter(|(part, _)| !part.is_empty()) {
         let mut font = if style.mono || all_mono { mono_font.clone() } else { ui_font.clone() };
+        font.weight = FontWeight(regular);
         if style.bold {
             font.weight = FontWeight(weight::SEMIBOLD);
         }
@@ -8598,7 +9439,7 @@ impl Shell {
 }
 ```
 
-- [ ] **Step 8: Append part 3: dispatch by kind group and the layout group**
+- [ ] **Step 9: Append part 3: dispatch by kind group and the layout group**
 
 Append to `crates/mkrew-ui/src/shell/tsp_view.rs`:
 
@@ -8609,6 +9450,16 @@ impl Shell {
         if bool_prop(node, "hidden") {
             return div().into_any_element();
         }
+        // The ask card's roles (spec 7.6) and the status row that holds the todo hud (7.7).
+        if let Some(look) = tsp::role_of(node).and_then(tsp::ask_look) {
+            return self.tsp_ask(p, node, look, cx);
+        }
+        if node.kind == "col"
+            && tsp::role_of(node) == Some("omp.hud.status")
+            && p.doc.children(&node.id).any(|child| child.kind == "checklist")
+        {
+            return self.tsp_status_hud(p, node, cx);
+        }
         match node.kind.as_str() {
             "col" | "row" | "card" | "section" | "rule" | "spacer" | "overlay" | "toast" => {
                 self.tsp_layout(p, node, cx)
@@ -8616,6 +9467,7 @@ impl Shell {
             "text" | "md" | "code" | "ansi" | "rows" | "shimmer" => self.tsp_text(p, node, cx),
             "kv" | "table" | "list" | "item" | "tabs" | "badge" | "kbd" | "icon" | "status"
             | "seg" => self.tsp_data(p, node, cx),
+            "checklist" => self.tsp_checklist(p, node, cx),
             "spinner" | "elapsed" | "progress" | "rate" | "meter" | "effort" => {
                 self.tsp_live(p, node, cx)
             }
@@ -8788,7 +9640,7 @@ impl Shell {
 }
 ```
 
-- [ ] **Step 9: Append part 4: the text group**
+- [ ] **Step 10: Append part 4: the text group**
 
 Append to `crates/mkrew-ui/src/shell/tsp_view.rs`:
 
@@ -8879,7 +9731,7 @@ impl Shell {
 }
 ```
 
-- [ ] **Step 10: Append part 5: the data group**
+- [ ] **Step 11: Append part 5: the data group**
 
 Append to `crates/mkrew-ui/src/shell/tsp_view.rs`:
 
@@ -9085,7 +9937,7 @@ impl Shell {
 }
 ```
 
-- [ ] **Step 11: Append part 6: the live group**
+- [ ] **Step 12: Append part 6: the live group**
 
 Append to `crates/mkrew-ui/src/shell/tsp_view.rs`:
 
@@ -9155,8 +10007,20 @@ impl Shell {
                 let text = tsp::rate_label(num_prop(node, "value").unwrap_or(0.0), str_prop(node, "unit").unwrap_or(""));
                 div().text_size(font_size::META).text_color(rgb(theme.text_muted)).child(text)
             }
+            // A timeout ring (the ask card): a ring with the seconds left. The arc is not drawn.
+            "meter" if str_prop(node, "style") == Some("ring") => div()
+                .size(px(theme::TSP_RING_SIZE))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.accent))
+                .text_size(font_size::META)
+                .child(styled_runs(&label("label"), theme.text_muted, false, theme)),
             "meter" => {
-                // bar, ring, blocks and segmented all draw as a bar in P1.
+                // bar, blocks and segmented all draw as a bar in P1.
                 let value = num_prop(node, "value");
                 let color = tsp::tone_color(
                     tsp::meter_tone(value.unwrap_or(0.0), node.props.get("thresholds")),
@@ -9186,7 +10050,7 @@ impl Shell {
 }
 ```
 
-- [ ] **Step 12: Append part 7: the input group and the generic fallback**
+- [ ] **Step 13: Append part 7: the input group and the generic fallback**
 
 Append to `crates/mkrew-ui/src/shell/tsp_view.rs`:
 
@@ -9297,7 +10161,513 @@ impl Shell {
 }
 ```
 
-- [ ] **Step 13: Register the module, the field and its initializer**
+- [ ] **Step 14: Append part 8: the todo (`checklist`)**
+
+Append to `crates/mkrew-ui/src/shell/tsp_view.rs`:
+
+```rust
+/// The mark of a todo item or phase.
+fn todo_mark(mark: tsp::ItemMark, color: u32, theme: &Theme) -> AnyElement {
+    match mark {
+        tsp::ItemMark::Active => div()
+            .size(theme::rems_px(theme::ICON_SIZE_SMALL))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(color))
+            .child(status_dot(color, false))
+            .into_any_element(),
+        tsp::ItemMark::Ring => status_dot(color, true).flex_none().into_any_element(),
+        tsp::ItemMark::Check => icon_svg(Icon::Check, theme::ICON_SIZE_SMALL, color)
+            .flex_none()
+            .into_any_element(),
+    }
+}
+
+impl Shell {
+    /// `checklist`: the hud chip with its popover, the `full` card, the `reminder` notice.
+    fn tsp_checklist(&self, p: &Paint, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let list = tsp::Checklist::from_props(&node.props);
+        match list.mode {
+            tsp::ChecklistMode::Hud => self.tsp_todo_hud(p, node, &list, cx),
+            tsp::ChecklistMode::Full => div()
+                .p(px(space::M))
+                .rounded(px(theme::radius::MEDIUM))
+                .bg(rgb(theme.surface_raised))
+                .child(self.tsp_phases(p, node, &list, cx))
+                .into_any_element(),
+            tsp::ChecklistMode::Reminder => div()
+                .flex()
+                .flex_col()
+                .gap(px(space::S))
+                .children(list.note.as_ref().map(|note| {
+                    div().text_color(rgb(theme.text_muted)).child(note.clone())
+                }))
+                .child(self.tsp_phases(p, node, &list, cx))
+                .into_any_element(),
+        }
+    }
+
+    /// The phases and their items (the `full` card, the `reminder` and the popover).
+    fn tsp_phases(
+        &self,
+        p: &Paint,
+        node: &Node,
+        list: &tsp::Checklist,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let phases = list.phases.iter().enumerate().map(|(at, phase)| {
+            let toggled = p.ui.todo_toggled.contains(&(node.id.clone(), phase.id.clone()));
+            let collapsed = tsp::collapsed_now(phase.default_collapsed(), toggled);
+            let header = (!phase.headerless()).then(|| {
+                let mark = match phase.mark() {
+                    tsp::PhaseMark::Working => {
+                        loading_dots(p.now, rgb(theme.status_working)).into_any_element()
+                    }
+                    tsp::PhaseMark::Done => status_dot(theme.status_done, false).into_any_element(),
+                    tsp::PhaseMark::Open => status_dot(theme.text_muted, true).into_any_element(),
+                };
+                let (done, count) = phase.counts();
+                let title = format!("{}. {}", tsp::roman(at + 1), phase.title);
+                let (session, node_id, phase_id) = (p.session, node.id.clone(), phase.id.clone());
+                div()
+                    .id(SharedString::from(format!("tsp-phase-{}-{}-{}", p.session, node.id, phase.id)))
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(theme::radius::SMALL))
+                    .child(mark)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .font_weight(FontWeight(weight::SEMIBOLD))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .font_family(theme.terminal_font_family.clone())
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(format!("{done}/{count}")),
+                    )
+                    .pressable(Look::Row, true, theme)
+                    .on_press(true, cx.listener(move |shell, _, _, cx| {
+                        shell.tsp_todo_phase(session, &node_id, &phase_id, cx);
+                    }))
+            });
+            let items: Vec<AnyElement> = if collapsed {
+                Vec::new()
+            } else {
+                phase.items.iter().map(|item| Self::tsp_todo_item(p, item)).collect()
+            };
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(space::XS))
+                .children(header)
+                .children(items)
+        });
+        div().flex().flex_col().gap(px(space::S)).children(phases).into_any_element()
+    }
+
+    /// One item: its mark, its text (struck, colored or suffixed per status) and its note.
+    fn tsp_todo_item(p: &Paint, item: &tsp::TodoItem) -> AnyElement {
+        let theme = p.theme;
+        let look = tsp::item_look(item.status, theme);
+        let runs = vec![(
+            format!("{}{}", item.text, look.suffix),
+            SpanStyle { strike: look.strike, ..SpanStyle::default() },
+        )];
+        div()
+            .flex()
+            .items_start()
+            .gap(px(space::S))
+            .px(px(space::S))
+            .child(div().pt(px(space::XS)).child(todo_mark(look.mark, look.mark_color, theme)))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(styled_runs(&runs, look.text_color, false, theme))
+                    .children(item.note.as_ref().map(|note| {
+                        div()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(note.clone())
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// The hud: one pressable line (mark, the item in progress, `done/total`) whose click opens
+    /// the list in a glass panel above it. Esc or a click outside closes it.
+    fn tsp_todo_hud(
+        &self,
+        p: &Paint,
+        node: &Node,
+        list: &tsp::Checklist,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let Some(line) = list.hud_line() else {
+            return div().into_any_element();
+        };
+        let open = p.ui.todo_open.as_deref() == Some(node.id.as_str());
+        let mark = match line.mark {
+            tsp::HudMark::Dots => loading_dots(p.now, rgb(theme.status_working)).into_any_element(),
+            tsp::HudMark::Ring => status_dot(theme.text_muted, true).into_any_element(),
+            tsp::HudMark::Done => status_dot(theme.status_done, false).into_any_element(),
+        };
+        let (session, id) = (p.session, node.id.clone());
+        let chip = div()
+            .id(SharedString::from(format!("tsp-todo-{}-{}", p.session, node.id)))
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::S))
+            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .rounded(px(theme::radius::PILL))
+            .text_size(font_size::META)
+            .child(mark)
+            .child(div().min_w_0().truncate().child(line.text.clone()))
+            .child(
+                div()
+                    .flex_none()
+                    .font_family(theme.terminal_font_family.clone())
+                    .text_color(rgb(theme.text_muted))
+                    .child(format!("{}/{}", line.done, line.total)),
+            )
+            .pressable_unless(open, Look::Chip, theme)
+            .tooltip(tooltip(theme, "Todo list", ""))
+            // The click outside the panel (this chip is outside it) has already closed an open
+            // panel, so a press on an open chip must not reopen it.
+            .on_press(true, cx.listener(move |shell, _, _, cx| {
+                if !open {
+                    shell.tsp_todo_open(session, &id, cx);
+                }
+            }));
+        let height = f32::from(p.ui.scroll.bounds().size.height) * theme::TSP_POPOVER_MAX_FRACTION;
+        let panel = floating_panel(SharedString::from(format!("tsp-todo-panel-{}", p.session)), theme)
+            .w(px(theme::TSP_POPOVER_WIDTH))
+            .max_h(px(height.max(theme::TSP_POPOVER_MIN_HEIGHT)))
+            .p(px(space::M))
+            .overflow_y_scroll()
+            .on_mouse_down_out(cx.listener(move |shell, _, _, cx| {
+                shell.tsp_todo_close(session, cx);
+            }))
+            .child(self.tsp_phases(p, node, list, cx));
+        div()
+            .relative()
+            .flex_none()
+            .child(chip)
+            .when(open, |el| {
+                el.child(deferred(
+                    anchored()
+                        .anchor(Corner::BottomLeft)
+                        .snap_to_window_with_margin(px(space::S))
+                        .child(panel),
+                ))
+            })
+            .into_any_element()
+    }
+
+    /// `col{role: "omp.hud.status"}` holding a todo hud: the status text on the left, the hud on
+    /// the right.
+    fn tsp_status_hud(&self, p: &Paint, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let (hud, rest): (Vec<&Node>, Vec<&Node>) =
+            p.doc.children(&node.id).partition(|child| child.kind == "checklist");
+        let left: Vec<AnyElement> = rest.into_iter().map(|child| self.tsp_node(p, child, cx)).collect();
+        let right: Vec<AnyElement> = hud.into_iter().map(|child| self.tsp_node(p, child, cx)).collect();
+        div()
+            .flex()
+            .items_center()
+            .gap(px(space::M))
+            .min_w_0()
+            .child(div().flex_1().min_w_0().flex().flex_col().children(left))
+            .children(right)
+            .into_any_element()
+    }
+}
+```
+
+- [ ] **Step 15: Append part 9: the ask card**
+
+Append to `crates/mkrew-ui/src/shell/tsp_view.rs`:
+
+```rust
+impl Shell {
+    /// A node with an `omp.ask.*` role (spec 7.6). Kinds that already draw well (`md`, `kv`, the
+    /// actions row) are handed to their own builder; no builder here calls `tsp_ask` for the same
+    /// node again.
+    fn tsp_ask(
+        &self,
+        p: &Paint,
+        node: &Node,
+        look: tsp::AskLook,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        use tsp::AskLook;
+        let theme = p.theme;
+        match look {
+            // The card is on `surface`, so the picked row (`surface_raised`) and the active tab
+            // (`card`) show on it.
+            AskLook::Card | AskLook::Hidden => div()
+                .flex()
+                .flex_col()
+                .gap(px(space::M))
+                .p(px(space::M))
+                .min_w_0()
+                .rounded(px(theme::radius::MEDIUM))
+                .bg(rgb(theme.surface))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.border))
+                .children(self.tsp_children(p, node, cx))
+                .into_any_element(),
+            AskLook::Head => div()
+                .flex()
+                .items_center()
+                .children(self.tsp_children(p, node, cx))
+                .into_any_element(),
+            AskLook::Tabs => self.tsp_ask_tabs(p, node, cx),
+            AskLook::Question => {
+                let text = str_prop(node, "text").unwrap_or("");
+                div()
+                    .child(styled_runs_w(
+                        &[(text.to_owned(), SpanStyle::default())],
+                        theme.text,
+                        false,
+                        weight::SEMIBOLD,
+                        theme,
+                    ))
+                    .into_any_element()
+            }
+            AskLook::Options => div()
+                .flex()
+                .flex_col()
+                .gap(px(space::XS))
+                .children(self.tsp_children(p, node, cx))
+                .into_any_element(),
+            AskLook::Choice | AskLook::Check | AskLook::Other | AskLook::OtherCheck => {
+                self.tsp_ask_choice(p, node, look, cx)
+            }
+            AskLook::Preview => self.tsp_text(p, node, cx),
+            AskLook::Answers => self.tsp_data(p, node, cx),
+            AskLook::Actions => self.tsp_layout(p, node, cx),
+            AskLook::Notice => {
+                let runs = tsp::node_spans(&node.props, theme);
+                div()
+                    .text_size(font_size::META)
+                    .child(styled_runs(&runs, theme.text_muted, false, theme))
+                    .into_any_element()
+            }
+            AskLook::Summary => {
+                let runs = tsp::node_spans(&node.props, theme);
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(font_size::META)
+                    .child(styled_runs(&runs, theme.text_muted, false, theme))
+                    .into_any_element()
+            }
+            AskLook::Button => self.tsp_ask_button(p, node, cx),
+        }
+    }
+
+    /// The question tabs: chips, the active one on the `card` fill. A click selects that tab
+    /// (`select {id: tabs, item}`); the strip itself sends nothing.
+    fn tsp_ask_tabs(&self, p: &Paint, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let active = str_prop(node, "active").unwrap_or("");
+        let items = (node.props.get("items").and_then(Value::as_array)).cloned().unwrap_or_default();
+        let tabs = items.iter().filter_map(|tab| {
+            let id = tab.get("id")?.as_str()?.to_owned();
+            let label = (tab.get("label")).map(|l| tsp::spans_of(l, theme)).unwrap_or_default();
+            let picked = id == active;
+            let (session, list, tab_id) = (p.session, node.id.clone(), id.clone());
+            Some(
+                div()
+                    .id(SharedString::from(format!("tsp-{}-{}-{id}", p.session, node.id)))
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(theme::radius::SMALL))
+                    .text_size(font_size::META)
+                    .when(picked, |el| el.bg(rgb(theme.card)))
+                    .pressable_unless(picked, Look::Chip, theme)
+                    .on_press(true, cx.listener(move |shell, _, _, cx| {
+                        if !tsp::root_owned(&list) {
+                            shell.tsp_emit(session, tsp::select_event(&list, &tab_id, false), cx);
+                        }
+                    }))
+                    .child(styled_runs(
+                        &label,
+                        if picked { theme.text } else { theme.text_muted },
+                        false,
+                        theme,
+                    )),
+            )
+        });
+        let strip = div().flex().flex_wrap().gap(px(space::XS)).children(tabs);
+        match str_prop(node, "title") {
+            Some(title) => strip
+                .id(SharedString::from(format!("tsp-tabs-{}-{}", p.session, node.id)))
+                .tooltip(tooltip(theme, title, ""))
+                .into_any_element(),
+            None => strip.into_any_element(),
+        }
+    }
+
+    /// One option: a radio (a check box for the `check` roles) filled with `accent` when picked,
+    /// the label in `weight::MEDIUM`, the detail muted below, the value ("Recommended") as a
+    /// badge on the right. The list's `selected` row is on `surface_raised` with an accent bar.
+    fn tsp_ask_choice(
+        &self,
+        p: &Paint,
+        node: &Node,
+        look: tsp::AskLook,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let selected = (node.parent.as_deref())
+            .and_then(|id| p.doc.get(id))
+            .and_then(|list| str_prop(list, "selected"))
+            == Some(node.id.as_str());
+        let filled = tsp::choice_filled(node);
+        let spans = |key: &str| node.props.get(key).map(|v| tsp::spans_of(v, theme)).unwrap_or_default();
+        let size = theme::rems_px(theme::ICON_SIZE_SMALL);
+        let mark = if look.boxed() {
+            div()
+                .size(size)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(theme::radius::SMALL))
+                .when(filled, |el| {
+                    el.bg(rgb(theme.accent))
+                        .child(icon_svg(Icon::Check, theme::ICON_SIZE_SMALL, theme.on_accent))
+                })
+                .when(!filled, |el| {
+                    el.border(px(theme::BORDER_WIDTH)).border_color(rgb(theme.text_muted))
+                })
+        } else {
+            div()
+                .size(size)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(if filled { theme.accent } else { theme.text_muted }))
+                .when(filled, |el| el.child(status_dot(theme.accent, false)))
+        };
+        let detail = spans("detail");
+        let value = spans("value");
+        let el = div()
+            .flex()
+            .items_start()
+            .gap(px(space::S))
+            .px(px(space::S))
+            .py(px(space::XS))
+            .rounded(px(theme::radius::SMALL))
+            .when(selected, |el| {
+                el.bg(rgb(theme.surface_raised))
+                    .border_l(px(theme::TSP_ASK_BAR_WIDTH))
+                    .border_color(rgb(theme.accent))
+            })
+            .child(div().pt(px(space::XS)).child(mark))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(styled_runs_w(&spans("label"), theme.text, false, weight::MEDIUM, theme))
+                    .when(!detail.is_empty(), |el| {
+                        el.child(div().text_size(font_size::META).child(styled_runs(
+                            &detail,
+                            theme.text_muted,
+                            false,
+                            theme,
+                        )))
+                    }),
+            )
+            .when(!value.is_empty(), |el| {
+                el.child(
+                    div()
+                        .flex_none()
+                        .px(px(space::S))
+                        .rounded(px(theme::radius::TAG))
+                        .bg(rgb(theme.hover))
+                        .text_size(font_size::META)
+                        .child(styled_runs(&value, theme.text_muted, false, theme)),
+                )
+            });
+        // Click selects, double click activates (`click_event` of an item in a list).
+        self.tsp_decorate(el, p, node, Look::Row, selected, cx)
+    }
+
+    /// `omp.btn`: a pill in the card's bottom row. `tone: accent` is `accent` with `on_accent`
+    /// text. The `kbd` child is not drawn; the node's `title` (with its keys) is the tooltip.
+    fn tsp_ask_button(&self, p: &Paint, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let label: String = (p.doc.children(&node.id))
+            .filter(|child| child.kind == "text")
+            .flat_map(|child| tsp::node_spans(&child.props, theme))
+            .map(|(text, _)| text)
+            .collect();
+        let accent = str_prop(node, "tone") == Some("accent");
+        let (fg, bg) = if accent { (theme.on_accent, theme.accent) } else { (theme.text, theme.hover) };
+        let (session, id) = (p.session, node.id.clone());
+        let mut el = div()
+            .id(SharedString::from(format!("tsp-btn-{}-{}", p.session, node.id)))
+            .flex_none()
+            .flex()
+            .items_center()
+            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .px(px(space::M))
+            .rounded(px(theme::radius::PILL))
+            .bg(rgb(bg))
+            .text_color(rgb(fg))
+            .text_size(font_size::META)
+            .pressable(Look::Chip, true, theme)
+            .on_press(true, cx.listener(move |shell, _, _, cx| {
+                shell.tsp_click(session, &id, false, cx);
+            }))
+            .child(label);
+        if let Some(title) = str_prop(node, "title") {
+            el = el.tooltip(tooltip(theme, title, ""));
+        }
+        el.into_any_element()
+    }
+}
+```
+
+Run (after Step 16 and the Step 21 build fix-ups): `cargo check -p mkrew-ui --all-targets`.
+
+- [ ] **Step 16: Check the new view code against the design rules**
+
+Run: `grep -nE "0x[0-9A-Fa-f]{6}|\.hover\(|\.active\(|\.cursor_pointer\(" crates/mkrew-ui/src/shell/tsp_view.rs`
+Expected: no output.
+
+Run: `grep -nE "px\([0-9]|rems_px\([0-9]" crates/mkrew-ui/src/shell/tsp_view.rs`
+Expected: no output (the popover, ring and bar sizes are the `TSP_*` tokens; marks use `ICON_SIZE_SMALL`).
+
+For Step 21 (API mismatches), look first at: `Corner`, `anchored(..).anchor(..)`, `snap_to_window_with_margin` and `deferred` (same calls as `shell/menu_render.rs:291-300`); `.on_mouse_down_out` on a `Stateful<Div>` (as `shell/peek.rs:602`); `border_l` (use `.border_l_width`/`border_l` as the crate does for other left bars: `grep -n "border_l" crates/mkrew-ui/src/shell/*.rs`); `.pressable(Look::Chip, ..)` painting its own background over the accent pill (if it does, apply `.bg(..)` after `.pressable(..)` or pick `Look::Raised`); `status_dot` returning `Div` (`.flex_none()` is a Div method).
+
+- [ ] **Step 17: Register the module, the field and its initializer**
 
 In `crates/mkrew-ui/src/shell.rs`, replace
 
@@ -9329,7 +10699,7 @@ add:
 
 In `crates/mkrew-ui/src/shell/connection.rs`, in the `Shell { .. }` initializer after `chats: HashMap::new(),` (line 407) add `tsps: HashMap::new(),`.
 
-- [ ] **Step 14: Draw the pane: the `pane_frame` branch and the `fed` rule**
+- [ ] **Step 18: Draw the pane: the `pane_frame` branch and the `fed` rule**
 
 In `crates/mkrew-ui/src/shell/pane_render.rs`, replace lines 519-531:
 
@@ -9378,7 +10748,7 @@ with:
             }
 ```
 
-- [ ] **Step 15: Wire the events: the `tsp.update` arm and the fallback toast**
+- [ ] **Step 19: Wire the events: the `tsp.update` arm and the fallback toast**
 
 In `crates/mkrew-ui/src/shell/connection.rs`, in `dispatch`, replace the start of the sidebar match (current line 1295, `match self.sidebar.apply(event) {`) with:
 
@@ -9416,7 +10786,7 @@ After the `if let Event::AiGenerated(done) = event { ... }` block (current lines
                 }
 ```
 
-- [ ] **Step 16: Wire the status tick**
+- [ ] **Step 20: Wire the status tick**
 
 In `crates/mkrew-ui/src/shell/connection.rs`, in the status tick, after `shell.sync_thread(cx);` (current line 168) add `shell.sync_tsps(window, cx);` and in `due` (current lines 189-193) replace
 
@@ -9433,7 +10803,7 @@ with
                         || shell.tsp_animating();
 ```
 
-- [ ] **Step 17: Build and fix API mismatches**
+- [ ] **Step 21: Build and fix API mismatches**
 
 Run: `cargo check -p mkrew-ui --all-targets`
 Expected: compiles. This file was written against the gpui version pinned in the workspace without a compiler, so expect a handful of mismatches. Fix them keeping the behavior in this step list; the ones to look at first:
@@ -9447,7 +10817,7 @@ Expected: compiles. This file was written against the gpui version pinned in the
 Run: `cargo fmt --all && cargo clippy -p mkrew-ui --all-targets -- -D warnings`
 Expected: no warnings.
 
-- [ ] **Step 18: Check the rules by grep**
+- [ ] **Step 22: Check the rules by grep**
 
 Run: `grep -nE "0x[0-9A-Fa-f]{6}|\.hover\(|\.active\(|\.cursor_pointer\(" crates/mkrew-ui/src/shell/tsp_view.rs`
 Expected: no output (no hex colors, no hover or cursor calls outside the widgets).
@@ -9455,12 +10825,12 @@ Expected: no output (no hex colors, no hover or cursor calls outside the widgets
 Run: `grep -nE "px\([0-9]" crates/mkrew-ui/src/shell/tsp_view.rs`
 Expected: no output (every px value comes from a token or an expression of tokens).
 
-- [ ] **Step 19: Run the UI crate's tests**
+- [ ] **Step 23: Run the UI crate's tests**
 
 Run: `cargo test -p mkrew-ui`
 Expected: PASS (the new `tsp::`, `chat::` gate and `redraw::` tests and every existing test).
 
-- [ ] **Step 20: Manual check (quick run of the app)**
+- [ ] **Step 24: Manual check (quick run of the app)**
 
 Prerequisites: Tasks 1 to 8 are merged (the daemon speaks TSP, protocol 59) and the ConPTY files are next to the binaries (`"C:/Program Files/Git/bin/bash.exe" scripts/fetch-conpty.sh`), omp 18.13.2 or newer is installed, and the shipped `omp.toml` profile is current.
 
@@ -9479,13 +10849,17 @@ Check, in this order (a 20 minute pass; the screenshots are Task 12):
 10. Look at a shell pane and a Claude pane. Expected: unchanged.
 11. Drag over a paragraph of omp's answer, then Ctrl+C and paste elsewhere. Expected: the text selected inside that one answer is copied; Esc with a selection clears it without reaching omp; Ctrl+C and Esc with no selection reach omp (Esc closes an omp overlay, Ctrl+C interrupts).
 12. Start a pane on a machine where the ConPTY files are missing (rename `conpty.dll` in `target/debug`). Expected: after about 2 s the pane becomes the terminal grid and one toast reads "omp is drawing as text: <reason>".
+13. Ask omp: "Use the todo tool: make 3 phases (Context, Build, Verify) with 2 items each, then start working on the first item." Expected: a todo card in the transcript (phase headers with Roman numerals, rings, the active item in the accent color); above the dock card a one line hud on the right: loading dots, the active item, `0/6` in mono. Finish an item: the count steps up on the next status tick. Click the hud: a glass panel opens above it with the phases; a finished phase shows its header only, clicking a header opens or closes it; Esc closes the panel (and omp's own Esc is not triggered); click outside closes it; clicking the hud while open closes it. Switch Light and Dark with the panel open: both readable.
+14. Let every item finish. Expected: the hud reads "All done" with a filled green circle and `6/6`; a blocked item keeps the hud on that item, never "All done".
+15. Ask omp: "Use the ask tool with two questions; the first has 3 options with one recommended, the second allows several answers." Expected: the dock card shows the question tabs on top (answered tabs start with a green check; active tab on a raised fill), the question in semibold, radio rows (check boxes for the multi-answer question) with the label in medium weight, the "Recommended" badge on the right, the picked row with an accent circle, the highlighted row on a raised fill with a 2 px accent bar. Click an option: omp highlights it; double click: omp answers. Click another tab: it switches. Click Next or Submit (accent pill) and Skip, Note, Hide (neutral pills): each does what the keys do; hover shows the title with its keys. Arrow keys, Enter, Space, Tab, `n` and Esc still work from the keyboard. Pick "Other…": omp shows its text field and typing reaches it.
+16. Click Hide on the ask card. Expected: one row with "Question …  +N more", Skip and an accent Show; Show restores the card. With an ask timeout set, a small ring with the seconds left sits in the bottom row. Both themes, and a narrow pane (the tabs wrap, the buttons stay in the row).
 
 Record anything that looks wrong in `docs/HUMAN_CHECKS.md` under "2026-11-23 omp native surface" (Task 12 owns that entry).
 
-- [ ] **Step 21: Commit**
+- [ ] **Step 25: Commit**
 
 ```bash
-git add crates/mkrew-ui/src/shell/tsp_view.rs crates/mkrew-ui/src/shell.rs crates/mkrew-ui/src/main.rs crates/mkrew-ui/src/shell/connection.rs crates/mkrew-ui/src/shell/pane_render.rs crates/mkrew-ui/src/shell/chat_view.rs crates/mkrew-ui/src/chat.rs crates/mkrew-ui/src/redraw.rs crates/mkrew-ui/src/terminal/view.rs
+git add crates/mkrew-ui/src/shell/tsp_view.rs crates/mkrew-ui/src/shell.rs crates/mkrew-ui/src/main.rs crates/mkrew-ui/src/shell/connection.rs crates/mkrew-ui/src/shell/pane_render.rs crates/mkrew-ui/src/shell/chat_view.rs crates/mkrew-ui/src/chat.rs crates/mkrew-ui/src/redraw.rs crates/mkrew-ui/src/terminal/view.rs crates/mkrew-ui/src/theme.rs
 git -c user.email=tungnv975@gmail.com commit -m "feat(ui): draw an omp pane from its native surface (TSP view)"
 ```
 
@@ -9786,7 +11160,7 @@ ADR 0105 matched Tern's Chat page from the transcript file, but the composer fac
 Tern gets them from omp itself: omp describes its whole interface as a tree of nodes and sends it as escape sequences inside the PTY stream (the Tern Surface Protocol, TSP); Tern draws the tree and sends clicks back.
 The protocol as omp 18.13.2 implements it is written down in `docs/superpowers/specs/2026-11-23-omp-tsp/tsp-reference-omp-18.13.2.md`, read from the JavaScript inside `omp.exe` with byte offsets, next to omp's own record of a real startup (`omp-18.13.2-startup.tsp.jsonl`).
 
-The work is split in three, each with its own spec and plan: P1 (this ADR: transport, document, the common kinds, clicks back to omp), P2 (`picker`, `tree`, `tool`, `checklist`, `prefs`, hovercards: the Agent Hub table, the Jobs panel), P3 (blobs cache, `media`, `chart`, `diff`, `math`, local text editing).
+The work is split in three, each with its own spec and plan: P1 (this ADR: transport, document, the common kinds plus `checklist`, omp's questions and todo, clicks back to omp), P2 (`picker`, `tree`, `tool`, `prefs`, hovercards: the Agent Hub table, the Jobs panel), P3 (blobs cache, `media`, `chart`, `diff`, `math`, local text editing).
 
 A throwaway probe on 2026-11-23 ran `omp.exe` 18.13.2 in a pseudo console with `PI_TUI_NATIVE=1`, answered the hello and acked every frame:
 
@@ -9826,6 +11200,12 @@ The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already
   Keys, paste and drops go to the PTY as in a terminal pane; clicks on nodes with actions go to omp as `tsp.event`.
   `fallback` shows the terminal grid and one info toast.
   An exited session keeps its last document, read-only.
+- Questions and todo need no protocol change and no new kind beyond `checklist`.
+  omp's `ask` replaces the dock's editor with a `col` of role `omp.editor.ask` built from P1 kinds (`tabs`, `md`, `list` and `item`, `row` buttons, `kv`, `meter`); the UI draws it as the composer card, choosing the look from the node `role` (`omp.ask.questions`, `omp.ask.question`, `omp.ask.options`, `omp.ask.option`, `omp.ask.check`, `omp.ask.other`, `omp.ask.preview`, `omp.ask.notice`, `omp.ask.answers`, `omp.btn`, `omp.editor.ask.hidden`).
+  Clicks go back as `select`, `activate` and `action`; keys still go to omp through the PTY, which also owns the "Other..." text field.
+  `checklist` is advertised in the hello, so omp sends its todo as a node in three modes: `hud` (one line in the status row: the active item and `done/total`, a click opens the phase list in a glass panel, UI-only), `full` (a card in `main`) and `reminder` (a notice in `main`).
+  The phase list shows Roman numeral phase headers with a status mark and `done/count`, collapsible by a click (UI state only), and items marked active, pending, done, dropped or blocked.
+  Both are drawn only from omp's roles and props; a role the UI does not know falls back to the generic drawing.
 - The colors, spacing and fonts are Mkrew's (`theme.rs`, SPEC section 14); omp's `t` palette message and its dark flag are read and ignored.
   One tested table maps span tokens, tones and named icons to theme tokens and Lucide icons.
 - State: while a session is `live` its screen text stays still, so the state comes from omp's hooks only (`StateMachine::set_hook_only`); without hooks it is `unknown`.
@@ -9863,8 +11243,9 @@ The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already
 - The session log and `session.history` hold only plain bytes, so a TSP session's replay and `mk attach` show little of what the surface drew.
 - A surface that gets trimmed shows "Earlier messages were trimmed" at the top; the cut text is gone from the pane (the transcript file still has it).
 - A daemon restart (startup resume) starts a new omp, which opens a new surface; nothing of the old document is restored.
-- The first version draws the kinds listed in the hello; the others (`picker tree tool checklist media prefs`) make omp send its card or list variants, and `agent chart diff math prefs` or any unknown kind draw generically (text-like props, then children) until P2 and P3.
+- The first version draws the kinds listed in the hello; the others (`picker tree tool media prefs`) make omp send its card or list variants, and `agent chart diff math prefs` or any unknown kind draw generically (text-like props, then children) until P2 and P3.
 - Until omp exposes more, the UI sends only `action`, `toggle`, `select`, `activate`, `focus` and `theme`; `edit`, `undo`, `send`, `motion` and `visible` are not sent, so omp keeps owning text editing through the PTY.
+- The ask card and the todo popover depend on omp 18.13.2's role names and prop shapes (`overlays/ask-dialog.ts`, `tools/todo.ts`); a renamed role draws as a plain row or list, never a blank pane.
 ```
 
 - [ ] **Step 2: SPEC section 4 and section 6**
@@ -9983,6 +11364,13 @@ Insert after it:
   The pane by `Session.tsp`: `off` is the terminal pane with `Terminal | Chat`; `waiting` (TSP on, no surface yet) is the starting state of an agent pane; `live` is the surface; `fallback` (no hello within 2 s of the session's first output, or omp closed the surface with `x {keep:false}`) is the terminal grid without the Chat switch and one info toast "omp is drawing as text: <reason>"; an exited session keeps its last document, read-only, under the existing exited notice.
   While `live` the state comes from omp's hooks only (§6); without hooks it is `unknown`.
   `mk web` shows "This omp session uses Mkrew's native view. Open it on the desktop." in place of the terminal; its state, Stop, the reply chips and the quick keys keep working.
+  A question from omp (`ask`) replaces the dock's editor and is drawn as the composer card: tab chips in its top row (answered tabs start with a check, a last Review tab, the active tab on a solid `card` background), the question in `weight::SEMIBOLD`, then one row per option with a radio circle (a check box for multi-select) filled with `accent` for the recommended one, the label, the detail muted below, a "Recommended" badge on the right and the picked row on `surface_raised` with a 2 px `accent` bar at its left; "Other..." is a row of the same list; an optional Markdown preview sits under the list.
+  The Review tab shows a notice line and the table of answers.
+  The bottom row has pill buttons (Hide, Note, Skip, Next or Submit; the default one in `accent` with `on_accent` text; the key hint is the tooltip) and, when the question has a timeout, a small ring with the seconds left.
+  Hide folds the card to one row ("Question ...", Skip, Show).
+  A click sends `select`, a double-click `activate`, a button `action`; keys still go to omp, and "Other..." opens omp's own text field.
+  omp's todo (`checklist`) shows as a one-line HUD at the right of the status row above the dock (loading dots and the active item, else the first pending one, else "All done", then `done/total` in the terminal font, muted); a click opens the phase list in a glass panel above the row (at most 60% of the pane height, scrolling; Esc or a click outside closes it, nothing is sent to omp).
+  The same phase list is the body of the todo card in the conversation (`full`) and of the todo reminder (a muted note, done phases collapsed): a header per phase with a status mark (loading dots while it has an active item, a `status_done` filled circle when all items are done or dropped, a muted ring otherwise), its Roman numeral, title and `done/count`; a click on a header folds it; items are marked active (`accent` ring and text), pending (muted ring), done (`status_done` check, muted text), dropped (muted, struck through) and blocked (`status_needs_input`, " (blocked)"), with a note as a muted second line.
 ```
 
 - [ ] **Step 5: SPEC section 14 (TSP style mapping)**
@@ -10024,6 +11412,24 @@ A `card` is `surface_raised` with `radius::MEDIUM`.
 A named `icon` node maps to a Lucide icon: `copy` Copy; `x` X; `eye` Eye; `model`, `wand` Sparkles; `chev` ChevronDown; `jobs`, `context.compaction` Layers; `job` Zap; `history` History; `link` Link; `open` ExternalLink; `rewind` Undo2; `check` Check; `lightbulb` Lightbulb; `loop` RotateCw; `back` ChevronLeft; `users`, `agents` Users; `agent` Bot; `bash` Terminal; `session` SquareTerminal; `time` Clock; `folder` Folder; `plus` Plus; `wrench` Settings; `x-circle` SquareX; `send` Send.
 A name with no entry (`eye-off`, `pause`, `gauge`, `corner-down-right`, `list`, `message`, `activity`, ...) draws nothing and is logged once at `debug`.
 A kind the UI does not know is drawn generically: the node's text-like props (`text`, `title`, `head`, `label`, `name`) as a muted line, then its children.
+
+The omp question card (§11) draws by node `role`:
+
+| Role | Drawn as |
+| --- | --- |
+| `omp.ask.questions` (`tabs`) | tab chips; the active one on `card`; an answered tab keeps its leading check |
+| `omp.ask.question` | text in `weight::SEMIBOLD` |
+| `omp.ask.option`, `omp.ask.other` | a radio circle, label in `weight::MEDIUM`, detail in `text_muted`; the circle is filled with `accent` when `tone` is `accent`; the picked row on `surface_raised` with a 2 px `accent` bar at its left |
+| `omp.ask.check`, `omp.ask.other.check` | the same with a check box |
+| the option `value` ("Recommended") | a `badge` at the right |
+| `omp.ask.preview` | Markdown under the list |
+| `omp.ask.notice` | a line; its `warning` span in `status_needs_input` |
+| `omp.ask.answers` | the answers table |
+| `omp.btn` | a pill button; `tone` `accent` is `accent` with `on_accent` text; the `kbd` child is not drawn, the node's `title` is the tooltip |
+| `meter` with `style` `ring` | a small ring with its `label` |
+| `omp.editor.ask.hidden` | one row: summary, Skip, Show |
+
+The todo marks (`checklist`, §11) are: an `active` item an `accent` ring around a dot, its text in `accent`; `pending` a `text_muted` ring; `done` a `status_done` check with muted text; `dropped` muted text struck through; `blocked` text in `status_needs_input` followed by " (blocked)"; a phase with an active item loading dots (moved on the 500 ms status tick), a phase with every item done or dropped a `status_done` filled circle, any other phase a `text_muted` ring; `done/count` in `text_muted`; the HUD popover is a `floating_panel`.
 ```
 
 - [ ] **Step 6: SPEC sections 16, 17 and 20.0**
@@ -10100,6 +11506,16 @@ With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow p
 - [ ] **Stop while working:** the bar shows Stop in the error color while omp works; a click interrupts the turn and the bar goes back to Send.
 - [ ] **Agent pill:** start a turn that runs subagents; the agent pill counts them; a click opens omp's Agent Hub as its card variant (the list and the detail, not the Tern table: that comes with P2); Esc or Close returns to the conversation.
 - [ ] **Jobs pill:** with a background job running, the jobs pill shows its count; a click opens omp's jobs overlay (the Cancel button comes with P2).
+- [ ] **Question card (dark + light):** make omp ask several questions at once (ask tool with 3 questions, one multi-select, one with a Recommended option and a preview).
+  The card replaces the editor: tab chips on top (the active one solid), the question in semibold, options as rows with a radio circle (check box for multi-select), the Recommended option's circle in accent and a "Recommended" badge on its right, the picked row raised with an accent bar; compare with Tern: same order, same labels.
+  Click an option, double-click another (it submits that question), click `Other...` (omp's own text field opens; typing goes to omp), then Note, then Skip on one question; answered tabs get a leading check.
+- [ ] **Question Review and Submit (dark + light):** after the last question the Review tab shows the notice line (a warning color if some are unanswered) and the answers table; Submit sends the answers and the editor comes back; the buttons show their keys as tooltips (no key cap drawn).
+- [ ] **Question Hide, Show and timer:** Hide folds the card to one row with Skip and Show; Show brings it back with the same choices; a question with a timeout shows a ring with the seconds left that counts down on the status tick and omp times the question out at zero.
+- [ ] **Question keys:** arrows, Enter, Space, Tab, `n` and Esc still work from the keyboard while the card shows.
+- [ ] **Todo HUD (dark + light):** ask omp to make a todo list (3 phases); the status row above the dock shows, at its right, loading dots and the active item (ellipsized), then `1/5` in muted mono; with nothing active it shows the first pending item, and "All done" at the end; it is a pressable chip.
+- [ ] **Todo popover:** a click on the HUD opens the list in a glass panel above the status row; it is at most 60% of the pane height and scrolls; Esc and a click outside close it; nothing changes in omp.
+- [ ] **Todo phases and items (dark + light):** phase headers have a mark (loading dots while active, a green filled circle when all done or dropped, a muted ring otherwise), Roman numerals (`I.`, `II.`), the title and `done/count`; a click on a header folds and unfolds it (a phase with `collapsed` or all done starts folded); items show active (accent ring and text), pending (muted ring), done (green check, muted text), dropped (struck through) and blocked (needs-input color and " (blocked)"), with notes as a muted second line; compare with Tern.
+- [ ] **Todo card and reminder:** the todo tool result in the conversation is a card with the same phase list; after a few turns omp's todo reminder shows as a muted note with the done phases folded.
 - [ ] **Narrow pane (dark + light):** drag a divider or shrink the window so the pane is about 400 px: the dock drops its low-priority parts first and nothing overlaps; the PTY gets the new column count (omp rewraps).
 - [ ] **Theme change:** switch dark and light while the pane is live; the surface changes color at once and omp is told (`theme` event), with no restart.
 - [ ] **UI restart (snapshot):** quit and open the UI with the daemon running; the omp pane shows the same conversation again at once (from `tsp.snapshot`), and further answers keep arriving.
@@ -10117,7 +11533,7 @@ With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow p
 - [ ] **Installer:** install the new setup over a running Mkrew; it finishes without a "files in use" prompt for `OpenConsole.exe` or `conpty.dll`, and both are in `{app}\bin`.
 - [ ] **macOS (and Linux if you have it):** the pure parts are tested on Windows; none of this ran there.
   An omp pane shows the surface (the PTY passes APC through), typing works with Option as Meta, Cmd shortcuts win, and the look matches Windows in dark and light; there is no ConPTY step.
-- [ ] **Screenshots for reference:** `docs/screenshots/2026-11-23-omp-tsp-*.png` (startup dock, prompt and answer, model chip, Stop, Agent Hub card, narrow pane, UI restart, TSP off; dark and light) and the Tern pair `tern-startup-dock`, `tern-prompt-answer`.
+- [ ] **Screenshots for reference:** `docs/screenshots/2026-11-23-omp-tsp-*.png` (startup dock, prompt and answer, model chip, Stop, Agent Hub card, question, question review, todo HUD, todo popover, narrow pane, UI restart, TSP off; dark and light) and the Tern pair `tern-startup-dock`, `tern-prompt-answer`.
 
 ```
 
@@ -10126,7 +11542,7 @@ With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow p
 In `docs/PROGRESS.md`, insert as a new first line of "Notes for the next session" (before the line that starts `- 2026-11-23 Chat look (branch `feat/chat-look`` at line 33; if the `feat/tern-layout` note is already above it, insert before that one):
 
 ```markdown
-- 2026-11-23 omp native surface (branch `feat/omp-tsp`, spec docs/superpowers/specs/2026-11-23-omp-tsp-surface-design.md, plan docs/superpowers/plans/2026-11-23-omp-tsp-surface.md, ADR 0107, protocol 59, no migration): ConPTY sideload (`scripts/fetch-conpty.sh` and `.ps1`, `packaging/mkrew.iss`, `mkrew_daemon::conpty` logs which one loaded); `mkrew_core::tsp` (`wire` splitter and codec, `doc` node document with eviction, `engine` hello, acks, resize, events); profile key `tsp` (default on for `omp_jsonl`) and `PI_TUI_NATIVE` 1 or 0 in every PTY; daemon `Session.tsp`, `tsp.snapshot`, `tsp.event`, `tsp.update`, hook-only state while live (`StateMachine::set_hook_only`); `mkrew-fakeagent --tsp`; UI `mkrew_ui::tsp` (style table, icons, ansi runs, `Mirror`) and `shell/tsp_view.rs`; `mk web` notice (`nativeView` in `model.mjs`). Checks in HUMAN_CHECKS "2026-11-23 omp native surface"; screenshots `docs/screenshots/2026-11-23-omp-tsp-*.png`. P2 (picker, tree, tool, checklist, prefs, hovercards: the Agent Hub table, the Jobs panel with Cancel) and P3 (blobs cache, media, chart, diff, math, local text editing) are separate specs.
+- 2026-11-23 omp native surface (branch `feat/omp-tsp`, spec docs/superpowers/specs/2026-11-23-omp-tsp-surface-design.md, plan docs/superpowers/plans/2026-11-23-omp-tsp-surface.md, ADR 0107, protocol 59, no migration): ConPTY sideload (`scripts/fetch-conpty.sh` and `.ps1`, `packaging/mkrew.iss`, `mkrew_daemon::conpty` logs which one loaded); `mkrew_core::tsp` (`wire` splitter and codec, `doc` node document with eviction, `engine` hello, acks, resize, events); profile key `tsp` (default on for `omp_jsonl`) and `PI_TUI_NATIVE` 1 or 0 in every PTY; daemon `Session.tsp`, `tsp.snapshot`, `tsp.event`, `tsp.update`, hook-only state while live (`StateMachine::set_hook_only`); `mkrew-fakeagent --tsp`; UI `mkrew_ui::tsp` (style table, icons, ansi runs, `Mirror`) and `shell/tsp_view.rs` (the omp ask card and the `checklist` todo HUD and popover included); `mk web` notice (`nativeView` in `model.mjs`). Checks in HUMAN_CHECKS "2026-11-23 omp native surface"; screenshots `docs/screenshots/2026-11-23-omp-tsp-*.png`. P2 (picker, tree, tool, prefs, hovercards: the Agent Hub table, the Jobs panel with Cancel) and P3 (blobs cache, media, chart, diff, math, local text editing) are separate specs.
 ```
 
 - [ ] **Step 10: Check the docs**
@@ -10139,9 +11555,10 @@ grep -c "tsp\.snapshot\|tsp\.event\|tsp\.update" docs/SPEC.md
 grep -c "omp native surface" docs/SPEC.md docs/HUMAN_CHECKS.md docs/PROGRESS.md docs/decisions/0107-omp-native-surface.md
 git diff -U0 docs/SPEC.md docs/HUMAN_CHECKS.md docs/PROGRESS.md agents/omp.toml | grep '^+' | grep -c $'\xe2\x80\x94\|\xe2\x80\x93' || true
 grep -c $'\xe2\x80\x94\|\xe2\x80\x93' docs/decisions/0107-omp-native-surface.md || true
+grep -c "omp.ask\|checklist" docs/SPEC.md docs/decisions/0107-omp-native-surface.md
 ```
 
-Expected: `1`; a number of at least `4` (three SPEC rows plus the history line and the section 11 text); at least `1` per file (`SPEC.md:1` or more, `HUMAN_CHECKS.md:1`, `PROGRESS.md:1`, ADR `1`); `0`; `0`.
+Expected: `1`; a number of at least `4` (three SPEC rows plus the history line and the section 11 text); at least `1` per file (`SPEC.md:1` or more, `HUMAN_CHECKS.md:1`, `PROGRESS.md:1`, ADR `1`); `0`; `0`; at least `3` in `SPEC.md` and at least `2` in the ADR.
 
 - [ ] **Step 11: Build the smoke binaries and the ConPTY files**
 
@@ -10175,7 +11592,7 @@ Never stop other `mkrew` processes by name: use `Stop-Process -Id $ui.Id` for th
 - [ ] **Step 12: Walk the smoke on the real app**
 
 Open an Oh My Pi pane in the sandbox workspace (`+ New`, Oh My Pi) and, in Tern, open the same omp session (`omp --resume <id>`; omp prints the id when it exits, and the Tern tab shows the session). Walk the HUMAN_CHECKS section of Step 8 and tick (`- [x]`, then append `(smoke: dark + light, 2026-11-23)`) every line the run covered. Leave a line unticked, with one sentence saying why, when the run could not do it (macOS, the installer, an omp with subagents, IME).
-At minimum this run must cover: the startup dock, one prompt and answer, the model chip click, Stop while working, the agent pill, a narrow pane, a UI restart (`Stop-Process -Id $ui.Id`, then start `mkrew.exe` again with the same variables), TSP off, the fallback with `conpty.dll` renamed, and one regression pass of a PowerShell pane (typing, resize, exit).
+At minimum this run must cover: the startup dock, one prompt and answer, the model chip click, Stop while working, the agent pill, a question with several tabs answered by mouse (Recommended, Other..., Note, Skip, Hide and Show, Review and Submit), the todo HUD and its popover with an active, a done, a blocked and a dropped item, a narrow pane, a UI restart (`Stop-Process -Id $ui.Id`, then start `mkrew.exe` again with the same variables), TSP off, the fallback with `conpty.dll` renamed, and one regression pass of a PowerShell pane (typing, resize, exit).
 Fix anything that looks wrong in the task that owns it (the UI drawing task or the daemon task), not here.
 
 TSP off for the screenshot (the sandbox config copy of the profile exists after the first daemon start):
@@ -10250,13 +11667,17 @@ powershell -NoProfile -File $env:TEMP\shot.ps1 -Name narrow -Theme dark -Width 7
 | `model-chip` | the model chip clicked: omp's model selector open in the pane | default |
 | `stop-working` | omp working, the bar showing Stop in the error color | default |
 | `agent-hub-card` | the agent pill clicked with subagents running: omp's Agent Hub card variant | default |
+| `ask` | omp's question card with several tabs, a Recommended option picked, the Hide, Note, Skip and Next buttons | default |
+| `ask-review` | the Review tab: notice line, answers table, Submit | default |
+| `todo-hud` | the todo HUD line at the right of the status row, one item active | default |
+| `todo-popover` | the HUD popover open with an active, a done, a blocked and a dropped item | default |
 | `narrow` | the pane at about 400 px of pane width (window `-Width 700 -Height 900` with a split) | `-Width 700 -Height 900` |
 | `ui-restart` | the same pane right after the UI was restarted (the snapshot), conversation back | default |
 | `tsp-off` | an omp pane started with `tsp = false`: terminal grid and `Terminal | Chat` switch | default |
 | `tern-startup-dock` | Tern with the same session at the startup dock (`-Process <Tern's name>`) | default |
 | `tern-prompt-answer` | Tern with the same prompt and answer | default |
 
-That is 8 names in two themes (16 files) plus the 2 Tern files per theme (`tern-startup-dock` and `tern-prompt-answer`, dark and light, 4 files).
+That is 12 names in two themes (24 files) plus the 2 Tern files per theme (`tern-startup-dock` and `tern-prompt-answer`, dark and light, 4 files).
 Open every PNG with `read` and check it is not black, blank or cropped, and that the surface (not a terminal grid) shows, except `tsp-off`; retake any bad one (use a fresh `shot.ps1` run after bringing the window to the front).
 Then stop the sandbox UI with `Stop-Process -Id $ui.Id` and `.\target\debug\mk.exe daemon stop`.
 

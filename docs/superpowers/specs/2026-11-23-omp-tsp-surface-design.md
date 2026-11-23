@@ -22,7 +22,7 @@ The work has three parts, each with its own spec and plan:
 | Part | Content |
 |---|---|
 | P1 (this spec) | Transport in the daemon, the node document, protocol to the UI, drawing `main`, `dock` and `layer` with the common kinds, clicks back to omp. |
-| P2 | `picker`, `tree`, `tool`, `checklist`, `prefs`, hovercards: the Agent Hub as Tern's table with Kill, Revive, Open transcript; the full Jobs panel with Cancel. |
+| P2 | `picker`, `tree`, `tool`, `prefs`, hovercards: the Agent Hub as Tern's table with Kill, Revive, Open transcript; the full Jobs panel with Cancel. |
 | P3 | The remaining kinds and features: blobs cache, `media`, `chart`, `diff` and `math` drawn natively, local text editing (`edit`, `undo`, `send`). |
 
 Success for P1, in an omp pane with TSP on, dark and light:
@@ -30,6 +30,8 @@ Success for P1, in an omp pane with TSP on, dark and light:
 - The pane shows omp's conversation as native rows (cards, Markdown, code, status) and omp's dock at the bottom: HUD pills, status, context meter, editor, the bar with model, effort, rate, cost and Send or Stop.
 - Typing, omp's shortcuts and pasting work as in a terminal pane today.
 - Clicking the model chip, Stop, the agent pill or the jobs pill does what it does in Tern (omp opens its own selector or overlay).
+- A question from omp's `ask` tool shows in the dock like Tern's: question tabs, the question, options as radio (or check) rows with their details and a Recommended badge, Other…, and Hide, Note, Skip, Next or Submit; a click picks (section 7.6).
+- omp's todo list shows on the status row as the current item with `done/total`, and a click opens the phases in a popover; todo results in the conversation show the same phases (section 7.7).
 - Without TSP (turned off, an omp without it, a ConPTY that drops it) the pane is today's terminal pane; nothing is blank.
 - Model token use does not change: TSP only changes how omp draws.
 
@@ -44,11 +46,14 @@ Said by the user (2026-11-23):
 - The composer is omp's dock, as in Tern.
 - Colors come from Mkrew's theme, not from omp's palette.
 - The split into P1, P2, P3 after a spike.
+- Questions: show omp's `ask` questions like Tern's picker in the dock, so the user picks with the mouse (2026-11-23, with Tern screenshots).
+- Todo: show omp's todo like Tern, the current item on the status row and the phases in a popover on click (2026-11-23, with Tern screenshots).
 
 Assumed (stated in chat, not contradicted):
 
 - `mk web` shows a notice for a TSP pane in P1 instead of drawing it.
 - The pane follows the Chat page's centered 760 px column.
+- Questions and todo apply to omp TSP panes only; a Claude Code question in the Chat view keeps its "Answer in terminal" button (Claude has no channel for Mkrew to answer it).
 
 ## 3. Spike result (2026-11-23)
 
@@ -150,11 +155,11 @@ Advertised in the hello:
 |---|---|---|
 | Layout | `col row card section rule spacer overlay toast` | flex boxes; `card` on `surface_raised` with `radius::MEDIUM`; `overlay` is a modal inside the pane anchored per its `anchor`; `toast` goes to Mkrew's toast layer. |
 | Text | `text md code ansi rows shimmer` | `md` and `code` through `preview.rs` with `Flavor::Chat`; `ansi` and `rows` through the terminal cell renderer; `shimmer` as plain text. |
-| Data | `kv table list item tabs badge kbd icon status seg` | Mkrew components (`Pressable` for anything with actions). |
+| Data | `kv table list item tabs badge kbd icon status seg checklist` | Mkrew components (`Pressable` for anything with actions); `checklist` per section 7.7. |
 | Live | `spinner elapsed progress rate meter effort` | updated on the 500 ms status tick (ADR 0086, no looping animation). |
 | Input | `editor input image` | `editor` and `input` show omp's text, placeholder, decorations and caret; keys go to the PTY. `image` shows inline blob bytes. |
 
-Not advertised in P1 (omp then sends its card or list variants): `picker tree tool checklist media prefs`.
+Not advertised in P1 (omp then sends its card or list variants): `picker tree tool media prefs`.
 Kinds omp sends whatever the hello says (`agent chart diff math prefs`) and any unknown kind are drawn generically: the node's text-like props (`text`, `title`, `head`, `label`, `name`) as a muted line, then its children.
 
 ### 7.2 Theme mapping (`mkrew_ui::tsp::style`, pure)
@@ -203,6 +208,42 @@ Events on nodes owned directly by a surface root (`main.…`, `dock.…`, `layer
 
 A TSP-live session shows "This omp session uses Mkrew's native view. Open it on the desktop." in place of the terminal; its state, Stop and the reply chips keep working.
 
+### 7.6 Questions (omp `ask`)
+
+No protocol change: omp replaces the dock's editor with `col{role:"omp.editor.ask"}` built only from P1 kinds (omp 18.13.2 `overlays/ask-dialog.ts`, buttons from `native/overlay.ts`).
+Mkrew draws it as the composer card, with these role-specific looks (all colors and sizes from `theme.rs`):
+
+| Node from omp | Looks like | Sent to omp |
+|---|---|---|
+| `tabs` `role=omp.ask.questions` (answered tabs start with "✓ "; a last `Review` tab) | tab chips in the card's top row; the active tab on a solid `card` background | `select {id, item}` |
+| `md` `role=omp.ask.question` | the question in `weight::SEMIBOLD` | - |
+| `list` `role=omp.ask.options` with `item` `role=omp.ask.option` / `omp.ask.check` / `omp.ask.other` / `omp.ask.other.check` | one row per item: a radio circle (a check box for the `check` roles) filled with `accent` when the item has `tone=accent`, the `label` in `weight::MEDIUM`, the `detail` muted below; the `value` ("Recommended") as a `badge` on the right; the list's `selected` item on `surface_raised` with a 2 px `accent` bar on its left | click: `select {id: list id, item}`; double-click: `activate` |
+| `md` `role=omp.ask.preview` | Markdown under the list | - |
+| `text` `role=omp.ask.notice` + `kv` `role=omp.ask.answers` (Review tab) | a notice line (its `warning` span in `status_needs_input`) and the answers table | - |
+| `row` `role=omp.btn` (Hide, Note, Skip, Next or Submit, Show) | pill buttons in the card's bottom row; `tone=accent` on `accent` with `on_accent` text; the `kbd` child is not drawn, the node's `title` (with its keys) is the tooltip | `action {id, act}` |
+| `meter` `style=ring` (a timeout) | a small ring with its `label` (seconds left) | - |
+| `col` `role=omp.editor.ask.hidden` | one row: "Question …" summary, Skip and Show | `action` |
+
+Keys (arrows, Enter, Space, Tab, `n`, Esc) still go to omp through the PTY; when "Other…" is picked, omp shows its own text field and typing goes to the PTY as usual.
+
+### 7.7 Todo (`checklist`)
+
+`checklist` is advertised, so omp sends its todo as `checklist {mode, phases: [{id, title, collapsed?, items: [{id, text, status, note?}]}], note?, role?}` with `status` one of `active pending done blocked dropped` (omp 18.13.2 `tools/todo.ts`, `chat/todo-reminder.ts`, `modes/interactive-mode.ts`).
+
+| Mode | Where | Looks like |
+|---|---|---|
+| `hud` (`role=omp.hud.todo`, inside `omp.hud.status`) | the status row above the dock card, on its right | one line: a loading-dots mark (status tick) and the `active` item's text (else the first `pending` one, else "All done"), ellipsized, then `done/total` in `text_muted` mono; pressable |
+| `full` | a todo tool result in `main` | a card with the phase list below |
+| `reminder` (`role=omp.notice.todo`) | a notice in `main` | the `note` as a muted line, then the phase list with done phases collapsed |
+
+Phase list (the `full` card, the `reminder` and the `hud` popover):
+
+- Each phase is a header row: a status mark (loading dots while it has an `active` item, a `status_done` filled circle when every item is `done` or `dropped`, a `text_muted` ring otherwise), its number in Roman numerals and its title (`I. Thu thập context`), and `done/count` on the right in `text_muted`.
+- A phase with `collapsed: true`, or every item done, shows its header only; a click on a header opens or closes it (UI state only).
+- Items: `active` with an `accent` ring around a dot and its text in `accent`; `pending` with a `text_muted` ring; `done` with a `status_done` check and muted text; `dropped` muted and struck through; `blocked` in `status_needs_input` with " (blocked)"; a `note` as a muted second line.
+- The `hud` click opens the list in a floating panel (`floating_panel`, glass) anchored above the status row, at most 60% of the pane height, scrolling; Esc or a click outside closes it.
+  The panel's open state is UI-only: nothing is sent to omp.
+
 ## 8. Error handling
 
 | Case | Behavior |
@@ -226,8 +267,8 @@ No test runs a real agent or touches the network.
 - Daemon unit: the output path writes the hello reply before the emulator's DA1 reply when both arrive in one chunk and when split.
 - Daemon e2e with `mkrew-fakeagent` in a new `tsp` mode (prints a hello, then frames from the fixture, then records what it reads): reply and acks arrive; `tsp.snapshot` and `tsp.update` reach a client; `tsp.event` reaches the agent; `Session.tsp` goes `waiting` -> `live`; a fake agent that never sends a hello goes to `fallback`.
   On Windows the e2e needs the fetched ConPTY files next to the test binaries (section 4).
-- UI pure: style and icon tables, the generic drawing of an unknown kind, the pane state table.
-- Smoke on the real app (screenshots in `docs/screenshots/2026-11-23-omp-tsp-*.png`, dark and light, next to Tern on the same session): startup dock, one prompt and answer, model chip click, Stop while working, the agent pill opening the Agent Hub card variant, a narrow pane, a UI restart (snapshot), TSP off in the profile.
+- UI pure: style and icon tables, the generic drawing of an unknown kind, the pane state table, the checklist model (counts, the HUD line, Roman numerals, status marks, collapse rules) and the question roles (which look a node gets), with node trees built as omp 18.13.2 builds them.
+- Smoke on the real app (screenshots in `docs/screenshots/2026-11-23-omp-tsp-*.png`, dark and light, next to Tern on the same session): startup dock, one prompt and answer, model chip click, Stop while working, the agent pill opening the Agent Hub card variant, a question with several tabs answered by mouse (Recommended, Other…, Note, Skip, Hide and Show, Review and Submit), the todo HUD and its popover with an active, a done, a blocked and a dropped item, a narrow pane, a UI restart (snapshot), TSP off in the profile.
 - Regression on the new ConPTY: shell, Claude and Codex panes (typing, resize, IME, paste, exit, startup resume).
 - `docs/HUMAN_CHECKS.md`: the same items with a real omp, plus macOS.
 
@@ -254,5 +295,6 @@ If `feat/tern-layout` merges first (it changes pane headers), this work rebases 
 
 - P2 and P3 content (section 1).
 - Claude Code and Codex: they have no TSP; their Chat view stays as ADR 0104 and 0105 made it.
+- Answering a Claude Code question from the Chat view.
 - Switching one running pane between TSP and the terminal grid.
 - omp's palette, and omp's RPC mode.
