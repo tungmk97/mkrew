@@ -147,29 +147,59 @@ pub(crate) fn button_fg(theme: &Theme, primary: bool) -> u32 {
     }
 }
 
-/// A round filled icon button (the Chat composer's send): accent with an `on_accent` glyph.
-/// `enabled` false is the disabled look (faded, no hover, no click); attach the handler with
-/// `.on_press(enabled, ..)`.
+/// The frame of the round icon buttons: a [`theme::SEND_BUTTON_SIZE`] circle holding `glyph`.
+fn round_frame(id: &'static str, glyph: Icon, color: u32) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(theme::SEND_BUTTON_SIZE))
+        .rounded(px(radius::PILL))
+        .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, color))
+}
+
+/// The neutral round look: raised surface, 1 px border, muted glyph.
+fn round_neutral(id: &'static str, glyph: Icon, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    round_frame(id, glyph, theme.text_muted)
+        .bg(rgb(theme.surface_raised))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme::raised_border(theme)))
+}
+
+/// The Chat composer's round send button: `primary` (it can send) is an accent fill with an
+/// `on_accent` glyph; otherwise the neutral look, with no hover and no pointer. Attach the
+/// handler with `.on_press(primary, ..)`.
 pub(crate) fn round_button(
     id: &'static str,
     glyph: Icon,
-    enabled: bool,
+    primary: bool,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    filled_press(
-        div()
-            .id(id)
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(theme::SEND_BUTTON_SIZE))
-            .rounded(px(radius::PILL))
-            .bg(rgb(theme.accent))
-            .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.on_accent)),
-        enabled,
-        theme,
-    )
+    if primary {
+        filled_press(
+            round_frame(id, glyph, theme.on_accent).bg(rgb(theme.accent)),
+            true,
+            theme,
+        )
+    } else {
+        round_neutral(id, glyph, theme)
+    }
+}
+
+/// A small floating round button (the Chat page's scroll to the end): the neutral look with a
+/// float shadow and the raised hover. It floats over a list, so it takes the mouse itself:
+/// only the wheel passes through.
+pub(crate) fn float_button(
+    id: &'static str,
+    glyph: Icon,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    round_neutral(id, glyph, theme)
+        .shadow(theme::shadow_float(theme))
+        .block_mouse_except_scroll()
+        .pressable(Look::Raised, true, theme)
 }
 
 /// A button label with a leading icon: `glyph`, then `text`, on one line, both in `color`.

@@ -1208,7 +1208,8 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
   color, ADR 0058); it also shows on board cards and in agent menus.
 - **Chat mode** (ADR 0104): an agent pane whose profile has a readable transcript (Claude, Codex, omp) has a `Terminal | Chat` switch in its header (for a single pane, in the tab strip next to its status pill) and `Ctrl+Alt+T` toggles it (palette: "Agent: Toggle chat view").
-  The mode is kept per pane in the tab layout: the pane's leaf holds `chat: true` or `chat: false`, and a leaf without the flag follows `[ui] chat_default` (default `false`).
+  The mode is kept per pane in the tab layout: the pane's leaf holds `chat: true` or `chat: false` (it survives a UI restart and the daemon's startup resume), and a leaf without the flag follows `[ui] chat_default` (default `false`).
+  Picking Terminal or Chat (the switch, `Ctrl+Alt+T`, the palette) also writes `[ui] chat_default` (the last pick) and pins the panes that had no saved mode, so new agent panes and the next start use it (ADR 0105).
   Chat draws the last 50 turns of the transcript: the prompt as a right-aligned card, the agent's text as Markdown (selectable inside one message), tool calls as collapsed rows `name target` that open to the arguments and the result (an error result in the danger color), thinking as a collapsed row (Claude, omp), the latest plan as a card, a pending Claude question as a card whose "Answer in terminal" button switches to Terminal, and a tray of the turn's running Claude subagents.
   The plan comes from Claude `TodoWrite`, Claude's task tools (`TaskCreate`, `TaskUpdate`, `TaskList`, which current Claude Code uses by default) or Codex `update_plan`.
   A Claude subagent started in the background stays in the tray until its `<task-notification>` arrives.
@@ -2242,7 +2243,7 @@ close_to_tray = true        # §20J, §20L; Windows: ✕ hides the window to the
 board_all_workspaces = false # §10; the Board shows every workspace's tasks; its `This workspace | All workspaces` switch writes it
 md_mode = "preview"         # §12A; preview | split | source: how the next .md file opens; switching a file's mode writes it
 md_split = 50               # §12A; the source's share of the Markdown Split view, percent (kept 20-80); dragging the divider writes it
-chat_default = false         # §11; agent panes without a saved mode open in Chat (Claude, Codex, omp); each pane's Terminal | Chat switch overrides it
+chat_default = false         # §11; agent panes without a saved mode open in Chat (Claude, Codex, omp); each pane's Terminal | Chat switch overrides it and is also written here as the last pick
 widget_bar = true          # §10; the widget bar at the bottom of the main window; its menu and Ctrl+Alt+Shift+J write it
 widgets_hidden = []        # §10; ids of hidden widgets: folder, git, limits, machine, version; its menu writes it
 
@@ -2355,8 +2356,9 @@ context_window = 200000        # tokens, for the % shown
    `/` opens the agent's command picker (§20B.7).
    Drafts are kept per session in UI memory (lost on UI restart, which is fine).
    In a pane in Chat mode (§11) the composer is always shown: Enter sends, Shift+Enter is a new line, Esc moves the keys to the chat list instead of hiding it (ADR 0104).
-   In Chat the composer is a floating card (ADR 0105): a 2 px context meter above it (percent left, window right; the warning color from `WARNING_PERCENT`; hidden without a window), the field with the session title in quotes as its placeholder, and a chip row: the model chip (a click switches the pane to Terminal and types `/model` + Enter, so the agent's own picker opens), the effort chip, the permission chip, the branch chip (only at the workspace root, `*N` changed files), then `74K`, `102 tok/s` and the elapsed time (or the status line while it shows), ✦, "Prompts…" and a round send button whose tooltip holds the key hint.
-   A narrow pane drops chips from the right: stats, permission, effort, branch; the model chip and the send button stay.
+   In Chat the composer is a floating card (ADR 0105): a 2 px context meter above it (percent left, window right; the warning color from `WARNING_PERCENT`; hidden without a window), the field with the session title in quotes as its italic muted placeholder (a small sparkle icon before it), and a chip row: the model as a bordered pill (a click switches the pane to Terminal and types `/model` + Enter, so the agent's own picker opens; the loading dots show before the name while the agent works), the permission chip with a lightning icon, the effort chip, the branch chip (only at the workspace root, `name *N` changed files), then the context tokens (`74K`, database icon), `102 tok/s`, the elapsed time and the local time the last turn ended (`09:44:27`, clock icons) in the terminal font, or the status line while it shows, ✦, "Prompts…" and a round send button (neutral while the draft is blank or busy, an accent fill when it can send) whose tooltip holds the key hint.
+   A narrow pane drops chips from the right: the end time, stats, permission, effort, branch; the model chip and the send button stay.
+   When the chat list is scrolled up, a small round down-arrow button floats above the composer at the column's right edge and scrolls to the end.
    While the pane has no keyboard and the draft, the queue and the error are empty, the card is a one-line pill with the placeholder; a click opens it.
    In the `/` picker `/model` shows the current model and `/compact` the context share.
    ✦ (shown while the composer has the keyboard and the draft is not blank) sends the draft to

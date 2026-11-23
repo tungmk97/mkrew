@@ -812,13 +812,16 @@ impl Shell {
         }
     }
 
-    /// The ✦ and "Prompts…" buttons of the chip or key row (§20B.1, §20B.3).
+    /// The ✦ and "Prompts…" buttons of the chip or key row (§20B.1, §20B.3). `compact`
+    /// (the Chat card) shows Prompts as an icon only, to leave room for the chips.
+    #[allow(clippy::too_many_arguments)]
     fn composer_tools(
         &self,
         session: Ulid,
         draft: &Draft,
         is_focused: bool,
         hover: u32,
+        compact: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> Vec<gpui::AnyElement> {
@@ -849,7 +852,12 @@ impl Shell {
         if is_focused && !draft.busy {
             let prompts = quiet_button(
                 "composer-prompts",
-                icon_text(Icon::Library, "Prompts…", theme.text_muted),
+                if compact {
+                    icon_svg(Icon::Library, theme::ICON_SIZE_SMALL, theme.text_muted)
+                        .into_any_element()
+                } else {
+                    icon_text(Icon::Library, "Prompts…", theme.text_muted).into_any_element()
+                },
                 theme,
                 hover,
             )
@@ -957,8 +965,15 @@ impl Shell {
         });
         let status = self.composer_status(draft, focused, true, theme);
         let queued = self.composer_queue_rows(session, theme, cx);
-        let tools =
-            self.composer_tools(session, draft, is_focused, theme.surface_raised, theme, cx);
+        let tools = self.composer_tools(
+            session,
+            draft,
+            is_focused,
+            theme.surface_raised,
+            false,
+            theme,
+            cx,
+        );
         div()
             .flex_none()
             .flex()
@@ -1083,7 +1098,19 @@ impl Shell {
                         cx.notify();
                     }),
                 )
-                .child(div().flex_1().min_w_0().truncate().child(placeholder))
+                .child(icon_svg(
+                    Icon::Sparkles,
+                    theme::ICON_SIZE_SMALL,
+                    theme.text_subtle,
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .italic()
+                        .child(placeholder),
+                )
                 .child(icon_svg(
                     Icon::ArrowUp,
                     theme::ICON_SIZE_SMALL,
@@ -1104,16 +1131,18 @@ impl Shell {
             at_root,
             working,
             now,
+            &super::widget_bar::local_offset,
         );
         let rewriting = draft.prompt.rewriting();
         let can_send = !draft.busy && !rewriting && !blank;
         let input = draft.prompt.text.input();
+        let caret = focused && !draft.busy && !rewriting;
         let (text, layout) = mkrew_ui::field::caret_text(
             input.as_str(),
             input.cursor(),
             input.selection(),
-            placeholder,
-            focused && !draft.busy && !rewriting,
+            placeholder_row(placeholder, theme),
+            caret,
             theme,
         );
         let field = mkrew_ui::field::caret_mouse(
@@ -1185,7 +1214,17 @@ impl Shell {
         // at 13 px), so the room is measured in the same unit.
         let room = (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M)
             / (cx.global::<theme::Fonts>().ui_size / 13.0);
-        let shown = chat::fit_chips(chat::Chips::wanted(&stats), room);
+        let shown = chat::fit_chips(
+            chat::Chips::wanted(&stats),
+            room,
+            chat::FitCtx {
+                typing: is_focused && !draft.busy && !blank,
+                working,
+                branch: stats.branch.as_ref().map_or(0.0, chat::branch_width),
+            },
+        );
+        let mono = theme.terminal_font_family.clone();
+        let glyph = |icon: Icon, color: u32| icon_svg(icon, theme::ICON_SIZE_SMALL, color);
         let quiet = |el: gpui::Div| {
             el.flex()
                 .flex_none()
@@ -1204,9 +1243,11 @@ impl Shell {
                 .gap(px(space::XS))
                 .px(px(space::S))
                 .py(px(space::XS))
-                .rounded(px(radius::CHIP))
+                .rounded(px(radius::PILL))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme::raised_border(theme)))
                 .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
+                .text_color(rgb(theme.accent_text))
                 .pressable(Look::Chip, !exited, theme)
                 .tooltip(tooltip(
                     theme,
@@ -1219,36 +1260,49 @@ impl Shell {
                         shell.open_model_picker(session, window, cx);
                     }),
                 )
+                .when(working, |el| {
+                    el.child(loading_dots(now, rgb(theme.accent_text)))
+                })
                 .child(model)
-                .child(icon_svg(
-                    Icon::ChevronDown,
-                    theme::ICON_SIZE_SMALL,
-                    theme.text_muted,
-                ))
+                .child(glyph(Icon::ChevronDown, theme.text_muted))
         });
+        let permission_chip =
+            stats
+                .permission
+                .clone()
+                .filter(|_| shown.permission)
+                .map(|permission| {
+                    quiet(div())
+                        .text_color(rgb(theme.status_needs_input))
+                        .child(glyph(Icon::Zap, theme.status_needs_input))
+                        .child(permission)
+                });
         let effort_chip = stats
             .effort
             .clone()
             .filter(|_| shown.effort)
             .map(|effort| quiet(div()).child(effort));
-        let permission_chip = stats
-            .permission
-            .clone()
-            .filter(|_| shown.permission)
-            .map(|permission| quiet(div()).child(permission));
         let branch_chip = stats.branch.clone().filter(|_| shown.branch).map(|branch| {
+            let name = match branch.changed {
+                0 => branch.name,
+                changed => format!("{} *{changed}", branch.name),
+            };
+            // Capped at `COMPOSER_BRANCH_MAX_WIDTH` (what `fit_chips` reserves); the name
+            // truncates, so a long branch never pushes the send button out of the card.
             quiet(div())
-                .child(icon_svg(
-                    Icon::GitBranch,
-                    theme::ICON_SIZE_SMALL,
-                    theme.text_muted,
-                ))
-                .child(branch.name)
-                .when(branch.changed > 0, |el| {
-                    el.child(format!("*{}", branch.changed))
-                })
+                .min_w_0()
+                .max_w(theme::rems_px(theme::COMPOSER_BRANCH_MAX_WIDTH))
+                .font_family(mono.clone())
+                .child(glyph(Icon::GitBranch, theme.text_muted))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(rgb(theme.syntax_string))
+                        .child(name),
+                )
         });
-        // The status line replaces the stats while it shows.
+        // The status line replaces the stats and the end clock while it shows.
         let status = self.composer_status(draft, focused, false, theme);
         let middle = match status {
             Some((icon, color, text)) => div()
@@ -1272,18 +1326,46 @@ impl Shell {
                 )
                 .into_any_element(),
             None => {
-                let parts = chat::stat_parts(&stats);
+                let context = stats.context.map(|(used, _)| {
+                    quiet(div())
+                        .child(glyph(Icon::Database, theme.text_muted))
+                        .child(
+                            div()
+                                .text_color(rgb(theme.syntax_keyword))
+                                .child(chat::format_k(used)),
+                        )
+                });
+                let rate = stats.tok_s.map(|rate| {
+                    quiet(div())
+                        .text_color(rgb(theme.text))
+                        .child(format!("{rate} tok/s"))
+                });
+                let elapsed = stats.elapsed_ms.map(|ms| {
+                    quiet(div())
+                        .child(glyph(Icon::Clock, theme.text_muted))
+                        .child(chat::format_elapsed(ms))
+                });
+                let ended = stats.ended_clock.clone().filter(|_| shown.clock);
                 div()
+                    .flex()
+                    .items_center()
                     .min_w_0()
-                    .truncate()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .font_family(theme.terminal_font_family.clone())
-                    .when(shown.stats, |el| el.child(parts.join("  ")))
+                    .overflow_hidden()
+                    .gap(px(space::S))
+                    .font_family(mono.clone())
+                    .when(shown.stats, |el| {
+                        el.children(context).children(rate).children(elapsed)
+                    })
+                    .children(ended.map(|time| {
+                        quiet(div())
+                            .text_color(rgb(theme.text_subtle))
+                            .child(glyph(Icon::Clock, theme.text_subtle))
+                            .child(time)
+                    }))
                     .into_any_element()
             }
         };
-        let send = round_button("composer-send", Icon::ArrowUp, can_send, theme)
+        let send = round_button("composer-send", Icon::CornerDownLeft, can_send, theme)
             .tooltip(tooltip(theme, composer::send_tip(), ""))
             .on_press(
                 can_send,
@@ -1328,18 +1410,21 @@ impl Shell {
             .child(
                 div()
                     .flex()
+                    .min_w_0()
+                    .overflow_hidden()
                     .items_center()
                     .gap(px(space::S))
                     .children(model_chip)
-                    .children(effort_chip)
                     .children(permission_chip)
+                    .children(effort_chip)
                     .children(branch_chip)
-                    .child(div().flex_1().min_w_0().flex().justify_end().child(middle))
+                    .child(div().flex_1().min_w_0().flex().child(middle))
                     .children(self.composer_tools(
                         session,
                         draft,
                         is_focused,
                         theme.border,
+                        true,
                         theme,
                         cx,
                     ))
@@ -1349,4 +1434,25 @@ impl Shell {
             .pb(px(space::M))
             .into_any_element()
     }
+}
+
+/// The Chat field's placeholder: a small sparkle icon, then `text` in italic muted (Tern look).
+/// `caret_text` draws the caret before it.
+fn placeholder_row(text: String, theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .child(icon_svg(
+            Icon::Sparkles,
+            theme::ICON_SIZE_SMALL,
+            theme.text_subtle,
+        ))
+        .child(
+            div()
+                .min_w_0()
+                .italic()
+                .text_color(rgb(theme.text_muted))
+                .child(text),
+        )
 }

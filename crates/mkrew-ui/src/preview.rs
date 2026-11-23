@@ -682,7 +682,7 @@ fn block_in(
 ) -> Option<AnyElement> {
     let element = match &block.kind {
         BlockKind::Heading { level, runs } => {
-            let chat = matches!(ctx.flavor, Flavor::Chat { .. });
+            let chat = chat_flavor(ctx);
             // Chat headings are one step smaller (h1 uses the h2 size), accent colored, and
             // have no rule under them.
             let step = usize::from(*level).saturating_sub(1) + usize::from(chat);
@@ -703,7 +703,7 @@ fn block_in(
                         .border_color(rgb(theme.border))
                 })
                 .child(selectable(pick, links(runs, ctx), |sel, bg| {
-                    text(runs, theme, sel, bg)
+                    text(runs, theme, sel, bg, chat_flavor(ctx))
                 }))
                 .into_any_element()
         }
@@ -711,7 +711,7 @@ fn block_in(
         BlockKind::Paragraph(runs) => div()
             .text_color(rgb(theme.text))
             .child(selectable(pick, links(runs, ctx), |sel, bg| {
-                text(runs, theme, sel, bg)
+                text(runs, theme, sel, bg, chat_flavor(ctx))
             }))
             .into_any_element(),
         BlockKind::List { start, items } => div()
@@ -790,6 +790,19 @@ fn block_in(
         }
         BlockKind::Html(html) => code(html, theme.text_muted, theme).into_any_element(),
         BlockKind::FrontMatter(text) => front_matter(text, theme).into_any_element(),
+        BlockKind::Table { aligns, head, rows } if chat_flavor(ctx) => div()
+            .flex()
+            .flex_col()
+            .child(
+                table_row(head, aligns, pick, ctx, theme.text_muted, theme)
+                    .border_b_1()
+                    .border_color(rgb(theme.divider)),
+            )
+            .children(rows.iter().enumerate().map(|(i, row)| {
+                table_row(row, aligns, pick, ctx, theme.text, theme)
+                    .when(i > 0, |el| el.border_t_1().border_color(rgb(theme.divider)))
+            }))
+            .into_any_element(),
         BlockKind::Table { aligns, head, rows } => div()
             .flex()
             .flex_col()
@@ -798,12 +811,12 @@ fn block_in(
             .border_color(rgb(theme.border))
             .overflow_hidden()
             .child(
-                table_row(head, aligns, pick, ctx, theme)
+                table_row(head, aligns, pick, ctx, theme.text, theme)
                     .bg(rgb(theme.surface_raised))
                     .font_weight(FontWeight(weight::SEMIBOLD)),
             )
             .children(rows.iter().map(|row| {
-                table_row(row, aligns, pick, ctx, theme)
+                table_row(row, aligns, pick, ctx, theme.text, theme)
                     .border_t_1()
                     .border_color(rgb(theme.border))
             }))
@@ -903,13 +916,21 @@ fn list_item(
         )
 }
 
+fn chat_flavor(ctx: Ctx) -> bool {
+    matches!(ctx.flavor, Flavor::Chat { .. })
+}
+
+/// A table row. Chat cells (Tern look) have no side padding on the first column so it lines
+/// up with the paragraphs, and `space::M` after each cell; Doc cells pad both sides.
 fn table_row(
     row: &Row,
     aligns: &[Align],
     pick: Option<&Pick>,
     ctx: Ctx,
+    color: u32,
     theme: &Theme,
 ) -> gpui::Div {
+    let chat = chat_flavor(ctx);
     div()
         .flex()
         .children(row.cells.iter().enumerate().map(|(column, cell)| {
@@ -917,16 +938,20 @@ fn table_row(
             div()
                 .flex_1()
                 .min_w_0()
-                .px(px(space::M))
+                .when(chat, |el| {
+                    el.pr(px(space::M))
+                        .when(column > 0, |el| el.pl(px(space::M)))
+                })
+                .when(!chat, |el| el.px(px(space::M)))
                 .py(px(space::S))
-                .text_color(rgb(theme.text))
+                .text_color(rgb(color))
                 .map(|el| match align {
                     Align::Center => el.text_center(),
                     Align::Right => el.text_right(),
                     Align::Default | Align::Left => el,
                 })
                 .child(selectable(pick, links(cell, ctx), |sel, bg| {
-                    text(cell, theme, sel, bg)
+                    text(cell, theme, sel, bg, chat)
                 }))
         }))
 }
@@ -1171,8 +1196,14 @@ fn diagram_view(diagram: &Diagram, start: u32, theme: &Theme) -> gpui::Div {
 }
 
 /// Inline runs as one text element: bold, italic, struck through, code spans on a raised
-/// background, links in the accent color and underlined.
-fn text(runs: &[Run], theme: &Theme, selected: Option<Range<usize>>, bg: Hsla) -> StyledText {
+/// background (in `accent_text` for Chat), links in the accent color and underlined.
+fn text(
+    runs: &[Run],
+    theme: &Theme,
+    selected: Option<Range<usize>>,
+    bg: Hsla,
+    chat: bool,
+) -> StyledText {
     let (text, styled) = inline(runs);
     let mono: Vec<(Range<usize>, SharedString)> = styled
         .iter()
@@ -1181,11 +1212,14 @@ fn text(runs: &[Run], theme: &Theme, selected: Option<Range<usize>>, bg: Hsla) -
         .collect();
     let accent = Hsla::from(rgb(theme.accent));
     let muted = Hsla::from(rgb(theme.text_muted));
+    let code_color = Hsla::from(rgb(theme.accent_text));
     let code_bg = Hsla::from(rgb(theme.surface_raised));
     let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
     for (range, style, link) in styled {
         let base = HighlightStyle {
-            color: link.then_some(accent),
+            color: link
+                .then_some(accent)
+                .or_else(|| (chat && style.code).then_some(code_color)),
             font_weight: style.bold.then_some(FontWeight(weight::SEMIBOLD)),
             font_style: style.italic.then_some(FontStyle::Italic),
             background_color: style.code.then_some(code_bg),

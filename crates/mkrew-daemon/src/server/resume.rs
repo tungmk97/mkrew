@@ -356,4 +356,19 @@ mod tests {
         assert_eq!(replace_session(&layout, Ulid::new(), new), None);
         assert_eq!(replace_session(&Value::Null, a, new), None);
     }
+
+    #[test]
+    fn replace_session_keeps_the_panes_chat_mode() {
+        let (old, new) = (Ulid::new(), Ulid::new());
+        let layout = json!({"split": "vertical", "ratio": 0.5, "children": [
+            {"session": old.to_string(), "chat": true},
+            {"session": Ulid::new().to_string(), "chat": false}
+        ]});
+        let replaced = replace_session(&layout, old, new).unwrap();
+        assert_eq!(
+            replaced["children"][0],
+            json!({"session": new.to_string(), "chat": true})
+        );
+        assert_eq!(replaced["children"][1], layout["children"][1]);
+    }
 }

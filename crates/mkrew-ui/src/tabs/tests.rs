@@ -1057,3 +1057,66 @@ fn a_cross_tab_move_keeps_the_pane_chat_mode() {
     assert_eq!(tabs.chat_of(a), Some(true));
     assert_eq!(tabs.chat_of(b), None);
 }
+
+#[test]
+fn pin_unset_sets_unset_panes_only_with_one_write_per_tab() {
+    let project = Ulid::new();
+    let [a, b, c, d] = [Ulid::new(), Ulid::new(), Ulid::new(), Ulid::new()];
+    let split = json!({"split":"vertical","ratio":0.5,"children":[
+        {"session": a.to_string(), "chat": false},
+        {"split":"horizontal","ratio":0.5,"children":[pane(b), pane(c)]}
+    ]});
+    let (one, two, three) = (
+        wire(project, "one", 1.0, split),
+        wire(project, "two", 2.0, pane(d)),
+        wire(
+            project,
+            "three",
+            3.0,
+            json!({"session": Ulid::new().to_string(), "chat": true}),
+        ),
+    );
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone(), three]);
+
+    // `c` has no known mode (not an agent): left unset.
+    let writes = tabs.pin_unset(|id| (id != c).then_some(true));
+    assert_eq!(writes.len(), 2, "tab three had nothing unset");
+    assert_eq!(writes[0].tab_id, one.id);
+    assert_eq!(writes[1].tab_id, two.id);
+    assert_eq!(
+        tabs.chat_of(a),
+        Some(false),
+        "a saved mode is never touched"
+    );
+    assert_eq!(tabs.chat_of(b), Some(true));
+    assert_eq!(tabs.chat_of(c), None);
+    assert_eq!(tabs.chat_of(d), Some(true));
+    assert!(
+        tabs.pin_unset(|id| (id != c).then_some(false)).is_empty(),
+        "pinned panes stay"
+    );
+}
+
+#[test]
+fn a_new_pane_is_born_with_the_given_mode() {
+    let project = Ulid::new();
+    let [a, b] = [Ulid::new(), Ulid::new()];
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "main", 1.0, serde_json::Value::Null)]);
+    let first = tabs
+        .split_focused_chat(Axis::Vertical, a, Some(true))
+        .unwrap();
+    assert_eq!(
+        first.layout,
+        json!({"session": a.to_string(), "chat": true})
+    );
+    let second = tabs
+        .split_focused_chat(Axis::Vertical, b, Some(false))
+        .unwrap();
+    assert_eq!(second.layout["children"][1]["chat"], json!(false));
+    assert_eq!(
+        (tabs.chat_of(a), tabs.chat_of(b)),
+        (Some(true), Some(false))
+    );
+}

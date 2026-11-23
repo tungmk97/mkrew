@@ -42,6 +42,32 @@ So Tern and Mkrew have the same architecture; the gap is the drawing and a few f
 - The branch chip shows only when the session runs at the workspace root; a task worktree session shows no branch chip and no folder chip.
 - The composer collapses to a one-line pill while the pane has no keyboard and the draft, the queue and the error are empty.
 - The `/` picker shows the current model next to `/model` and the context share next to `/compact`.
+- Tern-style details (second pass, 2026-11-23):
+  A Chat table has no outer border, no radius and no header fill: the header cells are muted regular text, a 1 px `divider` line runs under the header and between rows, there are no vertical lines, and the first column lines up with the paragraphs.
+  The Doc flavor keeps its bordered table.
+  Inline code in Chat is drawn in `accent_text` on the raised background; a path pill keeps the folder muted and the name bold.
+  The composer chip row reads, left to right: the model as a bordered pill (`raised_border`, chevron, name in `accent_text`, the loading dots before the name while the agent works), permission with a lightning icon in `status_needs_input`, effort, the branch with its icon and `name *N` in `syntax_string`, the context tokens with a database icon and the number in `syntax_keyword`, `tok/s` in `text`, the elapsed time with a clock icon, and the local wall-clock time the last turn ended (`HH:MM:SS`, clock icon in `text_subtle`, hidden while the agent works).
+  Stats and the branch use the terminal font at META size.
+  A narrow pane drops the clock time first, then the stats, permission, effort and branch.
+  The placeholder is italic muted with a small sparkle icon.
+  The send button is neutral (raised surface, 1 px `raised_border`, muted corner-down-left icon) while the draft is blank or busy, and an `accent` fill with an `on_accent` icon when it can send.
+  When the chat list is scrolled up from its end, a small round button with a down arrow floats at the right edge of the column above the composer and scrolls to the end.
+  The icon set gained clock, corner-down-left, database and zap (Lucide, ISC).
+- Terminal or Chat is kept per pane in the tab layout (`chat` on the leaf) and survives a UI restart.
+  The daemon's startup resume only swaps the leaf's `session` value, so the `chat` flag carries over to the resumed session (tested in `replace_session` and in the resume integration test).
+- Whenever the user picks Terminal or Chat (the header switch, `Ctrl+Alt+T`, the palette), Mkrew also writes `[ui] chat_default = <picked is Chat>` to `settings.toml` through the Settings writer, only when it differs, and reloads settings at once.
+  New agent panes and the next start use the last pick; the Settings page General still shows and edits it.
+  Panes with no saved mode follow the default, so a pick first pins every such pane to its current mode, and they do not flip.
+  The temporary switches to Terminal (the model chip, "Answer in terminal") are not picks and do not change the default.
+- Fix round 1: a new agent pane (`place_session`) is born with `chat: <default of the moment>`, so changing the default never flips it.
+  Legacy leaves (no flag) of the workspaces opened this session are pinned to their current mode, one `tab.set_layout` per tab, when the user picks.
+  Legacy panes in workspaces not opened this session follow the new default.
+  A failed write of `[ui] chat_default` shows the "choice was not saved" toast.
+- Fix round 1: the composer's chip widths are measured, and Prompts is an icon in the Chat card, so model, effort, permission, branch, stats and the end time fit one 760 px column (688 px of room) for an omp or Codex session.
+  omp's transcript has no permission mode (`yolo` is an omp runtime setting), so an omp session shows no permission chip.
+  The model pill and the neutral round buttons use `theme::raised_border` (control_border vanishes on `surface_raised`).
+- Fix round 2: every part of the chip row except the stats cell is `flex_none`, so `fit_chips` reserves honest widths: the sparkle button while typing, the loading dots while the agent works, and the real branch chip width (`branch_width`, capped at `COMPOSER_BRANCH_MAX_WIDTH` = 160, the name truncates).
+  The row clips as a last resort, so the send button never leaves the card.
 
 ## Alternatives
 

@@ -32,9 +32,9 @@ With a real omp, a real Claude Code and a real Codex session, dark and light the
 - [ ] **Markdown cards and pills:** a code block is a card with its language (or "text") and a Copy button that says "Copied" for about 1.5 s; inline code has the raised background (square corners, no padding: a text highlight); a file path shows the folder muted and the name bold; the same cards show in the Docs view, the Files preview, the Thread section and Ask AI (their headings keep their own color).
 - [ ] **Path pills:** in Chat a path (`src/main.rs:12`) opens the file at that line in the Editor view (also from a task worktree session); `v1.2` and `cargo test` are not clickable; a path outside the workspace shows "That file is outside this workspace".
 - [ ] **A new session fills without a reconnect:** start a new omp, Claude Code or Codex agent pane in Chat, send its first prompt; the conversation shows within about 2 s, with no UI restart (the daemon announces the agent's session id, ADR 0105).
-- [ ] **Screenshots for reference:** `docs/screenshots/2026-11-23-chat-look-omp-dark.png`, `-omp-light.png` and `-codex-light.png` (sandbox with real transcripts).
+- [ ] **Screenshots for reference:** `docs/screenshots/2026-11-23-chat-look-tern-dark.png` and `-tern-light.png` (Tern-style tables, chip row with a long branch, split panes; sandbox with real transcripts); the older `-omp-dark.png`, `-omp-light.png` and `-codex-light.png` show the first pass.
 - [ ] **omp recap:** after an omp turn ends and omp is idle, its recap line (history icon, italic) shows after the last turn; sending a new prompt hides it; a Claude or Codex session never shows one.
-- [ ] **Composer card:** a floating rounded card with the context meter above it (turns to the warning color at 80 %), the session title in quotes as the placeholder, chips for model, effort, permission and branch (branch only for a session at the workspace root, not for a task worktree, which has no folder chip either), then `74K`, `tok/s` and the elapsed time (counting live while the agent works), and a round send button (faded while the draft is blank; its tooltip has the key hint).
+- [ ] **Composer card:** a floating rounded card with the context meter above it (turns to the warning color at 80 %), the session title in quotes as the placeholder, chips for model, effort, permission and branch (branch only for a session at the workspace root, not for a task worktree, which has no folder chip either), then `74K`, `tok/s`, the elapsed time (counting live while the agent works) and the time the last turn ended, and a round send button (neutral while the draft is blank or the agent is busy, accent when it can send; its tooltip has the key hint).
   The meter's used value comes from the transcript first; only its window comes from `session.usage` (updated at a turn end).
   The header ctx% updates at a turn end too.
   Compare the numbers with Tern.
@@ -48,6 +48,24 @@ With a real omp, a real Claude Code and a real Codex session, dark and light the
   A draft, a queued text or an error keeps the card open.
 - [ ] **Slash picker:** typing `/` in the composer shows the current model next to `/model` and "context N% used" next to `/compact`.
 - [ ] **Terminal mode** keeps today's docked composer and its key hint.
+- [ ] **Tern-style tables (dark + light):** in Chat a Markdown table has no outer border, no rounded corners and no header fill; the header is muted regular text; a thin line sits under the header and between rows; no vertical lines; the first column starts at the paragraph's left edge.
+  The same table in the Docs view and the Files preview keeps its border and header fill.
+- [ ] **Inline code color (dark + light):** inline code in Chat is the accent color on the raised background; a path shows the folder muted and the name bold; Docs view code is unchanged.
+- [ ] **Chip row (dark + light):** left to right: the model as a bordered pill with a chevron (accent text; loading dots before the name while the agent works), permission with a lightning icon in the needs-input color, the branch with `name *N` in the string color, the context tokens with a database icon (keyword color), `tok/s` in the text color, the elapsed time with a clock icon, and the end time `HH:MM:SS` of the last turn in the subtle color with a clock icon (matches your wall clock; hidden while the agent works).
+  Stats and the branch are in the terminal font.
+  Narrow the pane: the end time drops first, then stats, permission, effort, branch.
+- [ ] **Placeholder:** italic muted, a small sparkle before it, still the session title in quotes; the caret shows before it while the field has the keyboard.
+- [ ] **Send button (dark + light):** neutral (raised, thin border, muted corner-arrow icon) with an empty draft or while sending; type something and it turns accent with a light icon; Enter and a click send.
+- [ ] **Scroll to the end (dark + light):** scroll a long chat up: a small round down-arrow button appears at the column's right edge above the composer; a click jumps to the end and it disappears; it never shows at the end; hover and press react.
+- [ ] **Terminal / Chat is kept per pane:** switch one pane to Chat and another to Terminal, restart the UI: each comes back as it was.
+  Stop the daemon (`mk daemon stop`) and start it again so it resumes the agent panes: each pane still has its mode.
+- [ ] **Last pick is the default:** pick Chat (header switch, `Ctrl+Alt+T` or the palette "Agent: Toggle chat view"), open a new agent pane: it opens in Chat; pick Terminal: the next new pane opens in Terminal.
+  Settings > General "Chat view by default" shows the same value and `settings.toml` has `[ui] chat_default`.
+  An older pane you did not touch keeps its look (it does not flip).
+  Legacy panes in a workspace you did not open since the update follow the new default; panes opened or created after the update keep their mode.
+- [ ] **Chip row at 900 px (omp and Codex):** model, effort, branch, `170K`, `tok/s`, elapsed and the end time all show in one row (Codex also shows permission); omp shows no permission chip (not in its transcript).
+  The model pill's border is visible in dark and light.
+  Clicking the scroll-to-end button does nothing to the message under it; it never covers the subagent tray or a question card.
 
 ### To verify - 2026-11-22 macOS app integration (ADR 0100)
 

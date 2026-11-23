@@ -51,6 +51,8 @@ icons! {
         ChevronLeft => "chevron-left",
         ChevronRight => "chevron-right",
         Circle => "circle",
+        Clock => "clock",
+        CornerDownLeft => "corner-down-left",
         CircleArrowUp => "circle-arrow-up",
         CircleAlert => "circle-alert",
         CircleStop => "circle-stop",
@@ -59,6 +61,7 @@ icons! {
         Columns2 => "columns-2",
         Copy => "copy",
         Delete => "delete",
+        Database => "database",
         Download => "download",
         Ellipsis => "ellipsis",
         ExternalLink => "external-link",
@@ -116,6 +119,7 @@ icons! {
         Users => "users",
         Upload => "upload",
         X => "x",
+        Zap => "zap",
     }
 }
 

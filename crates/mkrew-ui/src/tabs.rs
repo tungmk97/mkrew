@@ -544,23 +544,60 @@ impl Tabs {
     /// empty tab) and focuses it. `None` if there is no active tab or `new` is already shown.
     /// (A session spawned with `tab_id` into an empty tab is placed by the daemon already.)
     pub fn split_focused(&mut self, axis: Axis, new: Ulid) -> Option<TabSetLayoutParams> {
+        self.split_focused_chat(axis, new, None)
+    }
+
+    /// [`Self::split_focused`] with the new pane's saved mode `chat` (ADR 0105: a new agent
+    /// pane is born with the default of the moment, so a later change of the default never
+    /// flips it).
+    pub fn split_focused_chat(
+        &mut self,
+        axis: Axis,
+        new: Ulid,
+        chat: Option<bool>,
+    ) -> Option<TabSetLayoutParams> {
         if self.tab_of(new).is_some() {
             return None;
         }
         let tab = self.active_mut()?;
         match (&mut tab.layout, tab.focused) {
             (Some(node), Some(target)) => {
-                if !node.split(target, axis, new) {
+                if !node.split_with(target, axis, Node::Pane { session: new, chat }) {
                     return None;
                 }
             }
-            (layout @ None, _) => *layout = Some(Node::pane(new)),
+            (layout @ None, _) => *layout = Some(Node::Pane { session: new, chat }),
             // `fix_focus` keeps a pane focused whenever the tab has one.
             (Some(_), None) => return None,
         }
         tab.focused = Some(new);
         tab.fix_focus();
         Some(tab.write())
+    }
+
+    /// Saves a mode on every pane that has none: `mode(session)` says which (`None` leaves the
+    /// pane unset). One write per tab that changed, so a pick costs one `tab.set_layout` per
+    /// tab, not one per pane. Panes that already have a mode are never touched.
+    pub fn pin_unset(&mut self, mode: impl Fn(Ulid) -> Option<bool>) -> Vec<TabSetLayoutParams> {
+        let mut writes = Vec::new();
+        for tab in &mut self.tabs {
+            let Some(layout) = tab.layout.as_mut() else {
+                continue;
+            };
+            let unset: Vec<Ulid> = (layout.sessions().into_iter())
+                .filter(|id| layout.chat_of(*id).is_none())
+                .collect();
+            let mut changed = false;
+            for id in unset {
+                if let Some(chat) = mode(id) {
+                    changed |= layout.set_chat(id, Some(chat));
+                }
+            }
+            if changed {
+                writes.push(tab.write());
+            }
+        }
+        writes
     }
 
     /// Moves the pane of `session` next to the pane of `target` (right of it along
