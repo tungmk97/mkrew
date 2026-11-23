@@ -916,6 +916,7 @@ impl Daemon {
             started_at,
             ended_at: None,
             plan_path: start.plan_path,
+            tsp: mkrew_protocol::TspState::Off,
         };
         let session_id = session.id;
         let spec = SpawnSpec {

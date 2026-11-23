@@ -192,6 +192,7 @@ mod tests {
             started_at: 0,
             ended_at: None,
             plan_path: plan_path.map(Into::into),
+            tsp: mkrew_protocol::TspState::Off,
         }
     }
 

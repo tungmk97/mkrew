@@ -1414,6 +1414,7 @@ fn session(id: u128, task: Option<u128>, started_at: i64, state: SessionState) -
         pinned: false,
         position: 0.0,
         plan_path: None,
+        tsp: mkrew_protocol::TspState::Off,
     }
 }
 

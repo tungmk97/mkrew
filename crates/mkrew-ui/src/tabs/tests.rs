@@ -650,6 +650,7 @@ fn session(project_id: Ulid, state: SessionState, started_at: i64) -> Session {
         pinned: false,
         position: 0.0,
         plan_path: None,
+        tsp: mkrew_protocol::TspState::Off,
     }
 }
 

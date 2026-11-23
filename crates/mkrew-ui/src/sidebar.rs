@@ -669,6 +669,7 @@ impl Sidebar {
             | Event::SessionPlan(_)
             | Event::AiGenerated(_)
             | Event::AgentLimits(_)
+            | Event::TspUpdate(_)
             | Event::ProjectCloned(_) => Change::None,
         }
     }

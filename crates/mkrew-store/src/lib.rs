@@ -1684,6 +1684,7 @@ impl RawSession {
             pinned: self.pinned,
             plan_path: self.plan_path,
             position: self.position,
+            tsp: mkrew_protocol::TspState::Off,
         })
     }
 }

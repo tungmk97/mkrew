@@ -70,6 +70,8 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
         // Pane status pill, `⧗ N queued` and the composer's queue.
         Event::SessionTurn(e) => on_pane(e.session_id),
         Event::SessionQueue(e) => on_pane(e.session_id),
+        // The native surface of an omp pane (spec 2026-11-23 section 6.4).
+        Event::TspUpdate(e) => on_pane(e.session_id),
         // Session tab Plan card, or the focused row's bar in the full sidebar.
         Event::SessionPlan(e) => {
             in_session_tab(e.session_id)
@@ -180,6 +182,7 @@ mod tests {
             pinned: false,
             position: 0.0,
             plan_path: None,
+            tsp: mkrew_protocol::TspState::Off,
         }
     }
 
@@ -543,5 +546,22 @@ mod tests {
         for shown in [terminals(&w), nothing_shown(&w)] {
             assert!(redraws(&w, &shown, &limits));
         }
+    }
+
+    /// A surface change repaints only a pane that is on screen (spec 2026-11-23 section 6.4).
+    #[test]
+    fn tsp_updates_redraw_only_a_shown_pane() {
+        let w = world();
+        let s = terminals(&w);
+        let update = |id| {
+            Event::TspUpdate(Box::new(mkrew_protocol::TspUpdate {
+                session_id: id,
+                surface: "s:1".into(),
+                change: mkrew_protocol::TspChange::Closed { keep: true },
+            }))
+        };
+        assert!(redraws(&w, &s, &update(w.a())));
+        assert!(!redraws(&w, &s, &update(w.b())), "hidden tab");
+        assert!(!redraws(&w, &s, &update(w.c())), "other workspace");
     }
 }

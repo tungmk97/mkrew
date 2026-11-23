@@ -169,6 +169,7 @@ fn session_usage_lists_events_stored_before_the_cache_split() {
                 pinned: false,
                 position: 0.0,
                 plan_path: None,
+                tsp: mkrew_protocol::TspState::Off,
             })
             .unwrap();
         let old = json!({
