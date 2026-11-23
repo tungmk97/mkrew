@@ -41,16 +41,6 @@ pub struct HeaderRoom {
     pub switch: bool,
 }
 
-impl HeaderRoom {
-    /// Room for every part (the tab bar of a single pane).
-    pub const ALL: Self = Self {
-        context: true,
-        share: true,
-        reading: true,
-        switch: true,
-    };
-}
-
 // ponytail: widths in em of the UI font, measured once in logical px at 13 px, not with the
 // text system; a part drops whole, so an error only moves the moment it drops. Measure if one
 // drops visibly early or late.
@@ -66,8 +56,8 @@ const CHAR_EM: f32 = 0.46;
 /// `Terminal | Chat`.
 pub fn header_room(width: f32, em: f32, context_chars: usize, switch: bool) -> HeaderRoom {
     let gap = crate::theme::space::S;
-    // The padding on both sides, then the chip, the (maybe empty) title and the pill.
-    let mut used = 2.0 * gap + (CHIP_EM + PILL_MIN_EM) * em + 2.0 * gap;
+    // The padding on both sides, then the chip, the gap and the pill (the header has no title).
+    let mut used = 2.0 * gap + (CHIP_EM + PILL_MIN_EM) * em + gap;
     let mut fits = |part_em: f32| {
         let part = gap + part_em * em;
         let fits = used + part <= width;
@@ -199,5 +189,14 @@ mod tests {
         assert!(room(500.0, true).3 && !wide_font.context);
         // Without a context share nothing is kept for it.
         assert!(!header_room(2_000.0, 13.0, 0, true).context);
+    }
+
+    /// The header has no title: its room is the padding, the chip, one gap and the pill, so at
+    /// 13 px per em the switch fits from 16 + (1.85 + 4.0) em + 8 + (8 + 10.15 em) = 240 px.
+    #[test]
+    fn the_header_room_has_no_title_in_it() {
+        let switch = |width: f32| header_room(width, 13.0, 0, true).switch;
+        assert!(!switch(239.0));
+        assert!(switch(241.0));
     }
 }

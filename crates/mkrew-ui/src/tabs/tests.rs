@@ -717,13 +717,22 @@ fn a_tab_shows_the_kind_of_its_focused_pane() {
     assert_eq!(tab_kind(empty.active().unwrap(), &sessions), TabKind::Empty);
 }
 
+/// A tab that keeps its default name shows the session title of its focused pane, also among
+/// several panes; a name the user gave the tab wins; the label follows the focus.
 #[test]
-fn a_default_named_tab_with_one_pane_on_screen_shows_its_session_title() {
+fn a_default_named_tab_shows_the_session_title_of_its_focused_pane() {
     let project = Ulid::new();
     let mut titled = session(project, SessionState::Idle, 1);
     titled.terminal_title = Some("Fix login".into());
-    let untitled = session(project, SessionState::Idle, 2);
-    let sessions = [titled.clone(), untitled.clone()];
+    let mut named = session(project, SessionState::Idle, 2);
+    named.title = Some("Docs".into());
+    let untitled = session(project, SessionState::Idle, 3);
+    let sessions = [titled.clone(), named.clone(), untitled.clone()];
+    let tree = json!({"split":"vertical","ratio":0.5,"children":[
+        pane(titled.id),
+        {"split":"horizontal","ratio":0.5,"children":[pane(named.id), pane(untitled.id)]}
+    ]});
+    // The label of a tab loaded with `layout`; `load` focuses its first pane.
     let label = |title: &str, layout| {
         let mut tabs = Tabs::new(project);
         tabs.load(vec![wire(project, title, 1.0, layout)]);
@@ -738,23 +747,72 @@ fn a_default_named_tab_with_one_pane_on_screen_shows_its_session_title() {
         label("Terminal 12", pane(titled.id)).as_deref(),
         Some("Fix login")
     );
-    // A name the user gave the tab wins; so does the tab name without a session title.
+    assert_eq!(
+        label("Terminal", pane(untitled.id)),
+        None,
+        "no session title"
+    );
+    assert_eq!(
+        label("Terminal", serde_json::Value::Null),
+        None,
+        "empty tab"
+    );
+    // A name the user gave the tab wins, with one pane and with several.
     for title in ["Backend", "Terminal 3b", "Terminal ", "Terminals"] {
         assert_eq!(label(title, pane(titled.id)), None, "{title}");
+        assert_eq!(label(title, tree.clone()), None, "{title}");
     }
-    assert_eq!(label("Terminal", pane(untitled.id)), None);
 
-    // Several panes: each header shows its title; zoomed, the lone pane's shows on the tab.
-    let split =
-        json!({"split":"vertical","ratio":0.5,"children":[pane(untitled.id), pane(titled.id)]});
+    // Several panes: the label follows the focus; the user's pane title is the pane's title.
     let mut tabs = Tabs::new(project);
-    tabs.load(vec![wire(project, "Terminal 2", 1.0, split)]);
-    assert_eq!(session_label(tabs.active().unwrap(), &sessions), None);
-    tabs.focus(titled.id);
-    assert!(tabs.toggle_zoom());
+    tabs.load(vec![wire(project, "Terminal 2", 1.0, tree)]);
+    let shown = |tabs: &Tabs| session_label(tabs.active().unwrap(), &sessions);
+    assert_eq!(shown(&tabs), Some("Fix login"));
+    assert!(tabs.focus(named.id));
+    assert_eq!(shown(&tabs), Some("Docs"));
+    assert!(tabs.focus(untitled.id));
+    assert_eq!(shown(&tabs), None);
+    assert!(tabs.focus(titled.id));
+    assert_eq!(shown(&tabs), Some("Fix login"));
+}
+
+/// A double-click renames the focused pane while the tab keeps its default name; the tab
+/// itself when the user named it, when it has no panes, or when the focused pane is a run pane
+/// (named by its command).
+#[test]
+fn a_double_click_renames_the_focused_pane_of_a_default_named_tab() {
+    let project = Ulid::new();
+    let agent = session(project, SessionState::Idle, 1);
+    let mut run = session(project, SessionState::Idle, 2);
+    run.kind = SessionKind::Shell;
+    run.title = Some("run:BE".into());
+    let sessions = [agent.clone(), run.clone()];
+    let split = json!({"split":"vertical","ratio":0.5,"children":[pane(agent.id), pane(run.id)]});
+    let renames = |title: &str, focus: Ulid| {
+        let mut tabs = Tabs::new(project);
+        tabs.load(vec![wire(project, title, 1.0, split.clone())]);
+        assert!(tabs.focus(focus));
+        double_click_renames(tabs.active().unwrap(), &sessions)
+    };
+
+    assert_eq!(renames("Terminal 2", agent.id), Some(agent.id));
     assert_eq!(
-        session_label(tabs.active().unwrap(), &sessions),
-        Some("Fix login")
+        renames("Terminal", run.id),
+        None,
+        "a run pane is not renamed"
+    );
+    assert_eq!(renames("Backend", agent.id), None, "the user's tab name");
+
+    let mut empty = Tabs::new(project);
+    empty.load(vec![wire(
+        project,
+        "Terminal",
+        1.0,
+        serde_json::Value::Null,
+    )]);
+    assert_eq!(
+        double_click_renames(empty.active().unwrap(), &sessions),
+        None
     );
 }
 

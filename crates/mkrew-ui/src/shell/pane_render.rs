@@ -4,21 +4,15 @@ use crate::*;
 
 impl Shell {
     /// The tab strip: the tabs (kind icon, title, status dot, pin, ×) and `+`; on the right
-    /// the notices, then for a single pane its status, Reading width and Share (a split shows
-    /// them in the pane headers), the split / layout button and the ⋯ menu.
+    /// the notices, the split / layout button and the ⋯ menu. A pane's status, its controls and
+    /// the zoom notice are in its header.
     pub(crate) fn render_tab_bar(
         &self,
         project_id: Ulid,
         tabs: &Tabs,
-        now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        // A single pane has no header: its status sits at the right end of this bar.
-        let single = tabs
-            .active()
-            .and_then(Tab::single)
-            .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let active = tabs.active().map(|tab| tab.id);
         // Pinned tabs lead the strip; each kind is dragged among its own.
         let pinned_count = tabs.tabs().iter().filter(|tab| tab.pinned).count();
@@ -51,15 +45,14 @@ impl Shell {
                     .map(|(slot, (place, tab))| {
                         let tab_id = tab.id;
                         let is_active = active == Some(tab_id);
-                        // F2 on a single pane: its rename field takes the tab's place (no header).
-                        if let Some(renaming) = self.renaming.as_ref().filter(|r| {
-                            r.target == RenameTarget::Tab(tab_id)
-                                || tab.single().map(RenameTarget::Session).as_ref()
-                                    == Some(&r.target)
-                        }) {
+                        // The tab's own rename field takes its place; a pane is renamed in
+                        // its header.
+                        if let Some(renaming) = (self.renaming.as_ref())
+                            .filter(|r| r.target == RenameTarget::Tab(tab_id))
+                        {
                             return self.render_rename(&renaming.draft, theme, cx);
                         }
-                        // A lone pane's title stands in for a default tab name.
+                        // The focused pane's title stands in for a default tab name.
                         let label = session_label(tab, self.sidebar.sessions());
                         let item = DraggedItem {
                             list: ReorderList::Tabs(project_id, tab.pinned),
@@ -96,7 +89,7 @@ impl Shell {
                         shell.create_tab(project_id, None, window, cx);
                     })),
             )
-            // Pushes the notices, the pane status and the split / ⋯ group to the right.
+            // Pushes the notices and the split / ⋯ group to the right.
             .child(div().flex_1())
             .children(
                 (self.tab_error.as_ref())
@@ -108,52 +101,10 @@ impl Shell {
                     .filter(|(host, _)| *host == HostId::Main)
                     .map(|(_, text)| notice(theme.text_muted, text.clone())),
             )
-            .when(
-                tabs.active().and_then(|tab| tab.zoomed()).is_some(),
-                |bar| {
-                    bar.child(notice(theme.text_muted, "⤢ Pane zoomed".to_owned()))
-                        .child(
-                            button(
-                                "unzoom",
-                                icon_text(
-                                    Icon::Minimize2,
-                                    "Show all panes",
-                                    button_fg(theme, false),
-                                ),
-                                theme,
-                                false,
-                            )
-                            .tooltip(tooltip(
-                                theme,
-                                "Show all panes",
-                                self.keymap.label(Command::ZoomPane),
-                            ))
-                            .on_click(cx.listener(
-                                |shell, _, window, cx| {
-                                    shell.run(&Run(Command::ZoomPane), window, cx);
-                                },
-                            )),
-                        )
-                },
-            )
             .children(
                 lifecycle::running_warning(self.sidebar.sessions(), project_id)
                     .map(|warning| notice(theme.text_muted, format!("⚠ {warning}"))),
             )
-            .when_some(single, |bar, info| {
-                bar.child(
-                    div()
-                        .min_w_0()
-                        .flex()
-                        .items_center()
-                        .gap(px(space::S))
-                        .text_size(font_size::META)
-                        .children(self.pane_status(info, true, now, theme, cx))
-                        .children(self.pane_controls(info, pane_text::HeaderRoom::ALL, theme, cx))
-                        .relative()
-                        .child(record_bounds(Anchor::PaneHeader(info.id), cx)),
-                )
-            })
             .child(
                 icon_button("tab-split", Icon::Columns2, theme)
                     .tooltip(tooltip(
@@ -194,9 +145,10 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let tab_id = tab.id;
-        // A lone pane's title stands in for a default tab name.
+        // The focused pane's title stands in for a default tab name.
         let label = session_label(tab, self.sidebar.sessions());
-        let labeled = tab.single().filter(|_| label.is_some());
+        // A double-click renames that pane while the tab keeps its default name, else the tab.
+        let rename_pane = double_click_renames(tab, self.sidebar.sessions());
         // The most urgent state among the tab's panes (SPEC §11), as one dot.
         let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
         let dot = self.tab_dot(tab, urgent, theme);
@@ -252,7 +204,7 @@ impl Shell {
                     select(shell);
                     shell.sync_panes(window, cx);
                     if event.click_count() == 2 {
-                        match labeled {
+                        match rename_pane {
                             Some(session) => shell.start_pane_rename(session, window, cx),
                             None => shell.start_rename(window, cx),
                         }
@@ -429,6 +381,7 @@ impl Shell {
         let rects = tab.map(Tab::rects).unwrap_or_default();
         let dividers = tab.map(Tab::dividers).unwrap_or_default();
         let several = rects.len() > 1;
+        let zoomed = tab.is_some_and(|tab| tab.zoomed().is_some());
         let half_gap = px(theme::PANE_HALF_GAP);
         // The panes' 0..1 space in px, as laid out in the last frame (`content_canvas`).
         let area = f32::from(content.get().width) - 2.0 * theme::PANE_HALF_GAP;
@@ -447,6 +400,7 @@ impl Shell {
                     .child(self.pane_frame(
                         session,
                         several,
+                        zoomed,
                         width,
                         is_focused,
                         is_focused && composer_focused,
@@ -498,16 +452,18 @@ impl Shell {
             )
     }
 
-    /// One pane: the terminal (or why it is not shown; at reading width, centered, for an agent
-    /// pane with it on), its composer, its border. Among several panes it gets a compact header
-    /// and the unfocused ones a dim; a single pane has no header (the tab bar shows its status)
-    /// and its color is a 2 px line on top. `voice_ring`: the listening ring over the border;
-    /// `width`: the pane's width in px in the last frame (the header's room).
+    /// One pane: its header, the terminal (or why it is not shown; at reading width, centered,
+    /// for an agent pane with it on), its composer, its border. Every pane has the compact
+    /// header, a single and a zoomed one too; among several panes the unfocused ones get a dim.
+    /// `zoomed`: the pane fills the tab, its header shows the zoom notice. `voice_ring`: the
+    /// listening ring over the border; `width`: the pane's width in px in the last frame (the
+    /// header's room).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pane_frame(
         &self,
         session: Ulid,
         several: bool,
+        zoomed: bool,
         width: f32,
         is_focused: bool,
         composer_focused: bool,
@@ -574,20 +530,7 @@ impl Shell {
                 },
             ))
             .child(drop_catcher(DropTarget::Pane(session), cx))
-            .when(several, |el| {
-                el.children(info.map(|info| self.pane_header(info, color, width, now, theme, cx)))
-            })
-            .when(!several, |el| {
-                el.when_some(color, |el, color| {
-                    el.child(
-                        div()
-                            .flex_none()
-                            .h(px(theme::PANE_ACCENT_WIDTH))
-                            .rounded_t(px(radius::MEDIUM))
-                            .bg(rgb(color)),
-                    )
-                })
-            })
+            .children(info.map(|info| self.pane_header(info, color, width, zoomed, now, theme, cx)))
             // Reading width: the terminal element is narrower, so the PTY gets fewer columns
             // (the program wraps there); nothing reflows its output.
             .child(
@@ -677,8 +620,7 @@ impl Shell {
 
     /// The status of `info`'s pane, each part only when it has something to say: the task
     /// folder, the status pill, the conflict warning, `⧗ N queued` sends and the context share.
-    /// The tab bar shows them for a single pane, the compact header among several; `context`:
-    /// whether there is room for the context share.
+    /// The pane header shows them; `context`: whether there is room for the context share.
     pub(crate) fn pane_status(
         &self,
         info: &Session,
@@ -876,23 +818,21 @@ impl Shell {
         controls
     }
 
-    /// The title of `info`'s pane, or the inline rename field while it is renamed (F2 or a
-    /// double-click, ADR 0031; a run pane is named by its command and is not renamed).
-    pub(crate) fn pane_title(
+    /// The inline rename field of `session`'s pane while it is edited (F2, the pane menu, or a
+    /// double-click on a tab that keeps its default name, ADR 0031); `None` otherwise. The
+    /// header has no title, so the field takes the header's free space.
+    fn pane_rename(
         &self,
-        info: &Session,
+        session: Ulid,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
-        let session = info.id;
-        let renaming = self
-            .renaming
-            .as_ref()
-            .filter(|r| r.target == RenameTarget::Session(session));
-        if let Some(renaming) = renaming {
-            // Mouse downs stay in the field: the pane's handler would focus the terminal, and
-            // the blur would commit half-typed text.
-            return div()
+    ) -> Option<gpui::AnyElement> {
+        let renaming =
+            (self.renaming.as_ref()).filter(|r| r.target == RenameTarget::Session(session))?;
+        // Mouse downs stay in the field: the pane's handler would focus the terminal, and the
+        // blur would commit half-typed text.
+        Some(
+            div()
                 .flex_1()
                 .min_w_0()
                 .on_mouse_down(
@@ -900,37 +840,22 @@ impl Shell {
                     cx.listener(|_, _, _, cx| cx.stop_propagation()),
                 )
                 .child(self.render_rename(&renaming.draft, theme, cx))
-                .into_any_element();
-        }
-        let renamable = mkrew_core::run::command_name(info).is_none();
-        div()
-            .id(SharedString::from(format!("pane-title-{session}")))
-            .flex_1()
-            .min_w_0()
-            .truncate()
-            .text_color(rgb(theme.text_muted))
-            .children(run::pane_title(info, self.ports.get(info.id)))
-            // Also the empty space after the title of an untitled pane.
-            .when(renamable, |el| {
-                el.on_click(
-                    cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
-                        if event.click_count() == 2 {
-                            shell.start_pane_rename(session, window, cx);
-                        }
-                    }),
-                )
-            })
-            .into_any_element()
+                .into_any_element(),
+        )
     }
 
-    /// A pane's compact header among several panes (SPEC §11): the agent chip (tinted by the
-    /// pane color, which also draws a line under the header), the title, the status parts and
-    /// the agent controls. Right-click: the pane menu.
+    /// A pane's compact header (SPEC §11), on every pane, a single and a zoomed one too: the
+    /// agent chip (tinted by the pane color, which also draws a line under the header; its
+    /// tooltip is the pane's full title), the status parts, then the zoom notice while `zoomed`
+    /// and the agent controls. It has no title: the tab shows the focused pane's. While the pane
+    /// is renamed its field takes the free space. Right-click: the pane menu.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn pane_header(
         &self,
         info: &Session,
         color: Option<u32>,
         width: f32,
+        zoomed: bool,
         now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -945,6 +870,38 @@ impl Shell {
             context_chars,
             self.chat_available(info),
         );
+        let title = (run::pane_title(info, self.ports.get(session)))
+            .unwrap_or_else(|| info.agent_profile.clone());
+        let zoom_notice = zoomed.then(|| {
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .child(notice(theme.text_muted, "⤢ Pane zoomed".to_owned()))
+                .child(
+                    button_frame(
+                        "pane-unzoom",
+                        icon_text(Icon::Minimize2, "Show all panes", theme.text_muted),
+                    )
+                    .px(px(space::S))
+                    .py_0()
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_muted))
+                    .pressable(Look::Chip, true, theme)
+                    .tooltip(tooltip(
+                        theme,
+                        "Show all panes",
+                        self.keymap.label(Command::ZoomPane),
+                    ))
+                    .on_press(
+                        true,
+                        cx.listener(|shell, _: &gpui::ClickEvent, window, cx| {
+                            shell.run(&Run(Command::ZoomPane), window, cx);
+                        }),
+                    ),
+                )
+        });
         let header = div()
             .flex_none()
             .flex()
@@ -964,10 +921,17 @@ impl Shell {
                 agent_chip(self.agent_badge(&info.agent_profile), theme.text, theme)
                     .when_some(color, |chip, color| {
                         chip.bg(theme.tint(color)).border_color(rgb(color))
-                    }),
+                    })
+                    .id(SharedString::from(format!("pane-chip-{session}")))
+                    .tooltip(tooltip(theme, &title, "")),
             )
-            .child(self.pane_title(info, theme, cx))
             .children(self.pane_status(info, room.context, now, theme, cx))
+            // The free space pushes the controls right; the rename field takes it.
+            .child(
+                self.pane_rename(session, theme, cx)
+                    .unwrap_or_else(|| div().flex_1().min_w_0().into_any_element()),
+            )
+            .children(zoom_notice)
             .children(self.pane_controls(info, room, theme, cx))
             .relative()
             .child(record_bounds(Anchor::PaneHeader(session), cx))

@@ -278,11 +278,10 @@ impl Shell {
             .filter_map(|(index, dock)| {
                 let DockTab::Terminal { project, tab_id } = *dock;
                 let tab = self.tabs.get(&project)?.tab(tab_id)?;
-                // F2 on a single pane: its rename field takes the tab's place (no header).
-                if let Some(renaming) = self.renaming.as_ref().filter(|r| {
-                    r.target == RenameTarget::Tab(tab_id)
-                        || tab.single().map(RenameTarget::Session).as_ref() == Some(&r.target)
-                }) {
+                // The tab's own rename field takes its place; a pane is renamed in its header.
+                if let Some(renaming) =
+                    (self.renaming.as_ref()).filter(|r| r.target == RenameTarget::Tab(tab_id))
+                {
                     return Some(self.render_rename(&renaming.draft, theme, cx));
                 }
                 let workspace = (self.sidebar.projects().iter())

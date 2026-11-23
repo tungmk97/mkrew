@@ -248,7 +248,7 @@ impl Shell {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
+                    .child(self.render_tab_bar(project_id, tabs, theme, cx))
                     .child(if every_tab_detached {
                         empty_state(
                             theme,

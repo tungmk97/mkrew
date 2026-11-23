@@ -109,8 +109,8 @@ use mkrew_ui::split::{Axis, Direction, Divider, Preset, drop_axis};
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{
-    FIRST_TAB_TITLE, Tab, TabKind, Tabs, newest_unplaced, on_screen, rename_params, session_label,
-    tab_kind,
+    FIRST_TAB_TITLE, Tab, TabKind, Tabs, double_click_renames, newest_unplaced, on_screen,
+    rename_params, session_label, tab_kind,
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};

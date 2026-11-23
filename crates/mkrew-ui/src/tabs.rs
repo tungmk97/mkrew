@@ -70,14 +70,6 @@ impl Tab {
         self.layout.as_ref().map(Node::sessions).unwrap_or_default()
     }
 
-    /// The one pane on screen (zoomed, or the only pane), which then has no header.
-    pub fn single(&self) -> Option<Ulid> {
-        match (self.zoomed, self.layout.as_ref()) {
-            (Some(session), _) | (None, Some(&Node::Pane { session, .. })) => Some(session),
-            _ => None,
-        }
-    }
-
     /// Sessions on screen: the zoomed pane alone, else every pane.
     pub fn shown(&self) -> Vec<Ulid> {
         match self.zoomed {
@@ -823,22 +815,39 @@ pub fn tab_kind(tab: &Tab, sessions: &[Session]) -> TabKind {
     }
 }
 
-/// The session title a tab shows instead of its own: while one pane fills it (no pane header
-/// shows that title) and the tab keeps its default `Terminal` / `Terminal N` name. A name the
-/// user gave the tab always wins.
-pub fn session_label<'a>(tab: &Tab, sessions: &'a [Session]) -> Option<&'a str> {
-    let default = match tab.title.strip_prefix(FIRST_TAB_TITLE) {
+/// Whether `tab` still has its default name: `Terminal` or `Terminal N`.
+fn has_default_title(tab: &Tab) -> bool {
+    match tab.title.strip_prefix(FIRST_TAB_TITLE) {
         Some("") => true,
         Some(rest) => rest
             .strip_prefix(' ')
             .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
         None => false,
-    };
-    let session = tab.single().filter(|_| default)?;
+    }
+}
+
+/// The session title a tab shows instead of its own: the title of its focused pane (no pane
+/// header shows a title), while the tab keeps its default `Terminal` / `Terminal N` name. A
+/// name the user gave the tab always wins. It follows the focus; `None` for a tab without
+/// panes or a focused pane without a title.
+pub fn session_label<'a>(tab: &Tab, sessions: &'a [Session]) -> Option<&'a str> {
+    let focused = tab.focused().filter(|_| has_default_title(tab))?;
     sessions
         .iter()
-        .find(|s| s.id == session)
+        .find(|s| s.id == focused)
         .and_then(crate::history::title)
+}
+
+/// The pane a double-click on `tab` renames (SPEC §11): its focused pane while the tab keeps
+/// its default name, because the tab then shows that pane's title. `None` renames the tab
+/// itself: a name the user gave it, a tab without panes, or a focused run pane (named by its
+/// command, never renamed).
+pub fn double_click_renames(tab: &Tab, sessions: &[Session]) -> Option<Ulid> {
+    let focused = tab.focused().filter(|_| has_default_title(tab))?;
+    let session = sessions.iter().find(|s| s.id == focused)?;
+    mkrew_core::run::command_name(session)
+        .is_none()
+        .then_some(focused)
 }
 
 /// Sessions to attach (in `after` only) and to detach (in `before` only) when the visible
