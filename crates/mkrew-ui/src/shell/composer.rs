@@ -1214,7 +1214,15 @@ impl Shell {
         // at 13 px), so the room is measured in the same unit.
         let room = (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M)
             / (cx.global::<theme::Fonts>().ui_size / 13.0);
-        let shown = chat::fit_chips(chat::Chips::wanted(&stats), room);
+        let shown = chat::fit_chips(
+            chat::Chips::wanted(&stats),
+            room,
+            chat::FitCtx {
+                typing: is_focused && !draft.busy && !blank,
+                working,
+                branch: stats.branch.as_ref().map_or(0.0, chat::branch_width),
+            },
+        );
         let mono = theme.terminal_font_family.clone();
         let glyph = |icon: Icon, color: u32| icon_svg(icon, theme::ICON_SIZE_SMALL, color);
         let quiet = |el: gpui::Div| {
@@ -1279,10 +1287,20 @@ impl Shell {
                 0 => branch.name,
                 changed => format!("{} *{changed}", branch.name),
             };
+            // Capped at `COMPOSER_BRANCH_MAX_WIDTH` (what `fit_chips` reserves); the name
+            // truncates, so a long branch never pushes the send button out of the card.
             quiet(div())
+                .min_w_0()
+                .max_w(theme::rems_px(theme::COMPOSER_BRANCH_MAX_WIDTH))
                 .font_family(mono.clone())
                 .child(glyph(Icon::GitBranch, theme.text_muted))
-                .child(div().text_color(rgb(theme.syntax_string)).child(name))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(rgb(theme.syntax_string))
+                        .child(name),
+                )
         });
         // The status line replaces the stats and the end clock while it shows.
         let status = self.composer_status(draft, focused, false, theme);
@@ -1392,6 +1410,8 @@ impl Shell {
             .child(
                 div()
                     .flex()
+                    .min_w_0()
+                    .overflow_hidden()
                     .items_center()
                     .gap(px(space::S))
                     .children(model_chip)
