@@ -98,7 +98,7 @@ impl ChatUi {
 
 impl Shell {
     /// Sessions on screen in any window (the main window's tab and the detached ones').
-    fn visible_sessions(&self) -> Vec<Ulid> {
+    pub(crate) fn visible_sessions(&self) -> Vec<Ulid> {
         (self.hosted_sessions(self.main_visible).into_iter())
             .map(|(_, session)| session)
             .collect()
@@ -107,7 +107,7 @@ impl Shell {
     /// `info`'s pane can show Chat.
     pub(crate) fn chat_available(&self, info: &Session) -> bool {
         let has_transcript = (self.usages.get(info.id)).is_some_and(|u| u.transcript.is_some());
-        chat::available(info.kind, &info.agent_profile, has_transcript)
+        chat::available(info.kind, &info.agent_profile, has_transcript, info.tsp)
     }
 
     /// `info`'s pane shows Chat: its saved mode (the layout leaf), else `[ui] chat_default`.

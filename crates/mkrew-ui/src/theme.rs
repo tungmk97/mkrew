@@ -381,6 +381,21 @@ pub const COMPOSER_MAX_HEIGHT: f32 = 160.0;
 /// card line up in it (ADR 0105).
 pub const CHAT_COLUMN_WIDTH: f32 = 760.0;
 
+/// Width of the todo popover an omp pane opens from its hud (TSP `checklist`, ADR 0107).
+pub const TSP_POPOVER_WIDTH: f32 = 420.0;
+
+/// Tallest share of the pane's list area the todo popover takes; it scrolls past that.
+pub const TSP_POPOVER_MAX_FRACTION: f32 = 0.6;
+
+/// Shortest height the popover is capped at, before the list has been laid out.
+pub const TSP_POPOVER_MIN_HEIGHT: f32 = 120.0;
+
+/// The accent bar on the left of the picked row of an omp `ask` card.
+pub const TSP_ASK_BAR_WIDTH: f32 = 2.0;
+
+/// The ring of an omp `ask` timeout.
+pub const TSP_RING_SIZE: f32 = 24.0;
+
 /// Widest share of the Chat page a prompt card takes (it sits at the right).
 pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
 

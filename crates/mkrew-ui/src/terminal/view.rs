@@ -279,6 +279,12 @@ impl TerminalPane {
         self.focus_handle.contains_focused(window, cx)
     }
 
+    /// The pane's focus handle. A TSP pane keeps this `TerminalPane` out of the tree (it is still
+    /// fed, so its input mode stays right) and tracks the handle on its own element.
+    pub fn focus_handle(&self) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+
     /// The selected text, for "Send selection" (§20B.4). A copy mode in progress ends when
     /// there is a selection to send.
     pub fn take_selection_text(&mut self, cx: &mut Context<'_, Self>) -> Option<String> {
@@ -336,6 +342,13 @@ impl TerminalPane {
         self.request(request, "session.resize", cx);
     }
 
+    /// Fits the session's width to `cols`, keeping its rows: a TSP pane is never painted, so the
+    /// shell sizes the PTY from the pane's width (`shell/tsp_view.rs`).
+    pub fn fit_cols(&mut self, cols: u16, cx: &mut Context<'_, Self>) {
+        let rows = u16::try_from(self.emulator.size().1).unwrap_or(u16::MAX);
+        self.fit(cols, rows, cx);
+    }
+
     /// Sends `request` without waiting; a failure is logged (the pane keeps working).
     fn request(&self, request: Request, method: &'static str, cx: &mut Context<'_, Self>) {
         let reply = self.connection.request(request);
@@ -358,7 +371,13 @@ impl TerminalPane {
     /// instead, also in an exited pane (ADR 0022), and plain Ctrl+V pastes (ADR 0026). On macOS
     /// Option+key without `option_as_meta` is left to the input method (ADR 0099). While copy
     /// mode is on every key is the UI's.
-    fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
+    /// Also the key path of a TSP pane (`shell/tsp_view.rs`).
+    pub fn key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         if self.hints.is_some() {
             cx.stop_propagation();
             self.hint_key(event, cx);
@@ -1403,7 +1422,9 @@ static GLYPH_FALLBACKS: std::sync::LazyLock<gpui::FontFallbacks> = std::sync::La
     )
 });
 
-fn terminal_font(theme: &Theme) -> Font {
+/// The terminal font with the glyph fallbacks, for text drawn outside the grid (TSP `mono`,
+/// `ansi` and `rows`).
+pub fn terminal_font(theme: &Theme) -> Font {
     let mut base = font(theme.terminal_font_family.clone());
     base.fallbacks = Some(GLYPH_FALLBACKS.clone());
     base

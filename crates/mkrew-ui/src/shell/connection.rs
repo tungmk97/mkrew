@@ -166,6 +166,7 @@ impl Shell {
                         shell.save_main_frame();
                     }
                     shell.sync_thread(cx);
+                    shell.sync_tsps(window, cx);
                     shell.poll_machines(cx);
                     // Clicks of this window's own notifications where they come back on a
                     // channel (not Windows: there the toast's link starts `mkrew`).
@@ -192,7 +193,8 @@ impl Shell {
                         || shell.starting_pane.is_some()
                         || transcribing
                         || jira_busy
-                        || shell.chat_animating();
+                        || shell.chat_animating()
+                        || shell.tsp_animating();
                     if window.is_visible() && (due || status::redraw_due(sessions, last, now)) {
                         cx.notify();
                     }
@@ -402,6 +404,7 @@ impl Shell {
             right_panel,
             reads: HashMap::new(),
             chats: HashMap::new(),
+            tsps: HashMap::new(),
             thread: None,
             inspector_width,
             inspector_dragging: false,
@@ -1281,6 +1284,13 @@ impl Shell {
                     );
                 }
                 self.viewed.apply(event, self.sidebar.sessions());
+                // The session's TSP state before the sidebar applies the new one (fallback toast).
+                let tsp_before = match event {
+                    Event::SessionUpdated(updated) => (self.sidebar.sessions().iter())
+                        .find(|s| s.id == updated.id)
+                        .map(|s| s.tsp),
+                    _ => None,
+                };
                 match self.sidebar.apply(event) {
                     Change::None => {}
                     Change::Redraw => {
@@ -1289,6 +1299,12 @@ impl Shell {
                     }
                     // A new session (e.g. spawned by `mk`): re-list.
                     Change::Refresh => self.refresh(window, cx),
+                }
+                if let Event::SessionUpdated(updated) = event
+                    && mkrew_ui::tsp::enters_fallback(tsp_before, updated.tsp)
+                {
+                    // Asks the daemon for the reason, then toasts it.
+                    self.toast_fallback(updated.id, cx);
                 }
                 // After the board and sidebar, so a task leaving Running clears its warning.
                 let detected = self.conflicts.apply(event);
@@ -1351,6 +1367,13 @@ impl Shell {
                         cx.notify();
                     }
                 }
+                if let Event::TspUpdate(update) = event {
+                    self.tsp_update(update, cx);
+                    let shown = self.batch_shown(&mut shown_now, window);
+                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
+                        cx.notify();
+                    }
+                }
                 if let Event::ProjectCloned(done) = event {
                     self.workspace_cloned(done, window, cx);
                 }
@@ -1367,8 +1390,11 @@ impl Shell {
                 Delivery::Snapshot { snapshot, .. } => pane.load_snapshot(&snapshot),
                 Delivery::Exited { exit_code, .. } => pane.set_exited(exit_code),
             });
-            // A pane in Chat mode is not painted: it is no content to wait a frame for.
-            if !self.chat_session(session) && !fed.iter().any(|p| p.entity_id() == pane.entity_id())
+            // A pane in Chat mode, or showing a TSP surface, is not painted: it is no content to
+            // wait a frame for.
+            if !self.chat_session(session)
+                && !self.tsp_covers(session)
+                && !fed.iter().any(|p| p.entity_id() == pane.entity_id())
             {
                 fed.push(pane);
             }

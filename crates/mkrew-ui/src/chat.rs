@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use mkrew_core::thread::{PlanStatus, PlanStep, Subagent, ToolCall, short_model};
-use mkrew_protocol::{Recap, SessionKind, SessionUsageEvent};
+use mkrew_protocol::{Recap, SessionKind, SessionUsageEvent, TspState};
 use ulid::Ulid;
 
 use crate::docs::Shown;
@@ -15,9 +15,12 @@ use crate::thread_view::{Page, PageItem, PageTurn};
 use crate::{theme, usage};
 
 /// Whether a pane can show Chat: an agent whose profile is a shipped one with a readable
-/// transcript format (Claude, Codex, omp), or any agent whose transcript the daemon found.
-pub fn available(kind: SessionKind, profile: &str, has_transcript: bool) -> bool {
-    kind == SessionKind::Agent
+/// transcript format (Claude, Codex, omp), or any agent whose transcript the daemon found. Never
+/// while the session has TSP on (`tsp` is not `Off`): omp draws its own surface or, in fallback,
+/// the terminal grid (ADR 0107).
+pub fn available(kind: SessionKind, profile: &str, has_transcript: bool, tsp: TspState) -> bool {
+    tsp == TspState::Off
+        && kind == SessionKind::Agent
         && (has_transcript
             || matches!(
                 AgentLogo::of(profile),
@@ -1725,19 +1728,40 @@ mod tests {
     #[test]
     fn only_agents_with_a_readable_transcript_can_chat() {
         use SessionKind::{Agent, Shell};
-        assert!(available(Agent, "claude", false));
-        assert!(available(Agent, "codex", false));
-        assert!(available(Agent, "omp", false));
-        assert!(!available(Agent, "copilot", false), "no readable format");
+        use mkrew_protocol::TspState::Off;
+        assert!(available(Agent, "claude", false, Off));
+        assert!(available(Agent, "codex", false, Off));
+        assert!(available(Agent, "omp", false, Off));
         assert!(
-            !available(Agent, "my-agent", false),
+            !available(Agent, "copilot", false, Off),
+            "no readable format"
+        );
+        assert!(
+            !available(Agent, "my-agent", false, Off),
             "unknown until its transcript is found"
         );
         assert!(
-            available(Agent, "my-agent", true),
+            available(Agent, "my-agent", true, Off),
             "a copied profile whose transcript is found"
         );
-        assert!(!available(Shell, "claude", true), "a shell pane");
+        assert!(!available(Shell, "claude", true, Off), "a shell pane");
+    }
+
+    /// An omp pane with TSP on is the surface (or, in fallback, the terminal grid): no Chat
+    /// switch, whatever the transcript says.
+    #[test]
+    fn a_pane_with_tsp_on_has_no_chat() {
+        use SessionKind::Agent;
+        use mkrew_protocol::TspState::{Fallback, Live, Off, Waiting};
+        for tsp in [Waiting, Live, Fallback] {
+            assert!(!available(Agent, "omp", true, tsp), "{tsp:?}");
+        }
+        assert!(available(Agent, "omp", true, Off));
+        assert!(!effective(
+            available(Agent, "omp", true, Live),
+            Some(true),
+            true
+        ));
     }
 
     #[test]

@@ -607,7 +607,13 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let info = self.sidebar.sessions().iter().find(|s| s.id == session);
-        let content = if info.is_some_and(|info| self.chat_on(info)) {
+        // An omp pane with TSP on shows its surface (or the starting state); in `fallback` and
+        // `off` it is the terminal grid as before. It has no Chat mode (`chat::available`).
+        let tsp_drawn =
+            info.is_some_and(|info| self.tsp_pane_view(info) != mkrew_ui::tsp::PaneView::Terminal);
+        let content = if tsp_drawn {
+            self.render_tsp(session, is_focused, width, now, theme, cx)
+        } else if info.is_some_and(|info| self.chat_on(info)) {
             self.render_chat(session, is_focused, now, theme, cx)
         } else {
             match self.panes.get(&session) {
@@ -621,7 +627,9 @@ impl Shell {
             }
         };
         let border = status::pane_border(theme, info.map(|s| s.state), several, is_focused);
-        let reading = info.is_some_and(|info| self.reading_on(info));
+        // Reading width caps the terminal grid (and the Chat list); a surface keeps its own
+        // 760 px column (`chat_column`), so the cap would only narrow its scroll area.
+        let reading = info.is_some_and(|info| self.reading_on(info)) && !tsp_drawn;
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));
         let accent_border = theme.accent;
@@ -983,30 +991,37 @@ impl Shell {
                 .into_any_element(),
             );
         }
-        let reading = self.reading_on(info);
-        toggles.push(
-            icon_button_in(
-                SharedString::from(format!("pane-reading-{session}")),
-                Icon::AlignCenter,
-                if reading {
-                    theme.accent
-                } else {
-                    theme.text_muted
-                },
-                theme,
-            )
-            .tooltip(tooltip(
-                theme,
-                if reading {
-                    "Reading width: on (the agent wraps at about 130 columns). Click for full width"
-                } else {
-                    "Reading width: off (full width). Click to wrap at about 130 columns"
-                },
-                "",
-            ))
-            .on_click(cx.listener(move |shell, _, _, cx| shell.toggle_reading_width(session, cx)))
-            .into_any_element(),
-        );
+        // A surface (or its starting state) has no terminal to cap; in `fallback` and `off` the
+        // grid is back and so is the toggle. Terminal | Chat is already gone through
+        // `chat_available`; Share stays.
+        if self.tsp_pane_view(info) == mkrew_ui::tsp::PaneView::Terminal {
+            let reading = self.reading_on(info);
+            toggles.push(
+                icon_button_in(
+                    SharedString::from(format!("pane-reading-{session}")),
+                    Icon::AlignCenter,
+                    if reading {
+                        theme.accent
+                    } else {
+                        theme.text_muted
+                    },
+                    theme,
+                )
+                .tooltip(tooltip(
+                    theme,
+                    if reading {
+                        "Reading width: on (the agent wraps at about 130 columns). Click for full width"
+                    } else {
+                        "Reading width: off (full width). Click to wrap at about 130 columns"
+                    },
+                    "",
+                ))
+                .on_click(
+                    cx.listener(move |shell, _, _, cx| shell.toggle_reading_width(session, cx)),
+                )
+                .into_any_element(),
+            );
+        }
         if self.features.share {
             let following = self.follow.is_on(session);
             toggles.push(
