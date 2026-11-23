@@ -190,7 +190,18 @@ impl Engine {
                 "tsp: {dropped} oversized message(s) dropped"
             )));
         }
+        if self.state == TspState::Fallback {
+            self.pass_pending(&mut steps);
+        }
         steps
+    }
+
+    /// The splitter's held tail was plain output after all; it must not be lost when TSP stops.
+    fn pass_pending(&mut self, steps: &mut Vec<Step>) {
+        let tail = self.splitter.take_pending();
+        if !tail.is_empty() {
+            steps.push(Step::Plain(tail));
+        }
     }
 
     /// When to call [`Engine::on_deadline`]: only while no hello was answered, counted from the first output.
@@ -206,6 +217,7 @@ impl Engine {
     pub fn on_deadline(&mut self, now: Instant) -> Vec<Step> {
         let mut steps = Vec::new();
         if self.deadline().is_some_and(|d| now >= d) {
+            self.pass_pending(&mut steps);
             self.fall_back("no TSP reply from the terminal layer".into(), &mut steps);
         }
         steps
@@ -271,12 +283,13 @@ impl Engine {
 
     /// Keeps the newest blobs: past `max_blob_bytes` the oldest go first.
     fn store_blob(&mut self, blob: TspBlob) {
+        let id = blob.id.clone();
         self.blob_bytes += blob.data.len();
-        if let Some(old) = self.blobs.insert(blob.id.clone(), blob.clone()) {
+        if let Some(old) = self.blobs.insert(id.clone(), blob) {
             self.blob_bytes -= old.data.len();
-            self.blob_order.retain(|id| *id != old.id);
+            self.blob_order.retain(|k| *k != id);
         }
-        self.blob_order.push_back(blob.id);
+        self.blob_order.push_back(id);
         while self.blob_bytes > self.max_blob_bytes {
             let Some(oldest) = self.blob_order.pop_front() else {
                 break;
@@ -414,6 +427,9 @@ impl Engine {
     fn fall_back(&mut self, reason: String, steps: &mut Vec<Step>) {
         self.state = TspState::Fallback;
         self.surfaces.clear();
+        self.blobs.clear();
+        self.blob_order.clear();
+        self.blob_bytes = 0;
         self.fallback_reason = Some(reason.clone());
         steps.push(Step::State(TspState::Fallback));
         steps.push(Step::Warn(reason));

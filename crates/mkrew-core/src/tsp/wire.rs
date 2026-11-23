@@ -101,6 +101,16 @@ impl Splitter {
         std::mem::take(&mut self.dropped)
     }
 
+    /// The held tail, for when TSP is abandoned: it was plain output after all. Clears every state that would swallow later output.
+    pub fn take_pending(&mut self) -> Vec<u8> {
+        self.scanned = 0;
+        self.skipping = false;
+        self.skip_esc = false;
+        self.chunks.clear();
+        self.poisoned.clear();
+        std::mem::take(&mut self.buf)
+    }
+
     /// Splits one output chunk; keeps an unfinished message (or a prefix that may start one) for the next call.
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<Piece> {
         if bytes.is_empty() {

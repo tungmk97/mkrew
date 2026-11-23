@@ -131,6 +131,10 @@ fn an_unsupported_hello_version_falls_back_without_a_reply() {
         "{steps:?}"
     );
     assert_eq!(e.state(), TspState::Fallback);
+    assert_eq!(
+        e.snapshot().reason.as_deref(),
+        Some("omp offered TSP versions [2, 3], Mkrew speaks 1")
+    );
     assert_eq!(e.deadline(), None);
 
     // omp may offer several versions; `1` among them is enough.
@@ -348,6 +352,10 @@ fn closing_the_inline_surface_without_keep_falls_back() {
         "{steps:?}"
     );
     assert_eq!(e.state(), TspState::Fallback);
+    assert_eq!(
+        e.snapshot().reason.as_deref(),
+        Some("omp closed its surface and draws rows again")
+    );
     assert!(e.snapshot().surfaces.is_empty());
 }
 
@@ -703,4 +711,50 @@ fn a_late_frame_naming_evicted_ids_fails_per_op_with_one_error_and_one_ack() {
         !bodies.iter().any(|b| b["ev"] == "gone"),
         "nothing new was evicted"
     );
+}
+
+#[test]
+fn a_held_tail_comes_out_as_plain_when_the_deadline_falls_back() {
+    for tail in [&b"\x1b"[..], b"\x1b_ts"] {
+        let t = Instant::now();
+        let mut e = Engine::new(120, true);
+        let mut chunk = b"rows".to_vec();
+        chunk.extend_from_slice(tail);
+        assert_eq!(
+            merged(e.on_output(t, &chunk)),
+            vec![Step::Plain(b"rows".to_vec())]
+        );
+        let steps = e.on_deadline(t + HELLO_WAIT);
+        assert!(
+            matches!(steps.as_slice(), [Step::Plain(p), Step::State(TspState::Fallback), Step::Warn(_)] if p == tail),
+            "{steps:?}"
+        );
+        assert_eq!(e.on_output(t, b"next"), vec![Step::Plain(b"next".to_vec())]);
+    }
+}
+
+#[test]
+fn a_held_tail_comes_out_as_plain_when_a_chunk_falls_back() {
+    let t = Instant::now();
+    let mut e = Engine::new(120, true);
+    let mut chunk = hello_query(json!([2]));
+    chunk.extend_from_slice(b"x\x1b_ts");
+    let steps = merged(e.on_output(t, &chunk));
+    assert!(
+        matches!(steps.as_slice(), [Step::State(TspState::Fallback), Step::Warn(_), Step::Plain(p)] if p == b"x\x1b_ts"),
+        "{steps:?}"
+    );
+}
+
+#[test]
+fn falling_back_drops_the_blobs() {
+    let (mut e, t) = live();
+    let blob = format!(
+        "\x1b_tsp;b;id=a;mime=image/png;{}\x1b\\",
+        base64::engine::general_purpose::STANDARD.encode(b"xyz")
+    );
+    e.on_output(t, blob.as_bytes());
+    assert_eq!(e.blob_bytes, 3);
+    e.on_output(t, &apc(b'x', json!({"id": SF, "keep": false})));
+    assert_eq!((e.blobs.len(), e.blob_order.len(), e.blob_bytes), (0, 0, 0));
 }
