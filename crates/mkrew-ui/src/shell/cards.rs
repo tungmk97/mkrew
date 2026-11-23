@@ -240,7 +240,7 @@ pub(crate) fn task_card(
         // Always bordered, so selecting a card does not shift its content.
         .border(px(theme::BORDER_WIDTH))
         .border_color(rgb(if selected {
-            theme.pane_focus_border
+            theme.pane_focus_stripe
         } else {
             theme.surface_raised
         }))

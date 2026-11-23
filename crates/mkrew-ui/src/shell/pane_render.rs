@@ -433,7 +433,7 @@ impl Shell {
             .px(px(space::S))
             .rounded(px(radius::MEDIUM))
             .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.pane_focus_border))
+            .border_color(rgb(theme.pane_focus_stripe))
             .bg(rgb(theme.surface_raised))
             .whitespace_nowrap()
             .text_size(font_size::BODY)

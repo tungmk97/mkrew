@@ -123,7 +123,7 @@ pub fn pane_border(
     if state == Some(SessionState::NeedsInput) {
         Some(theme.status_needs_input)
     } else if several && focused {
-        Some(theme.pane_focus_border)
+        Some(theme.pane_focus_stripe)
     } else if several {
         Some(theme.border)
     } else {
@@ -256,7 +256,7 @@ mod tests {
             let working = Some(SessionState::Working);
             assert_eq!(
                 pane_border(&theme, working, true, true),
-                Some(theme.pane_focus_border)
+                Some(theme.pane_focus_stripe)
             );
             assert_eq!(pane_border(&theme, None, true, false), Some(theme.border));
             assert_eq!(pane_border(&theme, working, false, true), None, "lone pane");

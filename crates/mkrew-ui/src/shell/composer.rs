@@ -547,7 +547,7 @@ impl Shell {
                 .text_color(rgb(theme.text))
                 .border(px(theme::BORDER_WIDTH))
                 .border_color(if picked {
-                    gpui::Hsla::from(rgb(theme.pane_focus_border))
+                    gpui::Hsla::from(rgb(theme.pane_focus_stripe))
                 } else {
                     gpui::transparent_black()
                 })

@@ -989,7 +989,7 @@ pub(crate) fn file_row(
     let (menu_path, is_dir) = (entry.path.clone(), entry.is_dir);
     // The border is always there (so rows never shift); it only shows as the focus ring.
     let ring: gpui::Hsla = if at_cursor && state.focused {
-        rgb(theme.pane_focus_border).into()
+        rgb(theme.pane_focus_stripe).into()
     } else {
         gpui::transparent_black()
     };

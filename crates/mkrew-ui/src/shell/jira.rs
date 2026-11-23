@@ -895,7 +895,7 @@ impl Shell {
             // Always bordered, so selecting does not shift the content.
             .border(px(theme::BORDER_WIDTH))
             .border_color(if selected {
-                rgb(theme.pane_focus_border).into()
+                rgb(theme.pane_focus_stripe).into()
             } else {
                 gpui::transparent_black()
             })
@@ -966,7 +966,7 @@ impl Shell {
             // Always bordered, so hovering does not shift the content.
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(if selected {
-                theme.pane_focus_border
+                theme.pane_focus_stripe
             } else {
                 theme.surface_raised
             }))
