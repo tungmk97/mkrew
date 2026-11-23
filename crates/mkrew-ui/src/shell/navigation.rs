@@ -86,26 +86,58 @@ impl Shell {
         }
     }
 
-    /// A file tree row dropped on `session`'s pane (§20B.5, ADR 0081): `composer.file_ref`
-    /// on an agent, the bare relative path on a shell.
-    pub(crate) fn drop_tree_path(
+    /// Files dropped from the OS on a file or diff pane or on the tab strip (§20B.5): each file
+    /// inside the workspace root or the notes folder opens as a new tab; one toast says that
+    /// the others do not; folders are skipped.
+    /// In a machine window these files are on this computer, not on the machine: refused.
+    pub(crate) fn drop_os_files(
         &mut self,
-        session: Ulid,
-        dragged: &DraggedPath,
+        project_id: Ulid,
+        paths: &ExternalPaths,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let agent = (self.sidebar.sessions().iter())
-            .any(|s| s.id == session && s.kind == SessionKind::Agent);
-        // A missing or broken settings file types the default form (the daemon reports it).
-        let template = mkrew_core::settings::load(&self.settings_file)
-            .unwrap_or_default()
-            .composer
-            .file_ref;
-        let text = composer::dropped_ref(&template, &dragged.path, dragged.is_dir, agent);
-        self.type_into_pane(session, &text, window, cx);
+        if self.modal_open() {
+            return;
+        }
+        if let Some(name) = self.machine_name().map(str::to_owned) {
+            self.toast_info(mkrew_ui::machines::local_files_refused(&name), cx);
+            return;
+        }
+        let Some(root) = (self.sidebar.projects().iter())
+            .find(|project| project.id == project_id)
+            .map(|project| PathBuf::from(&project.path))
+        else {
+            return;
+        };
+        let files: Vec<PathBuf> = (paths.paths().iter())
+            .filter(|path| !path.is_dir())
+            .cloned()
+            .collect();
+        let notes = self.notes_folder();
+        let found = mkrew_ui::drop_zone::classify_os_files(&root, notes.as_deref(), &files);
+        if found.refused > 0 {
+            self.toast_error(mkrew_ui::drop_zone::REFUSED_OS_FILES, cx);
+        }
+        for path in found.open {
+            self.open_document(
+                project_id,
+                path,
+                None,
+                mkrew_ui::documents::Place::NewTab,
+                window,
+                cx,
+            );
+        }
     }
 
+    /// The absolute `[notes] folder` the daemon reads and writes files in, outside the
+    /// workspace root; `None` while no such folder is configured.
+    /// Task 7 (the `[notes] folder` setting) replaces this body with the resolved folder; the
+    /// drop check above needs no other change.
+    fn notes_folder(&self) -> Option<PathBuf> {
+        None
+    }
     /// Types a drop into `session`'s pane: into its composer draft while the composer is
     /// shown, else into the terminal; no Enter either way. A modal dialog covers the panes,
     /// so a drop on it types nothing.

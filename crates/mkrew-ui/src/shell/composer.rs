@@ -914,6 +914,72 @@ impl Shell {
         .detach();
     }
 
+    /// A Files tree row, file or folder, dropped on `session`'s composer (§20B.5, ADR 0081):
+    /// `composer.file_ref` on an agent, the bare relative path on a shell, a folder ending in
+    /// `/`, typed into the draft with no Enter.
+    /// This was the pane's drop; a pane now opens the file, so only a composer that is shown
+    /// takes the row.
+    pub(crate) fn drop_tree_on_composer(
+        &mut self,
+        session: Ulid,
+        dragged: &DraggedPath,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let in_workspace = (self.tab_of_session(session))
+            .is_some_and(|(project_id, _)| project_id == dragged.project_id);
+        if self.modal_open() || !in_workspace || self.composers.shown(session).is_none() {
+            return;
+        }
+        let agent = (self.sidebar.sessions().iter())
+            .any(|s| s.id == session && s.kind == SessionKind::Agent);
+        // A missing or broken settings file types the default form (the daemon reports it).
+        let template = mkrew_core::settings::load(&self.settings_file)
+            .unwrap_or_default()
+            .composer
+            .file_ref;
+        let text = composer::dropped_ref(&template, &dragged.path, dragged.is_dir, agent);
+        self.focus_session_pane(session);
+        self.prompt_typed(composer::Target::Composer(session), &text, window, cx);
+        cx.notify();
+    }
+
+    /// Makes a composer element (the docked box, the chat card, its collapsed pill) take a
+    /// tree row: an accent ring while one hovers it, and the pane's edge half is put out
+    /// while the pointer is over the composer, because the drop lands here and not as a split.
+    /// The frame's drag-move runs first (capture phase, parent before child), this one clears.
+    fn composer_drops<E: gpui::InteractiveElement + gpui::ParentElement>(
+        el: E,
+        session: Ulid,
+        corner: f32,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> E {
+        let accent = theme.accent;
+        el.on_drop(
+            cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
+                shell.drop_tree_on_composer(session, dragged, window, cx);
+            }),
+        )
+        .on_drag_move(
+            cx.listener(|shell, event: &DragMoveEvent<DraggedPath>, _, cx| {
+                if event.bounds.contains(&event.event.position) && shell.pane_drop.take().is_some()
+                {
+                    cx.notify();
+                }
+            }),
+        )
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .rounded(px(corner))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(gpui::transparent_black())
+                .drag_over::<DraggedPath>(move |style, _, _, _| style.border_color(rgb(accent))),
+        )
+    }
+
     /// The composer docked under `session`'s pane (§20B.1). In Chat mode it is the floating
     /// card (`composer_card`, ADR 0105); in Terminal mode the docked box: the draft,
     /// then why the last send failed or the keys. Only the focused pane's composer takes the
@@ -969,47 +1035,45 @@ impl Shell {
             theme,
             cx,
         );
-        div()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap(px(space::XS))
-            .p(px(space::S))
-            .bg(rgb(theme.surface))
-            .font_family(theme.ui_font_family.clone())
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.focus_session_pane(session);
-                    window.focus(&shell.composer_focus, cx);
-                    cx.notify();
-                }),
-            )
-            .when(!queued.is_empty(), |el| {
-                el.child(
-                    div()
-                        .id("composer-queue")
-                        .flex_none()
-                        .max_h(px(theme::COMPOSER_QUEUE_MAX_HEIGHT))
-                        .overflow_y_scroll()
-                        .flex()
-                        .flex_col()
-                        .gap(px(space::XS))
-                        .children(queued),
+        let panel =
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap(px(space::XS))
+                .p(px(space::S))
+                .bg(rgb(theme.surface))
+                .font_family(theme.ui_font_family.clone())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
+                        shell.focus_session_pane(session);
+                        window.focus(&shell.composer_focus, cx);
+                        cx.notify();
+                    }),
                 )
-            })
-            .child(field)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .child(
+                .when(!queued.is_empty(), |el| {
+                    el.child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .children(status.map(|(icon, color, text)| {
+                            .id("composer-queue")
+                            .flex_none()
+                            .max_h(px(theme::COMPOSER_QUEUE_MAX_HEIGHT))
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .gap(px(space::XS))
+                            .children(queued),
+                    )
+                })
+                .child(field)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::S))
+                        .child(div().flex_1().min_w_0().children(status.map(
+                            |(icon, color, text)| {
                                 div()
                                     .flex()
                                     .min_w_0()
@@ -1034,11 +1098,11 @@ impl Shell {
                                             }))
                                             .child(text),
                                     )
-                            })),
-                    )
-                    .children(tools),
-            )
-            .into_any_element()
+                            },
+                        )))
+                        .children(tools),
+                );
+        Self::composer_drops(panel, session, radius::MEDIUM, theme, cx).into_any_element()
     }
 
     /// The Chat composer (ADR 0105): in the page's centered column, `space::M` above the pane's
@@ -1111,6 +1175,7 @@ impl Shell {
                     theme::ICON_SIZE_SMALL,
                     theme.text_muted,
                 ));
+            let pill = Self::composer_drops(pill, session, radius::PILL, theme, cx);
             return super::chat_view::chat_column(pill)
                 .pb(px(space::M))
                 .into_any_element();
@@ -1425,6 +1490,7 @@ impl Shell {
                     ))
                     .child(send),
             );
+        let card = Self::composer_drops(card, session, radius::LARGE, theme, cx);
         super::chat_view::chat_column(div().flex().flex_col().children(meter).child(card))
             .pb(px(space::M))
             .into_any_element()

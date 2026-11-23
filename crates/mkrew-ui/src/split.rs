@@ -790,16 +790,6 @@ impl Rect {
     };
 }
 
-/// The split a pane dropped on a pane at `(x, y)` (fractions of that pane, 0..1) makes: right
-/// of it (`Vertical`) when the pointer is further right than down, else below it.
-pub fn drop_axis(x: f32, y: f32) -> Axis {
-    if x > y {
-        Axis::Vertical
-    } else {
-        Axis::Horizontal
-    }
-}
-
 /// The two children's areas of a split of `area`.
 fn halves(axis: Axis, ratio: f64, area: Rect) -> (Rect, Rect) {
     match axis {
@@ -866,14 +856,6 @@ mod tests {
         second: serde_json::Value,
     ) -> serde_json::Value {
         json!({"split": axis, "ratio": 0.5, "children": [first, second]})
-    }
-
-    #[test]
-    fn a_drop_leaning_right_splits_right_else_below() {
-        assert_eq!(drop_axis(0.9, 0.5), Axis::Vertical);
-        assert_eq!(drop_axis(0.6, 0.1), Axis::Vertical);
-        assert_eq!(drop_axis(0.5, 0.9), Axis::Horizontal);
-        assert_eq!(drop_axis(0.1, 0.6), Axis::Horizontal);
     }
 
     #[test]

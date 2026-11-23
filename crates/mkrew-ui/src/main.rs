@@ -106,7 +106,7 @@ use mkrew_ui::scrollbar;
 use mkrew_ui::settings_dialog::{self, SettingsDialog};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::slash_picker::{self, SlashKey, SlashPicker};
-use mkrew_ui::split::{Axis, Direction, Divider, Edge, Leaf, PaneKey, Preset, drop_axis};
+use mkrew_ui::split::{Axis, Direction, Divider, Edge, Leaf, PaneKey, Preset};
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{

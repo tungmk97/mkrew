@@ -138,6 +138,7 @@ impl Shell {
             .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
                 shell.drop_reordered(item, window, cx);
             }))
+            .when(host == HostId::Main, |el| self.strip_drops(el, theme, cx))
             // First: the strip records before its chips (prepaint goes parent first).
             .child(record_strip(strip, None))
             .child(
@@ -592,7 +593,6 @@ impl Shell {
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));
         let stripe = status::pane_stripe(theme, info.map(|s| s.state), color, several, is_focused);
-        let accent_border = theme.accent;
         let frame = div()
             .relative()
             .size_full()
@@ -602,20 +602,8 @@ impl Shell {
             // The file pane's own keys (Ctrl+S, Ctrl+F, ...), not the root's.
             .when(matches!(key, PaneKey::File(_)), |el| {
                 el.key_context(EDITOR_CONTEXT)
-            })
-            .when_some(session, |el, session| {
-                el.on_drop(
-                    cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
-                        if shell.workspace == Some(dragged.project_id) {
-                            shell.drop_tree_path(session, dragged, window, cx);
-                        }
-                    }),
-                )
             });
-        let frame = match session {
-            Some(session) => self.pane_drop_target(frame, session, cx),
-            None => frame,
-        };
+        let frame = self.pane_drop_target(frame, project_id, &key, cx);
         frame
             .on_mouse_down(MouseButton::Left, {
                 let key = key.clone();
@@ -624,25 +612,6 @@ impl Shell {
                     shell.focus_pane(window, cx);
                     cx.notify();
                 })
-            })
-            .when_some(session, |el, session| {
-                el.on_drag_move::<ExternalPaths>(cx.listener(
-                    move |shell, event: &DragMoveEvent<ExternalPaths>, _, cx| {
-                        // A modal dialog covers the pane: its own box takes the drop, and this
-                        // pane's catcher (painted first) must not take the slot from it.
-                        if !shell.modal_open() && event.bounds.contains(&event.event.position) {
-                            shell.drop_hover =
-                                Some((DropTarget::Pane(session), event.drag(cx).clone()));
-                        } else if shell
-                            .drop_hover
-                            .as_ref()
-                            .is_some_and(|(hovered, _)| *hovered == DropTarget::Pane(session))
-                        {
-                            shell.drop_hover = None;
-                        }
-                    },
-                ))
-                .child(drop_catcher(DropTarget::Pane(session), cx))
             })
             // Reading width: the terminal element is narrower, so the PTY gets fewer columns
             // (the program wraps there); nothing reflows its output.
@@ -681,21 +650,7 @@ impl Shell {
             // The terminal paints a square quad and gpui clips to rectangles: the frame color
             // over the four corners gives the pane its rounded look.
             .child(corner_masks(theme.pane_gap))
-            // The drop ring: an overlay, so the terminal keeps its size and the pointer.
-            .when(session.is_some(), |el| {
-                el.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .rounded(px(radius::MEDIUM))
-                        .border(px(theme::BORDER_WIDTH))
-                        .border_color(gpui::transparent_black())
-                        .drag_over::<DraggedPath>(move |style, _, _, _| {
-                            style.border_color(rgb(accent_border))
-                        }),
-                )
-            })
-            .children(session.and_then(|session| self.pane_drop_overlay(session, theme, cx)))
+            .children(self.pane_drop_overlay(&key, theme, cx))
             .when_some(stripe, |el, stripe| {
                 el.child(
                     div()
@@ -708,7 +663,7 @@ impl Shell {
                 )
             })
             .children(info.and_then(|info| self.pane_badges(info, zoomed, theme, cx)))
-            .children(info.map(|info| self.pane_edge(info, several, theme, cx)))
+            .child(self.pane_edge(project_id, &key, several, theme, cx))
             .when_some(voice_ring, |el, color| {
                 el.child(
                     div()
@@ -856,18 +811,20 @@ impl Shell {
         })
     }
 
-    /// The top edge of a pane: it records the anchor of the pane's keyboard menu and, among
-    /// `several` panes, is a slim handle (`PANE_GRIP_HEIGHT` tall, a grip shows on hover) that
-    /// drags the pane onto another.
+    /// The top edge of a pane: for a session it records the anchor of the pane's keyboard menu
+    /// and, among `several` panes, it is a slim handle (`PANE_GRIP_HEIGHT` tall, a grip shows on
+    /// hover) that drags the pane onto another; a file or diff pane has the handle but no
+    /// anchor.
     /// The handle blocks the mouse (not the wheel): gpui hit-tests every hitbox until one blocks,
     /// so without it the terminal under it would also get the mouse down and start a selection.
-    /// Drops are delivered to the hovered hitbox only, so the strip repeats the pane frame's drop
-    /// handlers (the frame's drag-move still sets the half that lights up).
+    /// Drops are delivered to the hovered hitbox only, so the strip carries the pane frame's drop
+    /// set (`pane_drops`); the frame's drag-move still sets the half that lights up.
     /// A lone pane has nothing to rearrange: its edge is an empty div, only the Shift+F10 menu
-    /// anchor, with no hitbox and no mouse handling.
+    /// anchor of a session, with no hitbox and no mouse handling.
     fn pane_edge(
         &self,
-        info: &Session,
+        project_id: Ulid,
+        key: &PaneKey,
         several: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -881,27 +838,16 @@ impl Shell {
             .flex()
             .items_center()
             .justify_center()
-            .child(record_bounds(Anchor::Pane(info.id), cx));
+            .children(
+                key.session()
+                    .map(|session| record_bounds(Anchor::Pane(session), cx)),
+            );
         if !several {
             return edge.into_any_element();
         }
-        let session = info.id;
-        let edge = edge
-            .on_drop(cx.listener(move |shell, pane: &DraggedPane, window, cx| {
-                shell.drop_pane(pane.session, session, window, cx);
-            }))
-            .on_drop(cx.listener(move |shell, item: &DraggedItem, window, cx| {
-                shell.drop_tab_on_pane(item, session, window, cx);
-            }))
-            .on_drop(
-                cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
-                    if shell.workspace == Some(dragged.project_id) {
-                        shell.drop_tree_path(session, dragged, window, cx);
-                    }
-                }),
-            );
-        let group = SharedString::from(format!("pane-grip-{}", info.id));
-        let handle = self.draggable_pane(edge.group(group.clone()), info, theme);
+        let edge = Self::pane_drops(edge, project_id, key, cx);
+        let group = grip_id(key);
+        let handle = self.draggable_pane(edge.group(group.clone()), project_id, key, theme);
         grip_hover(handle, theme)
             .block_mouse_except_scroll()
             .cursor(CursorStyle::OpenHand)
@@ -1083,10 +1029,12 @@ pub(crate) fn detach(connection: &Connection, session_id: Ulid, cx: &mut Context
 }
 
 /// What an OS file drag hovers (§20B.5, ADR 0095).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DropTarget {
-    /// An agent or shell pane.
-    Pane(Ulid),
+    /// A pane: a terminal types the paths, a file or diff pane opens the files.
+    Pane(PaneKey),
+    /// The main window's tab strip: the files open as new tabs.
+    Strip,
     /// The Prompt box of the open task dialog.
     TaskPrompt,
 }
@@ -1114,9 +1062,20 @@ pub(crate) fn drop_catcher(
                     let hovered = shell.drop_hover.take_if(|(hovered, _)| *hovered == target);
                     if let Some((_, paths)) = hovered {
                         cx.stop_propagation();
-                        match target {
-                            DropTarget::Pane(session) => {
-                                shell.drop_paths(session, &paths, window, cx);
+                        match &target {
+                            DropTarget::Pane(PaneKey::Session(session)) => {
+                                shell.drop_paths(*session, &paths, window, cx);
+                            }
+                            // The workspace of the window the pointer was released in.
+                            DropTarget::Pane(_) => {
+                                if let Some((project_id, _)) = shell.tab_scope(window) {
+                                    shell.drop_os_files(project_id, &paths, window, cx);
+                                }
+                            }
+                            DropTarget::Strip => {
+                                if let Some(project_id) = shell.workspace {
+                                    shell.drop_os_files(project_id, &paths, window, cx);
+                                }
                             }
                             DropTarget::TaskPrompt => shell.drop_prompt_paths(&paths, window, cx),
                         }
