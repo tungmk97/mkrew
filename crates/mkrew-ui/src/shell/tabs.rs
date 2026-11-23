@@ -476,8 +476,8 @@ impl Shell {
         self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
-    /// Sends a `tab.rename` / `session.rename` / `session.set_color` / `session.pin` / `tab.pin`; `shown` applies the
-    /// reply, a failure toasts after `failure`.
+    /// Sends a `tab.rename` / `session.rename` / `session.set_color` / `session.pin` /
+    /// `tab.pin`; `shown` applies the reply, a failure toasts after `failure`.
     pub(crate) fn send_edit<T: serde::de::DeserializeOwned + Send + 'static>(
         &mut self,
         request: Request,

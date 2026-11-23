@@ -1048,6 +1048,10 @@ impl Keymap {
         // Applied all at once, so two commands can swap keys.
         let mut overrides: Vec<(Command, String)> = Vec::new();
         for (name, value) in table {
+            // The widget bar is gone (ADR 0106): its binding is dropped, not reported.
+            if name == "toggle_widget_bar" {
+                continue;
+            }
             let Some(command) = Command::from_name(&name) else {
                 errors.push(KeymapError::UnknownCommand(name));
                 continue;
@@ -1789,6 +1793,14 @@ mod tests {
         ] {
             assert_eq!(keymap.label(command), defaults.label(command));
         }
+    }
+
+    /// ADR 0106 removed the widget bar; a file that still binds its command loads without an error.
+    #[test]
+    fn a_binding_of_the_retired_widget_bar_command_is_ignored() {
+        let (keymap, errors) = Keymap::parse("toggle_widget_bar = \"ctrl-alt-f11\"\n");
+        assert_eq!(errors, []);
+        assert_eq!(keymap.command_for(&keystroke("ctrl-alt-f11")), None);
     }
 
     #[test]

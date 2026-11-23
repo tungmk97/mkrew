@@ -187,7 +187,7 @@ impl Shell {
         )
     }
 
-    /// The tab menu (right-click a tab, or the tab bar's ⋯): Pin, Split right / down, Rename,
+    /// The tab menu (right-click a tab): Pin, Split right / down, Rename,
     /// the moves to other windows, Close, and in the main window Close others and Close tabs to
     /// the right (pinned tabs stay); on the active tab also the focused pane's Rename pane,
     /// Close pane and, for an agent, Follow in Zed (✓ while on) and Turns….

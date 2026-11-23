@@ -171,13 +171,15 @@ pub enum Open {
     Kept,
 }
 
-/// Which tabs a close asks for (tab menu; pinned tabs stay, except for `One`).
+/// Which tabs a close asks for (tab menu; pinned tabs stay, except for `One` and `Every`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Close {
     One,
     Others,
     Right,
     All,
+    /// Every tab, pinned or not (the Editor chip's ✕).
+    Every,
 }
 
 /// One opened file of the Files view (SPEC §12A, ADR 0080).
@@ -600,7 +602,7 @@ impl FilesView {
         self.activate(at)
     }
 
-    /// The tabs a close of `path`'s tab asks for (pinned tabs stay, except for `One`).
+    /// The tabs a close of `path`'s tab asks for (pinned tabs stay, except for `One` and `Every`).
     pub fn close_targets(&self, path: &str, which: Close) -> Vec<String> {
         let Some(at) = self.position(path) else {
             return Vec::new();
@@ -611,6 +613,7 @@ impl FilesView {
                 Close::Others => *i != at && !tab.pinned,
                 Close::Right => *i > at && !tab.pinned,
                 Close::All => !tab.pinned,
+                Close::Every => true,
             })
             .map(|(_, tab)| tab.path.clone())
             .collect()

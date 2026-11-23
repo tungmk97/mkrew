@@ -1,4 +1,4 @@
-//! Tab bar, tabs, rename field, pane frame and header.
+//! Tab area, tabs, rename field, pane frame and header.
 
 use crate::*;
 
@@ -216,8 +216,8 @@ impl Shell {
                                 .and_then(FilesView::file)
                                 .map(str::to_owned);
                             if let Some(path) = path {
-                                // Pinned file tabs stay (`Close::All`), as in the tab menu.
-                                shell.close_file_tabs(project_id, &path, Close::All, window, cx);
+                                // All file tabs, pinned too; unsaved text is asked first.
+                                shell.close_file_tabs(project_id, &path, Close::Every, window, cx);
                             }
                         }
                     }

@@ -189,7 +189,7 @@ pub const WINDOW_HEIGHT: f32 = 760.0;
 /// Smallest main window: the title bar's contents fit (ADR 0034).
 pub const WINDOW_MIN_WIDTH: f32 = 1100.0;
 pub const WINDOW_MIN_HEIGHT: f32 = 560.0;
-/// Smallest detached window (ADR 0096): a tab strip and one pane fit.
+/// Smallest detached window (ADR 0096): a title bar with tabs and one pane fit.
 pub const DETACHED_MIN_WIDTH: f32 = 480.0;
 pub const DETACHED_MIN_HEIGHT: f32 = 320.0;
 /// Where a detached window opened from the keyboard goes: this far right and down of the
@@ -777,10 +777,13 @@ pub struct Theme {
     pub surface_raised: u32,
     /// The workspace sidebar, a shade off `bg`.
     pub sidebar: u32,
-    /// The title bar and the Terminals tab bar (the window chrome around the panes).
+    /// The title bar (the window chrome around the tabs and panes).
     pub chrome: u32,
     /// Board cards and other blocks that sit on `bg`.
     pub card: u32,
+    /// The fill of the shown tab chip in the title bar; always differs from `chrome` (the
+    /// "active tab" rule of `problems`).
+    pub tab_active: u32,
     /// A hovered row or quiet button.
     pub hover: u32,
     /// The selected row (sidebar session, list item).
@@ -1014,6 +1017,7 @@ impl Theme {
             sidebar: 0x0F1013,
             chrome: 0x0F1013,
             card: 0x1C1F24,
+            tab_active: 0x2A2E35,
             hover: 0x1F2227,
             selected: 0x2A2E35,
             selected_ring: 0x3D4380,
@@ -1109,6 +1113,7 @@ impl Theme {
             sidebar: 0xF7F7F8,
             chrome: 0xF7F7F8,
             card: 0xF7F8FA,
+            tab_active: 0xE6E8EC,
             hover: 0xEEF0F3,
             selected: 0xE6E8EC,
             selected_ring: 0xA7ADEA,
@@ -1203,6 +1208,7 @@ impl Theme {
             sidebar: 0x191A1F,
             chrome: 0x15161A,
             card: 0x1A1B20,
+            tab_active: 0x262A3D,
             hover: 0x22242B,
             selected: 0x262A3D,
             selected_ring: 0x3D4380,
@@ -1275,6 +1281,7 @@ impl Theme {
             sidebar: 0xF4F5F7,
             chrome: 0xFFFFFF,
             card: 0xFFFFFF,
+            tab_active: 0xE9EAFF,
             hover: 0xEEF0F3,
             selected: 0xE9EAFF,
             selected_ring: 0xA7ADEA,
@@ -1347,6 +1354,7 @@ impl Theme {
             sidebar: 0,
             chrome: 0,
             card: 0,
+            tab_active: 0,
             hover: 0,
             selected: 0,
             selected_ring: 0,
@@ -1451,7 +1459,7 @@ pub struct Palette {
     pub dark: bool,
     /// The main area and the terminal.
     pub bg: u32,
-    /// Sidebar, title bar, tab strip.
+    /// Sidebar, title bar.
     pub chrome: u32,
     /// Panels, popovers, inputs, cards.
     pub surface: u32,
@@ -1633,6 +1641,7 @@ impl Theme {
             chrome: p.chrome,
             surface: p.surface,
             card: p.surface,
+            tab_active: mix(p.chrome, p.fg, 0.12),
             surface_raised,
             selected: surface_raised,
             hover,
@@ -2330,7 +2339,7 @@ pub const STATUS_DOT_LARGE: f32 = 6.0;
 /// One breath of the voice input ring ([`crate::voice::pulse`]); its lowest opacity.
 pub const PULSE_PERIOD: Duration = Duration::from_millis(1600);
 pub const PULSE_MIN_OPACITY: f32 = 0.35;
-/// A pane's status pill ("Idle · 2m") in the tab strip and the pane header.
+/// A pane's status pill ("Idle · 2m") in the pane header.
 pub const STATUS_PILL_HEIGHT: f32 = 24.0;
 /// Longest tab title before it truncates.
 pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
@@ -2494,6 +2503,10 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
     for fg in [t.status_needs_input, t.danger_text] {
         check("limits chip", fg, t.chrome, 4.5);
     }
+    // The shown tab chip of the title bar (ADR 0106) must stand out from `chrome`, and its
+    // text must read on it.
+    check("active tab", t.tab_active, t.chrome, 1.1);
+    check("active tab", t.text, t.tab_active, 4.5);
     found
 }
 
@@ -2696,6 +2709,13 @@ mod tests {
                 "limits chip",
                 Theme {
                     chrome: t.status_needs_input,
+                    ..t.clone()
+                },
+            ),
+            (
+                "active tab",
+                Theme {
+                    tab_active: t.chrome,
                     ..t.clone()
                 },
             ),

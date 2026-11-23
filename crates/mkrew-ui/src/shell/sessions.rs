@@ -72,7 +72,7 @@ impl Shell {
     }
 
     /// The installed agent profiles a new pane can start with in the active workspace, its
-    /// default first (the "+ New" menu and the palette).
+    /// default first (the `+` menu and the palette).
     pub(crate) fn pane_agents(&self) -> Vec<lifecycle::PaneAgent> {
         let default = self.workspace.and_then(|id| {
             let project = self.sidebar.projects().iter().find(|p| p.id == id)?;

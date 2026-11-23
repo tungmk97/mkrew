@@ -1,4 +1,4 @@
-//! Drag to reorder, one look for the sidebar's workspace cards and rows, the tab strip and the
+//! Drag to reorder, one look for the sidebar's workspace cards and rows, the tab area and the
 //! Files tabs: a small chip follows the pointer, the dragged item stays dim in its place and an
 //! accent line marks the gap it lands in (the half of the item under the pointer picks the
 //! side).
@@ -16,7 +16,7 @@ pub(crate) enum ReorderList {
     Workspaces(bool),
     /// A workspace's pinned (`true`) or unpinned Files tabs.
     FileTabs(Ulid, bool),
-    /// The tab strip of a detached window.
+    /// The tab area of a detached window.
     Detached(WindowKey),
 }
 
@@ -152,7 +152,7 @@ impl Shell {
             .into_any_element()
     }
 
-    /// A reorder drag was released over its list (the sidebar or the tab strip): the item moves
+    /// A reorder drag was released over its list (the sidebar or the tab area): the item moves
     /// to the gap the line showed.
     pub(crate) fn drop_reordered(
         &mut self,

@@ -39,7 +39,7 @@ pub fn spawn_params(
     }
 }
 
-/// One installed agent profile a new pane can start with (the "+ New" menu and the palette).
+/// One installed agent profile a new pane can start with (the `+` menu and the palette).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneAgent {
     /// Position in the profile list it was made from (what the palette's pick refers to).
@@ -228,19 +228,14 @@ pub fn running_warning(sessions: &[Session], project_id: Ulid) -> Option<String>
 
 /// The warning to toast for `project_id` now: its text the first time the running count is
 /// above [`RUNNING_WARN_ABOVE`], then `None` until the count has been at or below it (`warned`
-/// remembers the workspaces already told).
+/// remembers the workspaces already told; one that is not shown re-arms here too).
 pub fn running_alert(
     sessions: &[Session],
     project_id: Ulid,
     warned: &mut HashSet<Ulid>,
 ) -> Option<String> {
-    match running_warning(sessions, project_id) {
-        Some(text) => warned.insert(project_id).then_some(text),
-        None => {
-            warned.remove(&project_id);
-            None
-        }
-    }
+    warned.retain(|id| running_count(sessions, *id) > RUNNING_WARN_ABOVE);
+    running_warning(sessions, project_id).and_then(|text| warned.insert(project_id).then_some(text))
 }
 
 #[cfg(test)]
@@ -508,6 +503,15 @@ mod tests {
             running_alert(&sessions, other, &mut warned),
             None,
             "another workspace"
+        );
+
+        // A workspace that is not shown re-arms while another one is asked about.
+        sessions.truncate(RUNNING_WARN_ABOVE);
+        assert_eq!(running_alert(&sessions, other, &mut warned), None);
+        sessions.push(session(project, SessionKind::Agent, SessionState::Working));
+        assert!(
+            running_alert(&sessions, project, &mut warned).is_some(),
+            "re-armed while hidden"
         );
     }
 }

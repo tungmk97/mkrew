@@ -1,4 +1,4 @@
-//! Drag a tab (from the tab strip) or a pane (by its header) onto a pane to split it (SPEC §10):
+//! Drag a tab (from the tab area) or a pane (by its header) onto a pane to split it (SPEC §10):
 //! the half of the pane under the pointer lights up, and the drop puts the dragged panes right
 //! of it or below it, whichever side the pointer leans to.
 
@@ -123,7 +123,7 @@ impl Shell {
         let next = if takes && bounds.contains(&position) {
             let at = position - bounds.origin;
             let axis = drop_axis(at.x / bounds.size.width, at.y / bounds.size.height);
-            // Off the tab strip: no reorder line.
+            // Off the tab area: no reorder line.
             if let Some(reorder) = &mut self.reorder {
                 reorder.target = reorder.from;
                 reorder.after = false;

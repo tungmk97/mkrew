@@ -1,4 +1,5 @@
-//! What a detached window shows (ADR 0096, ADR 0106): the shared title bar with its tabs, the active tab.
+//! What a detached window shows (ADR 0096, ADR 0106): the shared title bar with its tabs, the
+//! active tab.
 
 use crate::*;
 
@@ -199,9 +200,14 @@ impl Shell {
                 ))
             })
             .collect();
-        // The key is the scroll target only, as in `render_tab_area`.
+        // The key is the scroll target only, as in `render_tab_area`; the index counts the
+        // chips built, which skip a tab that no longer resolves.
         let active_chip = active.and_then(|DockTab::Terminal { tab_id, .. }| {
-            let index = tabs.iter().position(|dock| Some(*dock) == active)?;
+            let index = (tabs.iter())
+                .filter(|DockTab::Terminal { project, tab_id }| {
+                    (self.tabs.get(project)).is_some_and(|set| set.tab(*tab_id).is_some())
+                })
+                .position(|dock| Some(*dock) == active)?;
             Some((SharedString::from(format!("tab/{tab_id:?}")), index))
         });
         self.tab_area_frame(host, chips, active_chip, None, theme, cx)

@@ -1341,6 +1341,21 @@ fn bulk_closes_skip_pinned_tabs() {
 }
 
 #[test]
+fn the_editor_chip_close_takes_every_tab_pinned_too() {
+    let mut view = three();
+    for path in ["README.md", "src/main.rs"] {
+        view.open(path, Open::Kept);
+    }
+    view.pin("README.md", true);
+    view.pin("src/main.rs", true);
+    assert_eq!(
+        view.close_targets("README.md", Close::Every),
+        ["README.md", "src/main.rs"]
+    );
+    assert!(view.close_targets("README.md", Close::All).is_empty());
+}
+
+#[test]
 fn pinning_moves_a_tab_to_the_pinned_group_and_keeps_it() {
     let mut view = three();
     view.open("README.md", Open::Kept);

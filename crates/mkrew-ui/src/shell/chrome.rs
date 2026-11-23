@@ -260,11 +260,12 @@ impl Shell {
     /// The title bar above everything (SPEC §10, ADR 0106), one `TITLE_BAR_HEIGHT` bar: on the
     /// left (main window) the machine chip, the sidebar toggle and the workspace switcher; the
     /// tab area (Editor / Diff chips, the terminal tabs, `+`); a drag area; on the right the
-    /// voice status, the limits chip (only at 80% or more; it shows without a workspace too),
-    /// the Run pill, the update button, the Board and Docs icons, Split (while Terminals shows
-    /// in the main window), the panel toggle and "+ New"; on Windows minimize, maximize, close.
-    /// A detached window (`host` is not `Main`) has no left group, no workspace controls and no
-    /// limits chip. Every icon is gray: color is for status only. Without a workspace only the
+    /// voice status (only while the sidebar is hidden), the limits chip (main window, only at
+    /// 80% or more; it shows without a workspace too), the Run pill, the update button, the
+    /// Board and Docs icons, Split (while Terminals shows in the main window, always in a
+    /// detached one) and the panel toggle; on Windows minimize, maximize, close. A detached
+    /// window (`host` is not `Main`) has no left group, no workspace controls and no limits
+    /// chip. Every icon is gray: color is for status only. Without a workspace only the
     /// sidebar toggle, the limits chip, the drag area and the controls show, so the window can
     /// always be moved and closed.
     pub(crate) fn render_title_bar(

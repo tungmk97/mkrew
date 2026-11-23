@@ -598,7 +598,7 @@ struct Shell {
     menu_pending: Option<&'static str>,
     /// The sidebar-row or tab reorder drag in progress (stale once no drag is active).
     reorder: Option<Reorder>,
-    /// The open menu of the tab strip's split button (Split right / down, layouts).
+    /// The open menu of the title bar's split button (Split right / down, layouts).
     layout_menu: Option<LayoutMenu>,
     /// The open pane menu (Pin, Rename, Change color).
     pane_menu: Option<PaneMenu>,
@@ -634,7 +634,7 @@ struct Shell {
     ports: Ports,
     /// Profile id → `icon` (ADR 0025), reloaded on every refresh.
     agent_icons: HashMap<String, String>,
-    /// The agent profiles of the last refresh: what "+ New" and the palette offer a new pane.
+    /// The agent profiles of the last refresh: what the `+` menu and the palette offer a new pane.
     agent_profiles: Vec<mkrew_protocol::AgentProfileInfo>,
     /// The open "Broadcast to agents…" dialog (modal).
     broadcast: Option<Broadcast>,
