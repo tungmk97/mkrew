@@ -1,7 +1,7 @@
 # 0104 - Chat view: a mode of the agent pane that reads the transcript
 
 - Date: 2026-11-22
-- Status: accepted (extends ADR 0057; amends SPEC sections 11, 13 and 20B)
+- Status: accepted (extends ADR 0057; amends SPEC sections 11, 13 and 20B); the look is amended by [0105](0105-chat-look.md)
 - Milestone: none (human request 2026-11-22, spec `docs/superpowers/specs/2026-11-22-chat-view-design.md`)
 
 ## Context
@@ -63,3 +63,8 @@ Mkrew already parses Claude, Codex and omp transcripts into a read-only Thread s
 - ADR 0057's exclusion of tool output and thinking is superseded in part: Chat shows them, the Thread section still does not.
 - A text selection works inside one message, not across messages (ADR 0072 selects within one page).
 - Every change re-parses the Markdown of at most 50 turns; cache by text if it ever shows.
+
+## Amended by 0105
+
+ADR 0105 changes how the Chat page is drawn (centered column, prompt bubble, activity rows, composer card) and what the reader keeps (times, tokens, session meta).
+Its data path, the per-pane mode and the keyboard rules stay as decided here.

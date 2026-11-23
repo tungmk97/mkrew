@@ -21,6 +21,26 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-23 Chat look (ADR 0105, plan docs/superpowers/plans/2026-11-23-chat-look.md)
+
+- [ ] **Restart the daemon first** (protocol 57; a window from before it shows a version mismatch).
+
+With a real omp, a real Claude Code and a real Codex session, dark and light themes, a wide and a narrow pane, and Tern open side by side with the same session:
+- [ ] **Compare with Tern side by side:** the same session in Tern and in Mkrew's Chat shows the same column, recap, chips and numbers (model, effort, permission, context, tok/s, elapsed) within rounding.
+- [ ] **Page (dark + light):** Chat is a centered column (at most 760 px) with calm spacing; the prompt is a right-aligned bubble; headings are accent colored without a rule; bullets are accent dots; the tray and the question card line up with the column.
+- [ ] **Activity rows:** thinking and tool calls between two answers are one row ("Thought for 4s · 3 commands, 2 reads"); while the agent works the last one says "Working…"; it opens to thinking rows (UI font, italic, muted) and the tool rows; a Claude redacted thinking shows only its time and does not open; Tab reaches the row, then its children only while it is open.
+- [ ] **Markdown cards and pills:** a code block is a card with its language (or "text") and a Copy button that says "Copied" for about 1.5 s; inline code has the raised background (square corners, no padding: a text highlight); a file path shows the folder muted and the name bold; the same cards show in the Docs view, the Files preview, the Thread section and Ask AI (their headings keep their own color).
+- [ ] **Path pills:** in Chat a path (`src/main.rs:12`) opens the file at that line in the Editor view (also from a task worktree session); `v1.2` and `cargo test` are not clickable; a path outside the workspace shows "That file is outside this workspace".
+- [ ] **omp recap:** after an omp turn ends and omp is idle, its recap line (history icon, italic) shows after the last turn; sending a new prompt hides it; a Claude or Codex session never shows one.
+- [ ] **Composer card:** a floating rounded card with the context meter above it (turns to the warning color at 80 %), the session title in quotes as the placeholder, chips for model, effort, permission and branch (branch only for a session at the workspace root, not for a task worktree, which has no folder chip either), then `74K`, `tok/s` and the elapsed time (counting live while the agent works), and a round send button (faded while the draft is blank; its tooltip has the key hint). The meter and the header ctx% update at a turn end (they come from `session.usage`). Compare the numbers with Tern.
+- [ ] **Card border (dark + light):** the card border is subtle, with no bright outline, in both themes.
+- [ ] **Model chip:** a click switches the pane to Terminal and the agent's own model picker opens (`/model` is typed and sent); on an exited session the chip is disabled.
+- [ ] **Copy in a detached Chat pane:** tear a Chat pane off into its own window; a code block's Copy button there copies the code and shows "Copied".
+- [ ] **Narrow pane:** dragging a split divider drops chips in this order: stats, permission, effort, branch; the model chip and the send button stay; nothing is drawn under them.
+- [ ] **Collapsed pill:** with the draft empty, clicking another pane shrinks the card to a one-line pill with the placeholder; a click on it opens the card and puts the caret in it. A draft, a queued text or an error keeps the card open.
+- [ ] **Slash picker:** typing `/` in the composer shows the current model next to `/model` and "context N% used" next to `/compact`.
+- [ ] **Terminal mode** keeps today's docked composer and its key hint.
+
 ### To verify - 2026-11-22 macOS app integration (ADR 0100)
 
 - [ ] **Traffic lights (macOS, dark + light):** at the default font size the three lights are centered vertically in the 42 px title bar of the main window and of a detached window.

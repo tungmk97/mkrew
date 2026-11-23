@@ -594,7 +594,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.set_color` | `session_id`, `color?` (a workspace color name; `null` clears) | the Session, also broadcast as `session.updated` — `invalid_request` for a name outside the palette, `invalid_state` for one caught exiting (ADR 0037) |
 | `session.history` | `session_id` | `files[]`: existing session log files, oldest first (`<id>.log.1`, `<id>.log`); works for exited sessions (also from before a restart); empty after retention deleted the log (ADR 0060). Windows read logs with `session.log_tail`; `session.history` serves `mk web` and the CLI on the daemon's computer |
 | `session.log_tail` | `session_id`, `max_bytes` (capped at `READ_WINDOW`, 4 MiB) | `data` (base64 on the wire): the newest bytes of the session log (`<id>.log.1` then `<id>.log`), `cut`: older output was left out. Works for exited and hidden sessions; `not_found` for an unknown id |
-| `session.transcript` | `session_id`, `offset` (0 on the first read) | `found`, `format` (the profile's `[usage] format` as written, `""` without `[usage]`), `start`, `len`, `data` (base64): one window (at most `READ_WINDOW`) of the agent's transcript file. From `offset` while the file still reaches it, else from 0; from 0 the last window. `found: false` with empty `data` when there is no profile `[usage]`, native id or file |
+| `session.transcript` | `session_id`, `offset` (0 on the first read) | `found`, `format` (the profile's `[usage] format` as written, `""` without `[usage]`), `start`, `len`, `data` (base64): one window (at most `READ_WINDOW`) of the agent's transcript file. From `offset` while the file still reaches it, else from 0; from 0 the last window. `found: false` with empty `data` when there is no profile `[usage]`, native id or file. omp only: `recap` (`{text, at}`, `at` in Unix seconds), the newest row of `session_recaps` in omp's `history.db` for the session (ADR 0105); absent for the other agents and when omp wrote none |
 | `session.resume` | `session_id`, `tab_id?` | `SessionSpawnResult` — relaunches an exited agent session into its conversation with the profile's `resume` command, as a new session (same title, color, pin, plan, size; a task's session stays the task's, in its worktree); placed where the old pane still is, else into `tab_id` when that tab is empty (the client places it otherwise). `invalid_state` while the session is live, for a shell, without `native_session_id` or `resume`, in an archived workspace, or while a live session has the same `native_session_id` or task (ADR 0055) |
 | `session.link_plan` | `session_id`, `path?` (a `.md` file, absolute or project-relative; `null` unlinks) | the Session (also `session.updated`) — live sessions only (`invalid_state`/`not_found` otherwise); `invalid_request` when the file is not `.md`, missing, a folder, over 2 MiB or not UTF-8; the daemon then watches that one file (ADR 0039) |
 | `session.plan` | `project_id` | `[{session_id, name, done, total, items[], error?}]` of the project's live sessions with a plan (the last announced checklist, for a client that connects later) |
@@ -703,6 +703,8 @@ Protocol 54 (Polish spec 2026-11-21 §8): requests `git.branches`, `git.checkout
 Protocol 55 (Widget bar spec 2026-11-22 sections 5 and 6, ADR 0102): requests `limits.get` and `limits.report`, events `agent.limits` and `machine.stats`.
 
 Protocol 56 (ADR 0103): `git.discard` takes `hunk`.
+
+Protocol 57 (ADR 0105): `session.transcript` result gains `recap`.
 
 Protocol 41: `session.move` and `Session.position`.
 
@@ -1212,7 +1214,9 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   A Claude subagent started in the background stays in the tray until its `<task-notification>` arrives.
   Codex tool output is read in the shapes current Codex writes: a JSON string with `metadata.exit_code`, or text with an `Exit code: N` or `Process exited with code N` line before `Output:`.
   The tool and thinking row toggles, the "earlier turns" link and "Answer in terminal" are Tab stops (Enter or Space presses them); PageUp, PageDown, Home, End and the arrows scroll the list, and Esc ends a selection, else returns to the composer.
-  The composer is docked under it and always shown.
+  ADR 0105 gives the page a centered column of 760 px with `space::XL` side padding: the prompt is a right-aligned bubble, the agent's text has accent headings and bullet dots, inline code and file paths are pills (a path in a Chat message opens the file in the Editor view at its `:line`), code blocks are cards with a language label and a Copy button, and thinking and tool calls between two texts are one activity row ("Thought for 4s · 3 commands, 2 reads", "Working…" while it runs) that opens to the thinking text and the tool rows.
+  An omp turn ends with omp's recap line when it is not older than the turn's prompt and the agent is not working.
+  The composer is a floating card in the same column (§20B).
   The terminal keeps running underneath and still reports the state.
 - Pane menu (right-click a split pane's header or a sidebar session row, or Shift+F10 with the pane focused): **Pin**, **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise), **Rename** (inline
   like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears). A
@@ -2351,6 +2355,10 @@ context_window = 200000        # tokens, for the % shown
    `/` opens the agent's command picker (§20B.7).
    Drafts are kept per session in UI memory (lost on UI restart, which is fine).
    In a pane in Chat mode (§11) the composer is always shown: Enter sends, Shift+Enter is a new line, Esc moves the keys to the chat list instead of hiding it (ADR 0104).
+   In Chat the composer is a floating card (ADR 0105): a 2 px context meter above it (percent left, window right; the warning color from `WARNING_PERCENT`; hidden without a window), the field with the session title in quotes as its placeholder, and a chip row: the model chip (a click switches the pane to Terminal and types `/model` + Enter, so the agent's own picker opens), the effort chip, the permission chip, the branch chip (only at the workspace root, `*N` changed files), then `74K`, `102 tok/s` and the elapsed time (or the status line while it shows), ✦, "Prompts…" and a round send button whose tooltip holds the key hint.
+   A narrow pane drops chips from the right: stats, permission, effort, branch; the model chip and the send button stay.
+   While the pane has no keyboard and the draft, the queue and the error are empty, the card is a one-line pill with the placeholder; a click opens it.
+   In the `/` picker `/model` shows the current model and `/compact` the context share.
    ✦ (shown while the composer has the keyboard and the draft is not blank) sends the draft to
    the session's own agent profile via `ai.generate` (`enhance_prompt`, §7). The agent may read
    the project folder for context. The rewrite replaces the draft, and the user still sends it.
