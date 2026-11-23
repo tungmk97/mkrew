@@ -1392,8 +1392,8 @@ fn a_report_replaces_an_older_different_one_only() {
 }
 
 #[test]
-fn the_tern_layout_protocol_is_version_58() {
-    assert_eq!(crate::PROTOCOL_VERSION, 58);
+fn the_tern_panes_protocol_is_version_60() {
+    assert_eq!(crate::PROTOCOL_VERSION, 60);
 }
 
 /// ADR 0105: the recap travels with the transcript reply; a reply without it (an older

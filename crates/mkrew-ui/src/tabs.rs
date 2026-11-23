@@ -728,6 +728,86 @@ impl Tabs {
         Some(tab.write())
     }
 
+    /// Places `leaf` in `tab_id` on `edge` of the pane of `target` (the new leaf takes that
+    /// half), or, with no `target`, as the root of an empty tab, and focuses it. The tab is not
+    /// activated. `None` (nothing changes) if the workspace already holds the leaf's key in
+    /// any tab (a file or the diff has one pane per workspace, ADR 0108), the tab is unknown,
+    /// `target` is not in that tab, or a root is placed in a tab that has panes.
+    pub fn insert_leaf(
+        &mut self,
+        tab_id: Ulid,
+        target: Option<&PaneKey>,
+        edge: Edge,
+        leaf: Leaf,
+    ) -> Option<TabSetLayoutParams> {
+        let key = leaf.key();
+        if self.tab_with(&key).is_some() {
+            return None;
+        }
+        let tab = self.tab_mut(tab_id)?;
+        let node = Node::Leaf(leaf);
+        match (target, &mut tab.layout) {
+            (Some(target), Some(root)) => {
+                if !root.insert_at(target, edge, node) {
+                    return None;
+                }
+            }
+            (None, layout @ None) => *layout = Some(node),
+            _ => return None,
+        }
+        tab.focused = Some(key);
+        tab.fix_focus();
+        Some(tab.write())
+    }
+
+    /// Changes the leaf of `key` with `change` (a Markdown mode, a preview flag, a chat flag):
+    /// the write to send, `None` when no tab holds it or `change` left it as it was. `change`
+    /// must not change which pane the leaf is (its key).
+    pub fn update_leaf(
+        &mut self,
+        key: &PaneKey,
+        change: impl FnOnce(&mut Leaf),
+    ) -> Option<TabSetLayoutParams> {
+        let tab_id = self.tab_with(key)?.id;
+        let tab = self.tab_mut(tab_id)?;
+        let leaf = tab.layout.as_mut()?.leaf_mut(key)?;
+        let before = leaf.clone();
+        change(leaf);
+        debug_assert!(leaf.has_key(key), "a leaf keeps its key");
+        let changed = *leaf != before;
+        changed.then(|| tab.write())
+    }
+
+    /// The tab that holds the workspace's preview file (the leaf with `preview` set), which
+    /// the next single click in the Files tree replaces.
+    pub fn preview_tab(&self) -> Option<&Tab> {
+        self.tabs.iter().find(|tab| {
+            (tab.layout.as_ref()).is_some_and(|node| {
+                node.any_leaf(|leaf| matches!(leaf, Leaf::File { preview: true, .. }))
+            })
+        })
+    }
+
+    /// The `position` for a new (unpinned) tab that opens right after the active one: the
+    /// midpoint between the active tab and the next tab (as [`Self::move_tab`] places a tab),
+    /// or one past it when the active tab is last. While the active tab is pinned, the new
+    /// tab goes first among the unpinned tabs: their first position - 1.0, or 1.0 when there
+    /// is none. `None` without tabs.
+    pub fn position_after_active(&self) -> Option<f64> {
+        let active = self.active()?;
+        if active.pinned {
+            let first = self.tabs.iter().find(|tab| !tab.pinned);
+            return Some(first.map_or(1.0, |tab| tab.position - 1.0));
+        }
+        let next = (self.tabs.iter())
+            .skip_while(|tab| tab.id != active.id)
+            .nth(1);
+        Some(match next {
+            Some(next) => (active.position + next.position) / 2.0,
+            None => active.position + 1.0,
+        })
+    }
+
     /// Removes panes whose session `keep` rejects (e.g. sessions the daemon no longer knows)
     /// and returns the layout writes to send. Files and the diff are not sessions: they stay,
     /// and so does a tab that holds one.

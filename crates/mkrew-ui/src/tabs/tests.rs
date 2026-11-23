@@ -1590,3 +1590,250 @@ fn arrange_carries_whole_leaves() {
         })
     );
 }
+
+#[test]
+fn insert_leaf_places_a_leaf_and_focuses_it() {
+    let project = Ulid::new();
+    let a = Ulid::new();
+    let one = wire(project, "one", 1.0, pane(a));
+    let empty = wire(project, "two", 2.0, serde_json::Value::Null);
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), empty.clone()]);
+
+    // An empty tab takes the leaf as its root (`target` None).
+    let write = tabs
+        .insert_leaf(empty.id, None, Edge::Right, Leaf::file("src/a.rs"))
+        .unwrap();
+    assert_eq!((write.tab_id, &write.layout), (empty.id, &file("src/a.rs")));
+    assert_eq!(
+        tabs.tab(empty.id).and_then(Tab::focused),
+        Some(&file_key("src/a.rs"))
+    );
+    assert_eq!(tabs.active().map(|t| t.id), Some(one.id), "not activated");
+
+    // Next to a pane, on each side.
+    let write = tabs
+        .insert_leaf(one.id, Some(&k(a)), Edge::Left, Leaf::diff())
+        .unwrap();
+    assert_eq!(
+        write.layout,
+        split("vertical", json!({"diff": true}), pane(a))
+    );
+    assert_eq!(
+        tabs.tab(one.id).and_then(Tab::focused),
+        Some(&PaneKey::Diff)
+    );
+    let write = tabs
+        .insert_leaf(one.id, Some(&k(a)), Edge::Bottom, Leaf::file("b.rs"))
+        .unwrap();
+    assert_eq!(
+        write.layout,
+        split(
+            "vertical",
+            json!({"diff": true}),
+            split("horizontal", pane(a), file("b.rs"))
+        )
+    );
+}
+
+#[test]
+fn insert_leaf_refuses_a_key_already_in_any_tab_of_the_workspace() {
+    let project = Ulid::new();
+    let [a, b] = [Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, pane(a));
+    let two = wire(
+        project,
+        "two",
+        2.0,
+        split("vertical", pane(b), file("src/a.rs")),
+    );
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone()]);
+    let before = tabs.clone();
+
+    // The file is in the other tab, a session likewise: no second pane for the same key.
+    assert_eq!(
+        tabs.insert_leaf(one.id, Some(&k(a)), Edge::Right, Leaf::file("src/a.rs")),
+        None
+    );
+    assert_eq!(
+        tabs.insert_leaf(one.id, Some(&k(a)), Edge::Right, Leaf::session(b)),
+        None
+    );
+    // The same file with other flags is the same key.
+    let flagged = Leaf::File {
+        file: "src/a.rs".into(),
+        md: Some(mkrew_core::settings::MdMode::Source),
+        preview: true,
+    };
+    assert_eq!(
+        tabs.insert_leaf(one.id, Some(&k(a)), Edge::Right, flagged),
+        None
+    );
+    // Unknown tab or target, a target in another tab, a root into a tab with panes.
+    assert_eq!(
+        tabs.insert_leaf(Ulid::new(), None, Edge::Right, Leaf::diff()),
+        None
+    );
+    assert_eq!(
+        tabs.insert_leaf(one.id, Some(&k(Ulid::new())), Edge::Right, Leaf::diff()),
+        None
+    );
+    assert_eq!(
+        tabs.insert_leaf(one.id, Some(&k(b)), Edge::Right, Leaf::diff()),
+        None
+    );
+    assert_eq!(
+        tabs.insert_leaf(one.id, None, Edge::Right, Leaf::diff()),
+        None
+    );
+    assert_eq!(tabs, before, "nothing changed");
+
+    // The diff is one per workspace too.
+    tabs.insert_leaf(one.id, Some(&k(a)), Edge::Right, Leaf::diff())
+        .unwrap();
+    assert_eq!(
+        tabs.insert_leaf(two.id, Some(&k(b)), Edge::Right, Leaf::diff()),
+        None
+    );
+}
+
+#[test]
+fn update_leaf_writes_only_a_change_and_never_moves_the_key() {
+    let project = Ulid::new();
+    let a = Ulid::new();
+    let tab = wire(
+        project,
+        "one",
+        1.0,
+        split("vertical", pane(a), file("a.md")),
+    );
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![tab.clone()]);
+    let key = file_key("a.md");
+    let set_mode = |leaf: &mut Leaf| {
+        if let Leaf::File { md, .. } = leaf {
+            *md = Some(mkrew_core::settings::MdMode::Split);
+        }
+    };
+
+    let write = tabs.update_leaf(&key, set_mode).unwrap();
+    assert_eq!(
+        write.layout,
+        split("vertical", pane(a), json!({"file": "a.md", "md": "split"}))
+    );
+    // The same value again: nothing to write.
+    assert_eq!(tabs.update_leaf(&key, set_mode), None);
+    // Another change, then an unknown key.
+    let write = tabs
+        .update_leaf(&key, |leaf| {
+            if let Leaf::File { preview, .. } = leaf {
+                *preview = true;
+            }
+        })
+        .unwrap();
+    assert_eq!(
+        write.layout["children"][1],
+        json!({"file": "a.md", "md": "split", "preview": true})
+    );
+    assert_eq!(tabs.update_leaf(&file_key("nope"), set_mode), None);
+    assert_eq!(tabs.update_leaf(&PaneKey::Diff, |_| {}), None);
+    // The leaf is found by its key in the tab, whichever tab is active.
+    let write = tabs
+        .update_leaf(&k(a), |leaf| {
+            if let Leaf::Session { chat, .. } = leaf {
+                *chat = Some(true);
+            }
+        })
+        .unwrap();
+    assert_eq!(write.layout["children"][0]["chat"], json!(true));
+}
+
+#[test]
+fn preview_tab_is_the_tab_holding_the_preview_file() {
+    let project = Ulid::new();
+    let [a, b] = [Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, pane(a));
+    let two = wire(
+        project,
+        "two",
+        2.0,
+        split(
+            "vertical",
+            pane(b),
+            json!({"file": "x.rs", "preview": true}),
+        ),
+    );
+    let three = wire(project, "three", 3.0, file("y.rs"));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one, two.clone(), three]);
+    assert_eq!(tabs.preview_tab().map(|t| t.id), Some(two.id));
+
+    // Kept: the flag goes, so does the preview tab.
+    tabs.update_leaf(&file_key("x.rs"), |leaf| {
+        if let Leaf::File { preview, .. } = leaf {
+            *preview = false;
+        }
+    })
+    .unwrap();
+    assert_eq!(tabs.preview_tab(), None);
+    assert_eq!(Tabs::new(project).preview_tab(), None);
+}
+
+/// Tabs at the given `(position, pinned)` pairs, in the given order; returns their ids.
+fn tabs_at(project: Ulid, places: &[(f64, bool)]) -> (Tabs, Vec<Ulid>) {
+    let wires: Vec<TerminalTab> = places
+        .iter()
+        .map(|&(position, pinned)| TerminalTab {
+            pinned,
+            ..wire(project, "t", position, serde_json::Value::Null)
+        })
+        .collect();
+    let ids = wires.iter().map(|wire| wire.id).collect();
+    let mut tabs = Tabs::new(project);
+    tabs.load(wires);
+    (tabs, ids)
+}
+
+#[test]
+fn position_after_active_is_the_midpoint_to_the_next_tab() {
+    let (mut tabs, ids) = tabs_at(Ulid::new(), &[(1.0, false), (2.0, false), (4.0, false)]);
+    assert!(tabs.activate(ids[0]));
+    assert_eq!(tabs.position_after_active(), Some(1.5));
+    assert!(tabs.activate(ids[1]));
+    assert_eq!(tabs.position_after_active(), Some(3.0));
+}
+
+#[test]
+fn position_after_active_of_the_last_tab_is_one_further() {
+    let (mut tabs, ids) = tabs_at(Ulid::new(), &[(1.0, false), (2.0, false), (4.0, false)]);
+    assert!(tabs.activate(ids[2]));
+    assert_eq!(tabs.position_after_active(), Some(5.0));
+    // No tabs, no position.
+    assert_eq!(Tabs::new(Ulid::new()).position_after_active(), None);
+}
+
+#[test]
+fn position_after_active_of_a_pinned_tab_goes_first_among_the_unpinned() {
+    // Pinned tabs lead the strip: p at 5, q at 7; then the others at 1 and 2.
+    let (mut tabs, ids) = tabs_at(
+        Ulid::new(),
+        &[(5.0, true), (7.0, true), (1.0, false), (2.0, false)],
+    );
+    for pinned in [ids[0], ids[1]] {
+        assert!(tabs.activate(pinned));
+        assert_eq!(
+            tabs.position_after_active(),
+            Some(0.0),
+            "first of the unpinned tabs (1.0 - 1.0)"
+        );
+    }
+    assert!(tabs.activate(ids[2]));
+    assert_eq!(tabs.position_after_active(), Some(1.5));
+    assert!(tabs.activate(ids[3]));
+    assert_eq!(tabs.position_after_active(), Some(3.0));
+    // Only pinned tabs: the new tab is the first unpinned one.
+    let (mut tabs, ids) = tabs_at(Ulid::new(), &[(5.0, true), (7.0, true)]);
+    assert!(tabs.activate(ids[1]));
+    assert_eq!(tabs.position_after_active(), Some(1.0));
+}

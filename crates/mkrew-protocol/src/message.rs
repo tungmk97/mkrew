@@ -636,7 +636,7 @@ pub struct TerminalTab {
     pub title: String,
     /// Tabs are ordered by ascending position.
     pub position: f64,
-    /// Split tree whose leaves are session ids (SPEC §5); opaque to the daemon.
+    /// Split tree whose leaves are sessions, files or the diff (SPEC §5); opaque to the daemon.
     /// `null` until the first pane is placed.
     pub layout: serde_json::Value,
     /// Pinned tabs sit left of the others, each group in `position` order (SPEC §10). Set with
