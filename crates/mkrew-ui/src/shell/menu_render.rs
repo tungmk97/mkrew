@@ -323,7 +323,6 @@ impl Shell {
             || self.workspace_menu.is_some()
             || self.file_menu.is_some()
             || self.file_tab_menu.is_some()
-            || self.widget_menu.is_some()
             || self.run_menu.is_some()
             || self.workspace_switcher
             || self.repo_menu
@@ -360,9 +359,6 @@ impl Shell {
         }
         if let Some(menu) = &self.file_tab_menu {
             return Some(self.file_tab_menu_rows(menu));
-        }
-        if self.widget_menu.is_some() {
-            return Some(self.widget_menu_rows());
         }
         if self.workspace_switcher {
             return self

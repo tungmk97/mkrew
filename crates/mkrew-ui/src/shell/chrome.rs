@@ -295,7 +295,7 @@ impl Shell {
     }
 
     /// The title bar above everything (SPEC §10, ADR 0034): logo, sidebar toggle, workspace
-    /// switcher (with the repository label) and views on the left; a drag area; the Run pill,
+    /// switcher (with the repository label) and views on the left; a drag area; the limits chip (from 80% of an agent limit), the Run pill,
     /// History, the theme toggle, the phone icon (Phone access, ADR 0053), the session panel
     /// toggle and "+ New" (Agent / Shell); on Windows minimize, maximize, close. Every icon is
     /// gray: color is for status only. Without a workspace only the logo, the sidebar toggle,
@@ -391,6 +391,7 @@ impl Shell {
             .when(self.sidebar_layout.hidden(), |el| {
                 el.children(self.voice_status(false, theme))
             });
+        right = right.children(self.render_limits_chip(theme, cx));
         if let Some(project_id) = workspace {
             right = right
                 .child(self.render_run_button(project_id, theme, cx))

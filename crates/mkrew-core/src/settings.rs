@@ -404,6 +404,16 @@ pub const INSPECTOR_WIDTH_DEFAULT: u16 = 300;
 /// `[ui] sidebar_width` default, px (the UI clamps what it reads to its own limits).
 pub const SIDEBAR_WIDTH_DEFAULT: u16 = 280;
 
+/// A `[ui]` key that an older build wrote and this build ignores, whatever its value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Retired;
+
+impl<'de> Deserialize<'de> for Retired {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(deserializer).map(|_| Retired)
+    }
+}
+
 /// `[ui]`: the app font, theme, diff layout (and panel widths) (SPEC §14, §12B, §20.0).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -446,13 +456,13 @@ pub struct UiSettings {
     /// `[ui] md_split`: the source's share of the Markdown Split view, percent (the UI keeps it
     /// 20–80); dragging the divider saves it.
     pub md_split: u8,
-    /// `[ui] widget_bar` (ADR 0102): the thin bar at the bottom of the main window with the
-    /// folder, Git branch, agent limits, machine load and version.
-    pub widget_bar: bool,
-    /// `[ui] widgets_hidden`: ids of the bar's widgets the user hid (`folder`, `git`,
-    /// `limits`, `machine`, `version`). Unknown ids are kept and ignored, so an older build
-    /// does not lose a newer build's choice.
-    pub widgets_hidden: Vec<String>,
+    /// `[ui] widget_bar` and `[ui] widgets_hidden` belonged to the widget bar that ADR 0106
+    /// removed. `deny_unknown_fields` would refuse a file that still has them, so they are
+    /// read, ignored and never written (`skip_serializing`).
+    #[serde(rename = "widget_bar", skip_serializing)]
+    retired_widget_bar: Retired,
+    #[serde(rename = "widgets_hidden", skip_serializing)]
+    retired_widgets_hidden: Retired,
 }
 
 impl Default for UiSettings {
@@ -475,8 +485,8 @@ impl Default for UiSettings {
             board_all_workspaces: false,
             md_mode: MdMode::Preview,
             md_split: MD_SPLIT_DEFAULT,
-            widget_bar: true,
-            widgets_hidden: Vec::new(),
+            retired_widget_bar: Retired,
+            retired_widgets_hidden: Retired,
         }
     }
 }
@@ -558,13 +568,6 @@ pub fn write_ui_value(path: &Path, key: &str, value: &str) -> Result<(), Setting
     write_value(path, "ui", key, value)
 }
 
-/// Saves `[ui] widgets_hidden`; see [`write_value`]. The ids are written as given, so ids this
-/// build does not know are never dropped by the caller's toggle.
-pub fn write_widgets_hidden(path: &Path, ids: &[String]) -> Result<(), SettingsError> {
-    let list = toml::Value::Array(ids.iter().cloned().map(toml::Value::String).collect());
-    write_value(path, "ui", "widgets_hidden", &list.to_string())
-}
-
 /// Saves `[web] enabled` (the Phone access dialog's Start / Stop); see [`write_value`]. The
 /// daemon applies it through its settings watcher.
 pub fn write_web_enabled(path: &Path, enabled: bool) -> Result<(), SettingsError> {
@@ -642,8 +645,6 @@ pub fn template() -> &'static str {
      # Close to tray (Windows): the window's ✕ hides it to the tray icon; false quits the UI.\n\
      # Markdown files open in preview, split (source | preview) or source; switching writes it.\n\
      # Markdown split: the source's share in percent (20-80); dragging the divider writes it.\n\
-     # Widget bar: the thin bar at the bottom with the folder, Git branch, agent limits, machine load and version.\n\
-     # widgets_hidden lists the ids you hid: folder, git, limits, machine, version (the bar's right-click menu writes it).\n\
      [ui]\n\
      # font_family = \"\"\n\
      # font_size = 13\n\
@@ -662,8 +663,6 @@ pub fn template() -> &'static str {
      # board_all_workspaces = false\n\
      # md_mode = \"preview\"\n\
      # md_split = 50\n\
-     # widget_bar = true\n\
-     # widgets_hidden = []\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
@@ -938,8 +937,7 @@ push = true
                     board_all_workspaces: false,
                     md_mode: MdMode::Preview,
                     md_split: MD_SPLIT_DEFAULT,
-                    widget_bar: true,
-                    widgets_hidden: vec![],
+                    ..UiSettings::default()
                 },
                 terminal: TerminalSettings {
                     font_family: "JetBrains Mono".into(),
@@ -1128,35 +1126,30 @@ push = true
         assert!(parse_err("[ui]\nmd_split = 300").contains("invalid value"));
     }
 
+    /// ADR 0106: `widget_bar` and `widgets_hidden` belonged to the removed widget bar. A file
+    /// that still has them loads, they change nothing and they are never written back.
     #[test]
-    fn the_widget_bar_defaults_to_shown_and_keeps_ids_it_does_not_know() {
-        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
-        assert!(ui("").widget_bar);
-        assert!(ui("").widgets_hidden.is_empty());
-        assert!(!ui("[ui]\nwidget_bar = false\n").widget_bar);
-        // A newer build wrote `clock`: this build keeps it.
+    fn a_file_with_the_retired_widget_bar_keys_still_loads_and_never_writes_them_back() {
+        let src =
+            "[ui]\ntheme = \"dark\"\nwidget_bar = false\nwidgets_hidden = [\"git\", \"clock\"]\n";
+        let settings = parse(Path::new("settings.toml"), src).unwrap();
         assert_eq!(
-            ui("[ui]\nwidgets_hidden = [\"git\", \"clock\"]\n").widgets_hidden,
-            ["git", "clock"]
+            settings.ui,
+            UiSettings {
+                theme: ThemeMode::Dark,
+                ..UiSettings::default()
+            }
         );
-        assert!(parse_err("[ui]\nwidgets_hidden = \"git\"\n").contains("invalid type"));
-    }
-
-    #[test]
-    fn write_widgets_hidden_round_trips_and_keeps_the_rest_of_the_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.toml");
-        std::fs::write(&path, "[ui]\n# keep me\ntheme = \"dark\"\n").unwrap();
-        let ids = vec!["git".to_owned(), "clock".to_owned()];
-        write_widgets_hidden(&path, &ids).unwrap();
-        assert_eq!(load(&path).unwrap().ui.widgets_hidden, ids);
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            text.contains("# keep me") && text.contains("theme = \"dark\""),
-            "{text}"
+        let written = toml::Value::try_from(&settings).unwrap().to_string();
+        assert!(!written.contains("widget"), "{written}");
+        // Whatever the value, it is ignored.
+        let odd = "[ui]\nwidget_bar = \"x\"\nwidgets_hidden = 3\n";
+        assert_eq!(
+            parse(Path::new("settings.toml"), odd).unwrap().ui,
+            UiSettings::default()
         );
-        write_widgets_hidden(&path, &[]).unwrap();
-        assert!(load(&path).unwrap().ui.widgets_hidden.is_empty());
+        // Other unknown keys are still refused.
+        assert!(parse_err("[ui]\nwidget_baz = true\n").contains("unknown field `widget_baz`"));
     }
 
     #[test]

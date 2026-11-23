@@ -398,7 +398,6 @@ fn availability_follows_the_view() {
             Command::ToggleFullScreen,
             Command::ToggleSidebar,
             Command::ToggleCompactSidebar,
-            Command::ToggleWidgetBar,
             Command::VoiceInput,
             Command::AskAi
         ]
@@ -411,23 +410,6 @@ fn availability_follows_the_view() {
             .any(|e| e.action == Action::Run(Command::OpenSettings)),
         "settings open without a workspace"
     );
-}
-
-#[test]
-fn the_widget_bar_toggle_is_listed_without_a_workspace() {
-    let none = Context {
-        workspace: false,
-        workspaces: 0,
-        tabs: 0,
-        ..context(View::Terminals)
-    };
-    let listed = entries(&Keymap::defaults(), &none, &[], &[], &[]);
-    let entry = listed
-        .iter()
-        .find(|e| e.action == Action::Run(Command::ToggleWidgetBar))
-        .expect("listed without a workspace");
-    assert_eq!(entry.title, "View: Show/hide widget bar");
-    assert_eq!(entry.shortcut, "Ctrl+Alt+Shift+J");
 }
 
 #[test]

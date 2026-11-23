@@ -429,13 +429,6 @@ struct FileTabMenu {
     position: gpui::Point<gpui::Pixels>,
 }
 
-/// The open right-click menu of the widget bar (ADR 0102): one checkable row per widget and
-/// "Hide widget bar".
-struct WidgetMenu {
-    /// Window position of the click.
-    position: gpui::Point<gpui::Pixels>,
-}
-
 /// The menu of a Board card (SPEC §10): its hover buttons as rows, for the keyboard.
 struct CardMenu {
     task_id: Ulid,
@@ -590,8 +583,6 @@ struct Shell {
     file_menu: Option<FileMenu>,
     /// The open right-click menu of a Files tab.
     file_tab_menu: Option<FileTabMenu>,
-    /// The open right-click menu of the widget bar.
-    widget_menu: Option<WidgetMenu>,
     /// The open tab menu (Pin, Split right / down, Rename, Close).
     tab_menu: Option<TabMenu>,
     /// The open menu of a Board card (Shift+F10 on the selected card).
@@ -707,13 +698,8 @@ struct Shell {
     jira_scroll: ScrollHandle,
     /// The Board shows every workspace's tasks (`[ui] board_all_workspaces`, SPEC §10).
     board_all: bool,
-    /// `[ui] widget_bar` (ADR 0102): the thin bar at the bottom of the main window.
-    widget_bar: bool,
-    /// `[ui] widgets_hidden`: ids of the bar's hidden widgets (ids this build does not know
-    /// are kept).
-    widgets_hidden: Vec<String>,
-    /// The agent limits and machine stats the bar shows (events and `limits.get`).
-    widget_data: mkrew_ui::widget_bar::WidgetData,
+    /// The agents' usage limits the title bar's chip shows (events and `limits.get`).
+    limits: mkrew_ui::limits::Limits,
     /// The card Ctrl+Enter runs (clicked last).
     selected_card: Option<Ulid>,
     /// Tasks whose `task.run` is in flight (Run is disabled meanwhile).
@@ -1305,6 +1291,5 @@ impl Render for Shell {
                     )
                     .children(self.render_voice_pill(&theme, cx)),
             )
-            .children(self.render_widget_bar(window, &theme, cx))
     }
 }
