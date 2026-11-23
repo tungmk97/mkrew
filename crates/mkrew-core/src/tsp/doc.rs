@@ -18,6 +18,8 @@ const TRIM_TEXT: &str = "Earlier messages were trimmed";
 pub const TEXT_KINDS: &[&str] = &[
     "text", "md", "code", "ansi", "math", "editor", "input", "shimmer",
 ];
+/// Deepest allowed nesting below the root; a deeper `add` or `move` fails.
+pub const MAX_DEPTH: usize = 64;
 /// The 43 kinds omp 18.13.2 can send (reference section 4); `add` of any other kind fails.
 const KINDS: &[&str] = &[
     "col",
@@ -277,7 +279,7 @@ impl Document {
         }
         self.node(parent)?;
         let at = self.index(parent, before)?;
-        self.check(&node, &mut HashSet::new())?;
+        self.check(&node, &mut HashSet::new(), self.depth(parent) + 1)?;
         self.insert(node, Some(parent));
         if let Some(parent_node) = self.nodes.get_mut(parent) {
             parent_node.children.insert(at, id.to_owned());
@@ -287,7 +289,15 @@ impl Document {
     }
 
     /// Validates a whole subtree before anything is inserted, so a failed `add` changes nothing.
-    fn check(&self, node: &TspNode, seen: &mut HashSet<String>) -> Result<(), String> {
+    fn check(
+        &self,
+        node: &TspNode,
+        seen: &mut HashSet<String>,
+        depth: usize,
+    ) -> Result<(), String> {
+        if depth > MAX_DEPTH {
+            return Err("too deep".to_owned());
+        }
         if node.id.is_empty() {
             return Err("node without id".to_owned());
         }
@@ -297,7 +307,33 @@ impl Document {
         if self.nodes.contains_key(&node.id) || !seen.insert(node.id.clone()) {
             return Err(format!("duplicate id {}", node.id));
         }
-        node.c.iter().try_for_each(|child| self.check(child, seen))
+        node.c
+            .iter()
+            .try_for_each(|child| self.check(child, seen, depth + 1))
+    }
+
+    /// Edges between a node and the root.
+    fn depth(&self, id: &str) -> usize {
+        let mut depth = 0;
+        let mut at = self.nodes.get(id).and_then(|n| n.parent.as_deref());
+        while let Some(parent) = at {
+            depth += 1;
+            at = self.nodes.get(parent).and_then(|n| n.parent.as_deref());
+        }
+        depth
+    }
+
+    /// Edges between a node and its deepest descendant.
+    fn height(&self, id: &str) -> usize {
+        let mut tallest = 0;
+        let mut stack = vec![(id, 0)];
+        while let Some((current, below)) = stack.pop() {
+            tallest = tallest.max(below);
+            if let Some(node) = self.nodes.get(current) {
+                stack.extend(node.children.iter().map(|c| (c.as_str(), below + 1)));
+            }
+        }
+        tallest
     }
 
     /// Inserts a checked subtree into the arena (not into the parent's child list).
@@ -443,6 +479,10 @@ impl Document {
         if before == Some(id) {
             return Err("move before itself".to_owned());
         }
+        let deepest = self.depth(parent) + 1 + self.height(id);
+        if deepest > MAX_DEPTH {
+            return Err("too deep".to_owned());
+        }
         // Validates `before` while the tree is still untouched.
         self.index(parent, before)?;
         if let Some(old) = self.nodes.get_mut(&old_parent) {
@@ -545,23 +585,21 @@ impl Document {
     }
 }
 
-/// Bytes the document counts for a node: its `text` plus the `t` of every span.
+/// Bytes the document counts for a node: the length of every string value in its props, at any
+/// depth (text, spans, table cells, `kv` items, labels, diff hunks).
+// ponytail: JSON escaping is not counted (an ESC-dense `ansi` text grows 6x as `\u001b`); the
+// 6 MiB bound leaves ~2.6x headroom to the 16 MiB frame. Count escaped length if that proves thin.
 fn weight(props: &Map<String, Value>) -> usize {
-    let text = props
-        .get("text")
-        .and_then(Value::as_str)
-        .map_or(0, str::len);
-    let spans = props
-        .get("spans")
-        .and_then(Value::as_array)
-        .map_or(0, |spans| {
-            spans
-                .iter()
-                .filter_map(|span| span.get("t")?.as_str())
-                .map(str::len)
-                .sum()
-        });
-    text + spans
+    props.values().map(value_weight).sum()
+}
+
+fn value_weight(value: &Value) -> usize {
+    match value {
+        Value::String(s) => s.len(),
+        Value::Array(items) => items.iter().map(value_weight).sum(),
+        Value::Object(map) => map.values().map(value_weight).sum(),
+        _ => 0,
+    }
 }
 
 fn text_kind(node: &Node) -> Result<(), String> {
@@ -799,12 +837,90 @@ mod tests {
         assert_eq!(doc.text_bytes(), 7);
         doc.apply(&[json!(["add", "s", "main", null,
             {"id": "s", "k": "text", "p": {"spans": [{"t": "ab"}, {"t": "c", "s": "muted"}]}}])]);
-        assert_eq!(doc.text_bytes(), 10);
+        assert_eq!(doc.text_bytes(), 15); // 7 + "ab" "c" "muted"
         doc.apply(&[json!(["set", "t", {"text": null}])]);
-        assert_eq!(doc.text_bytes(), 3);
-        // Both the spans (3) and the new text (2) are stored on `s`, so both count.
+        assert_eq!(doc.text_bytes(), 8);
+        // Both the spans (8) and the new text (2) are stored on `s`, so both count.
         doc.apply(&[json!(["text", "s", "replace", "xy"])]);
-        assert_eq!(doc.text_bytes(), 5);
+        assert_eq!(doc.text_bytes(), 10);
+    }
+
+    #[test]
+    fn text_bytes_counts_every_string_in_props_recursively() {
+        let mut doc = seeded();
+        doc.apply(&[json!(["add", "t", "main", null, {"id": "t", "k": "table",
+            "p": {"cols": ["ab", "cd"], "rows": [["e", "fg"]], "n": 5, "x": {"label": "hi"}}}])]);
+        assert_eq!(doc.text_bytes(), 9); // ab cd e fg hi
+        doc.apply(&[json!(["set", "t", {"x": null}])]);
+        assert_eq!(doc.text_bytes(), 7);
+        doc.apply(&[json!(["set", "t", {"x": {"label": "hello"}}])]);
+        assert_eq!(doc.text_bytes(), 12);
+        doc.apply(&[json!(["add", "k", "main", null, {"id": "k", "k": "kv",
+            "p": {"items": [{"k": "a", "v": "bcd"}]}}])]);
+        assert_eq!(doc.text_bytes(), 16); // 12 + a bcd; the keys "k" and "v" are not counted
+        doc.apply(&[json!(["del", "t"])]);
+        assert_eq!(doc.text_bytes(), 4);
+        doc.apply(&[json!(["del", "k"])]);
+        assert_eq!(doc.text_bytes(), 0);
+    }
+
+    #[test]
+    fn eviction_triggers_on_non_text_props() {
+        let mut doc = seeded();
+        let ops: Vec<Value> = (0..10)
+            .map(|i| {
+                let id = format!("r{i}");
+                json!(["add", id, "main", null, {"id": id, "k": "kv",
+                    "p": {"items": [{"k": "k", "v": "x".repeat(30)}]}}])
+            })
+            .collect();
+        assert!(doc.apply(&ops).errors.is_empty());
+        assert_eq!(doc.text_bytes(), 310);
+        let (removed, _) = doc.evict_with(usize::MAX, 100);
+        assert_eq!(removed.len(), 9);
+        assert_eq!(doc.text_bytes(), 60); // 31 + the 29 byte trim row
+    }
+
+    /// `n1..n63` nested under `main`: `n63` sits at depth 64 (root 0, `main` 1).
+    fn deep() -> Document {
+        let mut doc = seeded();
+        let ops: Vec<Value> = (1..=63)
+            .map(|i| {
+                leaf(
+                    &format!("n{i}"),
+                    &if i == 1 {
+                        "main".to_owned()
+                    } else {
+                        format!("n{}", i - 1)
+                    },
+                    "col",
+                )
+            })
+            .collect();
+        let applied = doc.apply(&ops);
+        assert!(applied.errors.is_empty(), "{:?}", applied.errors);
+        doc
+    }
+
+    #[test]
+    fn depth_is_capped_for_add_subtree_add_and_move() {
+        let mut doc = deep();
+        assert!(fails(&mut doc, leaf("over", "n63", "col")).contains("too deep"));
+        // A child of n62 is at depth 64: fine. Its own child would be 65: rejected.
+        let two = json!(["add", "x", "n62", null, {"id": "x", "k": "col",
+            "c": [{"id": "y", "k": "col"}]}]);
+        assert!(fails(&mut doc, two).contains("too deep"));
+        assert!(doc.get("x").is_none() && doc.get("y").is_none());
+        assert!(doc.apply(&[leaf("fit", "n62", "col")]).errors.is_empty());
+        doc.apply(&[json!(["add", "m", "dock", null, {"id": "m", "k": "col",
+            "c": [{"id": "m2", "k": "col"}]}])]);
+        assert!(fails(&mut doc, json!(["move", "m", "n62", null])).contains("too deep"));
+        assert_eq!(doc.get("m").unwrap().parent.as_deref(), Some("dock"));
+        assert!(
+            doc.apply(&[json!(["move", "m", "n61", null])])
+                .errors
+                .is_empty()
+        );
     }
 
     #[test]
