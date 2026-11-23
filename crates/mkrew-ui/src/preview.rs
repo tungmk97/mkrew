@@ -682,7 +682,7 @@ fn block_in(
 ) -> Option<AnyElement> {
     let element = match &block.kind {
         BlockKind::Heading { level, runs } => {
-            let chat = matches!(ctx.flavor, Flavor::Chat { .. });
+            let chat = chat_flavor(ctx);
             // Chat headings are one step smaller (h1 uses the h2 size), accent colored, and
             // have no rule under them.
             let step = usize::from(*level).saturating_sub(1) + usize::from(chat);

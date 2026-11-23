@@ -9,8 +9,7 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Entity, HighlightStyle, MouseButton, MouseDownEvent,
-    MouseMoveEvent, Pixels, Point, SharedString, StyledText, TextLayout, canvas, div, fill, px,
-    rgb, size,
+    MouseMoveEvent, Pixels, Point, StyledText, TextLayout, canvas, div, fill, px, rgb, size,
 };
 
 use crate::preview::closest_byte;
@@ -39,13 +38,14 @@ pub struct Caret {
 }
 
 /// The field's text: the caret at byte `cursor` while `focused` (none while something is
-/// selected), the bytes of `selection` highlighted, a muted placeholder when empty. The text's
+/// selected), the bytes of `selection` highlighted, a muted `placeholder` (text, or an element
+/// that sets its own look) when empty. The text's
 /// layout maps pointer positions to bytes once painted (`None` when empty).
 pub fn caret_text(
     text: &str,
     cursor: usize,
     selection: Option<Range<usize>>,
-    placeholder: impl Into<SharedString>,
+    placeholder: impl IntoElement,
     focused: bool,
     theme: &Theme,
 ) -> (AnyElement, Option<TextLayout>) {
@@ -59,11 +59,7 @@ pub fn caret_text(
             .flex()
             .items_center()
             .when(focused, |row| row.child(caret))
-            .child(
-                div()
-                    .text_color(rgb(theme.text_subtle))
-                    .child(placeholder.into()),
-            );
+            .child(div().text_color(rgb(theme.text_subtle)).child(placeholder));
         return (empty.into_any_element(), None);
     }
     let lit = HighlightStyle {

@@ -319,6 +319,11 @@ impl Shell {
             return;
         }
         let detached = tab.filter(|id| self.terminal_host(project_id, *id) != HostId::Main);
+        // A new agent pane is born with the default of the moment (ADR 0105), so a later
+        // change of `[ui] chat_default` never flips it.
+        let chat = (self.sidebar.sessions().iter())
+            .any(|s| s.id == session && s.kind == SessionKind::Agent)
+            .then_some(self.chat_default);
         let Some(tabs) = self.tabs.get_mut(&project_id) else {
             return;
         };
@@ -326,10 +331,10 @@ impl Shell {
             return;
         }
         let write = match detached {
-            Some(tab_id) => {
-                (tabs.with_active(tab_id, |tabs| tabs.split_focused(axis, session))).flatten()
-            }
-            None => tabs.split_focused(axis, session),
+            Some(tab_id) => (tabs
+                .with_active(tab_id, |tabs| tabs.split_focused_chat(axis, session, chat)))
+            .flatten(),
+            None => tabs.split_focused_chat(axis, session, chat),
         };
         if let Some(write) = write {
             self.save_layout(project_id, write, window, cx);

@@ -1237,6 +1237,35 @@ mod tests {
         );
     }
 
+    /// The card's chip room at a 900 px pane: the 760 px column less page and card padding.
+    const ROOM_900: f32 = theme::CHAT_COLUMN_WIDTH - 2.0 * theme::space::XL - 2.0 * theme::space::M;
+
+    #[test]
+    fn omp_and_codex_sessions_show_their_stats_at_900_px() {
+        let git = GitSummary {
+            repos: vec![RepoSummary {
+                repo: String::new(),
+                branch: Some("master".into()),
+                head: None,
+                modified: 1,
+                untracked: 0,
+            }],
+        };
+        for (format, jsonl) in [
+            (UsageFormat::OmpJsonl, OMP_TIMING),
+            (UsageFormat::CodexJsonl, CODEX_TIMING),
+        ] {
+            let name = format!("{format:?}");
+            let page = page_in(format, jsonl);
+            let stats = composer_stats(Some(&page), None, Some(&git), true, false, T0);
+            let want = Chips::wanted(&stats);
+            assert!(want.stats && want.clock && want.branch, "{name}: {stats:?}");
+            let shown = fit_chips(want, ROOM_900);
+            assert!(shown.stats && shown.clock, "{name}: dropped {shown:?}");
+            assert_eq!(stat_parts(&stats).len(), 3, "{name}: {stats:?}");
+        }
+    }
+
     #[test]
     fn the_branch_chip_shows_only_at_the_workspace_root() {
         let git = GitSummary {

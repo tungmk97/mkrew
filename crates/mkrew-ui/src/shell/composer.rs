@@ -812,13 +812,16 @@ impl Shell {
         }
     }
 
-    /// The ✦ and "Prompts…" buttons of the chip or key row (§20B.1, §20B.3).
+    /// The ✦ and "Prompts…" buttons of the chip or key row (§20B.1, §20B.3). `compact`
+    /// (the Chat card) shows Prompts as an icon only, to leave room for the chips.
+    #[allow(clippy::too_many_arguments)]
     fn composer_tools(
         &self,
         session: Ulid,
         draft: &Draft,
         is_focused: bool,
         hover: u32,
+        compact: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> Vec<gpui::AnyElement> {
@@ -849,7 +852,12 @@ impl Shell {
         if is_focused && !draft.busy {
             let prompts = quiet_button(
                 "composer-prompts",
-                icon_text(Icon::Library, "Prompts…", theme.text_muted),
+                if compact {
+                    icon_svg(Icon::Library, theme::ICON_SIZE_SMALL, theme.text_muted)
+                        .into_any_element()
+                } else {
+                    icon_text(Icon::Library, "Prompts…", theme.text_muted).into_any_element()
+                },
                 theme,
                 hover,
             )
@@ -957,8 +965,15 @@ impl Shell {
         });
         let status = self.composer_status(draft, focused, true, theme);
         let queued = self.composer_queue_rows(session, theme, cx);
-        let tools =
-            self.composer_tools(session, draft, is_focused, theme.surface_raised, theme, cx);
+        let tools = self.composer_tools(
+            session,
+            draft,
+            is_focused,
+            theme.surface_raised,
+            false,
+            theme,
+            cx,
+        );
         div()
             .flex_none()
             .flex()
@@ -1122,18 +1137,14 @@ impl Shell {
         let can_send = !draft.busy && !rewriting && !blank;
         let input = draft.prompt.text.input();
         let caret = focused && !draft.busy && !rewriting;
-        let (text, layout) = if input.as_str().is_empty() {
-            (placeholder_row(placeholder, caret, theme), None)
-        } else {
-            mkrew_ui::field::caret_text(
-                input.as_str(),
-                input.cursor(),
-                input.selection(),
-                "",
-                caret,
-                theme,
-            )
-        };
+        let (text, layout) = mkrew_ui::field::caret_text(
+            input.as_str(),
+            input.cursor(),
+            input.selection(),
+            placeholder_row(placeholder, theme),
+            caret,
+            theme,
+        );
         let field = mkrew_ui::field::caret_mouse(
             div()
                 .id("composer")
@@ -1226,7 +1237,7 @@ impl Shell {
                 .py(px(space::XS))
                 .rounded(px(radius::PILL))
                 .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(theme.control_border))
+                .border_color(rgb(theme::raised_border(theme)))
                 .text_size(font_size::META)
                 .text_color(rgb(theme.accent_text))
                 .pressable(Look::Chip, !exited, theme)
@@ -1393,6 +1404,7 @@ impl Shell {
                         draft,
                         is_focused,
                         theme.border,
+                        true,
                         theme,
                         cx,
                     ))
@@ -1404,22 +1416,13 @@ impl Shell {
     }
 }
 
-/// The empty Chat field: the caret while focused, a small leaf icon, then the placeholder in
-/// italic muted text (Tern look).
-fn placeholder_row(text: String, caret: bool, theme: &Theme) -> gpui::AnyElement {
+/// The Chat field's placeholder: a small sparkle icon, then `text` in italic muted (Tern look).
+/// `caret_text` draws the caret before it.
+fn placeholder_row(text: String, theme: &Theme) -> gpui::Div {
     div()
         .flex()
         .items_center()
         .gap(px(space::S))
-        .when(caret, |row| {
-            row.child(
-                div()
-                    .flex_none()
-                    .w(px(theme::BORDER_WIDTH))
-                    .h(font_size::BODY)
-                    .bg(rgb(theme.text)),
-            )
-        })
         .child(icon_svg(
             Icon::Sparkles,
             theme::ICON_SIZE_SMALL,
@@ -1432,5 +1435,4 @@ fn placeholder_row(text: String, caret: bool, theme: &Theme) -> gpui::AnyElement
                 .text_color(rgb(theme.text_muted))
                 .child(text),
         )
-        .into_any_element()
 }

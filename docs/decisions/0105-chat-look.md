@@ -59,6 +59,13 @@ So Tern and Mkrew have the same architecture; the gap is the drawing and a few f
   New agent panes and the next start use the last pick; the Settings page General still shows and edits it.
   Panes with no saved mode follow the default, so a pick first pins every such pane to its current mode, and they do not flip.
   The temporary switches to Terminal (the model chip, "Answer in terminal") are not picks and do not change the default.
+- Fix round 1: a new agent pane (`place_session`) is born with `chat: <default of the moment>`, so changing the default never flips it.
+  Legacy leaves (no flag) of the workspaces opened this session are pinned to their current mode, one `tab.set_layout` per tab, when the user picks.
+  Legacy panes in workspaces not opened this session follow the new default.
+  A failed write of `[ui] chat_default` shows the "choice was not saved" toast.
+- Fix round 1: the composer's chip widths are measured, and Prompts is an icon in the Chat card, so model, effort, permission, branch, stats and the end time fit one 760 px column (688 px of room) for an omp or Codex session.
+  omp's transcript has no permission mode (`yolo` is an omp runtime setting), so an omp session shows no permission chip.
+  The model pill and the neutral round buttons use `theme::raised_border` (control_border vanishes on `surface_raised`).
 
 ## Alternatives
 

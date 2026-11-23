@@ -165,7 +165,7 @@ fn round_neutral(id: &'static str, glyph: Icon, theme: &Theme) -> gpui::Stateful
     round_frame(id, glyph, theme.text_muted)
         .bg(rgb(theme.surface_raised))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.control_border))
+        .border_color(rgb(theme::raised_border(theme)))
 }
 
 /// The Chat composer's round send button: `primary` (it can send) is an accent fill with an
@@ -189,7 +189,8 @@ pub(crate) fn round_button(
 }
 
 /// A small floating round button (the Chat page's scroll to the end): the neutral look with a
-/// float shadow and the raised hover.
+/// float shadow and the raised hover. It floats over a list, so it takes the mouse itself:
+/// only the wheel passes through.
 pub(crate) fn float_button(
     id: &'static str,
     glyph: Icon,
@@ -197,6 +198,7 @@ pub(crate) fn float_button(
 ) -> gpui::Stateful<gpui::Div> {
     round_neutral(id, glyph, theme)
         .shadow(theme::shadow_float(theme))
+        .block_mouse_except_scroll()
         .pressable(Look::Raised, true, theme)
 }
 

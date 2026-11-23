@@ -62,6 +62,10 @@ With a real omp, a real Claude Code and a real Codex session, dark and light the
 - [ ] **Last pick is the default:** pick Chat (header switch, `Ctrl+Alt+T` or the palette "Agent: Toggle chat view"), open a new agent pane: it opens in Chat; pick Terminal: the next new pane opens in Terminal.
   Settings > General "Chat view by default" shows the same value and `settings.toml` has `[ui] chat_default`.
   An older pane you did not touch keeps its look (it does not flip).
+  Legacy panes in a workspace you did not open since the update follow the new default; panes opened or created after the update keep their mode.
+- [ ] **Chip row at 900 px (omp and Codex):** model, effort, branch, `170K`, `tok/s`, elapsed and the end time all show in one row (Codex also shows permission); omp shows no permission chip (not in its transcript).
+  The model pill's border is visible in dark and light.
+  Clicking the scroll-to-end button does nothing to the message under it; it never covers the subagent tray or a question card.
 
 ### To verify - 2026-11-22 macOS app integration (ADR 0100)
 

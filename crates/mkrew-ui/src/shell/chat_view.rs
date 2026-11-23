@@ -224,31 +224,29 @@ impl Shell {
         let Some(default) = chat::default_after_pick(self.chat_default, on) else {
             return;
         };
-        let unsaved: Vec<(Ulid, Ulid)> = (self.tabs.iter())
+        // Legacy leaves (no saved mode) follow the default, so they are pinned to their
+        // current mode first and do not flip. New agent panes are born pinned
+        // (`place_session`); only workspaces not opened this session keep legacy leaves.
+        let modes: HashMap<Ulid, bool> = (self.sidebar.sessions().iter())
+            .filter(|s| self.chat_available(s))
+            .map(|s| (s.id, self.chat_on(s)))
+            .collect();
+        let writes: Vec<_> = (self.tabs.iter_mut())
             .flat_map(|(project, tabs)| {
-                (tabs.tabs().iter())
-                    .flat_map(|tab| tab.sessions())
-                    .filter(|id| tabs.chat_of(*id).is_none())
-                    .map(|id| (*project, id))
+                (tabs.pin_unset(|id| modes.get(&id).copied()).into_iter())
+                    .map(|write| (*project, write))
+                    .collect::<Vec<_>>()
             })
             .collect();
-        for (project, id) in unsaved {
-            let on = (self.sidebar.sessions().iter())
-                .find(|s| s.id == id && self.chat_available(s))
-                .map(|info| self.chat_on(info));
-            let write = on.and_then(|on| {
-                (self.tabs.get_mut(&project)).and_then(|tabs| tabs.set_chat(id, Some(on)))
-            });
-            if let Some(write) = write {
-                self.save_layout(project, write, window, cx);
-            }
+        for (project, write) in writes {
+            self.save_layout(project, write, window, cx);
         }
-        let Some(setting) =
-            (mkrew_core::settings_fields::SETTINGS.iter()).find(|s| s.id() == "ui.chat_default")
-        else {
-            return;
-        };
-        match setting.write(&self.settings_file, &default.to_string()) {
+        match mkrew_core::settings::write_ui_value(
+            &self.settings_file,
+            "chat_default",
+            &default.to_string(),
+        ) {
+            Err(error) => self.settings_write_failed("the chat default", error, cx),
             Ok(()) => {
                 // Now, not at the next mtime poll (or window focus).
                 self.settings_modified = std::fs::metadata(&self.settings_file)
@@ -256,7 +254,6 @@ impl Shell {
                     .ok();
                 self.apply_settings_file(window, cx);
             }
-            Err(error) => tracing::warn!("cannot save [ui] chat_default: {error}"),
         }
     }
 
@@ -403,73 +400,85 @@ impl Shell {
             ui.scroll.scroll_to_bottom();
         }
         div()
-            .relative()
             .size_full()
             .flex()
             .flex_col()
             .when(is_focused, |el| el.track_focus(&self.chat_focus))
             .on_key_down(cx.listener(Self::chat_key_down))
             .child(
+                // The list and its floating button share one box, so the button never covers
+                // the tray or the question card below.
                 div()
-                    .id(SharedString::from(format!("chat-list-{session}")))
+                    .relative()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&ui.scroll)
-                    // A press on a message stops here; any other press ends the selection, so a
-                    // drag cannot extend an old one.
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |shell, _: &MouseDownEvent, _, cx| {
-                            shell.chat_clear_selection(session, cx);
-                        }),
-                    )
-                    .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
-                        if event.dragging() {
-                            shell.chat_drag(session, event.position, cx);
-                        }
-                    }))
-                    .font_family(theme.ui_font_family.clone())
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    .child(chat_column(
+                    .child(
                         div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(space::XL))
-                            .py(px(space::L))
-                            .children(earlier)
-                            .children(turns),
-                    )),
+                            .id(SharedString::from(format!("chat-list-{session}")))
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&ui.scroll)
+                            // A press on a message stops here; any other press ends the
+                            // selection, so a drag cannot extend an old one.
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |shell, _: &MouseDownEvent, _, cx| {
+                                    shell.chat_clear_selection(session, cx);
+                                }),
+                            )
+                            .on_mouse_move(cx.listener(
+                                move |shell, event: &MouseMoveEvent, _, cx| {
+                                    if event.dragging() {
+                                        shell.chat_drag(session, event.position, cx);
+                                    }
+                                },
+                            ))
+                            .font_family(theme.ui_font_family.clone())
+                            .text_size(font_size::BODY)
+                            .text_color(rgb(theme.text))
+                            .child(chat_column(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(space::XL))
+                                    .py(px(space::L))
+                                    .children(earlier)
+                                    .children(turns),
+                            )),
+                    )
+                    .when(!at_end, |el| {
+                        el.child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .bottom(px(space::S))
+                                .child(chat_column(
+                                    div().flex().justify_end().child(
+                                        float_button("chat-scroll-end", Icon::ArrowDown, theme)
+                                            .tooltip(tooltip(
+                                                theme,
+                                                "Scroll to the latest message",
+                                                "End",
+                                            ))
+                                            .on_press(
+                                                true,
+                                                cx.listener(move |shell, _, _, cx| {
+                                                    if let Some(ui) = shell.chats.get(&session) {
+                                                        ui.scroll.scroll_to_bottom();
+                                                    }
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                    ),
+                                )),
+                        )
+                    }),
             )
             .when(!view.tray.is_empty(), |el| {
                 el.child(chat_tray(&view.tray, now, theme))
             })
             .children(question)
-            .when(!at_end, |el| {
-                el.child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .right_0()
-                        .bottom(px(space::S))
-                        .child(chat_column(
-                            div().flex().justify_end().child(
-                                float_button("chat-scroll-end", Icon::ArrowDown, theme)
-                                    .tooltip(tooltip(theme, "Scroll to the latest message", ""))
-                                    .on_press(
-                                        true,
-                                        cx.listener(move |shell, _, _, cx| {
-                                            if let Some(ui) = shell.chats.get(&session) {
-                                                ui.scroll.scroll_to_bottom();
-                                            }
-                                            cx.notify();
-                                        }),
-                                    ),
-                            ),
-                        )),
-                )
-            })
             .into_any_element()
     }
 
