@@ -362,6 +362,9 @@ impl Shell {
             chat: focused_info
                 .as_ref()
                 .is_some_and(|info| self.chat_available(info)),
+            surface: focused_info
+                .as_ref()
+                .is_some_and(|info| self.tsp_pane_view(info) != mkrew_ui::tsp::PaneView::Terminal),
             plan_linked: self.focused_agent(window).is_some_and(|id| {
                 (self.sidebar.sessions().iter()).any(|s| s.id == id && s.plan_path.is_some())
             }),

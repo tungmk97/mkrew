@@ -166,7 +166,7 @@ impl Shell {
                         shell.save_main_frame();
                     }
                     shell.sync_thread(cx);
-                    shell.sync_tsps(window, cx);
+                    shell.sync_tsps(cx);
                     shell.poll_machines(cx);
                     // Clicks of this window's own notifications where they come back on a
                     // channel (not Windows: there the toast's link starts `mkrew`).

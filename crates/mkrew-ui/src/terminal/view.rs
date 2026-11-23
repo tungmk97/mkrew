@@ -415,7 +415,7 @@ impl TerminalPane {
     /// Pastes the clipboard (§20B.5): text (bracketed when asked), else an image saved through
     /// `attachment.save` and typed as its path, else copied files typed as paths. `false` when
     /// the clipboard holds none of these (Ctrl+V then sends ^V, ADR 0026).
-    fn paste(&mut self, cx: &mut Context<'_, Self>) -> bool {
+    pub fn paste(&mut self, cx: &mut Context<'_, Self>) -> bool {
         let Some(item) = cx.read_from_clipboard() else {
             return false;
         };
@@ -984,6 +984,11 @@ impl TerminalPane {
         self.exited.is_some()
     }
 
+    /// The exit code of an ended session (`Some(None)`: ended without one).
+    pub fn exit_code(&self) -> Option<Option<i32>> {
+        self.exited
+    }
+
     /// Types `text` as one paste into a live session (dropped or pasted paths, §20B.5).
     pub fn type_text(&mut self, text: &str, cx: &mut Context<'_, Self>) {
         if self.exited.is_some() || text.is_empty() || self.emulator.copy_mode() {
@@ -1027,6 +1032,26 @@ impl TerminalPane {
         self.request(request, "session.input", cx);
     }
 }
+/// The text of the line an exited session shows under its content.
+pub fn exited_text(code: Option<i32>) -> String {
+    match code {
+        Some(code) => format!("✕ Session exited (code {code})."),
+        None => "✕ Session exited.".to_owned(),
+    }
+}
+
+/// The line an exited session shows under its content: the grid of a terminal pane, the last
+/// document of a TSP pane (`shell/tsp_view.rs`).
+pub fn exited_notice(code: Option<i32>, theme: &Theme) -> gpui::Div {
+    div()
+        .px(px(space::M))
+        .py(px(space::XS))
+        .bg(rgb(theme.surface))
+        .font_family(theme.ui_font_family.clone())
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text_muted))
+        .child(exited_text(code))
+}
 
 impl Render for TerminalPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
@@ -1035,20 +1060,7 @@ impl Render for TerminalPane {
             self.rows.borrow_mut().clear();
             self.theme = theme;
         }
-        let exited = self.exited.map(|code| {
-            let text = match code {
-                Some(code) => format!("✕ Session exited (code {code})."),
-                None => "✕ Session exited.".to_owned(),
-            };
-            div()
-                .px(px(space::M))
-                .py(px(space::XS))
-                .bg(rgb(self.theme.surface))
-                .font_family(self.theme.ui_font_family.clone())
-                .text_size(font_size::META)
-                .text_color(rgb(self.theme.text_muted))
-                .child(text)
-        });
+        let exited = self.exited.map(|code| exited_notice(code, &self.theme));
         let find_bar = self.render_find_bar(window, cx);
         div()
             .size_full()
@@ -1386,7 +1398,12 @@ impl Element for TerminalElement {
 /// Cell width and line height. Monospace: one precomputed cell size, no per-cell measurement
 /// (SPEC §10). The Files editor uses this one.
 pub fn cell_size(window: &Window, theme: &Theme) -> (Pixels, Pixels) {
-    let text_system = window.text_system();
+    cell_size_in(window.text_system(), theme)
+}
+
+/// [`cell_size`] from the text system alone, for code that draws without a `Window` in hand (the
+/// TSP pane sizes its PTY while the shell renders).
+pub fn cell_size_in(text_system: &gpui::TextSystem, theme: &Theme) -> (Pixels, Pixels) {
     let font_size = px(theme.terminal_font_size);
     let cell_width = text_system
         .advance(

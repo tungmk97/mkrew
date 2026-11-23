@@ -11,7 +11,7 @@ use mkrew_protocol::{TspBlob, TspChange, TspSnapshot, TspState, TspSurface, TspU
 use serde_json::{Map, Value, json};
 
 use crate::icons::Icon;
-use crate::theme::{Theme, space};
+use crate::theme::{self, Theme, space};
 
 /// The one table from omp's span tokens and node tones to theme fields (spec 7.2). `None`: not a
 /// color token (a modifier, omp's own palette name, or nothing), the text draws in `theme.text`.
@@ -531,6 +531,13 @@ pub fn animating(doc: &Document) -> bool {
         for node in doc.children(id) {
             let live = match node.kind.as_str() {
                 "spinner" | "rate" => true,
+                // A bar without an amount draws the loading dots; a ring (the ask timeout) is
+                // a label.
+                "progress" => !has_value(&node.props),
+                "meter" => {
+                    node.props.get("style").and_then(Value::as_str) != Some("ring")
+                        && !has_value(&node.props)
+                }
                 "elapsed" => !node.props.contains_key("stopped"),
                 "checklist" => has_active_item(&node.props),
                 _ => false,
@@ -542,6 +549,10 @@ pub fn animating(doc: &Document) -> bool {
         }
     }
     false
+}
+
+fn has_value(props: &Map<String, Value>) -> bool {
+    props.get("value").is_some_and(Value::is_number)
 }
 
 /// Whether a checklist's props hold an `active` item, read in place (the tick runs this).
@@ -595,12 +606,49 @@ pub fn click_event(doc: &Document, node: &Node, double: bool) -> Option<Value> {
     if matches!(node.kind.as_str(), "editor" | "input") {
         return Some(json!({"ev": "focus", "id": node.id}));
     }
-    let act = node
-        .props
-        .get("actions")?
-        .get(if double { "dblclick" } else { "click" })?
+    let actions = node.props.get("actions")?;
+    // A quick second click on a node with only a `click` action is that click again.
+    let act = double
+        .then(|| actions.get("dblclick"))
+        .flatten()
+        .or_else(|| actions.get("click"))?
         .as_str()?;
     Some(json!({"ev": "action", "id": node.id, "act": act}))
+}
+
+/// Whether [`click_event`] gives an event for `node` (either click), without building one: the
+/// pane asks this of every node on every frame.
+pub fn has_click(doc: &Document, node: &Node) -> bool {
+    if root_owned(&node.id) {
+        return false;
+    }
+    if node.kind == "item"
+        && let Some(list) = node
+            .parent
+            .as_deref()
+            .and_then(|id| doc.get(id))
+            .filter(|list| list.kind == "list")
+    {
+        return !root_owned(&list.id);
+    }
+    if matches!(node.kind.as_str(), "editor" | "input") {
+        return true;
+    }
+    node.props.get("actions").is_some_and(|actions| {
+        ["click", "dblclick"]
+            .iter()
+            .any(|key| actions.get(key).is_some_and(Value::is_string))
+    })
+}
+
+/// How long to wait before asking for a snapshot again after `failures` failed ones in a row:
+/// 2 s, doubling, at most 30 s.
+pub fn retry_wait(failures: u32) -> std::time::Duration {
+    let secs = match failures {
+        0 => 0,
+        n => 2u64.saturating_mul(1u64 << (n - 1).min(5)).min(30),
+    };
+    std::time::Duration::from_secs(secs)
 }
 
 /// Index among `main`'s children of the row that holds `id`: what a `reveal` op scrolls to.
@@ -618,6 +666,16 @@ pub fn reveal_index(doc: &Document, id: &str) -> Option<usize> {
 /// The texts of the toasts a frame's ops add or change (`toast` goes to Mkrew's toast layer, spec
 /// 7.1). `doc` is the document after the ops, used to tell a toast from another node.
 pub fn toast_texts(doc: &Document, ops: &[Value]) -> Vec<String> {
+    toasts_in(Some(doc), ops)
+}
+
+/// The toasts a frame *adds*, for a frame that could not be applied (a gap): without the
+/// document a `set` cannot be told from a change to another node, so those are not found.
+pub fn added_toast_texts(ops: &[Value]) -> Vec<String> {
+    toasts_in(None, ops)
+}
+
+fn toasts_in(doc: Option<&Document>, ops: &[Value]) -> Vec<String> {
     ops.iter()
         .filter_map(|op| {
             let op = op.as_array()?;
@@ -630,7 +688,7 @@ pub fn toast_texts(doc: &Document, ops: &[Value]) -> Vec<String> {
                     node.get("p")?.get("text")?
                 }
                 "set" => {
-                    if doc.get(op.get(1)?.as_str()?)?.kind != "toast" {
+                    if doc?.get(op.get(1)?.as_str()?)?.kind != "toast" {
                         return None;
                     }
                     op.get(2)?.get("text")?
@@ -641,6 +699,55 @@ pub fn toast_texts(doc: &Document, ops: &[Value]) -> Vec<String> {
         })
         .filter(|text| !text.is_empty())
         .collect()
+}
+
+/// What a `scroll` op does to the list (spec 7.3): `["scroll", id, by]` with `by` `start`, `end`,
+/// or a step up or down. omp only sends it when the hello lists the `scroll` feature (P1 does
+/// not), so this is the reading of the reference's op table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListScroll {
+    Top,
+    Bottom,
+    Page { up: bool },
+}
+
+/// The scroll the last `scroll` op of a frame asks for.
+pub fn scroll_in(ops: &[Value]) -> Option<ListScroll> {
+    ops.iter().rev().find_map(|op| {
+        let op = op.as_array()?;
+        if op.first()?.as_str()? != "scroll" {
+            return None;
+        }
+        match op.get(2)?.as_str()? {
+            "start" => Some(ListScroll::Top),
+            "end" => Some(ListScroll::Bottom),
+            "up" | "pageup" => Some(ListScroll::Page { up: true }),
+            "down" | "pagedown" => Some(ListScroll::Page { up: false }),
+            _ => None,
+        }
+    })
+}
+
+/// The scroll offset (negative: the list moved up) after a page up or down of `page` px, kept in
+/// `-max..=0`.
+pub fn paged_offset(offset: f32, page: f32, max: f32, up: bool) -> f32 {
+    let moved = if up { offset + page } else { offset - page };
+    moved.clamp(-max.max(0.0), 0.0)
+}
+
+/// The width in px of the text column of a pane `pane_width` wide: the Chat column's content
+/// (`chat_column`), what the PTY is sized to.
+pub fn column_px(pane_width: f32) -> f32 {
+    pane_width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * theme::CHAT_COLUMN_PADDING
+}
+
+/// The widest an `overlay` of `size` is.
+pub fn overlay_width(size: Option<&str>) -> f32 {
+    match size {
+        Some("full" | "lg") => theme::CHAT_COLUMN_WIDTH,
+        Some("md") => theme::TSP_OVERLAY_MD_WIDTH,
+        _ => theme::TSP_OVERLAY_SM_WIDTH,
+    }
 }
 
 /// Parsed values by node id, kept while the node's text is unchanged. The key is the node id plus
@@ -661,8 +768,11 @@ impl<T> Default for TextCache<T> {
 }
 
 impl<T> TextCache<T> {
-    pub fn get(&mut self, id: &str, text: &str, make: impl FnOnce(&str) -> T) -> Rc<T> {
+    /// `salt` is part of the key next to the text (the `lang` of a `code` node), so the caller
+    /// builds nothing per frame: `make` gets the text and runs on a miss only.
+    pub fn get(&mut self, id: &str, salt: &str, text: &str, make: impl FnOnce(&str) -> T) -> Rc<T> {
         let mut hasher = DefaultHasher::new();
+        salt.hash(&mut hasher);
         text.hash(&mut hasher);
         let key = (text.len(), hasher.finish());
         if let Some((len, hash, value)) = self.entries.get(id)
@@ -704,6 +814,128 @@ pub fn byte_at_utf16(text: &str, index: usize) -> usize {
         }
     }
     text.len()
+}
+
+/// What an `editor` decoration does to a range of its text (`decor` entries `{from, to, s}`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Decor {
+    pub style: SpanStyle,
+    /// The range is not drawn (omp's own markers).
+    pub hide: bool,
+    /// A spelling mistake: wavy underline.
+    pub typo: bool,
+}
+
+impl Decor {
+    fn parse(tokens: &str, theme: &Theme) -> Self {
+        let mut decor = Self {
+            style: span_style(tokens, theme),
+            ..Self::default()
+        };
+        for token in tokens.split_whitespace() {
+            match token {
+                "hide" => decor.hide = true,
+                "typo" => decor.typo = true,
+                // Skills, mentions and references: one accent look for all.
+                "customMessageLabel" | "statusLineModel" => {
+                    decor.style.color.get_or_insert(theme.accent);
+                }
+                _ => {}
+            }
+        }
+        decor
+    }
+
+    /// Both decorations at once (ranges that overlap): the first color stays, flags add up.
+    fn merged(self, over: Self) -> Self {
+        Self {
+            style: SpanStyle {
+                color: self.style.color.or(over.style.color),
+                bold: self.style.bold || over.style.bold,
+                italic: self.style.italic || over.style.italic,
+                strike: self.style.strike || over.style.strike,
+                mono: self.style.mono || over.style.mono,
+                mark: self.style.mark || over.style.mark,
+            },
+            hide: self.hide || over.hide,
+            typo: self.typo || over.typo,
+        }
+    }
+}
+
+/// `text` cut into byte ranges that cover all of it, each with the decorations over it. `decor`
+/// is the `decor` prop: `{from, to, s}` in UTF-16 units of the whole text.
+pub fn decor_pieces(
+    text: &str,
+    decor: &[Value],
+    theme: &Theme,
+) -> Vec<(std::ops::Range<usize>, Decor)> {
+    let spans: Vec<(usize, usize, Decor)> = decor
+        .iter()
+        .filter_map(|entry| {
+            let at = |key: &str| {
+                let units = usize::try_from(entry.get(key)?.as_u64()?).ok()?;
+                Some(byte_at_utf16(text, units))
+            };
+            let (from, to) = (at("from")?, at("to")?);
+            let tokens = entry.get("s").and_then(Value::as_str).unwrap_or("");
+            (from < to).then(|| (from, to, Decor::parse(tokens, theme)))
+        })
+        .collect();
+    let mut cuts = vec![0, text.len()];
+    cuts.extend(spans.iter().flat_map(|(from, to, _)| [*from, *to]));
+    cuts.sort_unstable();
+    cuts.dedup();
+    cuts.windows(2)
+        .map(|cut| {
+            let decor = (spans.iter())
+                .filter(|(from, to, _)| *from <= cut[0] && cut[1] <= *to)
+                .fold(Decor::default(), |all, (_, _, one)| all.merged(*one));
+            (cut[0]..cut[1], decor)
+        })
+        .collect()
+}
+
+/// One drawn piece of an editor line: decorated text, or the caret.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Atom {
+    Text(std::ops::Range<usize>, Decor),
+    Caret,
+}
+
+/// What the line `line` (a byte range of the whole text) draws: its pieces without the hidden
+/// ones, the caret (a byte offset, `None` when this editor has no focus) where it falls.
+pub fn line_atoms(
+    pieces: &[(std::ops::Range<usize>, Decor)],
+    line: std::ops::Range<usize>,
+    caret: Option<usize>,
+) -> Vec<Atom> {
+    let mut caret = caret.filter(|at| (line.start..=line.end).contains(at));
+    let mut atoms = Vec::new();
+    for (range, decor) in pieces {
+        let (start, end) = (range.start.max(line.start), range.end.min(line.end));
+        if start >= end {
+            continue;
+        }
+        let text = |atoms: &mut Vec<Atom>, from: usize, to: usize| {
+            if from < to && !decor.hide {
+                atoms.push(Atom::Text(from..to, *decor));
+            }
+        };
+        match caret {
+            Some(at) if (start..end).contains(&at) => {
+                text(&mut atoms, start, at);
+                atoms.push(Atom::Caret);
+                text(&mut atoms, at, end);
+                caret = None;
+            }
+            _ => text(&mut atoms, start, end),
+        }
+    }
+    if caret.is_some() {
+        atoms.push(Atom::Caret);
+    }
+    atoms
 }
 
 /// Filled blocks of 4 for a thinking level.
@@ -1915,14 +2147,234 @@ mod tests {
         );
         assert_eq!(
             click_event(&d, send, true),
-            None,
-            "no dblclick action on that node"
+            click_event(&d, send, false),
+            "a quick second click on a node without a dblclick action is its click"
+        );
+        let both = doc(vec![
+            json!(["add", "dock", "s:1", null, {"id": "dock", "k": "col"}]),
+            json!(["add", "3.two", "dock", null, {
+                "id": "3.two", "k": "row",
+                "p": {"actions": {"click": "one", "dblclick": "two"}}
+            }]),
+        ]);
+        let two = both.get("3.two").unwrap();
+        assert_eq!(
+            click_event(&both, two, true),
+            Some(json!({"ev": "action", "id": "3.two", "act": "two"})),
+            "a dblclick action wins on a double click"
+        );
+        assert_eq!(
+            click_event(&both, two, false),
+            Some(json!({"ev": "action", "id": "3.two", "act": "one"}))
         );
         assert_eq!(
             click_event(&d, d.get("3.plain").unwrap(), false),
             None,
             "no actions"
         );
+    }
+
+    #[test]
+    fn has_click_tells_a_clickable_node_without_building_the_event() {
+        let d = dock_doc();
+        for (id, clickable) in [
+            ("3.bar/send", true),
+            ("3.list/a", true),
+            ("3.line/input", true),
+            ("3.plain", false),
+            ("dock.x", false),
+            ("dock.list/a", false),
+        ] {
+            let node = d.get(id).unwrap();
+            assert_eq!(has_click(&d, node), clickable, "{id}");
+            assert_eq!(
+                has_click(&d, node),
+                click_event(&d, node, false).is_some() || click_event(&d, node, true).is_some(),
+                "{id}: agrees with the events"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bar_with_no_amount_animates_but_a_ring_or_a_known_one_does_not() {
+        let anim = |node| animating(&with_node(node));
+        assert!(anim(json!({"id": "n", "k": "progress"})));
+        assert!(anim(json!({"id": "n", "k": "meter", "p": {"label": "x"}})));
+        assert!(!anim(
+            json!({"id": "n", "k": "progress", "p": {"value": 0.2}})
+        ));
+        assert!(!anim(
+            json!({"id": "n", "k": "meter", "p": {"style": "ring", "label": "9s"}})
+        ));
+    }
+
+    #[test]
+    fn the_cache_keys_on_the_salt_too_so_a_changed_language_reparses() {
+        let mut cache = TextCache::default();
+        let mut parses = 0;
+        let mut get = |cache: &mut TextCache<usize>, salt: &str| {
+            cache.get("n", salt, "abc", |t| {
+                parses += 1;
+                t.len()
+            })
+        };
+        get(&mut cache, "rust");
+        get(&mut cache, "rust");
+        get(&mut cache, "bash");
+        assert_eq!(parses, 2);
+    }
+
+    #[test]
+    fn a_failed_snapshot_is_retried_after_a_doubling_wait_up_to_30_seconds() {
+        let waits: Vec<u64> = (1..=7).map(|n| retry_wait(n).as_secs()).collect();
+        assert_eq!(waits, [2, 4, 8, 16, 30, 30, 30]);
+        assert_eq!(retry_wait(0).as_secs(), 0, "no failure, no wait");
+        assert_eq!(retry_wait(u32::MAX).as_secs(), 30, "never overflows");
+        assert_eq!(retry_wait(10).as_secs(), 30);
+    }
+
+    #[test]
+    fn a_gap_frame_still_toasts_what_it_adds() {
+        let ops = vec![
+            json!(["add", "t", "main", null, {"id": "t", "k": "toast", "p": {"text": "saved"}}]),
+            json!(["add", "n", "main", null, {"id": "n", "k": "text", "p": {"text": "x"}}]),
+            json!(["set", "t", {"text": "unknown without the document"}]),
+        ];
+        assert_eq!(added_toast_texts(&ops), vec!["saved".to_owned()]);
+    }
+
+    #[test]
+    fn the_last_scroll_op_of_a_frame_moves_the_list() {
+        let ops = |by: &str| vec![json!(["scroll", "main", by])];
+        assert_eq!(scroll_in(&ops("start")), Some(ListScroll::Top));
+        assert_eq!(scroll_in(&ops("end")), Some(ListScroll::Bottom));
+        assert_eq!(scroll_in(&ops("up")), Some(ListScroll::Page { up: true }));
+        assert_eq!(
+            scroll_in(&ops("pagedown")),
+            Some(ListScroll::Page { up: false })
+        );
+        assert_eq!(scroll_in(&ops("sideways")), None);
+        assert_eq!(scroll_in(&[json!(["reveal", "a", "end"])]), None);
+        assert_eq!(
+            scroll_in(&[
+                json!(["scroll", "a", "start"]),
+                json!(["scroll", "a", "end"])
+            ]),
+            Some(ListScroll::Bottom),
+            "the last one wins"
+        );
+    }
+
+    #[test]
+    fn a_page_moves_the_list_and_stops_at_both_ends() {
+        assert_eq!(paged_offset(0.0, 300.0, 1000.0, false), -300.0);
+        assert_eq!(paged_offset(-300.0, 300.0, 1000.0, true), 0.0);
+        assert_eq!(paged_offset(-100.0, 300.0, 1000.0, true), 0.0, "top");
+        assert_eq!(paged_offset(-900.0, 300.0, 1000.0, false), -1000.0, "end");
+        assert_eq!(
+            paged_offset(0.0, 300.0, 0.0, false),
+            0.0,
+            "nothing to scroll"
+        );
+    }
+
+    #[test]
+    fn the_pty_is_sized_to_the_chat_column_of_the_pane() {
+        let pad = 2.0 * theme::CHAT_COLUMN_PADDING;
+        assert_eq!(column_px(400.0), 400.0 - pad);
+        assert_eq!(column_px(5000.0), theme::CHAT_COLUMN_WIDTH - pad);
+    }
+
+    #[test]
+    fn decorations_cut_the_text_into_pieces_by_utf16_offsets() {
+        let t = Theme::dark();
+        // "é" is 1 UTF-16 unit and 2 bytes: bytes 0..2, then "@bob" at 2..6.
+        let text = "é @bob go";
+        let pieces = decor_pieces(
+            text,
+            &[
+                json!({"from": 2, "to": 6, "s": "statusLineModel strong"}),
+                json!({"from": 7, "to": 9, "s": "typo"}),
+                json!({"from": 5, "to": 5, "s": "hide"}),
+                json!({"s": "hide"}),
+            ],
+            &t,
+        );
+        let ranges: Vec<_> = pieces.iter().map(|(r, _)| r.clone()).collect();
+        assert_eq!(ranges, [0..3, 3..7, 7..8, 8..10]);
+        assert_eq!(pieces[0].1, Decor::default());
+        assert_eq!(pieces[1].1.style.color, Some(t.accent));
+        assert!(pieces[1].1.style.bold);
+        assert!(pieces[3].1.typo && !pieces[2].1.typo);
+        assert_eq!(
+            ranges.last().map(|r| r.end),
+            Some(text.len()),
+            "covers all of it"
+        );
+        assert!(decor_pieces("", &[], &t).is_empty());
+    }
+
+    #[test]
+    fn overlapping_decorations_add_up_and_the_first_color_stays() {
+        let t = Theme::dark();
+        let pieces = decor_pieces(
+            "abcd",
+            &[
+                json!({"from": 0, "to": 4, "s": "accent"}),
+                json!({"from": 1, "to": 3, "s": "error strong hide"}),
+            ],
+            &t,
+        );
+        assert_eq!(pieces.len(), 3);
+        let mid = pieces[1].1;
+        assert_eq!(mid.style.color, Some(t.accent));
+        assert!(mid.style.bold && mid.hide);
+        assert!(!pieces[0].1.hide && !pieces[2].1.hide);
+    }
+
+    #[test]
+    fn an_editor_line_draws_its_visible_pieces_and_the_caret_where_it_falls() {
+        let t = Theme::dark();
+        let text = "ab\ncdef";
+        let pieces = decor_pieces(text, &[json!({"from": 4, "to": 6, "s": "hide"})], &t);
+        let plain = Decor::default();
+        // Line 2 is bytes 3..7: "c" visible, "de" hidden, "f" visible.
+        let texts = |atoms: &[Atom]| -> Vec<String> {
+            atoms
+                .iter()
+                .map(|a| match a {
+                    Atom::Text(r, _) => text[r.clone()].to_owned(),
+                    Atom::Caret => "|".to_owned(),
+                })
+                .collect()
+        };
+        assert_eq!(texts(&line_atoms(&pieces, 3..7, None)), ["c", "f"]);
+        assert_eq!(texts(&line_atoms(&pieces, 3..7, Some(3))), ["|", "c", "f"]);
+        assert_eq!(
+            texts(&line_atoms(&pieces, 3..7, Some(5))),
+            ["c", "|", "f"],
+            "a caret inside hidden text sits where it starts"
+        );
+        assert_eq!(texts(&line_atoms(&pieces, 3..7, Some(7))), ["c", "f", "|"]);
+        assert_eq!(texts(&line_atoms(&pieces, 0..2, Some(1))), ["a", "|", "b"]);
+        assert_eq!(
+            texts(&line_atoms(&pieces, 0..2, Some(5))),
+            ["ab"],
+            "another line's caret"
+        );
+        let blank = decor_pieces("\nx", &[], &t);
+        assert_eq!(line_atoms(&blank, 0..0, Some(0)), [Atom::Caret]);
+        assert_eq!(line_atoms(&blank, 1..2, None), [Atom::Text(1..2, plain)]);
+    }
+
+    #[test]
+    fn an_overlay_is_as_wide_as_its_size_and_never_wider_than_the_column() {
+        let sm = overlay_width(None);
+        let md = overlay_width(Some("md"));
+        let lg = overlay_width(Some("lg"));
+        assert!(sm < md && md < lg);
+        assert_eq!(overlay_width(Some("full")), lg);
+        assert_eq!(lg, theme::CHAT_COLUMN_WIDTH);
     }
 
     #[test]
@@ -2001,7 +2453,7 @@ mod tests {
         let mut cache = TextCache::default();
         let mut parses = 0;
         let mut get = |cache: &mut TextCache<usize>, id: &str, text: &str| {
-            cache.get(id, text, |t| {
+            cache.get(id, "", text, |t| {
                 parses += 1;
                 t.len()
             })
@@ -2140,7 +2592,7 @@ mod tests {
     fn the_cache_can_be_read_without_parsing() {
         let mut cache = TextCache::default();
         assert!(cache.peek("n").is_none());
-        let made = cache.get("n", "abc", |t| t.len());
+        let made = cache.get("n", "", "abc", |t| t.len());
         assert!(Rc::ptr_eq(&made, &cache.peek("n").unwrap()));
         assert!(cache.peek("other").is_none());
     }

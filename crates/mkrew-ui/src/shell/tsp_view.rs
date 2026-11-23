@@ -5,19 +5,23 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use gpui::{
-    Anchor, AnyElement, ClickEvent, Div, FontStyle, FontWeight, StrikethroughStyle, StyledText,
-    TextRun, anchored, deferred,
+    Anchor, AnyElement, Bounds, ClickEvent, Div, FontStyle, FontWeight, StrikethroughStyle,
+    StyledText, TextRun, anchored, deferred,
 };
 use mkrew_core::tsp::doc::{Document, Node};
 use mkrew_protocol::{
     Request, TspChange, TspEventParams, TspSnapshot, TspSnapshotParams, TspState, TspUpdate,
 };
 use mkrew_ui::icons::{Icon, icon_svg};
-use mkrew_ui::terminal::view::{cell_size, terminal_font};
-use mkrew_ui::tsp::{self, CopyOrSend, Mirror, MirrorResult, PaneView, SpanStyle, TextCache};
+use mkrew_ui::terminal::view::{cell_size_in, exited_notice, terminal_font};
+use mkrew_ui::tsp::{
+    self, CopyOrSend, ListScroll, Mirror, MirrorResult, PaneView, SpanStyle, TextCache,
+};
 use mkrew_ui::{docs, preview};
 use serde_json::{Value, json};
 
@@ -35,18 +39,26 @@ pub(crate) struct TspUi {
     /// `elapsed` nodes: id -> (the `age` last seen, `now` when it was first seen).
     elapsed_seen: RefCell<HashMap<String, (u64, i64)>>,
     missing_icons: RefCell<HashSet<String>>,
-    /// The pane's width in px in the last frame; sizes the PTY (`sync_tsps`).
-    width: Cell<f32>,
-    /// The `dark` last sent to omp; `None` sends it again (after every snapshot).
+    /// The `dark` omp last accepted, and the one on its way (`None`: nothing yet).
     sent_dark: Option<bool>,
+    pending_dark: Option<bool>,
     fetch: Option<gpui::Task<()>>,
+    /// Snapshot calls that failed in a row, and when the next one may start.
+    failures: u32,
+    retry_at: Option<Instant>,
+    /// A frame could not be applied (a gap): the mirror is behind and wants a snapshot.
+    stale: bool,
     /// A selection inside one `md` or `code` node (key: node id) and where each was painted.
     selecting: Option<(String, mkrew_ui::preview_select::Selection)>,
     hits: RefCell<HashMap<String, preview::Hits>>,
     /// The hud `checklist` node whose popover is open (UI only, nothing is sent to omp).
     todo_open: Option<String>,
+    /// Where the hud chip was painted: a press on it is not "outside" the popover.
+    todo_chip: Rc<Cell<Bounds<Pixels>>>,
     /// Phase headers the user clicked: (checklist node id, phase id). Flips the phase's default.
     todo_toggled: HashSet<(String, String)>,
+    /// A `reveal` just moved the list: the next frame must not follow the end over it.
+    reveal_pending: Cell<bool>,
 }
 
 impl TspUi {
@@ -58,14 +70,28 @@ impl TspUi {
             images: RefCell::new(HashMap::new()),
             elapsed_seen: RefCell::new(HashMap::new()),
             missing_icons: RefCell::new(HashSet::new()),
-            width: Cell::new(0.0),
             sent_dark: None,
+            pending_dark: None,
             fetch: None,
+            failures: 0,
+            retry_at: None,
+            stale: false,
             selecting: None,
             hits: RefCell::new(HashMap::new()),
             todo_open: None,
+            todo_chip: Rc::new(Cell::new(Bounds::default())),
             todo_toggled: HashSet::new(),
+            reveal_pending: Cell::new(false),
         }
+    }
+
+    /// Scrolls the list a page (the height it shows) up or down.
+    fn page(&self, up: bool) {
+        let offset = self.scroll.offset();
+        let page = f32::from(self.scroll.bounds().size.height);
+        let max = f32::from(self.scroll.max_offset().y);
+        let y = tsp::paged_offset(f32::from(offset.y), page, max, up);
+        self.scroll.set_offset(point(offset.x, px(y)));
     }
 }
 
@@ -86,13 +112,17 @@ impl Shell {
             .is_some_and(|s| self.tsp_pane_view(s) != PaneView::Terminal)
     }
 
-    /// Asks the daemon for the session's surfaces (once at a time).
+    /// Asks the daemon for the session's surfaces (once at a time; after a failure not before its
+    /// back-off has passed; never for an exited session, the daemon answers `invalid_state`).
     fn fetch_tsp(&mut self, session: Ulid, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
+        if self.is_exited(session) {
+            return;
+        }
         let ui = self.tsps.entry(session).or_insert_with(TspUi::new);
-        if ui.fetch.is_some() {
+        if ui.fetch.is_some() || ui.retry_at.is_some_and(|at| Instant::now() < at) {
             return;
         }
         ui.fetch = Some(cx.spawn(async move |this, cx| {
@@ -109,9 +139,15 @@ impl Shell {
                 match reply {
                     Ok(snapshot) => {
                         ui.mirror = Some(Mirror::from_snapshot(snapshot));
-                        ui.sent_dark = None;
+                        ui.stale = false;
+                        ui.failures = 0;
+                        ui.retry_at = None;
                     }
-                    Err(error) => tracing::warn!(%session, "tsp.snapshot failed: {error:#}"),
+                    Err(error) => {
+                        ui.failures = ui.failures.saturating_add(1);
+                        ui.retry_at = Some(Instant::now() + tsp::retry_wait(ui.failures));
+                        tracing::warn!(%session, "tsp.snapshot failed: {error:#}");
+                    }
                 }
                 cx.notify();
             });
@@ -129,7 +165,17 @@ impl Shell {
             return;
         };
         if mirror.apply(update) == MirrorResult::Gap {
+            ui.stale = true;
+            // The frame is lost with the gap and the snapshot does not replay it: the toasts it
+            // adds are shown now (a `set` on a toast cannot be told from another node's).
+            let toasts = match &update.change {
+                TspChange::Frame { ops, .. } => tsp::added_toast_texts(ops),
+                _ => Vec::new(),
+            };
             self.fetch_tsp(session, cx);
+            for text in toasts {
+                self.toast_info(text, cx);
+            }
             return;
         }
         let TspChange::Frame { ops, .. } = &update.change else {
@@ -150,15 +196,54 @@ impl Shell {
             tsp::reveal_index(doc, op.get(1)?.as_str()?)
         });
         if let Some(ix) = reveal {
-            ui.scroll.scroll_to_item(ix);
+            // Index 0 of the list is the spacer under the pane's drag strip.
+            ui.scroll.scroll_to_item(ix + 1);
+            // The list may be at its end: the next frame must not follow it back down.
+            ui.reveal_pending.set(true);
+        }
+        match tsp::scroll_in(ops) {
+            Some(ListScroll::Top) => ui.scroll.set_offset(Point::default()),
+            Some(ListScroll::Bottom) => ui.scroll.scroll_to_bottom(),
+            Some(ListScroll::Page { up }) => ui.page(up),
+            None => {}
         }
         for text in toasts {
             self.toast_info(text, cx);
         }
     }
 
-    /// Sends one event to omp through the daemon (`tsp.event`); a failure is logged, the pane keeps
-    /// working.
+    /// The request of one event to omp through the daemon (`tsp.event`), resolving to whether omp
+    /// took it; a failure is logged, the pane keeps working. `None` without a connection.
+    fn tsp_request(
+        &self,
+        session: Ulid,
+        surface: &str,
+        event: Value,
+    ) -> Option<std::pin::Pin<Box<dyn Future<Output = bool> + Send>>> {
+        let reply = self
+            .connection
+            .as_ref()?
+            .request(Request::TspEvent(TspEventParams {
+                session_id: session,
+                surface: surface.to_owned(),
+                event,
+            }));
+        Some(Box::pin(async move {
+            match reply.await {
+                Ok(Outcome::Result(_)) => true,
+                Ok(Outcome::Error(body)) => {
+                    tracing::warn!(%session, "tsp.event failed: {}", body.message);
+                    false
+                }
+                Err(error) => {
+                    tracing::warn!(%session, "tsp.event failed: {error:#}");
+                    false
+                }
+            }
+        }))
+    }
+
+    /// Sends one event to omp, fire and forget.
     pub(crate) fn tsp_send(
         &self,
         session: Ulid,
@@ -166,29 +251,47 @@ impl Shell {
         event: Value,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(connection) = &self.connection else {
-            return;
-        };
-        let reply = connection.request(Request::TspEvent(TspEventParams {
-            session_id: session,
-            surface: surface.to_owned(),
-            event,
-        }));
-        cx.background_executor()
-            .spawn(async move {
-                match reply.await {
-                    Ok(Outcome::Result(_)) => {}
-                    Ok(Outcome::Error(body)) => {
-                        tracing::warn!(%session, "tsp.event failed: {}", body.message);
-                    }
-                    Err(error) => tracing::warn!(%session, "tsp.event failed: {error:#}"),
-                }
-            })
-            .detach();
+        if let Some(request) = self.tsp_request(session, surface, event) {
+            cx.background_executor().spawn(request).detach();
+        }
     }
 
-    /// `tsp_send` to the surface the pane draws; nothing for a read-only one.
+    /// Tells omp the theme; `sent_dark` is set only when omp took it, so a failure is retried on
+    /// the next tick.
+    fn tsp_send_theme(
+        &mut self,
+        session: Ulid,
+        surface: &str,
+        dark: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(request) =
+            self.tsp_request(session, surface, json!({"ev": "theme", "dark": dark}))
+        else {
+            return;
+        };
+        if let Some(ui) = self.tsps.get_mut(&session) {
+            ui.pending_dark = Some(dark);
+        }
+        cx.spawn(async move |this, cx| {
+            let sent = request.await;
+            let _ = this.update(cx, |shell, _| {
+                if let Some(ui) = shell.tsps.get_mut(&session) {
+                    ui.pending_dark = None;
+                    if sent {
+                        ui.sent_dark = Some(dark);
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// `tsp_send` to the surface the pane draws; nothing for a read-only one or an exited session.
     fn tsp_emit(&self, session: Ulid, event: Value, cx: &mut Context<'_, Self>) {
+        if self.is_exited(session) {
+            return;
+        }
         let Some((meta, _)) = (self.tsps.get(&session))
             .and_then(|ui| ui.mirror.as_ref())
             .and_then(Mirror::shown)
@@ -217,17 +320,15 @@ impl Shell {
     }
 
     /// Keeps the TSP state of the panes: drops what a session no longer needs, fetches the
-    /// snapshot of each pane on screen that has none, tells omp the theme, and sizes the PTY to the
-    /// pane's width (the grid is never painted, so nothing else would). Called on the status tick.
-    pub(crate) fn sync_tsps(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    /// snapshot of each pane on screen that has none (or fell behind), and tells omp the theme.
+    /// Called on the status tick. The PTY's width follows the pane in `render_tsp`.
+    pub(crate) fn sync_tsps(&mut self, cx: &mut Context<'_, Self>) {
         let live: HashSet<Ulid> = (self.sidebar.sessions().iter())
             .filter(|s| s.tsp == TspState::Live)
             .map(|s| s.id)
             .collect();
         self.tsps.retain(|id, _| live.contains(id));
-        let theme = cx.theme().clone();
-        let dark = theme.dark;
-        let (cell_width, _) = cell_size(window, &theme);
+        let dark = cx.theme().dark;
         for session in self.visible_sessions() {
             if !live.contains(&session) || self.is_exited(session) {
                 continue;
@@ -236,39 +337,75 @@ impl Shell {
                 self.fetch_tsp(session, cx);
                 continue;
             };
-            let Some(mirror) = &ui.mirror else {
+            let fetch = ui.mirror.is_none() || ui.stale;
+            let theme_to = (ui.sent_dark != Some(dark) && ui.pending_dark != Some(dark))
+                .then(|| ui.mirror.as_ref().and_then(Mirror::inline_id))
+                .flatten()
+                .map(str::to_owned);
+            if fetch {
                 self.fetch_tsp(session, cx);
-                continue;
-            };
-            let theme_event = (ui.sent_dark != Some(dark))
-                .then(|| mirror.inline_id().map(str::to_owned))
-                .flatten();
-            let width = ui.width.get();
-            if let Some(surface) = theme_event {
-                self.tsp_send(session, &surface, json!({"ev": "theme", "dark": dark}), cx);
-                if let Some(ui) = self.tsps.get_mut(&session) {
-                    ui.sent_dark = Some(dark);
-                }
             }
-            if width > 0.0
-                && let Some(pane) = self.panes.get(&session).cloned()
-            {
-                let column = width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL;
-                let cols = tsp::cols_for(column, f32::from(cell_width));
-                pane.update(cx, |pane, cx| pane.fit_cols(cols, cx));
+            if let Some(surface) = theme_to {
+                self.tsp_send_theme(session, &surface, dark, cx);
             }
         }
     }
 
-    /// Something on screen changes with time (spinner, running elapsed, shimmer, rate): the status
-    /// tick redraws (ADR 0086).
+    /// Something on screen changes with time (the starting dots, a spinner, a running elapsed,
+    /// a rate, a bar without an amount): the status tick redraws (ADR 0086). Only panes on screen
+    /// count.
     pub(crate) fn tsp_animating(&self) -> bool {
-        self.tsps.iter().any(|(session, ui)| {
-            !self.is_exited(*session)
-                && (ui.mirror.as_ref())
+        let visible = self.visible_sessions();
+        (self.sidebar.sessions().iter())
+            .filter(|s| visible.contains(&s.id))
+            .any(|s| match self.tsp_pane_view(s) {
+                PaneView::Starting => true,
+                PaneView::Surface => (self.tsps.get(&s.id))
+                    .and_then(|ui| ui.mirror.as_ref())
                     .and_then(Mirror::shown)
-                    .is_some_and(|(_, doc)| tsp::animating(doc))
-        })
+                    .is_some_and(|(_, doc)| tsp::animating(doc)),
+                _ => false,
+            })
+    }
+
+    /// Mkrew's terminal commands in a pane that shows a surface. The pane's `TerminalPane` is out
+    /// of the tree, so its action handler never runs and the shell would swallow the keys: Copy
+    /// copies the selection of an `md` or `code` node, Paste goes to the PTY (text, an image or
+    /// file paths, as in a terminal pane), PageUp and PageDown scroll the list. Copy mode and link
+    /// hints have no grid to work on.
+    pub(crate) fn tsp_command(
+        &mut self,
+        command: Command,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(session) = self
+            .focused_session(window)
+            .filter(|session| self.tsp_covers(*session))
+        else {
+            return;
+        };
+        match command {
+            Command::Copy => {
+                if let Some(text) = self.tsp_selected_text(session) {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
+            }
+            Command::Paste if !self.is_exited(session) => {
+                if let Some(pane) = self.panes.get(&session).cloned() {
+                    pane.update(cx, |pane, cx| {
+                        pane.paste(cx);
+                    });
+                }
+            }
+            Command::PageUp | Command::PageDown => {
+                if let Some(ui) = self.tsps.get(&session) {
+                    ui.page(command == Command::PageUp);
+                    cx.notify();
+                }
+            }
+            _ => {}
+        }
     }
 
     /// The pane's keys go to its `TerminalPane` (hidden but alive), exactly like a terminal pane,
@@ -393,7 +530,9 @@ impl Shell {
 
     /// The session fell back to drawing text: asks the daemon why and toasts it.
     pub(crate) fn toast_fallback(&mut self, session: Ulid, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        // The daemon answers `invalid_state` to the snapshot of an exited session.
+        let connection = self.connection.clone().filter(|_| !self.is_exited(session));
+        let Some(connection) = connection else {
             self.toast_info(tsp::fallback_toast(None), cx);
             return;
         };
@@ -413,10 +552,14 @@ impl Shell {
 }
 
 impl Shell {
-    /// Opens the hud's todo popover (UI only).
-    fn tsp_todo_open(&mut self, session: Ulid, id: &str, cx: &mut Context<'_, Self>) {
+    /// A press on the hud chip: opens its popover, or closes it when it is open (UI only). The
+    /// open state is read live: the outside press handler skips the chip, so it has not closed it.
+    fn tsp_todo_toggle(&mut self, session: Ulid, id: &str, cx: &mut Context<'_, Self>) {
         if let Some(ui) = self.tsps.get_mut(&session) {
-            ui.todo_open = Some(id.to_owned());
+            ui.todo_open = match ui.todo_open {
+                Some(_) => None,
+                None => Some(id.to_owned()),
+            };
             cx.notify();
         }
     }
@@ -471,6 +614,19 @@ fn num_prop(node: &Node, key: &str) -> Option<f64> {
     node.props.get(key).and_then(Value::as_f64)
 }
 
+/// An array prop (`items`, `cols`, `rows`), read in place; empty when absent.
+fn array_prop<'a>(node: &'a Node, key: &str) -> &'a [Value] {
+    node.props
+        .get(key)
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice)
+}
+
+/// `grow` > 0: the node takes the free space of its row or column.
+fn grows(node: &Node) -> bool {
+    num_prop(node, "grow").is_some_and(|grow| grow > 0.0)
+}
+
 /// `runs` as one styled text: weights, slants, strike and mark per run; `mono` runs (and all runs
 /// when `all_mono`) in the terminal font with the glyph fallbacks, the rest in the UI font.
 fn styled_runs(
@@ -488,6 +644,18 @@ fn styled_runs_w(
     base: u32,
     all_mono: bool,
     regular: f32,
+    theme: &Theme,
+) -> StyledText {
+    styled_runs_wavy(runs, base, all_mono, regular, false, theme)
+}
+
+/// [`styled_runs_w`] with a wavy `danger_text` underline under every run when `typo`.
+fn styled_runs_wavy(
+    runs: &[(String, SpanStyle)],
+    base: u32,
+    all_mono: bool,
+    regular: f32,
+    typo: bool,
     theme: &Theme,
 ) -> StyledText {
     let ui_font = gpui::font(theme.ui_font_family.clone());
@@ -512,7 +680,11 @@ fn styled_runs_w(
             font,
             color: rgb(style.color.unwrap_or(base)).into(),
             background_color: style.mark.then(|| rgb(theme.accent_bg).into()),
-            underline: None,
+            underline: typo.then(|| gpui::UnderlineStyle {
+                thickness: px(theme::BORDER_WIDTH),
+                color: Some(rgb(theme.danger_text).into()),
+                wavy: true,
+            }),
             strikethrough: style.strike.then(|| StrikethroughStyle {
                 thickness: px(theme::BORDER_WIDTH),
                 color: None,
@@ -534,6 +706,27 @@ fn image_format(mime: &str) -> Option<gpui::ImageFormat> {
 }
 
 impl Shell {
+    /// The root of a TSP pane: it has the keyboard through the hidden terminal's focus handle, so
+    /// keys (and the platform's text input) reach omp from the starting state on.
+    fn tsp_root(&self, handle: &FocusHandle, theme: &Theme, cx: &mut Context<'_, Self>) -> Div {
+        let focus = handle.clone();
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .relative()
+            .overflow_hidden()
+            .key_context(mkrew_ui::keymap::TERMINAL_CONTEXT)
+            .track_focus(handle)
+            .on_key_down(cx.listener(Self::tsp_key_down))
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                window.focus(&focus, cx)
+            })
+            .font_family(theme.ui_font_family.clone())
+            .text_size(font_size::BODY)
+            .text_color(rgb(theme.text))
+    }
+
     /// The pane of an omp session in TSP mode: the surface, the starting state, or (exited) the
     /// last document read-only.
     pub(crate) fn render_tsp(
@@ -545,18 +738,8 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
-        let ui = self.tsps.get(&session);
-        if let Some(ui) = ui {
-            ui.width.set(width);
-        }
-        let shown = ui.and_then(|ui| {
-            ui.mirror
-                .as_ref()
-                .and_then(|m| m.shown().map(|s| (ui, m, s)))
-        });
-        let (Some((ui, mirror, (_, doc))), Some(pane)) = (shown, self.panes.get(&session)) else {
-            return div()
-                .size_full()
+        let starting = || {
+            div()
                 .flex()
                 .flex_col()
                 .items_center()
@@ -564,9 +747,33 @@ impl Shell {
                 .gap(px(space::M))
                 .child(loading_dots(now, rgb(theme.status_working)))
                 .child(message(theme, None, "Starting omp…".into(), None))
+        };
+        let Some(pane) = self.panes.get(&session) else {
+            return starting().size_full().into_any_element();
+        };
+        // The grid is never painted, so nothing else sizes the PTY: omp gets its `resize` from the
+        // pane's width as soon as the pane has one (the starting state included).
+        let (cell_width, _) = cell_size_in(cx.text_system(), theme);
+        let cols = tsp::cols_for(tsp::column_px(width), f32::from(cell_width));
+        pane.update(cx, |pane, cx| pane.fit_cols(cols, cx));
+        let handle = pane.read(cx).focus_handle();
+        let exited = self
+            .is_exited(session)
+            .then(|| pane.read(cx).exit_code().flatten());
+        let root = self.tsp_root(&handle, theme, cx);
+        let shown = self
+            .tsps
+            .get(&session)
+            .and_then(|ui| (ui.mirror.as_ref()).and_then(|m| m.shown().map(|s| (ui, m, s))));
+        let Some((ui, mirror, (_, doc))) = shown else {
+            return root
+                .items_center()
+                .justify_center()
+                .child(starting())
+                // Platform text input (IME, Unikey) feeds the same key path.
+                .child(self.typing(&handle, Self::tsp_key_down, cx))
                 .into_any_element();
         };
-        let handle = pane.read(cx).focus_handle();
         let paint = Paint {
             session,
             doc,
@@ -576,13 +783,21 @@ impl Shell {
             theme,
             focused: is_focused,
         };
+        // Follow the end while the user is at it, except in the frame after a `reveal` moved the
+        // list: that scroll is applied while this frame paints.
         let at_end = super::thread_panel::at_bottom(&ui.scroll);
-        if at_end {
+        if !ui.reveal_pending.replace(false) && at_end {
             ui.scroll.scroll_to_bottom();
         }
-        // Each row of `main` is a direct child of the scroll box, so `reveal` can scroll to it.
-        let rows: Vec<AnyElement> = (doc.children("main"))
-            .map(|node| chat_column(self.tsp_node(&paint, node, cx)).into_any_element())
+        // Each row of `main` is a direct child of the scroll box (after the spacer), so `reveal`
+        // can scroll to it. The spacer keeps the first row clear of the pane's 8 px drag strip
+        // (`PANE_GRIP_HEIGHT`), the 2 px color line and the badges, like the Chat list's
+        // `py(space::L)`.
+        let rows: Vec<AnyElement> = std::iter::once(div().h(px(space::L)).into_any_element())
+            .chain(
+                (doc.children("main"))
+                    .map(|node| chat_column(self.tsp_node(&paint, node, cx)).into_any_element()),
+            )
             .collect();
         let dock: Vec<AnyElement> = (doc.children("dock"))
             .map(|node| self.tsp_node(&paint, node, cx))
@@ -591,103 +806,84 @@ impl Shell {
             .filter(|node| !bool_prop(node, "hidden"))
             .map(|node| self.tsp_layer_child(&paint, node, cx))
             .collect();
-        let focus = handle.clone();
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .relative()
-            .overflow_hidden()
-            .key_context(mkrew_ui::keymap::TERMINAL_CONTEXT)
-            .track_focus(&handle)
-            .on_key_down(cx.listener(Self::tsp_key_down))
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                window.focus(&focus, cx)
-            })
-            .font_family(theme.ui_font_family.clone())
-            .text_size(font_size::BODY)
-            .text_color(rgb(theme.text))
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("tsp-main-{session}")))
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&ui.scroll)
-                            // Clear of the pane's 8 px drag strip (`PANE_GRIP_HEIGHT`) and the
-                            // 2 px color line, like the Chat list's `py(space::L)`.
-                            .pt(px(space::L))
-                            // A drag extends the selection; a press off any text clears it.
-                            .on_mouse_move(cx.listener(
-                                move |shell, event: &MouseMoveEvent, _, cx| {
-                                    if event.dragging() {
-                                        shell.tsp_drag(session, event.position, cx);
-                                    }
-                                },
-                            ))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |shell, _: &MouseDownEvent, _, cx| {
-                                    shell.tsp_clear_selection(session, cx);
-                                }),
-                            )
-                            .children(rows),
-                    )
-                    .when(!at_end, |el| {
-                        el.child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .right_0()
-                                .bottom(px(space::S))
-                                .child(chat_column(
-                                    div().flex().justify_end().child(
-                                        float_button("tsp-scroll-end", Icon::ArrowDown, theme)
-                                            .tooltip(tooltip(
-                                                theme,
-                                                "Scroll to the latest message",
-                                                "End",
-                                            ))
-                                            .on_press(
-                                                true,
-                                                cx.listener(move |shell, _, _, cx| {
-                                                    if let Some(ui) = shell.tsps.get(&session) {
-                                                        ui.scroll.scroll_to_bottom();
-                                                    }
-                                                    cx.notify();
-                                                }),
-                                            ),
-                                    ),
-                                )),
-                        )
-                    }),
-            )
-            .child(chat_column(
-                div().flex().flex_col().pb(px(space::S)).children(dock),
-            ))
-            .when(!layer.is_empty(), |el| {
-                el.child(
+        root.child(
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .child(
                     div()
-                        .absolute()
-                        .inset_0()
-                        .occlude()
-                        .bg(gpui::rgba(theme.scrim))
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .justify_center()
-                        .p(px(space::L))
-                        .gap(px(space::M))
-                        .children(layer),
+                        .id(SharedString::from(format!("tsp-main-{session}")))
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&ui.scroll)
+                        // A drag extends the selection; a press off any text clears it.
+                        .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
+                            if event.dragging() {
+                                shell.tsp_drag(session, event.position, cx);
+                            }
+                        }))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |shell, _: &MouseDownEvent, _, cx| {
+                                shell.tsp_clear_selection(session, cx);
+                            }),
+                        )
+                        .children(rows),
                 )
-            })
-            // Platform text input (IME, Unikey) feeds the same key path.
-            .child(self.typing(&handle, Self::tsp_key_down, cx))
-            .into_any_element()
+                .when(!at_end, |el| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .bottom(px(space::S))
+                            .child(chat_column(
+                                div().flex().justify_end().child(
+                                    float_button("tsp-scroll-end", Icon::ArrowDown, theme)
+                                        .tooltip(tooltip(
+                                            theme,
+                                            "Scroll to the latest message",
+                                            "End",
+                                        ))
+                                        .on_press(
+                                            true,
+                                            cx.listener(move |shell, _, _, cx| {
+                                                if let Some(ui) = shell.tsps.get(&session) {
+                                                    ui.scroll.scroll_to_bottom();
+                                                }
+                                                cx.notify();
+                                            }),
+                                        ),
+                                ),
+                            )),
+                    )
+                }),
+        )
+        .child(chat_column(
+            div().flex().flex_col().pb(px(space::S)).children(dock),
+        ))
+        // The session ended: the last document stays, read-only, under the usual notice.
+        .children(exited.map(|code| exited_notice(code, theme)))
+        .when(!layer.is_empty(), |el| {
+            el.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .bg(gpui::rgba(theme.scrim))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .p(px(space::L))
+                    .gap(px(space::M))
+                    .children(layer),
+            )
+        })
+        // Platform text input (IME, Unikey) feeds the same key path.
+        .child(self.typing(&handle, Self::tsp_key_down, cx))
+        .into_any_element()
     }
 
     /// A child of `layer`: an `overlay` is a modal card placed by its `anchor` and `size`; any other
@@ -701,12 +897,6 @@ impl Shell {
         if node.kind != "overlay" {
             return self.tsp_node(p, node, cx);
         }
-        let fraction = match str_prop(node, "size") {
-            Some("full") => 1.0,
-            Some("lg") => 1.0,
-            Some("md") => 0.75,
-            _ => 0.5,
-        };
         let mut holder = div().w_full().flex().flex_col();
         holder = match str_prop(node, "anchor") {
             Some("top") => holder.justify_start(),
@@ -718,7 +908,7 @@ impl Shell {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(theme::CHAT_COLUMN_WIDTH * fraction))
+                    .max_w(px(tsp::overlay_width(str_prop(node, "size"))))
                     .child(self.tsp_node(p, node, cx)),
             )
             .into_any_element()
@@ -783,8 +973,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let title = str_prop(node, "title");
-        let clickable = tsp::click_event(p.doc, node, false).is_some()
-            || tsp::click_event(p.doc, node, true).is_some();
+        let clickable = tsp::has_click(p.doc, node);
         if title.is_none() && !clickable {
             return el.into_any_element();
         }
@@ -822,11 +1011,7 @@ impl Shell {
         } else {
             el
         };
-        if num_prop(node, "grow").is_some_and(|grow| grow > 0.0) {
-            el.flex_1()
-        } else {
-            el
-        }
+        if grows(node) { el.flex_1() } else { el }
     }
 
     /// col, row, card, section, rule, spacer, overlay, toast.
@@ -838,7 +1023,7 @@ impl Shell {
             "toast" => div().into_any_element(),
             "spacer" => {
                 let size = tsp::gap_px(str_prop(node, "size"));
-                let el = if num_prop(node, "grow").is_some_and(|grow| grow > 0.0) {
+                let el = if grows(node) {
                     div().flex_1()
                 } else {
                     div().h(px(size)).w(px(size))
@@ -970,15 +1155,17 @@ impl Shell {
         match node.kind.as_str() {
             "md" | "code" => {
                 let text = str_prop(node, "text").unwrap_or("");
-                let source = if node.kind == "code" {
-                    tsp::code_fence(str_prop(node, "lang"), text)
-                } else {
-                    text.to_owned()
-                };
-                let shown =
-                    p.ui.md
-                        .borrow_mut()
-                        .get(&node.id, &source, docs::Shown::from_text);
+                // The cache hashes the borrowed text (and the language); a fence is built on a
+                // miss only.
+                let (kind, lang) = (node.kind.as_str(), str_prop(node, "lang"));
+                let shown = p
+                    .ui
+                    .md
+                    .borrow_mut()
+                    .get(&node.id, lang.unwrap_or(""), text, |text| match kind {
+                        "code" => docs::Shown::from_text(&tsp::code_fence(lang, text)),
+                        _ => docs::Shown::from_text(text),
+                    });
                 // Selectable inside this node as in Chat: the painted texts go to `hits`.
                 let hits =
                     p.ui.hits
@@ -1013,22 +1200,13 @@ impl Shell {
                 self.tsp_decorate(el, p, node, Look::Text, false, cx)
             }
             "ansi" | "rows" => {
-                let lines: Vec<String> = if node.kind == "rows" {
-                    (node.props.get("lines").and_then(Value::as_array))
-                        .map(|lines| {
-                            lines
-                                .iter()
-                                .filter_map(Value::as_str)
-                                .map(str::to_owned)
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                } else {
-                    str_prop(node, "text")
-                        .unwrap_or("")
-                        .split('\n')
-                        .map(str::to_owned)
+                let lines: Vec<&str> = if node.kind == "rows" {
+                    array_prop(node, "lines")
+                        .iter()
+                        .filter_map(Value::as_str)
                         .collect()
+                } else {
+                    str_prop(node, "text").unwrap_or("").split('\n').collect()
                 };
                 let rows = lines.iter().map(|line| {
                     let mut runs = tsp::ansi_runs(line, theme);
@@ -1060,7 +1238,7 @@ impl Shell {
                 if str_prop(node, "truncate").is_some() {
                     el = el.truncate();
                 }
-                if num_prop(node, "grow").is_some_and(|grow| grow > 0.0) {
+                if grows(node) {
                     el = el.flex_1();
                 }
                 self.tsp_decorate(el, p, node, Look::Text, false, cx)
@@ -1089,12 +1267,7 @@ impl Shell {
         let tone = str_prop(node, "tone").map(|tone| tsp::tone_color(tone, theme));
         match node.kind.as_str() {
             "kv" => {
-                let items = node
-                    .props
-                    .get("items")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
+                let items = array_prop(node, "items");
                 let rows = items.iter().map(|item| {
                     let spans = |key: &str| {
                         item.get(key)
@@ -1104,12 +1277,12 @@ impl Shell {
                     div()
                         .flex()
                         .gap(px(space::M))
-                        .child(div().w(px(space::XXL * 3.0)).flex_none().child(styled_runs(
-                            &spans("k"),
-                            theme.text_muted,
-                            false,
-                            theme,
-                        )))
+                        .child(
+                            div()
+                                .w(px(theme::TSP_KEY_WIDTH))
+                                .flex_none()
+                                .child(styled_runs(&spans("k"), theme.text_muted, false, theme)),
+                        )
                         .child(div().flex_1().min_w_0().child(styled_runs(
                             &spans("v"),
                             theme.text,
@@ -1121,18 +1294,8 @@ impl Shell {
                 self.tsp_decorate(el, p, node, Look::Text, false, cx)
             }
             "table" => {
-                let cols = node
-                    .props
-                    .get("cols")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                let rows = node
-                    .props
-                    .get("rows")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
+                let cols = array_prop(node, "cols");
+                let rows = array_prop(node, "rows");
                 let cell = |col: &Value, runs: Vec<(String, SpanStyle)>, color: u32, head: bool| {
                     let mut el = div().flex_1().min_w_0().truncate();
                     if col.get("align").and_then(Value::as_str) == Some("end") {
@@ -1240,12 +1403,7 @@ impl Shell {
             }
             "tabs" => {
                 let active = str_prop(node, "active").unwrap_or("");
-                let items = node
-                    .props
-                    .get("items")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
+                let items = array_prop(node, "items");
                 let tabs = items.iter().filter_map(|tab| {
                     let id = tab.get("id")?.as_str()?.to_owned();
                     let label = tab
@@ -1353,7 +1511,7 @@ impl Shell {
                 if !right.is_empty() {
                     el = el.child(div().flex_1()).children(right);
                 }
-                if num_prop(node, "grow").is_some_and(|grow| grow > 0.0) {
+                if grows(node) {
                     el = el.flex_1();
                 }
                 self.tsp_decorate(el, p, node, Look::Text, false, cx)
@@ -1384,7 +1542,7 @@ impl Shell {
             return loading_dots(p.now, rgb(color)).into_any_element();
         };
         div()
-            .w(px(space::XXL * 3.0))
+            .w(px(theme::TSP_KEY_WIDTH))
             .flex_none()
             .h(px(space::XS))
             .rounded_full()
@@ -1534,6 +1692,16 @@ impl Shell {
                 theme,
             ))
         };
+        let piece = |s: &str, decor: tsp::Decor| {
+            div().min_w_0().child(styled_runs_wavy(
+                &[(s.to_owned(), decor.style)],
+                theme.text,
+                false,
+                weight::REGULAR,
+                decor.typo,
+                theme,
+            ))
+        };
         let line_height = theme::rems_px(space::L + space::XS);
         let mut lines: Vec<AnyElement> = Vec::new();
         if text.is_empty() {
@@ -1549,24 +1717,24 @@ impl Shell {
                     .into_any_element(),
             );
         } else {
+            // Decorations (mention colors, hidden markers, typos) cut the text into pieces.
+            let pieces = tsp::decor_pieces(text, array_prop(node, "decor"), theme);
+            let caret_at = caret_at.filter(|_| has_focus);
             let mut start = 0;
             for line in text.split('\n') {
                 let end = start + line.len();
                 let mut row = div().flex().min_h(line_height);
-                match caret_at.filter(|at| has_focus && (start..=end).contains(at)) {
-                    Some(at) => {
-                        row = row
-                            .child(part(&line[..at - start], theme.text))
-                            .child(caret())
-                            .child(part(&line[at - start..], theme.text));
-                    }
-                    None => row = row.child(part(line, theme.text)),
+                for atom in tsp::line_atoms(&pieces, start..end, caret_at) {
+                    row = match atom {
+                        tsp::Atom::Caret => row.child(caret()),
+                        tsp::Atom::Text(range, decor) => row.child(piece(&text[range], decor)),
+                    };
                 }
                 lines.push(row.into_any_element());
                 start = end + 1;
             }
         }
-        // Inline suggestion after the text; decorations (mention colors) are not drawn in P1.
+        // Inline suggestion after the text.
         let ghost = str_prop(node, "ghost").filter(|g| !g.is_empty() && !text.is_empty());
         let prompt = (node.props.get("prompt"))
             .map(|v| tsp::spans_of(v, theme))
@@ -1589,11 +1757,7 @@ impl Shell {
                     shell.tsp_click(session, &id, false, cx);
                 }),
             );
-        let el = if num_prop(node, "grow").is_some_and(|grow| grow > 0.0) {
-            el.flex_1()
-        } else {
-            el
-        };
+        let el = if grows(node) { el.flex_1() } else { el };
         el.into_any_element()
     }
 
@@ -1615,7 +1779,7 @@ impl Shell {
         });
         let el = match (image, str_prop(node, "alt")) {
             (Some(image), _) => div()
-                .max_w(px(theme::CHAT_COLUMN_WIDTH / 3.0))
+                .max_w(px(theme::TSP_IMAGE_MAX_WIDTH))
                 .child(gpui::img(image)),
             (None, Some(alt)) if str_prop(node, "builtin").is_none() => div()
                 .text_color(rgb(theme.text_muted))
@@ -1854,34 +2018,47 @@ impl Shell {
             )
             .pressable_unless(open, Look::Chip, theme)
             .tooltip(tooltip(theme, "Todo list", ""))
-            // The click outside the panel (this chip is outside it) has already closed an open
-            // panel, so a press on an open chip must not reopen it.
+            // The press outside the panel skips this chip (below), so the open state read here is
+            // live: a press on the chip of an open panel closes it.
             .on_press(
                 true,
                 cx.listener(move |shell, _, _, cx| {
-                    if !open {
-                        shell.tsp_todo_open(session, &id, cx);
-                    }
+                    shell.tsp_todo_toggle(session, &id, cx);
                 }),
             );
-        let height = f32::from(p.ui.scroll.bounds().size.height) * theme::TSP_POPOVER_MAX_FRACTION;
-        let panel = floating_panel(
-            SharedString::from(format!("tsp-todo-panel-{}", p.session)),
-            theme,
+        // Where the chip is painted, for the outside press handler of the panel.
+        let chip_at = p.ui.todo_chip.clone();
+        let chip_bounds = canvas(
+            {
+                let chip_at = chip_at.clone();
+                move |bounds, _, _| chip_at.set(bounds)
+            },
+            |_, _, _, _| {},
         )
-        .w(px(theme::TSP_POPOVER_WIDTH))
-        .max_h(px(height.max(theme::TSP_POPOVER_MIN_HEIGHT)))
-        .p(px(space::M))
-        .overflow_y_scroll()
-        .on_mouse_down_out(cx.listener(move |shell, _, _, cx| {
-            shell.tsp_todo_close(session, cx);
-        }))
-        .child(self.tsp_phases(p, node, list, cx));
+        .absolute()
+        .size_full();
         div()
             .relative()
             .flex_none()
             .child(chip)
+            .child(chip_bounds)
             .when(open, |el| {
+                let height =
+                    f32::from(p.ui.scroll.bounds().size.height) * theme::TSP_POPOVER_MAX_FRACTION;
+                let panel = floating_panel(
+                    SharedString::from(format!("tsp-todo-panel-{}", p.session)),
+                    theme,
+                )
+                .w(px(theme::TSP_POPOVER_WIDTH))
+                .max_h(px(height.max(theme::TSP_POPOVER_MIN_HEIGHT)))
+                .p(px(space::M))
+                .overflow_y_scroll()
+                .on_mouse_down_out(cx.listener(move |shell, event: &MouseDownEvent, _, cx| {
+                    if !chip_at.get().contains(&event.position) {
+                        shell.tsp_todo_close(session, cx);
+                    }
+                }))
+                .child(self.tsp_phases(p, node, list, cx));
                 el.child(deferred(
                     anchored()
                         .anchor(Anchor::BottomLeft)
@@ -1934,7 +2111,20 @@ impl Shell {
         match look {
             // The card is on `surface`, so the picked row (`surface_raised`) and the active tab
             // (`card`) show on it.
-            AskLook::Card | AskLook::Hidden => div()
+            // A hidden card is one row: "Question ..", Skip and Show.
+            AskLook::Hidden => div()
+                .flex()
+                .flex_col()
+                .px(px(space::M))
+                .py(px(space::S))
+                .min_w_0()
+                .rounded(px(theme::radius::MEDIUM))
+                .bg(rgb(theme.surface))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.border))
+                .children(self.tsp_children(p, node, cx))
+                .into_any_element(),
+            AskLook::Card => div()
                 .flex()
                 .flex_col()
                 .gap(px(space::M))
@@ -2002,9 +2192,7 @@ impl Shell {
     fn tsp_ask_tabs(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
         let theme = p.theme;
         let active = str_prop(node, "active").unwrap_or("");
-        let items = (node.props.get("items").and_then(Value::as_array))
-            .cloned()
-            .unwrap_or_default();
+        let items = array_prop(node, "items");
         let tabs = items.iter().filter_map(|tab| {
             let id = tab.get("id")?.as_str()?.to_owned();
             let label = (tab.get("label"))
@@ -2124,11 +2312,15 @@ impl Shell {
             .px(px(space::S))
             .py(px(space::XS))
             .rounded(px(theme::radius::SMALL))
-            .when(selected, |el| {
-                el.bg(rgb(theme.surface_raised))
-                    .border_l(px(theme::TSP_ASK_BAR_WIDTH))
-                    .border_color(rgb(theme.accent))
+            // A 2 px bar on the left of the picked row; the other rows keep it transparent, so
+            // picking a row moves nothing.
+            .border_l(px(theme::TSP_ASK_BAR_WIDTH))
+            .border_color(if selected {
+                rgb(theme.accent).into()
+            } else {
+                gpui::transparent_black()
             })
+            .when(selected, |el| el.bg(rgb(theme.surface_raised)))
             .child(div().pt(px(space::XS)).child(mark))
             .child(
                 div()
@@ -2177,34 +2369,19 @@ impl Shell {
             .map(|(text, _)| text)
             .collect();
         let accent = str_prop(node, "tone") == Some("accent");
-        let (fg, bg) = if accent {
-            (theme.on_accent, theme.accent)
-        } else {
-            (theme.text, theme.hover)
-        };
         let (session, id) = (p.session, node.id.clone());
-        let mut el = div()
-            .id(SharedString::from(format!(
-                "tsp-btn-{}-{}",
-                p.session, node.id
-            )))
-            .flex_none()
-            .flex()
-            .items_center()
-            .h(theme::rems_px(theme::PILL_HEIGHT))
-            .px(px(space::M))
-            .rounded(px(theme::radius::PILL))
-            .bg(rgb(bg))
-            .text_color(rgb(fg))
-            .text_size(font_size::META)
-            .pressable(Look::Chip, true, theme)
-            .on_press(
-                true,
-                cx.listener(move |shell, _, _, cx| {
-                    shell.tsp_click(session, &id, false, cx);
-                }),
-            )
-            .child(label);
+        let mut el = pill_button(
+            SharedString::from(format!("tsp-btn-{}-{}", p.session, node.id)),
+            label,
+            accent,
+            theme,
+        )
+        .on_press(
+            true,
+            cx.listener(move |shell, _, _, cx| {
+                shell.tsp_click(session, &id, false, cx);
+            }),
+        );
         if let Some(title) = str_prop(node, "title") {
             el = el.tooltip(tooltip(theme, title, ""));
         }

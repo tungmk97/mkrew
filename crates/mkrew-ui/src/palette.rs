@@ -81,6 +81,8 @@ pub struct Context {
     pub transcript: bool,
     /// The focused agent pane can show Chat (a readable transcript format).
     pub chat: bool,
+    /// The focused agent pane shows a TSP surface (or its starting state): no terminal grid.
+    pub surface: bool,
     /// The focused agent pane's session has a linked plan.
     pub plan_linked: bool,
     /// The focused pane's prompt composer is open.
@@ -336,7 +338,14 @@ impl Extra {
                 context.detached_window
             }
             Self::PanePin => in_view(View::Terminals) && context.tabs > 0 && context.pane,
-            Self::PaneReading | Self::AgentLinkPlan => {
+            // Reading width caps the terminal grid: a TSP surface has none to cap.
+            Self::PaneReading => {
+                in_view(View::Terminals)
+                    && context.tabs > 0
+                    && context.agent_pane
+                    && !context.surface
+            }
+            Self::AgentLinkPlan => {
                 in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
             }
             Self::WorkspaceDefaultShell | Self::WorkspaceMoveUp | Self::WorkspaceMoveDown => {

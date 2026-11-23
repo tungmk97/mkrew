@@ -1085,7 +1085,7 @@ pub(crate) fn chat_column(el: impl IntoElement) -> gpui::Div {
         div()
             .w_full()
             .max_w(px(theme::CHAT_COLUMN_WIDTH))
-            .px(px(space::XL))
+            .px(px(theme::CHAT_COLUMN_PADDING))
             .child(el),
     )
 }

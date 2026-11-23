@@ -137,6 +137,39 @@ pub(crate) fn button(
     }
 }
 
+/// A pill in the bottom row of an omp `ask` card (TSP, spec 7.6), its id built per node. `accent`
+/// fills it with `accent` and `on_accent` text, and it dims on hover like a primary [`button`];
+/// the neutral one is a raised fill whose hover is the step above it, the label staying `text`.
+pub(crate) fn pill_button(
+    id: impl Into<gpui::ElementId>,
+    label: impl IntoElement,
+    accent: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let pill = div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .h(theme::rems_px(theme::PILL_HEIGHT))
+        .px(px(space::M))
+        .rounded(px(radius::PILL))
+        .whitespace_nowrap()
+        .text_size(font_size::META)
+        .child(label);
+    if accent {
+        filled_press(
+            pill.bg(rgb(theme.accent)).text_color(rgb(theme.on_accent)),
+            true,
+            theme,
+        )
+    } else {
+        pill.bg(rgb(theme.surface_raised))
+            .text_color(rgb(theme.text))
+            .pressable(Look::Raised, true, theme)
+    }
+}
+
 /// The label color of [`button`]: `on_accent` on the primary fill, else `text_muted`. An
 /// [`icon_text`] inside a button takes the same color (an svg does not inherit it).
 pub(crate) fn button_fg(theme: &Theme, primary: bool) -> u32 {

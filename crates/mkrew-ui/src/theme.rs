@@ -396,6 +396,20 @@ pub const TSP_ASK_BAR_WIDTH: f32 = 2.0;
 /// The ring of an omp `ask` timeout.
 pub const TSP_RING_SIZE: f32 = 24.0;
 
+/// Space at both sides of the Chat page's centered column (`chat_column`, ADR 0105).
+pub const CHAT_COLUMN_PADDING: f32 = space::XL;
+
+/// Width of the key column of a TSP `kv` and of a `progress` or `meter` bar.
+pub const TSP_KEY_WIDTH: f32 = 96.0;
+
+/// Widest an `overlay` of `size` `sm` (and `md`) is in a TSP pane; `lg` and `full` take the
+/// Chat column.
+pub const TSP_OVERLAY_SM_WIDTH: f32 = 384.0;
+pub const TSP_OVERLAY_MD_WIDTH: f32 = 576.0;
+
+/// Widest an inline TSP `image` is.
+pub const TSP_IMAGE_MAX_WIDTH: f32 = 256.0;
+
 /// Widest share of the Chat page a prompt card takes (it sits at the right).
 pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
 

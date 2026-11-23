@@ -652,13 +652,12 @@ impl Shell {
                     self.run_action(project_id, action, None, window, cx);
                 }
             }
-            // Handled by the focused terminal pane.
-            Command::Copy
-            | Command::Paste
-            | Command::PageUp
-            | Command::PageDown
-            | Command::CopyMode
-            | Command::LinkHints => {}
+            // Handled by the focused terminal pane; a TSP pane has none in the tree, so the
+            // shell routes them for it.
+            Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
+                self.tsp_command(*command, window, cx);
+            }
+            Command::CopyMode | Command::LinkHints => {}
             // A focused terminal pane handles it itself.
             Command::Find => match self.view() {
                 View::Editor => self.open_file_find(false, window, cx),

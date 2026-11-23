@@ -33,6 +33,7 @@ fn context(view: View) -> Context {
         live_session: false,
         transcript: false,
         chat: false,
+        surface: false,
         plan_linked: false,
         composer_open: false,
         approve_card: false,
@@ -2287,4 +2288,23 @@ fn toggle_chat_is_listed_only_for_a_chat_capable_agent_pane() {
         ..context(View::Terminals)
     };
     assert!(commands(&chat).contains(&Command::ToggleChat));
+}
+
+/// Reading width only caps the terminal grid: it is not listed while a TSP surface shows.
+#[test]
+fn reading_width_is_not_listed_while_a_tsp_surface_shows() {
+    let terminal = Context {
+        agent_pane: true,
+        ..context(View::Terminals)
+    };
+    assert!(Extra::PaneReading.available(&terminal));
+    let surface = Context {
+        surface: true,
+        ..terminal
+    };
+    assert!(!Extra::PaneReading.available(&surface));
+    assert!(
+        Extra::AgentLinkPlan.available(&surface),
+        "the rest of the agent pane's entries stay"
+    );
 }
