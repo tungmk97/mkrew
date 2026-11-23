@@ -181,7 +181,7 @@ impl Shell {
     /// Editor is shown (unlike `focused_session`, which is where keys go).
     pub(crate) fn panel_session(&self) -> Option<Ulid> {
         let tabs = self.tabs.get(&self.workspace?)?;
-        tabs.active()?.focused()
+        tabs.active()?.focused_session()
     }
 
     /// Every session on screen with the window that shows it: the main window's tab (none for a
@@ -200,7 +200,12 @@ impl Shell {
                 continue;
             };
             let host = self.detached.host_of(&tab);
-            hosted.extend(shown.shown().into_iter().map(|session| (host, session)));
+            hosted.extend(
+                shown
+                    .shown_sessions()
+                    .into_iter()
+                    .map(|session| (host, session)),
+            );
         }
         hosted
     }

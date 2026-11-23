@@ -313,7 +313,7 @@ impl Shell {
             && self.terminal_host(project_id, tab_id) != HostId::Main
         {
             if let Some(tabs) = self.tabs.get_mut(&project_id) {
-                tabs.focus_pane(tab_id, session);
+                tabs.focus_pane(tab_id, &PaneKey::Session(session));
             }
             return;
         }
@@ -326,7 +326,7 @@ impl Shell {
         let Some(tabs) = self.tabs.get_mut(&project_id) else {
             return;
         };
-        if tabs.focus(session) {
+        if tabs.focus(&PaneKey::Session(session)) {
             return;
         }
         let write = match detached {

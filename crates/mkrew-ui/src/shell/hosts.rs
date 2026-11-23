@@ -113,10 +113,16 @@ impl Shell {
         }
     }
 
-    /// The pane that has (or gets) the keyboard in `window`.
-    pub(crate) fn focused_session(&self, window: &Window) -> Option<Ulid> {
+    /// The pane that has (or gets) the keyboard in `window`, of any kind.
+    pub(crate) fn focused_key(&self, window: &Window) -> Option<PaneKey> {
         let (project, tab_id) = self.tab_scope(window)?;
-        self.tabs.get(&project)?.tab(tab_id)?.focused()
+        self.tabs.get(&project)?.tab(tab_id)?.focused().cloned()
+    }
+
+    /// The session pane that has (or gets) the keyboard in `window`: the focused pane when it
+    /// is a session, `None` when a file or the diff has the focus.
+    pub(crate) fn focused_session(&self, window: &Window) -> Option<Ulid> {
+        self.focused_key(window)?.session()
     }
 
     /// Focuses `session`'s pane in its tab; a tab in a detached window does not become the
@@ -126,11 +132,12 @@ impl Shell {
             return;
         };
         let detached = self.terminal_host(project, tab_id) != HostId::Main;
+        let key = PaneKey::Session(session);
         if let Some(tabs) = self.tabs.get_mut(&project) {
             if detached {
-                tabs.focus_pane(tab_id, session);
+                tabs.focus_pane(tab_id, &key);
             } else {
-                tabs.focus(session);
+                tabs.focus(&key);
             }
         }
     }

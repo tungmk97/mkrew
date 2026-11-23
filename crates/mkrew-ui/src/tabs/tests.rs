@@ -17,6 +17,23 @@ fn pane(id: Ulid) -> serde_json::Value {
     json!({"session": id.to_string()})
 }
 
+fn k(id: Ulid) -> PaneKey {
+    PaneKey::Session(id)
+}
+
+fn file(path: &str) -> serde_json::Value {
+    json!({"file": path})
+}
+
+fn file_key(path: &str) -> PaneKey {
+    PaneKey::File(path.to_owned())
+}
+
+/// A file leaf with every optional key set.
+fn full_file() -> serde_json::Value {
+    json!({"file": "README.md", "md": "split", "preview": true})
+}
+
 #[test]
 fn load_orders_by_position_and_activates_the_first_tab() {
     let project = Ulid::new();
@@ -31,7 +48,7 @@ fn load_orders_by_position_and_activates_the_first_tab() {
     assert_eq!(titles, ["one", "two"]);
     assert_eq!(tabs.active().map(|t| t.id), Some(first.id));
     assert_eq!(tabs.visible(), vec![a]);
-    assert_eq!(tabs.active().and_then(Tab::focused), Some(a));
+    assert_eq!(tabs.active().and_then(Tab::focused_session), Some(a));
 }
 
 #[test]
@@ -43,11 +60,11 @@ fn load_keeps_active_tab_and_focus() {
     let two = wire(project, "two", 2.0, split);
     let mut tabs = Tabs::new(project);
     tabs.load(vec![one.clone(), two.clone()]);
-    assert!(tabs.focus(c));
+    assert!(tabs.focus(&k(c)));
 
     tabs.load(vec![one, two.clone()]);
     assert_eq!(tabs.active().map(|t| t.id), Some(two.id));
-    assert_eq!(tabs.active().and_then(Tab::focused), Some(c));
+    assert_eq!(tabs.active().and_then(Tab::focused_session), Some(c));
 }
 
 #[test]
@@ -97,7 +114,7 @@ fn split_close_and_persist_round_trip() {
             pane(a), {"split":"horizontal","ratio":0.5,"children":[pane(b), pane(c)]}
         ]})
     );
-    assert_eq!(tabs.active().and_then(Tab::focused), Some(c));
+    assert_eq!(tabs.active().and_then(Tab::focused_session), Some(c));
     // A session is shown in one pane only.
     assert_eq!(tabs.split_focused(Axis::Vertical, a), None);
 
@@ -109,17 +126,17 @@ fn split_close_and_persist_round_trip() {
     }]);
     assert_eq!(restored.visible(), vec![a, b, c]);
 
-    let write = tabs.close_pane(c).unwrap();
+    let write = tabs.close_leaf(&k(c)).unwrap();
     assert_eq!(
         write.layout,
         json!({"split":"vertical","ratio":0.5,"children":[pane(a), pane(b)]})
     );
-    assert_eq!(tabs.active().and_then(Tab::focused), Some(b));
-    tabs.close_pane(b).unwrap();
-    let write = tabs.close_pane(a).unwrap();
+    assert_eq!(tabs.active().and_then(Tab::focused_session), Some(b));
+    tabs.close_leaf(&k(b)).unwrap();
+    let write = tabs.close_leaf(&k(a)).unwrap();
     assert_eq!(write.layout, serde_json::Value::Null);
-    assert_eq!(tabs.active().and_then(Tab::focused), None);
-    assert_eq!(tabs.close_pane(a), None);
+    assert_eq!(tabs.active().and_then(Tab::focused_session), None);
+    assert_eq!(tabs.close_leaf(&k(a)), None);
 }
 
 /// A tab `a | b` (side by side), focused on `b`.
@@ -141,7 +158,7 @@ fn arrange_keeps_the_panes_in_order_and_adds_the_new_ones() {
     let tab = wire(project, "main", 1.0, stacked);
     let mut tabs = Tabs::new(project);
     tabs.load(vec![tab.clone()]);
-    assert!(tabs.focus(b));
+    assert!(tabs.focus(&k(b)));
     assert!(tabs.toggle_zoom());
 
     let write = tabs.arrange(tab.id, Preset::Grid, &[c, d]).unwrap();
@@ -153,7 +170,7 @@ fn arrange_keeps_the_panes_in_order_and_adds_the_new_ones() {
         ]})
     );
     let active = tabs.active().unwrap();
-    assert_eq!(active.focused(), Some(b), "the focus stays");
+    assert_eq!(active.focused_session(), Some(b), "the focus stays");
     assert_eq!(active.zoomed(), None, "the zoom ends");
     let again = tabs.arrange(tab.id, Preset::Grid, &[]).unwrap();
     assert_eq!(again.layout, write.layout, "every pane stays where it is");
@@ -229,11 +246,14 @@ fn resize_writes_the_moved_divider() {
 fn zoom_shows_only_the_focused_pane_until_focus_or_layout_changes() {
     let (mut tabs, a, b) = two_panes();
     assert!(tabs.toggle_zoom());
-    assert_eq!(tabs.active().and_then(Tab::zoomed), Some(b));
+    assert_eq!(tabs.active().and_then(Tab::zoomed), Some(&k(b)));
     assert_eq!(tabs.visible(), vec![b]);
     let rects = tabs.active().unwrap().rects();
     assert_eq!(rects.len(), 1);
-    assert_eq!((rects[0].0, rects[0].1.w, rects[0].1.h), (b, 1.0, 1.0));
+    assert_eq!(
+        (rects[0].0.clone(), rects[0].1.w, rects[0].1.h),
+        (k(b), 1.0, 1.0)
+    );
     // Hidden dividers are not resized while zoomed.
     assert_eq!(tabs.resize_focused(Direction::Left), None);
     assert!(tabs.toggle_zoom());
@@ -251,15 +271,15 @@ fn zoom_shows_only_the_focused_pane_until_focus_or_layout_changes() {
     tabs.split_focused(Axis::Horizontal, c).unwrap();
     assert_eq!(tabs.visible(), vec![a, c, b]);
     tabs.toggle_zoom();
-    tabs.close_pane(c).unwrap();
+    tabs.close_leaf(&k(c)).unwrap();
     assert_eq!(tabs.active().and_then(Tab::zoomed), None);
     assert_eq!(tabs.visible(), vec![a, b]);
 
     // Focusing the zoomed pane from the sidebar keeps the zoom; another pane ends it.
     tabs.toggle_zoom();
-    assert!(tabs.focus(a));
+    assert!(tabs.focus(&k(a)));
     assert_eq!(tabs.visible(), vec![a]);
-    assert!(tabs.focus(b));
+    assert!(tabs.focus(&k(b)));
     assert_eq!(tabs.visible(), vec![a, b]);
 }
 
@@ -268,7 +288,7 @@ fn a_single_pane_does_not_zoom() {
     let (mut tabs, a, _) = two_panes();
     let mut single = Tabs::new(tabs.project_id());
     assert!(!single.toggle_zoom());
-    tabs.close_pane(a).unwrap();
+    tabs.close_leaf(&k(a)).unwrap();
     assert!(!tabs.toggle_zoom());
     assert_eq!(tabs.active().and_then(Tab::zoomed), None);
 }
@@ -292,11 +312,11 @@ fn focus_moves_between_neighbours() {
     tabs.load(vec![wire(project, "main", 1.0, pane(a))]);
     tabs.split_focused(Axis::Vertical, b);
     assert!(tabs.focus_neighbour(Direction::Left));
-    assert_eq!(tabs.active().and_then(Tab::focused), Some(a));
+    assert_eq!(tabs.active().and_then(Tab::focused_session), Some(a));
     assert!(!tabs.focus_neighbour(Direction::Left));
     assert!(!tabs.focus_neighbour(Direction::Up));
     assert!(tabs.focus_neighbour(Direction::Right));
-    assert_eq!(tabs.active().and_then(Tab::focused), Some(b));
+    assert_eq!(tabs.active().and_then(Tab::focused_session), Some(b));
 }
 
 #[test]
@@ -326,7 +346,7 @@ fn echoes_of_own_writes_do_not_revert_newer_local_layouts() {
     // With nothing pending, an update from elsewhere (e.g. `mk` spawning) applies.
     assert!(tabs.apply(&echo(pane(b))));
     assert_eq!(tabs.visible(), vec![b]);
-    assert_eq!(tabs.active().and_then(Tab::focused), Some(b));
+    assert_eq!(tabs.active().and_then(Tab::focused_session), Some(b));
 }
 
 #[test]
@@ -622,10 +642,10 @@ fn focus_activates_the_holding_tab() {
     let two = wire(project, "two", 2.0, pane(b));
     let mut tabs = Tabs::new(project);
     tabs.load(vec![one, two.clone()]);
-    assert!(tabs.focus(b));
+    assert!(tabs.focus(&k(b)));
     assert_eq!(tabs.active().map(|t| t.id), Some(two.id));
     assert_eq!(tabs.tab_of(b).map(|t| t.id), Some(two.id));
-    assert!(!tabs.focus(Ulid::new()));
+    assert!(!tabs.focus(&k(Ulid::new())));
 }
 
 fn session(project_id: Ulid, state: SessionState, started_at: i64) -> Session {
@@ -711,7 +731,7 @@ fn a_tab_shows_pane_icons_active_all_inactive_focused() {
     );
     assert_eq!(active.more, 0);
     assert_eq!(tab_icons(tab, &sessions, false).panes, [PaneIcon::Shell]);
-    tabs.focus(a);
+    tabs.focus(&k(a));
     let tab = tabs.active().unwrap();
     assert_eq!(
         tab_icons(tab, &sessions, false).panes,
@@ -854,11 +874,11 @@ fn a_default_named_tab_shows_the_session_title_of_its_focused_pane() {
     tabs.load(vec![wire(project, "Terminal 2", 1.0, tree)]);
     let shown = |tabs: &Tabs| session_label(tabs.active().unwrap(), &sessions);
     assert_eq!(shown(&tabs), Some("Fix login"));
-    assert!(tabs.focus(named.id));
+    assert!(tabs.focus(&k(named.id)));
     assert_eq!(shown(&tabs), Some("Docs"));
-    assert!(tabs.focus(untitled.id));
+    assert!(tabs.focus(&k(untitled.id)));
     assert_eq!(shown(&tabs), None);
-    assert!(tabs.focus(titled.id));
+    assert!(tabs.focus(&k(titled.id)));
     assert_eq!(shown(&tabs), Some("Fix login"));
 }
 
@@ -877,7 +897,7 @@ fn a_double_click_renames_the_focused_pane_of_a_default_named_tab() {
     let renames = |title: &str, focus: Ulid| {
         let mut tabs = Tabs::new(project);
         tabs.load(vec![wire(project, title, 1.0, split.clone())]);
-        assert!(tabs.focus(focus));
+        assert!(tabs.focus(&k(focus)));
         double_click_renames(tabs.active().unwrap(), &sessions)
     };
 
@@ -965,8 +985,8 @@ fn split_focused_in_a_non_active_tab_leaves_the_active_one() {
         .flatten();
     assert_eq!(write.map(|w| w.tab_id), Some(two.id));
     assert_eq!(tabs.active().map(|t| t.id), Some(one.id));
-    assert!(tabs.tab(two.id).is_some_and(|tab| tab.contains(new)));
-    assert!(tabs.tab(one.id).is_some_and(|tab| !tab.contains(new)));
+    assert!(tabs.tab(two.id).is_some_and(|tab| tab.contains(&k(new))));
+    assert!(tabs.tab(one.id).is_some_and(|tab| !tab.contains(&k(new))));
 }
 
 #[test]
@@ -978,12 +998,12 @@ fn move_pane_in_a_non_active_tab_leaves_the_active_one() {
     let two = wire(project, "two", 2.0, split);
     let mut tabs = Tabs::new(project);
     tabs.load(vec![one.clone(), two.clone()]);
-    let writes = (tabs.with_active(two.id, |tabs| tabs.move_pane(b, c, Axis::Horizontal)))
+    let writes = (tabs.with_active(two.id, |tabs| tabs.move_pane(&k(b), &k(c), Edge::Bottom)))
         .flatten()
         .unwrap_or_default();
     assert_eq!(writes.len(), 1, "one tab, one write");
     assert_eq!(tabs.active().map(|t| t.id), Some(one.id), "active restored");
-    assert_eq!(tabs.tab(two.id).and_then(Tab::focused), Some(b));
+    assert_eq!(tabs.tab(two.id).and_then(Tab::focused_session), Some(b));
 }
 
 fn split(axis: &str, first: serde_json::Value, second: serde_json::Value) -> serde_json::Value {
@@ -1000,27 +1020,27 @@ fn a_pane_moves_beside_another_in_its_tab_or_from_another_tab() {
     tabs.load(vec![one.clone(), two.clone()]);
 
     // Same tab: `a` goes below `b`; one write.
-    let writes = tabs.move_pane(a, b, Axis::Horizontal).unwrap();
+    let writes = tabs.move_pane(&k(a), &k(b), Edge::Bottom).unwrap();
     assert_eq!(writes.len(), 1);
     assert_eq!(writes[0].tab_id, one.id);
     assert_eq!(writes[0].layout, split("horizontal", pane(b), pane(a)));
-    assert_eq!(tabs.active().and_then(Tab::focused), Some(a));
+    assert_eq!(tabs.active().and_then(Tab::focused_session), Some(a));
 
     // Another tab: the source tab is written first, the target tab is activated.
-    let writes = tabs.move_pane(a, c, Axis::Vertical).unwrap();
+    let writes = tabs.move_pane(&k(a), &k(c), Edge::Right).unwrap();
     assert_eq!((writes[0].tab_id, &writes[0].layout), (one.id, &pane(b)));
     assert_eq!(
         (writes[1].tab_id, &writes[1].layout),
         (two.id, &split("vertical", pane(c), pane(a)))
     );
     assert_eq!(tabs.active().map(|tab| tab.id), Some(two.id));
-    assert_eq!(tabs.active().and_then(Tab::focused), Some(a));
-    assert_eq!(tabs.tab(one.id).and_then(Tab::focused), Some(b));
+    assert_eq!(tabs.active().and_then(Tab::focused_session), Some(a));
+    assert_eq!(tabs.tab(one.id).and_then(Tab::focused_session), Some(b));
 
     // Onto itself, or with a pane in no tab: nothing moves.
-    assert_eq!(tabs.move_pane(a, a, Axis::Vertical), None);
-    assert_eq!(tabs.move_pane(Ulid::new(), a, Axis::Vertical), None);
-    assert_eq!(tabs.move_pane(a, Ulid::new(), Axis::Vertical), None);
+    assert_eq!(tabs.move_pane(&k(a), &k(a), Edge::Right), None);
+    assert_eq!(tabs.move_pane(&k(Ulid::new()), &k(a), Edge::Right), None);
+    assert_eq!(tabs.move_pane(&k(a), &k(Ulid::new()), Edge::Right), None);
 }
 
 #[test]
@@ -1033,7 +1053,7 @@ fn moving_a_pane_ends_the_zoom_of_its_new_tab() {
         wire(project, "two", 2.0, pane(c)),
     ]);
     assert!(tabs.toggle_zoom());
-    tabs.move_pane(c, b, Axis::Vertical).unwrap();
+    tabs.move_pane(&k(c), &k(b), Edge::Right).unwrap();
     assert_eq!(tabs.active().and_then(Tab::zoomed), None);
     assert_eq!(tabs.visible(), vec![a, b, c]);
 }
@@ -1049,10 +1069,10 @@ fn a_tab_merges_beside_a_pane_of_another_tab_keeping_its_layout() {
     tabs.load(vec![one.clone(), two.clone(), empty.clone()]);
 
     // Onto a pane of its own tab, or an empty tab: nothing moves.
-    assert_eq!(tabs.merge_tab(two.id, b, Axis::Vertical), None);
-    assert_eq!(tabs.merge_tab(empty.id, a, Axis::Vertical), None);
+    assert_eq!(tabs.merge_tab(two.id, &k(b), Edge::Right), None);
+    assert_eq!(tabs.merge_tab(empty.id, &k(a), Edge::Right), None);
 
-    let [placed, emptied] = tabs.merge_tab(two.id, a, Axis::Vertical).unwrap();
+    let [placed, emptied] = tabs.merge_tab(two.id, &k(a), Edge::Right).unwrap();
     assert_eq!(placed.tab_id, one.id);
     assert_eq!(
         placed.layout,
@@ -1063,7 +1083,7 @@ fn a_tab_merges_beside_a_pane_of_another_tab_keeping_its_layout() {
         (two.id, serde_json::Value::Null)
     );
     assert_eq!(tabs.active().map(|tab| tab.id), Some(one.id));
-    assert_eq!(tabs.active().and_then(Tab::focused), Some(b));
+    assert_eq!(tabs.active().and_then(Tab::focused_session), Some(b));
     assert!(
         tabs.tab(two.id)
             .is_some_and(|tab| tab.sessions().is_empty())
@@ -1101,10 +1121,10 @@ fn focus_pane_leaves_the_active_tab() {
     let mut tabs = Tabs::new(project);
     tabs.load(vec![one.clone(), two.clone()]);
 
-    assert!(tabs.focus_pane(two.id, c));
+    assert!(tabs.focus_pane(two.id, &k(c)));
     assert_eq!(tabs.active().map(|t| t.id), Some(one.id));
-    assert_eq!(tabs.tab(two.id).and_then(Tab::focused), Some(c));
-    assert!(!tabs.focus_pane(two.id, a), "a is not in that tab");
+    assert_eq!(tabs.tab(two.id).and_then(Tab::focused_session), Some(c));
+    assert!(!tabs.focus_pane(two.id, &k(a)), "a is not in that tab");
 }
 
 #[test]
@@ -1173,13 +1193,13 @@ fn moving_and_arranging_panes_keeps_their_chat_mode() {
     let tab = wire(project, "main", 1.0, split);
     let mut tabs = Tabs::new(project);
     tabs.load(vec![tab.clone()]);
-    tabs.move_pane(a, b, Axis::Horizontal).unwrap();
+    tabs.move_pane(&k(a), &k(b), Edge::Bottom).unwrap();
     assert_eq!(tabs.chat_of(a), Some(true), "a moved pane");
     assert_eq!(tabs.chat_of(b), None);
     tabs.arrange(tab.id, Preset::Columns3, &[c]).unwrap();
     assert_eq!(tabs.chat_of(a), Some(true), "a re-arranged pane");
     assert_eq!(tabs.chat_of(c), None);
-    tabs.close_pane(b);
+    tabs.close_leaf(&k(b));
     assert_eq!(tabs.chat_of(a), Some(true), "a pane whose sibling closed");
 }
 
@@ -1196,7 +1216,7 @@ fn a_cross_tab_move_keeps_the_pane_chat_mode() {
     let two = wire(project, "two", 2.0, pane(b));
     let mut tabs = Tabs::new(project);
     tabs.load(vec![one, two.clone()]);
-    tabs.move_pane(a, b, Axis::Horizontal).unwrap();
+    tabs.move_pane(&k(a), &k(b), Edge::Bottom).unwrap();
     assert_eq!(tabs.tab_of(a).map(|t| t.id), Some(two.id), "a changed tab");
     assert_eq!(tabs.chat_of(a), Some(true));
     assert_eq!(tabs.chat_of(b), None);
@@ -1310,5 +1330,263 @@ fn the_scroll_target_is_the_shown_chip_or_the_active_tab() {
         scroll_index(&items, View::Diff, Some(1)),
         None,
         "no Diff chip"
+    );
+}
+
+#[test]
+fn a_file_leaf_is_a_pane_but_not_a_session() {
+    let project = Ulid::new();
+    let a = Ulid::new();
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(
+        project,
+        "one",
+        1.0,
+        split("vertical", pane(a), file("src/a.rs")),
+    )]);
+    let tab = tabs.active().unwrap();
+    assert_eq!(tab.keys(), [k(a), file_key("src/a.rs")]);
+    assert_eq!(tab.sessions(), [a]);
+    assert_eq!(tab.focused(), Some(&k(a)), "the first leaf has the focus");
+    assert!(tab.contains(&file_key("src/a.rs")));
+
+    // With the file focused no session has the keyboard, and the zoom shows the file alone.
+    assert!(tabs.focus(&file_key("src/a.rs")));
+    let tab = tabs.active().unwrap();
+    assert_eq!(tab.focused_session(), None);
+    assert_eq!(tab.focused(), Some(&file_key("src/a.rs")));
+    assert!(tabs.toggle_zoom());
+    let tab = tabs.active().unwrap();
+    assert_eq!(tab.shown(), [file_key("src/a.rs")]);
+    assert!(tab.shown_sessions().is_empty());
+    assert!(tabs.visible().is_empty(), "no session is on screen");
+    assert_eq!(tab.rects().len(), 1);
+    assert_eq!(tab.rects()[0].0, file_key("src/a.rs"));
+
+    // Focusing the session ends the zoom: its terminal is on screen again.
+    assert!(tabs.focus(&k(a)));
+    assert_eq!(tabs.visible(), vec![a]);
+}
+
+#[test]
+fn tab_with_finds_any_leaf_in_any_tab() {
+    let project = Ulid::new();
+    let a = Ulid::new();
+    let one = wire(project, "one", 1.0, pane(a));
+    let two = wire(
+        project,
+        "two",
+        2.0,
+        split("vertical", file("src/a.rs"), json!({"diff": true})),
+    );
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone()]);
+    assert_eq!(tabs.active().map(|t| t.id), Some(one.id));
+
+    // A leaf of a tab that is not the active one (a detached window shows it from the same
+    // `Tabs`, so this is also how a file in a detached window is found).
+    assert_eq!(
+        tabs.tab_with(&file_key("src/a.rs")).map(|t| t.id),
+        Some(two.id)
+    );
+    assert_eq!(tabs.tab_with(&PaneKey::Diff).map(|t| t.id), Some(two.id));
+    assert_eq!(tabs.tab_with(&k(a)).map(|t| t.id), Some(one.id));
+    assert_eq!(tabs.tab_of(a).map(|t| t.id), Some(one.id));
+    assert!(tabs.tab_with(&file_key("src/b.rs")).is_none());
+
+    // `focus_pane` reaches a leaf of another tab without activating it.
+    assert!(tabs.focus_pane(two.id, &PaneKey::Diff));
+    assert_eq!(tabs.active().map(|t| t.id), Some(one.id));
+    assert_eq!(
+        tabs.tab(two.id).and_then(Tab::focused),
+        Some(&PaneKey::Diff)
+    );
+    assert!(!tabs.focus_pane(one.id, &PaneKey::Diff), "not in that tab");
+    // `focus` activates the tab that holds the leaf.
+    assert!(tabs.focus(&file_key("src/a.rs")));
+    assert_eq!(tabs.active().map(|t| t.id), Some(two.id));
+}
+
+#[test]
+fn a_tab_loads_around_a_leaf_it_cannot_read() {
+    let project = Ulid::new();
+    let a = Ulid::new();
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(
+        project,
+        "one",
+        1.0,
+        split("vertical", pane(a), json!({"canvas": 1})),
+    )]);
+    let tab = tabs.active().unwrap();
+    assert_eq!(tab.layout(), Some(&Node::pane(a)));
+    assert_eq!(tabs.visible(), vec![a]);
+    // A layout that is bad all the way down is an empty tab, not a lost one.
+    tabs.load(vec![wire(project, "two", 2.0, json!({"canvas": 1}))]);
+    assert_eq!(tabs.tabs().len(), 1);
+    assert_eq!(tabs.tabs()[0].layout(), None);
+}
+
+#[test]
+fn a_session_that_goes_leaves_the_file_leaf_focused_and_the_tab() {
+    let project = Ulid::new();
+    let [a, b] = [Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, split("vertical", pane(a), file("x")));
+    let two = wire(project, "two", 2.0, pane(b));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two]);
+    assert!(tabs.focus(&k(a)));
+
+    // `a` is unknown to the daemon now.
+    let writes = tabs.prune(|id| id == b);
+    assert_eq!(writes.len(), 1);
+    assert_eq!((writes[0].tab_id, &writes[0].layout), (one.id, &file("x")));
+    let tab = tabs.tab(one.id).unwrap();
+    assert_eq!(tab.focused(), Some(&file_key("x")));
+    assert!(tab.sessions().is_empty());
+    assert_eq!(tabs.tabs().len(), 2, "the tab stays");
+    assert!(tabs.prune(|id| id == b).is_empty());
+}
+
+#[test]
+fn close_leaf_closes_any_kind_and_moves_the_focus() {
+    let project = Ulid::new();
+    let a = Ulid::new();
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(
+        project,
+        "one",
+        1.0,
+        split(
+            "vertical",
+            pane(a),
+            split("horizontal", file("x"), json!({"diff": true})),
+        ),
+    )]);
+    assert!(tabs.focus(&file_key("x")));
+    let write = tabs.close_leaf(&file_key("x")).unwrap();
+    assert_eq!(
+        write.layout,
+        split("vertical", pane(a), json!({"diff": true}))
+    );
+    assert_eq!(tabs.active().and_then(Tab::focused), Some(&PaneKey::Diff));
+    assert_eq!(tabs.close_leaf(&file_key("x")), None, "already closed");
+    tabs.close_leaf(&PaneKey::Diff).unwrap();
+    let write = tabs.close_leaf(&k(a)).unwrap();
+    assert_eq!(write.layout, serde_json::Value::Null);
+    assert_eq!(tabs.active().and_then(Tab::focused), None);
+}
+
+#[test]
+fn move_pane_carries_the_whole_leaf() {
+    let project = Ulid::new();
+    let [a, c] = [Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, split("vertical", pane(a), full_file()));
+    let two = wire(project, "two", 2.0, pane(c));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone()]);
+
+    // To another tab, on the left of `c`: `md` and `preview` travel with the file.
+    let writes = tabs
+        .move_pane(&file_key("README.md"), &k(c), Edge::Left)
+        .unwrap();
+    assert_eq!(writes.len(), 2);
+    assert_eq!((writes[0].tab_id, &writes[0].layout), (one.id, &pane(a)));
+    assert_eq!(
+        (writes[1].tab_id, &writes[1].layout),
+        (two.id, &split("vertical", full_file(), pane(c)))
+    );
+    assert_eq!(tabs.active().map(|t| t.id), Some(two.id));
+    assert_eq!(
+        tabs.tab(two.id).and_then(Tab::focused),
+        Some(&file_key("README.md"))
+    );
+    assert_eq!(
+        tabs.tab_with(&file_key("README.md")).map(|t| t.id),
+        Some(two.id)
+    );
+    // Onto itself or onto a leaf that is in no tab: nothing moves.
+    assert_eq!(
+        tabs.move_pane(&file_key("README.md"), &file_key("README.md"), Edge::Top),
+        None
+    );
+    assert_eq!(
+        tabs.move_pane(&file_key("README.md"), &file_key("nope"), Edge::Top),
+        None
+    );
+    assert_eq!(tabs.move_pane(&file_key("nope"), &k(c), Edge::Top), None);
+}
+
+#[test]
+fn move_pane_moves_the_diff_within_a_tab_to_each_edge() {
+    let project = Ulid::new();
+    let a = Ulid::new();
+    let diff = || json!({"diff": true});
+    let tab = wire(project, "one", 1.0, split("vertical", pane(a), diff()));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![tab.clone()]);
+    for (edge, expected) in [
+        (Edge::Top, split("horizontal", diff(), pane(a))),
+        (Edge::Bottom, split("horizontal", pane(a), diff())),
+        (Edge::Left, split("vertical", diff(), pane(a))),
+        (Edge::Right, split("vertical", pane(a), diff())),
+    ] {
+        let writes = tabs.move_pane(&PaneKey::Diff, &k(a), edge).unwrap();
+        assert_eq!(writes.len(), 1, "one tab, one write");
+        assert_eq!(writes[0].layout, expected, "{edge:?}");
+        assert_eq!(tabs.active().and_then(Tab::focused), Some(&PaneKey::Diff));
+    }
+}
+
+#[test]
+fn merge_tab_carries_whole_leaves_to_any_edge() {
+    let project = Ulid::new();
+    let a = Ulid::new();
+    let one = wire(project, "one", 1.0, pane(a));
+    let moved = split("vertical", full_file(), json!({"diff": true}));
+    let two = wire(project, "two", 2.0, moved.clone());
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone()]);
+
+    let [placed, emptied] = tabs.merge_tab(two.id, &k(a), Edge::Top).unwrap();
+    assert_eq!(placed.tab_id, one.id);
+    assert_eq!(placed.layout, split("horizontal", moved, pane(a)));
+    assert_eq!(
+        (emptied.tab_id, emptied.layout),
+        (two.id, serde_json::Value::Null)
+    );
+    assert_eq!(tabs.active().map(|t| t.id), Some(one.id));
+    assert_eq!(
+        tabs.tab(one.id).and_then(Tab::focused),
+        Some(&file_key("README.md")),
+        "the first moved leaf has the focus"
+    );
+    // The same tab, or an empty one: nothing moves.
+    assert_eq!(tabs.merge_tab(one.id, &k(a), Edge::Right), None);
+    assert_eq!(tabs.merge_tab(two.id, &k(a), Edge::Right), None);
+}
+
+#[test]
+fn arrange_carries_whole_leaves() {
+    let project = Ulid::new();
+    let a = Ulid::new();
+    let tab = wire(project, "one", 1.0, split("vertical", pane(a), full_file()));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![tab.clone()]);
+    let write = tabs.arrange(tab.id, Preset::Rows2, &[]).unwrap();
+    assert_eq!(write.layout, split("horizontal", pane(a), full_file()));
+    // Three leaves need Columns3 or MainAndStack; a new session joins after the file.
+    let c = Ulid::new();
+    tabs.arrange(tab.id, Preset::MainAndStack, &[c]).unwrap();
+    let tab = tabs.tab(tab.id).unwrap();
+    assert_eq!(tab.keys(), [k(a), file_key("README.md"), k(c)]);
+    assert_eq!(
+        tab.layout()
+            .and_then(|node| node.leaf_of(&file_key("README.md"))),
+        Some(&Leaf::File {
+            file: "README.md".into(),
+            md: Some(mkrew_core::settings::MdMode::Split),
+            preview: true,
+        })
     );
 }

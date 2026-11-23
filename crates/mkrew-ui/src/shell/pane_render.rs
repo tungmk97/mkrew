@@ -511,7 +511,7 @@ impl Shell {
             .relative()
             .child(content_canvas(content));
         }
-        let focused = tab.and_then(|tab| tab.focused());
+        let focused = tab.and_then(Tab::focused_session);
         let rects = tab.map(Tab::rects).unwrap_or_default();
         let dividers = tab.map(Tab::dividers).unwrap_or_default();
         let several = rects.len() > 1;
@@ -521,6 +521,8 @@ impl Shell {
         let area = f32::from(content.get().width) - 2.0 * theme::PANE_HALF_GAP;
         let panes: Vec<_> = rects
             .into_iter()
+            // File and diff panes are drawn from Task 4 / Task 5 on.
+            .filter_map(|(key, rect)| Some((key.session()?, rect)))
             .map(|(session, rect)| {
                 let is_focused = focused == Some(session);
                 let width = rect.w as f32 * area - 2.0 * theme::PANE_HALF_GAP;
@@ -770,7 +772,7 @@ impl Shell {
     pub(crate) fn tab_renaming(&self, tab: &Tab) -> Option<&Renaming> {
         (self.renaming.as_ref()).filter(|r| match &r.target {
             RenameTarget::Tab(id) => *id == tab.id,
-            RenameTarget::Session(session) => tab.contains(*session),
+            RenameTarget::Session(session) => tab.contains(&PaneKey::Session(*session)),
             RenameTarget::NewEntry(_) => false,
         })
     }

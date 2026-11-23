@@ -203,7 +203,7 @@ impl Shell {
             (View::Terminals, Some(tabs)) => {
                 // Voice text goes to the focused terminal when it has the keyboard: ring it.
                 let voice_ring = self.voice_ring(theme, cx).filter(|_| {
-                    (tabs.active().and_then(Tab::focused))
+                    (tabs.active().and_then(Tab::focused_session))
                         .and_then(|session| self.panes.get(&session))
                         .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
                 });

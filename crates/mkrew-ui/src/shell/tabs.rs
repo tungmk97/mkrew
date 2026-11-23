@@ -92,7 +92,7 @@ impl Shell {
         };
         let Some(have) = (self.tabs.get(&project_id))
             .and_then(|tabs| tabs.tab(tab_id))
-            .map(|tab| tab.sessions().len())
+            .map(|tab| tab.keys().len())
         else {
             return;
         };
@@ -810,10 +810,12 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let closed = self
-            .tabs
-            .values_mut()
-            .find_map(|tabs| Some((tabs.project_id(), tabs.close_pane(session)?)));
+        let closed = self.tabs.values_mut().find_map(|tabs| {
+            Some((
+                tabs.project_id(),
+                tabs.close_leaf(&PaneKey::Session(session))?,
+            ))
+        });
         if let Some((project_id, write)) = closed {
             let emptied = write.layout.is_null().then_some(write.tab_id);
             // Saved first: requests go out in call order, so `tab.close` sees no panes and

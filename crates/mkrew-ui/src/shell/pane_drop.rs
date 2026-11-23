@@ -19,6 +19,15 @@ pub(crate) struct PaneDrop {
     pub(crate) axis: Axis,
 }
 
+/// The edge a drop that leans to `axis` lands on: right of the pane or below it. Task 6 reads
+/// the edge from the pointer ([`Edge::nearest`]) and deletes this.
+fn edge_of(axis: Axis) -> Edge {
+    match axis {
+        Axis::Vertical => Edge::Right,
+        Axis::Horizontal => Edge::Bottom,
+    }
+}
+
 impl Shell {
     /// Makes `handle` (the top-edge strip of `info`'s pane) draggable onto another pane.
     pub(crate) fn draggable_pane(
@@ -64,8 +73,9 @@ impl Shell {
             )
             .on_drag_move(
                 cx.listener(move |shell, event: &DragMoveEvent<DraggedItem>, _, cx| {
-                    let takes = (shell.dragged_tab(event.drag(cx)))
-                        .is_some_and(|tab| !tab.contains(session) && tab.layout().is_some());
+                    let takes = (shell.dragged_tab(event.drag(cx))).is_some_and(|tab| {
+                        !tab.contains(&PaneKey::Session(session)) && tab.layout().is_some()
+                    });
                     shell.hover_pane_drop(session, takes, event, cx);
                 }),
             )
@@ -165,11 +175,13 @@ impl Shell {
         let detached = (self.tab_of_session(target))
             .map(|(_, tab_id)| tab_id)
             .filter(|tab_id| self.terminal_host(project_id, *tab_id) != HostId::Main);
+        let (moved, target) = (PaneKey::Session(moved), PaneKey::Session(target));
+        let edge = edge_of(axis);
         let writes = (self.tabs.get_mut(&project_id)).and_then(|tabs| match detached {
             Some(tab_id) => {
-                (tabs.with_active(tab_id, |tabs| tabs.move_pane(moved, target, axis))).flatten()
+                (tabs.with_active(tab_id, |tabs| tabs.move_pane(&moved, &target, edge))).flatten()
             }
-            None => tabs.move_pane(moved, target, axis),
+            None => tabs.move_pane(&moved, &target, edge),
         });
         for write in writes.into_iter().flatten() {
             self.save_layout(project_id, write, window, cx);
@@ -199,8 +211,8 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        let Some(writes) =
-            (self.tabs.get_mut(&project_id)).and_then(|tabs| tabs.merge_tab(source, target, axis))
+        let Some(writes) = (self.tabs.get_mut(&project_id))
+            .and_then(|tabs| tabs.merge_tab(source, &PaneKey::Session(target), edge_of(axis)))
         else {
             return;
         };
