@@ -16,7 +16,7 @@ Test fixture (omp's own record of a real startup): `docs/superpowers/specs/2026-
 
 ## Global Constraints
 
-- Protocol version 59 (`PROTOCOL_VERSION`); `feat/tern-layout` (unmerged) holds 58 and ADR 0106, so this plan uses ADR 0107; no store migration.
+- Protocol version 59 (`PROTOCOL_VERSION`); `master` holds 58 and ADR 0106 (Tern layout, merged in 0a8d404), so this plan uses ADR 0107; no store migration.
 - ConPTY package: NuGet `Microsoft.Windows.Console.ConPTY` 1.24.260710001, nupkg SHA-256 `175640566a3b59c4b132070ee96c2c77e5ab7edd2e92732a5eb3610bbf63d90e`.
 - `runtimes/win-x64/native/conpty.dll` SHA-256 `39fba2713e2495117b1591ae8c32a3b904bea7aa66069cf7815e2844c76d75d8`; `build/native/runtimes/x64/OpenConsole.exe` SHA-256 `b7fd936c2668b87b9ecf7b3366dc6568afc1c6f981874cba3e955a1c35cf8160` (byte-identical to Tern's copies and to the spike's passing configuration).
 - Profile key `tsp` (bool, optional): absent means on when `[usage] format = "omp_jsonl"`, off otherwise; every session gets `PI_TUI_NATIVE=1` when `tsp` is on, `PI_TUI_NATIVE=0` otherwise.
@@ -30,7 +30,7 @@ Test fixture (omp's own record of a real startup): `docs/superpowers/specs/2026-
 - Commits: Conventional Commits with `git -c user.email=tungnv975@gmail.com commit`; stage only the task's files (other agents edit this tree); never push; no em dash in any text.
 - Per task: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, then the task's tests; after protocol or CLI changes run `cargo build -p mkrew-cli -p mkrew-fakeagent --bins -j 4` before `cargo test -p mkrew-daemon --test daemon -j 2`.
 - Windows shell: Git Bash (`"C:/Program Files/Git/bin/bash.exe"`); plain `bash` in the omp shell is WSL.
-- Branch: work on `feat/omp-tsp` from `master`; if `feat/tern-layout` merged first, rebase and keep 59 / 0107.
+- Branch: `feat/omp-tsp` from `master` 0a8d404 (after the Tern layout merge), worktree `.worktrees/omp-tsp`.
 
 ## Review Focus
 
@@ -793,36 +793,36 @@ If any item differs, report it to Main with the pane, the item, what was seen an
 ### Task 2: Protocol 59 TSP types
 
 **Files:**
-- Modify: `crates/mkrew-protocol/src/message.rs:337` (new `Request` variants after `LimitsReport`), `:481` (new `Event` variant after `MachineStats`), `:631` (`Session.tsp` after `plan_path`), `:1812` (new type block after `struct MachineStats`)
+- Modify: `crates/mkrew-protocol/src/message.rs:337` (new `Request` variants after `LimitsReport`), `:478` (new `Event` variant after `AgentLimits`), `:628` (`Session.tsp` after `plan_path`), `:1988` (new type block after `struct DocChangedEvent`, before `mod base64_bytes`)
 - Modify: `crates/mkrew-protocol/src/lib.rs:16` (`PROTOCOL_VERSION`)
-- Modify: `crates/mkrew-protocol/src/message/tests.rs:346` (request list), `:905-919` (Session literal), `:935` (session.updated assertions), `:1405-1408` (version test), end of file (new tests)
+- Modify: `crates/mkrew-protocol/src/message/tests.rs:346` (request list), `:898-919` (Session literal), `:935` (session.updated assertions), `:1394-1397` (version test), end of file (new tests)
 - Modify (add `tsp: mkrew_protocol::TspState::Off,` to every `Session { .. }` literal, current lines from `grep -rn "terminal_title: None," crates --include=*.rs`):
   - `crates/mkrew-core/src/run.rs:367`
   - `crates/mkrew-daemon/src/awake.rs:389`
   - `crates/mkrew-daemon/src/notify.rs:392`
   - `crates/mkrew-daemon/src/retention.rs:145`
   - `crates/mkrew-daemon/src/server/resume.rs:304`
-  - `crates/mkrew-daemon/src/server.rs:911`
+  - `crates/mkrew-daemon/src/server.rs:905`
   - `crates/mkrew-daemon/src/turns.rs:300`
   - `crates/mkrew-daemon/tests/daemon/basics.rs:146`
   - `crates/mkrew-daemon/tests/daemon/turns.rs:158`
   - `crates/mkrew-store/src/lib.rs:1673`
   - `crates/mkrew-store/src/tests.rs:17`
   - `crates/mkrew-ui/src/attention.rs:229`
-  - `crates/mkrew-ui/src/board/tests.rs:72`
+  - `crates/mkrew-ui/src/board/tests.rs:49`
   - `crates/mkrew-ui/src/broadcast.rs:265`
   - `crates/mkrew-ui/src/conflicts.rs:178`
   - `crates/mkrew-ui/src/doc_dialog.rs:332`
   - `crates/mkrew-ui/src/fanout.rs:408`
-  - `crates/mkrew-ui/src/git_view/tests.rs:1423`
+  - `crates/mkrew-ui/src/git_view/tests.rs:1403`
   - `crates/mkrew-ui/src/history.rs:198`
   - `crates/mkrew-ui/src/inbox.rs:351`
   - `crates/mkrew-ui/src/inspector.rs:245`
-  - `crates/mkrew-ui/src/lifecycle.rs:239`
+  - `crates/mkrew-ui/src/lifecycle.rs:253`
   - `crates/mkrew-ui/src/machine_notify.rs:133`
-  - `crates/mkrew-ui/src/palette/tests.rs:150`
+  - `crates/mkrew-ui/src/palette/tests.rs:192`
   - `crates/mkrew-ui/src/plan.rs:181`
-  - `crates/mkrew-ui/src/redraw.rs:171`
+  - `crates/mkrew-ui/src/redraw.rs:169`
   - `crates/mkrew-ui/src/run.rs:336`
   - `crates/mkrew-ui/src/sidebar/tests.rs:47`
   - `crates/mkrew-ui/src/status.rs:191`
@@ -831,7 +831,7 @@ If any item differs, report it to Main with the pane, the item, what was seen an
   - `crates/mkrew-ui/src/undo_dialog.rs:334`
   - `crates/mkrew-ui/src/usage.rs:218`
   - `crates/mkrew-ui/src/worktree_dialog.rs:488`
-- Modify: `crates/mkrew-ui/src/redraw.rs:74` (new event arm), `:558` (new test); `crates/mkrew-ui/src/sidebar.rs:672` (new event arm)
+- Modify: `crates/mkrew-ui/src/redraw.rs:72` (new event arm), `:546` (new test goes after the test ending there); `crates/mkrew-ui/src/sidebar.rs:671` (new event arm)
 - Test: `crates/mkrew-protocol/src/message/tests.rs`, `crates/mkrew-ui/src/redraw.rs`
 
 The list above is the output of the grep today.
@@ -839,7 +839,7 @@ The compiler is the authority: Step 5 tells the engineer to let `cargo check` na
 Literals written with `..other` (for example `Session { kind: SessionKind::Shell, ..session(..) }` in `attention.rs`, `inbox.rs`, `palette/tests.rs`, `sidebar/tests.rs`, `run.rs`) need no change.
 
 **Interfaces:**
-- Consumes: the private `base64_bytes` module (`message.rs:2002`), `Ulid`, `serde_json`, all already imported in `message.rs`.
+- Consumes: the private `base64_bytes` module (`message.rs:1989`), `Ulid`, `serde_json`, all already imported in `message.rs`.
 - Produces (exact, from the contract; all reachable as `mkrew_protocol::*` because `lib.rs:13` has `pub use message::*;`, so no re-export edit is needed): `TspState`, `TspNode`, `TspSurface`, `TspBlob`, `TspSnapshotParams`, `TspSnapshot`, `TspChange`, `TspUpdate`, `TspEventParams`, `Request::TspSnapshot`, `Request::TspEvent`, `Event::TspUpdate(Box<TspUpdate>)` (boxed: `TspChange::Open` holds a whole surface; daemon and UI construct `Event::TspUpdate(Box::new(TspUpdate { .. }))`), `Session.tsp: TspState`, `PROTOCOL_VERSION == 59`.
 - `serde_json::Map<String, Value>` implements `PartialEq` (not `Eq`), so `TspNode`, `TspSurface`, `TspSnapshot`, `TspChange`, `TspUpdate` and `TspEventParams` derive `PartialEq` only; `Request` and `Event` already derive only `PartialEq` (`message.rs:45`, `:405`), so nothing else changes.
   `TspBlob`, `TspSnapshotParams` and `TspState` hold no JSON value and derive `Eq`.
@@ -878,7 +878,7 @@ Then add these assertions after `assert!(updated["data"].get("plan_path").is_non
     );
 ```
 
-(c) Rename and renumber the version test (lines 1405-1408):
+(c) Rename and renumber the version test (lines 1394-1397; today `the_tern_layout_protocol_is_version_58` asserting 58):
 ```rust
 #[test]
 fn the_omp_surface_protocol_is_version_59() {
@@ -886,7 +886,7 @@ fn the_omp_surface_protocol_is_version_59() {
 }
 ```
 
-(d) Append at the end of the file (after the last test, line 1437):
+(d) Append at the end of the file (after the last test, `the_transcript_reply_carries_an_optional_recap`, line 1426):
 ```rust
 fn tsp_surface(seq: u64) -> TspSurface {
     TspSurface {
@@ -1083,7 +1083,7 @@ fn tsp_state_names_are_snake_case_and_off_is_the_default() {
 }
 ```
 
-(e) In `crates/mkrew-ui/src/redraw.rs`, add this test before the closing `}` of `mod tests` (after the test ending at line 558):
+(e) In `crates/mkrew-ui/src/redraw.rs`, add this test before the closing `}` of `mod tests` (after `limits_always_redraw_the_main_window`, which ends at line 546):
 ```rust
     /// A surface change repaints only a pane that is on screen (spec 2026-11-23 section 6.4).
     #[test]
@@ -1113,7 +1113,7 @@ Expected: FAIL to compile with "cannot find type `TspState` in this scope" (and 
 (a) `crates/mkrew-protocol/src/lib.rs:15-16`, replace
 ```rust
 /// Bumped on any incompatible change; `hello` with another value gets `version_mismatch`.
-pub const PROTOCOL_VERSION: u32 = 57;
+pub const PROTOCOL_VERSION: u32 = 58;
 ```
 with
 ```rust
@@ -1137,10 +1137,10 @@ pub const PROTOCOL_VERSION: u32 = 59;
 }
 ```
 
-(c) After `MachineStats(MachineStats),` (line 481) and before the closing `}` of `Event` (line 482):
+(c) After `AgentLimits(AgentLimits),` (line 478) and before the closing `}` of `Event` (line 479):
 ```rust
-    #[serde(rename = "machine.stats")]
-    MachineStats(MachineStats),
+    #[serde(rename = "agent.limits")]
+    AgentLimits(AgentLimits),
     /// The native surface of an omp pane changed (spec 2026-11-23 section 6.4): a client
     /// applies it in order and asks `tsp.snapshot` again when `seq` skips a number.
     #[serde(rename = "tsp.update")]
@@ -1148,7 +1148,7 @@ pub const PROTOCOL_VERSION: u32 = 59;
 }
 ```
 
-(d) `Session` (after `plan_path`, line 631):
+(d) `Session` (after `plan_path`, line 628):
 ```rust
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_path: Option<String>,
@@ -1160,7 +1160,7 @@ pub const PROTOCOL_VERSION: u32 = 59;
 }
 ```
 
-(e) After `struct MachineStats { .. }` (ends line 1812), insert this block (a blank line before and after):
+(e) After `struct DocChangedEvent { .. }` (ends line 1987) and before `mod base64_bytes` (line 1989), insert this block (a blank line before and after; `MachineStats` no longer exists):
 ```rust
 // ---- omp native surface, TSP (spec 2026-11-23 section 6.4) ----
 
@@ -1290,7 +1290,7 @@ Run: `cargo check --workspace --all-targets -j 4`
 Expected: errors "missing field `tsp` in initializer of `Session`" and "non-exhaustive patterns: `&Event::TspUpdate(_)` not covered".
 Let the compiler list every literal; add `tsp: mkrew_protocol::TspState::Off,` as the last field of each (the full path needs no new `use`).
 The grep list in **Files** is what the compiler should name today; trust the compiler over the list.
-Example, `crates/mkrew-ui/src/redraw.rs:183-185`:
+Example, `crates/mkrew-ui/src/redraw.rs:181-183`:
 ```rust
             position: 0.0,
             plan_path: None,
@@ -1298,18 +1298,18 @@ Example, `crates/mkrew-ui/src/redraw.rs:183-185`:
         }
 ```
 In `crates/mkrew-protocol/src/message/tests.rs` no other literal exists (the one at `:898` was done in Step 1).
-In `crates/mkrew-daemon/src/server.rs:924` (the live session built in `start_session`) the line after `plan_path: start.plan_path,` also gets `tsp: mkrew_protocol::TspState::Off,`; the daemon task replaces it with the real value later.
+In `crates/mkrew-daemon/src/server.rs:918` (the live session built in `start_session`) the line after `plan_path: start.plan_path,` also gets `tsp: mkrew_protocol::TspState::Off,`; the daemon task replaces it with the real value later.
 
 Exhaustive matches.
-`crates/mkrew-ui/src/redraw.rs`, after `Event::SessionQueue(e) => on_pane(e.session_id),` (line 74):
+`crates/mkrew-ui/src/redraw.rs`, after `Event::SessionQueue(e) => on_pane(e.session_id),` (line 72):
 ```rust
         Event::SessionQueue(e) => on_pane(e.session_id),
         // The native surface of an omp pane (spec 2026-11-23 section 6.4).
         Event::TspUpdate(e) => on_pane(e.session_id),
 ```
-`crates/mkrew-ui/src/sidebar.rs`, in the `Change::None` arm (lines 672-673):
+`crates/mkrew-ui/src/sidebar.rs`, in the `Change::None` arm (lines 671-672; `MachineStats` is gone, the arm now ends `| Event::AgentLimits(_) | Event::ProjectCloned(_) => Change::None`):
 ```rust
-            | Event::MachineStats(_)
+            | Event::AgentLimits(_)
             | Event::TspUpdate(_)
             | Event::ProjectCloned(_) => Change::None,
 ```
@@ -5436,19 +5436,19 @@ On the system ConPTY the APC hello never reaches the daemon, and the live-path t
 **Files:**
 - Create: `crates/mkrew-daemon/src/server/tsp.rs`
 - Create: `crates/mkrew-daemon/tests/daemon/tsp.rs`
-- Modify: `crates/mkrew-daemon/tests/daemon/main.rs:59-60` (`mod tsp;`)
+- Modify: `crates/mkrew-daemon/tests/daemon/main.rs:60-61` (`mod tsp;`)
 - Modify: `crates/mkrew-daemon/src/session.rs:14-22` (imports)
 - Modify: `crates/mkrew-daemon/src/session.rs:108` (`Hub.tsp_states`)
-- Modify: `crates/mkrew-daemon/src/session.rs:290-291` (`Command::TspSnapshot`, `Command::TspEvent`)
-- Modify: `crates/mkrew-daemon/src/session.rs:318` (`SpawnSpec.dark`)
-- Modify: `crates/mkrew-daemon/src/session.rs:349,367-369` (`Hub::new`, `Hub::tsp_state`)
-- Modify: `crates/mkrew-daemon/src/session.rs:421-444` (`spawn_watched`: destructure, env, engine)
-- Modify: `crates/mkrew-daemon/src/session.rs:596-617` (`Actor` literal)
-- Modify: `crates/mkrew-daemon/src/session.rs:1123` (`Actor.tsp`)
-- Modify: `crates/mkrew-daemon/src/session.rs:1143,1273-1301` (`run`: deadline branch, command arms)
-- Modify: `crates/mkrew-daemon/src/session.rs:1317-1350` (`on_output` split into `on_output`, `apply_steps`, `on_plain`)
-- Modify: `crates/mkrew-daemon/src/session.rs:1453-1458` (`resize`)
-- Modify: `crates/mkrew-daemon/src/server.rs:53-55,376-378,516-517,939,1412` (`mod tsp;`, list fill, dispatch arms, `dark`, `edit_session` fill)
+- Modify: `crates/mkrew-daemon/src/session.rs:287-288` (`Command::TspSnapshot`, `Command::TspEvent`)
+- Modify: `crates/mkrew-daemon/src/session.rs:315` (`SpawnSpec.dark`)
+- Modify: `crates/mkrew-daemon/src/session.rs:346,362-365` (`Hub::new`, `Hub::tsp_state`)
+- Modify: `crates/mkrew-daemon/src/session.rs:417-440` (`spawn_watched`: destructure, env, engine)
+- Modify: `crates/mkrew-daemon/src/session.rs:592-613` (`Actor` literal)
+- Modify: `crates/mkrew-daemon/src/session.rs:1119` (`Actor.tsp`)
+- Modify: `crates/mkrew-daemon/src/session.rs:1139,1270,1293` (`run`: deadline branch, command arms)
+- Modify: `crates/mkrew-daemon/src/session.rs:1313-1346` (`on_output` split into `on_output`, `apply_steps`, `on_plain`)
+- Modify: `crates/mkrew-daemon/src/session.rs:1452-1454` (`resize`)
+- Modify: `crates/mkrew-daemon/src/server.rs:52-54,370-372,510-511,933,1406` (`mod tsp;`, list fill, dispatch arms, `dark`, `edit_session` fill)
 - Test: `crates/mkrew-daemon/tests/daemon/tsp.rs`
 
 **Interfaces:**
@@ -5465,7 +5465,7 @@ On the system ConPTY the APC hello never reaches the daemon, and the live-path t
 
 - [ ] **Step 1: Write the failing e2e tests**
 
-Add `mod tsp;` to `crates/mkrew-daemon/tests/daemon/main.rs` in the module list, between `task_runs` and `turns` (lines 59-60):
+Add `mod tsp;` to `crates/mkrew-daemon/tests/daemon/main.rs` in the module list, between `task_runs` and `turns` (lines 60-61; `limits` replaced `widgets` earlier in the same list):
 
 ```rust
 mod task_runs;
@@ -5836,14 +5836,14 @@ to
     pub tsp_states: Mutex<HashMap<Ulid, TspState>>,
 ```
 
-(c) `Hub::new`, after `terminal_titles: Mutex::default(),` (line 349):
+(c) `Hub::new`, after `terminal_titles: Mutex::default(),` (line 346):
 
 ```rust
             terminal_titles: Mutex::default(),
             tsp_states: Mutex::default(),
 ```
 
-(d) Accessor, after `terminal_title` (lines 366-369):
+(d) Accessor, after `terminal_title` (lines 362-365):
 
 ```rust
     /// The TSP state of session `id`; `off` for a session without TSP.
@@ -5852,7 +5852,7 @@ to
     }
 ```
 
-(e) `SpawnSpec`, after `turn_snapshots` (line 318):
+(e) `SpawnSpec`, after `turn_snapshots` (line 315):
 
 ```rust
     pub turn_snapshots: bool,
@@ -5861,7 +5861,7 @@ to
 }
 ```
 
-(f) `Command`, after the `LinkPlan` variant (lines 283-290, before the closing `}` at 291):
+(f) `Command`, after the `LinkPlan` variant (lines 280-287, before the closing `}` at 288):
 
 ```rust
     /// `tsp.snapshot`: the engine's surfaces; `off` and empty when the session has no TSP.
@@ -5879,7 +5879,7 @@ to
 
 - [ ] **Step 4: Start the agent with `PI_TUI_NATIVE`, build the engine (`spawn_watched`)**
 
-(a) Destructure, lines 421-432: change `session,` to `mut session,` and add `dark,` last:
+(a) Destructure, lines 417-428: change `session,` to `mut session,` and add `dark,` last:
 
 ```rust
         let SpawnSpec {
@@ -5897,7 +5897,7 @@ to
         } = spec;
 ```
 
-(b) Env, after the `for (key, value) in &env { cmd.env(key, value); }` loop (line 437), before `cmd.env("MKREW_SESSION_ID", ...)`:
+(b) Env, after the `for (key, value) in &env { cmd.env(key, value); }` loop (line 433), before `cmd.env("MKREW_SESSION_ID", ...)`:
 
 ```rust
         // omp draws through TSP only when told to; `0` also keeps it from probing the
@@ -5905,7 +5905,7 @@ to
         cmd.env("PI_TUI_NATIVE", if profile.tsp { "1" } else { "0" });
 ```
 
-(c) Engine and initial state, right after `let machine = StateMachine::new(&profile.state).context("compile state patterns")?;` (line 444):
+(c) Engine and initial state, right after `let machine = StateMachine::new(&profile.state).context("compile state patterns")?;` (line 440):
 
 ```rust
         let tsp = profile.tsp.then(|| Engine::new(session.cols, dark));
@@ -5915,7 +5915,7 @@ to
         }
 ```
 
-(d) `Actor` literal (lines 596-617): add `tsp,` after `ports: run_ports,`:
+(d) `Actor` literal (lines 592-613): add `tsp,` after `ports: run_ports,`:
 
 ```rust
             usage,
@@ -5924,7 +5924,7 @@ to
         };
 ```
 
-(e) `Actor` struct, after the `ports` field (line 1123):
+(e) `Actor` struct, after the `ports` field (line 1119):
 
 ```rust
     /// `Some(..)` for a session whose profile has `tsp`: splits the output into plain bytes and
@@ -5933,9 +5933,9 @@ to
 }
 ```
 
-- [ ] **Step 5: Split `on_output` (`session.rs:1317-1350`)**
+- [ ] **Step 5: Split `on_output` (`session.rs:1313-1346`)**
 
-Replace the whole `fn on_output` (lines 1317-1350) with these six methods.
+Replace the whole `fn on_output` (lines 1313-1346) with these six methods.
 The body of `on_plain` is the old `on_output` body unchanged.
 
 ```rust
@@ -6057,7 +6057,7 @@ The body of `on_plain` is the old `on_output` body unchanged.
 
 - [ ] **Step 6: The deadline branch and the command arms (`Actor::run`)**
 
-(a) Next to `scan_at` (line 1143):
+(a) Next to `scan_at` (line 1139):
 
 ```rust
             let scan_at = self.scan.deadline().map(tokio::time::Instant::from_std);
@@ -6068,7 +6068,7 @@ The body of `on_plain` is the old `on_output` body unchanged.
                 .map(tokio::time::Instant::from_std);
 ```
 
-(b) Command arms, after the `Command::LinkPlan { .. }` arm and before `None => commands_open = false,` (line 1274):
+(b) Command arms, after the `Command::LinkPlan { .. }` arm and before `None => commands_open = false,` (line 1270):
 
 ```rust
                     Some(Command::TspSnapshot { reply }) => {
@@ -6089,7 +6089,7 @@ The body of `on_plain` is the old `on_output` body unchanged.
                     }
 ```
 
-(c) The select branch, before the `kill_at` branch (line 1297):
+(c) The select branch, before the `kill_at` branch (line 1293):
 
 ```rust
                 () = sleep_until(tsp_at), if tsp_at.is_some() => {
@@ -6108,7 +6108,7 @@ The body of `on_plain` is the old `on_output` body unchanged.
 
 - [ ] **Step 7: Tell a live surface about resizes (`Actor::resize`)**
 
-In `Actor::resize` replace (lines 1456-1458):
+In `Actor::resize` replace (lines 1452-1454):
 
 ```rust
         self.session.cols = cols;
@@ -6130,7 +6130,7 @@ with:
 
 - [ ] **Step 8: Server side: `dark`, list fills, handlers, dispatch**
 
-(a) `crates/mkrew-daemon/src/server.rs`, module list (lines 53-55): insert `mod tsp;` between `task_worktree` and `turn`:
+(a) `crates/mkrew-daemon/src/server.rs`, module list (lines 52-54): insert `mod tsp;` between `task_worktree` and `turn`:
 
 ```rust
 mod task_worktree;
@@ -6138,7 +6138,7 @@ mod tsp;
 mod turn;
 ```
 
-(b) `start_session`, in the `SpawnSpec` literal (line 939):
+(b) `start_session`, in the `SpawnSpec` literal (line 933):
 
 ```rust
             turn_snapshots: self.settings.current().features.turns,
@@ -6150,7 +6150,7 @@ mod turn;
         };
 ```
 
-(c) `session.list` (lines 376-378):
+(c) `session.list` (lines 370-372):
 
 ```rust
                     for session in &mut sessions {
@@ -6159,14 +6159,14 @@ mod turn;
                     }
 ```
 
-(d) `edit_session`, after line 1412:
+(d) `edit_session`, after line 1406:
 
 ```rust
         session.terminal_title = self.hub.terminal_title(session.id);
         session.tsp = self.hub.tsp_state(session.id);
 ```
 
-(e) Dispatch arms in `Server::handle`, after the `Request::LimitsReport(params) => match ... { ... },` arm (ends line 516) and before `other => {` (line 517):
+(e) Dispatch arms in `Daemon::handle`, after the `Request::LimitsReport(params) => match ... { ... },` arm (ends line 510) and before `other => {` (line 511):
 
 ```rust
             Request::TspSnapshot(params) => (self.tsp_snapshot(params).await, After::Continue),
@@ -6257,7 +6257,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(daemon): TSP output path, 
 
 **Files:**
 - Create: `crates/mkrew-ui/src/tsp.rs`
-- Modify: `crates/mkrew-ui/src/lib.rs:104` (add `pub mod tsp;` after `pub mod toast;`, before `pub mod turn;`)
+- Modify: `crates/mkrew-ui/src/lib.rs:105` (add `pub mod tsp;` after `pub mod toast;`, before `pub mod turn;`)
 - Test: `crates/mkrew-ui/src/tsp.rs` (inline `#[cfg(test)] mod tests`)
 
 **Interfaces:**
@@ -8561,16 +8561,16 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): pure TSP module (them
 - Create: `crates/mkrew-ui/src/shell/tsp_view.rs`
 - Modify: `crates/mkrew-ui/src/terminal/view.rs:271-280` (add `focus_handle`), `:325-337` (add `fit_cols`), `:361` (`pub fn key_down`), `:1406` (`pub fn terminal_font`)
 - Modify: `crates/mkrew-ui/src/chat.rs:19-27` and test `:1726-1741`
-- Modify: `crates/mkrew-ui/src/shell/chat_view.rs:108-111` (`chat_available`), `:99` (`visible_sessions` visibility)
+- Modify: `crates/mkrew-ui/src/shell/chat_view.rs:108-111` (`chat_available`), `:101` (`visible_sessions` visibility)
 - Modify: `crates/mkrew-ui/src/redraw.rs` (test; arm only if Task 2 did not add it)
-- Modify: `crates/mkrew-ui/src/shell.rs:70` (`pub(crate) mod tsp_view;`), `crates/mkrew-ui/src/main.rs:155` (`use shell::tsp_view::*;`), `main.rs:764` (field `tsps`)
-- Modify: `crates/mkrew-ui/src/shell/connection.rs:407` (init), `:168` (`sync_tsps`), `:189-197` (`tsp_animating`), `:1295` (fallback toast), `:1351-1364` (TspUpdate arm), `:1406-1409` (`fed` rule)
-- Modify: `crates/mkrew-ui/src/shell/pane_render.rs:447-457` (width into `pane_frame` is already passed), `:519-531` (`pane_frame` branch)
-- Modify: `crates/mkrew-ui/src/theme.rs:385` (five `TSP_*` tokens after `CHAT_COLUMN_WIDTH`)
+- Modify: `crates/mkrew-ui/src/shell.rs:71` (`pub(crate) mod tsp_view;`), `crates/mkrew-ui/src/main.rs:155` (`use shell::tsp_view::*;`), `main.rs:744` (field `tsps`)
+- Modify: `crates/mkrew-ui/src/shell/connection.rs:404` (init), `:168` (`sync_tsps`), `:191-195` (`tsp_animating`), `:1284` (fallback toast), `:1340-1353` (TspUpdate arm goes after it), `:1370-1374` (`fed` rule)
+- Modify: `crates/mkrew-ui/src/shell/pane_render.rs:526-542` (width into `pane_frame` is already passed), `:609-612` (`pane_frame` content branch), `:624` (`reading` in `pane_frame`), `:986-1009` (`pane_toggles`: Reading width toggle)
+- Modify: `crates/mkrew-ui/src/theme.rs:382` (five `TSP_*` tokens after `CHAT_COLUMN_WIDTH`)
 - Test: `chat.rs` (`chat::available` gate), `redraw.rs` (arm). The view itself is verified by Task 12's smoke and the manual check in Step 24.
 
 **Interfaces:**
-- Consumes: everything Task 9 produces, in particular `mkrew_ui::tsp::{Checklist, ChecklistMode, HudMark, PhaseMark, ItemMark, TodoPhase, AskLook, ask_look, role_of, choice_filled, collapsed_now, item_look, roman}` (Task 9), `widgets::{floating_panel, status_dot}`; `Session.tsp: TspState`, `Request::{TspSnapshot, TspEvent}`, `TspSnapshotParams { session_id }`, `TspEventParams { session_id, surface, event }`, `Event::TspUpdate(Box<TspUpdate>)` (Task 2); existing `Shell` items: `chat_column` (`chat_view.rs:1138`), `thread_panel::at_bottom`, `loading_dots` (`widgets.rs:1226`), `tooltip` (`widgets.rs:1338`), `message` (`widgets.rs:25`), `toast_info` (`toasts.rs:14`), `typing` (`focus.rs:256`), `focused_session` (`hosts.rs:112`), `is_exited` (`workspace.rs:224`), `preview::blocks`, `docs::Shown::from_text`, `Pressable`/`Look`, `icon_svg`.
+- Consumes: everything Task 9 produces, in particular `mkrew_ui::tsp::{Checklist, ChecklistMode, HudMark, PhaseMark, ItemMark, TodoPhase, AskLook, ask_look, role_of, choice_filled, collapsed_now, item_look, roman}` (Task 9), `widgets::{floating_panel, status_dot}`; `Session.tsp: TspState`, `Request::{TspSnapshot, TspEvent}`, `TspSnapshotParams { session_id }`, `TspEventParams { session_id, surface, event }`, `Event::TspUpdate(Box<TspUpdate>)` (Task 2); existing `Shell` items: `chat_column` (`chat_view.rs:1083`), `thread_panel::at_bottom`, `loading_dots` (`widgets.rs:1288`), `tooltip` (`widgets.rs:1384`), `message` (`widgets.rs:25`), `float_button` (`widgets.rs:194`), `toast_info` (`toasts.rs:14`), `typing` (`focus.rs:254`), `focused_session` (`hosts.rs:117`), `is_exited` (`workspace.rs:223`), `preview::blocks`, `docs::Shown::from_text`, `Pressable`/`Look`, `icon_svg`.
 - Produces: `Shell.tsps: HashMap<Ulid, TspUi>`; `TspUi`; `Shell::{render_tsp, tsp_send, sync_tsps, tsp_animating, tsp_pane_view, tsp_covers, tsp_update, tsp_checklist, tsp_ask, tsp_status_hud}`; `TspUi.todo_open: Option<String>` (the node id of the hud whose popover is open) and `TspUi.todo_toggled: HashSet<(String, String)>` (node id, phase id: headers the user clicked); the `omp.hud.status` row, the todo popover and the ask card (`omp.editor.ask`, spec 7.6 and 7.7); `chat::available(kind, profile, has_transcript, tsp)`; `TerminalPane::{focus_handle, fit_cols}` and `pub key_down`, `pub terminal_font`.
 
 Hard rules in force (mkrew-ui-design): every color, size, spacing, radius comes from `theme.rs` tokens; every clickable element is `.pressable(..)` + `.on_press(..)` (text fields are exempt and use `on_mouse_down`); selected rows use `pressable_unless`; no looping animation (the status tick redraws, `loading_dots` steps on it); dark and light work because only `Theme` fields are read; the empty state of a list is its `empty` prop, the empty state of the pane is the Starting message.
@@ -8621,7 +8621,7 @@ pub fn terminal_font(theme: &Theme) -> Font {
 
 - [ ] **Step 2: Add the theme tokens for the todo popover and the ask card**
 
-In `crates/mkrew-ui/src/theme.rs`, after `pub const CHAT_COLUMN_WIDTH: f32 = 760.0;` (current line 385) add:
+In `crates/mkrew-ui/src/theme.rs`, after `pub const CHAT_COLUMN_WIDTH: f32 = 760.0;` (current line 382) add:
 
 ```rust
 
@@ -8714,14 +8714,14 @@ In `crates/mkrew-ui/src/shell/chat_view.rs` replace lines 107-111:
     }
 ```
 
-and change `fn visible_sessions(&self)` (line 99) to `pub(crate) fn visible_sessions(&self)`.
+and change `fn visible_sessions(&self)` (line 101) to `pub(crate) fn visible_sessions(&self)`.
 
 Run: `cargo test -p mkrew-ui --lib chat::`
-Expected: PASS. This one gate also removes the Terminal | Chat switch (`pane_mode_switch` returns `None`), its header room, its palette entry and `toggle_chat`, and makes `chat_session` false so `focus_pane` never routes a TSP pane to the composer: no edit to `focus.rs`.
+Expected: PASS. This one gate also removes the Terminal | Chat toggle (it lives in the title bar's right group: `pane_toggles` adds it only when `chat_available`, `pane_render.rs:962`), its palette entry (`navigation.rs:364` fills `context.chat` from `chat_available`; `palette.rs:784` lists `ToggleChat` only with it) and the Ctrl+Alt+T action (`toggle_chat` looks the session up with `chat_available`, so it does nothing), and makes `chat_session` false so `focus_pane` (`focus.rs:286-292`) never routes a TSP pane to the composer: no edit to `focus.rs`. The gate is `tsp != Off` (waiting, live and fallback), so the toggle is also gone while the pane waits or has fallen back to the terminal grid.
 
 - [ ] **Step 5: Write the failing redraw test**
 
-In `crates/mkrew-ui/src/redraw.rs`, add to the `use mkrew_protocol::{...}` list of `mod tests` (current lines 134-139) `TspChange, TspUpdate`, add this helper after `queue` (current line 249-254):
+In `crates/mkrew-ui/src/redraw.rs`, add to the `use mkrew_protocol::{...}` list of `mod tests` (current lines 132-137) `TspChange, TspUpdate`, add this helper after `queue` (current line 249-254):
 
 ```rust
     fn tsp_update(id: Ulid) -> Event {
@@ -8733,7 +8733,7 @@ In `crates/mkrew-ui/src/redraw.rs`, add to the `use mkrew_protocol::{...}` list 
     }
 ```
 
-and this test after `turns_and_queues_need_a_visible_pane` (current line 351-360):
+and this test after `turns_and_queues_need_a_visible_pane` (current lines 346-356):
 
 ```rust
     /// A surface update is drawn in its own pane only.
@@ -8754,7 +8754,7 @@ Expected: if Task 2 already added the arm, PASS (nothing more to do in this step
 - [ ] **Step 6: Add the redraw arm if Task 2 did not**
 
 Run: `grep -n "TspUpdate" crates/mkrew-ui/src/redraw.rs`
-If the only hits are in the test module, add in `event_needs_redraw` after the `Event::SessionQueue(e) => on_pane(e.session_id),` line (current line 74):
+If the only hits are in the test module, add in `event_needs_redraw` after the `Event::SessionQueue(e) => on_pane(e.session_id),` line (current line 72):
 
 ```rust
         // The surface of an omp pane (ADR 0107).
@@ -9350,6 +9350,9 @@ impl Shell {
                             .size_full()
                             .overflow_y_scroll()
                             .track_scroll(&ui.scroll)
+                            // Clear of the pane's 8 px drag strip (`PANE_GRIP_HEIGHT`) and the
+                            // 2 px color line, like the Chat list's `py(space::L)`.
+                            .pt(px(space::L))
                             // A drag extends the selection; a press off any text clears it.
                             .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
                                 if event.dragging() {
@@ -10675,14 +10678,14 @@ In `crates/mkrew-ui/src/shell.rs`, replace
 mod toasts;
 ```
 
-(line 70) with
+(line 71) with
 
 ```rust
 mod toasts;
 pub(crate) mod tsp_view;
 ```
 
-In `crates/mkrew-ui/src/main.rs`, after `use shell::thread_panel::*;` (line 155) add `use shell::tsp_view::*;`. After the `chats` field (lines 763-764):
+In `crates/mkrew-ui/src/main.rs`, after `use shell::thread_panel::*;` (line 155) add `use shell::tsp_view::*;`. After the `chats` field (lines 744-745):
 
 ```rust
     /// What each pane in Chat mode remembers (open rows, scroll), ADR 0104.
@@ -10697,11 +10700,11 @@ add:
     tsps: HashMap<Ulid, TspUi>,
 ```
 
-In `crates/mkrew-ui/src/shell/connection.rs`, in the `Shell { .. }` initializer after `chats: HashMap::new(),` (line 407) add `tsps: HashMap::new(),`.
+In `crates/mkrew-ui/src/shell/connection.rs`, in the `Shell { .. }` initializer after `chats: HashMap::new(),` (line 404) add `tsps: HashMap::new(),`.
 
-- [ ] **Step 18: Draw the pane: the `pane_frame` branch and the `fed` rule**
+- [ ] **Step 18: Draw the pane: the `pane_frame` branch, Reading width, and the `fed` rule**
 
-In `crates/mkrew-ui/src/shell/pane_render.rs`, replace lines 519-531:
+In `crates/mkrew-ui/src/shell/pane_render.rs`, in `pane_frame`, replace lines 609-612:
 
 ```rust
         let info = self.sidebar.sessions().iter().find(|s| s.id == session);
@@ -10716,7 +10719,10 @@ with:
         let info = self.sidebar.sessions().iter().find(|s| s.id == session);
         // An omp pane with TSP on shows its surface (or the starting state); in `fallback` and
         // `off` it is the terminal grid as before. It has no Chat mode (`chat::available`).
-        let content = if info.is_some_and(|info| self.tsp_pane_view(info) != mkrew_ui::tsp::PaneView::Terminal) {
+        let tsp_drawn = info.is_some_and(|info| {
+            self.tsp_pane_view(info) != mkrew_ui::tsp::PaneView::Terminal
+        });
+        let content = if tsp_drawn {
             self.render_tsp(session, is_focused, width, now, theme, cx)
         } else if info.is_some_and(|info| self.chat_on(info)) {
             self.render_chat(session, is_focused, now, theme, cx)
@@ -10725,7 +10731,90 @@ with:
 
 (the rest of the `else` branch, the `match self.panes.get(&session)` block, is unchanged.)
 
-In `crates/mkrew-ui/src/shell/connection.rs` replace lines 1405-1409:
+Still in `pane_frame`, make Reading width a terminal-only cap. Replace line 624:
+
+```rust
+        let reading = info.is_some_and(|info| self.reading_on(info));
+```
+
+with:
+
+```rust
+        // Reading width caps the terminal grid (and the Chat list); a surface keeps its own
+        // 760 px column (`chat_column`), so the cap would only narrow its scroll area.
+        let reading = info.is_some_and(|info| self.reading_on(info)) && !tsp_drawn;
+```
+
+(`tsp_drawn` is defined by the first hunk, a few lines above.)
+
+In `pane_toggles` (`pane_render.rs`, the title bar's right group for the focused agent pane), hide the Reading width toggle while the pane shows the surface or its starting state. Replace lines 986-1009:
+
+```rust
+        let reading = self.reading_on(info);
+        toggles.push(
+            icon_button_in(
+                SharedString::from(format!("pane-reading-{session}")),
+                Icon::AlignCenter,
+                if reading {
+                    theme.accent
+                } else {
+                    theme.text_muted
+                },
+                theme,
+            )
+            .tooltip(tooltip(
+                theme,
+                if reading {
+                    "Reading width: on (the agent wraps at about 130 columns). Click for full width"
+                } else {
+                    "Reading width: off (full width). Click to wrap at about 130 columns"
+                },
+                "",
+            ))
+            .on_click(cx.listener(move |shell, _, _, cx| shell.toggle_reading_width(session, cx)))
+            .into_any_element(),
+        );
+```
+
+with:
+
+```rust
+        // A surface (or its starting state) has no terminal to cap; in `fallback` and `off` the
+        // grid is back and so is the toggle. Terminal | Chat is already gone through
+        // `chat_available`; Share stays.
+        if self.tsp_pane_view(info) == mkrew_ui::tsp::PaneView::Terminal {
+            let reading = self.reading_on(info);
+            toggles.push(
+                icon_button_in(
+                    SharedString::from(format!("pane-reading-{session}")),
+                    Icon::AlignCenter,
+                    if reading {
+                        theme.accent
+                    } else {
+                        theme.text_muted
+                    },
+                    theme,
+                )
+                .tooltip(tooltip(
+                    theme,
+                    if reading {
+                        "Reading width: on (the agent wraps at about 130 columns). Click for full width"
+                    } else {
+                        "Reading width: off (full width). Click to wrap at about 130 columns"
+                    },
+                    "",
+                ))
+                .on_click(
+                    cx.listener(move |shell, _, _, cx| shell.toggle_reading_width(session, cx)),
+                )
+                .into_any_element(),
+            );
+        }
+```
+
+The palette entry "Pane: Reading width (on / off)" stays (a no-op while a surface shows). `tsp_pane_view` is `pub(crate)` (Step 7). `pane_toggles` is not pure, so the gate is covered by manual check items 1, 8 and 10 of Step 24.
+
+In `crates/mkrew-ui/src/shell/connection.rs` replace lines 1370-1374:
 
 ```rust
             // A pane in Chat mode is not painted: it is no content to wait a frame for.
@@ -10750,7 +10839,7 @@ with:
 
 - [ ] **Step 19: Wire the events: the `tsp.update` arm and the fallback toast**
 
-In `crates/mkrew-ui/src/shell/connection.rs`, in `dispatch`, replace the start of the sidebar match (current line 1295, `match self.sidebar.apply(event) {`) with:
+In `crates/mkrew-ui/src/shell/connection.rs`, in `dispatch`, replace the start of the sidebar match (current line 1284, `match self.sidebar.apply(event) {`) with:
 
 ```rust
                 // The session's TSP state before the sidebar applies the new one (fallback toast).
@@ -10763,7 +10852,7 @@ In `crates/mkrew-ui/src/shell/connection.rs`, in `dispatch`, replace the start o
                 match self.sidebar.apply(event) {
 ```
 
-and directly after that `match`'s closing brace (current line 1305, before the `// After the board and sidebar` comment) add:
+and directly after that `match`'s closing brace (current line 1292, before the `// After the board and sidebar` comment) add:
 
 ```rust
                 if let Event::SessionUpdated(updated) = event
@@ -10774,7 +10863,7 @@ and directly after that `match`'s closing brace (current line 1305, before the `
                 }
 ```
 
-After the `if let Event::AiGenerated(done) = event { ... }` block (current lines 1351-1364, ending just before `if let Event::ProjectCloned(done) = event {`) add:
+After the `if let Event::AiGenerated(done) = event { ... }` block (current lines 1340-1353, ending just before `if let Event::ProjectCloned(done) = event {` at line 1354) add:
 
 ```rust
                 if let Event::TspUpdate(update) = event {
@@ -10788,7 +10877,7 @@ After the `if let Event::AiGenerated(done) = event { ... }` block (current lines
 
 - [ ] **Step 20: Wire the status tick**
 
-In `crates/mkrew-ui/src/shell/connection.rs`, in the status tick, after `shell.sync_thread(cx);` (current line 168) add `shell.sync_tsps(window, cx);` and in `due` (current lines 189-193) replace
+In `crates/mkrew-ui/src/shell/connection.rs`, in the status tick, after `shell.sync_thread(cx);` (current line 168) add `shell.sync_tsps(window, cx);` and in `due` (current lines 191-195) replace
 
 ```rust
                         || jira_busy
@@ -10837,22 +10926,23 @@ Prerequisites: Tasks 1 to 8 are merged (the daemon speaks TSP, protocol 59) and 
 Run: `cargo build -p mkrew-daemon -p mkrew-cli -p mkrew-fakeagent --bins -j 4`
 Run: `cargo run -p mkrew-ui`
 Check, in this order (a 20 minute pass; the screenshots are Task 12):
-1. Open an omp pane. Expected: "Starting omp…" with the dots for about a second, then omp's conversation and dock (HUD pills, editor with its placeholder, the bar with model, effort, context meter). No `Terminal | Chat` switch in the header or the palette.
+1. Open an omp pane. Expected: "Starting omp…" with the dots for about a second, then omp's conversation and dock (HUD pills, editor with its placeholder, the bar with model, effort, context meter). No `Terminal | Chat` toggle and no Reading width toggle in the title bar's right group while this pane has the focus (Share shows only with `[features] share`), and no "Agent: Toggle chat view" in the palette.
 2. Click anywhere in the pane (the transcript, the dock, empty space), then type. Expected: the characters appear in omp's editor; Enter sends; Esc, Ctrl+C and Vietnamese IME input behave as in a terminal pane.
 3. Click the model chip. Expected: omp opens its model selector as an overlay card inside the pane, keys still work, Esc closes it.
 4. Stream a long answer (ask for 300 lines of code). Expected: the pane follows the end, the window stays responsive (scrolling, typing, switching tabs, no stutter), the "scroll to latest" button appears when you scroll up, the spinner and elapsed time step about every 500 ms and stop when the answer ends.
 5. Resize the window and the split. Expected: omp re-lays out within a second (the PTY columns follow the pane width, never below 20).
-6. Switch to Light and back (Settings or the title bar toggle). Expected: both themes readable, text contrast intact, and within a second omp's own colors stay Mkrew's (omp tells nothing about colors); no leftover dark background.
+6. Switch to Light and back (Settings or the palette "Theme" entry; the title bar no longer has a theme toggle). Expected: both themes readable, text contrast intact, and within a second omp's own colors stay Mkrew's (omp tells nothing about colors); no leftover dark background.
 7. Quit omp (`/exit`). Expected: the last document stays, read-only, with the existing "Session exited" notice.
-8. Set `tsp = false` in `omp.toml`, start a new omp pane. Expected: today's terminal pane with `Terminal | Chat`.
+8. Set `tsp = false` in `omp.toml`, start a new omp pane. Expected: today's terminal pane with the Terminal | Chat and Reading width toggles back in the title bar's right group.
 9. Close the app and open it again with the omp session running. Expected: the surface comes back from the daemon's snapshot (no blank pane).
-10. Look at a shell pane and a Claude pane. Expected: unchanged.
+10. Look at a shell pane and a Claude pane. Expected: unchanged (a Claude pane keeps Terminal | Chat and Reading width in the title bar).
 11. Drag over a paragraph of omp's answer, then Ctrl+C and paste elsewhere. Expected: the text selected inside that one answer is copied; Esc with a selection clears it without reaching omp; Ctrl+C and Esc with no selection reach omp (Esc closes an omp overlay, Ctrl+C interrupts).
 12. Start a pane on a machine where the ConPTY files are missing (rename `conpty.dll` in `target/debug`). Expected: after about 2 s the pane becomes the terminal grid and one toast reads "omp is drawing as text: <reason>".
 13. Ask omp: "Use the todo tool: make 3 phases (Context, Build, Verify) with 2 items each, then start working on the first item." Expected: a todo card in the transcript (phase headers with Roman numerals, rings, the active item in the accent color); above the dock card a one line hud on the right: loading dots, the active item, `0/6` in mono. Finish an item: the count steps up on the next status tick. Click the hud: a glass panel opens above it with the phases; a finished phase shows its header only, clicking a header opens or closes it; Esc closes the panel (and omp's own Esc is not triggered); click outside closes it; clicking the hud while open closes it. Switch Light and Dark with the panel open: both readable.
 14. Let every item finish. Expected: the hud reads "All done" with a filled green circle and `6/6`; a blocked item keeps the hud on that item, never "All done".
 15. Ask omp: "Use the ask tool with two questions; the first has 3 options with one recommended, the second allows several answers." Expected: the dock card shows the question tabs on top (answered tabs start with a green check; active tab on a raised fill), the question in semibold, radio rows (check boxes for the multi-answer question) with the label in medium weight, the "Recommended" badge on the right, the picked row with an accent circle, the highlighted row on a raised fill with a 2 px accent bar. Click an option: omp highlights it; double click: omp answers. Click another tab: it switches. Click Next or Submit (accent pill) and Skip, Note, Hide (neutral pills): each does what the keys do; hover shows the title with its keys. Arrow keys, Enter, Space, Tab, `n` and Esc still work from the keyboard. Pick "Other…": omp shows its text field and typing reaches it.
 16. Click Hide on the ask card. Expected: one row with "Question …  +N more", Skip and an accent Show; Show restores the card. With an ask timeout set, a small ring with the seconds left sits in the bottom row. Both themes, and a narrow pane (the tabs wrap, the buttons stay in the row).
+17. Floating badges. Split the tab so the omp pane is one of two, then: queue a prompt in the composer (`N queued`), zoom the pane (`Pane zoomed` with Show all panes), and (with a second agent editing the same file) trigger a conflict. Expected: the badges stack in the pane's top-right corner over the surface and stay above it (also above an open overlay or the todo popover's scrim), text badges let clicks through to omp's rows, the Dismiss and Show all panes buttons take their own clicks, and the first row of the list starts 16 px below the pane top, clear of the 8 px drag strip (drag the pane by it onto another pane; a press just below it reaches omp).
 
 Record anything that looks wrong in `docs/HUMAN_CHECKS.md` under "2026-11-23 omp native surface" (Task 12 owns that entry).
 
@@ -11150,7 +11240,7 @@ Create `docs/decisions/0107-omp-native-surface.md` with exactly this content:
 # 0107 - omp native surface: Tern Surface Protocol in the daemon, drawn by Mkrew
 
 - Date: 2026-11-23
-- Status: accepted (amends SPEC sections 6, 7, 11, 14, 16 and 17; for an omp pane with TSP it replaces the Terminal and Chat views of ADR 0104 and 0105)
+- Status: accepted (follows ADR 0106, protocol 58 -> 59; amends SPEC sections 6, 7, 11, 14, 16 and 17; for an omp pane with TSP it replaces the Terminal and Chat views of ADR 0104 and 0105)
 - Milestone: none (human request 2026-11-23, spec `docs/superpowers/specs/2026-11-23-omp-tsp-surface-design.md`, plan `docs/superpowers/plans/2026-11-23-omp-tsp-surface.md`)
 
 ## Context
@@ -11181,7 +11271,7 @@ The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already
   TSP bytes never reach the emulator, the session log, the state scanner or the clients as terminal output.
 - The daemon owns the document, not the UI.
   There can be several clients (windows, a machine window, `mk web`) or none, and omp must never stall for want of an ack.
-- Protocol 59: requests `tsp.snapshot` and `tsp.event`, event `tsp.update`, and `Session.tsp` (`off`, `waiting`, `live`, `fallback`; daemon memory only, like `terminal_title`).
+- Protocol 59 (ADR 0106 made it 58, this ADR follows it): requests `tsp.snapshot` and `tsp.event`, event `tsp.update`, and `Session.tsp` (`off`, `waiting`, `live`, `fallback`; daemon memory only, like `terminal_title`).
   A client asks `tsp.snapshot` when it attaches (each surface carries its last `seq`), then applies `tsp.update` events in order, and asks again when it sees a gap in `seq`.
   A UI sends the theme with `tsp.event` `{ev:"theme", dark}` when it attaches and when the theme changes.
 - Bounds: a document holds at most 50,000 nodes and 6 MiB of text, and the engine keeps at most 4 MiB of image blobs.
@@ -11195,7 +11285,8 @@ The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already
   This applies to every PTY the daemon opens, not only omp's.
   The daemon logs once at start which ConPTY it loaded (`conpty = "sideloaded"` or `"system"`).
   Without the files the daemon runs as before on the system ConPTY, no hello arrives, and the pane falls back to the terminal grid 2 s after the session's first output.
-- The pane (`shell/tsp_view.rs`): while `Session.tsp` is `live` the pane draws the surface in the Chat page's centered column instead of the terminal grid, with no `Terminal | Chat` switch.
+- The pane (`shell/tsp_view.rs`): while `Session.tsp` is `live` the pane draws the surface in the Chat page's centered column instead of the terminal grid.
+  Since ADR 0106 a pane is only its content, so the surface fills the pane; the title bar shows no `Terminal | Chat` toggle while that pane has the focus, and `Ctrl+Alt+T` and the palette entry do nothing for it.
   `main` scrolls and follows its end, `dock` stays under it, `layer` and `overlay` are a modal inside the pane, a `screen` surface covers the pane.
   Keys, paste and drops go to the PTY as in a terminal pane; clicks on nodes with actions go to omp as `tsp.event`.
   `fallback` shows the terminal grid and one info toast.
@@ -11228,13 +11319,12 @@ The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already
 - Parse TSP in the UI: rejected, see Decision (several clients, remote windows, no UI attached).
 - Use omp's palette (`t`): rejected, SPEC section 14 gives Mkrew one look in both themes.
 - `TERM_PROGRAM=tern` and OSC 1337: rejected in ADR 0105 and still rejected; `TERM_PROGRAM=tern` would also switch on omp's Tern browser backend.
-- A `Terminal | Chat` switch inside a TSP pane: rejected, the composer is omp's dock, as in Tern; the terminal grid returns only through `fallback`.
+- A `Terminal | Chat` toggle for a TSP pane (the title bar toggle of ADR 0106): rejected, the composer is omp's dock, as in Tern; the terminal grid returns only through `fallback`.
 - Switching one running pane between TSP and the grid: out of scope.
 
 ## Consequences
 
-- Protocol 59: a UI from before it shows a version mismatch with an old daemon; the user restarts the daemon.
-  Protocol 58 belongs to `feat/tern-layout`; if that branch merges first this work rebases on it and keeps 59 and this ADR number (0106 is that branch's).
+- Protocol 59 follows ADR 0106 (protocol 58 -> 59, no store migration in either): a UI from before it shows a version mismatch with an old daemon; the user restarts the daemon.
 - Two more binaries in the install folder, and a newer OpenConsole behind every pane on Windows: shells, Claude and Codex change too.
   A regression pass (typing, resize, Vietnamese IME, paste, exit, startup resume, no orphan `OpenConsole.exe`) is in `docs/HUMAN_CHECKS.md`.
   The installer must replace both files while panes run (it already stops its own daemon first).
@@ -11318,7 +11408,7 @@ Replace with:
 | `tsp.event` | `session_id`, `surface`, `event` | `null`: `event` is an object whose `ev` is one of `action`, `toggle`, `select`, `activate`, `focus`, `theme`; the daemon adds `sf` (the surface) and writes it to the agent's input as a TSP message. Another `ev` is `invalid_request`. A `theme` event (`{ev:"theme", dark}`) also becomes the `dark` of the next hello |
 ```
 
-3c. `session.updated` event row. Anchor (about line 650):
+3c. `session.updated` event row. Anchor (about line 649):
 
 ```
 | `session.updated` | a session's title, color, pin, position or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.move`, `session.link_plan`): the whole Session |
@@ -11330,13 +11420,13 @@ Replace with:
 | `session.updated` | a session's title, color, pin, position or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.move`, `session.link_plan`), or its `tsp` state changed (ADR 0107): the whole Session |
 ```
 
-3d. New event row. Anchor: the `session.terminal_title` event row (about line 651). Insert after it:
+3d. New event row. Anchor: the `session.terminal_title` event row (about line 650). Insert after it:
 
 ```
 | `tsp.update` | omp's surface changed (ADR 0107): `session_id`, `surface`, `change` = `{kind:"frame", seq, ops, blobs?}` after the daemon applied a frame of omp (`ops` are the ops that applied, plus the daemon's own eviction ops; `blobs` the images the frame needs), `{kind:"open", surface}` when omp opens a surface, or `{kind:"closed", keep}`. Updates arrive in order, one `seq` after the other; a client that sees a gap asks `tsp.snapshot` again |
 ```
 
-3e. Protocol history. Anchor: the line `Protocol 57 (ADR 0105): `session.transcript` result gains `recap`.` (about 707), followed by a blank line and `Protocol 41: ...`. Insert after the blank line that follows it:
+3e. Protocol history. Anchor: the line `Protocol 58 (ADR 0106): event `machine.stats` and `MachineStats` removed; `agent.limits`, `limits.get` and `limits.report` stay.` (about 708), followed by a blank line and `Protocol 41: ...` (the list is not in numeric order; 59 goes right after 58). Insert after the blank line that follows it:
 
 ```
 Protocol 59 (ADR 0107): requests `tsp.snapshot` and `tsp.event`, event `tsp.update`, and `Session.tsp` (`off`, `waiting`, `live`, `fallback`; daemon memory only, like `terminal_title`).
@@ -11345,7 +11435,7 @@ Protocol 59 (ADR 0107): requests `tsp.snapshot` and `tsp.event`, event `tsp.upda
 
 - [ ] **Step 4: SPEC section 11**
 
-Anchor: the last line of the Chat mode bullet (about line 1221), directly before the `- Pane menu (right-click a split pane's header ...` bullet:
+Anchor: the last line of the Chat mode bullet (about line 1218), directly before the `- Pane menu (right-click a sidebar session row, or Shift+F10 ...` bullet:
 
 ```
   The terminal keeps running underneath and still reports the state.
@@ -11354,14 +11444,14 @@ Anchor: the last line of the Chat mode bullet (about line 1221), directly before
 Insert after it:
 
 ```markdown
-- **omp native surface** (ADR 0107): an omp pane whose session has `tsp` `live` draws omp's own interface instead of the terminal grid or Chat, and has no `Terminal | Chat` switch.
+- **omp native surface** (ADR 0107): an omp pane whose session has `tsp` `live` draws omp's own interface instead of the terminal grid or Chat, and has no `Terminal | Chat` toggle: the title bar (§10) shows none while that pane has the focus, and `Ctrl+Alt+T` and the palette entry do nothing for it.
   omp describes its interface as a tree of nodes (the Tern Surface Protocol, sent inside the PTY stream); the daemon applies the tree and the UI draws it in Mkrew's colors, spacing and fonts (§14), dark and light.
   `main` is a scrolling list in the Chat page's centered column (`CHAT_COLUMN_WIDTH`) that follows its end, with the scroll-to-end button; `dock` (the HUD pills, the status, the context meter, the editor, and the bar with model, effort, rate, cost and Send or Stop) sits under it in the same column and is always shown; `layer` children and `overlay` nodes are a modal inside the pane; a `screen` surface covers the whole pane until omp closes it.
   Keys, paste, image paste and file drops go to the PTY as in a terminal pane (Mkrew's own shortcuts first).
   A click on a node with a click action (the model chip, Stop, Send, the agent pill, the jobs pill, the context meter, the cost) goes to omp, which opens its own selector or overlay; the events sent are `action`, `toggle`, `select`, `activate`, `focus` and `theme`.
   Text selects inside one node and Ctrl+C copies it; a node's `title` is its tooltip; hovercards are ignored.
   An older document is cut when it passes 50,000 nodes or 6 MiB of text: the oldest rows of `main` go and the list starts with "Earlier messages were trimmed".
-  The pane by `Session.tsp`: `off` is the terminal pane with `Terminal | Chat`; `waiting` (TSP on, no surface yet) is the starting state of an agent pane; `live` is the surface; `fallback` (no hello within 2 s of the session's first output, or omp closed the surface with `x {keep:false}`) is the terminal grid without the Chat switch and one info toast "omp is drawing as text: <reason>"; an exited session keeps its last document, read-only, under the existing exited notice.
+  The pane by `Session.tsp`: `off` is the terminal pane with the title bar's `Terminal | Chat` toggle; `waiting` (TSP on, no surface yet) is the starting state of an agent pane; `live` is the surface; `fallback` (no hello within 2 s of the session's first output, or omp closed the surface with `x {keep:false}`) is the terminal grid without the Chat toggle and one info toast "omp is drawing as text: <reason>"; an exited session keeps its last document, read-only, under the existing exited notice.
   While `live` the state comes from omp's hooks only (§6); without hooks it is `unknown`.
   `mk web` shows "This omp session uses Mkrew's native view. Open it on the desktop." in place of the terminal; its state, Stop, the reply chips and the quick keys keep working.
   A question from omp (`ask`) replaces the dock's editor and is drawn as the composer card: tab chips in its top row (answered tabs start with a check, a last Review tab, the active tab on a solid `card` background), the question in `weight::SEMIBOLD`, then one row per option with a radio circle (a check box for multi-select) filled with `accent` for the recommended one, the label, the detail muted below, a "Recommended" badge on the right and the picked row on `surface_raised` with a 2 px `accent` bar at its left; "Other..." is a row of the same list; an optional Markdown preview sits under the list.
@@ -11375,7 +11465,7 @@ Insert after it:
 
 - [ ] **Step 5: SPEC section 14 (TSP style mapping)**
 
-Anchor: the last line of the Pressable states paragraph (about line 1932), directly before the blank line and `---` that precede `## §15 Non-functional requirements`:
+Anchor: the last line of the Pressable states paragraph (about line 1933), directly before the blank line and `---` that precede `## §15 Non-functional requirements`:
 
 ```
 Focus rings stay with `DialogControl`.
@@ -11434,7 +11524,7 @@ The todo marks (`checklist`, §11) are: an `active` item an `accent` ring around
 
 - [ ] **Step 6: SPEC sections 16, 17 and 20.0**
 
-6a. Section 16. Anchor: the paragraph ending `checkable end-to-end with it.` (about line 1970), followed by a blank line and `**Automation commands** ...`. Insert after the blank line that follows it:
+6a. Section 16. Anchor: the paragraph ending `checkable end-to-end with it.` (about line 1971), followed by a blank line and `**Automation commands** ...`. Insert after the blank line that follows it:
 
 ```markdown
 `--tsp <fixture.jsonl>` with `--record <file>` (ADR 0107) makes it a TSP terminal peer: it sets the console to raw VT input, prints a TSP hello, records every byte it reads, waits up to 10 s for the daemon's reply, then replays the fixture's omp-to-terminal messages and prints `fake tsp done`; with no reply it prints `fake tsp: no reply` and keeps running.
@@ -11442,7 +11532,7 @@ The committed fixture is omp 18.13.2's own startup record (`docs/superpowers/spe
 
 ```
 
-6b. Section 17 Windows list. Anchor (about line 1989):
+6b. Section 17 Windows list. Anchor (about line 1990):
 
 ```
 - PTY via ConPTY (`portable-pty`); support Windows 10 1809+ and Windows 11.
@@ -11458,7 +11548,7 @@ Insert after it:
   Without them the daemon runs on the system ConPTY, logs `conpty = "system"` once at start, and an omp pane falls back to the terminal grid 2 s after its first output; with them it logs `conpty = "sideloaded"`.
 ```
 
-6c. Section 20.0. Anchor: the closing fence of the `[usage]` block under `**Profile keys added in v2**` (about line 2305):
+6c. Section 20.0. Anchor: the closing fence of the `[usage]` block under `**Profile keys added in v2**` (the `context_window` line is about 2305, the fence about 2306):
 
 ```
 context_window = 200000        # tokens, for the % shown
@@ -11486,7 +11576,7 @@ Insert after line 9 (`oneshot = "omp -p --no-session"  # one-shot text; prompt o
 
 - [ ] **Step 8: HUMAN_CHECKS section**
 
-In `docs/HUMAN_CHECKS.md`, insert before line 24 (`### To verify - 2026-11-23 Chat look (ADR 0105, plan docs/superpowers/plans/2026-11-23-chat-look.md)`), after the blank line 23, so it is the first entry of "To verify":
+In `docs/HUMAN_CHECKS.md`, insert before line 24 (`### To verify - 2026-11-23 Tern layout (ADR 0106, plan docs/superpowers/plans/2026-11-23-tern-layout.md)`), after the blank line 23, so this section is the first entry of "To verify" and sits above the Tern layout section (that section keeps its own `Screenshots: docs/screenshots/tern-layout-<view>-<dark|light>.png` line directly under its heading; the names here start with `2026-11-23-omp-tsp-`, so the two sets do not clash):
 
 ```markdown
 ### To verify - 2026-11-23 omp native surface (ADR 0107, plan docs/superpowers/plans/2026-11-23-omp-tsp-surface.md)
@@ -11498,7 +11588,7 @@ In `docs/HUMAN_CHECKS.md`, insert before line 24 (`### To verify - 2026-11-23 Ch
 With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow pane, and Tern open side by side with the same omp session:
 - [ ] **Compare with Tern side by side:** the dock shows the same HUD pills, status, context meter, editor and bar (model, effort, rate, cost, Send or Stop), with the same numbers within rounding.
   Colors, fonts and spacing are Mkrew's, not omp's or Tern's palette.
-- [ ] **Startup dock (dark + light):** a new omp pane starts as "Starting agent", then shows omp's conversation area and the dock at the bottom in the Chat page's 760 px centered column; the header has no `Terminal | Chat` switch.
+- [ ] **Startup dock (dark + light):** a new omp pane starts as "Starting agent", then shows omp's conversation area and the dock at the bottom in the Chat page's 760 px centered column; the title bar shows no `Terminal | Chat` toggle while this pane has the focus, and `Ctrl+Alt+T` does nothing.
 - [ ] **Prompt and answer (dark + light):** type a prompt and Enter in the dock editor; the answer arrives as cards, Markdown and code blocks; the list follows the end, the scroll-to-end button shows when you scroll up, and the dock never moves.
 - [ ] **Keys, paste and IME:** typing, omp's shortcuts, a multi-line paste, an image paste and a file drop work as in a terminal pane; Vietnamese Telex typing gives the right text; Mkrew's own shortcuts still win.
 - [ ] **Selection:** drag inside one message to select, Ctrl+C copies it; a node with a `title` shows it as a tooltip.
@@ -11517,16 +11607,16 @@ With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow p
 - [ ] **Todo phases and items (dark + light):** phase headers have a mark (loading dots while active, a green filled circle when all done or dropped, a muted ring otherwise), Roman numerals (`I.`, `II.`), the title and `done/count`; a click on a header folds and unfolds it (a phase with `collapsed` or all done starts folded); items show active (accent ring and text), pending (muted ring), done (green check, muted text), dropped (struck through) and blocked (needs-input color and " (blocked)"), with notes as a muted second line; compare with Tern.
 - [ ] **Todo card and reminder:** the todo tool result in the conversation is a card with the same phase list; after a few turns omp's todo reminder shows as a muted note with the done phases folded.
 - [ ] **Narrow pane (dark + light):** drag a divider or shrink the window so the pane is about 400 px: the dock drops its low-priority parts first and nothing overlaps; the PTY gets the new column count (omp rewraps).
-- [ ] **Theme change:** switch dark and light while the pane is live; the surface changes color at once and omp is told (`theme` event), with no restart.
+- [ ] **Theme change:** switch dark and light (`Ctrl+Shift+J`; the title bar has no theme button) while the pane is live; the surface changes color at once and omp is told (`theme` event), with no restart.
 - [ ] **UI restart (snapshot):** quit and open the UI with the daemon running; the omp pane shows the same conversation again at once (from `tsp.snapshot`), and further answers keep arriving.
 - [ ] **Daemon restart:** `mk daemon stop`, then open Mkrew; the omp pane resumes as a new session with a new surface and an empty conversation (nothing of the old one is restored).
-- [ ] **TSP off:** put `tsp = false` in the omp profile (before `[state]`) and start a new omp pane; it is today's terminal pane with `Terminal | Chat`, omp draws ANSI rows, and there is no first-paint wait.
+- [ ] **TSP off:** put `tsp = false` in the omp profile (before `[state]`) and start a new omp pane; it is today's terminal pane with the title bar's `Terminal | Chat` toggle, omp draws ANSI rows, and there is no first-paint wait.
   An omp started by hand in a shell pane also draws rows.
 - [ ] **Fallback:** rename `conpty.dll` next to the daemon, restart the daemon, start an omp pane; about 2 s after its first output the pane shows the terminal grid, with one toast "omp is drawing as text: ..." and a log line `conpty = "system"`; nothing is blank.
   Put the file back and restart the daemon.
 - [ ] **Exited omp:** quit omp (`/exit`); the pane keeps its last conversation read-only under the exited notice.
-- [ ] **Hook-only state:** with the hooks installed the sidebar and the pane pill follow omp (working, idle, needs input, done) while the surface is live; after a fallback, screen detection works again.
-- [ ] **Claude Code and Codex unchanged:** their panes keep the `Terminal | Chat` switch and today's Chat look (ADR 0105).
+- [ ] **Hook-only state:** with the hooks installed the sidebar and the tab icon (hourglass, bell) follow omp (working, idle, needs input, done) while the surface is live; after a fallback, screen detection works again.
+- [ ] **Claude Code and Codex unchanged:** their panes keep the title bar's `Terminal | Chat` toggle and today's Chat look (ADR 0105).
 - [ ] **Machine window:** a window for another computer that runs omp with TSP shows the surface too (its daemon must be protocol 59).
 - [ ] **`mk web`:** on the phone page, an omp session with a live surface shows "This omp session uses Mkrew's native view. Open it on the desktop." in place of the terminal and has no Fit, Zoom or Read button; its state pill, Stop, the reply chips and the quick keys still work; when the session falls back, the terminal shows again; a Claude or shell session is unchanged.
 - [ ] **Regression on the new ConPTY (Windows):** in a PowerShell pane, a Git Bash pane, a Claude pane and a Codex pane check typing, resizing (text reflows), Vietnamese IME, a multi-line paste, `exit` (the pane shows the exited notice), and the startup resume after `mk daemon stop`; after closing every pane no `OpenConsole.exe` stays in Task Manager.
@@ -11539,10 +11629,10 @@ With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow p
 
 - [ ] **Step 9: PROGRESS note**
 
-In `docs/PROGRESS.md`, insert as a new first line of "Notes for the next session" (before the line that starts `- 2026-11-23 Chat look (branch `feat/chat-look`` at line 33; if the `feat/tern-layout` note is already above it, insert before that one):
+In `docs/PROGRESS.md`, insert as a new first line of "Notes for the next session" (before the line that starts `- 2026-11-23 Tern layout (branch `feat/tern-layout``, now line 33; the Chat look note is line 34 and stays below it):
 
 ```markdown
-- 2026-11-23 omp native surface (branch `feat/omp-tsp`, spec docs/superpowers/specs/2026-11-23-omp-tsp-surface-design.md, plan docs/superpowers/plans/2026-11-23-omp-tsp-surface.md, ADR 0107, protocol 59, no migration): ConPTY sideload (`scripts/fetch-conpty.sh` and `.ps1`, `packaging/mkrew.iss`, `mkrew_daemon::conpty` logs which one loaded); `mkrew_core::tsp` (`wire` splitter and codec, `doc` node document with eviction, `engine` hello, acks, resize, events); profile key `tsp` (default on for `omp_jsonl`) and `PI_TUI_NATIVE` 1 or 0 in every PTY; daemon `Session.tsp`, `tsp.snapshot`, `tsp.event`, `tsp.update`, hook-only state while live (`StateMachine::set_hook_only`); `mkrew-fakeagent --tsp`; UI `mkrew_ui::tsp` (style table, icons, ansi runs, `Mirror`) and `shell/tsp_view.rs` (the omp ask card and the `checklist` todo HUD and popover included); `mk web` notice (`nativeView` in `model.mjs`). Checks in HUMAN_CHECKS "2026-11-23 omp native surface"; screenshots `docs/screenshots/2026-11-23-omp-tsp-*.png`. P2 (picker, tree, tool, prefs, hovercards: the Agent Hub table, the Jobs panel with Cancel) and P3 (blobs cache, media, chart, diff, math, local text editing) are separate specs.
+- 2026-11-23 omp native surface (branch `feat/omp-tsp`, spec docs/superpowers/specs/2026-11-23-omp-tsp-surface-design.md, plan docs/superpowers/plans/2026-11-23-omp-tsp-surface.md, ADR 0107, protocol 59 after ADR 0106's 58, no migration): ConPTY sideload (`scripts/fetch-conpty.sh` and `.ps1`, `packaging/mkrew.iss`, `mkrew_daemon::conpty` logs which one loaded); `mkrew_core::tsp` (`wire` splitter and codec, `doc` node document with eviction, `engine` hello, acks, resize, events); profile key `tsp` (default on for `omp_jsonl`) and `PI_TUI_NATIVE` 1 or 0 in every PTY; daemon `Session.tsp`, `tsp.snapshot`, `tsp.event`, `tsp.update`, hook-only state while live (`StateMachine::set_hook_only`); `mkrew-fakeagent --tsp`; UI `mkrew_ui::tsp` (style table, icons, ansi runs, `Mirror`) and `shell/tsp_view.rs` (the omp ask card and the `checklist` todo HUD and popover included); `mk web` notice (`nativeView` in `model.mjs`). Checks in HUMAN_CHECKS "2026-11-23 omp native surface"; screenshots `docs/screenshots/2026-11-23-omp-tsp-*.png`. P2 (picker, tree, tool, prefs, hovercards: the Agent Hub table, the Jobs panel with Cancel) and P3 (blobs cache, media, chart, diff, math, local text editing) are separate specs.
 ```
 
 - [ ] **Step 10: Check the docs**
@@ -11556,9 +11646,12 @@ grep -c "omp native surface" docs/SPEC.md docs/HUMAN_CHECKS.md docs/PROGRESS.md 
 git diff -U0 docs/SPEC.md docs/HUMAN_CHECKS.md docs/PROGRESS.md agents/omp.toml | grep '^+' | grep -c $'\xe2\x80\x94\|\xe2\x80\x93' || true
 grep -c $'\xe2\x80\x94\|\xe2\x80\x93' docs/decisions/0107-omp-native-surface.md || true
 grep -c "omp.ask\|checklist" docs/SPEC.md docs/decisions/0107-omp-native-surface.md
+grep -c "ADR 0106" docs/decisions/0107-omp-native-surface.md
+grep -ci "pane header\|pane's header" docs/decisions/0107-omp-native-surface.md || true
+git diff -U0 docs/SPEC.md docs/HUMAN_CHECKS.md | grep '^+' | grep -ci "pane header\|pane's header\|header has no" || true
 ```
 
-Expected: `1`; a number of at least `4` (three SPEC rows plus the history line and the section 11 text); at least `1` per file (`SPEC.md:1` or more, `HUMAN_CHECKS.md:1`, `PROGRESS.md:1`, ADR `1`); `0`; `0`; at least `3` in `SPEC.md` and at least `2` in the ADR.
+Expected: `1`; a number of at least `4` (three SPEC rows plus the history line and the section 11 text); at least `1` per file (`SPEC.md:1` or more, `HUMAN_CHECKS.md:1`, `PROGRESS.md:1`, ADR `1`); `0`; `0`; at least `3` in `SPEC.md` and at least `2` in the ADR; at least `2` (the ADR names ADR 0106 in its status, protocol bullet, alternatives and consequences); `0`; `0`.
 
 - [ ] **Step 11: Build the smoke binaries and the ConPTY files**
 
@@ -11586,12 +11679,12 @@ $ui = Start-Process "$PWD\target\debug\mkrew.exe" -PassThru
 ```
 
 `mk daemon stop` makes sure the sandbox daemon that starts next is the freshly built protocol 59 one (the UI starts the daemon with the same variables).
-Add the workspace `$root\repo` (title bar `+`, or `.\target\debug\mk.exe project add "$root\repo"`; run `mk project add --help` if the arguments differ), then check `Get-ChildItem "$root\data\logs"`: the newest log has one line `conpty = "sideloaded"`.
+Add the workspace `$root\repo` (the workspace switcher's "Add workspace…" in the title bar, or `.\target\debug\mk.exe project add "$root\repo"`; run `mk project add --help` if the arguments differ), then check `Get-ChildItem "$root\data\logs"`: the newest log has one line `conpty = "sideloaded"`.
 Never stop other `mkrew` processes by name: use `Stop-Process -Id $ui.Id` for the one you started, and report any other leftover process instead of killing it.
 
 - [ ] **Step 12: Walk the smoke on the real app**
 
-Open an Oh My Pi pane in the sandbox workspace (`+ New`, Oh My Pi) and, in Tern, open the same omp session (`omp --resume <id>`; omp prints the id when it exits, and the Tern tab shows the session). Walk the HUMAN_CHECKS section of Step 8 and tick (`- [x]`, then append `(smoke: dark + light, 2026-11-23)`) every line the run covered. Leave a line unticked, with one sentence saying why, when the run could not do it (macOS, the installer, an omp with subagents, IME).
+Open an Oh My Pi pane in the sandbox workspace (the title bar's `+ ▾`, Oh My Pi) and, in Tern, open the same omp session (`omp --resume <id>`; omp prints the id when it exits, and the Tern tab shows the session). Walk the HUMAN_CHECKS section of Step 8 and tick (`- [x]`, then append `(smoke: dark + light, 2026-11-23)`) every line the run covered. Leave a line unticked, with one sentence saying why, when the run could not do it (macOS, the installer, an omp with subagents, IME).
 At minimum this run must cover: the startup dock, one prompt and answer, the model chip click, Stop while working, the agent pill, a question with several tabs answered by mouse (Recommended, Other..., Note, Skip, Hide and Show, Review and Submit), the todo HUD and its popover with an active, a done, a blocked and a dropped item, a narrow pane, a UI restart (`Stop-Process -Id $ui.Id`, then start `mkrew.exe` again with the same variables), TSP off, the fallback with `conpty.dll` renamed, and one regression pass of a PowerShell pane (typing, resize, exit).
 Fix anything that looks wrong in the task that owns it (the UI drawing task or the daemon task), not here.
 
@@ -11673,7 +11766,7 @@ powershell -NoProfile -File $env:TEMP\shot.ps1 -Name narrow -Theme dark -Width 7
 | `todo-popover` | the HUD popover open with an active, a done, a blocked and a dropped item | default |
 | `narrow` | the pane at about 400 px of pane width (window `-Width 700 -Height 900` with a split) | `-Width 700 -Height 900` |
 | `ui-restart` | the same pane right after the UI was restarted (the snapshot), conversation back | default |
-| `tsp-off` | an omp pane started with `tsp = false`: terminal grid and `Terminal | Chat` switch | default |
+| `tsp-off` | an omp pane started with `tsp = false`: terminal grid, with the title bar's `Terminal | Chat` toggle | default |
 | `tern-startup-dock` | Tern with the same session at the startup dock (`-Process <Tern's name>`) | default |
 | `tern-prompt-answer` | Tern with the same prompt and answer | default |
 
@@ -11704,3 +11797,4 @@ git -c user.email=tungnv975@gmail.com commit -m "docs: ADR 0107 omp native surfa
 ```
 
 (If `docs/SPEC.md`, `docs/HUMAN_CHECKS.md` or `docs/PROGRESS.md` carried someone else's uncommitted hunks at the start, use `git add -p` for those three and stage only the hunks of Steps 2 to 9. If a screenshot could not be taken, leave its file out and say which in the HUMAN_CHECKS "Screenshots for reference" line.)
+

@@ -2,8 +2,8 @@
 
 - Date: 2026-11-23
 - Status: design approved in chat by the user (2026-11-23), section by section; this file waits for the user's review.
-- ADR: `docs/decisions/0107-omp-native-surface.md` (0106 is taken by `feat/tern-layout`).
-- Protocol: 57 on `master`, 58 on `feat/tern-layout` (unmerged), so this change takes 59.
+- ADR: `docs/decisions/0107-omp-native-surface.md` (0106 is the Tern layout).
+- Protocol: 58 on `master` (ADR 0106), so this change takes 59.
 - Migration: none.
 - Inputs, committed with this spec:
   - `2026-11-23-omp-tsp/tsp-reference-omp-18.13.2.md`: the Tern Surface Protocol (TSP) as omp 18.13.2 implements it, read from the JavaScript embedded in `omp.exe`, every claim cited by byte offset.
@@ -42,7 +42,7 @@ Said by the user (2026-11-23):
 - Follow Tern's composer and Tern's subagent management view (Agents dialog, Background jobs dialog, pill hover texts).
 - "Giống Tern hoàn toàn": do it through TSP, not by reading files, after the alternatives (files only, omp RPC mode) were shown.
 - Agents: omp and Claude Code. TSP exists only in omp; Claude Code keeps today's Chat view (said in chat, not contradicted).
-- TSP is a setting per agent profile, on by default; no Terminal | Chat switch inside an omp TSP pane.
+- TSP is a setting per agent profile, on by default; an omp pane with TSP on has no Chat mode.
 - The composer is omp's dock, as in Tern.
 - Colors come from Mkrew's theme, not from omp's palette.
 - The split into P1, P2, P3 after a spike.
@@ -172,7 +172,8 @@ Kinds omp sends whatever the hello says (`agent chart diff math prefs`) and any 
 
 ### 7.3 Pane (`shell/tsp_view.rs`)
 
-- An omp pane whose session has `tsp` `live` draws the surface instead of the terminal grid; the header has no `Terminal | Chat` switch.
+- An omp pane whose session has `tsp` `live` draws the surface instead of the terminal grid.
+  A pane whose `tsp` is not `off` has no Chat mode: the title bar's `Terminal | Chat` toggle, its palette entry and its shortcut are hidden or do nothing, and the Reading width toggle is hidden while the surface shows (it only caps the terminal grid).
 - `main` is a scrolling list in the Chat page's centered column (`CHAT_COLUMN_WIDTH`), following the end like Chat, with the scroll-to-end button; `reveal` and `scroll` ops move it.
 - `dock` sits under it in the same column, always visible.
 - `layer` children and `overlay` nodes draw as a modal inside the pane; a `screen` surface covers the whole pane until omp closes it.
@@ -183,10 +184,10 @@ Kinds omp sends whatever the hello says (`agent chart diff math prefs`) and any 
 
 | `Session.tsp` | The pane shows |
 |---|---|
-| `off` | today's terminal pane with `Terminal | Chat` |
+| `off` | today's terminal pane, with the `Terminal | Chat` toggle |
 | `waiting` (TSP on, no surface yet) | the starting state of an agent pane |
 | `live` | the surface |
-| `fallback` (no hello within 2 s of the session's first output, or omp closed the surface with `x {keep:false}`, which it does when it goes back to drawing rows) | today's terminal grid without the Chat switch, and one `toast_info` "omp is drawing as text: <reason>". Once in `fallback` the daemon no longer answers TSP for that session, so a late hello falls back on omp's side too. |
+| `fallback` (no hello within 2 s of the session's first output, or omp closed the surface with `x {keep:false}`, which it does when it goes back to drawing rows) | today's terminal grid without the Chat toggle, and one `toast_info` "omp is drawing as text: <reason>". Once in `fallback` the daemon no longer answers TSP for that session, so a late hello falls back on omp's side too. |
 | exited | the last document, read-only, with the existing exited notice |
 
 ### 7.4 Events sent in P1
@@ -288,8 +289,6 @@ Each step is one commit and passes `scripts/verify.sh`.
 4. UI: `mkrew_ui::tsp::style`, `shell/tsp_view.rs`, events, pane states, fallback toast.
 5. Hook-only state for live surfaces, `mk web` notice.
 6. SPEC, HUMAN_CHECKS, screenshots.
-
-If `feat/tern-layout` merges first (it changes pane headers), this work rebases on it and keeps its protocol 59 and ADR 0107.
 
 ## 12. Out of scope
 
