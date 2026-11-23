@@ -34,18 +34,25 @@ fn write_tsp_profile(env: &Env, id: &str, args: &str) {
         .join("agents")
         .join(format!("{id}.toml"));
     let text = std::fs::read_to_string(&path).unwrap();
-    let tsp = text.replace(
-        "prompt_mode = \"none\"",
-        "prompt_mode = \"none\"\ntsp = true",
-    );
+    // A short idle window keeps the state tests below fast.
+    let tsp = text
+        .replace(
+            "prompt_mode = \"none\"",
+            "prompt_mode = \"none\"\ntsp = true",
+        )
+        .replace("idle_after_ms = 1000", "idle_after_ms = 200");
     assert_ne!(tsp, text);
     env.write_profile(id, &tsp);
 }
 
 /// A `--tsp` profile; returns the file the fake agent records its stdin to.
 fn write_replaying_profile(env: &Env, id: &str) -> PathBuf {
+    write_replaying_profile_of(env, id, FIXTURE)
+}
+
+fn write_replaying_profile_of(env: &Env, id: &str, fixture: &str) -> PathBuf {
     let record = env.dir.path().join(format!("{id}-record.bin"));
-    let args = format!("['--tsp', '{FIXTURE}', '--record', '{}']", record.display());
+    let args = format!("['--tsp', '{fixture}', '--record', '{}']", record.display());
     write_tsp_profile(env, id, &args);
     record
 }
@@ -77,21 +84,13 @@ fn wait_tsp(client: &mut Client, id: Ulid, want: TspState) {
     assert_eq!(session.tsp, want, "{NO_HELLO_HINT}");
 }
 
-/// Polls `tsp.snapshot` until the first surface has applied frame `seq`.
-fn wait_frames(client: &mut Client, id: Ulid, seq: u64) -> TspSnapshot {
-    let deadline = Instant::now() + TIMEOUT;
-    loop {
-        let snapshot = tsp_snapshot(client, id);
-        if snapshot.surfaces.first().is_some_and(|s| s.seq >= seq) {
-            return snapshot;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "surfaces stuck at {:?}, wanted seq {seq}",
-            snapshot.surfaces.iter().map(|s| s.seq).collect::<Vec<_>>()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
+/// Waits for the event of the fixture's last frame, then takes one snapshot.
+fn wait_frames(client: &mut Client, id: Ulid) -> TspSnapshot {
+    client.wait_event_where(|e| {
+        matches!(e, Event::TspUpdate(u) if u.session_id == id
+            && matches!(u.change, TspChange::Frame { seq, .. } if seq == FIXTURE_FRAMES))
+    });
+    tsp_snapshot(client, id)
 }
 
 /// Waits until what the fake agent recorded satisfies `ready`; returns it.
@@ -169,7 +168,7 @@ fn a_tsp_session_goes_live_and_trades_acks_and_events_with_the_agent() {
     assert_eq!(seqs, (1..=FIXTURE_FRAMES).collect::<Vec<_>>());
 
     // The snapshot is what a late client starts from.
-    let snapshot = wait_frames(&mut client, id, FIXTURE_FRAMES);
+    let snapshot = tsp_snapshot(&mut client, id);
     assert_eq!(snapshot.state, TspState::Live);
     assert_eq!(snapshot.surfaces.len(), 1);
     let surface = &snapshot.surfaces[0];
@@ -257,7 +256,7 @@ fn tsp_event_rejects_events_the_p1_list_does_not_have_and_never_writes_them() {
     let spawned: SessionSpawnResult = client.spawn(&project, "tsp").into_result().unwrap();
     let id = spawned.session_id;
     wait_tsp(&mut client, id, TspState::Live);
-    let snapshot = wait_frames(&mut client, id, FIXTURE_FRAMES);
+    let snapshot = wait_frames(&mut client, id);
     let editor = find(&snapshot.surfaces[0].root, &|n| n.k == "editor").unwrap();
 
     // Local text editing is P3: `edit` is refused, with a reason, before anything is written.
@@ -329,5 +328,41 @@ fn the_agent_is_started_with_pi_tui_native_matching_its_tsp_setting() {
         let log = session_log(&env, spawned.session_id);
         assert!(log.contains(expected), "{profile}: {log}");
     }
+    client.stop();
+}
+
+#[test]
+fn a_live_surface_leaves_the_state_to_hooks_and_a_closed_one_gives_it_back_to_the_screen() {
+    let env = Env::new();
+    write_replaying_profile(&env, "tsp");
+    // The fixture plus omp closing its inline surface: the pane draws rows again.
+    let closing = env.dir.path().join("closing.tsp.jsonl");
+    let mut text = std::fs::read_to_string(FIXTURE).unwrap();
+    text.push_str(
+        "{\"t\":1,\"dir\":\"out\",\"verb\":\"x\",\"body\":{\"id\":\"s:1\",\"keep\":false}}\n",
+    );
+    std::fs::write(&closing, text).unwrap();
+    write_replaying_profile_of(&env, "closing", &closing.display().to_string());
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+
+    // Live: the text after the frames is no state evidence, however long the screen rests
+    // (idle_after is 200 ms here; a screen-driven session would be idle by now).
+    let spawned: SessionSpawnResult = client.spawn(&project, "tsp").into_result().unwrap();
+    let id = spawned.session_id;
+    wait_tsp(&mut client, id, TspState::Live);
+    wait_frames(&mut client, id);
+    std::thread::sleep(Duration::from_millis(1000));
+    assert_eq!(client.session(id).state, SessionState::Unknown);
+    kill(&mut client, id);
+
+    // Closed: the screen drives the state again (text, then rest: idle).
+    let spawned: SessionSpawnResult = client.spawn(&project, "closing").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_event_where(
+        |e| matches!(e, Event::SessionUpdated(s) if s.id == id && s.tsp == TspState::Fallback),
+    );
+    client.wait_state(id, SessionState::Idle);
+    kill(&mut client, id);
     client.stop();
 }

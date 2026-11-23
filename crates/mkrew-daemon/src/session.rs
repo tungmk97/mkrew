@@ -470,7 +470,6 @@ impl Hub {
         let tsp = profile.tsp.then(|| Engine::new(session.cols, dark));
         if tsp.is_some() {
             session.tsp = TspState::Waiting;
-            lock(&self.tsp_states).insert(session.id, TspState::Waiting);
         }
         let log = SessionLog::create(&log_file)
             .with_context(|| format!("create {}", log_file.display()))?;
@@ -623,6 +622,9 @@ impl Hub {
         let run_ports = mkrew_core::run::command_name(&session)
             .is_some()
             .then(Vec::new);
+        if tsp.is_some() {
+            lock(&self.tsp_states).insert(session.id, TspState::Waiting);
+        }
         let mut actor = Actor {
             hub: std::sync::Arc::clone(self),
             session,
@@ -1379,7 +1381,12 @@ impl Actor {
     }
 
     fn on_output(&mut self, bytes: &[u8]) {
-        let Some(engine) = self.tsp.as_mut() else {
+        // Fallen back: the engine would only copy every chunk into a `Plain` step.
+        let Some(engine) = self
+            .tsp
+            .as_mut()
+            .filter(|e| e.state() != TspState::Fallback)
+        else {
             self.on_plain(bytes);
             return;
         };
@@ -1411,7 +1418,9 @@ impl Actor {
     }
 
     /// Writes a TSP message to the PTY input without waiting, like a DSR reply: a full queue
-    /// means the child is not reading, and omp resumes after its own 5 s ack stall.
+    /// means the child is not reading, and omp resumes after its own 5 s ack stall. A dropped
+    /// hello reply is unrecoverable (omp then never sends frames), but the queue is empty when
+    /// the hello arrives at startup, so it cannot happen there.
     fn send_tsp(&self, bytes: Vec<u8>) {
         if self.input.try_send(bytes).is_err() {
             tracing::warn!(id = %self.session.id, "input queue full or closed; TSP message dropped");
