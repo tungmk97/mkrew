@@ -187,16 +187,10 @@ fn the_selection_follows_its_file_across_groups_or_falls_back_to_the_first() {
 }
 
 #[test]
-fn an_open_diff_follows_its_selection_and_closes_when_nothing_is_left() {
+fn the_selection_follows_the_status_and_an_empty_status_closes_nothing() {
     let mut view = loaded();
-    assert!(
-        !view.diff_open(),
-        "selecting the first file does not open the diff"
-    );
     view.key(Key::Down);
-    assert!(!view.diff_open(), "moving the selection does not open it");
-    view.open_diff();
-    // `new.txt` got staged: the selection moves with it, the diff stays open.
+    // `new.txt` got staged: the selection moves with it.
     view.select(target(Group::Untracked, "new.txt"));
     let mut status = working();
     status.untracked.clear();
@@ -204,18 +198,48 @@ fn an_open_diff_follows_its_selection_and_closes_when_nothing_is_left() {
     view.begin_status();
     view.status_loaded(Ok(status));
     assert_eq!(view.selected, Some(target(Group::Staged, "new.txt")));
-    assert!(view.diff_open());
     view.key(Key::Up);
-    assert!(view.diff_open(), "moving the selection keeps it open");
-    // Everything committed: nothing to show, the diff closes.
+    assert!(
+        view.selected.is_some(),
+        "moving the selection keeps one picked"
+    );
+    // Everything committed: no selection and no diff; a Diff pane that shows this view stays
+    // and says so (there is nothing in the view to close any more).
+    view.begin_status();
+    let requests = view.status_loaded(Ok(GitStatus::default()));
+    assert_eq!(requests, Requests::default());
+    assert_eq!(view.selected, None);
+    assert_eq!(view.diff, Diff::None);
+    assert_eq!(view.no_file(), NoFile::Clean);
+    // Changes come back: the first file is selected again and its diff is read.
+    view.begin_status();
+    let requests = view.status_loaded(Ok(working()));
+    assert_eq!(requests.diff, Some(target(Group::Staged, "a.rs")));
+}
+
+#[test]
+fn the_diff_pane_knows_why_it_has_no_file() {
+    let mut view = GitView::new(Ulid::new(), None);
+    assert_eq!(view.no_file(), NoFile::Loading);
+    view.begin_status();
+    view.status_loaded(Err("index.lock".into()));
+    assert_eq!(view.no_file(), NoFile::Failed);
+    // Files are listed, the filter hides every one of them.
+    let mut view = loaded();
+    view.filter.insert("zzz");
+    view.begin_status();
+    view.status_loaded(Ok(working()));
+    assert_eq!(view.selected, None);
+    assert_eq!(view.no_file(), NoFile::Filtered);
+    // The filter is cleared: a refresh selects the first file again.
+    view.filter.clear();
+    view.begin_status();
+    let requests = view.status_loaded(Ok(working()));
+    assert_eq!(requests.diff, Some(target(Group::Staged, "a.rs")));
+    // Nothing changed at all.
     view.begin_status();
     view.status_loaded(Ok(GitStatus::default()));
-    assert!(!view.diff_open());
-    // Closed by hand.
-    let mut view = loaded();
-    view.open_diff();
-    view.close_diff();
-    assert!(!view.diff_open());
+    assert_eq!(view.no_file(), NoFile::Clean);
 }
 
 #[test]

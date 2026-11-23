@@ -674,6 +674,46 @@ pub enum PendingHunk {
     Last,
 }
 
+/// Why the diff pane has no file to show. The pane stays open and says so (spec 4.4): a leaf
+/// the user placed does not vanish when everything is committed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoFile {
+    /// The changes are being read.
+    Loading,
+    /// The changes could not be read.
+    Failed,
+    /// Nothing changed: everything is committed, or nothing differs from the base.
+    Clean,
+    /// Files are listed, but "Filter files" or "Changed by" hides every one of them.
+    Filtered,
+    /// Files are listed and none is picked.
+    Pick,
+}
+
+impl NoFile {
+    /// The pane's sentence and the line under it (`Failed` has none: the shell shows the error).
+    pub fn message(self, section: Section) -> (&'static str, Option<&'static str>) {
+        match (self, section) {
+            (NoFile::Loading, _) => ("Loading changes…", None),
+            (NoFile::Failed, _) => ("Cannot read the changes.", None),
+            (NoFile::Clean, Section::Base) => ("No changes against the base.", None),
+            (NoFile::Clean, Section::Since) => ("No changes since then.", None),
+            (NoFile::Clean, _) => (
+                "Nothing to commit.",
+                Some("The diff shows the next change you make."),
+            ),
+            (NoFile::Filtered, _) => (
+                "No file matches the filter.",
+                Some("Clear the filter or \"Changed by\" in the Git panel."),
+            ),
+            (NoFile::Pick, _) => (
+                "Select a file to see its changes.",
+                Some("Use ↑ ↓ (or j k) to move between files."),
+            ),
+        }
+    }
+}
+
 /// One workspace's Git view.
 #[derive(Debug)]
 pub struct GitView {
@@ -1032,6 +1072,17 @@ impl GitView {
         self.diff = Diff::None;
         self.hunk = None;
         self.pending_hunk = None;
+    }
+
+    /// Why no file is selected while the changes (not the History) are listed.
+    pub fn no_file(&self) -> NoFile {
+        match &self.status {
+            Status::Loading => NoFile::Loading,
+            Status::Failed(_) => NoFile::Failed,
+            Status::Loaded(_) if self.status_files(false).is_empty() => NoFile::Clean,
+            Status::Loaded(_) if self.files().is_empty() => NoFile::Filtered,
+            Status::Loaded(_) => NoFile::Pick,
+        }
     }
 
     /// Opens the Diff view on the selection (or the first file once listed).
