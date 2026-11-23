@@ -31,8 +31,6 @@ pub struct Shown {
     pub modal: bool,
     /// The Board draws every workspace's cards (the All workspaces board).
     pub all_board: bool,
-    /// The widget bar is drawn (`[ui] widget_bar`), so its limits and machine numbers are read.
-    pub widget_bar: bool,
 }
 
 /// Whether an event whose model reported "my data changed" must re-render the root. Events
@@ -97,9 +95,9 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
         Event::AiGenerated(_) => {
             shown.view == View::Terminals || shown.panel == Some(PanelTab::Git)
         }
-        // The widget bar's limits and CPU / RAM (ADR 0102).
-        Event::AgentLimits(_) | Event::MachineStats(_) => shown.widget_bar,
-        Event::SessionState(_)
+        // Rare, and the title bar's limits chip is always drawn in the main window (ADR 0106).
+        Event::AgentLimits(_)
+        | Event::SessionState(_)
         | Event::SessionExited(_)
         | Event::SessionUpdated(_)
         | Event::SessionTerminalTitle(_)
@@ -133,9 +131,9 @@ fn tasks_drawn(shown: &Shown, project_id: Ulid) -> bool {
 mod tests {
     use mkrew_protocol::{
         AgentLimits, AiGeneratedEvent, Cli, CommentId, CommentStatus, ConflictDetectedEvent,
-        DocComment, MachineStats, SessionExitedEvent, SessionKind, SessionPlanEvent,
-        SessionPortsEvent, SessionQueueEvent, SessionState, SessionStateEvent, SessionTurnEvent,
-        SessionUsageEvent, StateSource, TaskDeletedEvent,
+        DocComment, SessionExitedEvent, SessionKind, SessionPlanEvent, SessionPortsEvent,
+        SessionQueueEvent, SessionState, SessionStateEvent, SessionTurnEvent, SessionUsageEvent,
+        StateSource, TaskDeletedEvent,
     };
 
     use super::*;
@@ -206,7 +204,6 @@ mod tests {
             sidebar: SidebarMode::Compact,
             modal: false,
             all_board: false,
-            widget_bar: false,
         }
     }
 
@@ -222,7 +219,6 @@ mod tests {
             sidebar: SidebarMode::Hidden,
             modal: false,
             all_board: false,
-            widget_bar: false,
         }
     }
 
@@ -475,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn conflicts_show_on_the_board_and_in_pane_headers_only() {
+    fn conflicts_show_on_the_board_and_in_pane_badges_only() {
         let w = world();
         let detected = Event::ConflictDetected(ConflictDetectedEvent {
             project_id: w.ws,
@@ -536,24 +532,16 @@ mod tests {
     }
 
     #[test]
-    fn limits_and_machine_stats_redraw_only_while_the_bar_is_drawn() {
+    fn limits_always_redraw_the_main_window() {
         let w = world();
-        let mut s = terminals(&w);
         let limits = Event::AgentLimits(AgentLimits {
             agent: Cli::Claude,
             five_hour: None,
             weekly: None,
             observed_at: 1,
         });
-        let stats = Event::MachineStats(MachineStats {
-            cpu_percent: 1.0,
-            ram_used: 1,
-            ram_total: 2,
-        });
-        assert!(!redraws(&w, &s, &limits), "bar hidden");
-        assert!(!redraws(&w, &s, &stats), "bar hidden");
-        s.widget_bar = true;
-        assert!(redraws(&w, &s, &limits));
-        assert!(redraws(&w, &s, &stats));
+        for shown in [terminals(&w), nothing_shown(&w)] {
+            assert!(redraws(&w, &shown, &limits));
+        }
     }
 }

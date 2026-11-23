@@ -1,10 +1,10 @@
-//! Drag a tab (from the tab strip) or a pane (by its header) onto a pane to split it (SPEC §10):
+//! Drag a tab (from the tab area) or a pane (by the grip on its top edge) onto a pane to split it (SPEC §10):
 //! the half of the pane under the pointer lights up, and the drop puts the dragged panes right
 //! of it or below it, whichever side the pointer leans to.
 
 use crate::*;
 
-/// Payload of a pane header drag: the pane of `session`.
+/// Payload of a pane drag: the pane of `session`.
 #[derive(Debug, Clone)]
 pub(crate) struct DraggedPane {
     pub(crate) session: Ulid,
@@ -20,13 +20,13 @@ pub(crate) struct PaneDrop {
 }
 
 impl Shell {
-    /// Makes `header` (of `info`'s pane) draggable onto another pane.
+    /// Makes `handle` (the top-edge strip of `info`'s pane) draggable onto another pane.
     pub(crate) fn draggable_pane(
         &self,
-        header: gpui::Div,
+        handle: gpui::Div,
         info: &Session,
         theme: &Theme,
-    ) -> gpui::AnyElement {
+    ) -> gpui::Stateful<gpui::Div> {
         let pane = DraggedPane {
             session: info.id,
             title: (run::pane_title(info, self.ports.get(info.id)))
@@ -35,8 +35,8 @@ impl Shell {
         };
         let style = PopupStyle::of(theme);
         let accent = theme.accent;
-        header
-            .id(SharedString::from(format!("pane-header-{}", info.id)))
+        handle
+            .id(SharedString::from(format!("pane-grip-{}", info.id)))
             .on_drag(pane, move |pane, offset, _, cx| {
                 let (style, title) = (style.clone(), pane.title.clone());
                 cx.new(|_| DragChip {
@@ -46,7 +46,6 @@ impl Shell {
                     offset,
                 })
             })
-            .into_any_element()
     }
 
     /// Makes the frame of `session`'s pane take dragged tabs and panes.
@@ -123,7 +122,7 @@ impl Shell {
         let next = if takes && bounds.contains(&position) {
             let at = position - bounds.origin;
             let axis = drop_axis(at.x / bounds.size.width, at.y / bounds.size.height);
-            // Off the tab strip: no reorder line.
+            // Off the tab area: no reorder line.
             if let Some(reorder) = &mut self.reorder {
                 reorder.target = reorder.from;
                 reorder.after = false;
@@ -148,7 +147,7 @@ impl Shell {
     }
 
     /// Pane `moved` was dropped on `target`'s pane: it moves there, saved at once.
-    fn drop_pane(
+    pub(crate) fn drop_pane(
         &mut self,
         moved: Ulid,
         target: Ulid,
@@ -180,7 +179,7 @@ impl Shell {
     }
 
     /// A tab was dropped on `target`'s pane: its panes move there, then the emptied tab closes.
-    fn drop_tab_on_pane(
+    pub(crate) fn drop_tab_on_pane(
         &mut self,
         item: &DraggedItem,
         target: Ulid,
@@ -207,10 +206,8 @@ impl Shell {
         };
         self.sync_panes(window, cx);
         self.focus_pane(window, cx);
-        self.tab_error = None;
         // One after another, the close last: `tab.close` removes the sessions of the tab's saved
         // layout (ADR 0041), so it must only run once that layout is empty.
-        let host = self.host_of(window);
         cx.spawn_in(window, async move |this, cx| {
             for write in writes {
                 let saved = connection.call::<()>(Request::TabSetLayout(write.clone()));
@@ -220,9 +217,7 @@ impl Shell {
                         if let Some(tabs) = shell.tabs.get_mut(&project_id) {
                             tabs.write_failed(&write);
                         }
-                        shell.tab_error =
-                            Some((host, format!("Cannot save the layout: {error:#}")));
-                        cx.notify();
+                        shell.toast_error(format!("Cannot save the layout: {error:#}"), cx);
                     });
                     return;
                 }
@@ -239,8 +234,7 @@ impl Shell {
                     }
                     Err(error) => {
                         tracing::warn!(tab_id = %source, "tab.close failed: {error:#}");
-                        let host = shell.host_of(window);
-                        shell.tab_error = Some((host, format!("Cannot close the tab: {error:#}")));
+                        shell.toast_error(format!("Cannot close the tab: {error:#}"), cx);
                     }
                 }
                 cx.notify();

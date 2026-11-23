@@ -387,6 +387,8 @@ impl Shell {
             machine: self.target.is_machine(),
             detached_window: window_key.is_some(),
             features: self.features,
+            idle_removable: self.sidebar.idle_agents_and_terminals().len(),
+            workspaces_open: self.sidebar.any_expanded(),
         };
         let mut entries = palette::settings_error(&self.keymap, self.settings_error.as_deref());
         entries.extend(palette::keymap_errors(&self.keymap, &self.keymap_errors));
@@ -812,6 +814,13 @@ impl Shell {
             }
             palette::Action::Extra(Extra::InstallUpdate) => self.start_update(window, cx),
             palette::Action::Extra(Extra::InstallMkCommand) => self.install_mk_command(cx),
+            palette::Action::Extra(Extra::SidebarRemoveIdle) => {
+                self.remove_idle_agents(window, cx);
+            }
+            palette::Action::Extra(Extra::SidebarToggleAll) => {
+                self.sidebar.toggle_all();
+                cx.notify();
+            }
             palette::Action::RunCommand(action, index) => {
                 let Some(project_id) = workspace else {
                     return;
@@ -996,7 +1005,10 @@ impl Shell {
                     // Handled above: it needs no workspace.
                     Extra::ManagePrompts => self.open_prompts_settings(window, cx),
                     // Handled above: they need no workspace.
-                    Extra::NewThemeFromCurrent | Extra::OpenThemesFolder => {}
+                    Extra::NewThemeFromCurrent
+                    | Extra::OpenThemesFolder
+                    | Extra::SidebarRemoveIdle
+                    | Extra::SidebarToggleAll => {}
                     Extra::CheckUpdates => self.check_updates(true, window, cx),
                 }
             }

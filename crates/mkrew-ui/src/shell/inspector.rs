@@ -290,8 +290,8 @@ impl Shell {
             );
         let tab = self.panel_tab();
         let changed = self.git_summary().map_or(0, GitSummary::changed);
-        // The tab row lines up with the terminal tab strip and the sidebar's filter row on
-        // its left: same height, same bottom divider.
+        // The tab row has the height of the Editor's file tab strip and the sidebar's filter
+        // row on its left: same height, same bottom divider.
         let tabs = div()
             .flex_none()
             .h(theme::rems_px(theme::TAB_STRIP_HEIGHT))

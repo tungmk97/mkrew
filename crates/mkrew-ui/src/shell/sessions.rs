@@ -31,26 +31,19 @@ impl Shell {
         let Some((project_id, tab_id)) = self.tab_scope(window) else {
             return;
         };
-        if profile.is_some() {
-            self.tab_error = None;
-        }
-        if self.still_starting(window, cx)
+        if self.still_starting(cx)
             || (profile.is_none() && self.ask_for_default(project_id, kind, window, cx))
         {
             return;
         }
         self.starting_pane = Some(kind);
         cx.notify();
-        let host = self.host_of(window);
         let params = lifecycle::spawn_params(project_id, Some(tab_id), kind, profile.as_deref());
         let spawned = connection.call::<SessionSpawnResult>(Request::SessionSpawn(params));
         cx.spawn_in(window, async move |this, cx| {
             let spawned = spawned.await;
             let _ = this.update_in(cx, |shell, window, cx| {
                 shell.starting_pane = None;
-                shell
-                    .tab_error
-                    .take_if(|(_, error)| error.starts_with(lifecycle::STILL_STARTING));
                 match spawned {
                     Ok(spawned) => {
                         // In the tab the request came from when a detached window shows it,
@@ -69,7 +62,7 @@ impl Shell {
                     Err(error) => {
                         tracing::warn!(%project_id, "session.spawn failed: {error:#}");
                         let what = lifecycle::kind_noun(kind);
-                        shell.tab_error = Some((host, format!("Cannot start {what}: {error:#}")));
+                        shell.toast_error(format!("Cannot start {what}: {error:#}"), cx);
                     }
                 }
                 cx.notify();
@@ -79,7 +72,7 @@ impl Shell {
     }
 
     /// The installed agent profiles a new pane can start with in the active workspace, its
-    /// default first (the "+ New" menu and the palette).
+    /// default first (the `+` menu and the palette).
     pub(crate) fn pane_agents(&self) -> Vec<lifecycle::PaneAgent> {
         let default = self.workspace.and_then(|id| {
             let project = self.sidebar.projects().iter().find(|p| p.id == id)?;
@@ -88,18 +81,14 @@ impl Shell {
         lifecycle::pane_agents(&self.agent_profiles, default)
     }
 
-    /// True (after telling the user in the tab bar) while another pane is still starting: one
-    /// `session.spawn` at a time. The note goes once that pane is up.
-    pub(crate) fn still_starting(&mut self, window: &Window, cx: &mut Context<'_, Self>) -> bool {
+    /// True (after a toast) while another pane is still starting: one `session.spawn` at a
+    /// time.
+    pub(crate) fn still_starting(&mut self, cx: &mut Context<'_, Self>) -> bool {
         let Some(kind) = self.starting_pane else {
             return false;
         };
         let (still, what) = (lifecycle::STILL_STARTING, lifecycle::kind_noun(kind));
-        self.tab_error = Some((
-            self.host_of(window),
-            format!("{still} {what}; try again once it shows."),
-        ));
-        cx.notify();
+        self.toast_error(format!("{still} {what}; try again once it shows."), cx);
         true
     }
 
@@ -112,7 +101,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> bool {
-        self.tab_error = None;
         let project = (self.sidebar.projects().iter()).find(|project| project.id == project_id);
         let (default, what) = match kind {
             SessionKind::Agent => (project.map(|p| &p.default_agent), "agent"),
@@ -120,11 +108,10 @@ impl Shell {
         };
         let missing = default.is_some_and(Option::is_none);
         if missing {
-            let host = self.host_of(window);
-            self.tab_error = Some((
-                host,
+            self.toast_error(
                 format!("Pick a default {what} for this workspace, then try again."),
-            ));
+                cx,
+            );
             // The menu hangs on the main window's title bar: not opened from a detached one.
             if self.detached_key(window).is_none() {
                 self.open_workspace_menu_at_switcher(project_id, window, cx);
@@ -504,7 +491,6 @@ impl Shell {
             Command::ToggleSidebar => self.toggle_sidebar(window, cx),
             Command::ToggleCompactSidebar => self.toggle_compact_sidebar(window, cx),
             Command::ToggleInspector => self.toggle_inspector(window, cx),
-            Command::ToggleWidgetBar => self.toggle_widget_bar(cx),
             // Handled at the top of `run`.
             Command::VoiceInput => {}
             Command::AskAi => self.open_ask(window, cx),

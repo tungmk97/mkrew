@@ -388,8 +388,6 @@ impl Shell {
             .sidebar
             .highlighted(&view.rows)
             .filter(|_| filter_focused || self.sidebar.filtering());
-        let any_open = self.sidebar.any_expanded();
-        let removable = self.sidebar.idle_agents_and_terminals().len();
         // Without workspaces: the title and `+` (the empty state below offers it too).
         let header = (connected && self.sidebar.is_empty()).then(|| {
             div()
@@ -416,26 +414,21 @@ impl Shell {
         });
         let controls = (connected && !self.sidebar.is_empty()).then(|| {
             let filter = self.sidebar.filter();
-            let bordered = theme.border;
-            // Inside the field's right padding: × while it holds text, else the `/` hint.
-            let trailing = if !filter.is_empty() {
-                Some(
-                    row_action(
-                        "sidebar-filter-clear".into(),
-                        icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
-                        theme,
-                    )
-                    .tooltip(tooltip(theme, "Clear filter", ""))
-                    .on_click(cx.listener(|shell, _, _, cx| {
-                        cx.stop_propagation();
-                        shell.sidebar.filter_mut().clear();
-                        cx.notify();
-                    }))
-                    .into_any_element(),
+            // Inside the field's right padding: × while it holds text.
+            let trailing = (!filter.is_empty()).then(|| {
+                row_action(
+                    "sidebar-filter-clear".into(),
+                    icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
+                    theme,
                 )
-            } else {
-                (!filter_focused).then(|| kbd("/".to_owned(), theme, false).into_any_element())
-            };
+                .tooltip(tooltip(theme, "Clear filter", ""))
+                .on_click(cx.listener(|shell, _, _, cx| {
+                    cx.stop_propagation();
+                    shell.sidebar.filter_mut().clear();
+                    cx.notify();
+                }))
+                .into_any_element()
+            });
             let field = caret_field(
                 "sidebar-filter",
                 filter,
@@ -490,62 +483,6 @@ impl Shell {
             .when(filter_focused, |el| {
                 el.child(self.typing(&self.filter_focus, Self::filter_key_down, cx))
             });
-            // Square, bordered, as tall as the field beside them.
-            let framed = move |button: gpui::Stateful<gpui::Div>| {
-                button
-                    .size(theme::rems_px(theme::INPUT_HEIGHT))
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(bordered))
-            };
-            let actions = div()
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap(px(space::XS))
-                .when(removable > 0, |el| {
-                    el.child(
-                        framed(icon_button("remove-idle-agents", Icon::Delete, theme))
-                            .tooltip(tooltip(
-                                theme,
-                                &format!("Remove idle agents and terminals ({removable})"),
-                                "",
-                            ))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.remove_idle_agents(window, cx);
-                            })),
-                    )
-                })
-                .child(
-                    framed(icon_button(
-                        "collapse-workspaces",
-                        if any_open {
-                            Icon::ChevronDown
-                        } else {
-                            Icon::ChevronRight
-                        },
-                        theme,
-                    ))
-                    .tooltip(tooltip(
-                        theme,
-                        if any_open {
-                            "Collapse all workspaces"
-                        } else {
-                            "Expand all workspaces"
-                        },
-                        "",
-                    ))
-                    .on_click(cx.listener(|shell, _, _, cx| {
-                        shell.sidebar.toggle_all();
-                        cx.notify();
-                    })),
-                )
-                .child(
-                    framed(icon_button("add-workspace", Icon::Plus, theme))
-                        .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.add_workspace(window, cx);
-                        })),
-                );
             // All / Working / Needs you as a segmented control; a waiting count is amber.
             let chip =
                 |id: &'static str, label: &'static str, count: usize, which: sidebar::Chip| {
@@ -563,25 +500,22 @@ impl Shell {
                             cx.notify();
                         }))
                 };
-            // The filter row lines up with the tab strip on its right: same height, same
-            // bottom divider.
+            // The All / Working / Needs you control is the top of the sidebar; the filter field
+            // sits above it only while it has the keyboard or holds text (Alt+0, `/`).
             div()
                 .flex_none()
                 .flex()
                 .flex_col()
-                .child(
-                    div()
-                        .flex_none()
-                        .h(theme::rems_px(theme::TAB_STRIP_HEIGHT))
-                        .flex()
-                        .items_center()
-                        .gap(px(space::XS))
-                        .px(px(space::M))
-                        .border_b(px(theme::BORDER_WIDTH))
-                        .border_color(rgb(theme.divider))
-                        .child(field)
-                        .child(actions),
-                )
+                .when(filter_focused || !self.sidebar.filter().is_empty(), |el| {
+                    el.child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .px(px(space::M))
+                            .pt(px(space::S))
+                            .child(field),
+                    )
+                })
                 .child(
                     segmented(theme)
                         .mx(px(space::M))
@@ -1410,7 +1344,7 @@ pub(crate) fn session_row(
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                // Show the pane first: the menu's Rename edits the pane header's title, which
+                // Show the pane first: the menu's Rename edits the title in its tab chip, which
                 // exists only for the pane on screen (same as a left click).
                 shell.open_session(session_id, window, cx);
                 shell.open_pane_menu(session_id, event.position, window, cx);
@@ -1618,7 +1552,7 @@ pub(crate) fn compact_session_row(
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                // As in `session_row`: show the pane first (Rename edits its header).
+                // As in `session_row`: show the pane first (Rename edits its tab chip).
                 shell.open_session(session_id, window, cx);
                 shell.open_pane_menu(session_id, event.position, window, cx);
             }),

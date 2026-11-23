@@ -323,10 +323,8 @@ impl Shell {
             || self.workspace_menu.is_some()
             || self.file_menu.is_some()
             || self.file_tab_menu.is_some()
-            || self.widget_menu.is_some()
             || self.run_menu.is_some()
             || self.workspace_switcher
-            || self.repo_menu
             || self.new_menu
             || self.run_with.is_some()
             || self.fan_out.is_some()
@@ -361,18 +359,10 @@ impl Shell {
         if let Some(menu) = &self.file_tab_menu {
             return Some(self.file_tab_menu_rows(menu));
         }
-        if self.widget_menu.is_some() {
-            return Some(self.widget_menu_rows());
-        }
         if self.workspace_switcher {
             return self
                 .workspace
                 .map(|project_id| self.switcher_rows(project_id));
-        }
-        if self.repo_menu {
-            return self
-                .workspace
-                .map(|project_id| self.repo_menu_rows(project_id));
         }
         if self.new_menu {
             return Some(self.new_menu_rows());
@@ -551,7 +541,8 @@ impl Shell {
 pub(crate) enum Anchor {
     /// The title bar's workspace switcher: where every owner falls back to.
     Switcher,
-    PaneHeader(Ulid),
+    /// The top edge of a pane (`pane_edge`): the keyboard menu of a terminal opens under it.
+    Pane(Ulid),
     FileRow(String),
     FileTab(String),
     WorkspaceRow(Ulid),
@@ -677,7 +668,7 @@ impl Shell {
         };
         let owner = menu_model::owner(&self.menu_focus_state(project_id, window, cx));
         let key = match &owner {
-            menu_model::Owner::Pane(session) => Anchor::PaneHeader(*session),
+            menu_model::Owner::Pane(session) => Anchor::Pane(*session),
             menu_model::Owner::FileRow { path, .. } => Anchor::FileRow(path.clone()),
             menu_model::Owner::FileTab(path) => Anchor::FileTab(path.clone()),
             menu_model::Owner::SidebarRow(sidebar::Target::Workspace(id)) => {
@@ -723,7 +714,7 @@ mod tests {
         let anchors = MenuAnchors::default();
         for key in [
             Anchor::Switcher,
-            Anchor::PaneHeader(id),
+            Anchor::Pane(id),
             Anchor::WorkspaceRow(id),
             Anchor::SessionRow(id),
         ] {
@@ -735,7 +726,7 @@ mod tests {
         anchors
             .0
             .borrow_mut()
-            .insert((other, Anchor::PaneHeader(id)), Bounds::default());
+            .insert((other, Anchor::Pane(id)), Bounds::default());
         anchors.clear(main);
         let left = |anchors: &MenuAnchors| {
             let mut keys: Vec<_> = anchors.0.borrow().keys().cloned().collect();
@@ -747,10 +738,10 @@ mod tests {
             [
                 (main, Anchor::SessionRow(id)),
                 (main, Anchor::WorkspaceRow(id)),
-                (other, Anchor::PaneHeader(id)),
+                (other, Anchor::Pane(id)),
             ]
         );
         anchors.clear_sidebar();
-        assert_eq!(left(&anchors), [(other, Anchor::PaneHeader(id))]);
+        assert_eq!(left(&anchors), [(other, Anchor::Pane(id))]);
     }
 }

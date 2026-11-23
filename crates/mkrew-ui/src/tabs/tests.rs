@@ -691,11 +691,10 @@ fn attach_diff_lists_new_and_hidden_sessions() {
     assert_eq!(attach_diff(&[a], &[a]), (vec![], vec![]));
 }
 
-/// The icon of a tab follows its focused pane: an agent shows its profile, a shell `>_`,
-/// a tab without panes (or with a pane no session is known for) no icon.
+/// An active tab shows one icon per pane in pane order, an inactive one its focused pane's.
 #[test]
-fn a_tab_shows_the_kind_of_its_focused_pane() {
-    let (mut tabs, a, b) = two_panes(); // focused on b
+fn a_tab_shows_pane_icons_active_all_inactive_focused() {
+    let (mut tabs, a, b) = two_panes(); // a | b, focused on b
     let project = tabs.project_id();
     let mut agent = session(project, SessionState::Idle, 1);
     agent.id = a;
@@ -703,27 +702,123 @@ fn a_tab_shows_the_kind_of_its_focused_pane() {
     shell.id = b;
     shell.kind = SessionKind::Shell;
     let sessions = [agent, shell];
+    let tab = tabs.active().unwrap();
 
-    assert_eq!(tab_kind(tabs.active().unwrap(), &sessions), TabKind::Shell);
-    tabs.focus(a);
+    let active = tab_icons(tab, &sessions, true);
     assert_eq!(
-        tab_kind(tabs.active().unwrap(), &sessions),
-        TabKind::Agent("fake".into())
+        active.panes,
+        [PaneIcon::Agent("fake".into()), PaneIcon::Shell]
     );
-    assert_eq!(tab_kind(tabs.active().unwrap(), &[]), TabKind::Empty);
-
-    let mut empty = Tabs::new(project);
-    empty.load(vec![wire(project, "new", 1.0, serde_json::Value::Null)]);
-    assert_eq!(tab_kind(empty.active().unwrap(), &sessions), TabKind::Empty);
+    assert_eq!(active.more, 0);
+    assert_eq!(tab_icons(tab, &sessions, false).panes, [PaneIcon::Shell]);
+    tabs.focus(a);
+    let tab = tabs.active().unwrap();
+    assert_eq!(
+        tab_icons(tab, &sessions, false).panes,
+        [PaneIcon::Agent("fake".into())]
+    );
+    // A pane no session is known for has no icon.
+    assert!(tab_icons(tab, &[], true).panes.is_empty());
+    // The fake agent has no brand logo: the chip draws its glyph in `text_muted`.
+    assert!(crate::icons::AgentLogo::of("fake").is_none());
 }
 
+/// A tab without panes shows nothing; more than three panes end in `+N`; a run pane has its
+/// own icon.
 #[test]
-fn a_default_named_tab_with_one_pane_on_screen_shows_its_session_title() {
+fn a_tab_cuts_pane_icons_after_three_and_has_none_when_empty() {
+    let project = Ulid::new();
+    let mut empty = Tabs::new(project);
+    empty.load(vec![wire(project, "new", 1.0, serde_json::Value::Null)]);
+    let icons = tab_icons(empty.active().unwrap(), &[], true);
+    assert_eq!(
+        icons,
+        TabIcons {
+            status: None,
+            panes: vec![],
+            more: 0
+        }
+    );
+
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "main", 1.0, serde_json::Value::Null)]);
+    let mut sessions = Vec::new();
+    for n in 0..5 {
+        let mut s = session(project, SessionState::Idle, n);
+        if n == 1 {
+            s.kind = SessionKind::Shell;
+            s.title = Some(mkrew_core::run::session_title("dev"));
+        }
+        tabs.split_focused(Axis::Vertical, s.id).unwrap();
+        sessions.push(s);
+    }
+    let tab = tabs.active().unwrap();
+    let active = tab_icons(tab, &sessions, true);
+    assert_eq!(
+        active.panes,
+        [
+            PaneIcon::Agent("fake".into()),
+            PaneIcon::Run,
+            PaneIcon::Agent("fake".into())
+        ]
+    );
+    assert_eq!(active.more, 2);
+    assert_eq!(tab_icons(tab, &sessions, false).more, 0);
+}
+
+/// The status icon shows only a state to notice: needs input beats a working agent; idle, done,
+/// exited, starting and a live run process show none.
+#[test]
+fn a_tab_status_shows_needs_input_then_working_and_nothing_else() {
+    let (tabs, a, b) = two_panes();
+    let project = tabs.project_id();
+    let tab = tabs.active().unwrap();
+    let status = |first: SessionState, second: SessionState, run: bool| {
+        let mut one = session(project, first, 1);
+        one.id = a;
+        let mut two = session(project, second, 2);
+        two.id = b;
+        if run {
+            two.kind = SessionKind::Shell;
+            two.title = Some(mkrew_core::run::session_title("dev"));
+        }
+        tab_icons(tab, &[one, two], true).status
+    };
+    use SessionState::*;
+    assert_eq!(
+        status(Working, NeedsInput, false),
+        Some(TabStatus::NeedsInput)
+    );
+    assert_eq!(
+        status(NeedsInput, Working, false),
+        Some(TabStatus::NeedsInput)
+    );
+    assert_eq!(status(Done, Working, false), Some(TabStatus::Working));
+    assert_eq!(status(Idle, Idle, false), None);
+    assert_eq!(status(Done, Done, false), None);
+    assert_eq!(status(Exited, Exited, false), None);
+    assert_eq!(status(Idle, Starting, false), None);
+    assert_eq!(status(Idle, Idle, true), None, "a live run process");
+    // A working shell or run process is not an agent at work.
+    assert_eq!(status(Idle, Working, true), None);
+}
+
+/// A tab that keeps its default name shows the session title of its focused pane, also among
+/// several panes; a name the user gave the tab wins; the label follows the focus.
+#[test]
+fn a_default_named_tab_shows_the_session_title_of_its_focused_pane() {
     let project = Ulid::new();
     let mut titled = session(project, SessionState::Idle, 1);
     titled.terminal_title = Some("Fix login".into());
-    let untitled = session(project, SessionState::Idle, 2);
-    let sessions = [titled.clone(), untitled.clone()];
+    let mut named = session(project, SessionState::Idle, 2);
+    named.title = Some("Docs".into());
+    let untitled = session(project, SessionState::Idle, 3);
+    let sessions = [titled.clone(), named.clone(), untitled.clone()];
+    let tree = json!({"split":"vertical","ratio":0.5,"children":[
+        pane(titled.id),
+        {"split":"horizontal","ratio":0.5,"children":[pane(named.id), pane(untitled.id)]}
+    ]});
+    // The label of a tab loaded with `layout`; `load` focuses its first pane.
     let label = |title: &str, layout| {
         let mut tabs = Tabs::new(project);
         tabs.load(vec![wire(project, title, 1.0, layout)]);
@@ -738,23 +833,72 @@ fn a_default_named_tab_with_one_pane_on_screen_shows_its_session_title() {
         label("Terminal 12", pane(titled.id)).as_deref(),
         Some("Fix login")
     );
-    // A name the user gave the tab wins; so does the tab name without a session title.
+    assert_eq!(
+        label("Terminal", pane(untitled.id)),
+        None,
+        "no session title"
+    );
+    assert_eq!(
+        label("Terminal", serde_json::Value::Null),
+        None,
+        "empty tab"
+    );
+    // A name the user gave the tab wins, with one pane and with several.
     for title in ["Backend", "Terminal 3b", "Terminal ", "Terminals"] {
         assert_eq!(label(title, pane(titled.id)), None, "{title}");
+        assert_eq!(label(title, tree.clone()), None, "{title}");
     }
-    assert_eq!(label("Terminal", pane(untitled.id)), None);
 
-    // Several panes: each header shows its title; zoomed, the lone pane's shows on the tab.
-    let split =
-        json!({"split":"vertical","ratio":0.5,"children":[pane(untitled.id), pane(titled.id)]});
+    // Several panes: the label follows the focus; the user's pane title is the pane's title.
     let mut tabs = Tabs::new(project);
-    tabs.load(vec![wire(project, "Terminal 2", 1.0, split)]);
-    assert_eq!(session_label(tabs.active().unwrap(), &sessions), None);
-    tabs.focus(titled.id);
-    assert!(tabs.toggle_zoom());
+    tabs.load(vec![wire(project, "Terminal 2", 1.0, tree)]);
+    let shown = |tabs: &Tabs| session_label(tabs.active().unwrap(), &sessions);
+    assert_eq!(shown(&tabs), Some("Fix login"));
+    assert!(tabs.focus(named.id));
+    assert_eq!(shown(&tabs), Some("Docs"));
+    assert!(tabs.focus(untitled.id));
+    assert_eq!(shown(&tabs), None);
+    assert!(tabs.focus(titled.id));
+    assert_eq!(shown(&tabs), Some("Fix login"));
+}
+
+/// A double-click renames the focused pane while the tab keeps its default name; the tab
+/// itself when the user named it, when it has no panes, or when the focused pane is a run pane
+/// (named by its command).
+#[test]
+fn a_double_click_renames_the_focused_pane_of_a_default_named_tab() {
+    let project = Ulid::new();
+    let agent = session(project, SessionState::Idle, 1);
+    let mut run = session(project, SessionState::Idle, 2);
+    run.kind = SessionKind::Shell;
+    run.title = Some("run:BE".into());
+    let sessions = [agent.clone(), run.clone()];
+    let split = json!({"split":"vertical","ratio":0.5,"children":[pane(agent.id), pane(run.id)]});
+    let renames = |title: &str, focus: Ulid| {
+        let mut tabs = Tabs::new(project);
+        tabs.load(vec![wire(project, title, 1.0, split.clone())]);
+        assert!(tabs.focus(focus));
+        double_click_renames(tabs.active().unwrap(), &sessions)
+    };
+
+    assert_eq!(renames("Terminal 2", agent.id), Some(agent.id));
     assert_eq!(
-        session_label(tabs.active().unwrap(), &sessions),
-        Some("Fix login")
+        renames("Terminal", run.id),
+        None,
+        "a run pane is not renamed"
+    );
+    assert_eq!(renames("Backend", agent.id), None, "the user's tab name");
+
+    let mut empty = Tabs::new(project);
+    empty.load(vec![wire(
+        project,
+        "Terminal",
+        1.0,
+        serde_json::Value::Null,
+    )]);
+    assert_eq!(
+        double_click_renames(empty.active().unwrap(), &sessions),
+        None
     );
 }
 
@@ -1118,5 +1262,53 @@ fn a_new_pane_is_born_with_the_given_mode() {
     assert_eq!(
         (tabs.chat_of(a), tabs.chat_of(b)),
         (Some(true), Some(false))
+    );
+}
+
+/// The tab area's children, in paint order: the view chips, a rule, the tabs, a rule between
+/// the pinned tabs and the rest; never a rule at an end.
+#[test]
+fn the_tab_area_orders_view_chips_pinned_tabs_and_the_rest() {
+    use AreaItem::{Rule, Tab, View as Chip};
+    assert_eq!(area_items(false, false, &[]), []);
+    assert_eq!(
+        area_items(false, false, &[true, true, false]),
+        [Tab(0), Tab(1), Rule, Tab(2)]
+    );
+    assert_eq!(
+        area_items(false, false, &[true, true]),
+        [Tab(0), Tab(1)],
+        "no rule after the last group"
+    );
+    assert_eq!(
+        area_items(true, true, &[false, false]),
+        [Chip(View::Editor), Chip(View::Diff), Rule, Tab(0), Tab(1)]
+    );
+    assert_eq!(
+        area_items(false, true, &[true, false]),
+        [Chip(View::Diff), Rule, Tab(0), Rule, Tab(1)]
+    );
+    assert_eq!(
+        area_items(false, true, &[]),
+        [Chip(View::Diff)],
+        "no tabs, no rule"
+    );
+}
+
+/// The child to scroll into view: the active tab while Terminals shows, else the chip of the
+/// shown view; nothing for Board and Docs (they are icons, not children).
+#[test]
+fn the_scroll_target_is_the_shown_chip_or_the_active_tab() {
+    let items = area_items(true, false, &[true, false, false]);
+    // [Editor, Rule, Tab(0), Rule, Tab(1), Tab(2)]
+    assert_eq!(scroll_index(&items, View::Terminals, Some(2)), Some(5));
+    assert_eq!(scroll_index(&items, View::Terminals, Some(0)), Some(2));
+    assert_eq!(scroll_index(&items, View::Editor, Some(2)), Some(0));
+    assert_eq!(scroll_index(&items, View::Board, Some(2)), None);
+    assert_eq!(scroll_index(&items, View::Terminals, None), None);
+    assert_eq!(
+        scroll_index(&items, View::Diff, Some(1)),
+        None,
+        "no Diff chip"
     );
 }

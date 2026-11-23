@@ -1131,7 +1131,7 @@ impl Shell {
             at_root,
             working,
             now,
-            &super::widget_bar::local_offset,
+            &super::limits::local_offset,
         );
         let rewriting = draft.prompt.rewriting();
         let can_send = !draft.busy && !rewriting && !blank;

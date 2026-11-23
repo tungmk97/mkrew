@@ -10,6 +10,7 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
+use crate::board::View;
 use crate::split::{Axis, Direction, Divider, Node, Preset, RESIZE_STEP, Rect};
 
 /// Title of a workspace's first tab; later ones are numbered.
@@ -68,14 +69,6 @@ impl Tab {
 
     pub fn sessions(&self) -> Vec<Ulid> {
         self.layout.as_ref().map(Node::sessions).unwrap_or_default()
-    }
-
-    /// The one pane on screen (zoomed, or the only pane), which then has no header.
-    pub fn single(&self) -> Option<Ulid> {
-        match (self.zoomed, self.layout.as_ref()) {
-            (Some(session), _) | (None, Some(&Node::Pane { session, .. })) => Some(session),
-            _ => None,
-        }
     }
 
     /// Sessions on screen: the zoomed pane alone, else every pane.
@@ -799,46 +792,150 @@ pub fn rename_params(tab: &Tab, draft: &str) -> Option<TabRenameParams> {
     })
 }
 
-/// What a tab's icon shows (SPEC §10).
+/// The status icon in front of a tab chip: only a state the user should notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabStatus {
+    Working,
+    NeedsInput,
+}
+
+/// The icon of one pane in a tab chip.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TabKind {
+pub enum PaneIcon {
     /// An agent pane; the profile id (its badge is looked up by the caller).
     Agent(String),
     Shell,
-    Empty,
+    Run,
 }
 
-/// The kind of the tab's focused pane (`fix_focus` keeps one focused whenever the tab has
-/// panes). `Empty` without panes or when no session is known for the focused one.
-pub fn tab_kind(tab: &Tab, sessions: &[Session]) -> TabKind {
-    let focused = tab
-        .focused()
-        .and_then(|id| sessions.iter().find(|s| s.id == id));
-    match focused {
-        Some(session) if session.kind == SessionKind::Agent => {
-            TabKind::Agent(session.agent_profile.clone())
-        }
-        Some(_) => TabKind::Shell,
-        None => TabKind::Empty,
+/// What a tab chip shows in front of its title.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabIcons {
+    /// `None` unless a pane needs input or an agent works.
+    pub status: Option<TabStatus>,
+    pub panes: Vec<PaneIcon>,
+    /// Panes beyond [`MAX_PANE_ICONS`], shown as `+N`.
+    pub more: usize,
+}
+
+/// Most pane icons an active tab chip shows before `+N`.
+pub const MAX_PANE_ICONS: usize = 3;
+
+/// The icons of `tab`'s chip. Status: needs input beats a working agent; every other state
+/// (idle, done, exited, starting) shows none. Pane icons: the active tab shows one per pane in
+/// pane order (at most [`MAX_PANE_ICONS`], then `more`), an inactive tab only its focused
+/// pane. Panes without a known session are skipped.
+pub fn tab_icons(tab: &Tab, sessions: &[Session], active: bool) -> TabIcons {
+    let ids = tab.sessions();
+    let known = |id: &Ulid| sessions.iter().find(|s| s.id == *id);
+    let state = |wanted: SessionState| {
+        ids.iter().filter_map(known).any(|s| {
+            s.state == wanted && (wanted != SessionState::Working || s.kind == SessionKind::Agent)
+        })
+    };
+    let status = if state(SessionState::NeedsInput) {
+        Some(TabStatus::NeedsInput)
+    } else if state(SessionState::Working) {
+        Some(TabStatus::Working)
+    } else {
+        None
+    };
+    let icon = |s: &Session| match s.kind {
+        SessionKind::Agent => PaneIcon::Agent(s.agent_profile.clone()),
+        _ if mkrew_core::run::command_name(s).is_some() => PaneIcon::Run,
+        _ => PaneIcon::Shell,
+    };
+    let mut panes: Vec<PaneIcon> = if active {
+        ids.iter().filter_map(known).map(icon).collect()
+    } else {
+        tab.focused().iter().filter_map(known).map(icon).collect()
+    };
+    let more = panes.len().saturating_sub(MAX_PANE_ICONS);
+    panes.truncate(MAX_PANE_ICONS);
+    TabIcons {
+        status,
+        panes,
+        more,
     }
 }
 
-/// The session title a tab shows instead of its own: while one pane fills it (no pane header
-/// shows that title) and the tab keeps its default `Terminal` / `Terminal N` name. A name the
-/// user gave the tab always wins.
-pub fn session_label<'a>(tab: &Tab, sessions: &'a [Session]) -> Option<&'a str> {
-    let default = match tab.title.strip_prefix(FIRST_TAB_TITLE) {
+/// Whether `tab` still has its default name: `Terminal` or `Terminal N`.
+fn has_default_title(tab: &Tab) -> bool {
+    match tab.title.strip_prefix(FIRST_TAB_TITLE) {
         Some("") => true,
         Some(rest) => rest
             .strip_prefix(' ')
             .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
         None => false,
-    };
-    let session = tab.single().filter(|_| default)?;
+    }
+}
+
+/// The session title a tab shows instead of its own: the title of its focused pane (no pane
+/// header shows a title), while the tab keeps its default `Terminal` / `Terminal N` name. A
+/// name the user gave the tab always wins. It follows the focus; `None` for a tab without
+/// panes or a focused pane without a title.
+pub fn session_label<'a>(tab: &Tab, sessions: &'a [Session]) -> Option<&'a str> {
+    let focused = tab.focused().filter(|_| has_default_title(tab))?;
     sessions
         .iter()
-        .find(|s| s.id == session)
+        .find(|s| s.id == focused)
         .and_then(crate::history::title)
+}
+
+/// The pane a double-click on `tab` renames (SPEC §11): its focused pane while the tab keeps
+/// its default name, because the tab then shows that pane's title. `None` renames the tab
+/// itself: a name the user gave it, a tab without panes, or a focused run pane (named by its
+/// command, never renamed).
+pub fn double_click_renames(tab: &Tab, sessions: &[Session]) -> Option<Ulid> {
+    let focused = tab.focused().filter(|_| has_default_title(tab))?;
+    let session = sessions.iter().find(|s| s.id == focused)?;
+    mkrew_core::run::command_name(session)
+        .is_none()
+        .then_some(focused)
+}
+
+/// One child of the title bar's tab area, in paint order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AreaItem {
+    /// The Editor or Diff chip.
+    View(View),
+    /// The 1 px rule between two groups.
+    Rule,
+    /// The `n`th terminal tab this window draws (detached tabs are not counted).
+    Tab(usize),
+}
+
+/// The children of the tab area: the Editor / Diff chips (each only while open), a rule, the
+/// tabs (`pinned[n]` is whether the `n`th drawn tab is pinned; pinned ones lead), and a rule
+/// between the pinned tabs and the rest. A rule only sits between two groups.
+pub fn area_items(editor: bool, diff: bool, pinned: &[bool]) -> Vec<AreaItem> {
+    let mut items = Vec::new();
+    if editor {
+        items.push(AreaItem::View(View::Editor));
+    }
+    if diff {
+        items.push(AreaItem::View(View::Diff));
+    }
+    for (at, &pin) in pinned.iter().enumerate() {
+        let after_chips = at == 0 && !items.is_empty();
+        let after_pinned = at > 0 && pinned[at - 1] && !pin;
+        if after_chips || after_pinned {
+            items.push(AreaItem::Rule);
+        }
+        items.push(AreaItem::Tab(at));
+    }
+    items
+}
+
+/// The index in `items` of the child to scroll into view: the active tab (`active` is its
+/// drawn slot) while Terminals shows, else the chip of the shown view. `None` for Board and
+/// Docs, which are icons on the right.
+pub fn scroll_index(items: &[AreaItem], shown: View, active: Option<usize>) -> Option<usize> {
+    items.iter().position(|item| match *item {
+        AreaItem::View(view) => view == shown,
+        AreaItem::Tab(at) => shown == View::Terminals && active == Some(at),
+        AreaItem::Rule => false,
+    })
 }
 
 /// Sessions to attach (in `after` only) and to detach (in `before` only) when the visible

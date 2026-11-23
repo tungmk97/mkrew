@@ -144,9 +144,6 @@ pub const CONTROL_HEIGHT: f32 = 30.0;
 pub const INPUT_HEIGHT: f32 = 32.0;
 /// One segment of a segmented control.
 pub const SEGMENT_HEIGHT: f32 = 26.0;
-/// A segment of the pane header's `Terminal | Chat` switch: with its padding and border the
-/// switch is as tall as [`CONTROL_HEIGHT`], so headers line up with and without it.
-pub const COMPACT_SEGMENT_HEIGHT: f32 = CONTROL_HEIGHT - 2.0 * (SEGMENT_PADDING + BORDER_WIDTH);
 /// A status pill (Idle, In Progress) and an area chip / Git `M` badge.
 pub const PILL_HEIGHT: f32 = 22.0;
 pub const CHIP_HEIGHT: f32 = 20.0;
@@ -161,8 +158,6 @@ pub const PIN_ICON_SIZE: f32 = 13.0;
 pub const SEGMENT_PADDING: f32 = 3.0;
 /// The thin vertical rule before the window controls.
 pub const TITLE_RULE_HEIGHT: f32 = 18.0;
-/// The app logo tile at the left of the title bar.
-pub const APP_LOGO_TILE: f32 = 22.0;
 /// The bottom edge of a key hint (a key cap look).
 pub const KBD_BOTTOM_BORDER: f32 = 2.0;
 /// The Jira list (Board): a row's height, the key column, the toolbar's filter input and the
@@ -191,7 +186,7 @@ pub const WINDOW_HEIGHT: f32 = 760.0;
 /// Smallest main window: the title bar's contents fit (ADR 0034).
 pub const WINDOW_MIN_WIDTH: f32 = 1100.0;
 pub const WINDOW_MIN_HEIGHT: f32 = 560.0;
-/// Smallest detached window (ADR 0096): a tab strip and one pane fit.
+/// Smallest detached window (ADR 0096): a title bar with tabs and one pane fit.
 pub const DETACHED_MIN_WIDTH: f32 = 480.0;
 pub const DETACHED_MIN_HEIGHT: f32 = 320.0;
 /// Where a detached window opened from the keyboard goes: this far right and down of the
@@ -236,8 +231,12 @@ pub mod opacity {
 /// and `space::XS` from the tab's edges.
 pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
 
-/// Thickness of the accent line under the header of a colored pane (ADR 0037).
+/// Thickness of the line at the top of a colored pane (ADR 0037) and of the grip shown on the
+/// drag strip.
 pub const PANE_ACCENT_WIDTH: f32 = 2.0;
+/// Height of the strip along the top edge of a pane in a split tab: hovering it shows a grip,
+/// dragging it moves the pane (ADR 0106).
+pub const PANE_GRIP_HEIGHT: f32 = 8.0;
 
 /// Thickness of the accent line marking where a dragged sidebar row or tab will land.
 pub const DROP_LINE_WIDTH: f32 = 2.0;
@@ -449,9 +448,6 @@ pub const HISTORY_DIALOG_FRACTION: f32 = 0.9;
 /// Width of the "History" dialog's session list.
 pub const HISTORY_LIST_WIDTH: f32 = 280.0;
 
-/// Widest share of a pane header a conflict warning may take (it ellipsizes past that).
-pub const PANE_CONFLICT_MAX_FRACTION: f32 = 0.5;
-
 /// Width of the Docs view's file list.
 pub const DOC_LIST_WIDTH: f32 = 240.0;
 
@@ -620,9 +616,6 @@ pub const PEEK_HOVER_DELAY: Duration = Duration::from_millis(300);
 /// How long a hover peek stays after the mouse left its row, so it can reach the popover.
 pub const PEEK_LEAVE_GRACE: Duration = Duration::from_millis(150);
 
-/// How long a one-line notice stays in the tab bar before it goes away by itself.
-pub const TAB_NOTICE_TIMEOUT: Duration = Duration::from_secs(3);
-
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;
 
@@ -782,10 +775,13 @@ pub struct Theme {
     pub surface_raised: u32,
     /// The workspace sidebar, a shade off `bg`.
     pub sidebar: u32,
-    /// The title bar and the Terminals tab bar (the window chrome around the panes).
+    /// The title bar (the window chrome around the tabs and panes).
     pub chrome: u32,
     /// Board cards and other blocks that sit on `bg`.
     pub card: u32,
+    /// The fill of the shown tab chip in the title bar; always differs from `chrome` (the
+    /// "active tab" rule of `problems`).
+    pub tab_active: u32,
     /// A hovered row or quiet button.
     pub hover: u32,
     /// The selected row (sidebar session, list item).
@@ -854,6 +850,12 @@ pub struct Theme {
     pub status_done: u32,
     pub status_exited: u32,
     pub status_idle: u32,
+    /// The tint of an agent's brand logo in a tab chip (the logo's own color, readable on
+    /// `chrome`: 3:1 as an icon, checked by `problems`).
+    pub brand_claude: u32,
+    pub brand_codex: u32,
+    pub brand_copilot: u32,
+    pub brand_omp: u32,
     pub diff_add_bg: u32,
     pub diff_add_text: u32,
     pub diff_del_bg: u32,
@@ -1006,6 +1008,17 @@ impl Theme {
         }
     }
 
+    /// The tint of `logo` in a tab chip.
+    pub fn brand_color(&self, logo: crate::icons::AgentLogo) -> u32 {
+        use crate::icons::AgentLogo;
+        match logo {
+            AgentLogo::Claude => self.brand_claude,
+            AgentLogo::Codex => self.brand_codex,
+            AgentLogo::Copilot => self.brand_copilot,
+            AgentLogo::Omp => self.brand_omp,
+        }
+    }
+
     /// The pre-restyle palette for the sidebar's session list (see [`Theme::classic`]).
     pub fn classic(&self) -> &Theme {
         self.classic.as_deref().unwrap_or(self)
@@ -1019,6 +1032,7 @@ impl Theme {
             sidebar: 0x0F1013,
             chrome: 0x0F1013,
             card: 0x1C1F24,
+            tab_active: 0x2A2E35,
             hover: 0x1F2227,
             selected: 0x2A2E35,
             selected_ring: 0x3D4380,
@@ -1051,6 +1065,10 @@ impl Theme {
             status_done: 0x57C78A,
             status_exited: 0xEF7B6C,
             status_idle: 0x7D838C,
+            brand_claude: 0xD97757,
+            brand_codex: 0x10A37F,
+            brand_copilot: 0xA371F7,
+            brand_omp: 0x56B6C2,
             // Removed / added lines: danger / success at 9 % over the diff card (`surface`).
             diff_add_bg: 0x182422,
             diff_add_text: 0x6FD39B,
@@ -1114,6 +1132,7 @@ impl Theme {
             sidebar: 0xF7F7F8,
             chrome: 0xF7F7F8,
             card: 0xF7F8FA,
+            tab_active: 0xE6E8EC,
             hover: 0xEEF0F3,
             selected: 0xE6E8EC,
             selected_ring: 0xA7ADEA,
@@ -1146,6 +1165,10 @@ impl Theme {
             status_done: 0x23854F,
             status_exited: 0xC2412F,
             status_idle: 0x8A8F99,
+            brand_claude: 0xBF5B3A,
+            brand_codex: 0x0B7F62,
+            brand_copilot: 0x7C4DD6,
+            brand_omp: 0x0E7490,
             diff_add_bg: 0xE7EFEC,
             diff_add_text: 0x1E6B3A,
             diff_del_bg: 0xF5E9E9,
@@ -1208,6 +1231,7 @@ impl Theme {
             sidebar: 0x191A1F,
             chrome: 0x15161A,
             card: 0x1A1B20,
+            tab_active: 0x262A3D,
             hover: 0x22242B,
             selected: 0x262A3D,
             selected_ring: 0x3D4380,
@@ -1280,6 +1304,7 @@ impl Theme {
             sidebar: 0xF4F5F7,
             chrome: 0xFFFFFF,
             card: 0xFFFFFF,
+            tab_active: 0xE9EAFF,
             hover: 0xEEF0F3,
             selected: 0xE9EAFF,
             selected_ring: 0xA7ADEA,
@@ -1352,6 +1377,7 @@ impl Theme {
             sidebar: 0,
             chrome: 0,
             card: 0,
+            tab_active: 0,
             hover: 0,
             selected: 0,
             selected_ring: 0,
@@ -1391,6 +1417,10 @@ impl Theme {
             status_done: 0,
             status_exited: 0,
             status_idle: 0,
+            brand_claude: 0,
+            brand_codex: 0,
+            brand_copilot: 0,
+            brand_omp: 0,
             diff_add_bg: 0,
             diff_add_text: 0,
             diff_del_bg: 0,
@@ -1456,7 +1486,7 @@ pub struct Palette {
     pub dark: bool,
     /// The main area and the terminal.
     pub bg: u32,
-    /// Sidebar, title bar, tab strip.
+    /// Sidebar, title bar.
     pub chrome: u32,
     /// Panels, popovers, inputs, cards.
     pub surface: u32,
@@ -1624,6 +1654,8 @@ impl Theme {
             add_word,
             del_word,
         ];
+        // A brand logo sits on `chrome` and, in the shown tab, on `tab_active`.
+        let brand_grounds = [p.chrome, mix(p.chrome, p.fg, 0.12)];
         let text = |color| readable(color, p.fg, &grounds, 4.5);
         let on_accent = if contrast(p.bg, p.accent) >= contrast(p.fg, p.accent) {
             p.bg
@@ -1638,6 +1670,7 @@ impl Theme {
             chrome: p.chrome,
             surface: p.surface,
             card: p.surface,
+            tab_active: mix(p.chrome, p.fg, 0.12),
             surface_raised,
             selected: surface_raised,
             hover,
@@ -1694,6 +1727,10 @@ impl Theme {
             syntax_function: text(p.blue),
             teal: text(p.cyan),
             folder: text(p.blue),
+            brand_claude: readable(base.brand_claude, p.fg, &brand_grounds, 3.0),
+            brand_codex: readable(base.brand_codex, p.fg, &brand_grounds, 3.0),
+            brand_copilot: readable(base.brand_copilot, p.fg, &brand_grounds, 3.0),
+            brand_omp: readable(base.brand_omp, p.fg, &brand_grounds, 3.0),
             ansi: p.ansi,
             dark: p.dark,
             ..base
@@ -2263,22 +2300,12 @@ pub fn refresh(mode: ThemeMode, window: &Window, cx: &mut App) {
     cx.set_global(theme.with_fonts(&fonts));
 }
 
-/// System → Light → Dark → System (the title bar toggle, `ToggleTheme`).
+/// System → Light → Dark → System (the `ToggleTheme` command; the toggle left the title bar).
 pub fn next_mode(mode: ThemeMode) -> ThemeMode {
     match mode {
         ThemeMode::System => ThemeMode::Light,
         ThemeMode::Light => ThemeMode::Dark,
         ThemeMode::Dark => ThemeMode::System,
-    }
-}
-
-/// The toggle's icon: sun and moon (follows the OS) / sun / moon.
-pub fn mode_icon(mode: ThemeMode) -> crate::icons::Icon {
-    use crate::icons::Icon;
-    match mode {
-        ThemeMode::System => Icon::SunMoon,
-        ThemeMode::Light => Icon::Sun,
-        ThemeMode::Dark => Icon::Moon,
     }
 }
 
@@ -2321,6 +2348,8 @@ pub fn title_bar_inset(os: Os, fullscreen: bool) -> f32 {
 /// Layout heights from the redesign (ADR 0027), in px at the default font size.
 /// The custom title bar (ADR 0034; was the 44 px toolbar of ADR 0027).
 pub const TITLE_BAR_HEIGHT: f32 = 42.0;
+/// The Editor's file tab strip and the right panel's tab row (the terminal tabs are in the
+/// title bar).
 pub const TAB_STRIP_HEIGHT: f32 = 44.0;
 /// The Git view's repository tabs (multi-repo workspaces): a tab strip.
 pub const GIT_REPO_STRIP_HEIGHT: f32 = 42.0;
@@ -2343,18 +2372,14 @@ pub const STATUS_DOT_LARGE: f32 = 6.0;
 /// One breath of the voice input ring ([`crate::voice::pulse`]); its lowest opacity.
 pub const PULSE_PERIOD: Duration = Duration::from_millis(1600);
 pub const PULSE_MIN_OPACITY: f32 = 0.35;
-/// A pane's status pill ("Idle · 2m") in the tab strip and the pane header.
-pub const STATUS_PILL_HEIGHT: f32 = 24.0;
-/// The widget bar along the bottom of the main window (ADR 0102), in px at the default font
-/// size: its height, the padding at its two ends, the gap between widgets, and the widest a
-/// folder or branch label gets before it ellipsizes. Font size is `font_size::META`; colors
-/// are `chrome`, `border` and `text_muted`.
-pub const WIDGET_BAR_HEIGHT: f32 = 24.0;
-pub const WIDGET_BAR_PADDING: f32 = space::S;
-pub const WIDGET_BAR_GAP: f32 = space::M;
-pub const WIDGET_BAR_LABEL_MAX_WIDTH: f32 = 160.0;
+/// Widest a floating badge over a pane gets: a long conflict warning ellipsizes past it.
+pub const PANE_BADGE_MAX_WIDTH: f32 = 320.0;
 /// Longest tab title before it truncates.
 pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
+/// Narrowest a terminal tab chip gets: the chips shrink to this before the tab area scrolls.
+/// An inactive chip shows the status icon, one pane icon (14 px each), about five title letters
+/// and the ×.
+pub const TAB_MIN_WIDTH: f32 = 120.0;
 /// Reading width of an agent pane: the terminal is at most this wide (≈ 120–140 columns at
 /// the default font) and centered, so the program wraps there (the PTY gets fewer columns).
 pub const READING_WIDTH: f32 = 960.0;
@@ -2508,10 +2533,21 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
     }
     // The taskbar badge numeral on the needs-input amber (WCAG 1.4.11, 3:1).
     check("badge ink", t.badge_ink(), t.status_needs_input, 3.0);
-    // The widget bar (ADR 0102) is `chrome`; its text is META size, so 4.5:1 (not the 3:1 of
-    // large or graphical marks): the labels, the amber limit and the red limit.
-    for fg in [t.text_muted, t.status_needs_input, t.danger_text] {
-        check("widget bar", fg, t.chrome, 4.5);
+    // The limits chip (ADR 0106) sits on `chrome` in the title bar in body text: 4.5:1 for the
+    // amber (80 to 94%) and the red (95% and more).
+    for fg in [t.status_needs_input, t.danger_text] {
+        check("limits chip", fg, t.chrome, 4.5);
+    }
+    // The shown tab chip of the title bar (ADR 0106) must stand out from `chrome`, and its
+    // text must read on it.
+    check("active tab", t.tab_active, t.chrome, 1.1);
+    check("active tab", t.text, t.tab_active, 4.5);
+    // An agent's brand logo in a tab chip is an icon on `chrome` and, in the shown tab, on
+    // `tab_active` (WCAG 1.4.11, 3:1).
+    for logo in crate::icons::AgentLogo::ALL {
+        for ground in [t.chrome, t.tab_active] {
+            check("brand logo", t.brand_color(*logo), ground, 3.0);
+        }
     }
     found
 }
@@ -2712,9 +2748,30 @@ mod tests {
                 },
             ),
             (
-                "widget bar",
+                "limits chip",
                 Theme {
-                    chrome: t.text_muted,
+                    chrome: t.status_needs_input,
+                    ..t.clone()
+                },
+            ),
+            (
+                "active tab",
+                Theme {
+                    tab_active: t.chrome,
+                    ..t.clone()
+                },
+            ),
+            (
+                "brand logo",
+                Theme {
+                    brand_claude: t.chrome,
+                    ..t.clone()
+                },
+            ),
+            (
+                "brand logo",
+                Theme {
+                    tab_active: t.brand_codex,
                     ..t.clone()
                 },
             ),
@@ -3146,17 +3203,6 @@ mod tests {
         assert_eq!(title_bar_inset(Os::Mac, true), space::M);
         assert_eq!(title_bar_inset(Os::Windows, false), space::M);
         assert_eq!(title_bar_inset(Os::Linux, true), space::M);
-    }
-
-    #[test]
-    fn the_widget_bar_tokens_scale_and_sit_on_the_spacing_scale() {
-        assert_eq!(
-            rems_px(WIDGET_BAR_HEIGHT),
-            gpui::rems(WIDGET_BAR_HEIGHT / 13.0)
-        );
-        for step in [WIDGET_BAR_PADDING, WIDGET_BAR_GAP] {
-            assert!([4.0, 8.0, 12.0, 16.0, 24.0, 32.0].contains(&step), "{step}");
-        }
     }
 
     #[test]

@@ -210,9 +210,6 @@ pub enum Command {
     /// Show or hide the session panel right of Terminals (SPEC §10); from another view it
     /// shows Terminals with the panel open.
     ToggleInspector,
-    /// Show or hide the widget bar at the bottom of the main window (ADR 0102); remembered as
-    /// `[ui] widget_bar`.
-    ToggleWidgetBar,
     /// Start recording the microphone, or stop and type the speech as text into the field or
     /// terminal that has the keyboard (SPEC §20G).
     VoiceInput,
@@ -380,7 +377,6 @@ impl Command {
             Command::ToggleSidebar,
             Command::ToggleCompactSidebar,
             Command::ToggleInspector,
-            Command::ToggleWidgetBar,
             Command::VoiceInput,
             Command::AskAi,
             Command::ContextMenu,
@@ -494,7 +490,6 @@ impl Command {
             Command::ToggleSidebar => "toggle_sidebar".into(),
             Command::ToggleCompactSidebar => "toggle_compact_sidebar".into(),
             Command::ToggleInspector => "toggle_inspector".into(),
-            Command::ToggleWidgetBar => "toggle_widget_bar".into(),
             Command::VoiceInput => "voice_input".into(),
             Command::AskAi => "ask_ai".into(),
             Command::ContextMenu => "context_menu".into(),
@@ -607,7 +602,6 @@ impl Command {
             Command::ToggleFullScreen => "ctrl-cmd-f",
             Command::ToggleSidebar => "cmd-b",
             Command::ToggleInspector => "cmd-shift-y",
-            Command::ToggleWidgetBar => "cmd-shift-b",
             Command::VoiceInput => "ctrl-cmd-v",
             Command::AskAi => "cmd-shift-g",
             Command::ContextMenu => "ctrl-cmd-m",
@@ -735,7 +729,6 @@ impl Command {
             Command::ToggleSidebar => "ctrl-shift-b".into(),
             Command::ToggleCompactSidebar => "ctrl-alt-b".into(),
             Command::ToggleInspector => "ctrl-shift-y".into(),
-            Command::ToggleWidgetBar => "ctrl-alt-shift-j".into(),
             Command::VoiceInput => "ctrl-shift-d".into(),
             Command::AskAi => "ctrl-shift-g".into(),
             Command::ContextMenu => "shift-f10".into(),
@@ -1055,6 +1048,10 @@ impl Keymap {
         // Applied all at once, so two commands can swap keys.
         let mut overrides: Vec<(Command, String)> = Vec::new();
         for (name, value) in table {
+            // The widget bar is gone (ADR 0106): its binding is dropped, not reported.
+            if name == "toggle_widget_bar" {
+                continue;
+            }
             let Some(command) = Command::from_name(&name) else {
                 errors.push(KeymapError::UnknownCommand(name));
                 continue;
@@ -1580,15 +1577,8 @@ mod tests {
         assert_eq!(keymap.label(Command::ToggleInspector), "Ctrl+Shift+Y");
         // Global: also while a terminal has focus (it must not reach the agent).
         assert_eq!(Command::ToggleInspector.context(), None);
-        assert_eq!(bound("ctrl-alt-shift-j"), Some(Command::ToggleWidgetBar));
-        assert_eq!(keymap.label(Command::ToggleWidgetBar), "Ctrl+Alt+Shift+J");
         // Global like the sidebar toggles; `ctrl-shift-j` stays Toggle theme.
-        assert_eq!(Command::ToggleWidgetBar.context(), None);
         assert_eq!(bound("ctrl-shift-j"), Some(Command::ToggleTheme));
-        assert_eq!(
-            Command::from_name("toggle_widget_bar"),
-            Some(Command::ToggleWidgetBar)
-        );
         assert_eq!(bound("ctrl-shift-d"), Some(Command::VoiceInput));
         assert_eq!(keymap.label(Command::VoiceInput), "Ctrl+Shift+D");
         // Global: it must reach the shell while a terminal or a text field has the keyboard.
@@ -1803,6 +1793,14 @@ mod tests {
         ] {
             assert_eq!(keymap.label(command), defaults.label(command));
         }
+    }
+
+    /// ADR 0106 removed the widget bar; a file that still binds its command loads without an error.
+    #[test]
+    fn a_binding_of_the_retired_widget_bar_command_is_ignored() {
+        let (keymap, errors) = Keymap::parse("toggle_widget_bar = \"ctrl-alt-f11\"\n");
+        assert_eq!(errors, []);
+        assert_eq!(keymap.command_for(&keystroke("ctrl-alt-f11")), None);
     }
 
     #[test]

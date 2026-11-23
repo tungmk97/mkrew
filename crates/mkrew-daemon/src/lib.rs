@@ -17,7 +17,6 @@ pub mod ipc;
 mod launch;
 mod limits;
 pub mod lock;
-mod machine;
 mod notify;
 mod omp_recap;
 mod plan;

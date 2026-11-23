@@ -18,29 +18,6 @@ fn each_view_maps_to_its_own_show_command() {
     );
 }
 
-#[test]
-fn the_view_bar_lists_the_editor_and_the_diff_only_while_open() {
-    let bar = |docs, editor, diff| View::bar(docs, editor, diff).collect::<Vec<_>>();
-    assert_eq!(
-        bar(true, false, false),
-        [View::Terminals, View::Board, View::Docs]
-    );
-    assert_eq!(
-        bar(true, true, true),
-        [
-            View::Terminals,
-            View::Board,
-            View::Docs,
-            View::Editor,
-            View::Diff
-        ]
-    );
-    assert_eq!(
-        bar(false, false, true),
-        [View::Terminals, View::Board, View::Diff]
-    );
-}
-
 fn task(project_id: Ulid, title: &str, status: TaskStatus, position: f64) -> Task {
     Task {
         id: Ulid::new(),

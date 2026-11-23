@@ -1,4 +1,5 @@
-//! What a detached window shows (ADR 0096): title bar, its tab strip, the active tab.
+//! What a detached window shows (ADR 0096, ADR 0106): the shared title bar with its tabs, the
+//! active tab.
 
 use crate::*;
 
@@ -82,9 +83,8 @@ impl Shell {
             .bg(rgb(theme.bg))
             .font_family(theme.ui_font_family.clone())
             .child(tear_off_catcher(cx))
-            .child(self.render_detached_title_bar(key, &title, &theme, window, cx))
+            .child(self.render_title_bar(host, now, &theme, window, cx))
             .children(self.render_reconnect_banner(&theme, cx))
-            .child(self.render_detached_strip(key, &theme, cx))
             .child(body)
             .children(self.reconnecting().then(inert_layer))
             .children(self.detached_overlays(host, &theme, window, cx))
@@ -136,153 +136,30 @@ impl Shell {
         overlays
     }
 
-    /// The title bar of a detached window: logo, the shown tab's title, a drag area, "Move all
-    /// back" and, on Windows, minimize, maximize and close (as the main bar, without its
-    /// workspace controls).
-    fn render_detached_title_bar(
-        &self,
-        key: WindowKey,
-        title: &str,
-        theme: &Theme,
-        window: &Window,
-        cx: &mut Context<'_, Self>,
-    ) -> impl IntoElement {
-        // An open dialog keeps the mouse too: the bar's button is inert, only the drag area
-        // and the window controls stay live.
-        let modal = self.modal_open() || self.reconnecting();
-        let controls = DRAWN_CONTROLS && !window.is_fullscreen();
-        let mut bar = div()
-            .flex_none()
-            .h(theme::rems_px(theme::TITLE_BAR_HEIGHT))
-            .flex()
-            .items_center()
-            .gap(px(space::S))
-            .pl(px(theme::title_bar_inset(
-                Os::CURRENT,
-                window.is_fullscreen(),
-            )))
-            .bg(rgb(theme.chrome))
-            .border_b(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
-            .font_family(theme.ui_font_family.clone())
-            .child(app_logo(theme))
-            // Not a control: the title is part of the drag area.
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .window_control_area(WindowControlArea::Drag)
-                    .when(cfg!(target_os = "macos"), |el| {
-                        el.on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|_, event: &MouseDownEvent, window, _| {
-                                if event.click_count == 2 {
-                                    window.titlebar_double_click();
-                                } else {
-                                    window.start_window_move();
-                                }
-                            }),
-                        )
-                    })
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(font_size::BODY)
-                            .text_color(rgb(theme.text_muted))
-                            .child(title.to_owned()),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::XS))
-                    .when(!controls, |el| el.pr(px(space::M)))
-                    .child(
-                        icon_button("move-all-back", Icon::Minimize2, theme)
-                            .tooltip(tooltip(theme, "Move all tabs back to the main window", ""))
-                            .on_click(cx.listener(move |shell, _, window, cx| {
-                                shell.move_all_back(key, window, cx);
-                            })),
-                    )
-                    .when(modal, |el| el.relative().child(inert_layer())),
-            );
-        if controls {
-            // No click handlers: Windows hit-tests these areas and runs the action itself.
-            let max_icon = if window.is_maximized() {
-                Icon::Copy
-            } else {
-                Icon::Square
-            };
-            bar = bar.child(
-                div()
-                    .flex_none()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    // A thin rule sets the window's own controls apart from the app's.
-                    .child(
-                        div()
-                            .w(px(theme::BORDER_WIDTH))
-                            .h(theme::rems_px(theme::TITLE_RULE_HEIGHT))
-                            .mr(px(space::XS))
-                            .bg(rgb(theme.divider)),
-                    )
-                    .child(window_control(
-                        "win-min",
-                        Icon::Minus,
-                        WindowControlArea::Min,
-                        theme,
-                    ))
-                    .child(window_control(
-                        "win-max",
-                        max_icon,
-                        WindowControlArea::Max,
-                        theme,
-                    ))
-                    .child(window_control(
-                        "win-close",
-                        Icon::X,
-                        WindowControlArea::Close,
-                        theme,
-                    )),
-            );
-        }
-        bar
-    }
-
-    /// The strip of a detached window: a chip per tab (its workspace in front), the layout
-    /// button and the ⋯ menu. No `+`: new tabs are made in the main window. The strip and chip
-    /// bounds are kept in `HostUi::strip` for drops from other windows.
-    fn render_detached_strip(
+    /// The tab area of a detached window's title bar: a chip per tab, its workspace name in
+    /// front. No `+`: new tabs are made in the main window. The strip and chip bounds are kept
+    /// in `HostUi::strip` for drops from other windows (`record_strip`).
+    pub(crate) fn render_detached_tab_area(
         &self,
         key: WindowKey,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        let host = HostId::Detached(key);
         let tabs = self.detached.tabs_of(key);
         let active = self.detached.active(key);
-        let active_id = active.map(|DockTab::Terminal { tab_id, .. }| tab_id);
-        let strip = (self.hosts.get(&HostId::Detached(key)))
+        let strip = (self.hosts.get(&host))
             .map(|ui| ui.strip.clone())
             .unwrap_or_default();
         let sessions = self.sidebar.sessions();
-        let chip_elements: Vec<gpui::AnyElement> = tabs
+        let chips: Vec<gpui::AnyElement> = tabs
             .iter()
             .enumerate()
             .filter_map(|(index, dock)| {
                 let DockTab::Terminal { project, tab_id } = *dock;
                 let tab = self.tabs.get(&project)?.tab(tab_id)?;
-                // F2 on a single pane: its rename field takes the tab's place (no header).
-                if let Some(renaming) = self.renaming.as_ref().filter(|r| {
-                    r.target == RenameTarget::Tab(tab_id)
-                        || tab.single().map(RenameTarget::Session).as_ref() == Some(&r.target)
-                }) {
+                // The tab's own rename field takes its place, also while its pane is renamed.
+                if let Some(renaming) = self.tab_renaming(tab) {
                     return Some(self.render_rename(&renaming.draft, theme, cx));
                 }
                 let workspace = (self.sidebar.projects().iter())
@@ -310,62 +187,28 @@ impl Shell {
                         cx,
                     )
                     .child(record_strip(strip.clone(), Some(index)));
-                Some(self.reorderable(chip.into_any_element(), item, true, space::XS, theme, cx))
+                Some(self.reorderable_shrinking(
+                    chip.into_any_element(),
+                    item,
+                    true,
+                    space::XS,
+                    Some(theme::TAB_MIN_WIDTH),
+                    theme,
+                    cx,
+                ))
             })
             .collect();
-        div()
-            .flex_none()
-            .relative()
-            .h(theme::rems_px(theme::TAB_STRIP_HEIGHT))
-            .flex()
-            .items_center()
-            .gap(px(space::XS))
-            .px(px(space::S))
-            .bg(rgb(theme.surface))
-            .border_b(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
-            .font_family(theme.ui_font_family.clone())
-            .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
-                shell.drop_reordered(item, window, cx);
-            }))
-            // First: the strip records before its chips (prepaint goes parent first).
-            .child(record_strip(strip, None))
-            .children(chip_elements)
-            // Pushes the notices and the layout / ⋯ group to the right.
-            .child(div().flex_1())
-            .children(
-                (self.tab_error.as_ref())
-                    .filter(|(host, _)| *host == HostId::Detached(key))
-                    .map(|(_, error)| notice(theme.text, format!("✕ {error}"))),
-            )
-            .children(
-                (self.tab_notice.as_ref())
-                    .filter(|(host, _)| *host == HostId::Detached(key))
-                    .map(|(_, text)| notice(theme.text_muted, text.clone())),
-            )
-            .child(
-                icon_button("tab-split", Icon::Columns2, theme)
-                    .tooltip(tooltip(
-                        theme,
-                        "Split or pick a layout",
-                        self.keymap.label(Command::SplitRight),
-                    ))
-                    .on_click(cx.listener(|shell, event: &gpui::ClickEvent, window, cx| {
-                        shell.open_layout_menu(event.position(), window, cx);
-                    })),
-            )
-            .when_some(active_id, |bar, tab_id| {
-                bar.child(
-                    icon_button("tab-menu-button", Icon::Ellipsis, theme)
-                        .tooltip(tooltip(theme, "Tab and pane menu", ""))
-                        .on_click(cx.listener(
-                            move |shell, event: &gpui::ClickEvent, window, cx| {
-                                shell.open_tab_menu(tab_id, event.position(), window, cx);
-                            },
-                        )),
-                )
-            })
-            .children(self.drop_hint_line(HostId::Detached(key), theme))
+        // The key is the scroll target only, as in `render_tab_area`; the index counts the
+        // chips built, which skip a tab that no longer resolves.
+        let active_chip = active.and_then(|DockTab::Terminal { tab_id, .. }| {
+            let index = (tabs.iter())
+                .filter(|DockTab::Terminal { project, tab_id }| {
+                    (self.tabs.get(project)).is_some_and(|set| set.tab(*tab_id).is_some())
+                })
+                .position(|dock| Some(*dock) == active)?;
+            Some((SharedString::from(format!("tab/{tab_id:?}")), index))
+        });
+        self.tab_area_frame(host, chips, active_chip, None, theme, cx)
             .into_any_element()
     }
 }

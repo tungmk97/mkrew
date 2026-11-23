@@ -1,7 +1,7 @@
 # 0102 - Widget bar
 
 - Date: 2026-11-22
-- Status: accepted (amends ADR 0054, which removed the status bar)
+- Status: accepted (amends ADR 0054, which removed the status bar); the bar was removed by ADR 0106, the limits path (`agent.limits`, `limits.get`, `limits.report`, `mk statusline`) stays
 - Milestone: none (Tern-inspired update, sub-project 3; spec `docs/superpowers/specs/2026-11-22-widget-bar-design.md`, plan `docs/superpowers/plans/2026-11-22-widget-bar.md`)
 
 ## Context

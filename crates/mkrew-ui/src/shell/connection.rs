@@ -45,7 +45,6 @@ impl Shell {
         let reading_default = ui.reading_width;
         let chat_default = ui.chat_default;
         let board_all = ui.board_all_workspaces;
-        let (widget_bar, widgets_hidden) = (ui.widget_bar, ui.widgets_hidden);
         let (md_mode, md_split) = (ui.md_mode, files_view::md_split_share(ui.md_split));
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
@@ -159,6 +158,7 @@ impl Shell {
                     if shell.toasts.expire(Instant::now()) {
                         cx.notify();
                     }
+                    shell.warn_running_sessions(cx);
                     if shell.windows_dirty {
                         shell.save_windows(cx);
                     }
@@ -312,8 +312,7 @@ impl Shell {
             loading_tabs: HashSet::new(),
             early_tab_events: Vec::new(),
             reveal: None,
-            tab_error: None,
-            tab_notice: None,
+            running_warned: HashSet::new(),
             starting_pane: None,
             router: Router::default(),
             panes: HashMap::new(),
@@ -359,7 +358,6 @@ impl Shell {
             workspace_menu: None,
             file_menu: None,
             file_tab_menu: None,
-            widget_menu: None,
             tab_menu: None,
             card_menu: None,
             menu_focus: cx.focus_handle(),
@@ -377,7 +375,6 @@ impl Shell {
             run_setup_drag: scrollbar::Drag::default(),
             run_menu: None,
             workspace_switcher: false,
-            repo_menu: false,
             new_menu: false,
             empty_workspaces_open: false,
             collapsed_groups: HashSet::new(),
@@ -423,9 +420,7 @@ impl Shell {
             jira_filter_focus: cx.focus_handle(),
             jira_scroll: ScrollHandle::new(),
             board_all,
-            widget_bar,
-            widgets_hidden,
-            widget_data: mkrew_ui::widget_bar::WidgetData::default(),
+            limits: mkrew_ui::limits::Limits::default(),
             selected_card: None,
             starting: HashSet::new(),
             run_with: None,
@@ -747,9 +742,6 @@ impl Shell {
                 shell.status = Status::Disconnected;
                 shell.report_machine_state(MachineState::Reconnecting);
                 shell.connection = None;
-                // The load figures belong to the daemon that went away; the limits stay
-                // until the new connection's list replaces them (`reset_connection_state`).
-                shell.widget_data.clear_machine();
                 // Kept with its draft: `save_task` / `delete_task` do nothing without a
                 // connection, and an in-flight save is not waited for.
                 if let Some(dialog) = shell.task_dialog.as_mut() {
@@ -853,7 +845,7 @@ impl Shell {
         self.loading_tabs.clear();
         self.early_tab_events.clear();
         self.reveal = None;
-        self.tab_error = None;
+        self.running_warned.clear();
         self.router.clear();
         self.panes.clear();
         self.link_subscriptions.clear();
@@ -899,7 +891,7 @@ impl Shell {
             .filter_map(|(id, view)| Some((id, view.into_commit_draft()?)))
             .collect();
         self.git_summary = None;
-        self.widget_data.clear_limits();
+        self.limits.clear();
         self.close_popups(window, cx);
     }
 
@@ -1080,8 +1072,6 @@ impl Shell {
                     self.reading_default = settings.ui.reading_width;
                     self.chat_default = settings.ui.chat_default;
                     self.board_all = settings.ui.board_all_workspaces;
-                    self.widget_bar = settings.ui.widget_bar;
-                    self.widgets_hidden = settings.ui.widgets_hidden.clone();
                     self.follow_md_mode(settings.ui.md_mode);
                     if !self.md_split_dragging {
                         self.md_split = files_view::md_split_share(settings.ui.md_split);
@@ -1217,7 +1207,6 @@ impl Shell {
             sidebar: self.sidebar_layout.mode(),
             modal: self.modal_open(),
             all_board: self.all_board_shown(),
-            widget_bar: self.widget_bar,
         }
     }
 
@@ -1257,7 +1246,7 @@ impl Shell {
                 data_changed |= self.usages.apply(event);
                 data_changed |= self.plans.apply(event);
                 data_changed |= self.ports.apply(event);
-                data_changed |= self.widget_data.apply(event);
+                data_changed |= self.limits.apply(event);
                 data_changed |= self.composers.apply(event);
                 if data_changed {
                     let shown = self.batch_shown(&mut shown_now, window);

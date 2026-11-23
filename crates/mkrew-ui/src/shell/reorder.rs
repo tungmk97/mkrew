@@ -1,4 +1,4 @@
-//! Drag to reorder, one look for the sidebar's workspace cards and rows, the tab strip and the
+//! Drag to reorder, one look for the sidebar's workspace cards and rows, the tab area and the
 //! Files tabs: a small chip follows the pointer, the dragged item stays dim in its place and an
 //! accent line marks the gap it lands in (the half of the item under the pointer picks the
 //! side).
@@ -16,7 +16,7 @@ pub(crate) enum ReorderList {
     Workspaces(bool),
     /// A workspace's pinned (`true`) or unpinned Files tabs.
     FileTabs(Ulid, bool),
-    /// The tab strip of a detached window.
+    /// The tab area of a detached window.
     Detached(WindowKey),
 }
 
@@ -57,6 +57,21 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        self.reorderable_shrinking(element, item, horizontal, gap, None, theme, cx)
+    }
+
+    /// [`Self::reorderable`] for a chip that shrinks down to `shrink_to` px in a row.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reorderable_shrinking(
+        &self,
+        element: gpui::AnyElement,
+        item: DraggedItem,
+        horizontal: bool,
+        gap: f32,
+        shrink_to: Option<f32>,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
         let (list, index) = (item.list, item.index);
         let current = self
             .reorder
@@ -73,6 +88,9 @@ impl Shell {
         div()
             .id(SharedString::from(format!("reorder-{list:?}-{index}")))
             .relative()
+            // A shrinking tab: the wrapper is a flex row too (the chip inside shrinks with it)
+            // and keeps the chip's minimum, or its content width would stop the shrinking.
+            .when_some(shrink_to, |el, min| el.flex().min_w(px(min)))
             .when(dragging, |el| el.opacity(opacity::DRAG_SOURCE))
             .on_drag(item, move |item, offset, _, cx| {
                 let start = Reorder {
@@ -134,7 +152,7 @@ impl Shell {
             .into_any_element()
     }
 
-    /// A reorder drag was released over its list (the sidebar or the tab strip): the item moves
+    /// A reorder drag was released over its list (the sidebar or the tab area): the item moves
     /// to the gap the line showed.
     pub(crate) fn drop_reordered(
         &mut self,

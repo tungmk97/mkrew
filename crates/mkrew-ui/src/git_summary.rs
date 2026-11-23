@@ -1,16 +1,10 @@
-//! The git state of the shown workspace for the title bar (SPEC §10, ADR 0029): the branch
-//! chip (`master` / `2 repos`, after a branch icon; with several repositories it opens a
-//! dropdown of each one's branch) and the `Git N` badge. One `RepoSummary` per repository of
-//! the workspace folder, reduced from its `git.status` (Working mode). Pure; `main.rs` loads it.
+//! The git state of the shown workspace (SPEC §10, ADR 0029): the `Git N` badge and the branch
+//! name of the chat's branch chip. One `RepoSummary` per repository of the workspace folder,
+//! reduced from its `git.status` (Working mode). Pure; `main.rs` loads it.
 
 use std::collections::HashSet;
 
 use mkrew_protocol::GitStatus;
-
-use crate::git_history::short_hash;
-
-/// How the workspace folder's own repository is named in the tooltip.
-const ROOT_NAME: &str = "(root)";
 
 /// One repository of a workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -58,11 +52,6 @@ impl RepoSummary {
         }
     }
 
-    /// The checked-out branch, `detached` on a detached HEAD.
-    pub fn branch_name(&self) -> &str {
-        self.branch.as_deref().unwrap_or("detached")
-    }
-
     /// `Clean`, `1 change`, `N changes`.
     pub fn state(&self) -> String {
         match self.changed() {
@@ -72,18 +61,9 @@ impl RepoSummary {
         }
     }
 
-    /// `fe — main · 1a2b3c4`.
-    fn line(&self) -> String {
-        let name = if self.repo.is_empty() {
-            ROOT_NAME
-        } else {
-            &self.repo
-        };
-        let branch = self.branch.as_deref().unwrap_or("detached HEAD");
-        match self.head.as_deref() {
-            Some(head) => format!("{name} — {branch} · {}", short_hash(head)),
-            None => format!("{name} — {branch} · no commits"),
-        }
+    /// The checked-out branch, `detached` on a detached HEAD.
+    pub fn branch_name(&self) -> &str {
+        self.branch.as_deref().unwrap_or("detached")
     }
 }
 
@@ -106,20 +86,6 @@ impl GitSummary {
             [one] => Some(one.branch_name().to_owned()),
             many => Some(format!("{} repos", many.len())),
         }
-    }
-
-    /// One line per repository; `None` when there is none.
-    pub fn branch_tooltip(&self) -> Option<String> {
-        if self.repos.is_empty() {
-            return None;
-        }
-        Some(
-            self.repos
-                .iter()
-                .map(RepoSummary::line)
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
     }
 }
 
@@ -160,23 +126,15 @@ mod tests {
     fn one_repo_label_is_its_branch() {
         let s = summary(&[("", status(Some("master"), Some("1a2b3c4d5e6f")))]);
         assert_eq!(s.branch_label().as_deref(), Some("master"));
-        assert_eq!(
-            s.branch_tooltip().as_deref(),
-            Some("(root) — master · 1a2b3c4")
-        );
     }
 
     #[test]
-    fn many_repos_label_counts_them_and_the_tooltip_lists_each() {
+    fn many_repos_label_counts_them() {
         let s = summary(&[
             ("fe", status(Some("main"), Some("1a2b3c4d5e6f"))),
             ("be", status(Some("feature/x"), Some("9f8e7d6c5b4a"))),
         ]);
         assert_eq!(s.branch_label().as_deref(), Some("2 repos"));
-        assert_eq!(
-            s.branch_tooltip().as_deref(),
-            Some("fe — main · 1a2b3c4\nbe — feature/x · 9f8e7d6")
-        );
     }
 
     /// The workspace folder has no `.git` (git.repos has no `""`), but two children do: the
@@ -228,53 +186,11 @@ mod tests {
     fn a_detached_head_still_has_a_label() {
         let s = summary(&[("", status(None, Some("1a2b3c4d5e6f")))]);
         assert_eq!(s.branch_label().as_deref(), Some("detached"));
-        assert_eq!(
-            s.branch_tooltip().as_deref(),
-            Some("(root) — detached HEAD · 1a2b3c4")
-        );
-        let fresh = summary(&[("", status(Some("main"), None))]);
-        assert_eq!(
-            fresh.branch_tooltip().as_deref(),
-            Some("(root) — main · no commits")
-        );
-    }
-
-    /// The title bar's repository dropdown: a row per repository with its branch and state.
-    #[test]
-    fn dropdown_rows_name_each_repo_with_its_branch_and_state() {
-        let mut one = status(Some("main"), Some("aaaaaaaa"));
-        one.unstaged = vec![file("a.rs", ChangeKind::Modified)];
-        let mut two = status(None, Some("bbbbbbbb"));
-        two.untracked = vec![
-            file("n.txt", ChangeKind::Untracked),
-            file("m.txt", ChangeKind::Untracked),
-        ];
-        let s = summary(&[
-            ("", status(Some("dev"), Some("cccccccc"))),
-            ("fe", one),
-            ("be", two),
-        ]);
-        let rows: Vec<_> = s
-            .repos
-            .iter()
-            .map(|r| (r.label("EA"), r.branch_name(), r.state()))
-            .collect();
-        assert_eq!(
-            rows,
-            [
-                ("EA", "dev", "Clean".to_owned()),
-                ("fe", "main", "1 change".to_owned()),
-                ("be", "detached", "2 changes".to_owned()),
-            ]
-        );
     }
 
     #[test]
     fn no_repository_means_no_chip_and_no_badge() {
         let s = GitSummary::default();
-        assert_eq!(
-            (s.branch_label(), s.branch_tooltip(), s.changed()),
-            (None, None, 0)
-        );
+        assert_eq!((s.branch_label(), s.changed()), (None, 0));
     }
 }

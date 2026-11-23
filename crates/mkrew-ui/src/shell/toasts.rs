@@ -136,23 +136,19 @@ impl Shell {
         )
     }
 
-    /// A one-line notice in the tab bar of `host`'s window (nothing went wrong, so no toast
-    /// card); it goes away by itself.
-    pub(crate) fn show_tab_notice(&mut self, host: HostId, text: &str, cx: &mut Context<'_, Self>) {
-        let text = text.to_owned();
-        self.tab_notice = Some((host, text.clone()));
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(theme::TAB_NOTICE_TIMEOUT)
-                .await;
-            let _ = this.update(cx, |shell, cx| {
-                if shell.tab_notice.as_ref().map(|(_, shown)| shown) == Some(&text) {
-                    shell.tab_notice = None;
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+    /// One toast when the shown workspace's running sessions cross
+    /// `lifecycle::RUNNING_WARN_ABOVE` upward; not again until the count is back at or below it.
+    pub(crate) fn warn_running_sessions(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        let alert = lifecycle::running_alert(
+            self.sidebar.sessions(),
+            project_id,
+            &mut self.running_warned,
+        );
+        if let Some(text) = alert {
+            self.toast_info(text, cx);
+        }
     }
 }

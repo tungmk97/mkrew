@@ -109,8 +109,8 @@ use mkrew_ui::split::{Axis, Direction, Divider, Preset, drop_axis};
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{
-    FIRST_TAB_TITLE, Tab, TabKind, Tabs, newest_unplaced, on_screen, rename_params, session_label,
-    tab_kind,
+    AreaItem, FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, area_items, double_click_renames,
+    newest_unplaced, on_screen, rename_params, scroll_index, session_label, tab_icons,
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
@@ -429,13 +429,6 @@ struct FileTabMenu {
     position: gpui::Point<gpui::Pixels>,
 }
 
-/// The open right-click menu of the widget bar (ADR 0102): one checkable row per widget and
-/// "Hide widget bar".
-struct WidgetMenu {
-    /// Window position of the click.
-    position: gpui::Point<gpui::Pixels>,
-}
-
 /// The menu of a Board card (SPEC §10): its hover buttons as rows, for the keyboard.
 struct CardMenu {
     task_id: Ulid,
@@ -487,11 +480,8 @@ struct Shell {
     /// The session a `mkrew://` link asked for when it started this UI (ADR 0079); shown
     /// after the first session list.
     pending_jump: Option<(Ulid, Ulid)>,
-    /// Last failure of a tab action (new tab), with the window that shows it.
-    tab_error: Option<(HostId, String)>,
-    /// A one-line notice in the tab bar that goes away by itself (link hints found none), with
-    /// the window whose strip shows it.
-    tab_notice: Option<(HostId, String)>,
+    /// Workspaces already warned about their running sessions (`lifecycle::running_alert`).
+    running_warned: HashSet<Ulid>,
     /// The kind of pane `session.spawn` is starting (large agent exes can take seconds on a
     /// cold start): its buttons show a loading mark and further starts are ignored meanwhile.
     starting_pane: Option<SessionKind>,
@@ -590,8 +580,6 @@ struct Shell {
     file_menu: Option<FileMenu>,
     /// The open right-click menu of a Files tab.
     file_tab_menu: Option<FileTabMenu>,
-    /// The open right-click menu of the widget bar.
-    widget_menu: Option<WidgetMenu>,
     /// The open tab menu (Pin, Split right / down, Rename, Close).
     tab_menu: Option<TabMenu>,
     /// The open menu of a Board card (Shift+F10 on the selected card).
@@ -610,9 +598,9 @@ struct Shell {
     menu_pending: Option<&'static str>,
     /// The sidebar-row or tab reorder drag in progress (stale once no drag is active).
     reorder: Option<Reorder>,
-    /// The open menu of the tab strip's split button (Split right / down, layouts).
+    /// The open menu of the title bar's split button (Split right / down, layouts).
     layout_menu: Option<LayoutMenu>,
-    /// The open pane menu (Pin, Rename, Change color).
+    /// The open pane menu (Pin, Rename, Change color), from a sidebar session row or Shift+F10.
     pane_menu: Option<PaneMenu>,
     /// The open Share menu of an agent pane (Follow in Zed), at the click.
     share_menu: Option<PaneMenu>,
@@ -627,9 +615,7 @@ struct Shell {
     run_menu: Option<Ulid>,
     /// The title bar's workspace dropdown is open.
     workspace_switcher: bool,
-    /// The title bar's repository dropdown (the branch chip, several repositories) is open.
-    repo_menu: bool,
-    /// The title bar's "+ New" dropdown is open.
+    /// The tab area's `+ ▾` dropdown is open.
     new_menu: bool,
     /// The sidebar's "N empty workspaces" line is expanded (in memory only).
     empty_workspaces_open: bool,
@@ -648,7 +634,7 @@ struct Shell {
     ports: Ports,
     /// Profile id → `icon` (ADR 0025), reloaded on every refresh.
     agent_icons: HashMap<String, String>,
-    /// The agent profiles of the last refresh: what "+ New" and the palette offer a new pane.
+    /// The agent profiles of the last refresh: what the `+` menu and the palette offer a new pane.
     agent_profiles: Vec<mkrew_protocol::AgentProfileInfo>,
     /// The open "Broadcast to agents…" dialog (modal).
     broadcast: Option<Broadcast>,
@@ -687,7 +673,7 @@ struct Shell {
     board: Board,
     /// Why the last `task.list` failed, shown on the board.
     board_error: Option<String>,
-    /// Files edited by several sessions, warned about on their cards and pane headers.
+    /// Files edited by several sessions, warned about on their cards and pane badges.
     conflicts: Conflicts,
     /// Why the last card action (drop, Run, Approve) failed, shown on its workspace's board.
     card_error: Option<(Ulid, String)>,
@@ -707,13 +693,8 @@ struct Shell {
     jira_scroll: ScrollHandle,
     /// The Board shows every workspace's tasks (`[ui] board_all_workspaces`, SPEC §10).
     board_all: bool,
-    /// `[ui] widget_bar` (ADR 0102): the thin bar at the bottom of the main window.
-    widget_bar: bool,
-    /// `[ui] widgets_hidden`: ids of the bar's hidden widgets (ids this build does not know
-    /// are kept).
-    widgets_hidden: Vec<String>,
-    /// The agent limits and machine stats the bar shows (events and `limits.get`).
-    widget_data: mkrew_ui::widget_bar::WidgetData,
+    /// The agents' usage limits the title bar's chip shows (events and `limits.get`).
+    limits: mkrew_ui::limits::Limits,
     /// The card Ctrl+Enter runs (clicked last).
     selected_card: Option<Ulid>,
     /// Tasks whose `task.run` is in flight (Run is disabled meanwhile).
@@ -1094,7 +1075,7 @@ impl Render for Shell {
                 }
             }))
             .child(tear_off_catcher(cx))
-            .child(self.render_title_bar(self.view(), now, &theme, window, cx))
+            .child(self.render_title_bar(HostId::Main, now, &theme, window, cx))
             .children(self.render_reconnect_banner(&theme, cx))
             .child(
                 div()
@@ -1305,6 +1286,5 @@ impl Render for Shell {
                     )
                     .children(self.render_voice_pill(&theme, cx)),
             )
-            .children(self.render_widget_bar(window, &theme, cx))
     }
 }

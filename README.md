@@ -158,17 +158,15 @@ first. The omp and Copilot files belong to Mkrew: install writes the whole file 
 is backed up first) and uninstall deletes it; `PI_CODING_AGENT_DIR` and `COPILOT_HOME` move them.
 The hooks call `mk hook …`, which does nothing when the agent runs outside Mkrew.
 
-### Widget bar
+### Limits chip
 
-A thin bar along the bottom of the window shows the workspace folder, the Git branch with its change count, your Claude and Codex 5-hour and weekly limits, the CPU and RAM of the computer the agents run on, and the Mkrew version.
-Click the folder to open it in the file explorer, the branch to open Git (again: the next changed file), the limits to open Settings, the version to check for updates.
-Long folder and branch names end with an ellipsis.
-The bar does nothing while a dialog is open or while Mkrew reconnects.
-Right-click the bar to hide single widgets or the whole bar.
-`Ctrl+Alt+Shift+J` and the palette's "View: Show/hide widget bar" toggle it; `[ui] widget_bar` and `widgets_hidden` in `settings.toml` keep the choice.
+When one of your Claude or Codex limit windows (5 hours or weekly) is at 80% or more, a chip shows in the top bar, for example `⚠ Claude 5h 84%`.
+It is amber from 80% and red from 95%.
+Hover it to see every window with its reset time; click it to open Settings.
+With nothing at 80% there is no chip.
 Codex limits come from its transcript after a turn.
 Claude limits need its status line: `mk integration install claude` sets Claude Code's `statusLine` to `mk statusline`, which reports the limits to Mkrew and then runs the status line you had before (saved as `claude-statusline.json` next to `settings.json`; `mk integration uninstall claude` puts it back).
-Without a Claude subscription login (an API key), or with an older Claude Code, Claude sends no limits and that part of the bar stays absent.
+Without a Claude subscription login (an API key), or with an older Claude Code, Claude sends no limits and the chip stays absent for Claude.
 Run `mk integration install claude` again after updating Mkrew to get the status line.
 
 ### Workspaces, default agent and Run button
@@ -177,7 +175,7 @@ Run `mk integration install claude` again after updating Mkrew to get the status
   `mk project add <path> [--name N]`.
 - Default agent: in the workspace menu pick "Default agent for new panes". New agent panes and
   tasks without their own agent use it.
-- Run button (right of the view tabs): the first click opens "Run setup", where each command
+- Run button (in the top bar, before Board): the first click opens "Run setup", where each command
   gets a name, a folder (relative to the workspace), the command, an optional env file (e.g.
   `.env`) and extra `KEY=VALUE` lines. After that one click runs every command, each in its own
   pane of the "run" tab; ↻ restarts, ■ stops, ▾ controls one command. Ports the servers print
@@ -237,8 +235,7 @@ internet.
 
 1. Install Tailscale on this PC and on the phone, signed in to the same account. In the
    Tailscale admin console, under DNS, turn on MagicDNS and HTTPS Certificates.
-2. In Mkrew click the phone icon in the title bar (or open the command palette, `Ctrl+Shift+P`,
-   and pick "Global: Phone access…"), then click **Start**. The first time, also click **Set up**: it runs
+2. In Mkrew open the command palette (`Ctrl+Shift+P`) and pick "Global: Phone access…", then click **Start**. The first time, also click **Set up**: it runs
    `tailscale serve --bg 8787`, which Tailscale remembers across reboots.
 3. Scan the QR code with the iPhone camera (or click **Copy link** and send the link to yourself,
    e.g. in Notes). On iPhone: Share → Add to Home Screen.

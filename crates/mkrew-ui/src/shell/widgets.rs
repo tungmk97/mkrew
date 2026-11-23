@@ -86,7 +86,7 @@ pub(crate) fn empty_state(
         }))
 }
 
-/// A one-line notice in the tab bar, shortened to fit; `color` sets errors apart from warnings.
+/// A one-line notice, shortened to fit; `color` sets errors apart from warnings.
 pub(crate) fn notice(color: u32, text: String) -> gpui::Div {
     div()
         .min_w_0()
@@ -575,6 +575,48 @@ pub(crate) fn segment_in(
             el.text_color(rgb(theme.text_muted))
                 .pressable(Look::Chip, enabled, theme)
         })
+}
+
+/// A tab of the top bar (a terminal tab, the Editor / Diff chip), Tern style: the shown one is
+/// a solid `tab_active` chip (it always differs from `chrome`, see `theme::problems`) with full
+/// text and no border; the others are transparent and muted and get the `pressable` hover fill.
+/// `id` is also the hover group of a ✕ inside.
+pub(crate) fn tab_frame(id: SharedString, shown: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id.clone())
+        .group(id)
+        .relative()
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .h(theme::rems_px(theme::CONTROL_HEIGHT))
+        .pl(px(space::M))
+        .pr(px(space::S))
+        .rounded(px(radius::MEDIUM))
+        // The same (transparent) border as the rename field, so the bar does not shift while
+        // a tab is renamed.
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::transparent_black())
+        .whitespace_nowrap()
+        .text_size(font_size::BODY)
+        .when(shown, |el| {
+            el.bg(rgb(theme.tab_active))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text))
+        })
+        .when(!shown, |el| el.text_color(rgb(theme.text_muted)))
+        // The shown tab is picked, not disabled: the pointer for the double-click rename.
+        .pressable_unless(shown, Look::Chip, theme)
+}
+
+/// The 1 px rule between two groups of the tab area.
+pub(crate) fn title_rule(theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .w(px(theme::BORDER_WIDTH))
+        .h(theme::rems_px(theme::TITLE_RULE_HEIGHT))
+        .mx(px(space::XS))
+        .bg(rgb(theme.divider))
 }
 
 /// A status pill: a 6 px dot in `color` (hollow = a ring) and `label` in `fg` on `bg`.
@@ -1202,6 +1244,26 @@ pub(crate) fn conflict_badge(
         )
 }
 
+/// A floating badge over a pane (`pane_badges`): a raised, bordered pill with muted META text,
+/// so it reads over any terminal output. Not a button.
+pub(crate) fn badge_frame(theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::MEDIUM))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.border))
+        .bg(rgb(theme.surface_raised))
+        .font_family(theme.ui_font_family.clone())
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text_muted))
+        .whitespace_nowrap()
+}
+
 /// A session's status mark (SPEC §11): one still dot in the state's color while working, else
 /// the state's glyph in its color. Fixed width, so rows with different states line up.
 pub(crate) fn status_mark(state: SessionState, theme: &Theme) -> gpui::AnyElement {
@@ -1270,22 +1332,6 @@ pub(crate) fn voice_meter(bars: &[f32], color: gpui::Rgba) -> gpui::Div {
                 .rounded_full()
                 .bg(color)
         }))
-}
-
-/// The app mark at the left of the title bar: a small accent tile with a dark "m".
-pub(crate) fn app_logo(theme: &Theme) -> gpui::Div {
-    div()
-        .flex_none()
-        .size(theme::rems_px(theme::APP_LOGO_TILE))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(radius::CHIP))
-        .bg(rgb(theme.accent))
-        .text_size(font_size::BODY)
-        .font_weight(FontWeight(weight::SEMIBOLD))
-        .text_color(rgb(theme.on_accent))
-        .child("m")
 }
 
 /// An agent badge (ADR 0025) as a small square chip, so logos, glyphs and letters line up and

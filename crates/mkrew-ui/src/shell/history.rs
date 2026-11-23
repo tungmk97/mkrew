@@ -263,8 +263,8 @@ impl Shell {
         }
     }
 
-    /// "History" in the tab bar: lists the workspace's finished sessions (`session.list`) and
-    /// replays the newest one's log.
+    /// The "History" palette command: lists the workspace's finished sessions (`session.list`)
+    /// and replays the newest one's log.
     pub(crate) fn show_history(
         &mut self,
         project_id: Ulid,

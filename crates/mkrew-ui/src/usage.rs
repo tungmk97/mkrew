@@ -1,5 +1,5 @@
 //! Token usage (SPEC §20E.3): the newest `session.usage` of each session, loaded per workspace
-//! on connect and kept live by events; the pane header's `ctx 62%` and the total tokens of a
+//! on connect and kept live by events; the composer's context share and the total tokens of a
 //! task card. Pure; `main.rs` renders the text.
 
 use std::collections::{HashMap, HashSet};
@@ -8,7 +8,7 @@ use mkrew_core::usage::Usage;
 use mkrew_protocol::{Event, Session, SessionUsageEvent};
 use ulid::Ulid;
 
-/// From this context share on the pane header shows a warning (SPEC §20E.3).
+/// From this context share on the composer shows a warning (SPEC §20E.3).
 pub const WARNING_PERCENT: u64 = 80;
 
 #[derive(Debug, Default)]
@@ -88,7 +88,7 @@ fn total(usage: &SessionUsageEvent) -> u64 {
     usage.input + usage.cache_read + usage.cache_write + usage.output
 }
 
-/// The pane header's context share: `ctx 62%`, with `warning` from [`WARNING_PERCENT`].
+/// The composer's context share: `ctx 62%`, with `warning` from [`WARNING_PERCENT`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextShare {
     pub label: String,

@@ -476,9 +476,6 @@ pub enum Event {
     /// The newest limits of one agent changed (spec 2026-11-22 section 5.1).
     #[serde(rename = "agent.limits")]
     AgentLimits(AgentLimits),
-    /// CPU and RAM of the daemon's machine, sent while a client is connected (section 6).
-    #[serde(rename = "machine.stats")]
-    MachineStats(MachineStats),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -1799,16 +1796,6 @@ impl AgentLimits {
     pub fn supersedes(&self, old: &AgentLimits) -> bool {
         self.observed_at >= old.observed_at && self != old
     }
-}
-
-/// CPU and RAM of the daemon's machine (spec 2026-11-22 section 6).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct MachineStats {
-    /// Total CPU use over all cores, 0-100.
-    pub cpu_percent: f32,
-    pub ram_used: u64,
-    /// 0 when the OS reports no total: the client leaves the RAM part out.
-    pub ram_total: u64,
 }
 
 /// A run session's ports (SPEC §10): every port it printed so far, at most 4, in order.

@@ -49,8 +49,50 @@ fn context(view: View) -> Context {
             docs: true,
             turns: true,
             session: true,
+            share: true,
         },
+        idle_removable: 0,
+        workspaces_open: true,
     }
+}
+
+/// The sidebar's former header buttons are palette entries: Remove idle only while something
+/// is idle (its title counts them), Collapse / Expand named for what the toggle does now.
+#[test]
+fn sidebar_actions_follow_the_idle_count_and_the_open_state() {
+    let base = context(View::Terminals);
+    let title = |context: &Context, extra: Extra| {
+        entries(&Keymap::defaults(), context, &[], &[], &[])
+            .into_iter()
+            .find(|entry| entry.action == Action::Extra(extra))
+            .map(|entry| entry.title)
+    };
+    assert_eq!(title(&base, Extra::SidebarRemoveIdle), None, "nothing idle");
+    let idle = Context {
+        idle_removable: 3,
+        ..base
+    };
+    assert_eq!(
+        title(&idle, Extra::SidebarRemoveIdle).as_deref(),
+        Some("Sidebar: Remove idle agents and terminals (3)")
+    );
+    assert_eq!(
+        title(&base, Extra::SidebarToggleAll).as_deref(),
+        Some("Sidebar: Collapse all workspaces")
+    );
+    let closed = Context {
+        workspaces_open: false,
+        ..base
+    };
+    assert_eq!(
+        title(&closed, Extra::SidebarToggleAll).as_deref(),
+        Some("Sidebar: Expand all workspaces")
+    );
+    let none = Context {
+        workspaces: 0,
+        ..base
+    };
+    assert_eq!(title(&none, Extra::SidebarToggleAll), None, "no workspace");
 }
 
 #[test]
@@ -398,7 +440,6 @@ fn availability_follows_the_view() {
             Command::ToggleFullScreen,
             Command::ToggleSidebar,
             Command::ToggleCompactSidebar,
-            Command::ToggleWidgetBar,
             Command::VoiceInput,
             Command::AskAi
         ]
@@ -411,23 +452,6 @@ fn availability_follows_the_view() {
             .any(|e| e.action == Action::Run(Command::OpenSettings)),
         "settings open without a workspace"
     );
-}
-
-#[test]
-fn the_widget_bar_toggle_is_listed_without_a_workspace() {
-    let none = Context {
-        workspace: false,
-        workspaces: 0,
-        tabs: 0,
-        ..context(View::Terminals)
-    };
-    let listed = entries(&Keymap::defaults(), &none, &[], &[], &[]);
-    let entry = listed
-        .iter()
-        .find(|e| e.action == Action::Run(Command::ToggleWidgetBar))
-        .expect("listed without a workspace");
-    assert_eq!(entry.title, "View: Show/hide widget bar");
-    assert_eq!(entry.shortcut, "Ctrl+Alt+Shift+J");
 }
 
 #[test]
@@ -557,7 +581,7 @@ fn workspace_extras_need_an_active_workspace() {
 
 fn extras(context: &Context) -> Vec<Extra> {
     // Listed by the "workspace extras" test and the single-action tests below.
-    const SEPARATE: [Extra; 14] = [
+    const SEPARATE: [Extra; 16] = [
         Extra::RunSetup,
         Extra::Ports,
         Extra::PhoneAccess,
@@ -572,6 +596,8 @@ fn extras(context: &Context) -> Vec<Extra> {
         Extra::WorkspaceRemove,
         Extra::WorkspaceMenu,
         Extra::BoardScope,
+        Extra::SidebarRemoveIdle,
+        Extra::SidebarToggleAll,
     ];
     const ALWAYS: [Extra; 5] = [
         Extra::TabPin,

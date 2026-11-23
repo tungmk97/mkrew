@@ -94,23 +94,23 @@ impl Shell {
         .detach();
     }
 
-    /// Adds a tab to a workspace and activates it; `start` then spawns a session into it.
+    /// Adds a tab to a workspace and activates it; `start` (a kind, and an agent profile or
+    /// the workspace's default of that kind) then spawns a session into it.
     pub(crate) fn create_tab(
         &mut self,
         project_id: Ulid,
-        start: Option<SessionKind>,
+        start: Option<(SessionKind, Option<String>)>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(kind) = start
-            && self.ask_for_default(project_id, kind, window, cx)
+        if let Some((kind, None)) = &start
+            && self.ask_for_default(project_id, *kind, window, cx)
         {
             return;
         }
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        self.tab_error = None;
         let count = self
             .tabs
             .get(&project_id)
@@ -143,10 +143,10 @@ impl Shell {
                         } else {
                             shell.sync_panes(window, cx);
                         }
-                        if let Some(kind) = start
+                        if let Some((kind, profile)) = start
                             && shell.workspace == Some(project_id)
                         {
-                            shell.new_pane(kind, Axis::Vertical, window, cx);
+                            shell.new_pane_with(kind, profile, Axis::Vertical, window, cx);
                         }
                     }
                     Err(error) => {
@@ -156,8 +156,7 @@ impl Shell {
                             shell.tabs_load_failed(project_id);
                             shell.list_failed(error);
                         } else {
-                            let host = shell.host_of(window);
-                            shell.tab_error = Some((host, format!("Cannot add a tab: {error}")));
+                            shell.toast_error(format!("Cannot add a tab: {error}"), cx);
                         }
                     }
                 }
@@ -369,7 +368,6 @@ impl Shell {
             return;
         };
         let saved = connection.call::<()>(Request::TabSetLayout(write.clone()));
-        let host = self.host_of(window);
         cx.spawn_in(window, async move |this, cx| {
             if let Err(error) = saved.await {
                 tracing::warn!(tab_id = %write.tab_id, "tab.set_layout failed: {error:#}");
@@ -377,8 +375,7 @@ impl Shell {
                     if let Some(tabs) = shell.tabs.get_mut(&project_id) {
                         tabs.write_failed(&write);
                     }
-                    shell.tab_error = Some((host, format!("Cannot save the layout: {error:#}")));
-                    cx.notify();
+                    shell.toast_error(format!("Cannot save the layout: {error:#}"), cx);
                 });
             }
         })

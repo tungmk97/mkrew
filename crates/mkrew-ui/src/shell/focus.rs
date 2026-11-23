@@ -123,10 +123,8 @@ impl Shell {
         self.workspace_menu = None;
         self.file_menu = None;
         self.file_tab_menu = None;
-        self.widget_menu = None;
         self.run_menu = None;
         self.workspace_switcher = false;
-        self.repo_menu = false;
         self.new_menu = false;
         self.run_with = None;
         self.fan_out = None;
@@ -381,9 +379,8 @@ impl Shell {
                 .detach();
                 cx.subscribe(&pane, |_, _, _: &CopyModeChanged, cx| cx.notify())
                     .detach();
-                cx.subscribe(&pane, move |shell, _, _: &NoLinks, cx| {
-                    let host = shell.session_host(session);
-                    shell.show_tab_notice(host, "No links on screen.", cx);
+                cx.subscribe(&pane, |shell, _, _: &NoLinks, cx| {
+                    shell.toast_info("No links on screen.", cx);
                 })
                 .detach();
                 shell.panes.insert(session, pane);

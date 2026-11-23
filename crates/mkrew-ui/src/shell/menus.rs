@@ -187,10 +187,12 @@ impl Shell {
         )
     }
 
-    /// The tab menu (right-click a tab, or the tab bar's ⋯): Pin, Split right / down, Rename,
+    /// The tab menu (right-click a tab): Pin, Split right / down, Rename,
     /// the moves to other windows, Close, and in the main window Close others and Close tabs to
     /// the right (pinned tabs stay); on the active tab also the focused pane's Rename pane,
-    /// Close pane and, for an agent, Follow in Zed (✓ while on) and Turns….
+    /// Close pane, Zoom pane (with several panes, or while zoomed) and, for an agent, Follow in
+    /// Zed (✓ while on) and Turns…, then its Change color swatches. The panes have no header
+    /// and no menu of their own: this is where their actions live.
     pub(crate) fn tab_menu_rows(&self, menu: &TabMenu, window: &Window) -> Rows {
         let tab_id = menu.tab_id;
         let project_id = self.terminal_project(tab_id);
@@ -292,6 +294,27 @@ impl Shell {
                 .keys(key(Command::ClosePane))
                 .row(),
             );
+            let zoomed = (self.tabs.values().find_map(|tabs| tabs.tab(tab_id)))
+                .is_some_and(|tab| tab.zoomed().is_some());
+            if zoomed
+                || self
+                    .tabs
+                    .values()
+                    .any(|tabs| tabs.tab(tab_id).is_some_and(|tab| tab.sessions().len() > 1))
+            {
+                rows.push(
+                    MenuItem::new(
+                        if zoomed {
+                            "Show all panes"
+                        } else {
+                            "Zoom pane"
+                        },
+                        run(Command::ZoomPane),
+                    )
+                    .keys(key(Command::ZoomPane))
+                    .row(),
+                );
+            }
             if agent {
                 rows.push(
                     MenuItem::new(
@@ -312,6 +335,14 @@ impl Shell {
                     .row(),
                 );
             }
+            rows.push(MenuRow::Separator);
+            rows.push(MenuRow::Heading("Change color".into()));
+            rows.push(MenuRow::swatches(
+                info.color.as_deref(),
+                act_swatch(move |shell, color, window, cx| {
+                    shell.set_pane_color(session, color, window, cx);
+                }),
+            ));
         }
         rows
     }

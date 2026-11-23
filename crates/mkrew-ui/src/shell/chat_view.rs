@@ -272,61 +272,6 @@ impl Shell {
         }
     }
 
-    /// The `Terminal | Chat` control of an agent pane's header (`None` when it cannot chat).
-    pub(crate) fn pane_mode_switch(
-        &self,
-        info: &Session,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<gpui::AnyElement> {
-        if !self.chat_available(info) {
-            return None;
-        }
-        let (session, chat) = (info.id, self.chat_on(info));
-        Some(
-            segmented(theme)
-                .child(
-                    segment(
-                        SharedString::from(format!("pane-mode-terminal-{session}")),
-                        !chat,
-                        theme,
-                    )
-                    .h(theme::rems_px(theme::COMPACT_SEGMENT_HEIGHT))
-                    .child("Terminal")
-                    .tooltip(tooltip(
-                        theme,
-                        "Show the terminal",
-                        self.keymap.label(Command::ToggleChat),
-                    ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        if chat {
-                            shell.pick_chat(session, false, window, cx);
-                        }
-                    })),
-                )
-                .child(
-                    segment(
-                        SharedString::from(format!("pane-mode-chat-{session}")),
-                        chat,
-                        theme,
-                    )
-                    .h(theme::rems_px(theme::COMPACT_SEGMENT_HEIGHT))
-                    .child("Chat")
-                    .tooltip(tooltip(
-                        theme,
-                        "Show the conversation as a chat",
-                        self.keymap.label(Command::ToggleChat),
-                    ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        if !chat {
-                            shell.pick_chat(session, true, window, cx);
-                        }
-                    })),
-                )
-                .into_any_element(),
-        )
-    }
-
     /// The Chat page of `session`'s pane: the turns (scrolling, following the end), the subagent
     /// tray and the question card. `is_focused`: this pane has the keyboard, so its list takes
     /// `chat_focus`. The composer is not part of it: `pane_frame` docks it below.

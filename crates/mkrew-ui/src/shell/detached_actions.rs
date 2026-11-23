@@ -431,7 +431,7 @@ impl Shell {
             Command::CommandPalette => self.open_palette(window, cx),
             Command::ContextMenu => {
                 if !menu_was_open && let Some(session) = self.focused_session(window) {
-                    let at = self.menu_anchor(&Anchor::PaneHeader(session), window, cx);
+                    let at = self.menu_anchor(&Anchor::Pane(session), window, cx);
                     self.open_pane_menu(session, at, window, cx);
                 }
             }
