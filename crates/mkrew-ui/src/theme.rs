@@ -236,10 +236,11 @@ pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
 
 /// Thickness of the accent line under the header of a colored pane (ADR 0037).
 pub const PANE_ACCENT_WIDTH: f32 = 2.0;
-/// Height of every pane header: the tallest content ([`CONTROL_HEIGHT`], the Terminal | Chat
-/// switch and the Reading / Share buttons) with the header's 4 px padding above and below and
-/// the accent line, so side-by-side headers line up whatever they hold.
-pub const PANE_HEADER_HEIGHT: f32 = CONTROL_HEIGHT + 8.0 + PANE_ACCENT_WIDTH;
+/// Fixed part of every pane header's height: the 4 px padding above and below and the accent
+/// line. It does not scale with `[ui] font_size`; the content ([`CONTROL_HEIGHT`], the Terminal
+/// | Chat switch and the Reading / Share buttons) does. Together they give every header the same
+/// height, so side-by-side headers line up whatever they hold.
+pub const PANE_HEADER_FIXED: f32 = 2.0 * space::XS + PANE_ACCENT_WIDTH;
 
 /// Thickness of the accent line marking where a dragged sidebar row or tab will land.
 pub const DROP_LINE_WIDTH: f32 = 2.0;

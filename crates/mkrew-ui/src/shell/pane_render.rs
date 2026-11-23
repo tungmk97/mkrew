@@ -1038,7 +1038,10 @@ impl Shell {
         });
         let header = div()
             .flex_none()
-            .h(theme::rems_px(theme::PANE_HEADER_HEIGHT))
+            .h(px(theme::CONTROL_HEIGHT
+                * cx.global::<theme::Fonts>().ui_size
+                / 13.0
+                + theme::PANE_HEADER_FIXED))
             .flex()
             .items_center()
             .gap(px(space::S))
