@@ -775,6 +775,15 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        // Its unsaved file text is lost with the workspace: ask first; the question runs this
+        // again once every file was answered (a Cancel stops it).
+        let unsaved =
+            (self.documents.get(&project_id)).map_or_else(Vec::new, Documents::unsaved_paths);
+        if !unsaved.is_empty() {
+            let again: AfterSave =
+                Box::new(move |shell, window, cx| shell.archive_workspace(project_id, window, cx));
+            return self.leave_documents(project_id, unsaved, again, window, cx);
+        }
         self.workspace_menu = None;
         cx.notify();
         let Some(connection) = self.connection.clone() else {

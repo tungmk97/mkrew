@@ -114,7 +114,7 @@ impl Shell {
             .filter(|key| matches!(key, PaneKey::File(_)))
             .collect();
         for key in keys {
-            self.remove_leaf(key, window, cx);
+            self.remove_leaf(project_id, key, window, cx);
         }
     }
 

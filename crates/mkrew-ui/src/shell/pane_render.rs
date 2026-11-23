@@ -670,7 +670,7 @@ impl Shell {
             .on_mouse_down(MouseButton::Left, {
                 let key = key.clone();
                 cx.listener(move |shell, _, window, cx| {
-                    shell.focus_pane_key(&key);
+                    shell.focus_pane_key(project_id, &key);
                     shell.focus_pane(window, cx);
                     cx.notify();
                 })

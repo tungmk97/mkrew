@@ -128,7 +128,7 @@ impl Shell {
         else {
             return;
         };
-        self.focus_pane_key(key);
+        self.focus_pane_key(project_id, key);
         match self.terminal_host(project_id, tab_id) {
             host @ HostId::Detached(window_key) => {
                 let dock = DockTab::Terminal {
@@ -164,7 +164,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.focus_pane_key(&PaneKey::File(path.to_owned()));
+        self.focus_pane_key(project_id, &PaneKey::File(path.to_owned()));
         self.focus_doc(project_id, path, DocFocus::Editor, window, cx);
     }
 

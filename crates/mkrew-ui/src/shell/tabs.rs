@@ -838,19 +838,20 @@ impl Shell {
         }
     }
 
-    /// Takes the pane of `key` out of its tab's layout (a session itself is untouched). A tab
-    /// of the shown workspace left without panes closes too. No question: a caller that closes
-    /// (rather than moves) a file asks first (`close_file_pane`, `close_tabs`).
+    /// Takes the pane of `key` out of its tab's layout in workspace `project_id` (a session
+    /// itself is untouched; file keys are workspace-relative, so the workspace is needed). A
+    /// tab of the shown workspace left without panes closes too. No question: a caller that
+    /// closes (rather than moves) a file asks first (`close_file_pane`, `close_tabs`).
     pub(crate) fn remove_leaf(
         &mut self,
+        project_id: Ulid,
         key: PaneKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let closed = self
-            .tabs
-            .values_mut()
-            .find_map(|tabs| Some((tabs.project_id(), tabs.close_leaf(&key)?)));
+        let closed = (self.tabs.get_mut(&project_id))
+            .and_then(|tabs| tabs.close_leaf(&key))
+            .map(|write| (project_id, write));
         if let Some((project_id, write)) = closed {
             let emptied = write.layout.is_null().then_some(write.tab_id);
             // Saved first: requests go out in call order, so `tab.close` sees no panes and
@@ -875,7 +876,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.remove_leaf(PaneKey::Session(session), window, cx);
+        if let Some((project_id, _)) = self.tab_of_session(session) {
+            self.remove_leaf(project_id, PaneKey::Session(session), window, cx);
+        }
     }
 
     /// The files of `project_id` that would be lost, with unsaved text, if the tabs `tab_ids`
@@ -909,7 +912,8 @@ impl Shell {
     ) {
         let key = PaneKey::File(path);
         let dirty = self.dirty_on_close(project_id, &[], std::slice::from_ref(&key));
-        let then: AfterSave = Box::new(move |shell, window, cx| shell.remove_leaf(key, window, cx));
+        let then: AfterSave =
+            Box::new(move |shell, window, cx| shell.remove_leaf(project_id, key, window, cx));
         self.leave_documents(project_id, dirty, then, window, cx);
     }
 

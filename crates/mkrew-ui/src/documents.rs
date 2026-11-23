@@ -778,8 +778,9 @@ impl Documents {
     /// Drops the docs no layout holds a leaf for, except those with unsaved text (asked about
     /// when the window closes or the app quits).
     pub fn retain_open(&mut self, open: &HashSet<String>) {
-        self.docs
-            .retain(|path, doc| open.contains(path) || doc.is_dirty());
+        self.docs.retain(|path, doc| {
+            open.contains(path) || doc.is_dirty() || doc.pending_line.is_some()
+        });
     }
 
     pub fn clear(&mut self) {

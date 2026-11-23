@@ -1419,3 +1419,25 @@ fn ctrl_f_leaves_the_preview_and_drops_edit_and_selection() {
     assert!(readme.open_find(false));
     assert!(readme.block_edit.is_none() && readme.preview_selection.is_none());
 }
+
+/// A link's line is asked before the leaf is in a layout (a new tab is made first): the clean
+/// doc must survive the sync that runs in between.
+#[test]
+fn a_doc_with_a_pending_line_survives_until_its_leaf_arrives() {
+    let mut docs = Documents::new();
+    docs.ensure("link.rs", MdMode::default());
+    docs.get_mut("link.rs").unwrap().set_line(Some((7, 1)));
+    docs.retain_open(&HashSet::new());
+    assert!(docs.get("link.rs").is_some(), "its line is still wanted");
+    assert_eq!(
+        docs.get_mut("link.rs").unwrap().apply_pending_line(),
+        None,
+        "not shown yet"
+    );
+    docs.get_mut("link.rs").unwrap().set_line(None);
+    docs.retain_open(&HashSet::new());
+    assert!(
+        docs.get("link.rs").is_none(),
+        "nothing pending, no leaf, clean"
+    );
+}

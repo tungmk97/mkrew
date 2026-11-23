@@ -153,9 +153,10 @@ impl Shell {
 
     /// Focuses the pane of `key` in its tab; a tab in a detached window does not become the
     /// main window's active tab (spec §4.4).
-    pub(crate) fn focus_pane_key(&mut self, key: &PaneKey) {
-        let Some((project, tab_id)) =
-            (self.tabs.iter()).find_map(|(project, tabs)| Some((*project, tabs.tab_with(key)?.id)))
+    pub(crate) fn focus_pane_key(&mut self, project: Ulid, key: &PaneKey) {
+        let Some(tab_id) = (self.tabs.get(&project))
+            .and_then(|tabs| tabs.tab_with(key))
+            .map(|tab| tab.id)
         else {
             return;
         };
@@ -170,7 +171,9 @@ impl Shell {
     }
 
     pub(crate) fn focus_session_pane(&mut self, session: Ulid) {
-        self.focus_pane_key(&PaneKey::Session(session));
+        if let Some((project, _)) = self.tab_of_session(session) {
+            self.focus_pane_key(project, &PaneKey::Session(session));
+        }
     }
 
     /// The main window's active tab never names a detached tab (spec §4.1).
