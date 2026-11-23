@@ -842,18 +842,19 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
 
 - **Sidebar:** workspaces; expanding one lists its live sessions with status (§11); a session that
   exited leaves the list and its pane leaves its tab (ADR 0033; History keeps it).
-  A **filter box** (`⌕ Filter sessions…`, `/` focuses it while no terminal or field has the
-  keyboard; `×` inside it clears it while it holds text) matches workspace name, agent and
+  A **filter box** (`⌕ Filter sessions…`) shows above the All / Working / Needs you control only while it has the keyboard or holds text.
+  `/` (while no terminal or field has the keyboard) and Alt+0 show and focus it; Esc on an empty box hides it and gives the keyboard back; `×` inside it clears it while it holds text.
+  It matches workspace name, agent and
   session title as you type (every word must match; client-side, not remembered; while it holds
   text ↑/↓ move a highlight over the matching session rows, no wrap, and Enter opens the
   highlighted one, the first by default, or the first workspace when no session matches; with an
   empty box Enter gives the keyboard back to the pane).
   Alt+0 (§13) focuses the box with the active row highlighted: with an empty box ↑/↓ walk every visible row, ←/→ fold / unfold the highlighted row's workspace and Enter opens it; with text ←/→ move the caret.
   Tab / Shift+Tab in the box step the All / Working / Needs you chips.
-  Next to the filter box sit the
-  remove-idle-agents button (only while there are some), collapse / expand all and `+` (add
-  workspace); under it a segmented control `All N`, `Working N` and `Needs you N` (N amber while
-  above 0) narrows the list (the numbers count the sessions matching the filter text). *Needs
+  The sidebar has no row of buttons above the list: "Remove idle agents and terminals" and "Collapse all workspaces" / "Expand all workspaces" are palette entries (§13), and workspaces are added from the switcher, the palette and the Add workspace command (§13).
+  Without workspaces the sidebar keeps its "Workspaces" header with `+` and the empty state, whose primary action adds one.
+  The segmented control `All N`, `Working N` and `Needs you N` (N amber while
+  above 0) is the top of the sidebar and narrows the list (the numbers count the sessions matching the filter text). *Needs
   you* is what the Inbox listed before: needs_input, plus done and not yet viewed (ADR 0036).
   While a filter or chip is on, only workspaces with a match show, open.
   Each workspace is a card (ADR 0062): `card` fill, faint border, radius 8, 8 px between cards,
@@ -911,10 +912,12 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
 - **Title bar** (42 px, ADR 0027, ADR 0034, ADR 0054, ADR 0106), one bar across both columns, left to right:
   in a machine window (ADR 0089) the machine chip (below); the sidebar toggle `◧`; the workspace avatar + name ▾ (a dropdown of the workspaces, click switches, plus "Add workspace…");
   the tab area; a drag space; the right group; on Windows the window controls.
+  A 1 px rule (`title_rule`) sets the groups apart: between the left group and the tab area, between `+ ▾` and the drag space, and before the right group (the one before the window controls stays).
+  A rule is never a drag or press target; a detached window draws the rules where its groups exist (no rule for a missing left group).
   - **Tab area:** the Editor and Diff chips (icon, name, × that closes all file tabs or the diff; only while open; a click shows the view), a 1 px rule, the pinned tabs, a rule, the other tabs, and `+ ▾` (below).
     The area scrolls sideways when the tabs do not fit; the active tab is scrolled into view; a chip shrinks to `TAB_MIN_WIDTH` before the area scrolls, `TAB_TITLE_MAX_WIDTH` is its maximum; `+ ▾` stays visible after the scrolled tabs.
     Only the drag space moves the window, so a click on a tab never does.
-    A tab shows its kind icon, 📌 when pinned, its title, a status dot and ×; the active tab has a solid `tab_active` fill (never equal to `chrome`, a `theme::problems()` rule) with radius 8 and no border, the others are transparent with muted text and a hover fill; a click activates the tab and shows Terminals.
+    A tab shows a status icon, pane icons (see Terminals below), 📌 when pinned, its title and ×; the active tab has a solid `tab_active` fill (never equal to `chrome`, a `theme::problems()` rule) with radius 8 and no border, the others are transparent with muted text and a hover fill; a click activates the tab and shows Terminals.
   - **`+ ▾`:** one row per installed agent profile (the workspace's default first with ✓ and Ctrl+Shift+A), "Agent" when none is listed, Shell (Ctrl+Shift+T), Empty tab; each row opens a new tab and shows Terminals; while a session starts the button shows the starting spinner.
     Alt+Shift+A and Alt+Shift+S add a pane to the current tab instead.
   - **Right group:** the voice status while the sidebar is hidden, the limits chip (main window, only at 80% or more, see "Limits chip"), the Run pill, the update button (only when an update is known), Board (`SquareKanban`), Docs (`BookOpen`, only with `[features] docs`), Split ▾ (`◫`: Split right, Split down, Equalize panes, layouts, as before; in the main window only while Terminals show, a detached window always has it) and the right panel toggle (`◨`, ADR 0038, ADR 0081).
@@ -967,11 +970,11 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   Show Board (Ctrl+Shift+2) again switches Tasks / Jira, and the card keys walk the Jira rows.
   Shift+F10 on the selected card opens its menu: Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents… (each as its hover button; the buttons stay and call the same functions).
 - **Terminals:** the tabs are in the title bar (above); each tab is a split tree of panes; each pane is a session with its own header.
-  Each tab shows an icon of its focused pane (the agent's badge chip, or `>_` for a shell; none
-  for a tab without panes), one status dot of its most urgent pane (§11: a still accent dot while an
-  agent works, amber needs input, green done or a live run process, red exited, a hollow ring
-  idle), its title and a ✕ (always on the active tab, on hover for the others); closing never
-  activates the tab first. `+ ▾` (new tab) follows the tabs. The split button (title bar, right group) opens
+  Each tab chip starts with a status icon of its most urgent pane (§11: hourglass in `status-working` while an agent works, a circle with `?` in `status-needs-input`, a check in `status-done` for done or a live run process, `x` in `status-exited`; none while idle or starting).
+  Then come unframed `text-muted` pane icons: the agent's badge or logo, `square-terminal` for a shell, `play` for a run pane.
+  The active tab shows one icon per pane in pane order, at most three, then `+N`; an inactive tab shows only its focused pane's icon; a tab without panes shows none.
+  Next come 📌 when pinned, the title and a ✕ (always on the active tab, on hover for the others); closing never
+  activates the tab first. The chip's tooltip says the status in words. `+ ▾` (new tab) follows the tabs. The split button (title bar, right group) opens
   the layout menu: Split right, Split down, Equalize panes, then the layouts 2 columns, 2 rows,
   3 columns, 1 + 2 and 2 × 2, each with a small drawing and its shortcut (§13). Equalize panes
   gives every pane of a run of same-direction splits the same share (split right twice: 50/25/25
@@ -1162,7 +1165,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
 ## §11 UI: per-session status
 
 Status shows in three places: the pane header, the tab
-dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover gives the text).
+status icon, the sidebar row. Always icon + text, never color alone (the tab's tooltip gives the text).
 
 | State | Icon | Extra |
 | --- | --- | --- |
@@ -1589,7 +1592,7 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Agent (v2) | In a prompt box (the composer, the task dialog's Prompt), at the start of a line or after a space: pick the agent's command (§20B.7) / pick a file (§12A); Enter or Tab types the pick, Esc types the character | / / @ |
 | Agent (v2) | Send selection to an agent (Editor, Markdown preview, Docs, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
-| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer (Reveal in Finder on macOS), set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10, ⌃⌘M on macOS) |
+| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer (Reveal in Finder on macOS), set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update, sidebar "Remove idle agents and terminals (N)" (only while N is above 0) and "Collapse all workspaces" / "Expand all workspaces" (named for what the toggle does now; ADR 0106) | command palette only (the menu items also by Shift+F10, ⌃⌘M on macOS) |
 
 **macOS defaults** (ADR 0098); a command not listed keeps the key of the table above:
 
@@ -1736,9 +1739,10 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
 - Radius 5 (area chips, key hints), 6 (chips, segments, tree rows), 8 (buttons, inputs, rows),
   9 (segmented container), 10 (cards), 12 (dialogs, palette), 999 (pills); 4 for old badges.
-- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the Editor's file-tab strip and the sidebar and right panel tab rows 44, Git repo strip 42 (px at 13 px body).
+- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the Editor's file-tab strip and the right panel tab row 44, Git repo strip 42 (px at 13 px body).
 - Tab chip (Tern look, ADR 0106): height `CONTROL_HEIGHT`, radius 8 (`radius::MEDIUM`), no border; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
-  Chips shrink to `TAB_MIN_WIDTH` before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
+  Chips shrink to `TAB_MIN_WIDTH` (140, room for the status icon, a pane icon, a few title letters and the ×) before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
+- Pane header: every pane header has the fixed height `PANE_HEADER_HEIGHT` (`CONTROL_HEIGHT` + 8 + the accent line), so side-by-side panes line up whether or not they have the agent controls.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
   buttons, 30 px icon button, search box, status pill, tinted chip, overline, key hint.
 - UI font = Inter when installed, else the system font (Segoe UI Variable / SF), unless

@@ -40,6 +40,14 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
 - Detached windows draw the same title bar function without the workspace controls, `+ ▾`, Board, Docs, Editor and Diff chips, Run pill and limits chip, with Move all back in the right group; their chips keep the workspace name in front.
 - `[ui] widget_bar` and `[ui] widgets_hidden` are retired: `settings.toml` files that have them still load (the keys are accepted, ignored and never written).
   `Command::ToggleWidgetBar` and its shortcuts are gone.
+- Tab chip icons (UI feedback round): in front of the title a status icon replaces the trailing status dot (hourglass working, `?` circle needs input, check done or a live run process, `x` exited, none while idle or starting), then unframed muted pane icons (agent logo, terminal, play).
+  The active tab shows one icon per pane, at most three and then `+N`; an inactive tab shows its focused pane's icon.
+  The tooltip names the status in words.
+  `TAB_MIN_WIDTH` goes from 120 to 140 to keep a few title letters beside the icons.
+- A 1 px rule sets the title bar groups apart: left group, tab area, drag space, right group (the rule before the window controls stays).
+- The sidebar's filter row is gone: the All / Working / Needs you control is its top, the filter box shows only while it is focused or holds text (Alt+0 and `/` show it), and Remove idle agents and terminals, Collapse all and Expand all workspaces are palette entries.
+  Adding a workspace stays in the switcher, the palette and the empty state.
+- Every pane header has the fixed height `PANE_HEADER_HEIGHT`, so side-by-side headers line up.
 
 ## Alternatives
 
