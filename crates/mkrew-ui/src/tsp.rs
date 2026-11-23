@@ -296,7 +296,8 @@ pub fn ansi_runs(line: &str, theme: &Theme) -> Vec<(String, SpanStyle)> {
                 chars.next();
                 let mut params = String::new();
                 let mut last = None;
-                for c in chars.by_ref() {
+                // An ESC ends an unterminated CSI and is left for the next round to read.
+                while let Some(c) = chars.next_if(|c| *c != '\x1b') {
                     if ('\x40'..='\x7e').contains(&c) {
                         last = Some(c);
                         break;
@@ -404,7 +405,15 @@ pub struct Mirror {
 impl Mirror {
     pub fn from_snapshot(snapshot: TspSnapshot) -> Self {
         let mut mirror = Self::default();
-        for surface in snapshot.surfaces {
+        // ponytail: the daemon lists surfaces in id-string order, so the open order before a
+        // reattach is inferred from omp's increasing `s:<n>` ids; keep the real order in the
+        // snapshot if omp ever stops numbering that way.
+        let mut surfaces = snapshot.surfaces;
+        surfaces.sort_by_key(|s| {
+            let number = s.id.rsplit(':').next().and_then(|n| n.parse::<u64>().ok());
+            (number, s.id.clone())
+        });
+        for surface in surfaces {
             let doc = Document::from_tree(&surface.root);
             mirror.insert(surface, doc);
         }
@@ -973,10 +982,6 @@ impl Checklist {
             .iter()
             .map(TodoPhase::counts)
             .fold((0, 0), |(d, t), (pd, pt)| (d + pd, t + pt))
-    }
-
-    pub fn has_active(&self) -> bool {
-        self.first(TodoStatus::Active).is_some()
     }
 
     fn first(&self, status: TodoStatus) -> Option<&TodoItem> {
@@ -2708,14 +2713,33 @@ mod tests {
         open(&mut m, "s:10");
         open(&mut m, "s:9");
         assert_eq!(m.shown().unwrap().0.id, "s:9", "reopened last");
-        let snap = mirror(vec![
-            surface("s:9", "screen", 0, &Document::new("s:9")),
-            surface("s:10", "screen", 0, &Document::new("s:10")),
-        ]);
+    }
+
+    #[test]
+    fn after_a_reattach_the_snapshot_is_ordered_by_omps_increasing_ids() {
+        let screen = |id: &str| surface(id, "screen", 0, &Document::new(id));
+        // The daemon lists surfaces in id-string order: "s:10" before "s:9".
+        let snap = mirror(vec![screen("s:10"), screen("s:9")]);
+        assert_eq!(snap.shown().unwrap().0.id, "s:10");
+        let snap = mirror(vec![screen("x:b"), screen("x:a")]);
+        assert_eq!(snap.shown().unwrap().0.id, "x:b", "no number: string order");
+    }
+
+    #[test]
+    fn an_escape_inside_an_unterminated_csi_ends_it_and_starts_the_next() {
+        let t = Theme::dark();
         assert_eq!(
-            snap.shown().unwrap().0.id,
-            "s:10",
-            "snapshot order is open order"
+            ansi_runs("\x1b[1mA\x1b[31\x1b[0mtext", &t),
+            vec![
+                run(
+                    "A",
+                    SpanStyle {
+                        bold: true,
+                        ..Default::default()
+                    }
+                ),
+                run("text", SpanStyle::default()),
+            ]
         );
     }
 
