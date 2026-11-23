@@ -25,6 +25,121 @@ pub enum Direction {
     Down,
 }
 
+/// What a pane of the tab shows, as the key that finds it: one session, one file (the stored
+/// path), or the diff. A tab holds a key at most once, and so does a workspace for files and
+/// the diff (ADR 0108).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PaneKey {
+    Session(Ulid),
+    File(String),
+    Diff,
+}
+
+impl PaneKey {
+    /// The session of a session pane.
+    pub fn session(&self) -> Option<Ulid> {
+        match self {
+            PaneKey::Session(id) => Some(*id),
+            PaneKey::File(_) | PaneKey::Diff => None,
+        }
+    }
+}
+
+/// One pane of the split tree and what is saved on it. The JSON is untagged: the keys decide
+/// the kind, so every layout of an older version (sessions only) still reads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Leaf {
+    /// A pane showing one session. `chat` is the pane's saved mode (ADR 0104): `Some(true)`
+    /// Chat, `Some(false)` Terminal, absent = not set (`[ui] chat_default` decides).
+    Session {
+        session: Ulid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        chat: Option<bool>,
+    },
+    /// A file of the workspace: its path relative to the root with `/` separators (an
+    /// absolute path for a note in a notes folder outside it). `md` is the pane's own Markdown
+    /// mode, absent = `[ui] md_mode`. `preview` marks the workspace's preview tab.
+    File {
+        file: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        md: Option<mkrew_core::settings::MdMode>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        preview: bool,
+    },
+    /// The workspace's diff. `diff` is always `true` on the wire.
+    Diff { diff: bool },
+}
+
+impl Leaf {
+    pub fn session(id: Ulid) -> Leaf {
+        Leaf::Session {
+            session: id,
+            chat: None,
+        }
+    }
+
+    pub fn file(path: impl Into<String>) -> Leaf {
+        Leaf::File {
+            file: path.into(),
+            md: None,
+            preview: false,
+        }
+    }
+
+    pub fn diff() -> Leaf {
+        Leaf::Diff { diff: true }
+    }
+
+    pub fn key(&self) -> PaneKey {
+        match self {
+            Leaf::Session { session, .. } => PaneKey::Session(*session),
+            Leaf::File { file, .. } => PaneKey::File(file.clone()),
+            Leaf::Diff { .. } => PaneKey::Diff,
+        }
+    }
+}
+
+/// The side of a pane a dropped leaf goes to: it takes that half of the pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Edge {
+    /// The edge nearest to the pointer at (`x`, `y`), fractions of the pane (0..1): the
+    /// smallest of `x`, `1 - x`, `y`, `1 - y`. A tie goes Right, then Bottom, then Left, then
+    /// Top, so the middle of a pane splits it to the right like the old drop did.
+    pub fn nearest(x: f32, y: f32) -> Edge {
+        [
+            (1.0 - x, Edge::Right),
+            (1.0 - y, Edge::Bottom),
+            (x, Edge::Left),
+            (y, Edge::Top),
+        ]
+        .into_iter()
+        // `min_by` keeps the first of equal elements, which is the tie order above.
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map_or(Edge::Right, |(_, edge)| edge)
+    }
+
+    /// The split that holds the old pane and the new one.
+    pub fn axis(self) -> Axis {
+        match self {
+            Edge::Left | Edge::Right => Axis::Vertical,
+            Edge::Top | Edge::Bottom => Axis::Horizontal,
+        }
+    }
+
+    /// The new leaf is the first child of the split (left of / above the old pane).
+    pub fn leads(self) -> bool {
+        matches!(self, Edge::Left | Edge::Top)
+    }
+}
+
 /// A node of the split tree.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -1124,5 +1239,94 @@ mod tests {
         node.set_chat(a, Some(true));
         assert!(node.split(a, Axis::Vertical, b));
         assert_eq!((node.chat_of(a), node.chat_of(b)), (Some(true), None));
+    }
+
+    #[test]
+    fn the_three_leaf_kinds_round_trip() {
+        let id = Ulid::new();
+        let session = json!({"session": id.to_string(), "chat": true});
+        let file = json!({"file": "src/a.rs", "md": "split", "preview": true});
+        let diff = json!({"diff": true});
+        for stored in [session, file, diff] {
+            let leaf: Leaf = serde_json::from_value(stored.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&leaf).unwrap(), stored);
+        }
+        // Optional keys stay out of the stored form.
+        assert_eq!(
+            serde_json::to_value(Leaf::session(id)).unwrap(),
+            json!({"session": id.to_string()})
+        );
+        assert_eq!(
+            serde_json::to_value(Leaf::file("a.md")).unwrap(),
+            json!({"file": "a.md"})
+        );
+        assert_eq!(
+            serde_json::to_value(Leaf::diff()).unwrap(),
+            json!({"diff": true})
+        );
+    }
+
+    #[test]
+    fn a_leaf_has_the_key_of_its_kind() {
+        let id = Ulid::new();
+        assert_eq!(Leaf::session(id).key(), PaneKey::Session(id));
+        assert_eq!(
+            Leaf::file("src/a.rs").key(),
+            PaneKey::File("src/a.rs".to_owned())
+        );
+        assert_eq!(Leaf::diff().key(), PaneKey::Diff);
+        // The flags are not part of the key: one file has one key.
+        let flagged = Leaf::File {
+            file: "src/a.rs".into(),
+            md: Some(mkrew_core::settings::MdMode::Split),
+            preview: true,
+        };
+        assert_eq!(flagged.key(), Leaf::file("src/a.rs").key());
+        assert_eq!(PaneKey::Session(id).session(), Some(id));
+        assert_eq!(PaneKey::File("a".into()).session(), None);
+        assert_eq!(PaneKey::Diff.session(), None);
+    }
+
+    #[test]
+    fn the_nearest_edge_is_the_smallest_distance() {
+        assert_eq!(Edge::nearest(0.9, 0.5), Edge::Right);
+        assert_eq!(Edge::nearest(0.1, 0.5), Edge::Left);
+        assert_eq!(Edge::nearest(0.5, 0.1), Edge::Top);
+        assert_eq!(Edge::nearest(0.5, 0.9), Edge::Bottom);
+        // Off-axis pointers still pick the closest side.
+        assert_eq!(Edge::nearest(0.2, 0.3), Edge::Left);
+        assert_eq!(Edge::nearest(0.7, 0.2), Edge::Top);
+        assert_eq!(Edge::nearest(0.6, 0.9), Edge::Bottom);
+        assert_eq!(Edge::nearest(0.8, 0.7), Edge::Right);
+        // On the pane's own border.
+        assert_eq!(Edge::nearest(0.0, 0.5), Edge::Left);
+        assert_eq!(Edge::nearest(1.0, 0.5), Edge::Right);
+    }
+
+    #[test]
+    fn edge_ties_go_right_then_bottom_then_left_then_top() {
+        // The very middle: all four are equal.
+        assert_eq!(Edge::nearest(0.5, 0.5), Edge::Right);
+        // Right and Bottom (the bottom right corner), Right and Top.
+        assert_eq!(Edge::nearest(0.75, 0.75), Edge::Right);
+        assert_eq!(Edge::nearest(0.75, 0.25), Edge::Right);
+        // Bottom and Left (the bottom left corner).
+        assert_eq!(Edge::nearest(0.25, 0.75), Edge::Bottom);
+        // Left and Top (the top left corner).
+        assert_eq!(Edge::nearest(0.25, 0.25), Edge::Left);
+        // Left and Right at the horizontal middle, Top clearly nearer.
+        assert_eq!(Edge::nearest(0.5, 0.25), Edge::Top);
+    }
+
+    #[test]
+    fn an_edge_knows_its_axis_and_whether_it_leads() {
+        assert_eq!(Edge::Left.axis(), Axis::Vertical);
+        assert_eq!(Edge::Right.axis(), Axis::Vertical);
+        assert_eq!(Edge::Top.axis(), Axis::Horizontal);
+        assert_eq!(Edge::Bottom.axis(), Axis::Horizontal);
+        assert!(Edge::Left.leads());
+        assert!(Edge::Top.leads());
+        assert!(!Edge::Right.leads());
+        assert!(!Edge::Bottom.leads());
     }
 }
