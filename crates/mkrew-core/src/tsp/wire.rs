@@ -4,7 +4,7 @@
 //! Framing is `ESC _ tsp ; <verb> { ; <key>=<value> } ; <body> ESC \` (reference section 1),
 //! or the same after `ESC ] 877 ; tsp ;` ended by `ESC \` or `BEL`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -21,6 +21,8 @@ const ESC: u8 = 0x1b;
 const BEL: u8 = 0x07;
 /// Chunked messages open at once; a stream that opens more is garbage.
 const MAX_OPEN_CHUNKS: usize = 16;
+/// Dropped chunk ids remembered at once; a stream that drops more is garbage.
+const MAX_POISONED: usize = 256;
 
 /// One raw TSP message: `verb`, `k=v` params in order, body bytes (chunks already joined).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,19 +45,55 @@ struct Chunked {
     body: Vec<u8>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Splitter {
     /// An unfinished message, or a tail that may become the start of one. Starts with ESC.
     buf: Vec<u8>,
     /// Bytes of `buf` already searched for a terminator.
     scanned: usize,
+    /// Inside an oversized message that was dropped: bytes are discarded up to its terminator.
+    skipping: bool,
+    /// The skipped message is in the OSC envelope (`BEL` ends it too).
+    skip_osc: bool,
+    /// The last skipped byte was `ESC`, so a `\` at the start of the next chunk ends the message.
+    skip_esc: bool,
     chunks: HashMap<String, Chunked>,
+    /// Chunk ids whose message was dropped; their chunks are discarded up to the final one.
+    poisoned: HashSet<String>,
     dropped: usize,
+    max_message: usize,
+    max_chunks: usize,
+}
+
+impl Default for Splitter {
+    fn default() -> Self {
+        Self {
+            buf: Vec::new(),
+            scanned: 0,
+            skipping: false,
+            skip_osc: false,
+            skip_esc: false,
+            chunks: HashMap::new(),
+            poisoned: HashSet::new(),
+            dropped: 0,
+            max_message: MAX_MESSAGE,
+            max_chunks: MAX_OPEN_CHUNKS,
+        }
+    }
 }
 
 impl Splitter {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[cfg(test)]
+    fn with_limits(max_message: usize, max_chunks: usize) -> Self {
+        Self {
+            max_message,
+            max_chunks,
+            ..Self::default()
+        }
     }
 
     /// How many messages were dropped (over 4 MiB or malformed) since the last call.
@@ -65,18 +103,32 @@ impl Splitter {
 
     /// Splits one output chunk; keeps an unfinished message (or a prefix that may start one) for the next call.
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<Piece> {
-        if self.buf.is_empty() && !bytes.contains(&ESC) {
-            return if bytes.is_empty() {
-                Vec::new()
-            } else {
-                vec![Piece::Plain(bytes.to_vec())]
-            };
+        if bytes.is_empty() {
+            return Vec::new();
         }
-        self.buf.extend_from_slice(bytes);
-        let mut data = std::mem::take(&mut self.buf);
+        // Copy only when something is held; otherwise scan the incoming slice in place.
+        let mut owned = std::mem::take(&mut self.buf);
+        let joined = !owned.is_empty();
+        if joined {
+            owned.extend_from_slice(bytes);
+        }
+        let data: &[u8] = if joined { &owned } else { bytes };
+        let mut at = 0;
+        if self.skipping {
+            let end = if self.skip_esc && data[0] == b'\\' {
+                Some(1)
+            } else {
+                find_end(data, 0, self.skip_osc).map(|(end, term)| end + term)
+            };
+            let Some(end) = end else {
+                self.skip_esc = data.last() == Some(&ESC);
+                return Vec::new();
+            };
+            self.skipping = false;
+            at = end;
+        }
         let mut pieces = Vec::new();
         let mut plain = Vec::new();
-        let mut at = 0;
         let mut hold = false;
         while at < data.len() {
             let Some(off) = data[at..].iter().position(|&b| b == ESC) else {
@@ -92,8 +144,8 @@ impl Splitter {
             } else if rest.starts_with(OSC_PREFIX) {
                 (OSC_PREFIX.len(), true)
             } else if APC_PREFIX.starts_with(rest) || OSC_PREFIX.starts_with(rest) {
-                // ponytail: a lone ESC at the end of a chunk waits for the next chunk, so an ESC
-                // key echo is released with the next output; add a timer if that is ever visible.
+                // The tail is an incomplete escape sequence, which a terminal shows nothing for
+                // yet, so holding it until the next chunk delays no visible output.
                 hold = true;
                 break;
             } else {
@@ -108,10 +160,13 @@ impl Splitter {
                 prefix
             };
             let Some((end, term)) = find_end(rest, from, osc) else {
-                if rest.len() - prefix > MAX_MESSAGE {
-                    // ponytail: the rest of the oversized message leaks out as plain bytes once it
-                    // arrives; add skip-until-terminator state if a real agent ever does this.
+                // A trailing ESC may be the start of the terminator, not body.
+                let trailing_esc = rest.last() == Some(&ESC);
+                if rest.len() - prefix - usize::from(trailing_esc) > self.max_message {
                     self.dropped += 1;
+                    self.skipping = true;
+                    self.skip_osc = osc;
+                    self.skip_esc = trailing_esc;
                     at = data.len();
                 } else {
                     hold = true;
@@ -120,7 +175,7 @@ impl Splitter {
             };
             let body = &rest[prefix..end];
             at += end + term;
-            if body.len() > MAX_MESSAGE {
+            if body.len() > self.max_message {
                 self.dropped += 1;
             } else if let Some(message) = self.message(body) {
                 if !plain.is_empty() {
@@ -133,13 +188,25 @@ impl Splitter {
             pieces.push(Piece::Plain(plain));
         }
         if hold {
-            data.drain(..at);
-            self.scanned = data.len();
-            self.buf = data;
+            self.scanned = data.len() - at;
+            if joined {
+                owned.drain(..at);
+                self.buf = owned;
+            } else {
+                self.buf = data[at..].to_vec();
+            }
         } else {
             self.scanned = 0;
         }
         pieces
+    }
+
+    /// Remembers `id` so its remaining chunks are discarded up to the final one.
+    fn poison(&mut self, id: String) {
+        if self.poisoned.len() >= MAX_POISONED {
+            self.poisoned.clear();
+        }
+        self.poisoned.insert(id);
     }
 
     /// Parses one message body and joins chunks: `None` while a chunked message is incomplete or when malformed.
@@ -156,8 +223,17 @@ impl Splitter {
             Some(pos) => message.params.remove(pos).1 == "1",
             None => false,
         };
-        if self.chunks.len() >= MAX_OPEN_CHUNKS && !self.chunks.contains_key(&id) {
-            self.chunks.clear();
+        if self.poisoned.contains(&id) {
+            if !more {
+                self.poisoned.remove(&id);
+            }
+            return None;
+        }
+        if self.chunks.len() >= self.max_chunks && !self.chunks.contains_key(&id) {
+            let evicted: Vec<String> = self.chunks.drain().map(|(id, _)| id).collect();
+            for id in evicted {
+                self.poison(id);
+            }
             self.dropped += 1;
         }
         let held = self.chunks.entry(id.clone()).or_insert_with(|| Chunked {
@@ -165,8 +241,11 @@ impl Splitter {
             body: Vec::new(),
         });
         held.body.extend_from_slice(&message.body);
-        if held.body.len() > MAX_MESSAGE {
+        if held.body.len() > self.max_message {
             self.chunks.remove(&id);
+            if more {
+                self.poison(id);
+            }
             self.dropped += 1;
             return None;
         }
@@ -458,7 +537,8 @@ mod tests {
     /// one body cut in two chunks with plain text between them, plus the pieces it must give.
     fn mixed() -> (Vec<u8>, Vec<Piece>) {
         let frame = r#"{"sf":"s:1","s":1,"ops":[["del","a"]]}"#;
-        let long = r#"{"sf":"s:1","s":2,"ops":[["set","x",{"text":"héllo; world"}]]}"#;
+        // `Ü` is C3 9C: the second byte is the 8-bit ST, which must not end a message.
+        let long = r#"{"sf":"s:1","s":2,"ops":[["set","x",{"text":"héllo; Ü world"}]]}"#;
         let (head, tail) = long.split_at(20);
         let hello = r#"{"q":"hello","v":[1],"app":"omp","features":[]}"#;
         let blobs = r#"{"q":"blobs","ids":["a"]}"#;
@@ -466,7 +546,7 @@ mod tests {
         stream.extend_from_slice(b"hi \x1b[31mred\x1b[0m ");
         stream.extend_from_slice(KITTY);
         stream.extend_from_slice(format!("\x1b_tsp;f;{frame}\x1b\\").as_bytes());
-        stream.extend_from_slice(b"mid\x1b]0;title\x07");
+        stream.extend_from_slice("midÜ\x1b]0;title\x07".as_bytes());
         stream.extend_from_slice(format!("\x1b]877;tsp;q;{hello}\x07").as_bytes());
         stream.extend_from_slice(format!("\x1b]877;tsp;q;{blobs}\x1b\\").as_bytes());
         stream.extend_from_slice(format!("\x1b_tsp;f;c=7;m=1;{head}\x1b\\").as_bytes());
@@ -476,7 +556,7 @@ mod tests {
         let want = vec![
             Piece::Plain([b"hi \x1b[31mred\x1b[0m ".as_slice(), KITTY].concat()),
             Piece::Message(raw(b'f', &[], frame)),
-            Piece::Plain(b"mid\x1b]0;title\x07".to_vec()),
+            Piece::Plain("midÜ\x1b]0;title\x07".as_bytes().to_vec()),
             Piece::Message(raw(b'q', &[], hello)),
             Piece::Message(raw(b'q', &[], blobs)),
             Piece::Plain(b"xx".to_vec()),
@@ -603,10 +683,81 @@ mod tests {
         assert!(s.feed(b"a").is_empty());
         assert_eq!(s.take_dropped(), 1);
         assert_eq!(s.take_dropped(), 0);
-        // The splitter is usable again.
+        // The rest of the dropped message is skipped up to its terminator; then the splitter is usable again.
+        assert!(s.feed(b"aaa\x1b\\").is_empty());
         assert_eq!(
             s.feed(b"\x1b_tsp;f;{}\x1b\\"),
             vec![Piece::Message(raw(b'f', &[], "{}"))]
+        );
+    }
+
+    #[test]
+    fn an_oversized_message_is_skipped_to_its_terminator_across_feeds() {
+        let mut s = Splitter::with_limits(16, 16);
+        let mut got = s.feed(APC_PREFIX);
+        got.extend(s.feed(b"f;aaaaaaaaaa"));
+        assert!(got.is_empty());
+        assert_eq!(s.take_dropped(), 0);
+        // Over the limit: dropped, and the rest of the message is not plain output.
+        assert!(s.feed(b"aaaaaaaaaa").is_empty());
+        assert_eq!(s.take_dropped(), 1);
+        assert!(s.feed(b"aaaaaaaaaa").is_empty());
+        // The terminator split across feeds, then text after it passes through.
+        assert!(s.feed(b"a\x1b").is_empty());
+        assert_eq!(s.feed(b"\\after"), vec![Piece::Plain(b"after".to_vec())]);
+        assert_eq!(s.take_dropped(), 0);
+    }
+
+    #[test]
+    fn a_body_of_exactly_the_limit_is_kept_when_its_escape_arrives_later() {
+        let mut s = Splitter::with_limits(16, 16);
+        let mut got = s.feed(&[APC_PREFIX, b"f;", &[b'a'; 14]].concat());
+        got.extend(s.feed(b"\x1b"));
+        got.extend(s.feed(b"\\"));
+        assert_eq!(s.take_dropped(), 0);
+        assert_eq!(got.len(), 1);
+        assert!(matches!(&got[0], Piece::Message(m) if m.body.len() == 14));
+    }
+
+    #[test]
+    fn chunks_over_the_join_limit_are_dropped_up_to_the_final_one() {
+        let mut s = Splitter::with_limits(32, 16);
+        let chunk = |c: &str, more: bool, body: &str| {
+            let m = if more { "m=1;" } else { "" };
+            format!("\x1b_tsp;f;c={c};{m}{body}\x1b\\").into_bytes()
+        };
+        assert!(s.feed(&chunk("1", true, &"a".repeat(20))).is_empty());
+        assert!(s.feed(&chunk("1", true, &"a".repeat(20))).is_empty());
+        assert_eq!(s.take_dropped(), 1);
+        assert!(s.feed(&chunk("1", true, "bb")).is_empty());
+        // The final chunk of the dropped message does not come out as a message.
+        assert!(s.feed(&chunk("1", false, "cc")).is_empty());
+        // The id is free again afterwards.
+        assert_eq!(
+            s.feed(&chunk("1", false, "{}")),
+            vec![Piece::Message(raw(b'f', &[], "{}"))]
+        );
+        assert_eq!(s.take_dropped(), 0);
+    }
+
+    #[test]
+    fn chunks_of_messages_evicted_by_too_many_open_ids_are_dropped() {
+        let mut s = Splitter::with_limits(MAX_MESSAGE, 2);
+        let chunk = |c: &str, more: bool, body: &str| {
+            let m = if more { "m=1;" } else { "" };
+            format!("\x1b_tsp;f;c={c};{m}{body}\x1b\\").into_bytes()
+        };
+        assert!(s.feed(&chunk("1", true, "a")).is_empty());
+        assert!(s.feed(&chunk("2", true, "b")).is_empty());
+        // A third id evicts the open ones.
+        assert!(s.feed(&chunk("3", true, "c")).is_empty());
+        assert_eq!(s.take_dropped(), 1);
+        assert!(s.feed(&chunk("1", false, "x")).is_empty());
+        assert!(s.feed(&chunk("2", true, "y")).is_empty());
+        assert!(s.feed(&chunk("2", false, "z")).is_empty());
+        assert_eq!(
+            s.feed(&chunk("3", false, "d")),
+            vec![Piece::Message(raw(b'f', &[], "cd"))]
         );
     }
 
