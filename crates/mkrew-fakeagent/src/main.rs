@@ -339,7 +339,7 @@ mod tests {
             r#"{"t":2,"dir":"in","verb":"e","params":{},"body":{"ev":"ack","sf":"s:1","s":1}}"#,
             "",
             r#"{"t":3,"dir":"out","verb":"f","body":{"sf":"s:1","s":1,"ops":[]}}"#,
-            r#"{"t":4,"dir":"out","verb":"x","body":{"sf":"s:1","keep":false}}"#,
+            r#"{"t":4,"dir":"out","verb":"x","body":{"id":"s:1","keep":false}}"#,
         ]
         .join("\n");
         let messages = fixture_messages(&text).unwrap();
@@ -357,7 +357,7 @@ mod tests {
         let body = &messages[2][head..messages[2].len() - 2];
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(body).unwrap(),
-            json!({"sf": "s:1", "keep": false})
+            json!({"id": "s:1", "keep": false})
         );
     }
 
