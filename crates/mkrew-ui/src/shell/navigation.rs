@@ -131,12 +131,21 @@ impl Shell {
         }
     }
 
-    /// The absolute `[notes] folder` the daemon reads and writes files in, outside the
-    /// workspace root; `None` while no such folder is configured.
-    /// Task 7 (the `[notes] folder` setting) replaces this body with the resolved folder; the
-    /// drop check above needs no other change.
+    /// The absolute `[notes] folder` the daemon reads and writes files in (`fs.read` / `fs.write`
+    /// accept absolute paths inside it); `None` while the folder is empty, relative or unusable.
+    /// A folder inside the workspace root is returned too: `classify_os_files` lets the root win,
+    /// so those files open by their relative path. OS drops are local files, so this is the
+    /// local `settings.toml`; a remote machine's daemon has its own `[notes] folder`, and
+    /// `drop_os_files` refuses OS drops in a machine window before it asks.
     fn notes_folder(&self) -> Option<PathBuf> {
-        None
+        let setting = mkrew_core::settings::load(&self.settings_file)
+            .ok()?
+            .notes
+            .folder;
+        match mkrew_core::notes::folder(&setting) {
+            Ok(mkrew_core::notes::NotesFolder::Absolute(folder)) => Some(folder),
+            _ => None,
+        }
     }
     /// Types a drop into `session`'s pane: into its composer draft while the composer is
     /// shown, else into the terminal; no Enter either way. A modal dialog covers the panes,
