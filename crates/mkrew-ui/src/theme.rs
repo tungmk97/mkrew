@@ -378,6 +378,10 @@ pub const PROMPT_FIELD_HEIGHT: f32 = 140.0;
 /// Tallest an agent pane's prompt composer grows (it scrolls past that, ~8 lines; §20B.1).
 pub const COMPOSER_MAX_HEIGHT: f32 = 160.0;
 
+/// The Chat page's centered column: the list, the tray, the question card and the composer
+/// card line up in it (ADR 0105).
+pub const CHAT_COLUMN_WIDTH: f32 = 760.0;
+
 /// Widest share of the Chat page a prompt card takes (it sits at the right).
 pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
 
