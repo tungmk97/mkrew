@@ -2,7 +2,7 @@
 //! TSP tokens, tones and icons, the ANSI line parser, the pane state table, and the `Mirror`
 //! the UI keeps of the daemon's documents. `shell/tsp_view.rs` draws it.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 
@@ -197,16 +197,37 @@ fn extended(params: &mut impl Iterator<Item = u32>, theme: &Theme) -> Option<u32
     }
 }
 
+/// The color of a colon form `38:...` (the part after the `38`): `5:n`, `2:r:g:b` or the ITU
+/// `2:<colorspace>:r:g:b`.
+fn colon_color(rest: &[u32], theme: &Theme) -> Option<u32> {
+    let rgb = |r: u32, g: u32, b: u32| (r.min(255) << 16) | (g.min(255) << 8) | b.min(255);
+    match *rest {
+        [5, n, ..] => Some(indexed(n, theme)),
+        [2, r, g, b] | [2, _, r, g, b, ..] => Some(rgb(r, g, b)),
+        _ => None,
+    }
+}
+
 fn sgr(pen: &mut Pen, params: &str, theme: &Theme) {
     if params.is_empty() {
         *pen = Pen::default();
         return;
     }
-    let mut params = params
-        .split([';', ':'])
-        .map(|p| p.parse::<u32>().unwrap_or(0));
-    while let Some(code) = params.next() {
-        match code {
+    let number = |p: &str| p.parse::<u32>().unwrap_or(0);
+    let mut groups = params.split(';');
+    while let Some(group) = groups.next() {
+        // A colon group is one parameter; only its colors mean anything here (`4:3` is a curly
+        // underline, not italic).
+        if group.contains(':') {
+            let parts: Vec<u32> = group.split(':').map(number).collect();
+            if let [38, rest @ ..] = parts.as_slice()
+                && let Some(color) = colon_color(rest, theme)
+            {
+                pen.fg = Some(color);
+            }
+            continue;
+        }
+        match number(group) {
             0 => *pen = Pen::default(),
             1 => pen.bold = true,
             2 => pen.dim = true,
@@ -220,13 +241,13 @@ fn sgr(pen: &mut Pen, params: &str, theme: &Theme) {
             23 => pen.italic = false,
             27 => pen.reverse = false,
             29 => pen.strike = false,
-            30..=37 => pen.fg = Some(theme.ansi[(code - 30) as usize]),
-            90..=97 => pen.fg = Some(theme.ansi[(code - 90) as usize + 8]),
+            code @ 30..=37 => pen.fg = Some(theme.ansi[(code - 30) as usize]),
+            code @ 90..=97 => pen.fg = Some(theme.ansi[(code - 90) as usize + 8]),
             39 => pen.fg = None,
-            38 => pen.fg = extended(&mut params, theme),
+            38 => pen.fg = extended(&mut groups.by_ref().map(number), theme),
             // Backgrounds are dropped (reference 6.1) but their parameters are consumed.
             48 => {
-                extended(&mut params, theme);
+                extended(&mut groups.by_ref().map(number), theme);
             }
             _ => {}
         }
@@ -248,18 +269,29 @@ fn push_run(runs: &mut Vec<(String, SpanStyle)>, text: &mut String, style: SpanS
 }
 
 /// One line of ANSI text as styled runs: SGR 0 1 2 3 7 9 22 23 27 29 30-37 38 39 90-97 are
-/// applied, every other CSI, OSC and escape is dropped, equal neighbours merge.
+/// applied, every other CSI, string sequence (OSC, DCS, APC, PM, SOS) and escape is dropped,
+/// equal neighbours merge.
 pub fn ansi_runs(line: &str, theme: &Theme) -> Vec<(String, SpanStyle)> {
     let mut runs = Vec::new();
     let mut text = String::new();
     let mut pen = Pen::default();
     let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
+    // An ESC inside a string that is not the start of ST ends the string and begins the next
+    // sequence: it is replayed instead of eating the character after it.
+    let mut again = false;
+    loop {
+        let c = if std::mem::take(&mut again) {
+            '\x1b'
+        } else if let Some(c) = chars.next() {
+            c
+        } else {
+            break;
+        };
         if c != '\x1b' {
             text.push(c);
             continue;
         }
-        match chars.peek() {
+        match chars.peek().copied() {
             Some('[') => {
                 chars.next();
                 let mut params = String::new();
@@ -276,20 +308,22 @@ pub fn ansi_runs(line: &str, theme: &Theme) -> Vec<(String, SpanStyle)> {
                     sgr(&mut pen, &params, theme);
                 }
             }
-            Some(']') => {
+            Some(lead @ (']' | 'P' | '_' | '^' | 'X')) => {
                 chars.next();
                 while let Some(c) = chars.next() {
-                    if c == '\x07' {
+                    if c == '\x07' && lead == ']' {
                         break;
                     }
                     if c == '\x1b' {
-                        chars.next();
+                        again = chars.next_if_eq(&'\\').is_none();
                         break;
                     }
                 }
             }
+            // Intermediates, then one final byte: `ESC ( B`, `ESC 7`, `ESC \`.
             Some(_) => {
-                chars.next();
+                while chars.next_if(|c| ('\x20'..='\x2f').contains(c)).is_some() {}
+                chars.next_if(|c| ('\x30'..='\x7e').contains(c));
             }
             None => {}
         }
@@ -361,26 +395,50 @@ pub enum MirrorResult {
 #[derive(Debug, Default)]
 pub struct Mirror {
     surfaces: BTreeMap<String, (TspSurface, Document)>,
+    /// When each surface was opened (a counter, bigger is newer): the newest `screen` covers.
+    opened: HashMap<String, u64>,
+    next_open: u64,
     blobs: HashMap<String, TspBlob>,
 }
 
 impl Mirror {
     pub fn from_snapshot(snapshot: TspSnapshot) -> Self {
-        Self {
-            surfaces: snapshot
-                .surfaces
-                .into_iter()
-                .map(|surface| {
-                    let doc = Document::from_tree(&surface.root);
-                    (surface.id.clone(), (surface, doc))
-                })
-                .collect(),
-            blobs: snapshot
-                .blobs
-                .into_iter()
-                .map(|b| (b.id.clone(), b))
-                .collect(),
+        let mut mirror = Self::default();
+        for surface in snapshot.surfaces {
+            let doc = Document::from_tree(&surface.root);
+            mirror.insert(surface, doc);
         }
+        mirror.blobs = snapshot
+            .blobs
+            .into_iter()
+            .map(|b| (b.id.clone(), b))
+            .collect();
+        mirror
+    }
+
+    fn insert(&mut self, surface: TspSurface, doc: Document) {
+        self.opened.insert(surface.id.clone(), self.next_open);
+        self.next_open += 1;
+        self.surfaces.insert(surface.id.clone(), (surface, doc));
+    }
+
+    /// Drops the blobs no `image` node of any surface names.
+    fn prune_blobs(&mut self) {
+        let mut used = HashSet::new();
+        for (_, doc) in self.surfaces.values() {
+            let mut stack = vec![doc.root()];
+            while let Some(id) = stack.pop() {
+                for node in doc.children(id) {
+                    if node.kind == "image"
+                        && let Some(blob) = node.props.get("blob").and_then(Value::as_str)
+                    {
+                        used.insert(blob);
+                    }
+                    stack.push(&node.id);
+                }
+            }
+        }
+        self.blobs.retain(|id, _| used.contains(id.as_str()));
     }
 
     /// Applies one update. A frame at or below the surface's seq was already in the snapshot and
@@ -404,11 +462,14 @@ impl Mirror {
                 for blob in blobs {
                     self.blobs.insert(blob.id.clone(), blob.clone());
                 }
+                if !blobs.is_empty() {
+                    self.prune_blobs();
+                }
             }
             TspChange::Open { surface } => {
                 let doc = Document::from_tree(&surface.root);
-                self.surfaces
-                    .insert(update.surface.clone(), (surface.clone(), doc));
+                self.insert(surface.clone(), doc);
+                self.prune_blobs();
             }
             TspChange::Closed { keep: true } => {
                 if let Some((meta, _)) = self.surfaces.get_mut(&update.surface) {
@@ -417,6 +478,8 @@ impl Mirror {
             }
             TspChange::Closed { keep: false } => {
                 self.surfaces.remove(&update.surface);
+                self.opened.remove(&update.surface);
+                self.prune_blobs();
             }
         }
         MirrorResult::Applied
@@ -426,27 +489,23 @@ impl Mirror {
         self.surfaces.get(id)
     }
 
-    /// The surface the pane draws: a `screen` one covers the inline one.
+    /// The most recently opened surface of `mode`.
+    fn newest(&self, mode: &str) -> Option<&(TspSurface, Document)> {
+        self.surfaces
+            .iter()
+            .filter(|(_, (meta, _))| meta.mode == mode)
+            .max_by_key(|(id, _)| self.opened.get(*id))
+            .map(|(_, surface)| surface)
+    }
+
+    /// The surface the pane draws: the newest `screen` one covers the inline one.
     pub fn shown(&self) -> Option<&(TspSurface, Document)> {
-        (self
-            .surfaces
-            .values()
-            .rev()
-            .find(|(meta, _)| meta.mode == "screen"))
-        .or_else(|| {
-            self.surfaces
-                .values()
-                .find(|(meta, _)| meta.mode == "inline")
-        })
+        self.newest("screen").or_else(|| self.newest("inline"))
     }
 
     /// The inline surface's id: the target of `theme` events.
     pub fn inline_id(&self) -> Option<&str> {
-        (self
-            .surfaces
-            .values()
-            .find(|(meta, _)| meta.mode == "inline"))
-        .map(|(m, _)| m.id.as_str())
+        self.newest("inline").map(|(meta, _)| meta.id.as_str())
     }
 
     pub fn blob(&self, id: &str) -> Option<&TspBlob> {
@@ -455,16 +514,16 @@ impl Mirror {
 }
 
 /// Whether anything in `doc` changes with time: a spinner, a running `elapsed` (no `stopped`), a
-/// shimmer, a rate or a checklist with an active item. The status tick redraws only while this
-/// is true (ADR 0086).
+/// rate or a checklist with an active item. A shimmer draws as plain text (spec 7.1). The status
+/// tick redraws only while this is true (ADR 0086).
 pub fn animating(doc: &Document) -> bool {
     let mut stack = vec![doc.root()];
     while let Some(id) = stack.pop() {
         for node in doc.children(id) {
             let live = match node.kind.as_str() {
-                "spinner" | "shimmer" | "rate" => true,
+                "spinner" | "rate" => true,
                 "elapsed" => !node.props.contains_key("stopped"),
-                "checklist" => Checklist::from_props(&node.props).has_active(),
+                "checklist" => has_active_item(&node.props),
                 _ => false,
             };
             if live {
@@ -474,6 +533,17 @@ pub fn animating(doc: &Document) -> bool {
         }
     }
     false
+}
+
+/// Whether a checklist's props hold an `active` item, read in place (the tick runs this).
+fn has_active_item(props: &Map<String, Value>) -> bool {
+    fn list(value: Option<&Value>) -> impl Iterator<Item = &Value> {
+        value.and_then(Value::as_array).into_iter().flatten()
+    }
+    list(props.get("phases")).any(|phase| {
+        list(phase.get("items"))
+            .any(|item| item.get("status").and_then(Value::as_str) == Some("active"))
+    })
 }
 
 /// The surface roots omp adds itself; a node whose id is `<root>.<keypath>` belongs to the root,
@@ -659,7 +729,7 @@ pub fn rate_label(value: f64, unit: &str) -> String {
 /// An `elapsed` node's value: `stopped` once set, else `age` plus the time since this UI first
 /// saw that `age`.
 pub fn elapsed_ms(age: u64, stopped: Option<u64>, since_seen_ms: u64) -> u64 {
-    stopped.unwrap_or(age + since_seen_ms)
+    stopped.unwrap_or(age.saturating_add(since_seen_ms))
 }
 
 pub fn elapsed_label(ms: u64) -> String {
@@ -1564,7 +1634,11 @@ mod tests {
             (Fallback, false, false, Terminal),
             (Fallback, false, true, Terminal),
             (Fallback, true, true, Terminal),
+            (Off, true, false, Terminal),
+            (Waiting, true, true, Terminal),
+            (Fallback, true, false, Terminal),
         ];
+        assert_eq!(table.len(), 16, "4 states x exited x has_surface");
         for (state, exited, has_surface, shown) in table {
             assert_eq!(
                 pane_view(state, exited, has_surface),
@@ -1727,7 +1801,11 @@ mod tests {
 
     #[test]
     fn blobs_arrive_with_the_snapshot_and_with_applied_frames_only() {
-        let d = doc(main_added());
+        let d = doc(vec![
+            main_added().remove(0),
+            json!(["add", "ia", "main", null, {"id": "ia", "k": "image", "p": {"blob": "a"}}]),
+            json!(["add", "ib", "main", null, {"id": "ib", "k": "image", "p": {"blob": "b"}}]),
+        ]);
         let blob = |id: &str| TspBlob {
             id: id.into(),
             mime: "image/png".into(),
@@ -1754,17 +1832,21 @@ mod tests {
         assert!(m.blob("stale").is_none());
         m.apply(&with_blob(4, "b"));
         assert!(m.blob("b").is_some());
+        assert!(m.blob("a").is_some(), "still named by an image");
     }
 
     #[test]
-    fn only_spinner_running_elapsed_shimmer_and_rate_animate() {
+    fn only_spinner_running_elapsed_and_rate_animate() {
         let anim = |node| animating(&with_node(node));
         assert!(anim(json!({"id": "n", "k": "spinner"})));
         assert!(anim(json!({"id": "n", "k": "elapsed", "p": {"age": 1000}})));
         assert!(!anim(
             json!({"id": "n", "k": "elapsed", "p": {"age": 1000, "stopped": 5000}})
         ));
-        assert!(anim(json!({"id": "n", "k": "shimmer", "p": {"text": "x"}})));
+        assert!(
+            !anim(json!({"id": "n", "k": "shimmer", "p": {"text": "x"}})),
+            "a shimmer draws as plain text"
+        );
         assert!(anim(
             json!({"id": "n", "k": "rate", "p": {"value": 3.0, "unit": "tok/s"}})
         ));
@@ -2515,5 +2597,161 @@ mod tests {
             click_event(&d, d.get("7.actions/timer").unwrap(), false),
             None
         );
+    }
+
+    #[test]
+    fn a_charset_or_other_short_escape_leaves_nothing_and_tput_sgr0_resets() {
+        let t = Theme::dark();
+        assert_eq!(
+            ansi_runs("a\x1b(Bb", &t),
+            vec![run("ab", SpanStyle::default())]
+        );
+        assert_eq!(
+            ansi_runs("\x1b[1mx\x1b(B\x1b[my", &t),
+            vec![
+                run(
+                    "x",
+                    SpanStyle {
+                        bold: true,
+                        ..Default::default()
+                    }
+                ),
+                run("y", SpanStyle::default()),
+            ],
+            "tput sgr0 is ESC ( B ESC [ m"
+        );
+        assert_eq!(
+            ansi_runs("a\x1b#8b\x1b%Gc", &t),
+            vec![run("abc", SpanStyle::default())]
+        );
+    }
+
+    #[test]
+    fn string_sequences_are_skipped_up_to_st_and_an_inner_escape_eats_nothing() {
+        let t = Theme::dark();
+        for lead in ['P', '_', '^', 'X', ']'] {
+            assert_eq!(
+                ansi_runs(&format!("a\x1b{lead}payload\x1b\\b"), &t),
+                vec![run("ab", SpanStyle::default())],
+                "{lead}"
+            );
+        }
+        assert_eq!(
+            ansi_runs("a\x1b]0;t\x07b", &t),
+            vec![run("ab", SpanStyle::default())],
+            "BEL ends an OSC"
+        );
+        assert_eq!(
+            ansi_runs("a\x1bPq\x07b\x1b\\c", &t),
+            vec![run("ac", SpanStyle::default())],
+            "BEL does not end a DCS"
+        );
+        assert_eq!(
+            ansi_runs("\x1b]0;ti\x1b[31mred", &t),
+            vec![run(
+                "red",
+                SpanStyle {
+                    color: Some(t.ansi[1]),
+                    ..Default::default()
+                }
+            )],
+            "an ESC that is not ST ends the string and starts the next sequence"
+        );
+        assert_eq!(
+            ansi_runs("a\x1b_never ends\x1b", &t),
+            vec![run("a", SpanStyle::default())]
+        );
+    }
+
+    #[test]
+    fn a_colon_group_is_one_parameter_and_only_colors_are_read_from_it() {
+        let t = Theme::dark();
+        assert_eq!(
+            ansi_runs("\x1b[4:3mU", &t),
+            vec![run("U", SpanStyle::default())],
+            "curly underline is not italic"
+        );
+        let runs = ansi_runs(
+            "\x1b[38:2::1:2:3mA\x1b[38:2:4:5:6mB\x1b[38:5:196mC\x1b[48:2::9:9:9mD\x1b[4:3;1mE",
+            &t,
+        );
+        let got: Vec<_> = runs
+            .iter()
+            .map(|(s, st)| (s.as_str(), st.color, st.bold))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("A", Some(0x010203), false),
+                ("B", Some(0x040506), false),
+                ("CD", Some(0xFF0000), false),
+                ("E", Some(0xFF0000), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_newest_opened_screen_wins_not_the_largest_id() {
+        let d = doc(main_added());
+        let mut m = mirror(vec![surface("s:1", "inline", 1, &d)]);
+        let open = |m: &mut Mirror, id: &str| {
+            let change = TspChange::Open {
+                surface: surface(id, "screen", 0, &Document::new(id)),
+            };
+            m.apply(&update(id, change));
+        };
+        open(&mut m, "s:9");
+        open(&mut m, "s:10");
+        assert_eq!(m.shown().unwrap().0.id, "s:10");
+        m.apply(&update("s:10", TspChange::Closed { keep: false }));
+        assert_eq!(m.shown().unwrap().0.id, "s:9");
+        open(&mut m, "s:10");
+        open(&mut m, "s:9");
+        assert_eq!(m.shown().unwrap().0.id, "s:9", "reopened last");
+        let snap = mirror(vec![
+            surface("s:9", "screen", 0, &Document::new("s:9")),
+            surface("s:10", "screen", 0, &Document::new("s:10")),
+        ]);
+        assert_eq!(
+            snap.shown().unwrap().0.id,
+            "s:10",
+            "snapshot order is open order"
+        );
+    }
+
+    #[test]
+    fn blobs_no_image_names_are_dropped_when_blobs_arrive_or_a_surface_closes() {
+        let d = doc(vec![
+            main_added().remove(0),
+            json!(["add", "i", "main", null, {"id": "i", "k": "image", "p": {"blob": "keep"}}]),
+        ]);
+        let blob = |id: &str| TspBlob {
+            id: id.into(),
+            mime: "image/png".into(),
+            data: vec![1],
+        };
+        let mut m = mirror(vec![surface("s:1", "inline", 0, &d)]);
+        let frame_with = |seq, ids: &[&str]| {
+            update(
+                "s:1",
+                TspChange::Frame {
+                    seq,
+                    ops: Vec::new(),
+                    blobs: ids.iter().map(|i| blob(i)).collect(),
+                },
+            )
+        };
+        m.apply(&frame_with(1, &["keep", "orphan"]));
+        assert!(m.blob("keep").is_some());
+        assert!(m.blob("orphan").is_none(), "no image names it");
+        m.apply(&update("s:1", TspChange::Closed { keep: true }));
+        assert!(m.blob("keep").is_some(), "a kept surface still shows it");
+        m.apply(&update("s:1", TspChange::Closed { keep: false }));
+        assert!(m.blob("keep").is_none(), "its surface is gone");
+    }
+
+    #[test]
+    fn a_huge_age_does_not_overflow() {
+        assert_eq!(elapsed_ms(u64::MAX, None, 5), u64::MAX);
     }
 }
