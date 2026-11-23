@@ -682,6 +682,28 @@ impl Tabs {
         Some([placed, emptied])
     }
 
+    /// Pane `key` leaves its tab, whole leaf (chat flag, Markdown mode), for the empty tab
+    /// `into`, where it becomes the root and takes the focus: a pane dragged onto the tab
+    /// strip gets a tab of its own. Returns the writes, `into`'s first, then the source's, so
+    /// a failure between them duplicates the pane rather than losing it.
+    /// `None`, nothing changed, if no tab holds `key`, `into` is missing, is the source or has
+    /// panes, or `key` is the only pane of its tab.
+    pub fn move_to_empty_tab(
+        &mut self,
+        key: &PaneKey,
+        into: Ulid,
+    ) -> Option<[TabSetLayoutParams; 2]> {
+        let source = self.tab_with(key)?;
+        if source.id == into || source.keys().len() < 2 || self.tab(into)?.layout().is_some() {
+            return None;
+        }
+        let leaf = source.layout()?.leaf_of(key)?.clone();
+        let out = self.close_leaf(key)?;
+        // `into` exists and is empty (checked above), so this cannot refuse.
+        let inn = self.insert_leaf(into, None, Edge::Right, leaf)?;
+        Some([inn, out])
+    }
+
     /// Lays tab `tab_id` out as `preset` (SPEC §10 layouts): its panes keep their tree
     /// order, whole (a file keeps its Markdown mode, a session its chat flag), then come the
     /// `new` sessions it does not show yet. `None` (nothing changes) unless that makes

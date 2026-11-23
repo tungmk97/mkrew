@@ -1941,3 +1941,86 @@ fn file_panes_have_chip_icons_and_unknown_sessions_none() {
     // An inactive tab shows its focused leaf only: the first (session) leaf, unknown here.
     assert!(tab_icons(tab, &[], false).panes.is_empty());
 }
+
+#[test]
+fn a_pane_moves_to_an_empty_tab_with_its_whole_leaf() {
+    use crate::split::PaneKey;
+    let project = Ulid::new();
+    let session = Ulid::new();
+    let split = json!({"split":"vertical","ratio":0.5,"children":[
+        {"session": session.to_string(), "chat": true},
+        {"file": "notes/a.md", "md": "split"},
+    ]});
+    let source = wire(project, "one", 1.0, split);
+    let empty = wire(project, "two", 2.0, serde_json::Value::Null);
+    let (source_id, empty_id) = (source.id, empty.id);
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![source, empty]);
+    let key = PaneKey::File("notes/a.md".to_owned());
+    let leaf = (tabs.tab(source_id))
+        .and_then(Tab::layout)
+        .and_then(|node| node.leaf_of(&key))
+        .cloned();
+    assert!(leaf.is_some());
+
+    let [into, out] = tabs
+        .move_to_empty_tab(&key, empty_id)
+        .expect("the pane moves");
+
+    assert_eq!((into.tab_id, out.tab_id), (empty_id, source_id));
+    assert_eq!(
+        tabs.tab(source_id).map(Tab::keys),
+        Some(vec![PaneKey::Session(session)])
+    );
+    let moved = tabs.tab(empty_id).expect("the new tab");
+    assert_eq!(moved.keys(), vec![key.clone()]);
+    assert_eq!(
+        moved.layout().and_then(|node| node.leaf_of(&key)).cloned(),
+        leaf
+    );
+    assert_eq!(moved.focused(), Some(&key));
+}
+
+#[test]
+fn a_pane_alone_in_its_tab_does_not_move_out() {
+    use crate::split::PaneKey;
+    let project = Ulid::new();
+    let session = Ulid::new();
+    let one = wire(project, "one", 1.0, pane(session));
+    let empty = wire(project, "two", 2.0, serde_json::Value::Null);
+    let (one_id, empty_id) = (one.id, empty.id);
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one, empty]);
+
+    assert!(
+        tabs.move_to_empty_tab(&PaneKey::Session(session), empty_id)
+            .is_none()
+    );
+    assert_eq!(
+        tabs.tab(one_id).map(Tab::keys),
+        Some(vec![PaneKey::Session(session)])
+    );
+    assert!(tabs.tab(empty_id).is_some_and(|tab| tab.layout().is_none()));
+}
+
+#[test]
+fn a_pane_does_not_move_into_a_tab_that_has_panes_or_is_missing() {
+    use crate::split::PaneKey;
+    let project = Ulid::new();
+    let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];
+    let split = json!({"split":"vertical","ratio":0.5,"children":[pane(a), pane(b)]});
+    let source = wire(project, "one", 1.0, split);
+    let busy = wire(project, "two", 2.0, pane(c));
+    let (source_id, busy_id) = (source.id, busy.id);
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![source, busy]);
+    let key = PaneKey::Session(a);
+
+    assert!(tabs.move_to_empty_tab(&key, busy_id).is_none());
+    assert!(tabs.move_to_empty_tab(&key, Ulid::new()).is_none());
+    assert!(tabs.move_to_empty_tab(&key, source_id).is_none());
+    assert_eq!(
+        tabs.tab(source_id).map(Tab::keys),
+        Some(vec![PaneKey::Session(a), PaneKey::Session(b)])
+    );
+}
