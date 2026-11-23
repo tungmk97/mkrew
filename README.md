@@ -175,7 +175,7 @@ Run `mk integration install claude` again after updating Mkrew to get the status
   `mk project add <path> [--name N]`.
 - Default agent: in the workspace menu pick "Default agent for new panes". New agent panes and
   tasks without their own agent use it.
-- Run button (right of the view tabs): the first click opens "Run setup", where each command
+- Run button (in the top bar, before Board): the first click opens "Run setup", where each command
   gets a name, a folder (relative to the workspace), the command, an optional env file (e.g.
   `.env`) and extra `KEY=VALUE` lines. After that one click runs every command, each in its own
   pane of the "run" tab; ↻ restarts, ■ stops, ▾ controls one command. Ports the servers print

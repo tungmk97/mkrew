@@ -915,13 +915,14 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
     The area scrolls sideways when the tabs do not fit; the active tab is scrolled into view; a chip shrinks to `TAB_MIN_WIDTH` before the area scrolls, `TAB_TITLE_MAX_WIDTH` is its maximum; `+ ▾` stays visible after the scrolled tabs.
     Only the drag space moves the window, so a click on a tab never does.
     A tab shows its kind icon, 📌 when pinned, its title, a status dot and ×; the active tab has a solid `card` fill with radius 8 and no border, the others are transparent with muted text and a hover fill; a click activates the tab and shows Terminals.
-  - **`+ ▾`:** one row per installed agent profile (the workspace's default first with ✓ and Alt+Shift+A), "Agent" when none is listed, Shell (Alt+Shift+S), Empty tab; each row opens a new tab and shows Terminals; while a session starts the button shows the starting spinner.
-  - **Right group:** the limits chip (only at 80% or more, see "Limits chip"), the voice status while the sidebar is hidden, the Run pill, the update button (only when an update is known), Board (`LayoutGrid`), Docs (`BookOpen`, only with `[features] docs`), Split ▾ (`◫`: Split right, Split down, Equalize panes, layouts, as before) and the right panel toggle (`◨`, ADR 0038, ADR 0081).
+  - **`+ ▾`:** one row per installed agent profile (the workspace's default first with ✓ and Ctrl+Shift+A), "Agent" when none is listed, Shell (Ctrl+Shift+T), Empty tab; each row opens a new tab and shows Terminals; while a session starts the button shows the starting spinner.
+    Alt+Shift+A and Alt+Shift+S add a pane to the current tab instead.
+  - **Right group:** the limits chip (only at 80% or more, see "Limits chip"), the voice status while the sidebar is hidden, the Run pill, the update button (only when an update is known), Board (`LayoutGrid`), Docs (`BookOpen`, only with `[features] docs`), Split ▾ (`◫`: Split right, Split down, Equalize panes, layouts, as before; in the main window only while Terminals show, a detached window always has it) and the right panel toggle (`◨`, ADR 0038, ADR 0081).
     Board and Docs show in the accent color while their view is shown.
   - History (palette "Global: History…"), the theme toggle (Ctrl+Shift+J, palette, Settings > Appearance), Phone access (palette "Global: Phone access…"), the branch chip and repository menu (the Git panel, Ctrl+Shift+4) and the logo are not in the bar.
   - Every icon is gray (`text-muted`, `text` on hover): color only for status.
     The Git tab's count comes from `git.repos` and one `git.status` per repository, asked for the shown workspace only, on a workspace switch and on its `git.changed`; no polling, nothing for hidden workspaces.
-  - Window: the empty part (the drag space) is the drag area.
+  - Window: the empty part (the drag space) is the drag area; it keeps a minimum width of 32 px so the window stays movable with many tabs.
     **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering □ shows the Windows 11 Snap Layouts flyout), all edges resize; ✕ and Alt+F4 hide the window to the tray while `[ui] close_to_tray` is on (§20J); the controls are hidden in full screen.
     **macOS:** native traffic lights at the left, centered in the bar at any `[ui] font_size` (no gap is left for them in full screen), drag and double-click as the OS does.
     **Linux:** the OS title bar stays. Minimum window size 1100 × 560.
@@ -1149,7 +1150,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
 ### Detached windows (ADR 0096)
 
 - A terminal tab moves into a window of its own by dragging its chip outside every Mkrew window (the new window opens at the pointer), with `Shift+F4`, or from the tab menu and the palette.
-- A detached window draws the same title bar (ADR 0106): its tabs as chips with the workspace name in front, Move all back, Split ▾ and the window controls; it has no workspace switcher, Board, Docs, Editor and Diff chips, Run pill or limits chip. Below it are the tab's panes.
+- A detached window draws the same title bar (ADR 0106): its tabs as chips with the workspace name in front, Move all back, Split ▾ and the window controls; it has no workspace switcher, `+ ▾`, Board, Docs, Editor and Diff chips, Run pill or limits chip. Below it are the tab's panes.
 - Tabs move between windows by dragging their chip onto another window (onto its strip: at the gap under the pointer) or with the tab menu's Move to main window / Move to window: `<tab> - <workspace>` (named by the tab that window shows).
 - Its keys act on its own tab only: tab and pane commands of §13, the palette (its commands only: also Window: Close and Window: Move all tabs back), the context menu, the composer. The `/` and `@` pickers and the prompt picker open in the window of their composer. Turns… opens in the main window. Settings (Ctrl+, or ⌘,) opens in the main window on every OS (not over another dialog, not while reconnecting).
 - Closing a detached window (✕ or Window: Close) closes its tabs (one confirmation for running agents); quitting Mkrew keeps them and reopens the windows on the next start (`<data>/windows.json`).
@@ -1542,13 +1543,13 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
-| Panes | New agent pane / new shell pane (split right with the workspace default, like the tab + ▾ menu's Agent / Shell) | Alt+Shift+A / Alt+Shift+S |
+| Panes | New agent pane / new shell pane (split right with the workspace's default agent / shell; the title bar `+ ▾` menu and Ctrl+Shift+A / Ctrl+Shift+T create tabs) | Alt+Shift+A / Alt+Shift+S |
 | Panes | Move focus; past the outer pane (or from Board, Docs, Editor, Diff) ← enters the sidebar filter and → the right panel's file tree or Git list, only while on screen (the compact rail widens); from those ← / → come back to the center | Alt+←↑→↓ |
 | Panes | Resize | Alt+Shift+←↑→↓ |
 | Panes | Zoom / unzoom pane | Ctrl+Shift+M |
 | Panes | Toggle Terminal / Chat of the focused agent pane (ADR 0104; works while its composer has the keys) | Ctrl+Alt+T |
 | Panes | Close pane (asks if agent running) | Ctrl+Shift+X |
-| Panes | Rename pane (also: double-click its title) | F2 |
+| Panes | Rename pane (also: double-click a tab that keeps its default name) | F2 |
 | Terminal | Copy / paste | Ctrl+Shift+C (or Ctrl+C while text is selected) / Ctrl+V or Ctrl+Shift+V |
 | Terminal / Editor / Docs | Find in scrollback / in the opened file / filter the Docs list | Ctrl+Shift+F |
 | Terminal | Page up / down | Shift+PgUp / Shift+PgDn |

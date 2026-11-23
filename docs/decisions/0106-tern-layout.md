@@ -15,7 +15,7 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
 
 - One full-width top bar of `TITLE_BAR_HEIGHT` (42).
   Left: macOS inset, machine chip (machine windows), sidebar toggle, workspace switcher.
-  Then the tab area, a drag spacer, and on the right the limits chip, Run pill, update button, Board and Docs icons, Split, right panel toggle, and on Windows the window controls.
+  Then the tab area, a drag spacer (at least 32 px wide, so the window stays movable with many tabs), and on the right the limits chip, Run pill, update button, Board and Docs icons, Split (in the main window only while Terminals show), right panel toggle, and on Windows the window controls.
 - The tab strip lives in the tab area: Editor and Diff chips (only while open), pinned tabs, other tabs, and a `+ ▾` button.
   The area scrolls sideways; a chip shrinks to `TAB_MIN_WIDTH` first; `+ ▾` stays visible.
   Only the spacer drags the window, so a click on a tab never moves it.
@@ -37,7 +37,7 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
   Folder, Git and version are in the palette, the Git panel and Settings.
 - Machine stats are removed: `Event::MachineStats`, `MachineStats` and the daemon's `machine.rs` sampler go; protocol 57 -> 58.
   `sysinfo` stays for `ports.rs`.
-- Detached windows draw the same title bar function without the workspace controls, Board, Docs, Editor and Diff chips, Run pill and limits chip, with Move all back in the right group; their chips keep the workspace name in front.
+- Detached windows draw the same title bar function without the workspace controls, `+ ▾`, Board, Docs, Editor and Diff chips, Run pill and limits chip, with Move all back in the right group; their chips keep the workspace name in front.
 - `[ui] widget_bar` and `[ui] widgets_hidden` are retired: `settings.toml` files that have them still load (the keys are accepted, ignored and never written).
   `Command::ToggleWidgetBar` and its shortcuts are gone.
 
