@@ -21,6 +21,29 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-23 Tern layout (ADR 0106, plan docs/superpowers/plans/2026-11-23-tern-layout.md)
+
+Screenshots: `docs/screenshots/tern-layout-<view>-<dark|light>.png`.
+
+- [ ] **Look (dark + light, Mkrew Light and one palette theme):** one 42 px bar across the window: sidebar toggle, workspace switcher, tabs, `+ ▾`, a drag space, then Run, Board, Docs (with `[features] docs`), Split and the right panel toggle; no bottom bar; the sidebar and the terminals reach the window bottom.
+  The active tab is a solid lighter card with rounded corners and no border, inactive tabs are muted with a hover fill, the × shows on the active tab and on hover.
+- [ ] **Views:** a click on a terminal tab shows Terminals from Board, Docs, Editor and Diff; Board and Docs icons turn accent while shown and a second click goes back; open a file: an Editor chip appears, × closes all file tabs; open a diff: a Diff chip appears, × closes it.
+- [ ] **Many tabs:** open 10 or more tabs in an 1100 px wide window: the area scrolls sideways, the active tab stays in view when you switch with Ctrl+Tab, `+ ▾` stays visible, chips shrink to a minimum before scrolling.
+- [ ] **`+ ▾`:** rows are the agent profiles (default first with a check), Shell, Empty tab; each opens a new tab and shows Terminals, also from Board; the button shows the spinner while the agent starts; Alt+Shift+A and Alt+Shift+S still add a pane to the current tab.
+- [ ] **Window drag:** drag the empty space: the window moves; double-click it: maximize and restore; a click or a drag on a tab never moves the window (Windows and macOS).
+- [ ] **Pane header:** a single pane has the compact header with no title; the agent chip's tooltip shows the full pane title; Terminal | Chat, Reading width and Share work there; zoom a pane (Ctrl+Shift+M): the header shows `Pane zoomed` and "Show all panes".
+- [ ] **Tab title:** a tab named `Terminal` shows the focused pane's session title and follows when you move focus in a split; rename the tab (F2 on a named tab, or double-click): the name wins; double-click a default-named tab: the focused pane's rename field shows in its header.
+- [ ] **Notices as toasts:** a failed action that used to print in the strip (close a tab while the daemon is down, open links with none on screen) shows a toast; open 13 sessions in one workspace: one toast "sessions running", not repeated until the count drops to 12 or fewer and rises again.
+- [ ] **Limits chip:** with no data or below 80 % there is no chip; report 85 % (amber `⚠ Claude 5h 85%`), then 96 % (red); the tooltip lists the windows with reset times in local time; a click opens Settings > Integrations; it is inert behind a dialog.
+- [ ] **Detached window:** drag a tab out: same bar with the workspace name on its chip, Move all back, Split; no switcher, Board, Docs or limits chip; drag a tab out and back onto the main tab area (drop line shows); a click on its chip does not move the window.
+- [ ] **Old settings:** a `settings.toml` with `widget_bar = false` and `widgets_hidden = ["git"]` still loads and Mkrew rewrites other keys without them.
+- [ ] **macOS:** the traffic lights are centered in the 42 px bar (also with `[ui] font_size = 16`), dragging the empty space moves the window, double-click zooms it, a click on a tab never drags, full screen leaves no gap at the left.
+- [ ] In a light theme, the tray icon's needs-input amber (8B570D) is still visible on a dark Windows taskbar, and the taskbar badge number reads on it.
+- [ ] Real limits: run `mk integration install claude`, send one turn in Claude Code and one in Codex; the chip shows when a window is at 80 % or more, with plausible percentages and local reset times in the tooltip.
+  A status line you had before still prints in Claude Code; `mk integration uninstall claude` brings it back.
+- [ ] On Windows, check that your own status line still prints with Git for Windows installed (it runs through Git Bash); without Git Bash it runs through PowerShell.
+- [ ] The daemon no longer samples CPU or RAM: its CPU use at idle with a window open is 0 %.
+
 ### To verify - 2026-11-23 Chat look (ADR 0105, plan docs/superpowers/plans/2026-11-23-chat-look.md)
 
 - [ ] **Restart the daemon first** (protocol 57; a window from before it shows a version mismatch).
@@ -202,19 +225,6 @@ With a real Claude Code session, a real Codex session (and omp if installed), da
   With nothing selected the caret's line goes, as before.
 - [ ] **Send from Docs:** Docs, click a block (Shift+click extends), press `Ctrl+Shift+L`: the same dialog with the file and line range; in Source mode too.
 
-### To verify - 2026-11-22 Widget bar (ADR 0102, plan docs/superpowers/plans/2026-11-22-widget-bar.md)
-
-- [ ] The bar in dark and light themes: folder, branch with count, limits, CPU and RAM, version; hover and press feel like the other title bar controls; the text is readable; a long workspace or branch name ends in an ellipsis.
-- [ ] Narrow the window: limits drop first, then CPU and RAM; folder, branch and version stay.
-- [ ] In a light theme, the tray icon's needs-input amber (now darker, 8B570D) is still visible on a dark Windows taskbar, and the taskbar badge number reads on it.
-- [ ] Right-click the bar: each widget has a check mark and toggling keeps the menu open; "Hide widget bar" hides the bar; `Ctrl+Alt+Shift+J` and the palette entry bring it back; restart Mkrew and the choices are kept; a hidden id you add by hand to `widgets_hidden` (for example `"clock"`) survives toggling.
-- [ ] Open a dialog (for example Settings) and, in a machine window, stop its daemon: while the dialog is open or Mkrew reconnects, clicks and right-click on the bar do nothing.
-- [ ] Git widget: click opens the Git view; click again steps through the changed files and wraps from the last to the first; a workspace with several repositories shows `N repos`.
-- [ ] Folder widget opens the workspace folder in the file explorer; version widget runs the update check; limits widget opens Settings.
-- [ ] Real limits: run `mk integration install claude`, send one turn in Claude Code and one in Codex; the limits widget shows both with plausible percentages and reset times in the tooltip (local time).
-  A status line you had before still prints in Claude Code; `mk integration uninstall claude` brings it back.
-- [ ] On Windows, check that your own status line still prints with Git for Windows installed (it runs through Git Bash); without Git Bash it runs through PowerShell.
-- [ ] CPU and RAM match Task Manager closely; in a machine window they show that machine's numbers; with no Mkrew window open the daemon does no sampling (check its CPU use at idle).
 
 ### To verify - 2026-11-22 Theme gallery (plan docs/superpowers/plans/2026-11-22-theme-gallery.md)
 
@@ -1540,9 +1550,9 @@ by telling the agent.
 
 ### To verify — 2026-10-12 Lucide icons (ADR 0051, plan docs/superpowers/plans/2026-10-12-lucide-icons.md)
 
-- [ ] **Icons (dark + light):** title bar (theme toggle cycles sun-moon → sun → moon, History
-  clock), sidebar header (+, collapse chevron, remove-idle), tab strip (+, split, ⋯, tab ✕),
-  status bar (sidebar, compact, session panel toggles), Git (repos ▾, fetch, ‹ ›, ⋯), Files
+- [ ] **Icons (dark + light):** title bar (Board and Docs icons, Split, the sidebar and right panel toggles,
+  title bar tabs: + ▾, tab ✕), sidebar header (+, collapse chevron, remove-idle),
+  Git (repos ▾, fetch, ‹ ›, ⋯), Files
   (search row, find bar ▸ ↑ ↓ ✕), terminal find ✕, composer ✦ and queue ✕, Run (live ↻ ■, menu
   rows ↻ ■ ▶): every icon is drawn (no blank or box), centered, muted, same stroke weight.
 - [ ] **Window controls (Windows):** hover close → red background and a white X; minimize and

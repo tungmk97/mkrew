@@ -645,7 +645,6 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.ports` | a run session's port list grew (`session_id`, `ports`): ports are scanned from its screen text (`http(s)://<host>:<port>`, `port(s)[:=] <n>`), first 4 distinct, never removed while it lives |
 | `session.usage` | an agent session's token usage changed at a turn end (§20E.3): `session_id`, `input` (fresh, cache excluded), `output`, `cache_read`, `cache_write`, `context`, `context_window?`, `model?`, `transcript?` |
 | `agent.limits` | an agent's newest limits changed (`AgentLimits`, see `limits.get`); Codex's come from its transcript at a turn end (§20E.3), Claude's from `mk statusline` |
-| `machine.stats` | CPU and RAM of the daemon's machine: `cpu_percent`, `ram_used`, `ram_total` (0 = unknown); sampled every 2 s while a client is connected, sent when CPU moves 1 point or RAM 100 MB, or every 10 s |
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
 | `session.updated` | a session's title, color, pin, position or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.move`, `session.link_plan`): the whole Session |
 | `session.terminal_title` | an agent session's terminal title (OSC 0/2) changed: `session_id`, `title?` — leading glyphs stripped, paths ignored, ≤ 60 chars, once per change; memory only (ADR 0031) |
@@ -705,6 +704,8 @@ Protocol 55 (Widget bar spec 2026-11-22 sections 5 and 6, ADR 0102): requests `l
 Protocol 56 (ADR 0103): `git.discard` takes `hunk`.
 
 Protocol 57 (ADR 0105): `session.transcript` result gains `recap`.
+
+Protocol 58 (ADR 0106): event `machine.stats` and `MachineStats` removed; `agent.limits`, `limits.get` and `limits.report` stay.
 
 Protocol 41: `session.move` and `Session.position`.
 
@@ -821,9 +822,9 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ ◈ ◧ A api ▾ ⎇ master [Terminals│Board│Docs│Editor*│Diff*]  (● 2 running :8080 ▾) ◷ ◐ ▯ ◨ [+ New ▾] ─ □ ✕ │
+│ ◧ A api ▾ │[Editor*][Diff*]│ [▣ ● tab ✕] [>_ ○ tab ✕] +▾   ⚠ Claude 5h 84% (● 2 running ▾) ▦ ▤ ◫ ◨ ─ □ ✕ │
 ├──────────────┬────────────────────────────────────────────────────────────────────────┤
-│ [⌕ Filter… /]⇲+│ tab strip: [▣ ● tab ✕] [>_ ○ tab ✕] +    (● Working · 4s) 📖 Share ◫ ⋯ │
+│ [⌕ Filter… /]⇲+│ ┌ ▣ Claude ● Working · 4s  📖 Share ┐                                 │
 │ [All│Working│Needs you]│                                                              │
 │ ▾ A api (● 1 working)│  Todo │ Running │ Needs input │ …                              │
 │ │ ✻ fix login    2m │  …or the terminal tabs/panes                                    │
@@ -832,14 +833,12 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 │ ▸ W web       1 idle│                                                                 │
 │ ▸ 2 empty workspaces I D │                                                            │
 │ 📥 Inbox clear     ⇤ │                                                                │
-├──────────────┴────────────────────────────────────────────────────────────────────────┤
-│ 📁 api  ⎇ master · 3                  Claude 5h 42% · 7d 18%  CPU 23% · RAM 11/32 GB  v0.5.3 │
-└───────────────────────────────────────────────────────────────────────────────────────┘
+└──────────────┴────────────────────────────────────────────────────────────────────────┘
 ```
 ADR 0054 simplified this screen: one place per piece of information, color for status only,
-empty things hidden, detail on hover / in menus. It removed the old status bar; ADR 0102 adds back a thin widget bar along the bottom (see "Widget bar" below).
+empty things hidden, detail on hover / in menus. It removed the old status bar; ADR 0102 added a thin widget bar along the bottom and ADR 0106 removed it again: there is no bottom bar, the terminal tabs live in the title bar, and the agents' limits show as a chip in it (see "Limits chip" below).
 The right panel (below) is a third column right of Terminals, the Editor and the Diff while open.
-Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view bar only while a file tab or a diff is open.
+Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the title bar's tab area only while a file tab or a diff is open.
 
 - **Sidebar:** workspaces; expanding one lists its live sessions with status (§11); a session that
   exited leaves the list and its pane leaves its tab (ADR 0033; History keeps it).
@@ -901,46 +900,35 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
 - **Pin:** the workspace menu, the pane menu (right-click a sidebar session row or a pane header)
   and the tab menu have Pin / Unpin (`project.update` `pinned`, `session.pin`, `tab.pin`, §7). A
   pinned workspace leads the sidebar, a pinned session leads its workspace's list and a pinned tab
-  sits at the left of the tab strip; each group keeps its usual order (workspaces by dragged order, then age;
+  sits at the left of the tab area; each group keeps its usual order (workspaces by dragged order, then age;
   sessions newest first, tabs by position), and unpinning puts the item back in it. A pinned item
   shows 📌 next to its name (after it in the sidebar, before it on a tab). Pins are stored (§5), so they survive a restart; a resumed session
   keeps its pin (ADR 0017).
 - **Reorder:** drag a workspace card in the full sidebar to move it among the pinned or the
   unpinned workspaces (`project.update` `position`, the group numbered `1..=n`; ADR 0069), with
   the same drag look as tabs and rows; off while filtering and in the compact rail.
-- **Views per workspace:** Terminals, Board, Docs (only with `[features] docs`), Editor (only while a file tab is open), Diff (only while a diff is open).
-- **Title bar** (44 px, ADR 0027, ADR 0034, ADR 0054), left to right: the Mkrew logo; in a machine window (ADR 0089) the machine chip (below);
-  the sidebar toggle `◧`; the workspace avatar + name ▾ (a dropdown of the workspaces, click
-  switches, plus "Add workspace…") followed, muted, by `⎇ master` (one repository) or
-  `⎇ N repos ▾` (several; the only place this shows; the tooltip lists each repository's
-  branch and HEAD; a workspace folder without `.git` but with child repositories shows the
-  children, ADR 0029; hidden when there is no repository). A click on `⎇ master` opens the Git
-  tab and the diff; a click on `⎇ N repos ▾` opens a "Repositories" dropdown, one row per
-  repository in `git.repos` order (the workspace name for the folder itself, else the child
-  folder; its branch, `detached` on a detached HEAD, as the second line; `Clean` / `1 change` /
-  `N changes` on the right); a row opens that repository in the Git tab and the diff; the
-  views Terminals / Board / Docs / Editor / Diff as a segmented control (tooltips show their
-  shortcuts, §13; Editor and Diff only while a file tab or a diff is open); then, right-aligned,
-  the Run pill, History (`◷`: finished sessions
-  with their logs replayed read-only; **Resume** (Enter) continues the selected agent session's
-  conversation in a new pane that gets the keyboard, ADR 0055), the theme toggle,
-  the phone icon (`smartphone`, §14; a green dot while Phone access is on; the tooltip explains
-  it; hidden without a daemon connection), the right panel toggle (◨, ADR 0038, ADR 0081) and the
-  outlined `+ New ▾` (one row per installed agent profile, the workspace's default first with ✓
-  and Alt+Shift+A, then Shell with Alt+Shift+S; choosing a profile starts a pane with it), in every view (New's entries switch to
-  Terminals first; they show Alt+Shift+A / Alt+Shift+S, §13). Every icon is gray (`text-muted`,
-  `text` on hover): color only for status. The git label and the Git tab's count come from `git.repos`
-  and one `git.status` per repository, asked for the shown workspace only, on a workspace switch
-  and on its `git.changed`; no polling, nothing for hidden workspaces. Window: the empty part is
-  the drag area. **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering
-  □ shows the Windows 11 Snap Layouts flyout), all edges resize; ✕ and Alt+F4 hide the window to the tray while `[ui] close_to_tray` is on (§20J); the controls are hidden in full
-  screen. **macOS:** native traffic lights at the left, centered in the bar at any `[ui] font_size`
-  (no gap is left for them in full screen), drag and double-click as the OS does.
-  **Linux:** the OS title bar stays. Minimum window size 1100 × 560. Without a workspace only
-  the logo, the sidebar toggle, the drag area and the window controls show.
+- **Views per workspace:** Terminals (a click on any terminal tab), Board and Docs (icons in the title bar, only with `[features] docs` for Docs; a second click returns to Terminals), Editor (a chip, only while a file tab is open), Diff (a chip, only while a diff is open).
+- **Title bar** (42 px, ADR 0027, ADR 0034, ADR 0054, ADR 0106), one bar across both columns, left to right:
+  in a machine window (ADR 0089) the machine chip (below); the sidebar toggle `◧`; the workspace avatar + name ▾ (a dropdown of the workspaces, click switches, plus "Add workspace…");
+  the tab area; a drag space; the right group; on Windows the window controls.
+  - **Tab area:** the Editor and Diff chips (icon, name, × that closes all file tabs or the diff; only while open; a click shows the view), a 1 px rule, the pinned tabs, a rule, the other tabs, and `+ ▾` (below).
+    The area scrolls sideways when the tabs do not fit; the active tab is scrolled into view; a chip shrinks to `TAB_MIN_WIDTH` before the area scrolls, `TAB_TITLE_MAX_WIDTH` is its maximum; `+ ▾` stays visible after the scrolled tabs.
+    Only the drag space moves the window, so a click on a tab never does.
+    A tab shows its kind icon, 📌 when pinned, its title, a status dot and ×; the active tab has a solid `card` fill with radius 8 and no border, the others are transparent with muted text and a hover fill; a click activates the tab and shows Terminals.
+  - **`+ ▾`:** one row per installed agent profile (the workspace's default first with ✓ and Alt+Shift+A), "Agent" when none is listed, Shell (Alt+Shift+S), Empty tab; each row opens a new tab and shows Terminals; while a session starts the button shows the starting spinner.
+  - **Right group:** the limits chip (only at 80% or more, see "Limits chip"), the voice status while the sidebar is hidden, the Run pill, the update button (only when an update is known), Board (`LayoutGrid`), Docs (`BookOpen`, only with `[features] docs`), Split ▾ (`◫`: Split right, Split down, Equalize panes, layouts, as before) and the right panel toggle (`◨`, ADR 0038, ADR 0081).
+    Board and Docs show in the accent color while their view is shown.
+  - History (palette "Global: History…"), the theme toggle (Ctrl+Shift+J, palette, Settings > Appearance), Phone access (palette "Global: Phone access…"), the branch chip and repository menu (the Git panel, Ctrl+Shift+4) and the logo are not in the bar.
+  - Every icon is gray (`text-muted`, `text` on hover): color only for status.
+    The Git tab's count comes from `git.repos` and one `git.status` per repository, asked for the shown workspace only, on a workspace switch and on its `git.changed`; no polling, nothing for hidden workspaces.
+  - Window: the empty part (the drag space) is the drag area.
+    **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering □ shows the Windows 11 Snap Layouts flyout), all edges resize; ✕ and Alt+F4 hide the window to the tray while `[ui] close_to_tray` is on (§20J); the controls are hidden in full screen.
+    **macOS:** native traffic lights at the left, centered in the bar at any `[ui] font_size` (no gap is left for them in full screen), drag and double-click as the OS does.
+    **Linux:** the OS title bar stays. Minimum window size 1100 × 560.
+    Without a workspace only the sidebar toggle, the drag space and the window controls show.
 - **Machine windows** (ADR 0089, `mkrew-ui --machine <name>`; this computer's window is unchanged):
   - The OS window title is `Mkrew - <name>`.
-    The **machine chip** follows the logo: Lucide `server`, the machine name (cut with `…` at `TITLE_CHIP_MAX_WIDTH`) and a status dot.
+    The **machine chip** is the first element of the bar (after the macOS inset): Lucide `server`, the machine name (cut with `…` at `TITLE_CHIP_MAX_WIDTH`) and a status dot.
     It is not clickable; its tooltip says `<name>: <state>` in words (§11), and it stays while the window is disconnected.
     Dot: `status-done` connected, `status-needs-input` connecting or reconnecting, `status-exited` not reachable or another version.
   - **First connect:** the "Connecting…" screen names the machine.
@@ -959,11 +947,11 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
     Phone access and the in-app update are hidden; close-to-tray is off.
   - **Notifications:** the window shows OS notifications on this computer from `session.state`, with this computer's `[notify]` settings; the link is `mkrew://session/<session>?project=<project>&machine=<name>` and a click raises that machine's window.
     The other computer's daemon still notifies on the other computer.
-- **No status bar** (ADR 0054): its sidebar toggle is in the title bar, its Inbox state and
-  compact toggle in the sidebar footer, its git HEAD in the title bar's repository tooltip, the
-  focused agent's context share in the tab strip (single pane) or pane header (split), and the
+- **No status bar** (ADR 0054, ADR 0106): its sidebar toggle is in the title bar, its Inbox state and
+  compact toggle in the sidebar footer, its git HEAD in the Git panel's repository strip, the
+  focused agent's context share in the pane header, and the
   other usage fields (tokens, cache, model) on the Session tab's card.
-  The widget bar of ADR 0102 is not that bar: it holds only the folder, branch, limits, machine load and version.
+  There is no bottom bar of any kind: the folder is in the palette ("Reveal in Explorer"), the Git branch in the Git panel, the version in Settings, the agents' limits in the title bar chip.
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
   Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`; Esc gives
   the keyboard back and keeps a typed draft on the card, like the composer).
@@ -977,13 +965,12 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   The arrows, Ctrl+Enter, `a`, `e` and Shift+F10 act on every card of the All workspaces board.
   Show Board (Ctrl+Shift+2) again switches Tasks / Jira, and the card keys walk the Jira rows.
   Shift+F10 on the selected card opens its menu: Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents… (each as its hover button; the buttons stay and call the same functions).
-- **Terminals:** tab bar on top; each tab is a split tree of panes; each pane is a session.
+- **Terminals:** the tabs are in the title bar (above); each tab is a split tree of panes; each pane is a session with its own header.
   Each tab shows an icon of its focused pane (the agent's badge chip, or `>_` for a shell; none
   for a tab without panes), one status dot of its most urgent pane (§11: a still accent dot while an
   agent works, amber needs input, green done or a live run process, red exited, a hollow ring
   idle), its title and a ✕ (always on the active tab, on hover for the others); closing never
-  activates the tab first. `+` (new tab) follows the tabs. At the right end of the strip: for a
-  single pane its status (§11) and agent controls, then the split button and `⋯`. The split button opens
+  activates the tab first. `+ ▾` (new tab) follows the tabs. The split button (title bar, right group) opens
   the layout menu: Split right, Split down, Equalize panes, then the layouts 2 columns, 2 rows,
   3 columns, 1 + 2 and 2 × 2, each with a small drawing and its shortcut (§13). Equalize panes
   gives every pane of a run of same-direction splits the same share (split right twice: 50/25/25
@@ -993,13 +980,13 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   layout is saved once. A layout with fewer panes than the tab has is greyed (its tooltip says
   why); if a start fails, the sessions that started are placed as Split right places them.
   Every popover menu below opens by mouse or keyboard, takes the keyboard while it is open and gives it back when it closes (§13).
-  `⋯`, and a right-click on a tab, open the tab menu: Pin, Split right, Split down, Rename, Close,
+  A right-click on a tab opens the tab menu: Pin, Split right, Split down, Rename, Close,
   Close others, Close tabs to the right (both leave pinned tabs and make the menu's tab active;
   greyed when nothing would close); on the active tab also the focused pane's Rename pane, Close
   pane and, for an agent, Follow in Zed (✓ while on) and Turns…. The tab is
   activated first, so the menu acts on the tab it was opened on. Closing a tab stops its panes'
   sessions and removes them from the sidebar (ADR 0041); a running agent among them asks first
-  (once for Close others / to the right). Drag a tab along the strip to reorder it (`tab.move`),
+  (once for Close others / to the right). Drag a tab along the tab area to reorder it (`tab.move`),
   among the pinned or the unpinned tabs only; tabs and sidebar rows share one drag look: a small
   title chip follows the pointer, the item stays dim in place and an accent line marks the gap
   it lands in.
@@ -1094,7 +1081,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   the key is held and the pointer moves to another cell; nothing runs while output is parsed
   or painted.
 - **Copy mode** (`Alt+Shift+C`, ADR 0085): keyboard selection in the focused pane, on `alacritty_terminal`'s vi mode.
-  While it is on the keys go to the UI, not the program, and the pane header (the tab bar for a single pane) shows `Copy mode` with the key hints.
+  While it is on the keys go to the UI, not the program, and the pane header shows `Copy mode` with the key hints.
   `←↓↑→` / `h j k l` move the cursor; `w` / `b` / `e` by word, `0` / `$` line start / end, `g` / `G` top / bottom of the history, `PgUp` / `PgDn` a page.
   `v` / `Shift+V` start, switch or drop a character / line selection; entering copy mode clears a mouse selection.
   `y` or `Enter` copy it (a trailing newline of a line selection is trimmed) and leave; `Ctrl+Shift+C` copies it too and stays in copy mode; `Ctrl+Shift+L` sends it to an agent's composer and leaves copy mode; `Ctrl+Shift+F` opens the find bar, whose match moves the cursor.
@@ -1106,7 +1093,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   Typing a label opens that link exactly like Ctrl+Click; `Esc` or any other key cancels.
   Output is held back while the labels show (up to 1 MiB, like copy mode).
   Any key, a wheel scroll, a click or the pane losing focus ends the hints and applies the held output.
-  No link on screen: the tab bar says "No links on screen." for 3 seconds.
+  No link on screen: a toast says "No links on screen.".
 - **Run pill** (ADR 0018, ADR 0054) in the title bar: while something runs a green pill
   `● 2 running :8080 :5180 ▾` (`run-pill-*` tokens; amber dot and `1/2 running` when some
   exited; a steady dot: a pulse would redraw the window for as long as a server runs, §15);
@@ -1146,24 +1133,23 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   `↑` / `↓` select, Enter opens the pane.
 - **Empty states** everywhere (see §14).
 
-### Widget bar (ADR 0102)
+### Limits chip (ADR 0106, replaces the widget bar of ADR 0102)
 
-- One bar, `WIDGET_BAR_HEIGHT` tall, along the bottom of the main window, below the sidebar and the main area (`theme.chrome`, a 1 px `theme.border` top edge, muted text, the same in dark and light).
-  Detached windows have none.
-- Left: **folder** (the workspace name; tooltip the root path; click opens it in the file explorer) and **Git** (a branch icon and `master`, with ` · 3` when 3 files changed, `2 repos` for several; click opens the Git view, and with Git already open steps to the next changed file, wrapping at the end).
-  Right: **limits** (`Claude 5h 42% · 7d 18% | Codex 5h 10% · 7d 3%`; a window below 80 % is muted, from 80 % amber, from 95 % red; the tooltip gives each reset in local time and as "in 2 h 10 min"; click opens Settings at the Integrations pages), **machine** (`CPU 23% · RAM 11.2/31.8 GB` of the daemon's machine, no click), **version** (`v0.5.3`; click runs the update check).
-- The folder and branch labels end with an ellipsis (`…`) when they pass `WIDGET_BAR_LABEL_MAX_WIDTH` (160 px); the folder's tooltip has its path, the Git tooltip every repository line.
-- A widget with nothing to show is absent: no limits reported yet, no stats yet, no workspace, no repository.
-  A limit window whose reset time passed shows nothing until a new report.
-- A narrow window drops limits first, then machine; folder, Git and version stay.
-- The bar is inert while a dialog is open and while the window is reconnecting: clicks and the right-click menu do nothing and the bar's own menu is not drawn.
-- Right-click anywhere on the bar: one checkable row per widget and "Hide widget bar".
-  `[ui] widget_bar` and `[ui] widgets_hidden` (ids `folder`, `git`, `limits`, `machine`, `version`; unknown ids are kept) remember the choices; Settings has a "Widget bar" switch on Appearance.
+- A chip in the title bar's right group, before the Run pill, shown only while an agent's limit window is at 80 % or more (the rounded percent); no data, or nothing at 80 %, means no chip.
+- It shows the highest window, `⚠ Claude 5h 84%`; a tie goes to the window that resets later.
+  Amber (`status_needs_input`) from 80 % to 94 %, red (`danger_text`) from 95 %; always the ⚠ icon and the text.
+- The tooltip lists every known window (Claude 5h and 7d, Codex 5h and 7d) with its percent and its reset in local time and as "in 2 h 10 min".
+  A window whose reset time passed counts as unknown until a new report.
+- A click opens Settings at the Integrations page.
+- The chip is inert while a dialog is open and while the window is reconnecting.
+- Only the main window has it; detached windows have none.
+- Sources are unchanged: Codex from its transcript at a turn end (§20E.3), Claude from `mk statusline` (`limits.report`).
+- `[ui] widget_bar` and `[ui] widgets_hidden` are retired keys (§20.0).
 
 ### Detached windows (ADR 0096)
 
 - A terminal tab moves into a window of its own by dragging its chip outside every Mkrew window (the new window opens at the pointer), with `Shift+F4`, or from the tab menu and the palette.
-- A detached window has a title bar (the shown tab and its workspace, Move all back, the window controls), a tab strip with each tab's workspace, and the tab's panes.
+- A detached window draws the same title bar (ADR 0106): its tabs as chips with the workspace name in front, Move all back, Split ▾ and the window controls; it has no workspace switcher, Board, Docs, Editor and Diff chips, Run pill or limits chip. Below it are the tab's panes.
 - Tabs move between windows by dragging their chip onto another window (onto its strip: at the gap under the pointer) or with the tab menu's Move to main window / Move to window: `<tab> - <workspace>` (named by the tab that window shows).
 - Its keys act on its own tab only: tab and pane commands of §13, the palette (its commands only: also Window: Close and Window: Move all tabs back), the context menu, the composer. The `/` and `@` pickers and the prompt picker open in the window of their composer. Turns… opens in the main window. Settings (Ctrl+, or ⌘,) opens in the main window on every OS (not over another dialog, not while reconnecting).
 - Closing a detached window (✕ or Window: Close) closes its tabs (one confirmation for running agents); quitting Mkrew keeps them and reopens the windows on the next start (`<data>/windows.json`).
@@ -1174,7 +1160,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
 
 ## §11 UI: per-session status
 
-Status shows in three places: the tab strip (a single pane) or pane header (a split), the tab
+Status shows in three places: the pane header, the tab
 dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover gives the text).
 
 | State | Icon | Extra |
@@ -1188,26 +1174,23 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
 | unknown | · | |
 
 - Each state's mark has its own color (`status_working`, `status_needs_input`, `status_done`, `status_exited`, `status_idle`; dark and light), drawn beside its icon or text, never alone. Nothing loops while an agent works: the dot is still and the time text moves (ADR 0086). The loading mark (a pane being started, a transcription, a Jira fetch) is three dots taking turns on the status tick.
-- Pane status (ADR 0054), shown at the right end of the tab strip for a single pane (it has no
-  header) and in the compact header of each pane of a split: the task folder (only for a task
+- Pane status (ADR 0054, ADR 0106), shown in the compact header every pane has, a single pane too: the task folder (only for a task
   that runs in a worktree, shown as its branch without `mkrew/`), **one status pill** (the
   status mark and `Working · 1h 25m`; a done pane adds the last turn, `Done · 3 files · 4m`;
   hovering it shows the source and last change), a conflict warning, `⧗ N queued`, the context
   share, then an agent's Reading width toggle and `Share` menu (for now one item, "Follow in
   Zed", ✓ while on; the button is highlighted while following). Each part shows only when it has
-  something to say. "Turns…" is in the tab strip's `⋯` menu. The split header starts with the
-  agent badge and the session/task title (F2 or a double-click renames it inline: Enter saves,
-  Esc cancels, blank clears; run panes keep their command name — ADR 0031; for a single pane F2
-  shows the rename field in the tab's place, and a tab still named `Terminal` / `Terminal N`
-  shows that pane's session title instead, cut with `…`, full on hover, a double-click renaming
-  the session — a split goes back to the tab name; without a title an agent pane shows the title its
-  agent gave the terminal, e.g. Claude's conversation summary; everywhere a session is named the
-  order is: user title > terminal title > agent name). The active tab has a 2 px accent line
-  along its bottom (inset by its corner radius); in a split the panes keep only their thin
+  something to say. "Turns…" is in the tab menu (right-click a tab) and the pane menu.
+  The header starts with the agent badge and has no title; the badge's tooltip gives the pane's full title.
+  A pane is renamed with F2, the pane menu's "Rename pane" or a double-click on a tab that keeps its default name: the field shows in the pane's header (Enter saves, Esc cancels, blank clears; run panes keep their command name, ADR 0031).
+  A tab still named `Terminal` / `Terminal N` shows its focused pane's session title (cut with `…`, full on hover) and follows the focus to another pane; a name the user gave the tab always wins; a double-click on a default-named tab renames the focused pane, on a named tab the tab.
+  Without a title an agent pane shows the title its agent gave the terminal, e.g. Claude's conversation summary; everywhere a session is named the order is: user title > terminal title > agent name.
+  While a pane is zoomed its header shows `⤢ Pane zoomed` and a "Show all panes" button.
+  The active tab has a solid card fill (the Tern chip look); in a split the panes keep only their thin
   border, the unfocused ones are dimmed. The sidebar session row also puts the badge
   before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
   color, ADR 0058); it also shows on board cards and in agent menus.
-- **Chat mode** (ADR 0104): an agent pane whose profile has a readable transcript (Claude, Codex, omp) has a `Terminal | Chat` switch in its header (for a single pane, in the tab strip next to its status pill) and `Ctrl+Alt+T` toggles it (palette: "Agent: Toggle chat view").
+- **Chat mode** (ADR 0104): an agent pane whose profile has a readable transcript (Claude, Codex, omp) has a `Terminal | Chat` switch in its header and `Ctrl+Alt+T` toggles it (palette: "Agent: Toggle chat view").
   The mode is kept per pane in the tab layout: the pane's leaf holds `chat: true` or `chat: false` (it survives a UI restart and the daemon's startup resume), and a leaf without the flag follows `[ui] chat_default` (default `false`).
   Picking Terminal or Chat (the switch, `Ctrl+Alt+T`, the palette) also writes `[ui] chat_default` (the last pick) and pins the panes that had no saved mode, so new agent panes and the next start use it (ADR 0105).
   Chat draws the last 50 turns of the transcript: the prompt as a right-aligned card, the agent's text as Markdown (selectable inside one message), tool calls as collapsed rows `name target` that open to the arguments and the result (an error result in the danger color), thinking as a collapsed row (Claude, omp), the latest plan as a card, a pending Claude question as a card whose "Answer in terminal" button switches to Terminal, and a tray of the turn's running Claude subagents.
@@ -1293,7 +1276,7 @@ Only edit this file. When done, for EACH comment run:
   folders containing changes. In a workspace with child repositories (ADR 0029) the markers come
   from the project folder's repository and from each child repository the listed folder is in
   (all of them when the root is listed). Updates live when agents create/delete/rename files.
-- **Editor view:** listed in the view bar only while a file tab is open. A tree click or Enter,
+- **Editor view:** shown by the Editor chip in the title bar's tab area only while a file tab is open. A tree click or Enter,
   the palette, a terminal link and "New file…" show it (a tree click keeps the keyboard in the
   tree); `Ctrl+Shift+6` shows it again. Closing the last tab, or switching to another worktree,
   shows Terminals.
@@ -1395,7 +1378,7 @@ Only edit this file. When done, for EACH comment run:
 ## §12B UI: Git (right panel tab and Diff view)
 
 The Git tab of the right panel holds the header, Working / Vs. base / History, the filter and "Changed by", the list and the commit box, as wide as the panel (240-560 px; the filter row wraps).
-The `Diff` view holds the toolbar, unified / split, hunks, the comment margin and Send to agent, and is listed in the view bar only while a diff is open.
+The `Diff` view holds the toolbar, unified / split, hunks, the comment margin and Send to agent, and has a chip in the title bar's tab area only while a diff is open.
 A click or Enter opens it; `×`, `Esc` or an emptied list close it; a selection moving by itself keeps it open.
 
 All git actions are user-initiated; Mkrew never commits or switches branches by itself.
@@ -1529,7 +1512,6 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Global | Toggle full screen | F11 |
 | Global | Toggle sidebar | Ctrl+Shift+B |
 | Global | Toggle compact sidebar | Ctrl+Alt+B |
-| Global | Show / hide the widget bar (ADR 0102) | Ctrl+Alt+Shift+J |
 | Global | Voice input: start / stop recording (§20G) | Ctrl+Shift+D |
 | Global | Ask AI: a question outside every project (§20H) | Ctrl+Shift+G |
 | Global | Focus the sidebar filter with the active row highlighted (shows the sidebar if hidden, widens the compact rail; again returns to the pane) | Alt+0 |
@@ -1560,7 +1542,7 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
-| Panes | New agent pane / new shell pane (split right with the workspace default, like + New ▾ → Agent / Shell) | Alt+Shift+A / Alt+Shift+S |
+| Panes | New agent pane / new shell pane (split right with the workspace default, like the tab + ▾ menu's Agent / Shell) | Alt+Shift+A / Alt+Shift+S |
 | Panes | Move focus; past the outer pane (or from Board, Docs, Editor, Diff) ← enters the sidebar filter and → the right panel's file tree or Git list, only while on screen (the compact rail widens); from those ← / → come back to the center | Alt+←↑→↓ |
 | Panes | Resize | Alt+Shift+←↑→↓ |
 | Panes | Zoom / unzoom pane | Ctrl+Shift+M |
@@ -1630,7 +1612,7 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Quick open / new task / run task (Board) | ⌘P / ⌘N / ⌘↩ |
 | Run start / restart / stop | ⌘R / ⌃⌘R / ⌘. |
 | Command palette / settings / toggle theme / full screen | ⇧⌘P / ⌘, / ⇧⌘J / ⌃⌘F |
-| Sidebar / right panel / widget bar / context menu | ⌘B / ⇧⌘Y / ⇧⌘B / ⌃⌘M |
+| Sidebar / right panel / context menu | ⌘B / ⇧⌘Y / ⌃⌘M |
 | Move tab left / right / to a new window | ⌃⌘← / ⌃⌘→ / ⇧⌘N |
 
 In the Editor, and while the Git list (or the diff, with the list hidden) has the keyboard, the terminal never has focus, so single-key shortcuts are safe there.
@@ -1753,7 +1735,9 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
 - Radius 5 (area chips, key hints), 6 (chips, segments, tree rows), 8 (buttons, inputs, rows),
   9 (segmented container), 10 (cards), 12 (dialogs, palette), 999 (pills); 4 for old badges.
-- Heights: controls 30, inputs 32, title bar 48, tab strip 44, Git repo strip 42 (px at 13 px body).
+- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the Editor's file-tab strip and the sidebar and right panel tab rows 44, Git repo strip 42 (px at 13 px body).
+- Tab chip (Tern look, ADR 0106): height `CONTROL_HEIGHT`, radius 8 (`radius::MEDIUM`), no border; the active chip has a solid `card` fill and `text`; the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
+  Chips shrink to `TAB_MIN_WIDTH` before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
   buttons, 30 px icon button, search box, status pill, tinted chip, overline, key hint.
 - UI font = Inter when installed, else the system font (Segoe UI Variable / SF), unless
@@ -1783,14 +1767,12 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   history, `⌫` delete, `◐ ☀ ☾` sun-moon / sun / moon, `─ □ ❐ ✕` minus / square / copy / x, `⌕`
   search, `◫` columns-2, `◧ ◨` panel-left / panel-right, `⇤ ⇥` panel-left-close / -open,
   `↻ ■ ▶` rotate-cw / circle-stop / play, `✦` sparkles, Fetch `↓` arrow-down-to-line. Close
-  pane is an icon-only `square-x` in the tab strip. Frequent toolbar, header, card and
-  empty-state actions carry a 14 px icon before their text (Share, `+ New`, idle Run, Save, Find,
+  pane is an icon-only `square-x` in the pane header. Frequent toolbar, header, card and
+  empty-state actions carry a 14 px icon before their text (Share, idle Run, Save, Find,
   Comment, Send to agent, Open in Zed, Push, …; the list is in ADR 0051); a `▾` after a label
   is a chevron-down icon. Dialog footers, Retry, thread actions, row actions and danger buttons
   stay text. Status icons (§11), marks in messages and the live Run label stay text.
-- Phone access (ADR 0053): a Lucide `smartphone` icon button in the title bar, right of the
-  theme toggle (accent while `mk web` runs, `text-muted` otherwise; tooltip "Phone access: on" /
-  "Phone access: off"), and the palette command "Global: Phone access…", open the "Phone
+- Phone access (ADR 0053): the palette command "Global: Phone access…" (ADR 0106 removed the title bar's `smartphone` icon button) opens the "Phone
   access" dialog (`DIALOG_WIDTH`, same frame as the other dialogs, Esc / Close). Rows, each
   with a glyph and text (§11): **Status** `○ Off` + Start, `● On` + Stop, `✕ Not running:
   <error>. Retrying…` + Stop; **Tailscale** `✓ Tailscale serve is set up`, `Tailscale doesn't
@@ -1799,8 +1781,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   link, "Scan with the iPhone camera, then Share → Add to Home Screen." (`Starting…` until
   `mk web` has written `web_token`). The QR is always dark modules (`qr-dark`) on a light
   panel (`qr-light`) in both themes, `PHONE_QR_SIZE` px. The dialog re-reads `daemon.status`
-  and Tailscale about once a second while open (off the UI thread); the title bar icon reads
-  `daemon.status` every 5 s. A failed Start / Stop shows in the dialog. The link carries the
+  and Tailscale about once a second while open (off the UI thread). A failed Start / Stop shows in the dialog. The link carries the
   access token: it is never logged and never in a tooltip.
 - Settings (Ctrl+,, palette "Global: Open settings", ADR 0073, ADR 0097): a floating glass panel (`SETTINGS_DIALOG_WIDTH` ×
   `SETTINGS_DIALOG_HEIGHT`, never larger than the window minus a margin). The left navigation (`SETTINGS_NAV_WIDTH`) starts with a
@@ -1866,7 +1847,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   #A16207 #4D7C0F #15803D #0F766E #2563EB #9333EA #DB2777 (≥ 3:1 on every surface; neighbouring
   hues ≥ 12° apart).
 - Update button (§20K): Lucide `circle-arrow-up` in `accent-text` in the title bar right before
-  the phone icon while a newer release is known; dimmed (`opacity::DISABLED`) and not clickable
+  the Board icon while a newer release is known; dimmed (`opacity::DISABLED`) and not clickable
   while it downloads, with "Updating…" shown beside it.
 - In-app toasts (`crates/mkrew-ui/src/toast.rs` queue, `shell/toasts.rs` card): bottom-right over
   the content, at most 3 (a fourth drops the oldest; the same message again restarts its toast),
@@ -1877,7 +1858,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   `status-exited`). Used for results of an action that has no place of its own (a failure after its
   dialog closed or its view moved, a failed settings write, a copy, and one-off workspace actions:
   open in Zed / File Explorer, add / remove / update a workspace, run / stop); a failure that has one (a
-  dialog's error row, the commit box, the tab bar notice, a card notice) stays there.
+  dialog's error row, the commit box, a card notice) stays there; the tab strip's errors and notices are toasts (ADR 0106).
 - Confirmations (`window.prompt`) are drawn in the window, never as the OS message box
   (`App::set_prompt_builder`, `shell/confirm_prompt.rs`): the modal shade, a `surface` card
   (`CONFIRM_DIALOG_WIDTH`, radius 12, faint border, light shadow), the question as a card
@@ -1885,7 +1866,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   answer rightmost (accent; the danger button for `PromptLevel::Critical`). Esc = Cancel,
   Enter/Space = the ringed button (default: the first answer), Tab/←/→ move the ring. A click
   on the shade does nothing. OS file/folder pickers stay native.
-- Theme: System (follows the OS live), Light or Dark - `[ui] theme`, cycled by the title bar toggle
+- Theme: System (follows the OS live), Light or Dark - `[ui] theme`, cycled by Ctrl+Shift+J and the palette
   (ADR 0027).
   Each slot shows a theme (ADR 0078, ADR 0101): `[ui] light_theme` (default Mkrew Light) and `[ui] dark_theme` (default Mkrew Dark).
   There are 22 built-in themes.
@@ -2232,7 +2213,7 @@ follow_debounce_ms = 1500   # §20C.4
 [ui]
 font_family = ""            # §14; "" = system UI font; other UI sizes keep their ratio to it
 font_size = 13              # px, 8–32
-theme = "system"            # §14; "system" | "light" | "dark"; the title bar toggle writes it
+theme = "system"            # §14; "system" | "light" | "dark"; Ctrl+Shift+J and Settings write it
 light_theme = "Mkrew Light" # §14; a built-in theme name or the name of a file in themes/, shown in Light mode / a light OS
 dark_theme = "Mkrew Dark"   # §14; the same for Dark mode / a dark OS
 diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header toggle writes it
@@ -2244,8 +2225,7 @@ board_all_workspaces = false # §10; the Board shows every workspace's tasks; it
 md_mode = "preview"         # §12A; preview | split | source: how the next .md file opens; switching a file's mode writes it
 md_split = 50               # §12A; the source's share of the Markdown Split view, percent (kept 20-80); dragging the divider writes it
 chat_default = false         # §11; agent panes without a saved mode open in Chat (Claude, Codex, omp); each pane's Terminal | Chat switch overrides it and is also written here as the last pick
-widget_bar = true          # §10; the widget bar at the bottom of the main window; its menu and Ctrl+Alt+Shift+J write it
-widgets_hidden = []        # §10; ids of hidden widgets: folder, git, limits, machine, version; its menu writes it
+# widget_bar, widgets_hidden: retired (ADR 0106). A file that still has them loads; they are ignored and never written.
 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
