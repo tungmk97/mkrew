@@ -346,11 +346,22 @@ impl Shell {
             }
             None => tabs.move_pane(moved, target, edge),
         });
-        for write in writes.into_iter().flatten() {
-            self.save_layout(project_id, write, window, cx);
-        }
+        // The source tab left without panes closes (a detached one stays, as `remove_leaf`).
+        let emptied = (writes.iter().flatten())
+            .find(|write| write.layout.is_null())
+            .map(|write| write.tab_id)
+            .filter(|tab_id| self.terminal_host(project_id, *tab_id) == HostId::Main);
         self.sync_panes(window, cx);
         self.focus_pane(window, cx);
+        let writes = writes.unwrap_or_default();
+        match emptied {
+            Some(source) => self.save_then_close(project_id, writes, source, window, cx),
+            None => {
+                for write in writes {
+                    self.save_layout(project_id, write, window, cx);
+                }
+            }
+        }
     }
 
     /// A tab was dropped on the `edge` of `target`: its panes move there, then the emptied tab
@@ -366,9 +377,6 @@ impl Shell {
         let Some((project_id, source)) = self.dragged_tab(item).map(|(p, tab)| (p, tab.id)) else {
             return;
         };
-        let Some(connection) = self.connection.clone() else {
-            return;
-        };
         let Some(writes) =
             (self.tabs.get_mut(&project_id)).and_then(|tabs| tabs.merge_tab(source, target, edge))
         else {
@@ -376,8 +384,24 @@ impl Shell {
         };
         self.sync_panes(window, cx);
         self.focus_pane(window, cx);
-        // One after another, the close last: `tab.close` removes the sessions of the tab's saved
-        // layout (ADR 0041), so it must only run once that layout is empty.
+        self.save_then_close(project_id, Vec::from(writes), source, window, cx);
+    }
+
+    /// Saves `writes` one after another, then closes tab `source`, which they left without
+    /// panes (not `close_tab`: a move never asks about unsaved edits).
+    /// The close goes last: `tab.close` removes the sessions of the tab's saved layout
+    /// (ADR 0041), so it must only run once that layout is empty.
+    fn save_then_close(
+        &mut self,
+        project_id: Ulid,
+        writes: Vec<TabSetLayoutParams>,
+        source: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
         cx.spawn_in(window, async move |this, cx| {
             for write in writes {
                 let saved = connection.call::<()>(Request::TabSetLayout(write.clone()));

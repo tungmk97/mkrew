@@ -2024,3 +2024,30 @@ fn a_pane_does_not_move_into_a_tab_that_has_panes_or_is_missing() {
         Some(vec![PaneKey::Session(a), PaneKey::Session(b)])
     );
 }
+
+#[test]
+fn moving_the_only_pane_out_of_a_tab_writes_that_tab_empty_for_the_caller_to_close() {
+    use crate::split::{Edge, PaneKey};
+    let project = Ulid::new();
+    let [a, b] = [Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, json!({"file": "a.md"}));
+    let two = wire(project, "two", 2.0, pane(b));
+    let (one_id, two_id) = (one.id, two.id);
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one, two]);
+    let _ = a;
+
+    let writes = tabs
+        .move_pane(
+            &PaneKey::File("a.md".into()),
+            &PaneKey::Session(b),
+            Edge::Right,
+        )
+        .expect("the pane moves");
+
+    let emptied: Vec<_> = writes.iter().filter(|w| w.layout.is_null()).collect();
+    assert_eq!(emptied.len(), 1);
+    assert_eq!(emptied[0].tab_id, one_id);
+    assert!(tabs.tab(one_id).is_some_and(|tab| tab.layout().is_none()));
+    assert_eq!(tabs.tab(two_id).map(|t| t.keys().len()), Some(2));
+}
