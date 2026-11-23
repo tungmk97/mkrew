@@ -1070,7 +1070,7 @@ impl Shell {
                 .rounded(px(radius::PILL))
                 .bg(rgb(theme.surface_raised))
                 .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(theme.glass_border))
+                .border_color(gpui::rgba(theme.glass_border))
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
                 .font_family(theme.ui_font_family.clone())
@@ -1192,6 +1192,7 @@ impl Shell {
                 .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
         };
+        let exited = self.is_exited(session);
         let model_chip = stats.model.clone().filter(|_| shown.model).map(|model| {
             div()
                 .id("composer-model")
@@ -1204,14 +1205,14 @@ impl Shell {
                 .rounded(px(radius::CHIP))
                 .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
-                .pressable(Look::Chip, true, theme)
+                .pressable(Look::Chip, !exited, theme)
                 .tooltip(tooltip(
                     theme,
                     "Change the model (types /model in the terminal)",
                     "",
                 ))
                 .on_press(
-                    true,
+                    !exited,
                     cx.listener(move |shell, _, window, cx| {
                         shell.open_model_picker(session, window, cx);
                     }),
@@ -1240,7 +1241,7 @@ impl Shell {
                     theme::ICON_SIZE_SMALL,
                     theme.text_muted,
                 ))
-                .child(div().text_color(rgb(theme.text)).child(branch.name))
+                .child(branch.name)
                 .when(branch.changed > 0, |el| {
                     el.child(format!("*{}", branch.changed))
                 })
@@ -1296,7 +1297,7 @@ impl Shell {
             .rounded(px(radius::LARGE))
             .bg(rgb(theme.surface_raised))
             .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.glass_border))
+            .border_color(gpui::rgba(theme.glass_border))
             .shadow(theme::shadow_float(theme))
             .font_family(theme.ui_font_family.clone())
             .on_mouse_down(
