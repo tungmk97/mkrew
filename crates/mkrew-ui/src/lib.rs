@@ -36,6 +36,7 @@ pub mod diagram;
 pub mod dialog_focus;
 pub mod doc_dialog;
 pub mod docs;
+pub mod documents;
 pub mod editor;
 pub mod fanout;
 pub mod field;

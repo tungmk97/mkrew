@@ -663,10 +663,10 @@ impl Shell {
                     .children(replace_row)
             });
         let body = match &tab.content {
-            Content::Loading => message(theme, None, "Loading…".into(), None)
+            documents::Content::Loading => message(theme, None, "Loading…".into(), None)
                 .flex_1()
                 .into_any_element(),
-            Content::Failed(error) => message(
+            documents::Content::Failed(error) => message(
                 theme,
                 None,
                 "Cannot read this file.".into(),
@@ -681,7 +681,7 @@ impl Shell {
                 )),
             )
             .into_any_element(),
-            Content::Shown(shown) if shown.code.binary || shown.code.too_large => {
+            documents::Content::Shown(shown) if shown.code.binary || shown.code.too_large => {
                 let sentence = if shown.code.binary {
                     "This is a binary file."
                 } else {
@@ -699,13 +699,15 @@ impl Shell {
                 .child(zed_button("file-zed-notice", true))
                 .into_any_element()
             }
-            Content::Shown(_) if tab.previewing() => {
+            documents::Content::Shown(_) if tab.previewing() => {
                 self.render_md_preview(project_id, tab, false, window, theme, cx)
             }
-            Content::Shown(shown) if tab.splitting() => {
+            documents::Content::Shown(shown) if tab.splitting() => {
                 self.render_md_split(project_id, tab, shown, window, theme, cx)
             }
-            Content::Shown(shown) => self.render_shown_file(project_id, shown, window, theme, cx),
+            documents::Content::Shown(shown) => {
+                self.render_shown_file(project_id, shown, window, theme, cx)
+            }
         };
         let disk_banner = tab
             .shown()
@@ -783,7 +785,7 @@ impl Shell {
     pub(crate) fn render_shown_file(
         &self,
         project_id: Ulid,
-        shown: &files_view::Shown,
+        shown: &documents::Shown,
         window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,

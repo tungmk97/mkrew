@@ -2,7 +2,7 @@
 //! and editing one block's Markdown in place.
 
 use crate::*;
-use mkrew_ui::files_view::{BlockEditOutcome, StaleEdit};
+use mkrew_ui::documents::{BlockEditOutcome, StaleEdit};
 
 impl Shell {
     /// A `.md` file of the Files view as the Docs preview: the page of the editor's text
@@ -11,7 +11,7 @@ impl Shell {
     pub(crate) fn render_md_preview(
         &self,
         project_id: Ulid,
-        tab: &FileTab,
+        tab: &documents::Doc,
         split: bool,
         window: &Window,
         theme: &Theme,
@@ -124,7 +124,9 @@ impl Shell {
         };
         let plain = !event.keystroke.modifiers.modified();
         if plain && event.keystroke.key == "escape" {
-            if (self.active_file_tab(project_id)).is_some_and(FileTab::clear_preview_selection) {
+            if (self.active_file_tab(project_id))
+                .is_some_and(documents::Doc::clear_preview_selection)
+            {
                 cx.stop_propagation();
                 cx.notify();
             }
@@ -155,7 +157,7 @@ impl Shell {
     fn file_block_wrap(
         &self,
         project_id: Ulid,
-        tab: &FileTab,
+        tab: &documents::Doc,
         window: &Window,
         theme: &Theme,
         cx: &Context<'_, Self>,
@@ -241,7 +243,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let applied = (self.active_file_tab(project_id)).map(FileTab::apply_block_edit);
+        let applied = (self.active_file_tab(project_id)).map(documents::Doc::apply_block_edit);
         match applied.unwrap_or(Ok(())) {
             Ok(()) => {
                 self.file_page.remeasure();

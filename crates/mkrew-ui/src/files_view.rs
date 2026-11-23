@@ -1,6 +1,6 @@
 //! Files view-model (SPEC §12A): a lazily listed tree of the workspace (`fs.list` per folder,
 //! with git markers and an optional "show ignored"), the tree cursor moved by arrow keys, and
-//! the opened files as tabs ([`FileTab`], ADR 0080: `fs.read`, highlighted off the UI thread
+//! the opened files as tabs ([`Doc`], ADR 0080: `fs.read`, highlighted off the UI thread
 //! into a [`Code`], in an [`Editor`], saved with `fs.write`). `git.changed` re-lists the open
 //! folders and re-reads the active tab; the others are read when activated.
 //! Pure and tested headlessly; `main.rs` does the requests and renders it.
@@ -8,20 +8,17 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::Keystroke;
-pub use mkrew_core::settings::MdMode;
 use mkrew_protocol::{Event, FsContent, FsEntry, FsWritten};
 use ulid::Ulid;
 
 use crate::docs;
+pub use crate::documents::MdMode;
+use crate::documents::{Content, Doc, SaveRequest, Shown, Stamp, unshown_save};
 use crate::editor::{Editor, Pos};
 use crate::highlight::Code;
-use crate::markdown::{self, Lines};
-use crate::preview_select::{self, Point, Selection};
-use crate::task_dialog::DialogKey;
-use crate::text_box::{Input, TextBox};
+use crate::text_box::Input;
 use crate::text_find::{self, TextFind};
 
 /// One folder's children.
@@ -30,45 +27,6 @@ pub enum Listing {
     Loading,
     Loaded(Vec<FsEntry>),
     Failed(String),
-}
-
-/// A tab's file.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Content {
-    Loading,
-    Shown(Box<Shown>),
-    Failed(String),
-}
-
-/// The opened file in the editor (SPEC §12A, ADR 0028).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Shown {
-    /// The last highlight, with the binary / too-large flags. Its spans are drawn only on
-    /// lines whose text it still matches; the text is highlighted again once typing pauses.
-    pub code: Rc<Code>,
-    pub editor: Editor,
-    /// `fs.read`'s hash of the version on disk that the text started from (or was last saved
-    /// as). `None` = cannot be saved (binary, too large, or an old daemon).
-    pub hash: Option<String>,
-    pub language: Option<String>,
-    /// The file's text in the git index from the last read (`fs.read` `index_text`); the text
-    /// highlighted again after typing is diffed with it (SPEC §12A gutter).
-    pub index_text: Option<String>,
-    /// The file on disk changed under unsaved text: its hash ("Changed on disk — Reload ·
-    /// Keep mine").
-    pub disk_changed: Option<String>,
-    /// Why the last save failed.
-    pub save_error: Option<String>,
-}
-
-/// An `fs.write` of the opened file (SPEC §7): its text, the hash the file must still have
-/// on disk, and the undo state it saves.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SaveRequest {
-    pub path: String,
-    pub text: String,
-    pub expected_hash: String,
-    pub point: Option<u64>,
 }
 
 /// One visible tree row.
@@ -99,45 +57,6 @@ pub struct Requests {
     pub list: Vec<String>,
     pub read: Option<String>,
 }
-
-/// Numbers every text the view shows (across views), so that a page built for one text is
-/// never taken for another's.
-static NEXT_TEXT: AtomicU64 = AtomicU64::new(1);
-
-/// What a preview was built from: the number of the text in the editor and the editor's
-/// version of it. Later texts and later edits have larger stamps.
-pub type Stamp = (u64, u64);
-
-/// The rendered page of a `.md` file (ADR 0021) and what it was built from.
-#[derive(Debug)]
-struct MdPreview {
-    stamp: Stamp,
-    shown: Rc<docs::Shown>,
-}
-
-/// The top-level block of the preview whose Markdown is edited in place (SPEC §12A, ADR 0072):
-/// its source lines as of `stamp`, and the field's text.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlockEdit {
-    pub block: usize,
-    pub lines: Lines,
-    stamp: Stamp,
-    pub text: TextBox,
-}
-
-/// What a key in the block edit field does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlockEditOutcome {
-    Edited,
-    /// Esc: close it, the typed text is dropped.
-    Cancel,
-    /// Ctrl+Enter.
-    Apply,
-}
-
-/// The text changed since the field opened: applying could hit the wrong lines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StaleEdit;
 
 /// The source's share of the Markdown Split view that `[ui] md_split` (percent) stands for,
 /// kept between the limits.
@@ -182,42 +101,6 @@ pub enum Close {
     Every,
 }
 
-/// One opened file of the Files view (SPEC §12A, ADR 0080).
-#[derive(Debug)]
-pub struct FileTab {
-    /// Relative to the shown folder, `/` separators.
-    pub path: String,
-    pub content: Content,
-    /// `.md` files: the rendered preview, the editor, or both side by side. A new tab starts in
-    /// its view's [`FilesView::md_mode`].
-    pub mode: MdMode,
-    /// VS Code's preview tab: italic, replaced by the next transient open while clean.
-    pub transient: bool,
-    /// Pinned tabs lead the strip and are skipped by bulk closes.
-    pub pinned: bool,
-    /// The tab's [`docs::new_opening`] number: the shell's page restarts when it changes.
-    pub opening: u64,
-    /// Number of the text in the editor: new for every re-read that replaced it.
-    text_id: u64,
-    /// The last page built, and the stamp last asked for (one build per text).
-    page: Option<MdPreview>,
-    page_asked: Option<Stamp>,
-    /// The preview's text selection; cleared with every new page.
-    pub preview_selection: Option<Selection>,
-    /// The block being edited in the preview, `None` = none.
-    pub block_edit: Option<BlockEdit>,
-    /// An `fs.write` is in flight.
-    saving: bool,
-    /// An `fs.read` is in flight, and another was asked for meanwhile (sent once it answers,
-    /// so a burst of changes reads and highlights the file once more, not once per change).
-    reading: bool,
-    read_again: bool,
-    /// `git.changed` arrived while another tab was active: read when activated.
-    stale: bool,
-    /// A line (1-based) that a link asked for, put under the caret once the file is shown.
-    pending_line: Option<u32>,
-}
-
 /// One workspace's Files view.
 #[derive(Debug)]
 pub struct FilesView {
@@ -234,7 +117,7 @@ pub struct FilesView {
     /// The tree cursor (a file or folder path).
     pub cursor: Option<String>,
     /// The opened files, pinned ones first; at most one per path.
-    tabs: Vec<FileTab>,
+    tabs: Vec<Doc>,
     /// The tab shown; `None` exactly when `tabs` is empty.
     active: Option<usize>,
     /// Why the last "Open in Zed" failed.
@@ -251,15 +134,6 @@ pub struct FilesView {
     sent_in: HashMap<String, u64>,
     /// The mode a newly opened Markdown tab starts in (`[ui] md_mode`, the last one switched to).
     pub md_mode: MdMode,
-}
-
-/// A save's answer that has no file view to land in: only a failure or a refused save is news.
-pub fn unshown_save(written: Result<FsWritten, String>) -> Option<String> {
-    match written {
-        Ok(written) if written.saved => None,
-        Ok(_) => Some("Not saved: the file changed on disk meanwhile.".to_owned()),
-        Err(error) => Some(format!("Not saved: {error}")),
-    }
 }
 
 impl FilesView {
@@ -436,7 +310,7 @@ impl FilesView {
         Requests { list, read: None }
     }
 
-    pub fn tabs(&self) -> &[FileTab] {
+    pub fn tabs(&self) -> &[Doc] {
         &self.tabs
     }
 
@@ -445,19 +319,19 @@ impl FilesView {
     }
 
     /// The active tab.
-    pub fn tab(&self) -> Option<&FileTab> {
+    pub fn tab(&self) -> Option<&Doc> {
         self.tabs.get(self.active?)
     }
 
-    pub fn tab_mut(&mut self) -> Option<&mut FileTab> {
+    pub fn tab_mut(&mut self) -> Option<&mut Doc> {
         self.tabs.get_mut(self.active?)
     }
 
-    pub fn tab_for(&self, path: &str) -> Option<&FileTab> {
+    pub fn tab_for(&self, path: &str) -> Option<&Doc> {
         self.tabs.iter().find(|tab| tab.path == path)
     }
 
-    pub fn tab_for_mut(&mut self, path: &str) -> Option<&mut FileTab> {
+    pub fn tab_for_mut(&mut self, path: &str) -> Option<&mut Doc> {
         self.tabs.iter_mut().find(|tab| tab.path == path)
     }
 
@@ -488,14 +362,12 @@ impl FilesView {
     /// tab are read again. `None` when no tab is unsaved.
     pub fn into_unsaved(mut self) -> Option<FilesView> {
         let shown = self.file().map(str::to_owned);
-        self.tabs.retain(FileTab::is_dirty);
+        self.tabs.retain(Doc::is_dirty);
         if self.tabs.is_empty() {
             return None;
         }
         for tab in &mut self.tabs {
-            tab.saving = false;
-            tab.reading = false;
-            tab.read_again = false;
+            tab.reset_flight();
         }
         self.active = shown
             .and_then(|path| self.tabs.iter().position(|tab| tab.path == path))
@@ -513,7 +385,7 @@ impl FilesView {
     /// typed meanwhile made unsaved again).
     pub fn first_unsaved(&self, paths: &[String]) -> Option<String> {
         (paths.iter())
-            .find(|path| self.tab_for(path).is_some_and(FileTab::is_dirty))
+            .find(|path| self.tab_for(path).is_some_and(Doc::is_dirty))
             .cloned()
     }
 
@@ -550,7 +422,8 @@ impl FilesView {
             }
             return self.activate(at);
         }
-        let tab = FileTab::new(path, how == Open::Transient, self.md_mode);
+        let mut tab = Doc::new(path, self.md_mode);
+        tab.transient = how == Open::Transient;
         // Only a transient open takes the transient tab's place.
         let replace = (how == Open::Transient)
             .then(|| (self.tabs.iter()).position(|tab| tab.transient && !tab.is_dirty()))
@@ -688,7 +561,7 @@ impl FilesView {
 
     /// Opens file `path` from outside the tree (quick open, a terminal link): its folders open
     /// (listed as needed), the cursor moves to it and its tab shows; with `line`, the caret
-    /// goes there once the file is shown ([`FileTab::apply_pending_line`]).
+    /// goes there once the file is shown ([`Doc::apply_pending_line`]).
     pub fn reveal(&mut self, path: &str, line: Option<u32>, how: Open) -> Requests {
         let mut list = Vec::new();
         let mut dir = String::new();
@@ -704,11 +577,7 @@ impl FilesView {
         self.cursor = Some(path.to_owned());
         let read = self.open(path, how);
         if let Some(tab) = self.tab_mut() {
-            tab.pending_line = line;
-            // The caret of a link's line shows in the editor, not in the preview alone.
-            if line.is_some() && tab.mode == MdMode::Preview {
-                tab.mode = MdMode::Source;
-            }
+            tab.set_line(line.map(|line| (line, 1)));
         }
         Requests { list, read }
     }
@@ -727,15 +596,7 @@ impl FilesView {
     /// An `fs.read` of `path` is about to be sent; `false` = its tab is gone, or one is in
     /// flight already (sent again once that one answers).
     pub fn begin_read(&mut self, path: &str) -> bool {
-        let Some(tab) = self.tab_for_mut(path) else {
-            return false;
-        };
-        if tab.reading {
-            tab.read_again = true;
-            return false;
-        }
-        tab.reading = true;
-        true
+        self.tab_for_mut(path).is_some_and(Doc::begin_read)
     }
 
     /// The `fs.read` answer (with its highlight) for `path`, shown in its tab (dropped when
@@ -772,7 +633,7 @@ impl FilesView {
     /// when an open block edit was closed by the new page.
     pub fn preview_ready(&mut self, stamp: Stamp, shown: docs::Shown) -> bool {
         (self.tabs.iter_mut())
-            .find(|tab| tab.text_id == stamp.0)
+            .find(|tab| tab.text_id() == stamp.0)
             .is_some_and(|tab| tab.preview_ready(stamp, shown))
     }
 
@@ -780,7 +641,7 @@ impl FilesView {
     pub fn search(&mut self) {
         let shown = (self.active)
             .and_then(|at| self.tabs.get(at))
-            .and_then(FileTab::shown);
+            .and_then(Doc::shown);
         if let (Some(find), Some(shown)) = (&mut self.find, shown) {
             find.search(shown.editor.lines());
         }
@@ -976,7 +837,9 @@ impl FilesView {
         self.relayout();
         let active = self.active;
         for (at, tab) in self.tabs.iter_mut().enumerate() {
-            tab.stale |= Some(at) != active;
+            if Some(at) != active {
+                tab.mark_stale();
+            }
         }
         Requests {
             list: open,
@@ -996,545 +859,6 @@ impl FilesView {
             _ => None,
         });
         std::iter::once(String::new()).chain(open).collect()
-    }
-}
-
-impl FileTab {
-    fn new(path: &str, transient: bool, mode: MdMode) -> FileTab {
-        FileTab {
-            path: path.to_owned(),
-            content: Content::Loading,
-            mode,
-            transient,
-            pinned: false,
-            opening: docs::new_opening(),
-            text_id: 0,
-            page: None,
-            page_asked: None,
-            preview_selection: None,
-            block_edit: None,
-            saving: false,
-            reading: false,
-            read_again: false,
-            stale: false,
-            pending_line: None,
-        }
-    }
-
-    /// The file name (the tab's title).
-    pub fn name(&self) -> &str {
-        self.path.rsplit('/').next().unwrap_or(&self.path)
-    }
-
-    /// The text has unsaved changes.
-    pub fn is_dirty(&self) -> bool {
-        self.shown().is_some_and(|shown| shown.editor.is_dirty())
-    }
-
-    /// An `fs.write` of this tab is in flight.
-    pub fn is_saving(&self) -> bool {
-        self.saving
-    }
-
-    /// Whether activating the tab must read it: `git.changed` came while it was hidden, or
-    /// its last read failed (a retry). Clears the stale mark.
-    fn take_read(&mut self) -> bool {
-        let failed = matches!(self.content, Content::Failed(_));
-        if failed {
-            self.content = Content::Loading;
-        }
-        std::mem::take(&mut self.stale) || failed
-    }
-
-    /// The `fs.read` answer; returns whether another read was asked for meanwhile. A failed
-    /// read drops a link's line (a retry shows the file from the top).
-    fn read(&mut self, read: Result<(FsContent, Code), String>) -> bool {
-        self.reading = false;
-        let again = std::mem::take(&mut self.read_again);
-        if read.is_err() {
-            self.pending_line = None;
-        }
-        self.show(read);
-        again
-    }
-
-    /// Puts the caret on the line [`FilesView::reveal`] was given, once the file is shown
-    /// (call it after every read and after `reveal`). Returns the 0-based line to scroll to,
-    /// clamped to the text; `None` while nothing is shown or nothing is pending.
-    pub fn apply_pending_line(&mut self) -> Option<usize> {
-        let Content::Shown(shown) = &mut self.content else {
-            return None;
-        };
-        let line = usize::try_from(self.pending_line.take()?)
-            .ok()?
-            .saturating_sub(1)
-            .min(shown.editor.lines().len().saturating_sub(1));
-        shown.editor.set_cursor(Pos::new(line, 0), false);
-        Some(line)
-    }
-
-    fn show(&mut self, read: Result<(FsContent, Code), String>) {
-        let (dirty, hash, cursor) = match &self.content {
-            Content::Shown(shown) => (
-                shown.editor.is_dirty(),
-                shown.hash.clone(),
-                Some(shown.editor.cursor()),
-            ),
-            _ => (false, None, None),
-        };
-        // Unsaved text is never replaced by a re-read (SPEC §2.5). Another version on disk is
-        // offered as "Reload · Keep mine"; the version the text started from clears that.
-        if dirty {
-            if let (Ok((content, _)), Content::Shown(shown)) = (&read, &mut self.content) {
-                shown.disk_changed =
-                    (content.hash != hash).then(|| content.hash.clone().unwrap_or_default());
-                shown.index_text = content.index_text.clone();
-            }
-            return;
-        }
-        // The same version again (our own save, a change elsewhere): caret and undo stay; a
-        // staged or committed change still moves the gutter.
-        if let (Ok((content, code)), Content::Shown(shown)) = (&read, &mut self.content)
-            && hash.is_some()
-            && content.hash == hash
-        {
-            if shown.index_text != content.index_text {
-                shown.index_text = content.index_text.clone();
-                shown.code = Rc::new(code.clone());
-            }
-            return;
-        }
-        self.content = match read {
-            Err(error) => Content::Failed(error),
-            Ok((content, code)) => {
-                self.text_id = NEXT_TEXT.fetch_add(1, Ordering::Relaxed);
-                let mut editor = Editor::new(content.content.as_deref().unwrap_or(""));
-                if let Some(cursor) = cursor {
-                    editor.set_cursor(cursor, false);
-                }
-                Content::Shown(Box::new(Shown {
-                    code: Rc::new(code),
-                    editor,
-                    hash: content.hash,
-                    language: content.language,
-                    index_text: content.index_text,
-                    disk_changed: None,
-                    save_error: None,
-                }))
-            }
-        };
-    }
-
-    pub fn shown(&self) -> Option<&Shown> {
-        match &self.content {
-            Content::Shown(shown) => Some(shown),
-            _ => None,
-        }
-    }
-
-    /// Whether the file is Markdown (`.md`).
-    pub fn is_markdown(&self) -> bool {
-        (self.path.rsplit_once('.')).is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("md"))
-    }
-
-    /// The `.md` file is shown as its rendered page alone, not as the editor.
-    pub fn previewing(&self) -> bool {
-        self.mode == MdMode::Preview && self.shows_md()
-    }
-
-    /// The `.md` file is shown as the editor and its rendered page side by side.
-    pub fn splitting(&self) -> bool {
-        self.mode == MdMode::Split && self.shows_md()
-    }
-
-    /// An editable `.md` file is shown.
-    fn shows_md(&self) -> bool {
-        self.is_markdown() && self.stamp().is_some()
-    }
-
-    /// Shows the file in `mode`; the preview's selection and block edit end with a change.
-    pub fn set_mode(&mut self, mode: MdMode) {
-        if self.mode != mode {
-            self.mode = mode;
-            self.preview_selection = None;
-            self.block_edit = None;
-        }
-    }
-
-    /// What a page of the editor's text now would be built from (`None`: nothing editable
-    /// shown).
-    fn stamp(&self) -> Option<Stamp> {
-        let shown = (self.shown()).filter(|shown| !shown.code.binary && !shown.code.too_large)?;
-        Some((self.text_id, shown.editor.version()))
-    }
-
-    /// The last page of this text; while an edited text is parsed again it is the page of the
-    /// text before the edit. `None` after another text replaced it.
-    pub fn preview(&self) -> Option<&Rc<docs::Shown>> {
-        (self.page.as_ref())
-            .filter(|page| page.stamp.0 == self.text_id)
-            .map(|page| &page.shown)
-    }
-
-    /// The text to parse for the preview: `None` when no preview is shown, the page is current,
-    /// or one is being built for this text (one at a time: the Split view rebuilds per edit,
-    /// and an edit made meanwhile is asked for once that build lands). The shell parses it off
-    /// the UI thread and answers with [`FilesView::preview_ready`].
-    pub fn preview_request(&mut self) -> Option<(Stamp, String)> {
-        if !(self.previewing() || self.splitting()) {
-            return None;
-        }
-        let stamp = self.stamp()?;
-        let current = (self.page.as_ref()).is_some_and(|page| page.stamp == stamp);
-        let building = self.page_asked.is_some_and(|asked| asked.0 == stamp.0);
-        if current || building {
-            return None;
-        }
-        self.page_asked = Some(stamp);
-        Some((stamp, self.shown()?.editor.text()))
-    }
-
-    /// The page built for `stamp`. Dropped when another text replaced the one it was built
-    /// from, or when a newer page is already here. Returns `true` when an open block edit was
-    /// closed by the new page.
-    fn preview_ready(&mut self, stamp: Stamp, shown: docs::Shown) -> bool {
-        if self.page_asked == Some(stamp) {
-            self.page_asked = None;
-        }
-        let newer = (self.page.as_ref()).is_some_and(|page| page.stamp >= stamp);
-        if stamp.0 != self.text_id || newer {
-            return false;
-        }
-        self.page = Some(MdPreview {
-            stamp,
-            shown: Rc::new(shown),
-        });
-        self.preview_selection = None;
-        self.block_edit.take().is_some()
-    }
-
-    /// A press on the preview at `at`: a caret, Shift extends, a double click takes the word.
-    pub fn preview_click(&mut self, at: Point, extend: bool, clicks: usize) {
-        let Some(shown) = self.preview().cloned() else {
-            return;
-        };
-        self.preview_selection = Some(match self.preview_selection {
-            _ if clicks == 2 => preview_select::word_at(&shown, at),
-            Some(selection) if extend => Selection {
-                head: at,
-                ..selection
-            },
-            _ => Selection::caret(at),
-        });
-    }
-
-    pub fn preview_drag(&mut self, at: Point) {
-        if let Some(selection) = &mut self.preview_selection {
-            selection.head = at;
-        }
-    }
-
-    pub fn preview_select_all(&mut self) {
-        self.preview_selection = self
-            .preview()
-            .and_then(|shown| preview_select::select_all(shown));
-    }
-
-    /// Ctrl+C in the preview: the selected text as shown; `None` when nothing is selected.
-    pub fn preview_copy(&self) -> Option<String> {
-        let text = preview_select::copy_text(self.preview()?, self.preview_selection.as_ref()?);
-        (!text.is_empty()).then_some(text)
-    }
-
-    /// What "Send selection" sends from this tab (§20B.4): the file, first and last line and
-    /// their text. In Preview the page's selection (the source lines of the blocks it touches,
-    /// as Markdown); in Split the editor's own selection first, then the page's; else the
-    /// editor's selected lines, else its caret's line. The editor's caret always answers, so
-    /// the page is asked before it.
-    pub fn picked_lines(&self) -> Option<(String, u32, u32, String)> {
-        let editor = &self.shown()?.editor;
-        let from_page = self.previewing() || (self.splitting() && editor.selection().is_none());
-        let page = from_page.then(|| self.preview_lines()).flatten();
-        if let Some((first, last, text)) = page {
-            return Some((self.path.clone(), first, last, text));
-        }
-        // The selected lines, else the caret's line.
-        let (first, last) = match editor.selection() {
-            // A selection ending at a line's start does not include that line.
-            Some(range) if range.end.col == 0 => (range.start.line, range.end.line - 1),
-            Some(range) => (range.start.line, range.end.line),
-            None => (editor.cursor().line, editor.cursor().line),
-        };
-        let text = editor.lines().get(first..=last)?.join("\n");
-        let line = |index: usize| u32::try_from(index + 1).ok();
-        Some((self.path.clone(), line(first)?, line(last)?, text))
-    }
-
-    /// The page's selection as source lines and their text; `None` without a selection, outside
-    /// Preview and Split, or while the page is of an older text (its lines may have moved).
-    fn preview_lines(&self) -> Option<(u32, u32, String)> {
-        if !(self.previewing() || self.splitting()) {
-            return None;
-        }
-        let current = self
-            .page
-            .as_ref()
-            .is_some_and(|page| Some(page.stamp) == self.stamp());
-        let page = self.preview().filter(|_| current)?;
-        let lines = preview_select::source_lines(page, self.preview_selection.as_ref()?)?;
-        let text = docs::source_text(&page.lines, lines.start, lines.end)?;
-        Some((lines.start, lines.end, text))
-    }
-
-    /// Esc: `true` when there was a selection.
-    pub fn clear_preview_selection(&mut self) -> bool {
-        self.preview_selection.take().is_some()
-    }
-
-    /// ✎ on block `block`: its source lines go into the field. Refused while the page is of an
-    /// older text (its lines may have moved) or the file cannot be edited.
-    pub fn open_block_edit(&mut self, block: usize) -> bool {
-        let Some(stamp) = self.stamp() else {
-            return false;
-        };
-        let current = self.page.as_ref().is_some_and(|page| page.stamp == stamp);
-        let lines = self
-            .preview()
-            .and_then(|shown| shown.blocks.get(block))
-            .map(|block| block.lines);
-        let (Some(lines), true) = (lines, current) else {
-            return false;
-        };
-        let Some(shown) = self.shown() else {
-            return false;
-        };
-        let source = shown.editor.lines();
-        let from = (lines.start as usize).saturating_sub(1);
-        let to = (lines.end as usize).min(source.len());
-        if from >= to {
-            return false;
-        }
-        let mut text = TextBox::default();
-        text.insert(&source[from..to].join("\n"));
-        self.block_edit = Some(BlockEdit {
-            block,
-            lines,
-            stamp,
-            text,
-        });
-        true
-    }
-
-    /// A key in the field. Clipboard keys are the shell's: it reads the selection before Copy /
-    /// Cut and inserts the clipboard on Paste.
-    pub fn block_edit_key(&mut self, key: DialogKey) -> BlockEditOutcome {
-        let Some(edit) = &mut self.block_edit else {
-            return BlockEditOutcome::Cancel;
-        };
-        match key {
-            DialogKey::Cancel => return BlockEditOutcome::Cancel,
-            DialogKey::Save => return BlockEditOutcome::Apply,
-            DialogKey::Enter => edit.text.insert("\n"),
-            DialogKey::Insert(text) => edit.text.insert(&text),
-            DialogKey::Cut => {
-                if edit.text.input().selection().is_some() {
-                    edit.text.edit(&DialogKey::Backspace);
-                }
-            }
-            DialogKey::Paste | DialogKey::Copy | DialogKey::SwitchField => {}
-            key => {
-                edit.text.edit(&key);
-            }
-        }
-        BlockEditOutcome::Edited
-    }
-
-    /// Ctrl+Enter: the field's text replaces the block's lines as one undo step and the field
-    /// closes (the caller rebuilds the page). The field stays when the text changed since it
-    /// opened.
-    pub fn apply_block_edit(&mut self) -> Result<(), StaleEdit> {
-        let Some(edit) = self.block_edit.take() else {
-            return Ok(());
-        };
-        if self.stamp() != Some(edit.stamp) {
-            self.block_edit = Some(edit);
-            return Err(StaleEdit);
-        }
-        let Some(editor) = self.editor_mut() else {
-            return Ok(());
-        };
-        let from = (edit.lines.start as usize).saturating_sub(1);
-        let last = (edit.lines.end as usize)
-            .min(editor.lines().len())
-            .saturating_sub(1);
-        let Some(end_col) = editor.lines().get(last).map(String::len) else {
-            return Ok(());
-        };
-        editor.replace(
-            Pos { line: from, col: 0 }..Pos {
-                line: last,
-                col: end_col,
-            },
-            edit.text.text(),
-        );
-        self.preview_selection = None;
-        Ok(())
-    }
-
-    /// A click on the check box of the task item whose first source line (1-based) is `line`:
-    /// ticks or unticks it in the text as one undo step; the caret stays. Refused while the page
-    /// is of an older text (its lines may have moved); `Ok(false)` when the line holds no task
-    /// marker.
-    pub fn toggle_task(&mut self, line: u32) -> Result<bool, StaleEdit> {
-        let stamp = self.stamp();
-        if stamp.is_none() || self.page.as_ref().map(|page| page.stamp) != stamp {
-            return Err(StaleEdit);
-        }
-        let Some(editor) = self.editor_mut() else {
-            return Ok(false);
-        };
-        let at = (line as usize).saturating_sub(1);
-        let Some((col, mark)) =
-            (editor.lines().get(at)).and_then(|text| markdown::task_toggle(text))
-        else {
-            return Ok(false);
-        };
-        let caret = editor.cursor();
-        let anchor = (editor.selection()).map(|s| if s.start == caret { s.end } else { s.start });
-        editor.replace(
-            Pos { line: at, col }..Pos {
-                line: at,
-                col: col + 1,
-            },
-            mark,
-        );
-        // One byte for one byte: the caret's and selection's places still exist.
-        editor.set_cursor(anchor.unwrap_or(caret), false);
-        editor.set_cursor(caret, anchor.is_some());
-        self.preview_selection = None;
-        Ok(true)
-    }
-
-    /// The editor of an editable file (not binary or too large).
-    pub fn editor_mut(&mut self) -> Option<&mut Editor> {
-        match &mut self.content {
-            Content::Shown(shown) if !shown.code.binary && !shown.code.too_large => {
-                Some(&mut shown.editor)
-            }
-            _ => None,
-        }
-    }
-
-    /// The caret's line (1-based): "Open in Zed" and Send selection go there.
-    pub fn line(&self) -> Option<u32> {
-        let shown = self.shown()?;
-        u32::try_from(shown.editor.cursor().line + 1).ok()
-    }
-
-    fn begin_save(&mut self) -> Option<SaveRequest> {
-        if self.saving {
-            return None;
-        }
-        let Content::Shown(shown) = &mut self.content else {
-            return None;
-        };
-        if !shown.editor.is_dirty() {
-            return None;
-        }
-        let expected_hash = shown.hash.clone()?;
-        self.saving = true;
-        Some(SaveRequest {
-            path: self.path.clone(),
-            text: shown.editor.text(),
-            expected_hash,
-            point: shown.editor.save_point(),
-        })
-    }
-
-    fn saved(&mut self, point: Option<u64>, written: Result<FsWritten, String>) -> Option<String> {
-        self.saving = false;
-        let Content::Shown(shown) = &mut self.content else {
-            return unshown_save(written);
-        };
-        match written {
-            Ok(written) if written.saved => {
-                shown.editor.mark_saved(point);
-                shown.hash = Some(written.hash);
-                shown.save_error = None;
-                shown.disk_changed = None;
-            }
-            // Another version on disk: the banner offers Reload / Keep mine.
-            Ok(written) => shown.disk_changed = Some(written.hash),
-            Err(error) => shown.save_error = Some(format!("Not saved: {error}")),
-        }
-        None
-    }
-
-    /// "Don't save" / "Reload": drops the unsaved changes; the next read replaces the text.
-    pub fn discard(&mut self) {
-        if let Content::Shown(shown) = &mut self.content {
-            let point = shown.editor.save_point();
-            shown.editor.mark_saved(point);
-            shown.disk_changed = None;
-            // No version to keep: whatever is read next is shown.
-            shown.hash = None;
-        }
-    }
-
-    /// "Keep mine": the text stays and Save overwrites the version on disk.
-    pub fn keep_mine(&mut self) {
-        if let Content::Shown(shown) = &mut self.content
-            && let Some(disk) = shown.disk_changed.take()
-        {
-            shown.hash = Some(disk);
-        }
-    }
-
-    /// The text to highlight again once typing paused at `version`; `None` if it changed
-    /// since (a later pause does it).
-    pub fn highlight_request(&self, version: u64) -> Option<FsContent> {
-        let shown = self.shown()?;
-        (shown.editor.version() == version).then(|| FsContent {
-            path: self.path.clone(),
-            content: Some(shown.editor.text()),
-            size: shown.code.size,
-            binary: false,
-            too_large: false,
-            language: shown.language.clone(),
-            hash: None,
-            index_text: shown.index_text.clone(),
-        })
-    }
-
-    /// The highlight of `version`; dropped (`false`) when the text changed meanwhile.
-    pub fn highlighted(&mut self, version: u64, code: Code) -> bool {
-        match &mut self.content {
-            Content::Shown(shown) if shown.editor.version() == version => {
-                shown.code = Rc::new(code);
-                true
-            }
-            _ => false,
-        }
-    }
-}
-
-/// Answers of "Save changes to …?", in `window.prompt` order ("Cancel" is also Esc).
-pub const LEAVE_ANSWERS: [&str; 3] = ["Save", "Don't save", "Cancel"];
-
-/// What to do with unsaved changes before leaving them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Leave {
-    Save,
-    DontSave,
-}
-
-/// The choice for an answer (an index into [`LEAVE_ANSWERS`]; `None` = the dialog went
-/// away). Returns `None` to stay.
-pub fn leave_choice(answer: Option<usize>) -> Option<Leave> {
-    match answer {
-        Some(0) => Some(Leave::Save),
-        Some(1) => Some(Leave::DontSave),
-        _ => None,
     }
 }
 

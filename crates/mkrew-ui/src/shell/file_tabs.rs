@@ -5,7 +5,7 @@ use crate::*;
 
 impl Shell {
     /// The shown tab of `project_id`'s Editor view.
-    pub(crate) fn active_file_tab(&mut self, project_id: Ulid) -> Option<&mut FileTab> {
+    pub(crate) fn active_file_tab(&mut self, project_id: Ulid) -> Option<&mut documents::Doc> {
         self.files.get_mut(&project_id)?.tab_mut()
     }
 

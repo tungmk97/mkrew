@@ -220,7 +220,7 @@ impl Shell {
                 && (self.workspace)
                     .and_then(|id| self.files.get(&id))
                     .is_some_and(|view| {
-                        view.find.is_some() && !view.tab().is_some_and(FileTab::previewing)
+                        view.find.is_some() && !view.tab().is_some_and(documents::Doc::previewing)
                     });
             let files_command = matches!(
                 command,

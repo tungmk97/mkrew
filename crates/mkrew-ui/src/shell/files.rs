@@ -185,7 +185,7 @@ impl Shell {
             return;
         };
         let target = view.worktree_task_id;
-        let Some((stamp, text)) = view.tab_mut().and_then(FileTab::preview_request) else {
+        let Some((stamp, text)) = view.tab_mut().and_then(documents::Doc::preview_request) else {
             return;
         };
         let background = cx.background_executor().clone();
@@ -498,7 +498,7 @@ impl Shell {
         let opening = view.tab_for(&path).map(|tab| tab.opening);
         let Some(save) = view.begin_save(&path) else {
             if let Some(then) = then
-                && view.tab_for(&path).is_some_and(FileTab::is_saving)
+                && view.tab_for(&path).is_some_and(documents::Doc::is_saving)
             {
                 self.files_after_save.push((project_id, path, then));
             }
@@ -524,7 +524,7 @@ impl Shell {
                         view.saved(&save.path, save.point, written)
                     }
                     // The tab or the workspace's Files view is gone.
-                    _ => files_view::unshown_save(written),
+                    _ => documents::unshown_save(written),
                 };
                 if let Some(message) = unshown {
                     shell.toast_error(message, cx);
@@ -575,20 +575,20 @@ impl Shell {
             PromptLevel::Warning,
             &format!("Save changes to {name}?"),
             Some(detail.as_str()),
-            &files_view::LEAVE_ANSWERS,
+            &documents::LEAVE_ANSWERS,
             cx,
         );
         cx.spawn_in(window, async move |this, cx| {
-            let choice = files_view::leave_choice(answer.await.ok());
+            let choice = documents::leave_choice(answer.await.ok());
             let _ = this.update_in(cx, |shell, window, cx| {
                 let rest: AfterSave = Box::new(move |shell, window, cx| {
                     shell.leave_files(project_id, paths, then, window, cx);
                 });
                 match choice {
-                    Some(files_view::Leave::Save) => {
+                    Some(documents::Leave::Save) => {
                         shell.save_file(project_id, path, Some(rest), window, cx);
                     }
-                    Some(files_view::Leave::DontSave) => {
+                    Some(documents::Leave::DontSave) => {
                         // The tab shows the file on disk again (it may stay open on Cancel).
                         let read = shell.files_view(project_id).drop_changes(&path);
                         let requests = Requests { list: vec![], read };
@@ -878,7 +878,7 @@ impl Shell {
         };
         let (Some(path), line) = (
             view.file().map(str::to_owned),
-            view.tab().and_then(FileTab::line),
+            view.tab().and_then(documents::Doc::line),
         ) else {
             return;
         };

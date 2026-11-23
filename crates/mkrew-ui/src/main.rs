@@ -60,10 +60,11 @@ use mkrew_ui::diagram::Diagram;
 use mkrew_ui::dialog_focus::{self, Nav};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
+use mkrew_ui::documents::{self, MdMode};
 use mkrew_ui::editor::{self, EditKey, Pos};
 use mkrew_ui::fanout::{self, Compare, FanOutPicker};
 use mkrew_ui::field::{Caret, caret_mouse, caret_text, copy_selection};
-use mkrew_ui::files_view::{self, Close, Content, FileTab, FilesView, MdMode, Open, Requests};
+use mkrew_ui::files_view::{self, Close, FilesView, Open, Requests};
 use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::git_actions::{self, Remote};
@@ -788,7 +789,7 @@ struct Shell {
     /// The Markdown Split view's preview (the editor beside it keeps `file_editor_focus`).
     file_preview_focus: FocusHandle,
     /// The mode the next Markdown file opens in (`[ui] md_mode`, the last one switched to).
-    md_mode: files_view::MdMode,
+    md_mode: documents::MdMode,
     /// The source's share of the Markdown Split view (`[ui] md_split`, 0.2–0.8).
     md_split: f32,
     /// Its divider was dragged since the last mouse-up: the share is saved when it ends.

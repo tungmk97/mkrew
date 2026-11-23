@@ -4,7 +4,7 @@
 //! task box, copy a code block.
 
 use crate::*;
-use mkrew_ui::files_view::StaleEdit;
+use mkrew_ui::documents::StaleEdit;
 use mkrew_ui::markdown::{self, LinkTarget};
 use mkrew_ui::preview::{CopyCode, OpenLink, ToggleTask};
 
@@ -111,8 +111,8 @@ impl Shell {
     pub(crate) fn render_md_split(
         &self,
         project_id: Ulid,
-        tab: &FileTab,
-        shown: &files_view::Shown,
+        tab: &documents::Doc,
+        shown: &documents::Shown,
         window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -230,7 +230,7 @@ impl Shell {
 
     /// Scrolls the Split view's page to the block the editor shows at its top, once per move
     /// of the editor (the page can be scrolled on its own meanwhile).
-    fn follow_source_scroll(&self, tab: &FileTab, cx: &App) {
+    fn follow_source_scroll(&self, tab: &documents::Doc, cx: &App) {
         let Some(page) = tab.preview() else {
             return;
         };
