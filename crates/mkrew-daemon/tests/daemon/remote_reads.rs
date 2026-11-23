@@ -103,6 +103,7 @@ fn session_transcript_reads_windows_and_answers_not_found_without_a_file() {
             start: 0,
             len: 0,
             data: Vec::new(),
+            recap: None,
         }
     );
 
@@ -113,6 +114,7 @@ fn session_transcript_reads_windows_and_answers_not_found_without_a_file() {
     let len = body.len() as u64;
     let first = transcript(&mut client, 0);
     assert!(first.found);
+    assert_eq!(first.recap, None, "a Claude session has no recap");
     assert_eq!(
         (first.format.as_str(), first.start, first.len),
         ("claude_jsonl", 0, len)
@@ -136,6 +138,40 @@ fn session_transcript_reads_windows_and_answers_not_found_without_a_file() {
         offset: 0,
     }));
     assert_eq!(error_code(unknown), ErrorCode::NotFound);
+    client.stop();
+}
+
+/// A hook that reports a new native id is announced as `session.updated`, so an open Chat pane
+/// learns it (the transcript is keyed on it), whether or not the hook also changes the state.
+#[test]
+fn a_new_native_id_from_a_hook_is_announced_with_or_without_a_state_change() {
+    let env = Env::new();
+    write_usage_profile(&env);
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "usage").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::NeedsInput);
+    let announced = |native: &'static str| {
+        move |e: &Event| {
+            matches!(e, Event::SessionUpdated(s)
+                if s.id == id && s.native_session_id.as_deref() == Some(native))
+        }
+    };
+
+    // The session already waits for input: this hook changes no state.
+    client
+        .hook(id, "fake", "needs_input", json!({"session_id": "native-7"}))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_event_where(announced("native-7"));
+
+    // A hook that changes the state and the native id at once.
+    client
+        .hook(id, "fake", "busy", json!({"session_id": "native-8"}))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_event_where(announced("native-8"));
     client.stop();
 }
 

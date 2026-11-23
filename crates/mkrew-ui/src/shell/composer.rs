@@ -1,6 +1,7 @@
 //! The composer (agent input) and the prompt picker.
 
 use crate::*;
+use mkrew_ui::chat;
 
 impl Shell {
     /// The focused pane's session while its composer is shown.
@@ -734,61 +735,14 @@ impl Shell {
         Self::modal_shade("prompt-picker-shade", panel, cx)
     }
 
-    /// The composer docked under `session`'s pane (§20B.1): the draft, then why the last send
-    /// failed or the keys. Only the focused pane's composer takes the keyboard (`focused`: it
-    /// has it now); a click on another pane's composer focuses that pane and its composer.
-    pub(crate) fn composer_panel(
+    /// The texts waiting for the agent, first line each, ✕ removes one (§20B.2).
+    fn composer_queue_rows(
         &self,
         session: Ulid,
-        draft: &Draft,
-        is_focused: bool,
-        focused: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
-    ) -> impl IntoElement {
-        let rewriting = draft.prompt.rewriting();
-        let field = caret_field(
-            "composer",
-            draft.prompt.text.input(),
-            "Message the agent…",
-            focused && !draft.busy && !rewriting,
-            theme,
-            cx,
-            move |shell, caret| {
-                shell
-                    .composers
-                    .click(session, caret.at, caret.extend, caret.clicks);
-            },
-        )
-        .max_h(px(theme::COMPOSER_MAX_HEIGHT))
-        .overflow_y_scroll()
-        .when(draft.busy || rewriting, |el| el.opacity(opacity::DISABLED))
-        .when(is_focused, |el| {
-            el.track_focus(&self.composer_focus)
-                .track_scroll(&self.composer_scroll)
-                .on_key_down(cx.listener(Self::composer_key_down))
-                .relative()
-                .child(self.typing(&self.composer_focus, Self::composer_key_down, cx))
-        });
-        // The keys only while it has the keyboard (they do nothing on other panes).
-        let status = if draft.busy {
-            Some(("↑", theme.text_muted, "Sending…".to_owned()))
-        } else if rewriting {
-            Some(("✦", theme.text_muted, "Improving the prompt…".to_owned()))
-        } else if let Some(error) = &draft.error {
-            Some(("✕", theme.status_exited, error.clone()))
-        } else {
-            focused.then(|| {
-                (
-                    "",
-                    theme.text_muted,
-                    composer::hint(self.chat_session(session)).to_owned(),
-                )
-            })
-        };
-        // The texts waiting for the agent (§20B.2), first line each, ✕ removes one.
-        let queued = self
-            .composers
+    ) -> Vec<gpui::Div> {
+        self.composers
             .queue(session)
             .iter()
             .map(|item| {
@@ -835,7 +789,176 @@ impl Shell {
                             .child(icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted)),
                     )
             })
-            .collect::<Vec<_>>();
+            .collect()
+    }
+
+    /// The line that replaces the stats: sending, improving, an error, else (Terminal only) the
+    /// key hint while the composer has the keyboard.
+    fn composer_status(
+        &self,
+        draft: &Draft,
+        focused: bool,
+        with_hint: bool,
+        theme: &Theme,
+    ) -> Option<(&'static str, u32, String)> {
+        if draft.busy {
+            Some(("↑", theme.text_muted, "Sending…".to_owned()))
+        } else if draft.prompt.rewriting() {
+            Some(("✦", theme.text_muted, "Improving the prompt…".to_owned()))
+        } else if let Some(error) = &draft.error {
+            Some(("✕", theme.status_exited, error.clone()))
+        } else {
+            (focused && with_hint).then(|| ("", theme.text_muted, composer::hint().to_owned()))
+        }
+    }
+
+    /// The ✦ and "Prompts…" buttons of the chip or key row (§20B.1, §20B.3).
+    fn composer_tools(
+        &self,
+        session: Ulid,
+        draft: &Draft,
+        is_focused: bool,
+        hover: u32,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let rewriting = draft.prompt.rewriting();
+        let mut tools = Vec::new();
+        if is_focused && !draft.busy && !draft.prompt.text.is_blank() {
+            let sparkles = icon_svg(Icon::Sparkles, theme::ICON_SIZE_SMALL, theme.text_muted);
+            let improve = if rewriting {
+                disabled_button("composer-enhance", sparkles, theme, false)
+            } else {
+                quiet_button("composer-enhance", sparkles, theme, hover).on_click(cx.listener(
+                    move |shell, _, window, cx| {
+                        shell.enhance_prompt(composer::Target::Composer(session), window, cx)
+                    },
+                ))
+            };
+            tools.push(
+                improve
+                    .flex_none()
+                    .tooltip(tooltip(
+                        theme,
+                        "Improve this prompt with the agent (it may read the code)",
+                        "",
+                    ))
+                    .into_any_element(),
+            );
+        }
+        if is_focused && !draft.busy {
+            let prompts = quiet_button(
+                "composer-prompts",
+                icon_text(Icon::Library, "Prompts…", theme.text_muted),
+                theme,
+                hover,
+            )
+            .flex_none()
+            .tooltip(tooltip(
+                theme,
+                "Insert a prompt from the library (type / in the box for the agent's commands)",
+                "",
+            ))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.open_prompt_picker(composer::Target::Composer(session), window, cx);
+            }));
+            tools.push(prompts.into_any_element());
+        }
+        tools
+    }
+
+    /// The model chip: the agent's own model picker opens in its terminal. The pane switches to
+    /// Terminal and `/model` + Enter is sent (ADR 0105). A working agent queues it (SPEC §8).
+    pub(crate) fn open_model_picker(
+        &mut self,
+        session: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.set_chat(session, false, window, cx);
+        self.send_to_agent(session, "/model", window, cx);
+    }
+
+    /// `session.send` of `text` with Enter, outside the composer's draft; a failure is a toast.
+    pub(crate) fn send_to_agent(
+        &mut self,
+        session: Ulid,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let sent = connection.request(Request::SessionSend(SessionSendParams {
+            session_id: session,
+            text: text.to_owned(),
+            submit: true,
+        }));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = match sent.await {
+                Ok(Outcome::Result(_)) => Ok(()),
+                Ok(Outcome::Error(body)) => Err(body.message),
+                Err(error) => Err(format!("{error:#}")),
+            };
+            if let Err(error) = result {
+                tracing::warn!(%session, "session.send failed: {error}");
+                let _ = this.update(cx, |shell, cx| {
+                    shell.toast_error(format!("Cannot send: {error}"), cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// The composer docked under `session`'s pane (§20B.1). In Chat mode it is the floating
+    /// card (`composer_card`, ADR 0105); in Terminal mode the docked box: the draft,
+    /// then why the last send failed or the keys. Only the focused pane's composer takes the
+    /// keyboard (`focused`: it has it now); a click on another pane's composer focuses that
+    /// pane and its composer. `width`: the pane's width in px, `now`: epoch ms.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn composer_panel(
+        &self,
+        session: Ulid,
+        draft: &Draft,
+        is_focused: bool,
+        focused: bool,
+        width: f32,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        if self.chat_session(session) {
+            return self.composer_card(session, draft, is_focused, focused, width, now, theme, cx);
+        }
+        let rewriting = draft.prompt.rewriting();
+        let field = caret_field(
+            "composer",
+            draft.prompt.text.input(),
+            "Message the agent…",
+            focused && !draft.busy && !rewriting,
+            theme,
+            cx,
+            move |shell, caret| {
+                shell
+                    .composers
+                    .click(session, caret.at, caret.extend, caret.clicks);
+            },
+        )
+        .max_h(px(theme::COMPOSER_MAX_HEIGHT))
+        .overflow_y_scroll()
+        .when(draft.busy || rewriting, |el| el.opacity(opacity::DISABLED))
+        .when(is_focused, |el| {
+            el.track_focus(&self.composer_focus)
+                .track_scroll(&self.composer_scroll)
+                .on_key_down(cx.listener(Self::composer_key_down))
+                .relative()
+                .child(self.typing(&self.composer_focus, Self::composer_key_down, cx))
+        });
+        let status = self.composer_status(draft, focused, true, theme);
+        let queued = self.composer_queue_rows(session, theme, cx);
+        let tools =
+            self.composer_tools(session, draft, is_focused, theme.surface_raised, theme, cx);
         div()
             .flex_none()
             .flex()
@@ -903,64 +1026,327 @@ impl Shell {
                                     )
                             })),
                     )
-                    // ✦ (§20B.1): the agent rewrites the draft.
-                    .when(
-                        is_focused && !draft.busy && !draft.prompt.text.is_blank(),
-                        |el| {
-                            let sparkles =
-                                icon_svg(Icon::Sparkles, theme::ICON_SIZE_SMALL, theme.text_muted);
-                            let improve = if rewriting {
-                                disabled_button("composer-enhance", sparkles, theme, false)
-                            } else {
-                                quiet_button(
-                                    "composer-enhance",
-                                    sparkles,
-                                    theme,
-                                    theme.surface_raised,
-                                )
-                                .on_click(cx.listener(
-                                    move |shell, _, window, cx| {
-                                        shell.enhance_prompt(
-                                            composer::Target::Composer(session),
-                                            window,
-                                            cx,
-                                        )
-                                    },
-                                ))
-                            };
-                            el.child(improve.flex_none().tooltip(tooltip(
-                                theme,
-                                "Improve this prompt with the agent (it may read the code)",
-                                "",
-                            )))
-                        },
-                    )
-                    // The prompt library (§20B.3), typed into this draft.
-                    .when(is_focused && !draft.busy, |el| {
-                        el.child(
-                            quiet_button(
-                                "composer-prompts",
-                                icon_text(Icon::Library, "Prompts…", theme.text_muted),
-                                theme,
-                                theme.surface_raised,
-                            )
-                            .flex_none()
-                            .tooltip(tooltip(
-                                theme,
-                                "Insert a prompt from the library (type / in the box for the agent's commands)",
-                                "",
-                            ))
-                            .on_click(cx.listener(
-                                move |shell, _, window, cx| {
-                                    shell.open_prompt_picker(
-                                        composer::Target::Composer(session),
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            )),
-                        )
-                    }),
+                    .children(tools),
             )
+            .into_any_element()
+    }
+
+    /// The Chat composer (ADR 0105): in the page's centered column, `space::M` above the pane's
+    /// bottom edge, a thin context meter over a floating card (the queue, the field, then the
+    /// chip row: model, effort, permission, branch, stats or the status line, ✦, Prompts…, and
+    /// the round send button). Collapsed to a one-line pill while the pane has no keyboard, the
+    /// draft is empty and nothing is queued or failed.
+    #[allow(clippy::too_many_arguments)]
+    fn composer_card(
+        &self,
+        session: Ulid,
+        draft: &Draft,
+        is_focused: bool,
+        focused: bool,
+        width: f32,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let info = self.sidebar.sessions().iter().find(|s| s.id == session);
+        let page = self
+            .reads
+            .get(&session)
+            .and_then(|read| read.page.as_deref());
+        let placeholder = chat::composer_placeholder(
+            page.and_then(|page| page.meta.title.as_deref()),
+            info.and_then(mkrew_ui::history::title),
+        );
+        let blank = draft.prompt.text.is_blank();
+        let queue = self.composers.queue(session);
+        if !is_focused && blank && queue.is_empty() && !draft.busy && draft.error.is_none() {
+            let pill = div()
+                .id(SharedString::from(format!("composer-pill-{session}")))
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .px(px(space::L))
+                .py(px(space::S))
+                .rounded(px(radius::PILL))
+                .bg(rgb(theme.surface_raised))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(gpui::rgba(theme.glass_border))
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text_muted))
+                .font_family(theme.ui_font_family.clone())
+                .pressable(Look::Raised, true, theme)
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, window, cx| {
+                        shell.focus_session_pane(session);
+                        window.focus(&shell.composer_focus, cx);
+                        cx.notify();
+                    }),
+                )
+                .child(div().flex_1().min_w_0().truncate().child(placeholder))
+                .child(icon_svg(
+                    Icon::ArrowUp,
+                    theme::ICON_SIZE_SMALL,
+                    theme.text_muted,
+                ));
+            return super::chat_view::chat_column(pill)
+                .pb(px(space::M))
+                .into_any_element();
+        }
+        let working = info.is_some_and(|s| s.state == SessionState::Working);
+        let at_root = self
+            .link_scope(session)
+            .is_some_and(|(_, target, _)| target.is_none());
+        let stats = chat::composer_stats(
+            page,
+            self.usages.get(session),
+            self.git_summary(),
+            at_root,
+            working,
+            now,
+        );
+        let rewriting = draft.prompt.rewriting();
+        let can_send = !draft.busy && !rewriting && !blank;
+        let input = draft.prompt.text.input();
+        let (text, layout) = mkrew_ui::field::caret_text(
+            input.as_str(),
+            input.cursor(),
+            input.selection(),
+            placeholder,
+            focused && !draft.busy && !rewriting,
+            theme,
+        );
+        let field = mkrew_ui::field::caret_mouse(
+            div()
+                .id("composer")
+                .relative()
+                .cursor(CursorStyle::IBeam)
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text))
+                .child(text),
+            &cx.entity(),
+            layout,
+            move |shell: &mut Shell, caret| {
+                shell
+                    .composers
+                    .click(session, caret.at, caret.extend, caret.clicks);
+            },
+        )
+        .max_h(px(theme::COMPOSER_MAX_HEIGHT))
+        .overflow_y_scroll()
+        .when(draft.busy || rewriting, |el| el.opacity(opacity::DISABLED))
+        .when(is_focused, |el| {
+            el.track_focus(&self.composer_focus)
+                .track_scroll(&self.composer_scroll)
+                .on_key_down(cx.listener(Self::composer_key_down))
+                .child(self.typing(&self.composer_focus, Self::composer_key_down, cx))
+        });
+        let meter = stats
+            .context
+            .and_then(|(used, window)| chat::context_meter(used, window?))
+            .map(|meter| {
+                let fill = if meter.warning {
+                    theme.status_needs_input
+                } else {
+                    theme.accent
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .px(px(space::S))
+                    .pb(px(space::XS))
+                    .child(
+                        div()
+                            .h(px(theme::CONTEXT_METER_HEIGHT))
+                            .w_full()
+                            .rounded(px(radius::PILL))
+                            .bg(rgb(theme.divider))
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(relative(meter.fraction))
+                                    .rounded(px(radius::PILL))
+                                    .bg(rgb(fill)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(format!("{}%", meter.percent))
+                            .child(meter.window_label),
+                    )
+            });
+        // Room for the chips: the pane's width, capped by the column, less the page padding
+        // and the card's own padding. The chip widths are in rems (`theme::rems_px`, designed
+        // at 13 px), so the room is measured in the same unit.
+        let room = (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M)
+            / (cx.global::<theme::Fonts>().ui_size / 13.0);
+        let shown = chat::fit_chips(chat::Chips::wanted(&stats), room);
+        let quiet = |el: gpui::Div| {
+            el.flex()
+                .flex_none()
+                .items_center()
+                .gap(px(space::XS))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+        };
+        let exited = self.is_exited(session);
+        let model_chip = stats.model.clone().filter(|_| shown.model).map(|model| {
+            div()
+                .id("composer-model")
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(space::XS))
+                .px(px(space::S))
+                .py(px(space::XS))
+                .rounded(px(radius::CHIP))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .pressable(Look::Chip, !exited, theme)
+                .tooltip(tooltip(
+                    theme,
+                    "Change the model (types /model in the terminal)",
+                    "",
+                ))
+                .on_press(
+                    !exited,
+                    cx.listener(move |shell, _, window, cx| {
+                        shell.open_model_picker(session, window, cx);
+                    }),
+                )
+                .child(model)
+                .child(icon_svg(
+                    Icon::ChevronDown,
+                    theme::ICON_SIZE_SMALL,
+                    theme.text_muted,
+                ))
+        });
+        let effort_chip = stats
+            .effort
+            .clone()
+            .filter(|_| shown.effort)
+            .map(|effort| quiet(div()).child(effort));
+        let permission_chip = stats
+            .permission
+            .clone()
+            .filter(|_| shown.permission)
+            .map(|permission| quiet(div()).child(permission));
+        let branch_chip = stats.branch.clone().filter(|_| shown.branch).map(|branch| {
+            quiet(div())
+                .child(icon_svg(
+                    Icon::GitBranch,
+                    theme::ICON_SIZE_SMALL,
+                    theme.text_muted,
+                ))
+                .child(branch.name)
+                .when(branch.changed > 0, |el| {
+                    el.child(format!("*{}", branch.changed))
+                })
+        });
+        // The status line replaces the stats while it shows.
+        let status = self.composer_status(draft, focused, false, theme);
+        let middle = match status {
+            Some((icon, color, text)) => div()
+                .flex()
+                .min_w_0()
+                .gap(px(space::XS))
+                .text_size(font_size::META)
+                .when(!icon.is_empty(), |el| {
+                    el.child(div().flex_none().text_color(rgb(color)).child(icon))
+                })
+                .child(
+                    div()
+                        .min_w_0()
+                        .when(draft.error.is_none(), |el| el.truncate())
+                        .text_color(rgb(if draft.error.is_some() {
+                            theme.text
+                        } else {
+                            theme.text_muted
+                        }))
+                        .child(text),
+                )
+                .into_any_element(),
+            None => {
+                let parts = chat::stat_parts(&stats);
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_muted))
+                    .font_family(theme.terminal_font_family.clone())
+                    .when(shown.stats, |el| el.child(parts.join("  ")))
+                    .into_any_element()
+            }
+        };
+        let send = round_button("composer-send", Icon::ArrowUp, can_send, theme)
+            .tooltip(tooltip(theme, composer::send_tip(), ""))
+            .on_press(
+                can_send,
+                cx.listener(move |shell, _, window, cx| {
+                    shell.send_composer(session, window, cx);
+                }),
+            );
+        let card = div()
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .p(px(space::M))
+            .rounded(px(radius::LARGE))
+            .bg(rgb(theme.surface_raised))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(gpui::rgba(theme.glass_border))
+            .shadow(theme::shadow_float(theme))
+            .font_family(theme.ui_font_family.clone())
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |shell, _, window, cx| {
+                    cx.stop_propagation();
+                    shell.focus_session_pane(session);
+                    window.focus(&shell.composer_focus, cx);
+                    cx.notify();
+                }),
+            )
+            .when(!queue.is_empty(), |el| {
+                el.child(
+                    div()
+                        .id("composer-queue")
+                        .flex_none()
+                        .max_h(px(theme::COMPOSER_QUEUE_MAX_HEIGHT))
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .gap(px(space::XS))
+                        .children(self.composer_queue_rows(session, theme, cx)),
+                )
+            })
+            .child(field)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .children(model_chip)
+                    .children(effort_chip)
+                    .children(permission_chip)
+                    .children(branch_chip)
+                    .child(div().flex_1().min_w_0().flex().justify_end().child(middle))
+                    .children(self.composer_tools(
+                        session,
+                        draft,
+                        is_focused,
+                        theme.border,
+                        theme,
+                        cx,
+                    ))
+                    .child(send),
+            );
+        super::chat_view::chat_column(div().flex().flex_col().children(meter).child(card))
+            .pb(px(space::M))
+            .into_any_element()
     }
 }

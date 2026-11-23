@@ -97,14 +97,20 @@ pub struct ContextShare {
     pub hover: String,
 }
 
-/// `None` without the profile's `context_window`.
-pub fn context_share(usage: &SessionUsageEvent) -> Option<ContextShare> {
-    let window = usage.context_window?;
-    let percent = Usage {
+/// The context share of `usage` as a whole percentage; `None` without the profile's
+/// `context_window`.
+pub fn context_percent(usage: &SessionUsageEvent) -> Option<u64> {
+    Usage {
         context: usage.context,
         ..Usage::default()
     }
-    .context_percent(Some(window))?;
+    .context_percent(usage.context_window)
+}
+
+/// `None` without the profile's `context_window`.
+pub fn context_share(usage: &SessionUsageEvent) -> Option<ContextShare> {
+    let window = usage.context_window?;
+    let percent = context_percent(usage)?;
     let cached = usage.cache_read + usage.cache_write;
     let cached = if cached > 0 {
         format!(", {} cached", format_count(cached))

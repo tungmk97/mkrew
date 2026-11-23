@@ -321,6 +321,14 @@ impl Shell {
                     None => self.toast_info(format!("No heading #{anchor} here"), cx),
                 }
             }
+            // A file opens in the Editor of the main window.
+            Some(LinkTarget::File { .. }) if self.host_of(window) != HostId::Main => {
+                let action = action.clone();
+                self.in_window(HostId::Main, cx, move |shell, window, cx| {
+                    window.activate_window();
+                    shell.open_preview_link(&action, window, cx);
+                });
+            }
             Some(LinkTarget::File { path, line }) if shown_target == target => {
                 self.reveal_file(project_id, target, path, line, Open::Kept, window, cx);
             }
@@ -359,7 +367,8 @@ impl Shell {
         }
     }
 
-    /// "Copy" on a code block of a preview.
+    /// "Copy" on a code block of a preview: the text goes to the clipboard and the button
+    /// says "Copied" for [`theme::COPIED_FEEDBACK`].
     pub(crate) fn copy_preview_code(
         &mut self,
         action: &CopyCode,
@@ -367,6 +376,47 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.write_to_clipboard(ClipboardItem::new_string(action.0.clone()));
-        self.toast_info("Copied", cx);
+        let key = preview::code_key(&action.0);
+        preview::set_copied(Some(key));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(theme::COPIED_FEEDBACK).await;
+            let _ = this.update(cx, |_, cx| {
+                if preview::copied() == Some(key) {
+                    preview::set_copied(None);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// A press on a path pill of a Chat message: the file opens in the Editor view of the
+    /// session's workspace and worktree, at its `:line`. A path that leaves the workspace
+    /// opens nothing. A file that does not exist gets the Files view's own message.
+    pub(crate) fn open_chat_path(
+        &mut self,
+        action: &preview::OpenPath,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(pill) = markdown::path_pill(&action.text) else {
+            return;
+        };
+        let Some((project_id, target, base)) = self.link_scope(action.session) else {
+            return;
+        };
+        let Some(path) = mkrew_ui::chat::files_path(&base.to_string_lossy(), pill.path) else {
+            self.toast_error("That file is outside this workspace", cx);
+            return;
+        };
+        let line = pill.line;
+        if self.host_of(window) != HostId::Main {
+            return self.in_window(HostId::Main, cx, move |shell, window, cx| {
+                window.activate_window();
+                shell.open_file_at(project_id, target, path, line, window, cx);
+            });
+        }
+        self.open_file_at(project_id, target, path, line, window, cx);
     }
 }

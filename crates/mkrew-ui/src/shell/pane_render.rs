@@ -600,7 +600,16 @@ impl Shell {
                 ),
             )
             .children(self.composers.shown(session).map(|draft| {
-                self.composer_panel(session, draft, is_focused, composer_focused, theme, cx)
+                self.composer_panel(
+                    session,
+                    draft,
+                    is_focused,
+                    composer_focused,
+                    width,
+                    now,
+                    theme,
+                    cx,
+                )
             }))
             .when(several && !is_focused, |el| {
                 el.child(

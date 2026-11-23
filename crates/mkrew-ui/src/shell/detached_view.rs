@@ -79,6 +79,32 @@ impl Render for DetachedWindow {
             .on_action(cx.listener(move |_, action: &Run, window, cx| {
                 let _ = shell.update(cx, |shell, cx| shell.run(action, window, cx));
             }))
+            .on_action(cx.listener({
+                let shell = self.shell.clone();
+                move |_, action: &preview::OpenPath, window, cx| {
+                    let _ = shell.update(cx, |shell, cx| shell.open_chat_path(action, window, cx));
+                }
+            }))
+            .on_action(cx.listener({
+                let shell = self.shell.clone();
+                move |_, action: &preview::CopyCode, window, cx| {
+                    let _ =
+                        shell.update(cx, |shell, cx| shell.copy_preview_code(action, window, cx));
+                }
+            }))
+            .on_action(cx.listener({
+                let shell = self.shell.clone();
+                move |_, action: &preview::OpenLink, window, cx| {
+                    let _ =
+                        shell.update(cx, |shell, cx| shell.open_preview_link(action, window, cx));
+                }
+            }))
+            .on_action(cx.listener({
+                let shell = self.shell.clone();
+                move |_, action: &preview::ExpandDiagram, window, cx| {
+                    let _ = shell.update(cx, |shell, cx| shell.expand_diagram(action, window, cx));
+                }
+            }))
             .child(content)
     }
 }

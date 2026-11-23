@@ -128,6 +128,16 @@ pub fn source_label(source: &SlashSource) -> String {
     }
 }
 
+/// What a picker row shows after its description (ADR 0105): `/model` the current model,
+/// `/compact` the context share; `None` when it is not known or the command is another.
+pub fn row_hint(name: &str, model: Option<&str>, percent: Option<u64>) -> Option<String> {
+    match name {
+        "model" => model.map(str::to_owned),
+        "compact" => percent.map(|percent| format!("context {percent}% used")),
+        _ => None,
+    }
+}
+
 /// The footer note for files the scan could not read.
 pub fn unreadable_note(count: usize) -> String {
     match count {
@@ -671,5 +681,21 @@ mod tests {
         assert_eq!(label(SlashSource::Managed), "managed");
         assert_eq!(label(SlashSource::Plugin("acme".into())), "plugin: acme");
         assert_eq!(label(SlashSource::Profile), "profile");
+    }
+
+    #[test]
+    fn model_and_compact_rows_carry_the_current_state() {
+        assert_eq!(
+            row_hint("model", Some("opus 5.5"), Some(37)).as_deref(),
+            Some("opus 5.5")
+        );
+        assert_eq!(
+            row_hint("compact", Some("opus 5.5"), Some(37)).as_deref(),
+            Some("context 37% used")
+        );
+        // Unknown state: no hint (never a placeholder), other commands: none.
+        assert_eq!(row_hint("model", None, Some(37)), None);
+        assert_eq!(row_hint("compact", Some("opus 5.5"), None), None);
+        assert_eq!(row_hint("review", Some("opus 5.5"), Some(37)), None);
     }
 }

@@ -85,7 +85,7 @@ Claude's redacted thinking (`"thinking": ""` with a signature) is now kept as a 
 |---|---|---|---|
 | `model` | assistant `message.model` | `turn_context.payload.model` | `model_change.model`, then assistant `message.model` |
 | `effort` | none (only in API requests) | `turn_context.payload.collaboration_mode.settings.reasoning_effort` | `thinking_level_change.thinkingLevel` |
-| `permission` | user line `permissionMode` | `turn_context.payload.approval_policy` | none |
+| `permission` | user line `permissionMode` and separate `permission-mode` lines (the newest wins) | `turn_context.payload.approval_policy` | none |
 | `title` | `ai-title.aiTitle` | none | `title.title` / `title_change.title` |
 | `context` | input + cache read + cache write of the newest assistant message | `last_token_usage.total_tokens` | input + cacheRead + cacheWrite of the newest assistant message |
 | `context_window` | none | `token_count.info.model_context_window` | none |

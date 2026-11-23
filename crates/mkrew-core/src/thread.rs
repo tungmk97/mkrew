@@ -4,6 +4,8 @@
 //! transcript at [`ThreadReader::offset`] and hands them to [`ThreadReader::feed`]. A partial
 //! last line is kept until its newline arrives. Unknown or malformed lines are skipped.
 
+use std::collections::HashMap;
+
 use serde_json::Value;
 
 use crate::profile::UsageFormat;
@@ -46,14 +48,27 @@ pub struct Turn {
     /// The last `AskUserQuestion` of the turn that has no result yet.
     pub question: Option<Question>,
     pub subagents: Vec<Subagent>,
+    /// The prompt line's timestamp (epoch ms); `None` when that line has none.
+    pub started_at: Option<i64>,
+    /// The newest timestamp of a line of the turn (epoch ms): a later line with an older time
+    /// never lowers it.
+    pub ended_at: Option<i64>,
+    /// Output tokens of the turn's assistant messages. Claude lines that share one
+    /// `message.id` count once (the newest figure), as in the usage reader.
+    pub output_tokens: u64,
+    /// Milliseconds the model spent writing: for each assistant line, its time minus the time
+    /// of the line before it in the turn (never negative). tok/s is `output_tokens * 1000 /
+    /// generation_ms`.
+    pub generation_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
     /// Agent text (Markdown).
     Text(String),
-    /// A thinking block (Claude, omp), cut to [`THINKING_MAX`].
-    Thinking(String),
+    /// A thinking block (Claude, omp), cut to [`THINKING_MAX`]. `ms` is how long it took: the
+    /// block's line time minus the line before it. Claude's redacted thinking has empty text.
+    Thinking { text: String, ms: Option<u64> },
     /// Consecutive tool calls.
     Tools(Vec<ToolCall>),
 }
@@ -178,6 +193,41 @@ struct Structured {
     async_launched: bool,
 }
 
+/// The times around the line being pushed: its own, and the newest of the line before it in
+/// the turn.
+#[derive(Debug, Clone, Copy, Default)]
+struct Clock {
+    now: Option<i64>,
+    prev: Option<i64>,
+}
+
+/// What a line says about the turn's time and tokens (not about its items).
+#[derive(Debug, Default)]
+struct Facts {
+    /// An assistant line: the model was writing since the line before.
+    assistant: bool,
+    /// Output tokens, with the id that de-duplicates them (a Claude `message.id`).
+    output: Option<(Option<String>, u64)>,
+}
+
+/// What a transcript says about the session, the newest value seen of each (ADR 0105). A
+/// reader that started mid-file (`start_mid_file`) holds only what it has seen.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionMeta {
+    /// The model as the agent names it (see [`short_model`]).
+    pub model: Option<String>,
+    /// Codex `reasoning_effort`, omp `thinkingLevel`; none for Claude (only in API requests).
+    pub effort: Option<String>,
+    /// Claude `permissionMode`, Codex `approval_policy`; none for omp.
+    pub permission: Option<String>,
+    /// The agent's own title for the session, cleaned by [`clean_title`].
+    pub title: Option<String>,
+    /// Tokens in the context of the newest message.
+    pub context: Option<u64>,
+    /// Codex only: `model_context_window`.
+    pub context_window: Option<u64>,
+}
+
 /// Incremental reader for one transcript file.
 #[derive(Debug, Clone)]
 pub struct ThreadReader {
@@ -195,6 +245,15 @@ pub struct ThreadReader {
     checklist: Vec<Task>,
     /// `TaskCreate` calls (tool-use id, subject) whose result has not come yet.
     creates: Vec<(String, String)>,
+    /// The clock of the line being read.
+    clock: Clock,
+    /// The newest time of the previous line of the current turn.
+    last: Option<i64>,
+    /// Claude `message.id` -> the output tokens it counted in this turn.
+    seen: HashMap<String, u64>,
+    /// The `total_tokens` of the last Codex `token_count`: an equal one is a repeat.
+    codex_total: Option<u64>,
+    meta: SessionMeta,
 }
 
 impl ThreadReader {
@@ -222,6 +281,11 @@ impl ThreadReader {
             max_turns: max_turns.max(1),
             checklist: Vec::new(),
             creates: Vec::new(),
+            clock: Clock::default(),
+            last: None,
+            seen: HashMap::new(),
+            codex_total: None,
+            meta: SessionMeta::default(),
         })
     }
 
@@ -237,10 +301,16 @@ impl ThreadReader {
         self.partial.clear();
         self.skip_first = true;
         self.truncated = true;
+        self.last = None;
     }
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    /// The newest model, effort, permission, title and context seen.
+    pub fn meta(&self) -> &SessionMeta {
+        &self.meta
     }
 
     /// True when turns were dropped (window start or the turn cap).
@@ -274,25 +344,48 @@ impl ThreadReader {
             let Ok(value) = serde_json::from_slice::<Value>(line) else {
                 continue;
             };
+            // A Claude sidechain line is a subagent's: it has no part in the turn's times.
+            let ts = (value["isSidechain"] != true)
+                .then(|| value["timestamp"].as_str().and_then(stamp_ms))
+                .flatten();
+            let facts = match self.format {
+                Format::Claude => claude_facts(&value),
+                Format::Codex => codex_facts(&value, &mut self.codex_total),
+                Format::Omp => omp_facts(&value),
+            };
+            update_meta(&mut self.meta, self.format, &value);
             let lines = match self.format {
                 Format::Claude => claude_line(&value),
                 Format::Codex => codex_line(&value),
                 Format::Omp => omp_line(&value),
             };
+            self.clock = Clock {
+                now: ts,
+                prev: self.last,
+            };
             for line in lines {
                 changed |= self.push(line);
+            }
+            changed |= self.account(ts, facts);
+            if ts.is_some() {
+                self.last = ts;
             }
         }
         changed
     }
 
     fn push(&mut self, line: Line) -> bool {
+        let clock = self.clock;
         let line = match line {
             Line::Prompt(prompt) => {
                 self.turns.push(Turn {
                     prompt,
+                    started_at: clock.now,
+                    ended_at: clock.now,
                     ..Turn::default()
                 });
+                self.seen.clear();
+                self.last = None;
                 if self.turns.len() > self.max_turns {
                     self.turns.remove(0);
                     self.first_turn += 1;
@@ -326,7 +419,11 @@ impl ThreadReader {
                     true
                 }
                 Line::Thinking(text) => {
-                    turn.items.push(Item::Thinking(text));
+                    let ms = clock
+                        .now
+                        .zip(clock.prev)
+                        .map(|(now, prev)| u64::try_from((now - prev).max(0)).unwrap_or(0));
+                    turn.items.push(Item::Thinking { text, ms });
                     true
                 }
                 Line::Tool(call) => {
@@ -359,6 +456,35 @@ impl ThreadReader {
                     turn.set_result(&id, result, structured.async_launched, structured.agent_id)
                 }
             }
+    }
+
+    /// Adds the time and tokens of the line just pushed to the current turn; true if it changed.
+    fn account(&mut self, ts: Option<i64>, facts: Facts) -> bool {
+        let clock = self.clock;
+        let Some(turn) = self.turns.last_mut() else {
+            return false;
+        };
+        let mut changed = false;
+        if let Some(ts) = ts
+            && turn.ended_at.is_none_or(|end| ts > end)
+        {
+            turn.ended_at = Some(ts);
+            changed = true;
+        }
+        if facts.assistant
+            && let Some((now, prev)) = clock.now.zip(clock.prev)
+        {
+            turn.generation_ms += u64::try_from((now - prev).max(0)).unwrap_or(0);
+            changed = true;
+        }
+        if let Some((key, tokens)) = facts.output {
+            let old = key
+                .and_then(|key| self.seen.insert(key, tokens))
+                .unwrap_or(0);
+            turn.output_tokens = turn.output_tokens.saturating_sub(old) + tokens;
+            changed = true;
+        }
+        changed
     }
 
     /// Applies a task-tool line to the session checklist (also before the first turn, which
@@ -732,9 +858,15 @@ fn input_text(input: &Value) -> String {
     }
 }
 
-fn thinking(block: &Value) -> Option<Line> {
+/// A thinking block. `keep_redacted`: an empty text with a signature (Claude's redacted
+/// thinking) is kept as a block with empty text, so the activity row can say "Thought for 3s".
+fn thinking(block: &Value, keep_redacted: bool) -> Option<Line> {
     let text = block["thinking"].as_str()?.trim();
-    (!text.is_empty()).then(|| Line::Thinking(clip(text, THINKING_MAX)))
+    if text.is_empty() {
+        let redacted = keep_redacted && block["signature"].as_str().is_some_and(|s| !s.is_empty());
+        return redacted.then(|| Line::Thinking(String::new()));
+    }
+    Some(Line::Thinking(clip(text, THINKING_MAX)))
 }
 
 fn result(id: &Value, text: &str, is_error: bool) -> Line {
@@ -973,7 +1105,7 @@ fn claude_line(value: &Value) -> Vec<Line> {
             .flatten()
             .flat_map(|block| match block["type"].as_str() {
                 Some("text") => own_text(block).map(Line::Text).into_iter().collect(),
-                Some("thinking") => thinking(block).into_iter().collect(),
+                Some("thinking") => thinking(block, true).into_iter().collect(),
                 Some("tool_use") => claude_tool(block),
                 _ => Vec::new(),
             })
@@ -1062,7 +1194,7 @@ fn omp_line(value: &Value) -> Vec<Line> {
             .flatten()
             .flat_map(|block| match block["type"].as_str() {
                 Some("text") => own_text(block).map(Line::Text).into_iter().collect(),
-                Some("thinking") => thinking(block).into_iter().collect(),
+                Some("thinking") => thinking(block, false).into_iter().collect(),
                 Some("toolCall") => vec![tool(
                     &block["id"],
                     &block["name"],
@@ -1081,6 +1213,226 @@ fn omp_line(value: &Value) -> Vec<Line> {
     }
 }
 
+/// `2026-05-11T17:05:53.772Z` as epoch milliseconds; any other form is `None`.
+pub(crate) fn stamp_ms(stamp: &str) -> Option<i64> {
+    let seconds = crate::usage::utc_seconds(stamp)?;
+    let millis = stamp
+        .strip_suffix('Z')?
+        .split_once('.')
+        .map_or(0, |(_, fraction)| {
+            let digits: String = fraction.chars().take(3).collect();
+            let value: i64 = digits.parse().unwrap_or(0);
+            value * 10_i64.pow(3 - u32::try_from(digits.len()).unwrap_or(3))
+        });
+    Some(seconds * 1000 + millis)
+}
+
+fn claude_facts(value: &Value) -> Facts {
+    if value["isSidechain"] == true || value["type"] != "assistant" {
+        return Facts::default();
+    }
+    let message = &value["message"];
+    Facts {
+        assistant: true,
+        output: message["usage"]["output_tokens"]
+            .as_u64()
+            .map(|tokens| (message["id"].as_str().map(str::to_owned), tokens)),
+    }
+}
+
+fn codex_facts(value: &Value, last_total: &mut Option<u64>) -> Facts {
+    let payload = &value["payload"];
+    match (value["type"].as_str(), payload["type"].as_str()) {
+        (Some("event_msg"), Some("token_count")) => {
+            let info = &payload["info"];
+            let total = info["total_token_usage"]["total_tokens"].as_u64();
+            let repeat = total.is_some() && total == *last_total;
+            if total.is_some() {
+                *last_total = total;
+            }
+            Facts {
+                assistant: false,
+                output: info["last_token_usage"]["output_tokens"]
+                    .as_u64()
+                    .filter(|_| !repeat)
+                    .map(|tokens| (None, tokens)),
+            }
+        }
+        (Some("response_item"), Some("message")) if payload["role"] == "assistant" => Facts {
+            assistant: true,
+            output: None,
+        },
+        // Codex writes these event lines just before their `response_item`, same time: the
+        // writing gap lands on whichever comes first.
+        (Some("event_msg"), Some("agent_message" | "agent_reasoning")) => Facts {
+            assistant: true,
+            output: None,
+        },
+        (Some("response_item"), Some("function_call" | "custom_tool_call" | "reasoning")) => {
+            Facts {
+                assistant: true,
+                output: None,
+            }
+        }
+        _ => Facts::default(),
+    }
+}
+
+fn omp_facts(value: &Value) -> Facts {
+    let message = &value["message"];
+    if value["type"] != "message" || message["role"] != "assistant" {
+        return Facts::default();
+    }
+    Facts {
+        assistant: true,
+        output: message["usage"]["output"]
+            .as_u64()
+            .map(|tokens| (None, tokens)),
+    }
+}
+
+fn update_meta(meta: &mut SessionMeta, format: Format, value: &Value) {
+    match format {
+        Format::Claude => claude_meta(meta, value),
+        Format::Codex => codex_meta(meta, value),
+        Format::Omp => omp_meta(meta, value),
+    }
+}
+
+/// Keeps `model` unless it is empty or a placeholder like `<synthetic>`.
+fn set_model(slot: &mut Option<String>, model: Option<&str>) {
+    if let Some(model) = model.filter(|m| !m.is_empty() && !m.starts_with('<'))
+        && slot.as_deref() != Some(model)
+    {
+        *slot = Some(model.to_owned());
+    }
+}
+
+fn set_title(slot: &mut Option<String>, raw: Option<&str>) {
+    let title = clean_title(raw.unwrap_or_default());
+    if !title.is_empty() {
+        *slot = Some(title);
+    }
+}
+
+fn claude_meta(meta: &mut SessionMeta, value: &Value) {
+    if value["isSidechain"] == true {
+        return;
+    }
+    match value["type"].as_str() {
+        Some("ai-title") => set_title(&mut meta.title, value["aiTitle"].as_str()),
+        Some("user" | "permission-mode") => {
+            if let Some(mode) = value["permissionMode"].as_str() {
+                meta.permission = Some(mode.to_owned());
+            }
+        }
+        Some("assistant") => {
+            let message = &value["message"];
+            set_model(&mut meta.model, message["model"].as_str());
+            let usage = &message["usage"];
+            let count = |key: &str| usage[key].as_u64().unwrap_or(0);
+            let context = count("input_tokens")
+                + count("cache_read_input_tokens")
+                + count("cache_creation_input_tokens");
+            if context > 0 {
+                meta.context = Some(context);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn codex_meta(meta: &mut SessionMeta, value: &Value) {
+    let payload = &value["payload"];
+    match (value["type"].as_str(), payload["type"].as_str()) {
+        (Some("turn_context"), _) => {
+            set_model(&mut meta.model, payload["model"].as_str());
+            meta.effort = payload["collaboration_mode"]["settings"]["reasoning_effort"]
+                .as_str()
+                .map(str::to_owned);
+            meta.permission = payload["approval_policy"].as_str().map(str::to_owned);
+        }
+        (Some("event_msg"), Some("token_count")) if !payload["info"].is_null() => {
+            let info = &payload["info"];
+            if let Some(context) = info["last_token_usage"]["total_tokens"].as_u64() {
+                meta.context = Some(context);
+            }
+            if let Some(window) = info["model_context_window"].as_u64() {
+                meta.context_window = Some(window);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn omp_meta(meta: &mut SessionMeta, value: &Value) {
+    match value["type"].as_str() {
+        Some("model_change") => set_model(&mut meta.model, value["model"].as_str()),
+        Some("thinking_level_change") => {
+            if let Some(level) = value["thinkingLevel"].as_str() {
+                meta.effort = Some(level.to_owned());
+            }
+        }
+        Some("title" | "title_change") => set_title(&mut meta.title, value["title"].as_str()),
+        Some("message") if value["message"]["role"] == "assistant" => {
+            let message = &value["message"];
+            set_model(&mut meta.model, message["model"].as_str());
+            let usage = &message["usage"];
+            let count = |key: &str| usage[key].as_u64().unwrap_or(0);
+            let context = count("input") + count("cacheRead") + count("cacheWrite");
+            if context > 0 {
+                meta.context = Some(context);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Longest model name the composer chip shows.
+const MODEL_MAX: usize = 24;
+
+/// A model name for a chip: the part after the last `/`, `claude-` and a trailing `-YYYYMMDD`
+/// dropped, a dash between digits a dot and any other dash a space (`anthropic/claude-opus-5-5`
+/// is `opus 5.5`), cut to [`MODEL_MAX`] characters with `…`.
+pub fn short_model(name: &str) -> String {
+    let base = name.rsplit('/').next().unwrap_or(name).trim();
+    let base = base.strip_prefix("claude-").unwrap_or(base);
+    let base = match base.rsplit_once('-') {
+        Some((head, tail)) if tail.len() == 8 && tail.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => base,
+    };
+    let chars: Vec<char> = base.chars().collect();
+    let mut out = String::with_capacity(base.len());
+    for (at, c) in chars.iter().enumerate() {
+        if *c == '-' {
+            let between_digits = at > 0
+                && chars[at - 1].is_ascii_digit()
+                && chars.get(at + 1).is_some_and(char::is_ascii_digit);
+            out.push(if between_digits { '.' } else { ' ' });
+        } else {
+            out.push(*c);
+        }
+    }
+    if out.chars().count() > MODEL_MAX {
+        out = out.chars().take(MODEL_MAX - 1).collect::<String>() + "…";
+    }
+    out
+}
+
+/// A session title without the private-use glyph omp puts first (a Nerd Font icon) and
+/// without edge blanks.
+pub fn clean_title(raw: &str) -> String {
+    let private = |c: char| {
+        matches!(
+            c,
+            '\u{E000}'..='\u{F8FF}' | '\u{F0000}'..='\u{FFFFD}' | '\u{100000}'..='\u{10FFFD}'
+        )
+    };
+    raw.trim_start_matches(|c: char| private(c) || c.is_whitespace())
+        .trim_end()
+        .to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1091,6 +1443,11 @@ mod tests {
     const CLAUDE_CHAT: &[u8] = include_bytes!("../tests/fixtures/thread/claude_chat.jsonl");
     const CODEX_CHAT: &[u8] = include_bytes!("../tests/fixtures/thread/codex_chat.jsonl");
     const OMP_CHAT: &[u8] = include_bytes!("../tests/fixtures/thread/omp_chat.jsonl");
+    const CLAUDE_TIMING: &[u8] = include_bytes!("../tests/fixtures/thread/claude_timing.jsonl");
+    const CODEX_TIMING: &[u8] = include_bytes!("../tests/fixtures/thread/codex_timing.jsonl");
+    const OMP_TIMING: &[u8] = include_bytes!("../tests/fixtures/thread/omp_timing.jsonl");
+    /// 2026-01-01T00:00:00Z in epoch milliseconds.
+    const T0: i64 = 1_767_225_600_000;
 
     fn tool(name: &str, target: &str) -> ToolCall {
         ToolCall {
@@ -1127,7 +1484,7 @@ mod tests {
             .iter()
             .map(|t| {
                 let items = t.items.iter().filter_map(|item| match item {
-                    Item::Thinking(_) => None,
+                    Item::Thinking { .. } => None,
                     Item::Text(text) => Some(Item::Text(text.clone())),
                     Item::Tools(calls) => Some(Item::Tools(
                         calls.iter().map(|c| tool(&c.name, &c.target)).collect(),
@@ -1258,7 +1615,10 @@ mod tests {
         );
         assert_eq!(
             only.items[0],
-            Item::Thinking("Check the suite first.".into())
+            Item::Thinking {
+                text: "Check the suite first.".into(),
+                ms: None
+            }
         );
         assert_eq!(only.items[1], text("Running them."));
         assert_eq!(only.items[3], text("Two tests fail."));
@@ -1359,7 +1719,13 @@ mod tests {
     fn omp_results_and_thinking() {
         let reader = read(UsageFormat::OmpJsonl, OMP_CHAT);
         let turn = &reader.turns()[0];
-        assert_eq!(turn.items[0], Item::Thinking("hm".into()));
+        assert_eq!(
+            turn.items[0],
+            Item::Thinking {
+                text: "hm".into(),
+                ms: None
+            }
+        );
         let calls = calls(turn);
         assert_eq!(
             (calls[0].id.as_str(), calls[0].target.as_str()),
@@ -1405,7 +1771,7 @@ mod tests {
         );
         let reader = read(UsageFormat::OmpJsonl, jsonl.as_bytes());
         let turn = &reader.turns()[0];
-        let Item::Thinking(thought) = &turn.items[0] else {
+        let Item::Thinking { text: thought, .. } = &turn.items[0] else {
             panic!("{turn:?}");
         };
         let call = calls(turn)[0];
@@ -2042,5 +2408,208 @@ mod tests {
             {\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"call_id\":\"e1\",\"arguments\":\"{\\\"cmd\\\":\\\"cargo test\\\",\\\"workdir\\\":\\\"/w\\\"}\"}}\n";
         let reader = read(UsageFormat::CodexJsonl, codex.as_bytes());
         assert_eq!(calls(&reader.turns()[0])[0].target, "cargo test");
+    }
+
+    #[test]
+    fn stamps_become_epoch_milliseconds() {
+        assert_eq!(stamp_ms("2026-01-01T00:00:00Z"), Some(T0));
+        assert_eq!(stamp_ms("2026-01-01T00:00:01.250Z"), Some(T0 + 1_250));
+        assert_eq!(stamp_ms("2026-01-01T00:00:00.5Z"), Some(T0 + 500));
+        assert_eq!(stamp_ms("2026-01-01 00:00:00"), None);
+        assert_eq!(stamp_ms("nonsense"), None);
+    }
+
+    /// m1 is written in three lines and counts once (its newest figure, 40), m2 adds 20, the
+    /// sidechain line at +13 s is a subagent's: it is not in the tokens, `ended_at` or the
+    /// clock. The redacted thinking (empty text, a signature) is kept with its time.
+    #[test]
+    fn claude_turn_timing_tokens_and_redacted_thinking() {
+        let reader = read(UsageFormat::ClaudeJsonl, CLAUDE_TIMING);
+        let [turn] = reader.turns() else {
+            panic!("{:?}", reader.turns());
+        };
+        assert_eq!(turn.started_at, Some(T0));
+        assert_eq!(turn.ended_at, Some(T0 + 12_000));
+        assert_eq!(turn.output_tokens, 60);
+        // Assistant lines at +2 (after +0), +3, +4 and +12 (after the result at +10).
+        assert_eq!(turn.generation_ms, 2_000 + 1_000 + 1_000 + 2_000);
+        assert_eq!(turn.items.len(), 4, "{turn:?}");
+        assert_eq!(
+            turn.items[0],
+            Item::Thinking {
+                text: String::new(),
+                ms: Some(2_000)
+            }
+        );
+    }
+
+    /// A regression pin, not a red-first test: today's `thinking()` already drops empty text, and
+    /// this guards that a block without a signature stays dropped once redacted blocks are kept.
+    #[test]
+    fn a_claude_thinking_block_without_text_or_signature_is_not_kept() {
+        let jsonl = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"go\"}}\n\
+             {\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"\"},{\"type\":\"text\",\"text\":\"hi\"}]}}\n";
+        let reader = read(UsageFormat::ClaudeJsonl, jsonl.as_bytes());
+        assert_eq!(reader.turns()[0].items, [text("hi")]);
+    }
+
+    /// The repeated `token_count` (same total) is skipped; times come from the Codex lines.
+    #[test]
+    fn codex_turn_timing_and_tokens() {
+        let reader = read(UsageFormat::CodexJsonl, CODEX_TIMING);
+        let [turn] = reader.turns() else {
+            panic!("{:?}", reader.turns());
+        };
+        assert_eq!(turn.started_at, Some(T0 + 1_000));
+        assert_eq!(turn.ended_at, Some(T0 + 7_000));
+        assert_eq!(turn.output_tokens, 50 + 30);
+        // The `agent_message` event at +3 (after the prompt at +1; the `response_item` message
+        // at the same time adds 0), the call at +6 (after +4.5).
+        assert_eq!(turn.generation_ms, 2_000 + 1_500);
+    }
+
+    /// omp writes the thinking and the tool call in one line: its time is the message's
+    /// generation time (line time minus the line before).
+    #[test]
+    fn omp_turn_timing_tokens_and_shared_line_thinking() {
+        let reader = read(UsageFormat::OmpJsonl, OMP_TIMING);
+        let [turn] = reader.turns() else {
+            panic!("{:?}", reader.turns());
+        };
+        assert_eq!(turn.started_at, Some(T0 + 1_000));
+        assert_eq!(turn.ended_at, Some(T0 + 10_000));
+        assert_eq!(turn.output_tokens, 180);
+        assert_eq!(turn.generation_ms, 4_000 + 4_000);
+        assert_eq!(
+            turn.items[0],
+            Item::Thinking {
+                text: "hm".into(),
+                ms: Some(4_000)
+            }
+        );
+    }
+
+    #[test]
+    fn lines_without_timestamps_have_no_times() {
+        let reader = read(UsageFormat::OmpJsonl, OMP_CHAT);
+        let turn = &reader.turns()[0];
+        assert_eq!((turn.started_at, turn.ended_at), (None, None));
+        assert_eq!((turn.output_tokens, turn.generation_ms), (0, 0));
+        assert!(matches!(turn.items[0], Item::Thinking { ms: None, .. }));
+    }
+
+    /// An assistant line older than the line before it adds no time; `ended_at` keeps the
+    /// newest time.
+    #[test]
+    fn a_skewed_clock_never_gives_negative_time() {
+        let line = |ts: &str, body: &str| {
+            format!("{{\"type\":\"message\",\"timestamp\":\"{ts}\",\"message\":{body}}}\n")
+        };
+        let jsonl = line(
+            "2026-01-01T00:00:10.000Z",
+            r#"{"role":"user","content":[{"type":"text","text":"go"}]}"#,
+        ) + &line(
+            "2026-01-01T00:00:05.000Z",
+            r#"{"role":"assistant","usage":{"output":10},"content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"late"}]}"#,
+        );
+        let reader = read(UsageFormat::OmpJsonl, jsonl.as_bytes());
+        let turn = &reader.turns()[0];
+        assert_eq!(turn.ended_at, Some(T0 + 10_000));
+        assert_eq!(turn.generation_ms, 0);
+        assert_eq!(turn.output_tokens, 10);
+        assert!(matches!(turn.items[0], Item::Thinking { ms: Some(0), .. }));
+    }
+
+    fn meta_of(format: UsageFormat, bytes: &[u8]) -> SessionMeta {
+        read(format, bytes).meta().clone()
+    }
+
+    #[test]
+    fn claude_meta() {
+        assert_eq!(
+            meta_of(UsageFormat::ClaudeJsonl, CLAUDE_TIMING),
+            SessionMeta {
+                model: Some("claude-opus-5-5".into()),
+                effort: None,
+                // The later `permission-mode` line wins over the user line's `acceptEdits`.
+                permission: Some("auto".into()),
+                title: Some("Fix login".into()),
+                // The newest main-thread message: 5 + 200 + 0 (the sidechain line is ignored).
+                context: Some(205),
+                context_window: None,
+            }
+        );
+    }
+
+    #[test]
+    fn codex_meta() {
+        assert_eq!(
+            meta_of(UsageFormat::CodexJsonl, CODEX_TIMING),
+            SessionMeta {
+                model: Some("gpt-5.3-codex".into()),
+                effort: Some("high".into()),
+                permission: Some("on-request".into()),
+                title: None,
+                context: Some(1_900),
+                context_window: Some(258_400),
+            }
+        );
+    }
+
+    /// The assistant message's model is newer than `model_change`; the glyph in the title goes.
+    #[test]
+    fn omp_meta() {
+        assert_eq!(
+            meta_of(UsageFormat::OmpJsonl, OMP_TIMING),
+            SessionMeta {
+                model: Some("claude-opus-5-5".into()),
+                effort: Some("high".into()),
+                permission: None,
+                title: Some("Check it".into()),
+                context: Some(1 + 2_000),
+                context_window: None,
+            }
+        );
+    }
+
+    /// A reader that starts in the middle of a file knows only what it has seen: fewer fields,
+    /// never wrong ones.
+    #[test]
+    fn a_reader_started_mid_file_knows_only_what_it_saw() {
+        let mut reader = ThreadReader::new(&UsageFormat::OmpJsonl, THREAD_TURNS).unwrap();
+        reader.start_mid_file(500);
+        let tail = "tail of a cut line\n{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-opus-5-5\",\"usage\":{\"input\":1,\"output\":2,\"cacheRead\":3,\"cacheWrite\":0},\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}\n";
+        reader.feed(tail.as_bytes());
+        assert_eq!(
+            reader.meta(),
+            &SessionMeta {
+                model: Some("claude-opus-5-5".into()),
+                context: Some(4),
+                ..SessionMeta::default()
+            }
+        );
+        assert!(reader.turns().is_empty());
+    }
+
+    #[test]
+    fn short_model_names() {
+        assert_eq!(short_model("anthropic/claude-opus-5-5"), "opus 5.5");
+        assert_eq!(short_model("claude-sonnet-4-5-20250929"), "sonnet 4.5");
+        assert_eq!(short_model("gpt-5.3-codex"), "gpt 5.3 codex");
+        assert_eq!(short_model(""), "");
+        // An unknown shape is kept, cut to 24 characters with an ellipsis.
+        let long = "x".repeat(40);
+        let cut = short_model(&long);
+        assert_eq!(cut.chars().count(), 24);
+        assert!(cut.ends_with('…'));
+        assert_eq!(short_model("a-b"), "a b");
+    }
+
+    #[test]
+    fn titles_lose_their_private_use_glyph() {
+        assert_eq!(clean_title("\u{F04F9} VER: Check it"), "VER: Check it");
+        assert_eq!(clean_title("  plain title  "), "plain title");
+        assert_eq!(clean_title("\u{E000}\u{F8FF}"), "");
+        assert_eq!(clean_title("Tiếng Việt"), "Tiếng Việt");
     }
 }

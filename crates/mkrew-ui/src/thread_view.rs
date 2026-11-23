@@ -4,33 +4,45 @@
 //! caller polls about once a second.
 
 use mkrew_core::UsageFormat;
-use mkrew_core::thread::{Item, PlanStep, Question, Subagent, ThreadReader, ToolCall};
+use mkrew_core::thread::{Item, PlanStep, Question, SessionMeta, Subagent, ThreadReader, ToolCall};
 
 use crate::docs::Shown;
 
 const CHUNK: usize = 1024 * 1024;
 
 /// What the panel shows: the kept turns, with text parsed as Markdown.
+#[derive(Default)]
 pub struct Page {
     pub turns: Vec<PageTurn>,
     /// Earlier turns exist but are not shown ("Earlier turns: Open transcript").
     pub truncated: bool,
     /// Key of `turns[0]` (see `ThreadReader::first_turn`), for per-turn UI state.
     pub first_turn: u64,
+    /// What the transcript says about the session (model, effort, permission, title, context).
+    pub meta: SessionMeta,
 }
 
+#[derive(Default)]
 pub struct PageTurn {
     pub prompt: String,
     pub items: Vec<PageItem>,
     pub plan: Option<Vec<PlanStep>>,
     pub question: Option<Question>,
     pub subagents: Vec<Subagent>,
+    /// See [`mkrew_core::thread::Turn`]: epoch ms, tokens, milliseconds writing.
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
+    pub output_tokens: u64,
+    pub generation_ms: u64,
 }
 
 pub enum PageItem {
     Text(Shown),
     /// A thinking block (the Chat view shows it, the Thread section does not).
-    Thinking(String),
+    Thinking {
+        text: String,
+        ms: Option<u64>,
+    },
     Tools(Vec<ToolCall>),
 }
 
@@ -109,17 +121,25 @@ impl ThreadFile {
                         .iter()
                         .map(|item| match item {
                             Item::Text(text) => PageItem::Text(Shown::from_text(text)),
-                            Item::Thinking(text) => PageItem::Thinking(text.clone()),
+                            Item::Thinking { text, ms } => PageItem::Thinking {
+                                text: text.clone(),
+                                ms: *ms,
+                            },
                             Item::Tools(calls) => PageItem::Tools(calls.clone()),
                         })
                         .collect(),
                     plan: turn.plan.clone(),
                     question: turn.question.clone(),
                     subagents: turn.subagents.clone(),
+                    started_at: turn.started_at,
+                    ended_at: turn.ended_at,
+                    output_tokens: turn.output_tokens,
+                    generation_ms: turn.generation_ms,
                 })
                 .collect(),
             truncated: self.reader.truncated(),
             first_turn: self.reader.first_turn(),
+            meta: self.reader.meta().clone(),
         }
     }
 }
@@ -142,6 +162,8 @@ mod tests {
 
     const CLAUDE_CHAT: &str =
         include_str!("../../mkrew-core/tests/fixtures/thread/claude_chat.jsonl");
+    const OMP_TIMING: &str =
+        include_str!("../../mkrew-core/tests/fixtures/thread/omp_timing.jsonl");
 
     fn prompt(text: &str) -> String {
         format!(
@@ -210,12 +232,29 @@ mod tests {
         file.apply(0, CLAUDE_CHAT.as_bytes());
         let page = file.page();
         let turn = &page.turns[0];
-        assert!(matches!(&turn.items[0], PageItem::Thinking(t) if t == "Check the suite first."));
+        assert!(
+            matches!(&turn.items[0], PageItem::Thinking { text, .. } if text == "Check the suite first.")
+        );
         let PageItem::Tools(calls) = &turn.items[2] else {
             panic!("tools expected");
         };
         assert_eq!(calls[0].result.as_ref().map(|r| r.is_error), Some(true));
         assert!(turn.plan.is_none() && turn.question.is_none() && turn.subagents.is_empty());
+    }
+
+    #[test]
+    fn the_page_carries_the_session_meta_and_the_turn_times() {
+        let mut file = ThreadFile::new(&UsageFormat::OmpJsonl, CHAT_TURNS).unwrap();
+        file.apply(0, OMP_TIMING.as_bytes());
+        let page = file.page();
+        assert_eq!(page.meta.title.as_deref(), Some("Check it"));
+        assert_eq!(page.meta.effort.as_deref(), Some("high"));
+        let turn = &page.turns[0];
+        assert_eq!((turn.output_tokens, turn.generation_ms), (180, 8_000));
+        assert!(matches!(
+            &turn.items[0],
+            PageItem::Thinking { text, ms: Some(4_000) } if text == "hm"
+        ));
     }
 
     #[test]

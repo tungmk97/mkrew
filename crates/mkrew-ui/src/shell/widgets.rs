@@ -147,6 +147,31 @@ pub(crate) fn button_fg(theme: &Theme, primary: bool) -> u32 {
     }
 }
 
+/// A round filled icon button (the Chat composer's send): accent with an `on_accent` glyph.
+/// `enabled` false is the disabled look (faded, no hover, no click); attach the handler with
+/// `.on_press(enabled, ..)`.
+pub(crate) fn round_button(
+    id: &'static str,
+    glyph: Icon,
+    enabled: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    filled_press(
+        div()
+            .id(id)
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(theme::SEND_BUTTON_SIZE))
+            .rounded(px(radius::PILL))
+            .bg(rgb(theme.accent))
+            .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.on_accent)),
+        enabled,
+        theme,
+    )
+}
+
 /// A button label with a leading icon: `glyph`, then `text`, on one line, both in `color`.
 pub(crate) fn icon_text(glyph: Icon, text: impl IntoElement, color: u32) -> gpui::Div {
     div()

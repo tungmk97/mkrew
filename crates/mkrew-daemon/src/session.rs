@@ -1385,6 +1385,13 @@ impl Actor {
             None if native_changed => self.save(),
             None => {}
         }
+        if native_changed {
+            // Clients key transcript reads on the native id; `session.state` does not carry it.
+            let _ = self
+                .hub
+                .events
+                .send(Event::SessionUpdated(Box::new(self.session.clone())));
+        }
         self.deliver();
     }
 

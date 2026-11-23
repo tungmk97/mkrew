@@ -113,6 +113,72 @@ pub struct Style {
     pub code: bool,
 }
 
+/// An inline code span that looks like a file path (ADR 0105): the folder part, the file name
+/// and an optional `:line[:col]` suffix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PathPill<'a> {
+    /// The path without the `:line` suffix (`dir` + `name`).
+    pub path: &'a str,
+    /// Up to and including the last `/` or `\`; empty for a bare file name.
+    pub dir: &'a str,
+    pub name: &'a str,
+    /// `:12` or `:12:3`, as written; empty when there is none.
+    pub suffix: &'a str,
+    /// The first number of the suffix (1-based).
+    pub line: Option<u32>,
+}
+
+/// `code` as a path pill, when it has no blanks and no `://` and either contains a `/` or `\`
+/// (with a letter or digit in it) or ends in `.<ext>` of 1 to 8 letters or digits with at least
+/// one letter (so `v1.2` and `1.5` are no paths). A trailing `:12` or `:12:3` is the line.
+pub fn path_pill(code: &str) -> Option<PathPill<'_>> {
+    if code.is_empty() || code.contains(char::is_whitespace) || code.contains("://") {
+        return None;
+    }
+    let (mut path, mut line) = (code, None);
+    for _ in 0..2 {
+        match path.rsplit_once(':') {
+            Some((head, digits))
+                if !head.is_empty()
+                    && !digits.is_empty()
+                    && digits.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                line = digits.parse().ok();
+                path = head;
+            }
+            _ => break,
+        }
+    }
+    // A drive (`C:\`) is the only colon a path may keep.
+    let body = match path.as_bytes() {
+        [drive, b':', sep, ..] if drive.is_ascii_alphabetic() && matches!(sep, b'\\' | b'/') => {
+            &path[2..]
+        }
+        _ => path,
+    };
+    if body.contains(':') {
+        return None;
+    }
+    let shaped = if body.contains(['/', '\\']) {
+        body.chars().any(char::is_alphanumeric)
+    } else {
+        body.rsplit_once('.').is_some_and(|(_, ext)| {
+            (1..=8).contains(&ext.len())
+                && ext.bytes().all(|b| b.is_ascii_alphanumeric())
+                && ext.bytes().any(|b| b.is_ascii_alphabetic())
+        })
+    };
+    let cut = path.rfind(['/', '\\']).map_or(0, |at| at + 1);
+    let (dir, name) = path.split_at(cut);
+    (shaped && !name.is_empty()).then_some(PathPill {
+        path,
+        dir,
+        name,
+        suffix: &code[path.len()..],
+        line,
+    })
+}
+
 /// Parses `source` (GitHub-flavoured tables, task lists, strikethrough and alerts, and YAML
 /// front matter at the top).
 pub fn parse(source: &str) -> Vec<Block> {
@@ -944,5 +1010,39 @@ fn main() {}
         assert_eq!(block_at_line(&blocks, 3), Some((0, 1.0)));
         assert_eq!(block_at_line(&blocks, 6), Some((1, 0.5)));
         assert_eq!(block_at_line(&blocks, 99), Some((2, 1.0)));
+    }
+
+    #[test]
+    fn path_pills_need_a_path_shape() {
+        let pill = |text| path_pill(text).map(|p| (p.dir, p.name, p.line));
+        assert_eq!(pill("src/main.rs"), Some(("src/", "main.rs", None)));
+        assert_eq!(pill("Cargo.toml"), Some(("", "Cargo.toml", None)));
+        assert_eq!(
+            pill("crates\\x\\a.rs:12:3"),
+            Some(("crates\\x\\", "a.rs", Some(12)))
+        );
+        assert_eq!(pill("a/b.rs:7"), Some(("a/", "b.rs", Some(7))));
+        assert_eq!(pill("C:\\work\\a.rs"), Some(("C:\\work\\", "a.rs", None)));
+        // Not paths: commands, URLs, versions, a bare word, a folder, `key:value`, noise.
+        for text in [
+            "cargo test",
+            "https://x.dev/a.rs",
+            "v1.2",
+            "1.5",
+            "foo",
+            "src/",
+            "/",
+            "a.toolongext1",
+            "key:value",
+            "",
+        ] {
+            assert_eq!(pill(text), None, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_path_pill_keeps_its_line_suffix() {
+        let pill = path_pill("src/a.rs:12").unwrap();
+        assert_eq!((pill.path, pill.suffix), ("src/a.rs", ":12"));
     }
 }

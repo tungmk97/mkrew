@@ -1175,6 +1175,7 @@ fn log_tail_and_transcript_bytes_are_base64() {
         start: 3,
         len: 5,
         data: b"hi".to_vec(),
+        recap: None,
     };
     let value = serde_json::to_value(&read).unwrap();
     assert_eq!(
@@ -1402,6 +1403,35 @@ fn a_report_replaces_an_older_different_one_only() {
 }
 
 #[test]
-fn the_review_flow_protocol_is_version_56() {
-    assert_eq!(crate::PROTOCOL_VERSION, 56);
+fn the_chat_look_protocol_is_version_57() {
+    assert_eq!(crate::PROTOCOL_VERSION, 57);
+}
+
+/// ADR 0105: the recap travels with the transcript reply; a reply without it (an older
+/// daemon, or any non-omp agent) still decodes, and the key is left out when there is none.
+#[test]
+fn the_transcript_reply_carries_an_optional_recap() {
+    let with = SessionTranscript {
+        found: true,
+        format: "omp_jsonl".into(),
+        start: 0,
+        len: 2,
+        data: b"hi".to_vec(),
+        recap: Some(Recap {
+            text: "Fixed the parser.".into(),
+            at: 1_767_225_600,
+        }),
+    };
+    let value = serde_json::to_value(&with).unwrap();
+    assert_eq!(
+        value["recap"],
+        json!({"text": "Fixed the parser.", "at": 1_767_225_600})
+    );
+    assert_eq!(
+        serde_json::from_value::<SessionTranscript>(value).unwrap(),
+        with
+    );
+    let old = json!({"found": true, "format": "omp_jsonl", "start": 0, "len": 2, "data": "aGk="});
+    let decoded: SessionTranscript = serde_json::from_value(old).unwrap();
+    assert_eq!(decoded.recap, None);
 }

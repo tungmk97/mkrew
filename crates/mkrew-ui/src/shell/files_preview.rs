@@ -44,6 +44,7 @@ impl Shell {
             shown,
             wrap,
             select,
+            preview::Flavor::Doc,
             &fonts,
             theme,
         )

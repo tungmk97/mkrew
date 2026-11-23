@@ -221,6 +221,24 @@ impl Shell {
 }
 
 impl Shell {
+    /// The current model (short) and context share of the session the picker types into, for
+    /// the `/model` and `/compact` rows; both `None` for the task dialog's prompt.
+    fn slash_status(&self, picker: &SlashPicker) -> (Option<String>, Option<u64>) {
+        let composer::Target::Composer(session) = picker.target else {
+            return (None, None);
+        };
+        let usage = self.usages.get(session);
+        let meta_model = (self.reads.get(&session))
+            .and_then(|read| read.page.as_deref())
+            .and_then(|page| page.meta.model.clone());
+        let model = meta_model
+            .or_else(|| usage.and_then(|usage| usage.model.clone()))
+            .map(|model| mkrew_core::thread::short_model(&model));
+        (model, usage.and_then(mkrew_ui::usage::context_percent))
+    }
+}
+
+impl Shell {
     /// The picker: the filter field over the rows (`/name` in the mono font with its matched
     /// chars in the accent color, the argument hint and the one-line description muted, a source
     /// chip on the right, the pick ringed), then the note that says why there are none, the
@@ -238,6 +256,7 @@ impl Shell {
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
+        let (current_model, context_percent) = self.slash_status(picker);
         let rows: Vec<gpui::AnyElement> = picker
             .rows()
             .iter()
@@ -320,6 +339,20 @@ impl Shell {
                                 .text_size(font_size::META)
                                 .text_color(rgb(theme.text_muted))
                                 .child(item.description.clone()),
+                        )
+                        .children(
+                            slash_picker::row_hint(
+                                &item.name,
+                                current_model.as_deref(),
+                                context_percent,
+                            )
+                            .map(|hint| {
+                                div()
+                                    .flex_none()
+                                    .text_size(font_size::META)
+                                    .text_color(rgb(theme.text_muted))
+                                    .child(hint)
+                            }),
                         )
                         // The group row (omp's `skill:`) stands for skills of many sources: no chip.
                         .children(item.group.is_none().then(|| {

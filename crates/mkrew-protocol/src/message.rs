@@ -1270,6 +1270,14 @@ pub struct SessionTranscriptParams {
     pub offset: u64,
 }
 
+/// The newest recap of an omp session (ADR 0105): what omp's idle recap said and when.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Recap {
+    pub text: String,
+    /// Unix seconds (omp's `created_at`).
+    pub at: i64,
+}
+
 /// `session.transcript` result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionTranscript {
@@ -1283,6 +1291,10 @@ pub struct SessionTranscript {
     pub len: u64,
     #[serde(with = "base64_bytes")]
     pub data: Vec<u8>,
+    /// omp only: the newest recap of the session (read from omp's `history.db`, ADR 0105);
+    /// `None` for the other agents and when omp wrote none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recap: Option<Recap>,
 }
 
 /// `session.read`: the last `lines` non-blank rows of a live session's screen (SPEC §20A).

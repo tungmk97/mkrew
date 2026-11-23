@@ -19,16 +19,17 @@ pub fn sends_on_enter(keystroke: &Keystroke) -> bool {
     keystroke.key == "enter" && !keystroke.modifiers.modified()
 }
 
-/// The composer's key hint while it has the keyboard.
-pub fn hint(chat: bool) -> &'static str {
-    if chat {
-        "Enter to send · Shift+Enter for a new line · @ for a file · Esc for the chat"
-    } else {
-        crate::os_text!(
-            "Ctrl+Enter to send · @ for a file · Esc to hide",
-            "⌘↩ to send · @ for a file · Esc to hide",
-        )
-    }
+/// The Terminal composer's key hint while it has the keyboard.
+pub fn hint() -> &'static str {
+    crate::os_text!(
+        "Ctrl+Enter to send · @ for a file · Esc to hide",
+        "⌘↩ to send · @ for a file · Esc to hide",
+    )
+}
+
+/// The Chat composer's send button tooltip: the key hint of Chat lives here (ADR 0105).
+pub fn send_tip() -> &'static str {
+    "Send (Enter) · Shift+Enter for a new line · @ for a file · Esc for the chat"
 }
 
 /// A prompt field the pickers type into: a session's composer draft or the task dialog's
@@ -464,11 +465,12 @@ mod tests {
     }
 
     #[test]
-    fn the_hint_names_the_keys_of_the_composer_in_use() {
-        assert!(hint(true).starts_with("Enter to send"));
-        assert!(hint(true).contains("Shift+Enter"));
+    fn the_hint_and_the_send_tip_name_the_keys_of_each_composer() {
         let send = crate::os_text!("Ctrl+Enter to send", "⌘↩ to send");
-        assert!(hint(false).starts_with(send), "{}", hint(false));
+        assert!(hint().starts_with(send), "{}", hint());
+        // Chat has no key hint under the box any more: it is the send button's tooltip.
+        assert!(send_tip().starts_with("Send (Enter)"));
+        assert!(send_tip().contains("Shift+Enter"));
     }
 
     /// A blank draft never sends, whichever key asked: Enter in Chat on an empty box does nothing.

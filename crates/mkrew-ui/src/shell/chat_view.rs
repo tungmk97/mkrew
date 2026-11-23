@@ -156,13 +156,16 @@ impl Shell {
         changed
     }
 
-    /// A subagent runs in a visible Chat pane: its loading dots move on the status tick.
+    /// An agent works or a subagent runs in a visible Chat pane: the elapsed time of the
+    /// composer and the loading dots move on the status tick (ADR 0086: no looping animation).
     pub(crate) fn chat_animating(&self) -> bool {
         self.chats.keys().any(|id| {
             !self.is_exited(*id)
-                && (self.reads.get(id))
-                    .and_then(|read| read.page.as_ref())
-                    .is_some_and(|page| chat::subagent_runs(page))
+                && ((self.sidebar.sessions().iter())
+                    .any(|s| s.id == *id && s.state == SessionState::Working)
+                    || (self.reads.get(id))
+                        .and_then(|read| read.page.as_ref())
+                        .is_some_and(|page| chat::subagent_runs(page)))
         })
     }
 
@@ -298,7 +301,13 @@ impl Shell {
         if let Some(page) = page {
             (ui.hits.borrow_mut()).retain(|key, _| key.0 >= page.first_turn);
         }
-        let view = chat::view(page, &ui.open);
+        let working = (self.sidebar.sessions().iter())
+            .any(|s| s.id == session && s.state == SessionState::Working);
+        let recap = self
+            .reads
+            .get(&session)
+            .and_then(|read| read.recap.as_ref());
+        let view = chat::view(page, &ui.open, recap, working);
         if view.turns.is_empty() {
             ui.stops.borrow_mut().end();
             return message(
@@ -366,15 +375,18 @@ impl Shell {
                             shell.chat_drag(session, event.position, cx);
                         }
                     }))
-                    .flex()
-                    .flex_col()
-                    .gap(px(space::M))
-                    .p(px(space::M))
                     .font_family(theme.ui_font_family.clone())
                     .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
-                    .children(earlier)
-                    .children(turns),
+                    .child(chat_column(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(space::XL))
+                            .py(px(space::L))
+                            .children(earlier)
+                            .children(turns),
+                    )),
             )
             .when(!view.tray.is_empty(), |el| {
                 el.child(chat_tray(&view.tray, now, theme))
@@ -529,7 +541,8 @@ impl Shell {
         }
     }
 
-    /// One turn: the prompt card (right), then its rows, then the plan card if it has one.
+    /// One turn: the prompt bubble (right), then its rows (`space::M` apart), then the plan
+    /// card if it has one.
     fn chat_turn(
         &self,
         session: Ulid,
@@ -553,19 +566,23 @@ impl Shell {
                     {
                         Some(PageItem::Text(shown)) => {
                             let key = (turn.key, *item);
-                            let ui = self.chats.get(&session);
-                            let hits = ui
-                                .map(|ui| ui.hits.borrow_mut().entry(key).or_default().clone())
-                                .unwrap_or_default();
-                            let selection = ui
-                                .and_then(|ui| ui.selecting)
+                            let hits = chat_ui.hits.borrow_mut().entry(key).or_default().clone();
+                            let selection = chat_ui
+                                .selecting
                                 .filter(|(selected, _)| *selected == key)
                                 .map(|(_, selection)| selection);
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(px(space::XS))
-                                .children(preview::message(shown, selection, &hits, theme))
+                                .gap(px(space::M))
+                                .line_height(relative(theme::doc::LINE_HEIGHT))
+                                .children(preview::message(
+                                    shown,
+                                    selection,
+                                    &hits,
+                                    preview::Flavor::Chat { session },
+                                    theme,
+                                ))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(
@@ -579,75 +596,66 @@ impl Shell {
                         _ => div().into_any_element(),
                     }
                 }
-                chat::Row::Thinking { key, text, open } => chat_disclosure(
-                    (session, *key),
-                    *open,
-                    div().italic().child("Thinking").into_any_element(),
-                    {
-                        let link = (*open && chat::body_cut(text))
-                            .then(|| cut_link(session, *key, theme, cx));
-                        move || {
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(space::XS))
-                                .child(mono_block((*text).to_owned(), theme.text_muted, theme))
-                                .children(link)
-                                .into_any_element()
-                        }
-                    },
-                    &chat_ui.stop(Stop::Row(*key), cx),
-                    theme,
-                    cx,
-                ),
-                chat::Row::Tool { key, call, open } => chat_disclosure(
-                    (session, *key),
-                    *open,
-                    div()
+                chat::Row::Activity {
+                    key,
+                    thought,
+                    summary,
+                    children,
+                    open,
+                    ..
+                } => {
+                    // The head's stop comes first, the children's (drawn only while open) after.
+                    let stop = chat_ui.stop(Stop::Row(*key), cx);
+                    let head = div()
                         .flex()
-                        .gap(px(space::S))
+                        .items_center()
                         .min_w_0()
-                        .child(
-                            div()
-                                .flex_none()
-                                .font_weight(FontWeight(weight::MEDIUM))
-                                .child(call.name.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .font_family(theme.terminal_font_family.clone())
-                                .child(call.target.clone()),
-                        )
-                        .into_any_element(),
-                    {
-                        let link = (*open
-                            && (chat::body_cut(&call.input)
-                                || call
-                                    .result
-                                    .as_ref()
-                                    .is_some_and(|r| chat::body_cut(&r.text))))
-                        .then(|| cut_link(session, *key, theme, cx));
-                        move || tool_body(call, link, theme).into_any_element()
-                    },
-                    &chat_ui.stop(Stop::Row(*key), cx),
-                    theme,
-                    cx,
-                ),
+                        .gap(px(space::XS))
+                        .children(thought.clone().map(|t| div().flex_none().italic().child(t)))
+                        .when(thought.is_some() && !summary.is_empty(), |el| {
+                            el.child(div().flex_none().child("·"))
+                        })
+                        .when(!summary.is_empty(), |el| {
+                            el.child(div().flex_1().min_w_0().truncate().child(summary.clone()))
+                        })
+                        .into_any_element();
+                    let body = open.then(|| {
+                        let rows: Vec<_> = children
+                            .iter()
+                            .map(|child| self.chat_child(session, chat_ui, child, theme, cx))
+                            .collect();
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(space::XS))
+                            .pl(px(space::L))
+                            .children(rows)
+                            .into_any_element()
+                    });
+                    chat_disclosure(
+                        (session, *key),
+                        *open,
+                        head,
+                        move || body.unwrap_or_else(|| div().into_any_element()),
+                        &stop,
+                        theme,
+                        cx,
+                    )
+                }
+                chat::Row::Recap { text } => chat_recap(text, theme),
             })
             .collect();
         div()
             .flex()
             .flex_col()
-            .gap(px(space::S))
+            .gap(px(space::M))
             .child(
                 div().flex().justify_end().child(
                     div()
                         .max_w(relative(theme::CHAT_PROMPT_MAX_FRACTION))
-                        .p(px(space::S))
-                        .rounded(px(radius::MEDIUM))
+                        .px(px(space::M))
+                        .py(px(space::S))
+                        .rounded(px(radius::LARGE))
                         .bg(rgb(theme.card))
                         .child(turn.prompt.to_owned()),
                 ),
@@ -655,6 +663,102 @@ impl Shell {
             .children(rows)
             .children(turn.plan.as_deref().map(|steps| chat_plan(steps, theme)))
             .into_any_element()
+    }
+
+    /// A row inside an open activity row: a thinking block (opens to its text unless it is
+    /// redacted) or a tool call (opens to its arguments and result).
+    fn chat_child(
+        &self,
+        session: Ulid,
+        chat_ui: &ChatUi,
+        child: &chat::Child<'_>,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        match child {
+            chat::Child::Thinking {
+                key,
+                text,
+                ms,
+                open,
+            } if !text.is_empty() => {
+                let link =
+                    (*open && chat::body_cut(text)).then(|| cut_link(session, *key, theme, cx));
+                chat_disclosure(
+                    (session, *key),
+                    *open,
+                    div()
+                        .italic()
+                        .child(chat::thinking_label(*ms))
+                        .into_any_element(),
+                    move || {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(space::XS))
+                            .child(
+                                div()
+                                    .p(px(space::S))
+                                    .rounded(px(radius::SMALL))
+                                    .bg(rgb(theme.surface))
+                                    .italic()
+                                    .text_size(font_size::META)
+                                    .text_color(rgb(theme.text_muted))
+                                    .child((*text).to_owned()),
+                            )
+                            .children(link)
+                            .into_any_element()
+                    },
+                    &chat_ui.stop(Stop::Row(*key), cx),
+                    theme,
+                    cx,
+                )
+            }
+            // Redacted thinking: the time only, nothing to open.
+            chat::Child::Thinking { ms, .. } => div()
+                .pl(px(theme::BORDER_WIDTH + theme::ICON_SIZE_SMALL + space::XS))
+                .italic()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .child(chat::thinking_label(*ms))
+                .into_any_element(),
+            chat::Child::Tool { key, call, open } => chat_disclosure(
+                (session, *key),
+                *open,
+                div()
+                    .flex()
+                    .gap(px(space::S))
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex_none()
+                            .font_weight(FontWeight(weight::MEDIUM))
+                            .child(call.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(theme.terminal_font_family.clone())
+                            .child(call.target.clone()),
+                    )
+                    .into_any_element(),
+                {
+                    let link = (*open
+                        && (chat::body_cut(&call.input)
+                            || call
+                                .result
+                                .as_ref()
+                                .is_some_and(|r| chat::body_cut(&r.text))))
+                    .then(|| cut_link(session, *key, theme, cx));
+                    move || tool_body(call, link, theme).into_any_element()
+                },
+                &chat_ui.stop(Stop::Row(*key), cx),
+                theme,
+                cx,
+            ),
+        }
     }
 }
 
@@ -815,43 +919,45 @@ fn chat_plan(steps: &[chat::PlanRow<'_>], theme: &Theme) -> gpui::AnyElement {
 fn chat_tray(chips: &[chat::Chip<'_>], now: i64, theme: &Theme) -> gpui::AnyElement {
     div()
         .flex_none()
-        .flex()
-        .flex_wrap()
-        .gap(px(space::S))
-        .px(px(space::M))
         .py(px(space::S))
         .border_t(px(theme::BORDER_WIDTH))
         .border_color(rgb(theme.divider))
         .font_family(theme.ui_font_family.clone())
         .text_size(font_size::META)
-        .children(chips.iter().map(|chip| {
+        .child(chat_column(
             div()
                 .flex()
-                .items_center()
-                .gap(px(space::XS))
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded_full()
-                .bg(rgb(theme.card))
-                .child(if chip.done {
-                    icon_svg(Icon::Check, theme::ICON_SIZE_SMALL, theme.success_text)
-                        .into_any_element()
-                } else {
-                    loading_dots(now, rgb(theme.status_working)).into_any_element()
-                })
-                .child(
+                .flex_wrap()
+                .gap(px(space::S))
+                .children(chips.iter().map(|chip| {
                     div()
-                        .text_color(rgb(theme.text))
-                        .child(chip.description.to_owned()),
-                )
-                .when(!chip.subagent_type.is_empty(), |el| {
-                    el.child(
-                        div()
-                            .text_color(rgb(theme.text_muted))
-                            .child(chip.subagent_type.to_owned()),
-                    )
-                })
-        }))
+                        .flex()
+                        .items_center()
+                        .gap(px(space::XS))
+                        .px(px(space::S))
+                        .py(px(space::XS))
+                        .rounded_full()
+                        .bg(rgb(theme.card))
+                        .child(if chip.done {
+                            icon_svg(Icon::Check, theme::ICON_SIZE_SMALL, theme.success_text)
+                                .into_any_element()
+                        } else {
+                            loading_dots(now, rgb(theme.status_working)).into_any_element()
+                        })
+                        .child(
+                            div()
+                                .text_color(rgb(theme.text))
+                                .child(chip.description.to_owned()),
+                        )
+                        .when(!chip.subagent_type.is_empty(), |el| {
+                            el.child(
+                                div()
+                                    .text_color(rgb(theme.text_muted))
+                                    .child(chip.subagent_type.to_owned()),
+                            )
+                        })
+                })),
+        ))
         .into_any_element()
 }
 
@@ -864,13 +970,11 @@ fn chat_question(
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
-    div()
+    let card = div()
         .flex_none()
         .flex()
         .flex_col()
         .gap(px(space::S))
-        .mx(px(space::M))
-        .mb(px(space::M))
         .p(px(space::M))
         .rounded(px(radius::CARD))
         .border(px(theme::BORDER_WIDTH))
@@ -923,8 +1027,8 @@ fn chat_question(
                 )
                 .child("Answer in terminal"),
             ),
-        )
-        .into_any_element()
+        );
+    chat_column(card).pb(px(space::M)).into_any_element()
 }
 
 /// `el` as a Tab stop on `handle` with the focus ring: a 1 px border, transparent at rest, so
@@ -940,4 +1044,32 @@ fn keyboard_stop(
         .rounded(px(radius::SMALL))
         .track_focus(handle)
         .focus_visible(move |style| style.border_color(ring))
+}
+
+/// `el` in the Chat page's centered column: at most [`theme::CHAT_COLUMN_WIDTH`] wide with
+/// `space::XL` at both sides.
+pub(crate) fn chat_column(el: impl IntoElement) -> gpui::Div {
+    div().w_full().flex().justify_center().child(
+        div()
+            .w_full()
+            .max_w(px(theme::CHAT_COLUMN_WIDTH))
+            .px(px(space::XL))
+            .child(el),
+    )
+}
+
+/// omp's recap: the history icon and the text in italic muted.
+fn chat_recap(text: &str, theme: &Theme) -> gpui::AnyElement {
+    div()
+        .flex()
+        .items_start()
+        .gap(px(space::S))
+        .text_color(rgb(theme.text_muted))
+        .child(div().flex_none().child(icon_svg(
+            Icon::History,
+            theme::ICON_SIZE_SMALL,
+            theme.text_muted,
+        )))
+        .child(div().flex_1().min_w_0().italic().child(text.to_owned()))
+        .into_any_element()
 }

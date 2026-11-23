@@ -541,6 +541,7 @@ impl Shell {
                         shown,
                         Some(wrap),
                         None,
+                        preview::Flavor::Doc,
                         fonts,
                         theme,
                     )

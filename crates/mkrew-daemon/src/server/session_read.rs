@@ -10,7 +10,7 @@ use mkrew_protocol::{
 };
 
 use super::{Daemon, ok, store_outcome};
-use crate::{session_log, usage};
+use crate::{omp_recap, session_log, usage};
 
 impl Daemon {
     /// `session.log_tail`: the newest log bytes, up to [`READ_WINDOW`]. Answers for exited and
@@ -52,7 +52,9 @@ impl Daemon {
                 return Ok(not_found(String::new()));
             };
             let name = format.name().to_owned();
-            let Some(path) = native.and_then(|native| usage::transcript_path(&format, &native))
+            let Some(path) = native
+                .as_deref()
+                .and_then(|native| usage::transcript_path(&format, native))
             else {
                 return Ok(not_found(name));
             };
@@ -65,12 +67,17 @@ impl Daemon {
             let mut data = vec![0; usize::try_from(end - start).unwrap_or(0)];
             file.seek(SeekFrom::Start(start))?;
             file.read_exact(&mut data)?;
+            let recap = native
+                .as_deref()
+                .zip(usage::root(&format))
+                .and_then(|(native, root)| omp_recap::latest(&format, &root, native));
             Ok::<_, std::io::Error>(SessionTranscript {
                 found: true,
                 format: name,
                 start,
                 len,
                 data,
+                recap,
             })
         })
         .await;
@@ -92,6 +99,7 @@ fn not_found(format: String) -> SessionTranscript {
         start: 0,
         len: 0,
         data: Vec::new(),
+        recap: None,
     }
 }
 
