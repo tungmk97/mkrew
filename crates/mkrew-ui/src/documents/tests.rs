@@ -30,6 +30,8 @@ fn page(text: &str) -> docs::Shown {
 fn opened(text: &str) -> Documents {
     let mut docs = Documents::new();
     docs.ensure(P, MdMode::default());
+    // The shell's first draw asks for the read, then sends it.
+    assert!(doc_mut(&mut docs).take_read());
     assert!(docs.begin_read(P));
     docs.read(P, file_text(text));
     docs
@@ -61,6 +63,7 @@ fn unsaved(docs: &Documents) -> Option<String> {
 /// Another file, read.
 fn read_ok(docs: &mut Documents, path: &str, text: &str) {
     docs.ensure(path, MdMode::default());
+    assert!(docs.get_mut(path).unwrap().take_read());
     assert!(docs.begin_read(path));
     docs.read(path, file_text_at(path, text));
 }
@@ -169,7 +172,7 @@ fn a_failed_read_drops_the_line() {
     docs.read(P, Err("gone".into()));
     assert_eq!(doc_mut(&mut docs).apply_pending_line(), None);
     // Retry shows the file from the top.
-    assert!(doc_mut(&mut docs).take_read());
+    assert!(doc_mut(&mut docs).retry());
     assert!(docs.begin_read(P));
     docs.read(P, file_text("a\nb\n"));
     assert_eq!(doc_mut(&mut docs).apply_pending_line(), None);
@@ -1218,4 +1221,201 @@ fn closing_tabs_and_panes_are_told_from_moves_by_the_remaining_open_set() {
     // A pane moved to the first tab is in both sets: the difference is empty.
     let docs = dirty_store(&["b.rs"]);
     assert!(needs_save_question(&open_paths(&tabs), &open_paths(&tabs), &docs).is_empty());
+}
+
+#[test]
+fn a_doc_loads_once_on_its_first_draw() {
+    let mut docs = Documents::new();
+    docs.ensure("a.rs", MdMode::Source);
+    // The shell's first draw asks; a second draw before the answer asks for nothing.
+    assert!(docs.get_mut("a.rs").unwrap().take_read());
+    assert!(!docs.get_mut("a.rs").unwrap().take_read());
+    assert!(docs.begin_read("a.rs"));
+    assert!(
+        !docs.begin_read("a.rs"),
+        "one read in flight; the next is queued"
+    );
+    assert_eq!(
+        docs.read("a.rs", file_text_at("a.rs", "x\n")).as_deref(),
+        Some("a.rs")
+    );
+}
+
+#[test]
+fn a_failed_read_is_retried_by_retry_and_not_by_a_draw() {
+    let mut docs = Documents::new();
+    docs.ensure("a.rs", MdMode::Source);
+    assert!(docs.get_mut("a.rs").unwrap().take_read());
+    assert!(docs.begin_read("a.rs"));
+    docs.read(
+        "a.rs",
+        Err("no file a.rs in project 01J0000000000000000000000".into()),
+    );
+    assert!(docs.get("a.rs").unwrap().removed());
+    // Drawing again asks for nothing: no loop on a failing file.
+    assert!(!docs.get_mut("a.rs").unwrap().take_read());
+    // Retry reads again, and a coalesced read is sent once the first answers.
+    assert!(docs.get_mut("a.rs").unwrap().retry());
+    assert!(docs.begin_read("a.rs"));
+    assert!(!docs.begin_read("a.rs"));
+    assert_eq!(
+        docs.read("a.rs", file_text_at("a.rs", "ok\n")).as_deref(),
+        Some("a.rs")
+    );
+    assert!(!docs.get("a.rs").unwrap().removed());
+}
+
+#[test]
+fn a_file_that_comes_back_replaces_the_removed_state() {
+    let mut docs = Documents::new();
+    docs.ensure("a.rs", MdMode::Source);
+    assert!(docs.begin_read("a.rs"));
+    docs.read(
+        "a.rs",
+        Err("no file a.rs in project 01J0000000000000000000000".into()),
+    );
+    // git.changed: the drawn doc is read again and now exists.
+    assert_eq!(docs.refresh(&["a.rs".to_owned()]), ["a.rs"]);
+    assert!(docs.begin_read("a.rs"));
+    docs.read("a.rs", file_text_at("a.rs", "back\n"));
+    assert_eq!(
+        docs.get("a.rs").unwrap().shown().unwrap().editor.text(),
+        "back\n"
+    );
+}
+
+#[test]
+fn removed_unsaved_text_is_kept() {
+    let mut docs = opened("a\n");
+    editor(&mut docs).insert("x");
+    assert!(docs.begin_read(P));
+    docs.read(
+        P,
+        Err("no file README.md in project 01J0000000000000000000000".into()),
+    );
+    assert!(
+        doc(&docs).is_dirty(),
+        "a failed re-read never replaces unsaved text"
+    );
+    assert!(!doc(&docs).removed());
+}
+
+#[test]
+fn find_follows_a_reread_file() {
+    let mut docs = opened("todo\nok");
+    let mut find = TextFind::default();
+    find.query = "todo".into();
+    doc_mut(&mut docs).find = Some(find);
+    doc_mut(&mut docs).search();
+    let label = |docs: &Documents| doc(docs).find.as_ref().map(TextFind::label);
+    assert_eq!(label(&docs).as_deref(), Some("1 of 1"));
+    // An agent edits the file: the re-read is searched again.
+    docs.begin_read(P);
+    docs.read(P, file_text("todo\ntodo"));
+    assert_eq!(label(&docs).as_deref(), Some("1 of 2"));
+}
+
+#[test]
+fn find_opens_seeded_with_a_one_line_selection_at_the_caret() {
+    let mut docs = opened("let a = b;\nlet b = a;\n");
+    editor(&mut docs).select(Pos::new(1, 4)..Pos::new(1, 5));
+    assert!(doc_mut(&mut docs).open_find(false));
+    let find = doc(&docs).find.as_ref().unwrap();
+    assert_eq!((find.query.as_str(), find.replace.as_deref()), ("b", None));
+    let at = find.current().map(|m| (m.line, m.range.start));
+    assert_eq!(at, Some((1, 4)), "the selected one is current");
+    // Ctrl+H adds the replace row; a multi-line selection keeps the query.
+    editor(&mut docs).select(Pos::new(0, 0)..Pos::new(1, 1));
+    assert!(doc_mut(&mut docs).open_find(true));
+    let find = doc(&docs).find.as_ref().unwrap();
+    assert_eq!(
+        (find.query.as_str(), find.replace.as_deref()),
+        ("b", Some(""))
+    );
+    // Without a file there is nothing to find in.
+    assert!(!Doc::new("a.rs", MdMode::Source).open_find(false));
+}
+
+#[test]
+fn replace_one_moves_on_and_replace_all_is_one_undo_step() {
+    let mut docs = opened("a1 A2\na3\n");
+    assert!(doc_mut(&mut docs).open_find(true));
+    let find = doc_mut(&mut docs).find.as_mut().unwrap();
+    find.query = "a".into();
+    find.replace = Some("aa".into());
+    doc_mut(&mut docs).search();
+    assert!(doc_mut(&mut docs).replace_one());
+    assert_eq!(text(&docs), "aa1 A2\na3\n");
+    let at = (doc(&docs).find.as_ref())
+        .and_then(TextFind::current)
+        .map(|m| (m.line, m.range.start));
+    assert_eq!(
+        at,
+        Some((0, 4)),
+        "the next match, not one inside the replacement"
+    );
+    assert!(doc_mut(&mut docs).replace_one());
+    assert!(doc_mut(&mut docs).replace_one());
+    assert_eq!(text(&docs), "aa1 aa2\naa3\n");
+    // Replace all: each match once (the replacement holds the query), ignoring case,
+    // in UTF-8; one undo step; not saved.
+    let mut docs = opened("Tiếng việt, VIỆT\nviệt\n");
+    doc_mut(&mut docs).open_find(true);
+    let find = doc_mut(&mut docs).find.as_mut().unwrap();
+    find.query = "việt".into();
+    find.replace = Some("Nam việt".into());
+    assert_eq!(doc_mut(&mut docs).replace_all(), 3);
+    assert_eq!(text(&docs), "Tiếng Nam việt, Nam việt\nNam việt\n");
+    assert_eq!(unsaved(&docs).as_deref(), Some("README.md"));
+    let label = doc(&docs).find.as_ref().map(TextFind::label);
+    assert_eq!(label.as_deref(), Some("1 of 3"));
+    assert!(editor(&mut docs).undo());
+    assert_eq!(text(&docs), "Tiếng việt, VIỆT\nviệt\n");
+    assert_eq!(unsaved(&docs), None);
+    // Without the replace row, or a match, nothing is replaced (no empty undo step).
+    doc_mut(&mut docs).find.as_mut().unwrap().replace = None;
+    assert_eq!(doc_mut(&mut docs).replace_all(), 0);
+    assert!(!doc_mut(&mut docs).replace_one());
+    let find = doc_mut(&mut docs).find.as_mut().unwrap();
+    (find.query, find.replace) = ("zzz".into(), Some(Input::default()));
+    assert_eq!(doc_mut(&mut docs).replace_all(), 0);
+    assert!(!editor(&mut docs).undo());
+}
+
+/// Find and a link's line need the editor on screen.
+#[test]
+fn find_and_a_link_line_switch_to_source() {
+    let mut docs = opened("a\nb\n");
+    assert!(doc_mut(&mut docs).open_find(false));
+    assert_eq!(doc(&docs).mode, MdMode::Source);
+    let mut docs = opened("a\nb\n");
+    doc_mut(&mut docs).set_line(Some((2, 1)));
+    assert_eq!(doc(&docs).mode, MdMode::Source);
+    // A request without a line keeps the mode.
+    let mut docs = opened("a\n");
+    doc_mut(&mut docs).set_line(None);
+    assert_eq!(doc(&docs).mode, MdMode::Preview);
+}
+
+#[test]
+fn a_split_doc_keeps_split_for_find_and_links() {
+    let mut docs = Documents::new();
+    docs.ensure(P, MdMode::Split);
+    assert!(docs.begin_read(P));
+    docs.read(P, file_text("a\nb\n"));
+    assert!(doc(&docs).splitting() && !doc(&docs).previewing());
+    // The editor is on screen next to the page: find and a link's line keep the split.
+    assert!(doc_mut(&mut docs).open_find(false));
+    doc_mut(&mut docs).set_line(Some((2, 1)));
+    assert_eq!(doc(&docs).mode, MdMode::Split);
+}
+
+#[test]
+fn ctrl_f_leaves_the_preview_and_drops_edit_and_selection() {
+    let mut docs = previewed("a\n\nb\n");
+    let readme = doc_mut(&mut docs);
+    assert!(readme.open_block_edit(0));
+    readme.preview_select_all();
+    assert!(readme.open_find(false));
+    assert!(readme.block_edit.is_none() && readme.preview_selection.is_none());
 }

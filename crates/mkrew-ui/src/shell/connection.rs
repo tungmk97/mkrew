@@ -357,7 +357,6 @@ impl Shell {
             comments_scroll: ScrollHandle::new(),
             workspace_menu: None,
             file_menu: None,
-            file_tab_menu: None,
             tab_menu: None,
             card_menu: None,
             menu_focus: cx.focus_handle(),
@@ -442,28 +441,18 @@ impl Shell {
             views: HashMap::new(),
             docs: HashMap::new(),
             comment_focus: cx.focus_handle(),
+            documents: HashMap::new(),
+            doc_views: HashMap::new(),
             files: HashMap::new(),
             files_focus: cx.focus_handle(),
             files_scroll: UniformListScrollHandle::new(),
-            file_tabs_scroll: ScrollHandle::new(),
-            file_find_focus: cx.focus_handle(),
-            file_replace_focus: cx.focus_handle(),
             docs_filter_focus: cx.focus_handle(),
             doc_page: preview::Page::default(),
             doc_source_scroll: UniformListScrollHandle::new(),
-            file_page: preview::Page::default(),
-            file_code_scroll: UniformListScrollHandle::new(),
-            file_code_drag: scrollbar::Drag::default(),
             files_after_save: Vec::new(),
-            file_editor_focus: cx.focus_handle(),
-            file_block_focus: cx.focus_handle(),
-            file_text_left: Rc::default(),
-            file_preview_focus: cx.focus_handle(),
             md_mode,
             md_split,
             md_split_dragging: false,
-            md_split_bounds: Rc::default(),
-            md_split_sync: files_split::Sync::default(),
             git: HashMap::new(),
             git_repos: HashMap::new(),
             git_summary: None,
@@ -881,11 +870,14 @@ impl Shell {
             .into_iter()
             .filter_map(|(id, docs)| Some((id, docs.into_draft()?)))
             .collect();
-        // Unsaved Files text outlives the connection: Save writes it with the old hash (§8).
-        self.files = std::mem::take(&mut self.files)
+        // Unsaved file text outlives the connection: Save writes it with the old hash (§8).
+        self.documents = std::mem::take(&mut self.documents)
             .into_iter()
-            .filter_map(|(id, view)| Some((id, view.into_unsaved()?)))
+            .filter_map(|(id, docs)| Some((id, docs.into_unsaved()?)))
             .collect();
+        self.doc_views.clear();
+        // The tree is read again.
+        self.files.clear();
         self.git = std::mem::take(&mut self.git)
             .into_iter()
             .filter_map(|(id, view)| Some((id, view.into_commit_draft()?)))
@@ -965,6 +957,8 @@ impl Shell {
                             let listed = shell.sidebar.projects();
                             let known = |id: &Ulid| listed.iter().any(|project| project.id == *id);
                             shell.files.retain(|id, _| known(id));
+                            shell.documents.retain(|id, _| known(id));
+                            shell.doc_views.retain(|(id, _), _| known(id));
                             shell.docs.retain(|id, _| known(id));
                             shell.git.retain(|id, _| known(id));
                         }

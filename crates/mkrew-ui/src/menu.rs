@@ -396,7 +396,6 @@ pub enum Owner {
         path: String,
         is_dir: bool,
     },
-    FileTab(String),
     SidebarRow(Target),
     Card(Ulid),
     /// No owner: the active workspace's menu.
@@ -416,8 +415,6 @@ pub struct Focus {
     pub git_focused: bool,
     /// The file tree's cursor row and whether it is a folder.
     pub files_cursor: Option<(String, bool)>,
-    /// The active file tab of the Editor view.
-    pub file_tab: Option<String>,
     /// The Board's selected card, when this workspace has it.
     pub card: Option<Ulid>,
 }
@@ -443,10 +440,6 @@ pub fn owner(focus: &Focus) -> Owner {
         return Owner::Workspace;
     }
     match focus.view {
-        View::Editor => focus
-            .file_tab
-            .clone()
-            .map_or(Owner::Workspace, Owner::FileTab),
         View::Board => focus.card.map_or(Owner::Workspace, Owner::Card),
         _ => Owner::Workspace,
     }
@@ -474,10 +467,9 @@ mod tests {
         };
         assert_eq!(owner(&filter), Owner::SidebarRow(Target::Workspace(id(2))));
         let tree = Focus {
-            view: View::Editor,
+            view: View::Terminals,
             files_tree_focused: true,
             files_cursor: Some(("src".into(), true)),
-            file_tab: Some("README.md".into()),
             ..Focus::default()
         };
         assert_eq!(
@@ -487,11 +479,6 @@ mod tests {
                 is_dir: true
             }
         );
-        let editor = Focus {
-            files_tree_focused: false,
-            ..tree.clone()
-        };
-        assert_eq!(owner(&editor), Owner::FileTab("README.md".into()));
         let board = Focus {
             view: View::Board,
             card: Some(id(3)),
@@ -528,7 +515,7 @@ mod tests {
             assert_eq!(owner(&focus), Owner::Workspace);
         }
         let bare_tree = Focus {
-            view: View::Editor,
+            view: View::Terminals,
             files_tree_focused: true,
             ..Focus::default()
         };
@@ -538,18 +525,10 @@ mod tests {
             ..Focus::default()
         };
         assert_eq!(owner(&board), Owner::Workspace);
-        // A file tab does not own the keyboard while another view is shown.
-        let hidden_tab = Focus {
-            view: View::Terminals,
-            file_tab: Some("a".into()),
-            ..Focus::default()
-        };
-        assert_eq!(owner(&hidden_tab), Owner::Workspace);
-        // The Git list has the keyboard in the Editor view: the workspace menu, not the tab's.
+        // The Git list has the keyboard: the workspace menu.
         let git_list = Focus {
-            view: View::Editor,
+            view: View::Terminals,
             git_focused: true,
-            file_tab: Some("a".into()),
             ..Focus::default()
         };
         assert_eq!(owner(&git_list), Owner::Workspace);

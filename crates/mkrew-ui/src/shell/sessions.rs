@@ -213,15 +213,15 @@ impl Shell {
             }
             window.focus(&self.git_focus, cx);
         }
-        // Same for the Editor's find / replace fields while they have the keyboard (Esc gives it
-        // back), except the Editor commands (Ctrl+S, Ctrl+F, Ctrl+H act from there).
-        if self.file_find_focus.is_focused(window) || self.file_replace_focus.is_focused(window) {
-            let open = self.view() == View::Editor
-                && (self.workspace)
-                    .and_then(|id| self.files.get(&id))
-                    .is_some_and(|view| {
-                        view.find.is_some() && !view.tab().is_some_and(documents::Doc::previewing)
-                    });
+        // Same for a file pane's find / replace fields while they have the keyboard (Esc gives
+        // it back), except the editor commands (Ctrl+S, Ctrl+F, Ctrl+H act from there).
+        let field = (self.focused_doc(window)).filter(|(project_id, path)| {
+            self.doc_focused(*project_id, path, DocFocus::Find, window)
+                || self.doc_focused(*project_id, path, DocFocus::Replace, window)
+        });
+        if let Some((project_id, path)) = field {
+            let open = (self.doc(project_id, &path))
+                .is_some_and(|doc| doc.find.is_some() && !doc.previewing());
             let files_command = matches!(
                 command,
                 Command::SaveFile
@@ -291,22 +291,6 @@ impl Shell {
         // typed in the peek still runs); its own shortcut toggles it below.
         if *command != Command::Peek {
             self.close_peek(window, cx);
-        }
-        // Tab keys act on the Editor's tabs while the Editor view is shown (SPEC §12A, §13).
-        if self.view() == View::Editor
-            && let Some(project_id) = self.workspace
-        {
-            match *command {
-                Command::NextTab => return self.cycle_file_tab(project_id, true, window, cx),
-                Command::PreviousTab => return self.cycle_file_tab(project_id, false, window, cx),
-                Command::Tab(n) => return self.nth_file_tab(project_id, n, window, cx),
-                Command::CloseTab | Command::CloseFileTab => {
-                    return self.close_active_file_tab(project_id, window, cx);
-                }
-                Command::MoveTabLeft => return self.move_active_tab(-1, window, cx),
-                Command::MoveTabRight => return self.move_active_tab(1, window, cx),
-                _ => {}
-            }
         }
         if self.view() != View::Terminals {
             match *command {
@@ -408,40 +392,36 @@ impl Shell {
                 }
             }
             Command::ClosePane => self.close_focused_pane(window, cx),
-            Command::OpenInZed => match self.workspace {
-                // Docs open the shown file (SPEC §13 "workspace or current file").
-                Some(project_id)
-                    if self.view() == View::Docs
-                        && self
-                            .docs
-                            .get(&project_id)
-                            .is_some_and(|docs| docs.selected.is_some()) =>
+            Command::OpenInZed => {
+                if let (Some(project_id), Some(path)) = (self.workspace, self.focused_file(window))
                 {
-                    self.open_doc_in_zed(project_id, cx);
+                    return self.open_file_in_zed(project_id, &path, cx);
                 }
-                // Files open the opened file, at the selected line.
-                Some(project_id)
-                    if self.view() == View::Editor
-                        && self
-                            .files
-                            .get(&project_id)
-                            .is_some_and(|view| view.file().is_some()) =>
-                {
-                    self.open_file_in_zed(project_id, cx);
+                match self.workspace {
+                    // Docs open the shown file (SPEC §13 "workspace or current file").
+                    Some(project_id)
+                        if self.view() == View::Docs
+                            && self
+                                .docs
+                                .get(&project_id)
+                                .is_some_and(|docs| docs.selected.is_some()) =>
+                    {
+                        self.open_doc_in_zed(project_id, cx);
+                    }
+                    // Git opens the selected changed file.
+                    Some(project_id)
+                        if self.view() == View::Diff
+                            && self
+                                .git
+                                .get(&project_id)
+                                .is_some_and(|view| view.selected.is_some()) =>
+                    {
+                        self.open_git_file_in_zed(project_id, cx);
+                    }
+                    Some(project_id) => self.open_in_zed(project_id, cx),
+                    None => {}
                 }
-                // Git opens the selected changed file.
-                Some(project_id)
-                    if self.view() == View::Diff
-                        && self
-                            .git
-                            .get(&project_id)
-                            .is_some_and(|view| view.selected.is_some()) =>
-                {
-                    self.open_git_file_in_zed(project_id, cx);
-                }
-                Some(project_id) => self.open_in_zed(project_id, cx),
-                None => {}
-            },
+            }
             Command::NextInbox => self.jump_next_inbox(window, cx),
             Command::PreviousInbox => self.jump_previous_inbox(window, cx),
             // Again while it has the keyboard closes it.
@@ -468,11 +448,6 @@ impl Shell {
             Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
             Command::ShowDocs => self.show_view(View::Docs, window, cx),
             Command::ShowFileTree => self.show_file_tree(window, cx),
-            Command::ShowEditor => {
-                if self.workspace.is_some_and(|id| self.has_file_tabs(id)) {
-                    self.show_view(View::Editor, window, cx);
-                }
-            }
             Command::ShowGitPanel => self.show_git_panel(window, cx),
             Command::ShowDiff => {
                 if self.workspace.is_some_and(|id| self.diff_open(id)) {
@@ -528,12 +503,8 @@ impl Shell {
                 }
             }
             Command::SaveFile => {
-                // Only bound while the Editor is shown.
-                let active = (self.workspace).and_then(|project_id| {
-                    let path = self.files.get(&project_id)?.file()?.to_owned();
-                    Some((project_id, path))
-                });
-                if let Some((project_id, path)) = active {
+                // Only bound in a file pane (`EDITOR_CONTEXT`).
+                if let Some((project_id, path)) = self.focused_doc(window) {
                     self.save_file(project_id, path, None, window, cx);
                 }
             }
@@ -546,7 +517,7 @@ impl Shell {
                 if let Some(project_id) = self.workspace {
                     let cursor = self.files_view(project_id).enter_target();
                     if let Some(cursor) = cursor {
-                        self.click_file(project_id, &cursor, Open::Kept, window, cx);
+                        self.click_file(project_id, &cursor, true, window, cx);
                     }
                 }
             }
@@ -565,15 +536,15 @@ impl Shell {
                 }
             }
             Command::ToggleFilePreview => {
-                // Only bound while the Editor is shown.
-                if let Some(project_id) = self.workspace {
-                    self.toggle_file_preview(project_id, window, cx);
+                // Only bound in a file pane.
+                if let Some((project_id, path)) = self.focused_doc(window) {
+                    self.toggle_file_preview(project_id, &path, window, cx);
                 }
             }
             Command::ToggleFileSplit => {
-                // Only bound while the Editor is shown.
-                if let Some(project_id) = self.workspace {
-                    self.toggle_file_split(project_id, window, cx);
+                // Only bound in a file pane.
+                if let Some((project_id, path)) = self.focused_doc(window) {
+                    self.toggle_file_split(project_id, &path, window, cx);
                 }
             }
             Command::AddComment => {
@@ -660,18 +631,18 @@ impl Shell {
             | Command::CopyMode
             | Command::LinkHints => {}
             // A focused terminal pane handles it itself.
-            Command::Find => match self.view() {
-                View::Editor => self.open_file_find(false, window, cx),
-                View::Docs => {
+            Command::Find => {
+                if self.focused_file(window).is_some() {
+                    self.open_file_find(false, window, cx);
+                } else if self.view() == View::Docs {
                     window.focus(&self.docs_filter_focus, cx);
                     cx.notify();
                 }
-                _ => {}
-            },
+            }
             Command::FindInFile => self.open_file_find(false, window, cx),
             Command::ReplaceInFile => self.open_file_find(true, window, cx),
-            // Bound in the Editor view only; handled above.
-            Command::CloseFileTab => {}
+            // Bound in a file pane only.
+            Command::CloseFileTab => self.close_focused_pane(window, cx),
             Command::MoveTabToNewWindow => {
                 if let Some((project, tab_id)) = self.tab_scope(window) {
                     let tab = DockTab::Terminal { project, tab_id };

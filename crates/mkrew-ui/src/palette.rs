@@ -40,8 +40,8 @@ pub struct Context {
     pub workspaces: usize,
     /// Terminal tabs of the active workspace.
     pub tabs: usize,
-    /// The active workspace's open file tabs.
-    pub file_tabs: usize,
+    /// A file pane had the keyboard (save, find, preview… act on it).
+    pub file_pane: bool,
     /// The file tree is painted in the right panel (Open in a kept tab acts on its cursor).
     pub file_tree: bool,
     /// A terminal pane had the keyboard (copy, paste, find… act on it).
@@ -648,7 +648,6 @@ pub fn title(command: Command) -> String {
         Command::ShowTerminals => "View: Terminals".into(),
         Command::ShowDocs => "View: Docs".into(),
         Command::ShowFileTree => "View: File tree".into(),
-        Command::ShowEditor => "View: Editor".into(),
         Command::ShowGitPanel => "View: Git panel".into(),
         Command::ShowDiff => "View: Diff".into(),
         Command::ToggleDocSource => "Docs: Toggle preview / source".into(),
@@ -668,7 +667,7 @@ pub fn title(command: Command) -> String {
         Command::SaveFile => "Editor: Save file".into(),
         Command::FindInFile => "Editor: Find in file".into(),
         Command::ReplaceInFile => "Editor: Replace in file".into(),
-        Command::CloseFileTab => "Editor: Close tab".into(),
+        Command::CloseFileTab => "File: Close file".into(),
         Command::ToggleFilePreview => "Editor: Toggle preview / source".into(),
         Command::ToggleFileSplit => "Editor: Toggle split source | preview".into(),
         Command::QuickOpen => "Files: Quick open file".into(),
@@ -755,7 +754,6 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::FocusSidebar => context.workspace,
         Command::ShowDiff => context.workspace && context.diff,
         Command::ShowDocs => context.workspace && context.features.docs,
-        Command::ShowEditor => context.workspace && context.file_tabs > 0,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
         Command::Tab(n) => context.workspace && usize::from(n) <= context.tabs,
         Command::SplitRight
@@ -777,13 +775,11 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::PageDown
         | Command::CopyMode
         | Command::LinkHints => on_panes && context.terminal,
-        Command::Find => {
-            (on_panes && context.terminal) || in_view(View::Editor) || in_view(View::Docs)
-        }
+        Command::Find => (on_panes && context.terminal) || context.file_pane || in_view(View::Docs),
         Command::OpenComposer => on_panes && context.agent_pane,
         Command::ToggleChat => on_panes && context.agent_pane && context.chat,
         Command::SendSelection => {
-            in_view(View::Editor)
+            context.file_pane
                 || in_view(View::Diff)
                 || in_view(View::Docs)
                 || (on_panes && context.terminal)
@@ -801,9 +797,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::PreviousComment
         | Command::ReplyComment
         | Command::ResolveComment => in_view(View::Docs) || in_view(View::Diff),
-        Command::MoveTabLeft | Command::MoveTabRight => {
-            on_panes || (in_view(View::Editor) && context.file_tabs > 0)
-        }
+        Command::MoveTabLeft | Command::MoveTabRight => on_panes,
         Command::MoveTabToNewWindow => {
             context.workspace && context.view == View::Terminals && context.tabs > 0
         }
@@ -814,7 +808,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ReplaceInFile
         | Command::CloseFileTab
         | Command::ToggleFilePreview
-        | Command::ToggleFileSplit => in_view(View::Editor),
+        | Command::ToggleFileSplit => context.file_pane,
         Command::GitToggleMode
         | Command::GitToggleHistory
         | Command::GitNextHunk

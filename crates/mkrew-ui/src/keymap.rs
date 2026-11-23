@@ -127,21 +127,19 @@ pub enum Command {
     PickUp,
     /// Open the right panel on the file tree and give it the keyboard.
     ShowFileTree,
-    /// Show the Editor view (the opened files) while a file is open.
-    ShowEditor,
     /// Tree only: show or hide git-ignored files in the tree.
     ToggleIgnored,
-    /// Editor only: save the opened file (Ctrl+S, ADR 0028).
+    /// File pane only: save the opened file (Ctrl+S, ADR 0028).
     SaveFile,
-    /// Editor only: open the find bar over the opened file (Ctrl+F).
+    /// File pane only: open the find bar over the opened file (Ctrl+F).
     FindInFile,
-    /// Editor only: open the find bar with its replace row (Ctrl+H).
+    /// File pane only: open the find bar with its replace row (Ctrl+H).
     ReplaceInFile,
-    /// Editor only: close the active tab, asking about unsaved text (Ctrl+W).
+    /// File pane only: close it, asking about unsaved text (Ctrl+W).
     CloseFileTab,
-    /// Editor only: switch a Markdown file between its rendered preview and its source.
+    /// File pane only: switch a Markdown file between its rendered preview and its source.
     ToggleFilePreview,
-    /// Editor only: show a Markdown file's source and live preview side by side, or not.
+    /// File pane only: show a Markdown file's source and live preview side by side, or not.
     ToggleFileSplit,
     /// Open the right panel on the Git tab and give its list the keyboard.
     ShowGitPanel,
@@ -174,7 +172,7 @@ pub enum Command {
     GitFetch,
     /// Git only: push the shown repository's branch.
     GitPush,
-    /// Open the palette on its Files scope: fuzzy-find a file of the active workspace and open it in the Editor view.
+    /// Open the palette on its Files scope: fuzzy-find a file of the active workspace and open it as a file tab.
     QuickOpen,
     /// Open the palette on its Search scope: the text of the active workspace's files.
     SearchInFiles,
@@ -231,7 +229,7 @@ pub enum Command {
     ReplyComment,
     /// Docs / Git: resolve (or reopen) the selected thread.
     ResolveComment,
-    /// Move the active terminal tab (the active file tab in the Editor) one place left / right,
+    /// Move the active terminal tab (a file tab is one too) one place left / right,
     /// within its pinned / unpinned group.
     MoveTabLeft,
     MoveTabRight,
@@ -252,7 +250,7 @@ pub const BOARD_CONTEXT: &str = "Board";
 /// Key context of the window while a Docs view is shown.
 pub const DOCS_CONTEXT: &str = "Docs";
 
-/// Key context of the window while the Editor view is shown.
+/// Key context of a file pane (its editor).
 pub const EDITOR_CONTEXT: &str = "Editor";
 
 /// Key context of the file tree in the right panel while it has the keyboard.
@@ -268,7 +266,7 @@ pub const COMMENTS_CONTEXT: &str = "Docs || Git";
 /// Key context of an open popover menu (`Shell::menu_focus`).
 pub const MENU_CONTEXT: &str = "Menu";
 
-/// Find: in a terminal's scrollback, the Editor's opened file, and the Docs list filter.
+/// Find: in a terminal's scrollback, a file pane, and the Docs list filter.
 pub const FIND_CONTEXT: &str = "Terminal || Editor || Docs";
 
 /// The GPUI action every binding dispatches. A terminal pane handles [`Command::Paste`] and
@@ -338,7 +336,6 @@ impl Command {
             Command::PickDown,
             Command::PickUp,
             Command::ShowFileTree,
-            Command::ShowEditor,
             Command::ToggleIgnored,
             Command::SaveFile,
             Command::FindInFile,
@@ -450,7 +447,6 @@ impl Command {
             Command::PickDown => "pick_down".into(),
             Command::PickUp => "pick_up".into(),
             Command::ShowFileTree => "show_file_tree".into(),
-            Command::ShowEditor => "show_editor".into(),
             Command::ToggleIgnored => "toggle_ignored".into(),
             Command::SaveFile => "save_file".into(),
             Command::FindInFile => "find_in_file".into(),
@@ -579,7 +575,6 @@ impl Command {
             Command::ShowFileTree => "ctrl-cmd-3",
             Command::ShowGitPanel => "ctrl-cmd-4",
             Command::ShowDocs => "ctrl-cmd-5",
-            Command::ShowEditor => "ctrl-cmd-6",
             Command::ShowDiff => "ctrl-cmd-7",
             Command::ToggleDocSource => "cmd-shift-e",
             Command::SendComments => "cmd-shift-s",
@@ -677,13 +672,12 @@ impl Command {
             Command::PickDown => "shift-down".into(),
             Command::PickUp => "shift-up".into(),
             Command::ShowFileTree => "ctrl-shift-3".into(),
-            Command::ShowEditor => "ctrl-shift-6".into(),
             Command::ToggleIgnored => "ctrl-shift-h".into(),
             Command::SaveFile => "ctrl-s".into(),
             Command::FindInFile => "ctrl-f".into(),
             Command::ReplaceInFile => "ctrl-h".into(),
             Command::CloseFileTab => "ctrl-w".into(),
-            // Shares Ctrl+Shift+V with the terminal's Paste: no terminal has focus in the Editor.
+            // Shares Ctrl+Shift+V with the terminal's Paste: no terminal has focus in a file pane.
             Command::ToggleFilePreview => "ctrl-shift-v".into(),
             Command::ToggleFileSplit => "ctrl-alt-v".into(),
             Command::ShowGitPanel => "ctrl-shift-4".into(),
@@ -793,7 +787,7 @@ impl Command {
     }
 
     /// Whether `self` and `other` can both be live at once, so they must not share keys. Only
-    /// a terminal and the Editor view are known apart: no terminal has focus in the Editor.
+    /// a terminal and a file pane are known apart: no terminal has focus in a file pane.
     fn shares_context(self, other: Command) -> bool {
         !matches!(
             (self.context(), other.context()),
@@ -1534,7 +1528,6 @@ mod tests {
         assert_eq!(bound("ctrl-alt-m"), Some(Command::AddComment));
         assert_eq!(bound("ctrl-shift-s"), Some(Command::SendComments));
         assert_eq!(bound("ctrl-shift-3"), Some(Command::ShowFileTree));
-        assert_eq!(bound("ctrl-shift-6"), Some(Command::ShowEditor));
         assert_eq!(bound("ctrl-shift-h"), Some(Command::ToggleIgnored));
         // Editor only: plain Ctrl+S saves the opened file (the terminal never has focus there).
         assert_eq!(bound("ctrl-s"), Some(Command::SaveFile));

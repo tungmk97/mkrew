@@ -1,5 +1,5 @@
-//! Drag to reorder, one look for the sidebar's workspace cards and rows, the tab area and the
-//! Files tabs: a small chip follows the pointer, the dragged item stays dim in its place and an
+//! Drag to reorder, one look for the sidebar's workspace cards and rows and the tab area: a
+//! small chip follows the pointer, the dragged item stays dim in its place and an
 //! accent line marks the gap it lands in (the half of the item under the pointer picks the
 //! side).
 
@@ -14,8 +14,6 @@ pub(crate) enum ReorderList {
     Tabs(Ulid, bool),
     /// The pinned (`true`) or unpinned workspace cards of the full sidebar.
     Workspaces(bool),
-    /// A workspace's pinned (`true`) or unpinned Files tabs.
-    FileTabs(Ulid, bool),
     /// The tab area of a detached window.
     Detached(WindowKey),
 }
@@ -176,9 +174,6 @@ impl Shell {
             ReorderList::Tabs(project_id, pinned) => {
                 self.drop_tab(project_id, pinned, item.index, to, window, cx);
             }
-            ReorderList::FileTabs(project_id, pinned) => {
-                self.files_view(project_id).move_tab(pinned, item.index, to);
-            }
             ReorderList::Detached(key) => {
                 self.detached.move_within(key, item.index, to);
                 self.windows_dirty = true;
@@ -228,8 +223,8 @@ impl Shell {
         );
     }
 
-    /// Ctrl+Shift+PgUp / PgDn (`by` -1 / 1): the active tab (the active file tab in the Editor
-    /// view) one place along its pin group, through the same functions a drag drop calls.
+    /// Ctrl+Shift+PgUp / PgDn (`by` -1 / 1): the active tab one place along its pin group,
+    /// through the same functions a drag drop calls.
     pub(crate) fn move_active_tab(
         &mut self,
         by: isize,
@@ -239,21 +234,6 @@ impl Shell {
         let Some(project_id) = self.workspace else {
             return;
         };
-        if self.view() == View::Editor {
-            let view = self.files_view(project_id);
-            let Some((pinned, from, len)) = view.active_place() else {
-                return;
-            };
-            let Some(to) = sidebar::step_index(len, from, by) else {
-                return;
-            };
-            view.move_tab(pinned, from, to);
-            if let Some(at) = view.active_index() {
-                self.file_tabs_scroll.scroll_to_item(at);
-            }
-            cx.notify();
-            return;
-        }
         // Past the tabs the strip does not show (those in a detached window).
         let detached = &self.detached;
         let params = (self.tabs.get_mut(&project_id)).and_then(|tabs| {

@@ -1,25 +1,14 @@
 //! Files view-model (SPEC §12A): a lazily listed tree of the workspace (`fs.list` per folder,
-//! with git markers and an optional "show ignored"), the tree cursor moved by arrow keys, and
-//! the opened files as tabs ([`Doc`], ADR 0080: `fs.read`, highlighted off the UI thread
-//! into a [`Code`], in an [`Editor`], saved with `fs.write`). `git.changed` re-lists the open
-//! folders and re-reads the active tab; the others are read when activated.
+//! with git markers and an optional "show ignored") and the tree cursor moved by arrow keys.
+//! The open files are [`crate::documents`]'s. `git.changed` re-lists the open folders.
 //! Pure and tested headlessly; `main.rs` does the requests and renders it.
 
 use std::collections::{HashMap, HashSet};
-use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::Keystroke;
-use mkrew_protocol::{Event, FsContent, FsEntry, FsWritten};
+use mkrew_protocol::{Event, FsEntry};
 use ulid::Ulid;
-
-use crate::docs;
-pub use crate::documents::MdMode;
-use crate::documents::{Content, Doc, SaveRequest, Shown, Stamp, unshown_save};
-use crate::editor::{Editor, Pos};
-use crate::highlight::Code;
-use crate::text_box::Input;
-use crate::text_find::{self, TextFind};
 
 /// One folder's children.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,11 +40,10 @@ pub enum Key {
     Enter,
 }
 
-/// What a change asks of the shell: folders to `fs.list`, a file to `fs.read`.
+/// What a change asks of the shell: folders to `fs.list`.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Requests {
     pub list: Vec<String>,
-    pub read: Option<String>,
 }
 
 /// The source's share of the Markdown Split view that `[ui] md_split` (percent) stands for,
@@ -80,27 +68,6 @@ fn split_share(share: f32) -> f32 {
     )
 }
 
-/// How a file opens (SPEC §12A, ADR 0080).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Open {
-    /// A single click, Enter, quick open, a link: the transient (italic) tab, replaced by the
-    /// next one while it is clean.
-    Transient,
-    /// A double click or a new file: a permanent tab.
-    Kept,
-}
-
-/// Which tabs a close asks for (tab menu; pinned tabs stay, except for `One` and `Every`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Close {
-    One,
-    Others,
-    Right,
-    All,
-    /// Every tab, pinned or not (the Editor chip's ✕).
-    Every,
-}
-
 /// One workspace's Files view.
 #[derive(Debug)]
 pub struct FilesView {
@@ -116,15 +83,6 @@ pub struct FilesView {
     rows: Rc<[Row]>,
     /// The tree cursor (a file or folder path).
     pub cursor: Option<String>,
-    /// The opened files, pinned ones first; at most one per path.
-    tabs: Vec<Doc>,
-    /// The tab shown; `None` exactly when `tabs` is empty.
-    active: Option<usize>,
-    /// Why the last "Open in Zed" failed.
-    pub zed_error: Option<String>,
-    /// The find bar (SPEC §12A), `None` = closed. Shared by the tabs; searched again on the
-    /// active tab's text whenever it changes.
-    pub find: Option<TextFind>,
     /// Folders with an `fs.list` in flight, and those asked again meanwhile.
     listing: HashSet<String>,
     list_again: HashSet<String>,
@@ -132,8 +90,6 @@ pub struct FilesView {
     generation: u64,
     /// The generation each in-flight `fs.list` was sent in.
     sent_in: HashMap<String, u64>,
-    /// The mode a newly opened Markdown tab starts in (`[ui] md_mode`, the last one switched to).
-    pub md_mode: MdMode,
 }
 
 impl FilesView {
@@ -146,15 +102,10 @@ impl FilesView {
             expanded: HashSet::new(),
             rows: Rc::new([]),
             cursor: None,
-            tabs: Vec::new(),
-            active: None,
-            zed_error: None,
-            find: None,
             listing: HashSet::new(),
             list_again: HashSet::new(),
             generation: 0,
             sent_in: HashMap::new(),
-            md_mode: MdMode::default(),
         }
     }
 
@@ -275,19 +226,19 @@ impl FilesView {
         })
     }
 
-    /// A click on a row: the cursor moves there; a folder opens or closes, a file opens.
-    pub fn click(&mut self, path: &str, how: Open) -> Requests {
+    /// A click on a row: the cursor moves there; a folder opens or closes. Opening a file is
+    /// the shell's (`Shell::open_document`).
+    pub fn click(&mut self, path: &str) -> Requests {
         self.cursor = Some(path.to_owned());
-        let Some(entry) = self.entry(path) else {
-            return Requests::default();
-        };
-        if entry.is_dir {
-            return self.toggle(&entry.path);
+        match self.entry(path) {
+            Some(entry) if entry.is_dir => self.toggle(&entry.path),
+            _ => Requests::default(),
         }
-        Requests {
-            list: vec![],
-            read: self.open(&entry.path, how),
-        }
+    }
+
+    /// The row `path` is a listed file (a click on it opens it).
+    pub fn is_file(&self, path: &str) -> bool {
+        self.entry(path).is_some_and(|entry| !entry.is_dir)
     }
 
     /// Opens or closes folder `dir`; opening lists it unless already listed.
@@ -307,262 +258,12 @@ impl FilesView {
             Some(Listing::Loaded(_) | Listing::Loading) => vec![],
             Some(Listing::Failed(_)) | None => vec![dir.to_owned()],
         };
-        Requests { list, read: None }
+        Requests { list }
     }
 
-    pub fn tabs(&self) -> &[Doc] {
-        &self.tabs
-    }
-
-    pub fn active_index(&self) -> Option<usize> {
-        self.active
-    }
-
-    /// The active tab.
-    pub fn tab(&self) -> Option<&Doc> {
-        self.tabs.get(self.active?)
-    }
-
-    pub fn tab_mut(&mut self) -> Option<&mut Doc> {
-        self.tabs.get_mut(self.active?)
-    }
-
-    pub fn tab_for(&self, path: &str) -> Option<&Doc> {
-        self.tabs.iter().find(|tab| tab.path == path)
-    }
-
-    pub fn tab_for_mut(&mut self, path: &str) -> Option<&mut Doc> {
-        self.tabs.iter_mut().find(|tab| tab.path == path)
-    }
-
-    /// The active tab's path.
-    pub fn file(&self) -> Option<&str> {
-        self.tab().map(|tab| tab.path.as_str())
-    }
-
-    pub fn shown(&self) -> Option<&Shown> {
-        self.tab()?.shown()
-    }
-
-    /// The active tab's editor, when its file is editable.
-    pub fn editor_mut(&mut self) -> Option<&mut Editor> {
-        self.tab_mut()?.editor_mut()
-    }
-
-    /// Every tab with unsaved changes, in strip order.
-    pub fn unsaved_paths(&self) -> Vec<String> {
-        (self.tabs.iter())
-            .filter(|tab| tab.is_dirty())
-            .map(|tab| tab.path.clone())
-            .collect()
-    }
-
-    /// The view as it carries over a lost connection (spec §8): the tabs with unsaved text, kept
-    /// with their hash so Save still works, and nothing in flight; the tree and every clean
-    /// tab are read again. `None` when no tab is unsaved.
-    pub fn into_unsaved(mut self) -> Option<FilesView> {
-        let shown = self.file().map(str::to_owned);
-        self.tabs.retain(Doc::is_dirty);
-        if self.tabs.is_empty() {
-            return None;
-        }
-        for tab in &mut self.tabs {
-            tab.reset_flight();
-        }
-        self.active = shown
-            .and_then(|path| self.tabs.iter().position(|tab| tab.path == path))
-            .or(Some(0));
-        self.dirs.clear();
-        self.listing.clear();
-        self.list_again.clear();
-        self.sent_in.clear();
-        self.generation += 1;
-        self.relayout();
-        Some(self)
-    }
-
-    /// The first of `paths` whose tab is still unsaved (asked again after a save that text
-    /// typed meanwhile made unsaved again).
-    pub fn first_unsaved(&self, paths: &[String]) -> Option<String> {
-        (paths.iter())
-            .find(|path| self.tab_for(path).is_some_and(Doc::is_dirty))
-            .cloned()
-    }
-
-    /// "Don't save" / "Reload": drops `path`'s unsaved changes; returns the file to read
-    /// again, so the tab shows what is on disk.
-    pub fn drop_changes(&mut self, path: &str) -> Option<String> {
-        let tab = self.tab_for_mut(path)?;
-        tab.discard();
-        Some(tab.path.clone())
-    }
-
-    /// The active tab becomes permanent (an edit).
-    pub fn keep(&mut self) {
-        if let Some(tab) = self.tab_mut() {
-            tab.transient = false;
-        }
-    }
-
-    fn position(&self, path: &str) -> Option<usize> {
-        self.tabs.iter().position(|tab| tab.path == path)
-    }
-
-    fn pinned_count(&self) -> usize {
-        self.tabs.iter().filter(|tab| tab.pinned).count()
-    }
-
-    /// Shows `path`: its tab when open (`Kept` makes it permanent), else a new tab that takes
-    /// the clean transient tab's place, or goes right of the active tab (after the pinned
-    /// ones). Returns the file to read.
-    pub fn open(&mut self, path: &str, how: Open) -> Option<String> {
-        if let Some(at) = self.position(path) {
-            if how == Open::Kept {
-                self.tabs[at].transient = false;
-            }
-            return self.activate(at);
-        }
-        let mut tab = Doc::new(path, self.md_mode);
-        tab.transient = how == Open::Transient;
-        // Only a transient open takes the transient tab's place.
-        let replace = (how == Open::Transient)
-            .then(|| (self.tabs.iter()).position(|tab| tab.transient && !tab.is_dirty()))
-            .flatten();
-        let at = match replace {
-            Some(at) => {
-                self.tabs[at] = tab;
-                at
-            }
-            None => {
-                let at = (self.active.map_or(self.tabs.len(), |active| active + 1))
-                    .max(self.pinned_count());
-                self.tabs.insert(at, tab);
-                at
-            }
-        };
-        self.active = Some(at);
-        Some(path.to_owned())
-    }
-
-    /// Shows tab `at`; returns its file when it must be read (stale or failed).
-    pub fn activate(&mut self, at: usize) -> Option<String> {
-        if at >= self.tabs.len() {
-            return None;
-        }
-        self.active = Some(at);
-        self.search();
-        let tab = &mut self.tabs[at];
-        tab.take_read().then(|| tab.path.clone())
-    }
-
-    /// Ctrl+Tab / Ctrl+Shift+Tab: the next or previous tab, wrapping around.
-    pub fn cycle(&mut self, forward: bool) -> Option<String> {
-        let (at, len) = (self.active?, self.tabs.len());
-        self.activate(if forward {
-            (at + 1) % len
-        } else {
-            (at + len - 1) % len
-        })
-    }
-
-    /// Ctrl+Alt+`n` (1–9): tab `n`, 9 = the last one.
-    pub fn select_nth(&mut self, n: u8) -> Option<String> {
-        let at = if n == 9 {
-            self.tabs.len().checked_sub(1)?
-        } else {
-            usize::from(n).checked_sub(1)?
-        };
-        self.activate(at)
-    }
-
-    /// The tabs a close of `path`'s tab asks for (pinned tabs stay, except for `One` and `Every`).
-    pub fn close_targets(&self, path: &str, which: Close) -> Vec<String> {
-        let Some(at) = self.position(path) else {
-            return Vec::new();
-        };
-        (self.tabs.iter().enumerate())
-            .filter(|(i, tab)| match which {
-                Close::One => *i == at,
-                Close::Others => *i != at && !tab.pinned,
-                Close::Right => *i > at && !tab.pinned,
-                Close::All => !tab.pinned,
-                Close::Every => true,
-            })
-            .map(|(_, tab)| tab.path.clone())
-            .collect()
-    }
-
-    /// Closes the tabs of `paths` (unsaved text was asked about first). A closed active tab
-    /// passes to its right neighbour, else its left one. Returns the file to read.
-    pub fn close(&mut self, paths: &[String]) -> Option<String> {
-        let active = self.active;
-        let mut next = None;
-        let mut kept = Vec::with_capacity(self.tabs.len());
-        for (i, tab) in std::mem::take(&mut self.tabs).into_iter().enumerate() {
-            if paths.contains(&tab.path) {
-                continue;
-            }
-            // The active tab itself, else the first one right of it.
-            if active.is_some_and(|active| i >= active) && next.is_none() {
-                next = Some(kept.len());
-            }
-            kept.push(tab);
-        }
-        self.tabs = kept;
-        // None right of it: the last one (its left neighbour), or none at all.
-        self.active = next.or(self.tabs.len().checked_sub(1));
-        let at = self.active?;
-        self.activate(at)
-    }
-
-    /// Pins or unpins `path`'s tab: it goes to the end of the pinned tabs, or the start of
-    /// the unpinned ones. A pinned tab is permanent.
-    pub fn pin(&mut self, path: &str, pinned: bool) {
-        let Some(at) = self.position(path) else {
-            return;
-        };
-        let active = self.file().map(str::to_owned);
-        let mut tab = self.tabs.remove(at);
-        tab.pinned = pinned;
-        tab.transient &= !pinned;
-        let to = self.pinned_count();
-        self.tabs.insert(to, tab);
-        self.active = active.and_then(|path| self.position(&path));
-    }
-
-    /// A reorder drop: the `from`-th of the pinned or unpinned tabs goes to place `to` among
-    /// them (`to` counted without it, as `sidebar::drop_index` gives it).
-    pub fn move_tab(&mut self, pinned: bool, from: usize, to: usize) {
-        let pinned_count = self.pinned_count();
-        let (start, end) = if pinned {
-            (0, pinned_count)
-        } else {
-            (pinned_count, self.tabs.len())
-        };
-        if start + from >= end || start + to >= end {
-            return;
-        }
-        let active = self.file().map(str::to_owned);
-        let tab = self.tabs.remove(start + from);
-        self.tabs.insert(start + to, tab);
-        self.active = active.and_then(|path| self.position(&path));
-    }
-
-    /// The active tab's pin group and place in it (see `Tabs::active_place`).
-    pub fn active_place(&self) -> Option<(bool, usize, usize)> {
-        let active = self.tab()?;
-        let group: Vec<&str> = (self.tabs.iter())
-            .filter(|tab| tab.pinned == active.pinned)
-            .map(|tab| tab.path.as_str())
-            .collect();
-        let at = group.iter().position(|path| *path == active.path)?;
-        Some((active.pinned, at, group.len()))
-    }
-
-    /// Opens file `path` from outside the tree (quick open, a terminal link): its folders open
-    /// (listed as needed), the cursor moves to it and its tab shows; with `line`, the caret
-    /// goes there once the file is shown ([`Doc::apply_pending_line`]).
-    pub fn reveal(&mut self, path: &str, line: Option<u32>, how: Open) -> Requests {
+    /// Shows `path` in the tree (quick open, a terminal link): its folders open (listed as
+    /// needed) and the cursor moves to it.
+    pub fn reveal(&mut self, path: &str) -> Requests {
         let mut list = Vec::new();
         let mut dir = String::new();
         let mut parts: Vec<&str> = path.split('/').collect();
@@ -575,11 +276,7 @@ impl FilesView {
             list.extend(self.expand(&dir).list);
         }
         self.cursor = Some(path.to_owned());
-        let read = self.open(path, how);
-        if let Some(tab) = self.tab_mut() {
-            tab.set_line(line.map(|line| (line, 1)));
-        }
-        Requests { list, read }
+        Requests { list }
     }
 
     /// Opens folder `dir` and its parent folders (listed as needed) and moves the cursor to it
@@ -590,153 +287,7 @@ impl FilesView {
             list.extend(self.expand(&dir[..end]).list);
         }
         self.cursor = Some(dir.to_owned());
-        Requests { list, read: None }
-    }
-
-    /// An `fs.read` of `path` is about to be sent; `false` = its tab is gone, or one is in
-    /// flight already (sent again once that one answers).
-    pub fn begin_read(&mut self, path: &str) -> bool {
-        self.tab_for_mut(path).is_some_and(Doc::begin_read)
-    }
-
-    /// The `fs.read` answer (with its highlight) for `path`, shown in its tab (dropped when
-    /// the tab is gone). Returns the file to read again (asked for meanwhile).
-    pub fn read(&mut self, path: &str, read: Result<(FsContent, Code), String>) -> Option<String> {
-        let again = self.tab_for_mut(path)?.read(read);
-        if self.file() == Some(path) {
-            self.search();
-        }
-        again.then(|| path.to_owned())
-    }
-
-    /// Save `path`'s tab (Ctrl+S, "Save" in the unsaved-changes question). `None` when
-    /// nothing is unsaved, the file cannot be saved, or a save is already in flight.
-    pub fn begin_save(&mut self, path: &str) -> Option<SaveRequest> {
-        self.tab_for_mut(path)?.begin_save()
-    }
-
-    /// The `fs.write` answer for `path`, which saved the state `point`. `Some(why)` when the
-    /// answer has nowhere to show because its tab was closed meanwhile: the shell toasts it.
-    pub fn saved(
-        &mut self,
-        path: &str,
-        point: Option<u64>,
-        written: Result<FsWritten, String>,
-    ) -> Option<String> {
-        match self.tab_for_mut(path) {
-            Some(tab) => tab.saved(point, written),
-            None => unshown_save(written),
-        }
-    }
-
-    /// The page built for `stamp`, for the tab whose text it was built from. Returns `true`
-    /// when an open block edit was closed by the new page.
-    pub fn preview_ready(&mut self, stamp: Stamp, shown: docs::Shown) -> bool {
-        (self.tabs.iter_mut())
-            .find(|tab| tab.text_id() == stamp.0)
-            .is_some_and(|tab| tab.preview_ready(stamp, shown))
-    }
-
-    /// Runs the find bar's query over the active tab's text again.
-    pub fn search(&mut self) {
-        let shown = (self.active)
-            .and_then(|at| self.tabs.get(at))
-            .and_then(Doc::shown);
-        if let (Some(find), Some(shown)) = (&mut self.find, shown) {
-            find.search(shown.editor.lines());
-        }
-    }
-
-    /// Ctrl+F / Ctrl+H: opens the find bar, with the replace row when `replace`. A selection
-    /// on one line becomes the query, and the current match is the first one at the selection
-    /// or caret. Returns `false` when no file is open.
-    pub fn open_find(&mut self, replace: bool) -> bool {
-        let Some(tab) = self.active.and_then(|at| self.tabs.get_mut(at)) else {
-            return false;
-        };
-        if !matches!(tab.content, Content::Shown(_)) {
-            return false;
-        }
-        // Matches and the replace row act on the editor's text: the preview alone hides it.
-        if tab.mode == MdMode::Preview {
-            tab.mode = MdMode::Source;
-        }
-        tab.block_edit = None;
-        tab.preview_selection = None;
-        let Content::Shown(shown) = &tab.content else {
-            return false;
-        };
-        let editor = &shown.editor;
-        let seed = (editor.selected_text()).filter(|text| !text.contains('\n'));
-        let from = editor
-            .selection()
-            .map_or(editor.cursor(), |selection| selection.start);
-        let find = self.find.get_or_insert_with(TextFind::default);
-        if let Some(seed) = seed {
-            find.query = seed.into();
-        }
-        if replace {
-            find.replace.get_or_insert_with(Input::default);
-        }
-        find.search_from(editor.lines(), (from.line, from.col));
-        true
-    }
-
-    /// The find bar and the editor of the active tab's editable file (not binary or too large).
-    fn find_and_editor(&mut self) -> Option<(&mut TextFind, &mut Editor)> {
-        let tab = self.active.and_then(|at| self.tabs.get_mut(at))?;
-        match (&mut self.find, &mut tab.content) {
-            (Some(find), Content::Shown(shown)) if !shown.code.binary && !shown.code.too_large => {
-                Some((find, &mut shown.editor))
-            }
-            _ => None,
-        }
-    }
-
-    /// Replace (Enter in the replace field): the current match becomes the replacement and the
-    /// next match after it is current. One undo step; not saved (like VS Code).
-    pub fn replace_one(&mut self) -> bool {
-        let Some((find, editor)) = self.find_and_editor() else {
-            return false;
-        };
-        let (Some(with), Some(found)) = (find.replace.as_deref(), find.current().cloned()) else {
-            return false;
-        };
-        let line = found.line;
-        editor.replace(
-            Pos::new(line, found.range.start)..Pos::new(line, found.range.end),
-            with,
-        );
-        // Continue after the replacement, so a replacement that holds the query is not
-        // replaced again.
-        let after = found.range.start + with.len();
-        find.search_from(editor.lines(), (line, after));
-        true
-    }
-
-    /// Replace all (Ctrl+Alt+Enter, "Replace all"): every match at once, as one undo step;
-    /// not saved. Returns how many matches were replaced.
-    pub fn replace_all(&mut self) -> usize {
-        let Some((find, editor)) = self.find_and_editor() else {
-            return 0;
-        };
-        let Some(with) = find.replace.as_deref() else {
-            return 0;
-        };
-        let edits: Vec<(Range<Pos>, String)> = (editor.lines().iter().enumerate())
-            .flat_map(|(line, text)| {
-                text_find::find_in_line(text, &find.query)
-                    .into_iter()
-                    .map(move |range| {
-                        let at = Pos::new(line, range.start)..Pos::new(line, range.end);
-                        (at, with.to_owned())
-                    })
-            })
-            .collect();
-        let count = edits.len();
-        editor.replace_all(edits);
-        find.search(editor.lines());
-        count
+        Requests { list }
     }
 
     /// The row Enter opens: the cursor's, while that row is still listed (an agent may have
@@ -791,7 +342,7 @@ impl FilesView {
                 }
             }
             Key::Right => {}
-            Key::Enter => return self.click(&entry.path, Open::Transient),
+            Key::Enter => {}
         }
         Requests::default()
     }
@@ -805,13 +356,11 @@ impl FilesView {
         self.relayout();
         Requests {
             list: vec![String::new()],
-            read: None,
         }
     }
 
     /// Follows `git.changed` of this workspace (sent for every file-watcher batch): the root
-    /// and open folders are listed again (closed ones when next opened) and the active tab is
-    /// read again.
+    /// and open folders are listed again (closed ones when next opened).
     pub fn apply(&mut self, event: &Event) -> Requests {
         let Event::GitChanged(changed) = event else {
             return Requests::default();
@@ -827,24 +376,15 @@ impl FilesView {
     }
 
     /// Everything on screen again: the root and open folders are listed (closed ones when next
-    /// opened) and the active tab is read; the other tabs are read when activated. Also used
-    /// when the view is shown again, since hidden views do not follow `git.changed`.
+    /// opened). Also used when the view is shown again, since hidden views do not follow
+    /// `git.changed`.
     pub fn refresh(&mut self) -> Requests {
         self.generation += 1;
         let open = self.open_dirs();
         self.dirs
             .retain(|dir, listing| open.contains(dir) || matches!(listing, Listing::Loading));
         self.relayout();
-        let active = self.active;
-        for (at, tab) in self.tabs.iter_mut().enumerate() {
-            if Some(at) != active {
-                tab.mark_stale();
-            }
-        }
-        Requests {
-            list: open,
-            read: self.file().map(str::to_owned),
-        }
+        Requests { list: open }
     }
 
     /// The root and every open folder on screen (not those inside a closed or deleted

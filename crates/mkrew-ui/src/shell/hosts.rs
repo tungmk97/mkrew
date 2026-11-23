@@ -60,7 +60,11 @@ impl Shell {
         let name = &(self.sidebar.projects().iter())
             .find(|p| p.id == project)?
             .name;
-        let label = session_label(tab, self.sidebar.sessions()).unwrap_or(&tab.title);
+        let file = file_label(tab, self.documents.get(&project)).map(|label| label.name);
+        let label = file
+            .as_deref()
+            .or_else(|| session_label(tab, self.sidebar.sessions()))
+            .unwrap_or(&tab.title);
         Some(format!("{label} - {name}"))
     }
 
@@ -125,21 +129,48 @@ impl Shell {
         self.focused_key(window)?.session()
     }
 
-    /// Focuses `session`'s pane in its tab; a tab in a detached window does not become the
+    /// The workspace and file of the focused pane of `window`, when it is a file pane.
+    pub(crate) fn focused_doc(&self, window: &Window) -> Option<(Ulid, String)> {
+        let (project, tab_id) = self.tab_scope(window)?;
+        match self.tabs.get(&project)?.tab(tab_id)?.focused()? {
+            PaneKey::File(path) => Some((project, path.clone())),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn focused_file(&self, window: &Window) -> Option<String> {
+        self.focused_doc(window).map(|(_, path)| path)
+    }
+
+    /// The file the right panel and prompt variables mean: the shown workspace's active tab's
+    /// focused pane, when it is a file (also while a detached window has the keyboard).
+    pub(crate) fn panel_file(&self, project_id: Ulid) -> Option<String> {
+        match self.tabs.get(&project_id)?.active()?.focused()? {
+            PaneKey::File(path) => Some(path.clone()),
+            _ => None,
+        }
+    }
+
+    /// Focuses the pane of `key` in its tab; a tab in a detached window does not become the
     /// main window's active tab (spec §4.4).
-    pub(crate) fn focus_session_pane(&mut self, session: Ulid) {
-        let Some((project, tab_id)) = self.tab_of_session(session) else {
+    pub(crate) fn focus_pane_key(&mut self, key: &PaneKey) {
+        let Some((project, tab_id)) =
+            (self.tabs.iter()).find_map(|(project, tabs)| Some((*project, tabs.tab_with(key)?.id)))
+        else {
             return;
         };
         let detached = self.terminal_host(project, tab_id) != HostId::Main;
-        let key = PaneKey::Session(session);
         if let Some(tabs) = self.tabs.get_mut(&project) {
             if detached {
-                tabs.focus_pane(tab_id, &key);
+                tabs.focus_pane(tab_id, key);
             } else {
-                tabs.focus(&key);
+                tabs.focus(key);
             }
         }
+    }
+
+    pub(crate) fn focus_session_pane(&mut self, session: Ulid) {
+        self.focus_pane_key(&PaneKey::Session(session));
     }
 
     /// The main window's active tab never names a detached tab (spec §4.1).

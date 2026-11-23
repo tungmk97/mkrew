@@ -573,7 +573,8 @@ impl Shell {
                 self.files_requests(project_id, requests, window, cx);
             }
         } else {
-            self.reveal_file(project_id, target, path, None, Open::Kept, window, cx);
+            self.reveal_file(project_id, target, path.clone(), window, cx);
+            self.open_document(project_id, path, None, documents::Place::NewTab, window, cx);
         }
     }
 

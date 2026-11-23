@@ -167,10 +167,10 @@ impl Shell {
         .detach();
     }
 
-    /// "Send selection" (Ctrl+Shift+L, §20B.4): the picked lines of Files (a Markdown preview's
-    /// selection included), Docs or the Git diff, or the focused terminal's selected text, go
-    /// to a session picked in the send dialog (the task's session for Git task changes, else
-    /// the most recently active agent).
+    /// "Send selection" (Ctrl+Shift+L, §20B.4): the picked lines of a file pane (a Markdown
+    /// preview's selection included), Docs or the Git diff, or the focused terminal's selected
+    /// text, go to a session picked in the send dialog (the task's session for Git task
+    /// changes, else the most recently active agent).
     pub(crate) fn open_selection_dialog(
         &mut self,
         window: &mut Window,
@@ -180,8 +180,19 @@ impl Shell {
             return;
         };
         let sessions = self.sidebar.sessions();
+        let file = self.focused_file(window);
         let (file_path, prefill, task) = match self.view() {
-            view @ (View::Editor | View::Diff | View::Docs) => {
+            View::Terminals if file.is_some() => {
+                let picked = (file.as_deref())
+                    .and_then(|path| self.picked_file_lines(project_id, path))
+                    .filter(|(_, _, _, text)| !text.trim().is_empty());
+                let Some((path, start, end, text)) = picked else {
+                    return;
+                };
+                let prefill = composer::selection_prefill(Some((&path, start, end)), &text);
+                (format!("{path}:{start}-{end}"), prefill, None)
+            }
+            view @ (View::Diff | View::Docs) => {
                 let picked = self
                     .picked_lines(project_id, view)
                     .filter(|(_, _, _, text)| !text.trim().is_empty());

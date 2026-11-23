@@ -122,7 +122,6 @@ impl Shell {
         self.share_menu = None;
         self.workspace_menu = None;
         self.file_menu = None;
-        self.file_tab_menu = None;
         self.run_menu = None;
         self.workspace_switcher = false;
         self.new_menu = false;
@@ -138,7 +137,7 @@ impl Shell {
 
     /// The views the right panel is drawn next to.
     pub(crate) fn panel_view(&self) -> bool {
-        matches!(self.view(), View::Terminals | View::Editor | View::Diff)
+        matches!(self.view(), View::Terminals | View::Diff)
     }
 
     /// The right panel is drawn.
@@ -160,10 +159,10 @@ impl Shell {
         self.panel_shown() && self.panel_tab() == PanelTab::Files
     }
 
-    /// Some of the active workspace's Editor view is drawn (the editor or the tree), so it
-    /// follows `git.changed` and refreshes when it comes back.
+    /// Some of the active workspace's files are drawn (a file pane or the tree), so they
+    /// follow `git.changed` and refresh when they come back.
     pub(crate) fn files_on_screen(&self) -> bool {
-        self.view() == View::Editor || self.file_tree_shown()
+        self.file_tree_shown() || !self.visible_files().is_empty()
     }
 
     /// The right panel shows the Git list (header, changes or History, commit box).
@@ -177,8 +176,8 @@ impl Shell {
         self.view() == View::Diff || self.git_panel_shown()
     }
 
-    /// The pane the Session tab describes: the active tab's focused pane, also while the
-    /// Editor is shown (unlike `focused_session`, which is where keys go).
+    /// The pane the Session tab describes: the active tab's focused pane, also while a file
+    /// or the diff has the focus (unlike `focused_session`, which is where keys go).
     pub(crate) fn panel_session(&self) -> Option<Ulid> {
         let tabs = self.tabs.get(&self.workspace?)?;
         tabs.active()?.focused_session()
@@ -210,12 +209,75 @@ impl Shell {
         hosted
     }
 
+    /// Every file pane drawn now, with its leaf's Markdown mode: the main window's active
+    /// tab (while it shows Terminals) and the visible detached tabs.
+    pub(crate) fn visible_files(&self) -> Vec<(Ulid, String, Option<MdMode>)> {
+        let mut shown = Vec::new();
+        let mut add = |project: Ulid, tab: &Tab| {
+            let Some(layout) = tab.layout() else {
+                return;
+            };
+            for key in tab.shown() {
+                if let PaneKey::File(path) = &key {
+                    let md = match layout.leaf_of(&key) {
+                        Some(Leaf::File { md, .. }) => *md,
+                        _ => None,
+                    };
+                    shown.push((project, path.clone(), md));
+                }
+            }
+        };
+        if self.main_visible
+            && self.view() == View::Terminals
+            && let Some(project) = self.workspace
+            && let Some(tab) = self.tabs.get(&project).and_then(Tabs::active)
+        {
+            add(project, tab);
+        }
+        for dock in self.detached.visible_tabs() {
+            let DockTab::Terminal { project, tab_id } = dock;
+            if let Some(tab) = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id)) {
+                add(project, tab);
+            }
+        }
+        shown
+    }
+
+    /// The docs follow the layouts: one whose leaf left every layout goes unless it has unsaved
+    /// text; a file pane about to be drawn has its doc and view state, and its file is read the
+    /// first time (the `Doc` is `stale` until then). A pane no longer waits for a tab strip to
+    /// ask for its read.
+    pub(crate) fn sync_documents(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        for (project, tabs) in &self.tabs {
+            // Tabs still loading list no leaves yet: nothing may be dropped.
+            if self.loading_tabs.contains(project) {
+                continue;
+            }
+            if let Some(docs) = self.documents.get_mut(project) {
+                docs.retain_open(&documents::open_paths(tabs));
+            }
+        }
+        let documents = &self.documents;
+        self.doc_views.retain(|(project, path), _| {
+            documents
+                .get(project)
+                .is_some_and(|docs| docs.get(path).is_some())
+        });
+        for (project, path, md) in self.visible_files() {
+            self.ensure_doc(project, &path, md, cx);
+            if (self.doc_mut(project, &path)).is_some_and(documents::Doc::take_read) {
+                self.read_file(project, path, window, cx);
+            }
+        }
+    }
+
     /// Attaches the sessions on screen in any window (live ones, or already attached; none
     /// for a hidden window or while the main window shows another view) and detaches all others
     /// (SPEC §10), then focuses the focused pane of `window`.
     pub(crate) fn sync_panes(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.keep_main_active_visible();
         self.prune_detached(cx);
+        self.sync_documents(window, cx);
         let hosted = self.hosted_sessions(self.main_visible);
         let here = self.host_of(window);
         let visible: Vec<Ulid> = hosted.iter().map(|&(_, session)| session).collect();
@@ -285,6 +347,14 @@ impl Shell {
         // The panes' connection is dead: the keyboard stays with the window until it is back.
         if self.reconnecting() {
             window.focus(&self.focus_handle, cx);
+            return;
+        }
+        // A file pane keeps the keyboard in its editor.
+        if let Some((project_id, path)) = self.focused_doc(window) {
+            match self.doc_view(project_id, &path) {
+                Some(view) => window.focus(&view.editor_focus, cx),
+                None => window.focus(&self.focus_handle, cx),
+            }
             return;
         }
         // A pane in Chat mode keeps its terminal out of the tree: the keys go to its composer.

@@ -1034,7 +1034,7 @@ pub fn double_click_renames(tab: &Tab, sessions: &[Session]) -> Option<Ulid> {
 /// One child of the title bar's tab area, in paint order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AreaItem {
-    /// The Editor or Diff chip.
+    /// The Diff chip.
     View(View),
     /// The 1 px rule between two groups.
     Rule,
@@ -1042,14 +1042,11 @@ pub enum AreaItem {
     Tab(usize),
 }
 
-/// The children of the tab area: the Editor / Diff chips (each only while open), a rule, the
-/// tabs (`pinned[n]` is whether the `n`th drawn tab is pinned; pinned ones lead), and a rule
+/// The children of the tab area: the Diff chip (only while open), a rule, the tabs
+/// (`pinned[n]` is whether the `n`th drawn tab is pinned; pinned ones lead), and a rule
 /// between the pinned tabs and the rest. A rule only sits between two groups.
-pub fn area_items(editor: bool, diff: bool, pinned: &[bool]) -> Vec<AreaItem> {
+pub fn area_items(diff: bool, pinned: &[bool]) -> Vec<AreaItem> {
     let mut items = Vec::new();
-    if editor {
-        items.push(AreaItem::View(View::Editor));
-    }
     if diff {
         items.push(AreaItem::View(View::Diff));
     }

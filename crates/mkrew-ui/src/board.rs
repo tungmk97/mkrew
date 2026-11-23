@@ -29,27 +29,18 @@ pub enum View {
     Terminals,
     /// The Markdown review (SPEC §12).
     Docs,
-    /// The opened files' tabs and editor (SPEC §12A); the tree is in the right panel.
-    Editor,
     /// The open diff (SPEC §12B); the Git list is in the right panel.
     Diff,
 }
 
 impl View {
-    pub const ALL: [View; 5] = [
-        View::Terminals,
-        View::Board,
-        View::Docs,
-        View::Editor,
-        View::Diff,
-    ];
+    pub const ALL: [View; 4] = [View::Terminals, View::Board, View::Docs, View::Diff];
 
     pub fn title(self) -> &'static str {
         match self {
             View::Board => "Board",
             View::Terminals => "Terminals",
             View::Docs => "Docs",
-            View::Editor => "Editor",
             View::Diff => "Diff",
         }
     }
@@ -61,7 +52,6 @@ impl View {
             View::Board => Command::ShowBoard,
             View::Terminals => Command::ShowTerminals,
             View::Docs => Command::ShowDocs,
-            View::Editor => Command::ShowEditor,
             View::Diff => Command::ShowDiff,
         }
     }

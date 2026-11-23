@@ -419,6 +419,20 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.tab_menu = None;
+        // A pinned tab keeps its preview file (a pin is a decision to keep it).
+        if pinned {
+            let files: Vec<(Ulid, String)> = (self.tabs.iter())
+                .filter_map(|(project, tabs)| Some((*project, tabs.tab(tab_id)?.keys())))
+                .flat_map(|(project, keys)| keys.into_iter().map(move |key| (project, key)))
+                .filter_map(|(project, key)| match key {
+                    PaneKey::File(path) => Some((project, path)),
+                    _ => None,
+                })
+                .collect();
+            for (project, path) in files {
+                self.keep_leaf(project, &path, window, cx);
+            }
+        }
         let params = TabPinParams { tab_id, pinned };
         self.send_edit(
             Request::TabPin(params),
@@ -655,6 +669,21 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        // A file with unsaved text in a tab being closed asks first; the question runs this
+        // close again once every one was answered (a Cancel stops it).
+        let asked = (tabs.iter()).find_map(|&(project, _)| {
+            let ids: Vec<Ulid> = (tabs.iter())
+                .filter(|(other, _)| *other == project)
+                .map(|&(_, tab_id)| tab_id)
+                .collect();
+            let dirty = self.dirty_on_close(project, &ids, &[]);
+            (!dirty.is_empty()).then_some((project, dirty))
+        });
+        if let Some((project_id, dirty)) = asked {
+            let again: AfterSave =
+                Box::new(move |shell, window, cx| shell.close_tabs(tabs, window, cx));
+            return self.leave_documents(project_id, dirty, again, window, cx);
+        }
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -755,8 +784,15 @@ impl Shell {
     }
 
     pub(crate) fn close_focused_pane(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if let Some(session) = self.focused_session(window) {
-            self.close_pane(session, window, cx);
+        match self.focused_key(window) {
+            Some(PaneKey::Session(session)) => self.close_pane(session, window, cx),
+            Some(PaneKey::File(path)) => {
+                if let Some((project_id, _)) = self.tab_scope(window) {
+                    self.close_file_pane(project_id, path, window, cx);
+                }
+            }
+            // Task 5 closes the diff here.
+            Some(PaneKey::Diff) | None => {}
         }
     }
 
@@ -802,20 +838,19 @@ impl Shell {
         }
     }
 
-    /// Takes the pane of `session` out of its tab's layout (the session itself is untouched).
-    /// A tab of the shown workspace left without panes closes too.
-    pub(crate) fn remove_pane(
+    /// Takes the pane of `key` out of its tab's layout (a session itself is untouched). A tab
+    /// of the shown workspace left without panes closes too. No question: a caller that closes
+    /// (rather than moves) a file asks first (`close_file_pane`, `close_tabs`).
+    pub(crate) fn remove_leaf(
         &mut self,
-        session: Ulid,
+        key: PaneKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let closed = self.tabs.values_mut().find_map(|tabs| {
-            Some((
-                tabs.project_id(),
-                tabs.close_leaf(&PaneKey::Session(session))?,
-            ))
-        });
+        let closed = self
+            .tabs
+            .values_mut()
+            .find_map(|tabs| Some((tabs.project_id(), tabs.close_leaf(&key)?)));
         if let Some((project_id, write)) = closed {
             let emptied = write.layout.is_null().then_some(write.tab_id);
             // Saved first: requests go out in call order, so `tab.close` sees no panes and
@@ -831,6 +866,51 @@ impl Shell {
         }
         self.sync_panes(window, cx);
         cx.notify();
+    }
+
+    /// Takes the pane of `session` out of its tab's layout (the session itself is untouched).
+    pub(crate) fn remove_pane(
+        &mut self,
+        session: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.remove_leaf(PaneKey::Session(session), window, cx);
+    }
+
+    /// The files of `project_id` that would be lost, with unsaved text, if the tabs `tab_ids`
+    /// and the leaves `keys` closed (moves leave them open and are not asked about).
+    pub(crate) fn dirty_on_close(
+        &self,
+        project_id: Ulid,
+        tab_ids: &[Ulid],
+        keys: &[PaneKey],
+    ) -> Vec<String> {
+        let (Some(tabs), Some(docs)) =
+            (self.tabs.get(&project_id), self.documents.get(&project_id))
+        else {
+            return Vec::new();
+        };
+        documents::needs_save_question(
+            &documents::open_paths(tabs),
+            &documents::open_paths_without(tabs, tab_ids, keys),
+            docs,
+        )
+    }
+
+    /// Closes the pane of file `path` (its ✕, Ctrl+W, the "removed" Close): unsaved text asks
+    /// Save / Don't save / Cancel first.
+    pub(crate) fn close_file_pane(
+        &mut self,
+        project_id: Ulid,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let key = PaneKey::File(path);
+        let dirty = self.dirty_on_close(project_id, &[], std::slice::from_ref(&key));
+        let then: AfterSave = Box::new(move |shell, window, cx| shell.remove_leaf(key, window, cx));
+        self.leave_documents(project_id, dirty, then, window, cx);
     }
 
     /// `session.kill`; a failure toasts.

@@ -13,7 +13,7 @@ fn context(view: View) -> Context {
         view,
         workspaces: 2,
         tabs: 2,
-        file_tabs: 1,
+        file_pane: false,
         file_tree: false,
         terminal: false,
         discard: false,
@@ -383,24 +383,10 @@ fn availability_follows_the_view() {
     assert!(docs.contains(&Command::SendComments));
     assert!(docs.contains(&Command::PickDown));
     assert!(commands(&context(View::Terminals)).contains(&Command::ToggleIgnored));
-    assert!(commands(&context(View::Editor)).contains(&Command::SaveFile));
-    assert!(commands(&context(View::Editor)).contains(&Command::ReplaceInFile));
-    assert!(commands(&context(View::Editor)).contains(&Command::CloseFileTab));
     assert!(!commands(&context(View::Terminals)).contains(&Command::CloseFileTab));
-    let no_files = Context {
-        file_tabs: 0,
-        ..context(View::Terminals)
-    };
-    assert!(!commands(&no_files).contains(&Command::ShowEditor));
-    assert!(commands(&context(View::Terminals)).contains(&Command::ShowEditor));
-    // Move tab: terminal tabs on the panes, file tabs in the Editor view (needs a file tab).
+    // Move tab: the terminal and file tabs of the panes.
     assert!(commands(&context(View::Terminals)).contains(&Command::MoveTabLeft));
-    assert!(commands(&context(View::Editor)).contains(&Command::MoveTabLeft));
-    let editor_no_files = Context {
-        file_tabs: 0,
-        ..context(View::Editor)
-    };
-    assert!(!commands(&editor_no_files).contains(&Command::MoveTabLeft));
+    assert!(!commands(&context(View::Docs)).contains(&Command::MoveTabLeft));
     // Open in a kept tab needs the tree on screen.
     assert!(!commands(&context(View::Terminals)).contains(&Command::OpenKept));
     let with_tree = Context {
@@ -456,13 +442,7 @@ fn availability_follows_the_view() {
 
 #[test]
 fn phone_access_is_listed_in_every_view_and_without_a_workspace() {
-    for view in [
-        View::Terminals,
-        View::Board,
-        View::Docs,
-        View::Editor,
-        View::Diff,
-    ] {
+    for view in [View::Terminals, View::Board, View::Docs, View::Diff] {
         assert!(Extra::PhoneAccess.available(&context(view)), "{view:?}");
     }
     let none = Context {
@@ -1321,9 +1301,33 @@ fn window_extras_show_only_in_a_detached_window() {
     };
     assert!(!available(Command::MoveTabToNewWindow, &no_tabs));
     assert!(
-        !available(Command::MoveTabToNewWindow, &context(View::Editor)),
-        "file tabs move in Plan 2"
+        !available(Command::MoveTabToNewWindow, &context(View::Diff)),
+        "only the terminals view moves tabs"
     );
+}
+
+#[test]
+fn the_file_commands_need_a_focused_file_pane() {
+    let mut on_file = context(View::Terminals);
+    on_file.file_pane = true;
+    let offered = commands(&on_file);
+    for command in [
+        Command::SaveFile,
+        Command::FindInFile,
+        Command::ReplaceInFile,
+        Command::CloseFileTab,
+        Command::ToggleFilePreview,
+        Command::ToggleFileSplit,
+        Command::SendSelection,
+    ] {
+        assert!(
+            offered.contains(&command),
+            "{command:?} acts on the focused file pane"
+        );
+    }
+    let elsewhere = commands(&context(View::Terminals));
+    assert!(!elsewhere.contains(&Command::SaveFile));
+    assert!(!elsewhere.contains(&Command::FindInFile));
 }
 
 #[test]

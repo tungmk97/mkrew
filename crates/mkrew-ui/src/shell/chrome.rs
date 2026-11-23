@@ -184,14 +184,6 @@ impl Shell {
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
-            (View::Editor, _) => main.child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .child(self.render_editor(project_id, theme, window, cx))
-                    .children(panel),
-            ),
             (View::Diff, _) => main.child(
                 div()
                     .flex_1()
@@ -222,6 +214,7 @@ impl Shell {
                         .flex_1()
                     } else {
                         self.render_tab(
+                            project_id,
                             tabs.active(),
                             now,
                             self.composer_focus.is_focused(window),
@@ -231,6 +224,7 @@ impl Shell {
                                 .get(&HostId::Main)
                                 .map(|ui| ui.content.clone())
                                 .unwrap_or_default(),
+                            window,
                             cx,
                         )
                     },
@@ -259,7 +253,7 @@ impl Shell {
 
     /// The title bar above everything (SPEC §10, ADR 0106), one `TITLE_BAR_HEIGHT` bar: on the
     /// left (main window) the machine chip, the sidebar toggle and the workspace switcher; the
-    /// tab area (Editor / Diff chips, the terminal tabs, `+`); a drag area; on the right the
+    /// tab area (the Diff chip, the terminal and file tabs, `+`); a drag area; on the right the
     /// voice status (only while the sidebar is hidden), the limits chip (main window, only at
     /// 80% or more; it shows without a workspace too), the Run pill, the update button, the
     /// Board and Docs icons, Split (while Terminals shows in the main window, always in a

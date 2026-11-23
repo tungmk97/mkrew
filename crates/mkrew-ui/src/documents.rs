@@ -4,6 +4,7 @@
 //! Pure and tested headlessly; `shell/places.rs` and `shell/file_pane.rs` do the rest.
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -19,7 +20,8 @@ use crate::preview_select::{self, Point, Selection};
 use crate::split::{Edge, Leaf, PaneKey};
 use crate::tabs::{Tab, Tabs};
 use crate::task_dialog::DialogKey;
-use crate::text_box::TextBox;
+use crate::text_box::{Input, TextBox};
+use crate::text_find::{self, TextFind};
 
 /// A tab's file.
 #[derive(Debug, Clone, PartialEq)]
@@ -108,9 +110,6 @@ pub struct Doc {
     /// `.md` files: the rendered preview, the editor, or both side by side. Starts as the
     /// leaf's `md`, else `[ui] md_mode`.
     pub mode: MdMode,
-    /// Strip leftovers, deleted in step 11 (the leaf's `preview` flag replaces them).
-    pub transient: bool,
-    pub pinned: bool,
     /// The doc's [`docs::new_opening`] number: the page restarts when it changes.
     pub opening: u64,
     /// Number of the text in the editor: new for every re-read that replaced it.
@@ -132,6 +131,8 @@ pub struct Doc {
     stale: bool,
     /// A (line, column), 1-based, that a link asked for, put under the caret once shown.
     pending_line: Option<(u32, u32)>,
+    /// The find bar (SPEC §12A), `None` = closed; searched again whenever the text changes.
+    pub find: Option<TextFind>,
 }
 
 /// A save's answer that has no file view to land in: only a failure or a refused save is news.
@@ -149,8 +150,6 @@ impl Doc {
             path: path.to_owned(),
             content: Content::Loading,
             mode,
-            transient: false,
-            pinned: false,
             opening: docs::new_opening(),
             text_id: 0,
             page: None,
@@ -160,8 +159,9 @@ impl Doc {
             saving: false,
             reading: false,
             read_again: false,
-            stale: false,
+            stale: true,
             pending_line: None,
+            find: None,
         }
     }
 
@@ -180,14 +180,19 @@ impl Doc {
         self.saving
     }
 
-    /// Whether activating the tab must read it: `git.changed` came while it was hidden, or
-    /// its last read failed (a retry). Clears the stale mark.
+    /// Whether the doc must be read now: it was never drawn, or `git.changed` came while it
+    /// was hidden. Clears the mark. A failed read is not read again by a draw (see `retry`).
     pub fn take_read(&mut self) -> bool {
+        std::mem::take(&mut self.stale)
+    }
+
+    /// Retry after a failed read: shows `Loading` again. `true` = read it.
+    pub fn retry(&mut self) -> bool {
         let failed = matches!(self.content, Content::Failed(_));
         if failed {
             self.content = Content::Loading;
         }
-        std::mem::take(&mut self.stale) || failed
+        failed
     }
 
     /// An `fs.read` is about to be sent; `false` = one is in flight (sent again once it
@@ -236,6 +241,7 @@ impl Doc {
             self.pending_line = None;
         }
         self.show(read);
+        self.search();
         again
     }
 
@@ -1004,6 +1010,103 @@ pub fn keep_leaf(leaf: &mut Leaf) {
 pub fn set_leaf_mode(leaf: &mut Leaf, mode: MdMode) {
     if let Leaf::File { md, .. } = leaf {
         *md = Some(mode);
+    }
+}
+
+impl Doc {
+    /// Runs the find bar's query over the text again.
+    pub fn search(&mut self) {
+        if let (Some(find), Content::Shown(shown)) = (&mut self.find, &self.content) {
+            find.search(shown.editor.lines());
+        }
+    }
+
+    /// Ctrl+F / Ctrl+H: opens the find bar, with the replace row when `replace`. A selection
+    /// on one line becomes the query, and the current match is the first one at the selection
+    /// or caret. Returns `false` when nothing is shown.
+    pub fn open_find(&mut self, replace: bool) -> bool {
+        if !matches!(self.content, Content::Shown(_)) {
+            return false;
+        }
+        // Matches and the replace row act on the editor's text: the preview alone hides it.
+        if self.mode == MdMode::Preview {
+            self.mode = MdMode::Source;
+        }
+        self.block_edit = None;
+        self.preview_selection = None;
+        let Content::Shown(shown) = &self.content else {
+            return false;
+        };
+        let editor = &shown.editor;
+        let seed = (editor.selected_text()).filter(|text| !text.contains('\n'));
+        let from = editor
+            .selection()
+            .map_or(editor.cursor(), |selection| selection.start);
+        let find = self.find.get_or_insert_with(TextFind::default);
+        if let Some(seed) = seed {
+            find.query = seed.into();
+        }
+        if replace {
+            find.replace.get_or_insert_with(Input::default);
+        }
+        find.search_from(editor.lines(), (from.line, from.col));
+        true
+    }
+
+    /// The find bar and the editor of an editable file (not binary or too large).
+    fn find_and_editor(&mut self) -> Option<(&mut TextFind, &mut Editor)> {
+        match (&mut self.find, &mut self.content) {
+            (Some(find), Content::Shown(shown)) if !shown.code.binary && !shown.code.too_large => {
+                Some((find, &mut shown.editor))
+            }
+            _ => None,
+        }
+    }
+
+    /// Replace (Enter in the replace field): the current match becomes the replacement and the
+    /// next match after it is current. One undo step; not saved (like VS Code).
+    pub fn replace_one(&mut self) -> bool {
+        let Some((find, editor)) = self.find_and_editor() else {
+            return false;
+        };
+        let (Some(with), Some(found)) = (find.replace.as_deref(), find.current().cloned()) else {
+            return false;
+        };
+        let line = found.line;
+        editor.replace(
+            Pos::new(line, found.range.start)..Pos::new(line, found.range.end),
+            with,
+        );
+        // Continue after the replacement, so a replacement that holds the query is not
+        // replaced again.
+        let after = found.range.start + with.len();
+        find.search_from(editor.lines(), (line, after));
+        true
+    }
+
+    /// Replace all (Ctrl+Alt+Enter, "Replace all"): every match at once, as one undo step;
+    /// not saved. Returns how many matches were replaced.
+    pub fn replace_all(&mut self) -> usize {
+        let Some((find, editor)) = self.find_and_editor() else {
+            return 0;
+        };
+        let Some(with) = find.replace.as_deref() else {
+            return 0;
+        };
+        let edits: Vec<(Range<Pos>, String)> = (editor.lines().iter().enumerate())
+            .flat_map(|(line, text)| {
+                text_find::find_in_line(text, &find.query)
+                    .into_iter()
+                    .map(move |range| {
+                        let at = Pos::new(line, range.start)..Pos::new(line, range.end);
+                        (at, with.to_owned())
+                    })
+            })
+            .collect();
+        let count = edits.len();
+        editor.replace_all(edits);
+        find.search(editor.lines());
+        count
     }
 }
 

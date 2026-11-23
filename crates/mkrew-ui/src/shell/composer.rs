@@ -323,7 +323,7 @@ impl Shell {
     }
 
     /// The prompt variables known for `project_id` (§20B.3): its name, `task` (a task title)
-    /// and the file open in its Files view, else the one selected in its Git view.
+    /// and the file of its focused file pane, else the one selected in its Git view.
     pub(crate) fn prompt_vars(&self, project_id: Ulid, task: Option<String>) -> PromptVars {
         let project = self
             .sidebar
@@ -331,26 +331,23 @@ impl Shell {
             .iter()
             .find(|project| project.id == project_id)
             .map(|project| project.name.clone());
-        let file = self
-            .files
-            .get(&project_id)
-            .and_then(|view| view.file().map(str::to_owned))
-            .or_else(|| {
-                self.git
-                    .get(&project_id)
-                    .and_then(|view| view.selected.as_ref())
-                    .map(|target| target.path.clone())
-            });
+        let file = self.panel_file(project_id).or_else(|| {
+            self.git
+                .get(&project_id)
+                .and_then(|view| view.selected.as_ref())
+                .map(|target| target.path.clone())
+        });
         // The shown view's pick first (one picked earlier elsewhere may linger).
-        let views = if self.view() == View::Diff {
-            [View::Diff, View::Editor]
+        let file_pick = self
+            .panel_file(project_id)
+            .and_then(|path| self.picked_file_lines(project_id, &path));
+        let diff_pick = self.picked_lines(project_id, View::Diff);
+        let selection = if self.view() == View::Diff {
+            diff_pick.or(file_pick)
         } else {
-            [View::Editor, View::Diff]
-        };
-        let selection = views
-            .into_iter()
-            .find_map(|view| self.picked_lines(project_id, view))
-            .map(|(_, _, _, text)| text);
+            file_pick.or(diff_pick)
+        }
+        .map(|(_, _, _, text)| text);
         PromptVars {
             file,
             selection,
@@ -359,16 +356,24 @@ impl Shell {
         }
     }
 
-    /// The lines picked in `project_id`'s Editor view (a Markdown preview's selection, or the
-    /// editor's lines, §12A), Docs view (its comment selection) or Git diff (new side): the
-    /// file, first and last line, and their text (§20B.4).
+    /// The lines picked in the file pane of `path` (a Markdown preview's selection, or the
+    /// editor's lines, §12A): the file, first and last line, and their text (§20B.4).
+    pub(crate) fn picked_file_lines(
+        &self,
+        project_id: Ulid,
+        path: &str,
+    ) -> Option<(String, u32, u32, String)> {
+        self.doc(project_id, path)?.picked_lines()
+    }
+
+    /// The lines picked in `project_id`'s Docs view (its comment selection) or Git diff (new
+    /// side): the file, first and last line, and their text (§20B.4).
     pub(crate) fn picked_lines(
         &self,
         project_id: Ulid,
         view: View,
     ) -> Option<(String, u32, u32, String)> {
         match view {
-            View::Editor => self.files.get(&project_id)?.tab()?.picked_lines(),
             View::Diff => {
                 let git = self.git.get(&project_id)?;
                 let (Some(target), Some(selection), git_view::Diff::Shown(shown)) =

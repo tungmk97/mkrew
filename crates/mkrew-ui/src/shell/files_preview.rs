@@ -5,19 +5,23 @@ use crate::*;
 use mkrew_ui::documents::{BlockEditOutcome, StaleEdit};
 
 impl Shell {
-    /// A `.md` file of the Files view as the Docs preview: the page of the editor's text
+    /// A `.md` file pane as the Docs preview: the page of the editor's text
     /// (unsaved edits included), selectable. `split`: beside the editor (Split view), with its
     /// own keyboard focus.
     pub(crate) fn render_md_preview(
         &self,
         project_id: Ulid,
-        tab: &documents::Doc,
+        doc: &documents::Doc,
         split: bool,
         window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let shown = match tab.preview() {
+        let Some(view) = self.doc_view(project_id, &doc.path) else {
+            return div().into_any_element();
+        };
+        let path = doc.path.clone();
+        let shown = match doc.preview() {
             None => {
                 return message(theme, None, "Rendering the preview…".into(), None)
                     .flex_1()
@@ -31,16 +35,16 @@ impl Shell {
             Some(shown) => shown,
         };
         let fonts = cx.global::<theme::Fonts>().clone();
-        let select = Some(preview::Selecting(tab.preview_selection));
-        let wrap = Some(self.file_block_wrap(project_id, tab, window, theme, cx));
+        let select = Some(preview::Selecting(doc.preview_selection));
+        let wrap = Some(self.file_block_wrap(project_id, doc, window, theme, cx));
         let focus = if split {
-            &self.file_preview_focus
+            &view.preview_focus
         } else {
-            &self.file_editor_focus
+            &view.editor_focus
         };
         preview::page(
-            &self.file_page,
-            tab.opening,
+            &view.page,
+            doc.opening,
             shown,
             wrap,
             select,
@@ -50,17 +54,19 @@ impl Shell {
         )
         .track_focus(focus)
         .on_key_down(cx.listener(Self::file_preview_key_down))
-        .on_mouse_down(
-            MouseButton::Left,
+        .on_mouse_down(MouseButton::Left, {
+            let path = path.clone();
             cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                shell.preview_press(project_id, split, event, window, cx);
-            }),
-        )
-        .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
-            if event.dragging() {
-                shell.preview_drag_to(project_id, event.position, cx);
-            }
-        }))
+                shell.preview_press(project_id, &path, split, event, window, cx);
+            })
+        })
+        .on_mouse_move({
+            cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
+                if event.dragging() {
+                    shell.preview_drag_to(project_id, &path, event.position, cx);
+                }
+            })
+        })
         .into_any_element()
     }
 
@@ -70,28 +76,29 @@ impl Shell {
     fn preview_press(
         &mut self,
         project_id: Ulid,
+        path: &str,
         split: bool,
         event: &MouseDownEvent,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let focus = if split {
-            &self.file_preview_focus
+        let which = if split {
+            DocFocus::Preview
         } else {
-            &self.file_editor_focus
+            DocFocus::Editor
         };
-        window.focus(focus, cx);
-        let at = self.file_page.hit(event.position);
+        self.focus_doc(project_id, path, which, window, cx);
+        let at = (self.doc_view(project_id, path)).and_then(|view| view.page.hit(event.position));
         if split && let Some(at) = at {
-            self.split_caret_to_block(project_id, at.block, cx);
+            self.split_caret_to_block(project_id, path, at.block, cx);
         }
-        let Some(tab) = self.active_file_tab(project_id) else {
+        let Some(doc) = self.doc_mut(project_id, path) else {
             return;
         };
         match at {
-            Some(at) => tab.preview_click(at, event.modifiers.shift, event.click_count),
+            Some(at) => doc.preview_click(at, event.modifiers.shift, event.click_count),
             None => {
-                tab.clear_preview_selection();
+                doc.clear_preview_selection();
             }
         }
         cx.notify();
@@ -100,13 +107,14 @@ impl Shell {
     fn preview_drag_to(
         &mut self,
         project_id: Ulid,
+        path: &str,
         position: Point<Pixels>,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(at) = self.file_page.hit(position)
-            && let Some(tab) = self.active_file_tab(project_id)
+        if let Some(at) = (self.doc_view(project_id, path)).and_then(|view| view.page.hit(position))
+            && let Some(doc) = self.doc_mut(project_id, path)
         {
-            tab.preview_drag(at);
+            doc.preview_drag(at);
             cx.notify();
         }
     }
@@ -116,15 +124,15 @@ impl Shell {
     pub(crate) fn file_preview_key_down(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace else {
+        let Some((project_id, path)) = self.focused_doc(window) else {
             return;
         };
         let plain = !event.keystroke.modifiers.modified();
         if plain && event.keystroke.key == "escape" {
-            if (self.active_file_tab(project_id))
+            if (self.doc_mut(project_id, &path))
                 .is_some_and(documents::Doc::clear_preview_selection)
             {
                 cx.stop_propagation();
@@ -135,17 +143,16 @@ impl Shell {
         match editor::edit_key(&event.keystroke) {
             Some(EditKey::Copy) => {
                 cx.stop_propagation();
-                if let Some(text) = self
-                    .active_file_tab(project_id)
-                    .and_then(|tab| tab.preview_copy())
+                if let Some(text) =
+                    (self.doc_mut(project_id, &path)).and_then(|doc| doc.preview_copy())
                 {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
                 }
             }
             Some(EditKey::SelectAll) => {
                 cx.stop_propagation();
-                if let Some(tab) = self.active_file_tab(project_id) {
-                    tab.preview_select_all();
+                if let Some(doc) = self.doc_mut(project_id, &path) {
+                    doc.preview_select_all();
                 }
                 cx.notify();
             }
@@ -157,29 +164,35 @@ impl Shell {
     fn file_block_wrap(
         &self,
         project_id: Ulid,
-        tab: &documents::Doc,
+        doc: &documents::Doc,
         window: &Window,
         theme: &Theme,
         cx: &Context<'_, Self>,
     ) -> preview::Wrap {
         let this = cx.entity();
         let theme = theme.clone();
-        let edit = tab
+        let path = doc.path.clone();
+        let edit = doc
             .block_edit
             .as_ref()
             .map(|edit| (edit.block, edit.text.input().clone()));
-        let focused = self.file_block_focus.is_focused(window);
-        let focus = self.file_block_focus.clone();
+        let block_focus =
+            (self.doc_view(project_id, &doc.path)).map(|view| view.block_focus.clone());
+        let Some(focus) = block_focus else {
+            return Rc::new(|_, _, element| element);
+        };
+        let focused = focus.is_focused(window);
         let (marked, target) = (self.ime_marked.clone(), self.typing_target.clone());
         Rc::new(move |index, _block, element| {
             if let Some((_, input)) = edit.as_ref().filter(|(block, _)| *block == index) {
                 return block_edit_field(
-                    project_id, &this, &focus, input, focused, &marked, &target, &theme,
+                    project_id, &path, &this, &focus, input, focused, &marked, &target, &theme,
                 )
                 .into_any_element();
             }
             let group = SharedString::from(format!("file-block-{index}"));
             let this = this.clone();
+            let path = path.clone();
             div()
                 .id(("file-block", index))
                 .group(group.clone())
@@ -200,7 +213,7 @@ impl Shell {
                                 .on_click(move |_, window, cx| {
                                     cx.stop_propagation();
                                     this.update(cx, |shell, cx| {
-                                        shell.open_block_edit(project_id, index, window, cx);
+                                        shell.open_block_edit(project_id, &path, index, window, cx);
                                     });
                                 }),
                         ),
@@ -212,13 +225,16 @@ impl Shell {
     fn open_block_edit(
         &mut self,
         project_id: Ulid,
+        path: &str,
         block: usize,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if (self.active_file_tab(project_id)).is_some_and(|tab| tab.open_block_edit(block)) {
-            self.file_page.remeasure();
-            window.focus(&self.file_block_focus, cx);
+        if (self.doc_mut(project_id, path)).is_some_and(|doc| doc.open_block_edit(block)) {
+            if let Some(view) = self.doc_view(project_id, path) {
+                view.page.remeasure();
+            }
+            self.focus_doc(project_id, path, DocFocus::Block, window, cx);
         }
         cx.notify();
     }
@@ -226,13 +242,16 @@ impl Shell {
     fn close_block_edit(
         &mut self,
         project_id: Ulid,
+        path: &str,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let closed = (self.active_file_tab(project_id)).and_then(|tab| tab.block_edit.take());
+        let closed = (self.doc_mut(project_id, path)).and_then(|doc| doc.block_edit.take());
         if closed.is_some() {
-            self.file_page.remeasure();
-            window.focus(&self.file_editor_focus, cx);
+            if let Some(view) = self.doc_view(project_id, path) {
+                view.page.remeasure();
+            }
+            self.focus_doc(project_id, path, DocFocus::Editor, window, cx);
         }
         cx.notify();
     }
@@ -240,24 +259,26 @@ impl Shell {
     fn apply_block_edit(
         &mut self,
         project_id: Ulid,
+        path: &str,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let applied = (self.active_file_tab(project_id)).map(documents::Doc::apply_block_edit);
+        let applied = (self.doc_mut(project_id, path)).map(documents::Doc::apply_block_edit);
         match applied.unwrap_or(Ok(())) {
             Ok(()) => {
-                self.file_page.remeasure();
-                window.focus(&self.file_editor_focus, cx);
-                self.file_edited(project_id, window, cx);
+                if let Some(view) = self.doc_view(project_id, path) {
+                    view.page.remeasure();
+                }
+                self.focus_doc(project_id, path, DocFocus::Editor, window, cx);
+                self.file_edited(project_id, path, window, cx);
             }
             Err(StaleEdit) => self.toast_error("The file changed; edit again", cx),
         }
         cx.notify();
     }
 
-    fn click_block_edit(&mut self, project_id: Ulid, caret: Caret) {
-        if let Some(edit) =
-            (self.active_file_tab(project_id)).and_then(|tab| tab.block_edit.as_mut())
+    fn click_block_edit(&mut self, project_id: Ulid, path: &str, caret: Caret) {
+        if let Some(edit) = (self.doc_mut(project_id, path)).and_then(|doc| doc.block_edit.as_mut())
         {
             edit.text.click(caret.at, caret.extend, caret.clicks);
         }
@@ -272,32 +293,33 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(key), Some(project_id)) =
-            (task_dialog::dialog_key(&event.keystroke), self.workspace)
-        else {
+        let (Some(key), Some((project_id, path))) = (
+            task_dialog::dialog_key(&event.keystroke),
+            self.focused_doc(window),
+        ) else {
             return;
         };
         let pasted = (key == DialogKey::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
-        let Some(tab) = self.active_file_tab(project_id) else {
+        let Some(doc) = self.doc_mut(project_id, &path) else {
             return;
         };
         if matches!(key, DialogKey::Copy | DialogKey::Cut)
-            && let Some(text) = tab
+            && let Some(text) = doc
                 .block_edit
                 .as_ref()
                 .and_then(|edit| edit.text.input().selected_text().map(str::to_owned))
         {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
-        if let (Some(text), Some(edit)) = (pasted, &mut tab.block_edit) {
+        if let (Some(text), Some(edit)) = (pasted, &mut doc.block_edit) {
             edit.text.insert(&text);
         }
-        match tab.block_edit_key(key) {
+        match doc.block_edit_key(key) {
             BlockEditOutcome::Edited => cx.notify(),
-            BlockEditOutcome::Cancel => self.close_block_edit(project_id, window, cx),
-            BlockEditOutcome::Apply => self.apply_block_edit(project_id, window, cx),
+            BlockEditOutcome::Cancel => self.close_block_edit(project_id, &path, window, cx),
+            BlockEditOutcome::Apply => self.apply_block_edit(project_id, &path, window, cx),
         }
     }
 }
@@ -308,6 +330,7 @@ impl Shell {
 #[allow(clippy::too_many_arguments)]
 fn block_edit_field(
     project_id: Ulid,
+    path: &str,
     this: &Entity<Shell>,
     focus: &FocusHandle,
     input: &Input,
@@ -317,6 +340,7 @@ fn block_edit_field(
     theme: &Theme,
 ) -> gpui::Div {
     let (keys, out, grab) = (this.clone(), this.clone(), focus.clone());
+    let (click_path, out_path) = (path.to_owned(), path.to_owned());
     let field = caret_field_for(
         this,
         "file-block-field",
@@ -324,7 +348,7 @@ fn block_edit_field(
         "Markdown…",
         focused,
         theme,
-        move |shell, caret| shell.click_block_edit(project_id, caret),
+        move |shell, caret| shell.click_block_edit(project_id, &click_path, caret),
     )
     .max_h(px(theme::PROMPT_FIELD_HEIGHT))
     .overflow_y_scroll()
@@ -350,7 +374,7 @@ fn block_edit_field(
         .on_mouse_move(|_, _, cx| cx.stop_propagation())
         .on_mouse_down_out(move |_, window, cx| {
             out.update(cx, |shell, cx| {
-                shell.close_block_edit(project_id, window, cx)
+                shell.close_block_edit(project_id, &out_path, window, cx)
             });
         })
         .child(field)

@@ -50,7 +50,7 @@ impl Shell {
         }
         self.show_panel_tab(PanelTab::Files, window, cx);
         // Without loaded tabs the Terminals view draws no panel: nothing to focus.
-        if self.view() == View::Editor || self.tabs.contains_key(&project_id) {
+        if self.tabs.contains_key(&project_id) {
             window.focus(&self.files_focus, cx);
         }
     }
@@ -127,15 +127,11 @@ impl Shell {
         cx.notify();
     }
 
-    /// The keyboard back to the center after the panel's focused tab went away: the editor
-    /// in the Editor view, else the focused pane. (In the Git / Diff view the diff card holds
+    /// The keyboard back to the center after the panel's focused tab went away: the focused
+    /// pane (a file pane keeps it in its editor). (In the Git / Diff view the diff card holds
     /// `git_focus` itself: `git_shown` stays true there.)
     pub(crate) fn focus_center(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if self.view() == View::Editor {
-            window.focus(&self.file_editor_focus, cx);
-        } else {
-            self.focus_pane(window, cx);
-        }
+        self.focus_pane(window, cx);
     }
 
     /// Alt+arrows (SPEC §13): the next pane that way. Past the edge (or without panes) ←

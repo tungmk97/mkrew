@@ -322,7 +322,6 @@ impl Shell {
             || self.share_menu.is_some()
             || self.workspace_menu.is_some()
             || self.file_menu.is_some()
-            || self.file_tab_menu.is_some()
             || self.run_menu.is_some()
             || self.workspace_switcher
             || self.new_menu
@@ -355,9 +354,6 @@ impl Shell {
         }
         if let Some(menu) = &self.file_menu {
             return Some(self.file_menu_rows(menu));
-        }
-        if let Some(menu) = &self.file_tab_menu {
-            return Some(self.file_tab_menu_rows(menu));
         }
         if self.workspace_switcher {
             return self
@@ -544,7 +540,6 @@ pub(crate) enum Anchor {
     /// The top edge of a pane (`pane_edge`): the keyboard menu of a terminal opens under it.
     Pane(Ulid),
     FileRow(String),
-    FileTab(String),
     WorkspaceRow(Ulid),
     SessionRow(Ulid),
     Card(Ulid),
@@ -652,7 +647,6 @@ impl Shell {
                     _ => None,
                 })
             }),
-            file_tab: files.and_then(|view| view.file().map(str::to_owned)),
             card: (self.view() == View::Board && !self.jira_side_shown())
                 .then_some(self.selected_card)
                 .flatten()
@@ -670,7 +664,6 @@ impl Shell {
         let key = match &owner {
             menu_model::Owner::Pane(session) => Anchor::Pane(*session),
             menu_model::Owner::FileRow { path, .. } => Anchor::FileRow(path.clone()),
-            menu_model::Owner::FileTab(path) => Anchor::FileTab(path.clone()),
             menu_model::Owner::SidebarRow(sidebar::Target::Workspace(id)) => {
                 Anchor::WorkspaceRow(*id)
             }
@@ -683,9 +676,6 @@ impl Shell {
             menu_model::Owner::Pane(session) => self.open_pane_menu(session, at, window, cx),
             menu_model::Owner::FileRow { path, is_dir } => {
                 self.open_file_menu(project_id, path, is_dir, at, window, cx);
-            }
-            menu_model::Owner::FileTab(path) => {
-                self.open_file_tab_menu(project_id, path, at, window, cx);
             }
             menu_model::Owner::SidebarRow(sidebar::Target::Workspace(id)) => {
                 self.open_workspace_menu(id, at, true, window, cx);

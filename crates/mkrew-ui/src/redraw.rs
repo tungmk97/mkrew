@@ -207,11 +207,11 @@ mod tests {
         }
     }
 
-    /// Editor view of `ws`: no pane drawn, no panel, no sidebar rows.
+    /// Docs view of `ws`: no pane drawn, no panel, no sidebar rows.
     fn nothing_shown(w: &World) -> Shown {
         Shown {
             workspace: Some(w.ws),
-            view: View::Editor,
+            view: View::Docs,
             panes: Vec::new(),
             focused: None,
             panel: None,
@@ -457,8 +457,8 @@ mod tests {
             "the All workspaces board draws it"
         );
         s.all_board = false;
-        s.view = View::Editor;
-        assert!(!redraws(&w, &s, &event(w.ws)), "Editor, no panel");
+        s.view = View::Docs;
+        assert!(!redraws(&w, &s, &event(w.ws)), "Docs, no panel");
         s.panel = Some(PanelTab::Session);
         assert!(!redraws(&w, &s, &event(w.ws)), "Session tab");
         for tab in [PanelTab::Files, PanelTab::Git] {
@@ -487,7 +487,7 @@ mod tests {
                 "{view:?}"
             );
         }
-        for view in [View::Docs, View::Editor, View::Diff] {
+        for view in [View::Docs, View::Diff] {
             s.view = view;
             assert!(
                 !conflicts_need_redraw(&s) && !redraws(&w, &s, &detected),
@@ -525,7 +525,7 @@ mod tests {
             error: None,
         });
         assert!(redraws(&w, &s, &ai), "pane composer");
-        s.view = View::Editor;
+        s.view = View::Docs;
         assert!(!redraws(&w, &s, &ai));
         s.panel = Some(PanelTab::Git);
         assert!(redraws(&w, &s, &ai), "commit box in the Git tab");

@@ -108,6 +108,32 @@ impl Shell {
         {
             return;
         }
+        self.create_tab_then(
+            project_id,
+            None,
+            move |shell, _tab_id, window, cx| {
+                if let Some((kind, profile)) = start
+                    && shell.workspace == Some(project_id)
+                {
+                    shell.new_pane_with(kind, profile, Axis::Vertical, window, cx);
+                }
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// `tab.create` at `position` (`None`: last), the tab applied and activated, then `then`
+    /// with its id. A failure toasts (or fails the workspace's first load) and `then` never
+    /// runs.
+    pub(crate) fn create_tab_then(
+        &mut self,
+        project_id: Ulid,
+        position: Option<f64>,
+        then: impl FnOnce(&mut Shell, Ulid, &mut Window, &mut Context<'_, Shell>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<'_, Shell>,
+    ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -122,7 +148,7 @@ impl Shell {
         let created = connection.call::<TerminalTab>(Request::TabCreate(TabCreateParams {
             project_id,
             title,
-            position: None,
+            position,
         }));
         cx.spawn_in(window, async move |this, cx| {
             let created = created.await;
@@ -143,11 +169,7 @@ impl Shell {
                         } else {
                             shell.sync_panes(window, cx);
                         }
-                        if let Some((kind, profile)) = start
-                            && shell.workspace == Some(project_id)
-                        {
-                            shell.new_pane_with(kind, profile, Axis::Vertical, window, cx);
-                        }
+                        then(shell, tab_id, window, cx);
                     }
                     Err(error) => {
                         tracing::warn!(%project_id, "tab.create failed: {error:#}");
@@ -387,8 +409,7 @@ impl Shell {
     }
 
     /// The view of the active workspace; Docs reads as Terminals while `[features] docs` is
-    /// off (ADR 0046), the Editor while the workspace has no open file, the Diff while it has
-    /// no open diff.
+    /// off (ADR 0046), the Diff while it has no open diff.
     pub(crate) fn view(&self) -> View {
         let Some(id) = self.workspace else {
             return View::default();
@@ -398,18 +419,10 @@ impl Shell {
             .copied()
             .filter(|&view| match view {
                 View::Docs => self.features.docs,
-                View::Editor => self.has_file_tabs(id),
                 View::Diff => self.diff_open(id),
                 View::Board | View::Terminals => true,
             })
             .unwrap_or_default()
-    }
-
-    /// The workspace has open file tabs (the Editor view exists).
-    pub(crate) fn has_file_tabs(&self, project_id: Ulid) -> bool {
-        self.files
-            .get(&project_id)
-            .is_some_and(|view| !view.tabs().is_empty())
     }
 
     /// The workspace has an open diff (the Diff view exists).
@@ -418,9 +431,8 @@ impl Shell {
     }
 
     /// Switches the active workspace to `view`; leaving Terminals detaches its panes. Showing
-    /// Docs re-lists its files (agents may have written new ones); showing the Editor refreshes
-    /// the tree and gives the editor the keyboard; Git (the panel's tab or the diff) coming on
-    /// screen refreshes its changes.
+    /// Docs re-lists its files (agents may have written new ones); Git (the panel's tab or the
+    /// diff) coming on screen refreshes its changes.
     pub(crate) fn show_view(
         &mut self,
         view: View,
@@ -436,7 +448,6 @@ impl Shell {
         self.close_menus();
         let tree_before = self.files_on_screen();
         let git_before = self.git_shown();
-        let tree_focused = self.files_focus.is_focused(window);
         let shown = self.views.insert(project_id, view).unwrap_or_default();
         if !self.panel_view() {
             // The panel (and its grip) leaves with the views that draw it: end a drag in progress.
@@ -458,16 +469,6 @@ impl Shell {
         if shown != view {
             self.sync_panes(window, cx);
             cx.notify();
-        }
-        // After `sync_panes` (its focus would win). A tree click keeps the keyboard in the
-        // tree; any other way in types in the editor.
-        if view == View::Editor {
-            let target = if tree_focused {
-                &self.files_focus
-            } else {
-                &self.file_editor_focus
-            };
-            window.focus(target, cx);
         }
     }
 

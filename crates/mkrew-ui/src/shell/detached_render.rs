@@ -61,12 +61,14 @@ impl Shell {
             Some((project, tab_id)) => {
                 let tab = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id));
                 self.render_tab(
+                    project,
                     tab,
                     now,
                     self.composer_focus.is_focused(window),
                     None,
                     &theme,
                     content,
+                    window,
                     cx,
                 )
                 .into_any_element()
@@ -165,10 +167,12 @@ impl Shell {
                 let workspace = (self.sidebar.projects().iter())
                     .find(|p| p.id == project)
                     .map(|p| p.name.as_str());
+                let file = file_label(tab, self.documents.get(&project));
                 let item = DraggedItem {
                     list: ReorderList::Detached(key),
                     index,
-                    title: session_label(tab, sessions)
+                    title: (file.as_ref().map(|file| file.name.as_str()))
+                        .or_else(|| session_label(tab, sessions))
                         .unwrap_or(&tab.title)
                         .to_owned()
                         .into(),

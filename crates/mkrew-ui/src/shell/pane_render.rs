@@ -3,9 +3,9 @@
 use crate::*;
 
 impl Shell {
-    /// The tab area of the main window's title bar: the Editor / Diff chips (while open), the
-    /// pinned tabs, the other tabs, a rule between groups; then `+` outside the scrolled part.
-    /// With a view other than Terminals shown, its chip is the active one and every terminal
+    /// The tab area of the main window's title bar: the Diff chip (while open), the pinned
+    /// tabs, the other tabs, a rule between groups; then `+` outside the scrolled part. With a
+    /// view other than Terminals shown, its chip is the active one and every terminal
     /// tab looks inactive. A click on a tab shows Terminals (`tab_chip`).
     pub(crate) fn render_tab_area(
         &self,
@@ -26,11 +26,7 @@ impl Shell {
             .collect();
         let pinned_count = tabs.tabs().iter().filter(|tab| tab.pinned).count();
         let pinned: Vec<bool> = drawn.iter().map(|(_, tab)| tab.pinned).collect();
-        let items = area_items(
-            self.has_file_tabs(project_id),
-            self.diff_open(project_id),
-            &pinned,
-        );
+        let items = area_items(self.diff_open(project_id), &pinned);
         let strip = (self.hosts.get(&HostId::Main))
             .map(|ui| ui.strip.clone())
             .unwrap_or_default();
@@ -49,8 +45,10 @@ impl Shell {
                     if let Some(renaming) = self.tab_renaming(tab) {
                         self.render_rename(&renaming.draft, theme, cx)
                     } else {
-                        // The focused pane's title stands in for a default tab name.
-                        let label = session_label(tab, self.sidebar.sessions());
+                        // A file or the focused pane's title stands in for a default tab name.
+                        let file = file_label(tab, self.documents.get(&project_id));
+                        let label = (file.as_ref().map(|file| file.name.as_str()))
+                            .or_else(|| session_label(tab, self.sidebar.sessions()));
                         let item = DraggedItem {
                             list: ReorderList::Tabs(project_id, tab.pinned),
                             index: if tab.pinned {
@@ -175,10 +173,8 @@ impl Shell {
     ) -> gpui::Stateful<gpui::Div> {
         let active = chip == shown;
         let name = chip.title();
-        let (glyph, close_tip) = match chip {
-            View::Diff => (Icon::FileDiff, "Close diff"),
-            _ => (Icon::Code, "Close all files"),
-        };
+        debug_assert_eq!(chip, View::Diff, "the Diff is the only view chip");
+        let (glyph, close_tip) = (Icon::FileDiff, "Close diff");
         let group = SharedString::from(format!("view-{name}"));
         tab_frame(group.clone(), active, theme)
             .flex_none()
@@ -207,18 +203,7 @@ impl Shell {
                 .tooltip(tooltip(theme, close_tip, ""))
                 .on_click(cx.listener(move |shell, _, window, cx| {
                     cx.stop_propagation();
-                    match chip {
-                        View::Diff => shell.close_git_diff(project_id, window, cx),
-                        _ => {
-                            let path = (shell.files.get(&project_id))
-                                .and_then(FilesView::file)
-                                .map(str::to_owned);
-                            if let Some(path) = path {
-                                // All file tabs, pinned too; unsaved text is asked first.
-                                shell.close_file_tabs(project_id, &path, Close::Every, window, cx);
-                            }
-                        }
-                    }
+                    shell.close_git_diff(project_id, window, cx);
                 })),
             )
     }
@@ -265,8 +250,11 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let tab_id = tab.id;
-        // The focused pane's title stands in for a default tab name.
-        let label = session_label(tab, self.sidebar.sessions());
+        // A file or the focused pane's title stands in for a default tab name; a dot marks
+        // unsaved text and italics the preview tab.
+        let file = file_label(tab, self.documents.get(&project_id));
+        let label = (file.as_ref().map(|file| file.name.as_str()))
+            .or_else(|| session_label(tab, self.sidebar.sessions()));
         // A double-click renames that pane while the tab keeps its default name, else the tab.
         let rename_pane = double_click_renames(tab, self.sidebar.sessions());
         // The most urgent pane (SPEC §11): the tooltip states its status in words.
@@ -312,6 +300,7 @@ impl Shell {
             })
             .collect();
         let title = label.unwrap_or(&tab.title);
+        let dirty = file.as_ref().is_some_and(|file| file.dirty);
         let tip = match urgent {
             Some(pane) => format!(
                 "{title}\n{}",
@@ -323,6 +312,7 @@ impl Shell {
                     self.turns.get(pane.id),
                 )
             ),
+            None if dirty => format!("{title} (unsaved)"),
             None => title.to_owned(),
         };
         tab_frame(group.clone(), is_active, theme)
@@ -380,7 +370,10 @@ impl Shell {
                     .min_w_0()
                     .max_w(px(theme::TAB_TITLE_MAX_WIDTH))
                     .truncate()
-                    .child(label.unwrap_or(&tab.title).to_owned()),
+                    .when(file.as_ref().is_some_and(|file| file.preview), |el| {
+                        el.italic()
+                    })
+                    .child(format!("{}{title}", if dirty { "● " } else { "" })),
             )
             .child(
                 row_action(
@@ -462,12 +455,14 @@ impl Shell {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_tab(
         &self,
+        project_id: Ulid,
         tab: Option<&Tab>,
         now: i64,
         composer_focused: bool,
         voice_ring: Option<Hsla>,
         theme: &Theme,
         content: Rc<Cell<gpui::Size<Pixels>>>,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
         if tab.and_then(|tab| tab.layout()).is_none() {
@@ -514,16 +509,10 @@ impl Shell {
             .relative()
             .child(content_canvas(content));
         }
-        let focused = tab.and_then(Tab::focused_session);
-        let rects: Vec<_> = tab
-            .map(Tab::rects)
-            .unwrap_or_default()
-            .into_iter()
-            // File and diff panes are drawn from Task 4 / Task 5 on.
-            .filter_map(|(key, rect)| Some((key.session()?, rect)))
-            .collect();
+        let focused = tab.and_then(Tab::focused);
+        let rects: Vec<_> = tab.map(Tab::rects).unwrap_or_default();
         let dividers = tab.map(Tab::dividers).unwrap_or_default();
-        // Only the panes drawn count: a lone terminal next to a file leaf is not "several".
+        // Every pane drawn counts (a session, a file, the diff).
         let several = rects.len() > 1;
         let zoomed = tab.is_some_and(|tab| tab.zoomed().is_some());
         let half_gap = px(theme::PANE_HALF_GAP);
@@ -531,8 +520,8 @@ impl Shell {
         let area = f32::from(content.get().width) - 2.0 * theme::PANE_HALF_GAP;
         let panes: Vec<_> = rects
             .into_iter()
-            .map(|(session, rect)| {
-                let is_focused = focused == Some(session);
+            .map(|(key, rect)| {
+                let is_focused = focused == Some(&key);
                 let width = rect.w as f32 * area - 2.0 * theme::PANE_HALF_GAP;
                 div()
                     .absolute()
@@ -542,7 +531,8 @@ impl Shell {
                     .h(relative(rect.h as f32))
                     .p(half_gap)
                     .child(self.pane_frame(
-                        session,
+                        project_id,
+                        key,
                         several,
                         zoomed,
                         width,
@@ -551,6 +541,7 @@ impl Shell {
                         voice_ring.filter(|_| is_focused),
                         now,
                         theme,
+                        window,
                         cx,
                     ))
             })
@@ -598,18 +589,20 @@ impl Shell {
             )
     }
 
-    /// One pane: the terminal (or why it is not shown; at reading width, centered, for an agent
-    /// pane with it on), its composer, a stripe along the top edge (`status::pane_stripe`: needs
-    /// input, the session color or the focus among several; ADR 0108). No border: the pane sits
-    /// on the frame color (`pane_gap`) with rounded corners. Among several the unfocused ones get
-    /// a dim and a slim handle on the top edge drags the pane. Transient signals float in the
-    /// top-right corner (`pane_badges`).
+    /// One pane: the terminal, the chat, the file or the diff (or why it is not shown; at
+    /// reading width, centered, for an agent pane with it on), a session's composer, a stripe
+    /// along the top edge (`status::pane_stripe`: needs input, the session color or the focus
+    /// among several; ADR 0108). No border: the pane sits on the frame color (`pane_gap`) with
+    /// rounded corners. Among several the unfocused ones get a dim and a session pane a slim
+    /// handle on the top edge that drags it. Transient signals float in the top-right corner
+    /// (`pane_badges`). A file pane is the editor (`render_file_pane`).
     /// `zoomed`: the pane fills the tab. `voice_ring`: the listening ring over the pane;
     /// `width`: the pane's width in px in the last frame (the composer's room).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pane_frame(
         &self,
-        session: Ulid,
+        project_id: Ulid,
+        key: PaneKey,
         several: bool,
         zoomed: bool,
         width: f32,
@@ -618,21 +611,32 @@ impl Shell {
         voice_ring: Option<Hsla>,
         now: i64,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let info = self.sidebar.sessions().iter().find(|s| s.id == session);
-        let content = if info.is_some_and(|info| self.chat_on(info)) {
-            self.render_chat(session, is_focused, now, theme, cx)
-        } else {
-            match self.panes.get(&session) {
-                Some(pane) => pane.clone().into_any_element(),
-                None => {
-                    let (sentence, detail) = self.pane_placeholder(session);
-                    message(theme, None, sentence, detail)
-                        .size_full()
-                        .into_any_element()
+        let session = key.session();
+        let info = session.and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
+        let content = match &key {
+            PaneKey::Session(id) => {
+                if info.is_some_and(|info| self.chat_on(info)) {
+                    self.render_chat(*id, is_focused, now, theme, cx)
+                } else {
+                    match self.panes.get(id) {
+                        Some(pane) => pane.clone().into_any_element(),
+                        None => {
+                            let (sentence, detail) = self.pane_placeholder(*id);
+                            message(theme, None, sentence, detail)
+                                .size_full()
+                                .into_any_element()
+                        }
+                    }
                 }
             }
+            PaneKey::File(path) => self.render_file_pane(project_id, path, window, theme, cx),
+            // Task 5 draws the diff pane here.
+            PaneKey::Diff => message(theme, None, "Diff".into(), None)
+                .size_full()
+                .into_any_element(),
         };
         let reading = info.is_some_and(|info| self.reading_on(info));
         let color = (info.and_then(|info| info.color.as_deref()))
@@ -645,39 +649,51 @@ impl Shell {
             .flex()
             .flex_col()
             .bg(rgb(theme.terminal_bg))
-            .on_drop(
-                cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
-                    if shell.workspace == Some(dragged.project_id) {
-                        shell.drop_tree_path(session, dragged, window, cx);
-                    }
-                }),
-            );
-        self.pane_drop_target(frame, session, cx)
-            .on_mouse_down(
-                MouseButton::Left,
+            // The file pane's own keys (Ctrl+S, Ctrl+F, ...), not the root's.
+            .when(matches!(key, PaneKey::File(_)), |el| {
+                el.key_context(EDITOR_CONTEXT)
+            })
+            .when_some(session, |el, session| {
+                el.on_drop(
+                    cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
+                        if shell.workspace == Some(dragged.project_id) {
+                            shell.drop_tree_path(session, dragged, window, cx);
+                        }
+                    }),
+                )
+            });
+        let frame = match session {
+            Some(session) => self.pane_drop_target(frame, session, cx),
+            None => frame,
+        };
+        frame
+            .on_mouse_down(MouseButton::Left, {
+                let key = key.clone();
                 cx.listener(move |shell, _, window, cx| {
-                    shell.focus_session_pane(session);
+                    shell.focus_pane_key(&key);
                     shell.focus_pane(window, cx);
                     cx.notify();
-                }),
-            )
-            .on_drag_move::<ExternalPaths>(cx.listener(
-                move |shell, event: &DragMoveEvent<ExternalPaths>, _, cx| {
-                    // A modal dialog covers the pane: its own box takes the drop, and this
-                    // pane's catcher (painted first) must not take the slot from it.
-                    if !shell.modal_open() && event.bounds.contains(&event.event.position) {
-                        shell.drop_hover =
-                            Some((DropTarget::Pane(session), event.drag(cx).clone()));
-                    } else if shell
-                        .drop_hover
-                        .as_ref()
-                        .is_some_and(|(hovered, _)| *hovered == DropTarget::Pane(session))
-                    {
-                        shell.drop_hover = None;
-                    }
-                },
-            ))
-            .child(drop_catcher(DropTarget::Pane(session), cx))
+                })
+            })
+            .when_some(session, |el, session| {
+                el.on_drag_move::<ExternalPaths>(cx.listener(
+                    move |shell, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                        // A modal dialog covers the pane: its own box takes the drop, and this
+                        // pane's catcher (painted first) must not take the slot from it.
+                        if !shell.modal_open() && event.bounds.contains(&event.event.position) {
+                            shell.drop_hover =
+                                Some((DropTarget::Pane(session), event.drag(cx).clone()));
+                        } else if shell
+                            .drop_hover
+                            .as_ref()
+                            .is_some_and(|(hovered, _)| *hovered == DropTarget::Pane(session))
+                        {
+                            shell.drop_hover = None;
+                        }
+                    },
+                ))
+                .child(drop_catcher(DropTarget::Pane(session), cx))
+            })
             // Reading width: the terminal element is narrower, so the PTY gets fewer columns
             // (the program wraps there); nothing reflows its output.
             .child(
@@ -689,17 +705,19 @@ impl Shell {
                         .child(content),
                 ),
             )
-            .children(self.composers.shown(session).map(|draft| {
-                self.composer_panel(
-                    session,
-                    draft,
-                    is_focused,
-                    composer_focused,
-                    width,
-                    now,
-                    theme,
-                    cx,
-                )
+            .children(session.and_then(|session| {
+                self.composers.shown(session).map(|draft| {
+                    self.composer_panel(
+                        session,
+                        draft,
+                        is_focused,
+                        composer_focused,
+                        width,
+                        now,
+                        theme,
+                        cx,
+                    )
+                })
             }))
             .when(several && !is_focused, |el| {
                 el.child(
@@ -714,18 +732,20 @@ impl Shell {
             // over the four corners gives the pane its rounded look.
             .child(corner_masks(theme.pane_gap))
             // The drop ring: an overlay, so the terminal keeps its size and the pointer.
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .rounded(px(radius::MEDIUM))
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(gpui::transparent_black())
-                    .drag_over::<DraggedPath>(move |style, _, _, _| {
-                        style.border_color(rgb(accent_border))
-                    }),
-            )
-            .children(self.pane_drop_overlay(session, theme, cx))
+            .when(session.is_some(), |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded(px(radius::MEDIUM))
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(gpui::transparent_black())
+                        .drag_over::<DraggedPath>(move |style, _, _, _| {
+                            style.border_color(rgb(accent_border))
+                        }),
+                )
+            })
+            .children(session.and_then(|session| self.pane_drop_overlay(session, theme, cx)))
             .when_some(stripe, |el, stripe| {
                 el.child(
                     div()
