@@ -1,5 +1,5 @@
 //! Turn summaries (SPEC §20A.3): the last `session.turn` of each session and the status text
-//! of a `done` session, `done · 3 files · 4m`, shown on its Inbox row and pane header. Pure;
+//! of a `done` session, `done · 3 files · 4m`, shown on its Inbox row and tab tooltip. Pure;
 //! `main.rs` renders the text.
 
 use std::collections::HashMap;

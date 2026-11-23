@@ -49,6 +49,7 @@ fn context(view: View) -> Context {
             docs: true,
             turns: true,
             session: true,
+            share: true,
         },
         idle_removable: 0,
         workspaces_open: true,

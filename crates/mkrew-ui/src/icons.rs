@@ -40,6 +40,7 @@ macro_rules! icons {
 icons! {
     /// A Lucide icon embedded in the binary.
     Icon in "lucide" {
+        AlignCenter => "align-center",
         ArrowDown => "arrow-down",
         ArrowDownToLine => "arrow-down-to-line",
         ArrowUp => "arrow-up",
@@ -85,6 +86,7 @@ icons! {
         Lightbulb => "lightbulb",
         Link => "link",
         Maximize2 => "maximize-2",
+        MessageSquare => "message-square",
         MessageSquarePlus => "message-square-plus",
         MessageSquareWarning => "message-square-warning",
         Minimize2 => "minimize-2",

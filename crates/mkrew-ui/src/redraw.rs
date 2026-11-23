@@ -471,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn conflicts_show_on_the_board_and_in_pane_headers_only() {
+    fn conflicts_show_on_the_board_and_in_pane_badges_only() {
         let w = world();
         let detected = Event::ConflictDetected(ConflictDetectedEvent {
             project_id: w.ws,

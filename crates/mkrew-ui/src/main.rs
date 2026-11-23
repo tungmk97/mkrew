@@ -600,7 +600,7 @@ struct Shell {
     reorder: Option<Reorder>,
     /// The open menu of the title bar's split button (Split right / down, layouts).
     layout_menu: Option<LayoutMenu>,
-    /// The open pane menu (Pin, Rename, Change color).
+    /// The open pane menu (Pin, Rename, Change color), from a sidebar session row or Shift+F10.
     pane_menu: Option<PaneMenu>,
     /// The open Share menu of an agent pane (Follow in Zed), at the click.
     share_menu: Option<PaneMenu>,
@@ -673,7 +673,7 @@ struct Shell {
     board: Board,
     /// Why the last `task.list` failed, shown on the board.
     board_error: Option<String>,
-    /// Files edited by several sessions, warned about on their cards and pane headers.
+    /// Files edited by several sessions, warned about on their cards and pane badges.
     conflicts: Conflicts,
     /// Why the last card action (drop, Run, Approve) failed, shown on its workspace's board.
     card_error: Option<(Ulid, String)>,

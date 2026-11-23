@@ -824,7 +824,7 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
 │ ◧ A api ▾ │[Editor*][Diff*]│ [▣ ● tab ✕] [>_ ○ tab ✕] +▾   ⚠ Claude 5h 84% (● 2 running ▾) ▦ ▤ ◫ ◨ ─ □ ✕ │
 ├──────────────┬────────────────────────────────────────────────────────────────────────┤
-│ [⌕ Filter… /]⇲+│ ┌ ▣ Claude ● Working · 4s  📖 Share ┐                                 │
+│ [⌕ Filter… /]⇲+│ ┌ the terminal pane, no header ──────────── ⤢ Pane zoomed ┐              │
 │ [All│Working│Needs you]│                                                              │
 │ ▾ A api (● 1 working)│  Todo │ Running │ Needs input │ …                              │
 │ │ ✻ fix login    2m │  …or the terminal tabs/panes                                    │
@@ -897,9 +897,9 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
 - **Color:** the workspace menu's swatches give a workspace one of 9 colors, shown as a letter
   avatar tinted with the color before its name and a 3 px stripe on its sidebar card
   (decoration only, ADR 0020, ADR 0027, ADR 0062).
-  A pane has its own color too: right-click its header → Change color (same palette; ADR 0037).
-- **Pin:** the workspace menu, the pane menu (right-click a sidebar session row or a pane header)
-  and the tab menu have Pin / Unpin (`project.update` `pinned`, `session.pin`, `tab.pin`, §7). A
+  A pane has its own color too: right-click its tab, Change color (the sidebar row menu has it as well; same palette; ADR 0037). A colored pane has a 2 px line of its color at its top.
+- **Pin:** the workspace menu, the pane menu (right-click a sidebar session row; Shift+F10 on a terminal) and the tab menu have Pin / Unpin
+  (the palette has "Pane: Pin / Unpin" for the focused pane; `project.update` `pinned`, `session.pin`, `tab.pin`, §7). A
   pinned workspace leads the sidebar, a pinned session leads its workspace's list and a pinned tab
   sits at the left of the tab area; each group keeps its usual order (workspaces by dragged order, then age;
   sessions newest first, tabs by position), and unpinning puts the item back in it. A pinned item
@@ -920,10 +920,11 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
     A tab shows a status icon, pane icons (see Terminals below), 📌 when pinned, its title and ×; the active tab has a solid `tab_active` fill (never equal to `chrome`, a `theme::problems()` rule) with radius 8 and no border, the others are transparent with muted text and a hover fill; a click activates the tab and shows Terminals.
   - **`+ ▾`:** one row per installed agent profile (the workspace's default first with ✓ and Ctrl+Shift+A), "Agent" when none is listed, Shell (Ctrl+Shift+T), Empty tab; each row opens a new tab and shows Terminals; while a session starts the button shows the starting spinner.
     Alt+Shift+A and Alt+Shift+S add a pane to the current tab instead.
-  - **Right group:** the voice status while the sidebar is hidden, the limits chip (main window, only at 80% or more, see "Limits chip"), the Run pill, the update button (only when an update is known), Board (`SquareKanban`), Docs (`BookOpen`, only with `[features] docs`), Split ▾ (`◫`: Split right, Split down, Equalize panes, layouts, as before; in the main window only while Terminals show, a detached window always has it) and the right panel toggle (`◨`, ADR 0038, ADR 0081).
+  - **Right group:** the voice status while the sidebar is hidden, the limits chip (main window, only at 80% or more, see "Limits chip"), the Run pill, the update button (only when an update is known), the toggles of the focused agent pane (below), Board (`SquareKanban`), Docs (`BookOpen`, only with `[features] docs`), Split ▾ (`◫`: Split right, Split down, Equalize panes, layouts, as before; in the main window only while Terminals show, a detached window always has it) and the right panel toggle (`◨`, ADR 0038, ADR 0081).
     Board and Docs show in the accent color while their view is shown.
+  - **Pane toggles** (ADR 0106; only while an agent pane has the focus and its terminals are on screen; they act on that pane): Terminal | Chat (`MessageSquare`, only for a pane that can chat, accent while Chat shows, Ctrl+Alt+T and the palette "Agent: Toggle chat view"; new agent panes follow `[ui] chat_default`), Reading width (`AlignCenter`, accent while on, the palette "Pane: Reading width (on / off)") and, only with `[features] share`, Share (`Share2`, accent while following; its menu has "Follow in Zed").
   - History (palette "Global: History…"), the theme toggle (Ctrl+Shift+J, palette, Settings > Appearance), Phone access (palette "Global: Phone access…"), the branch chip and repository menu (the Git panel, Ctrl+Shift+4) and the logo are not in the bar.
-  - Every icon is gray (`text-muted`, `text` on hover): color only for status.
+  - Every icon is gray (`text-muted`, `text` on hover); color is for status (the tab's hourglass and bell), an agent's brand logo in its tab chip and the accent of a toggle or view icon that is on.
     The Git tab's count comes from `git.repos` and one `git.status` per repository, asked for the shown workspace only, on a workspace switch and on its `git.changed`; no polling, nothing for hidden workspaces.
   - Window: the empty part (the drag space) is the drag area; it keeps a minimum width of 32 px so the window stays movable with many tabs.
     **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering □ shows the Windows 11 Snap Layouts flyout), all edges resize; ✕ and Alt+F4 hide the window to the tray while `[ui] close_to_tray` is on (§20J); the controls are hidden in full screen.
@@ -953,7 +954,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
     The other computer's daemon still notifies on the other computer.
 - **No status bar** (ADR 0054, ADR 0106): its sidebar toggle is in the title bar, its Inbox state and
   compact toggle in the sidebar footer, its git HEAD in the Git panel's repository strip, the
-  focused agent's context share in the pane header, and the
+  focused agent's context share in the composer, and the
   other usage fields (tokens, cache, model) on the Session tab's card.
   There is no bottom bar of any kind: the folder is in the palette ("Reveal in Explorer"), the Git branch in the Git panel, the version in Settings, the agents' limits in the title bar chip.
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
@@ -969,7 +970,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   The arrows, Ctrl+Enter, `a`, `e` and Shift+F10 act on every card of the All workspaces board.
   Show Board (Ctrl+Shift+2) again switches Tasks / Jira, and the card keys walk the Jira rows.
   Shift+F10 on the selected card opens its menu: Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents… (each as its hover button; the buttons stay and call the same functions).
-- **Terminals:** the tabs are in the title bar (above); each tab is a split tree of panes; each pane is a session with its own header.
+- **Terminals:** the tabs are in the title bar (above); each tab is a split tree of panes; each pane is a session with no header of its own (ADR 0106): the terminal fills it.
   Each tab chip starts with a status icon only when the user should notice (§11): an hourglass in `status-working` while an agent works, a bell in `status-needs-input` when a pane needs input (needs input wins); none for idle, done, exited and starting.
   Then come the pane icons, all 14 px: `square-terminal` in `text-muted` for a shell, `play` in `text-muted` for a run pane, an agent's brand logo (claude, codex, copilot, omp) in its brand color (`brand-claude`, `brand-codex`, `brand-copilot`, `brand-omp`; each 3:1 on `chrome`, a `theme::problems()` rule), and an agent without a logo its glyph in `text-muted`.
   The active tab shows one icon per pane in pane order, at most three, then `+N`; an inactive tab shows only its focused pane's icon; a tab without panes shows none.
@@ -997,7 +998,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   among the pinned or the unpinned tabs only; tabs and sidebar rows share one drag look: a small
   title chip follows the pointer, the item stays dim in place and an accent line marks the gap
   it lands in.
-  Drag a tab onto a pane of the shown tab, or a pane by its header (among several panes) onto
+  Drag a tab onto a pane of the shown tab, or a pane by the grip on its top edge (a 6 px strip that shows a grip on hover; only in a split tab) onto
   another pane, to split that pane: the half under the pointer lights up (the right half when
   the pointer is further right than down, else the bottom half) and the drop puts the dragged
   panes there, a tab keeping its layout. A pane moves within its tab or out of another one; an
@@ -1011,7 +1012,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   side keeps at least 10 % of the split; hidden while a pane is zoomed); the layout is saved once
   when the button is released.
   No hard limit on terminals; warn above 12 running sessions per workspace.
-  **Reading width** (agent panes): the pane's 📖 toggle limits the terminal to 960 px (≈ 120–140
+  **Reading width** (agent panes): the title bar's Reading width toggle limits the terminal to 960 px (≈ 120–140
   columns), centered, so the agent wraps there: the terminal element is narrower and the usual
   resize sends `session.resize` (nothing reflows its output). Agent panes start with
   `[ui] reading_width` (default `true`); the toggle holds per pane until restart. Shell and run
@@ -1088,7 +1089,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   the key is held and the pointer moves to another cell; nothing runs while output is parsed
   or painted.
 - **Copy mode** (`Alt+Shift+C`, ADR 0085): keyboard selection in the focused pane, on `alacritty_terminal`'s vi mode.
-  While it is on the keys go to the UI, not the program, and the pane header shows `Copy mode` with the key hints.
+  While it is on the keys go to the UI, not the program, and a floating badge in the pane's top-right corner shows `Copy mode` with the key hints.
   `←↓↑→` / `h j k l` move the cursor; `w` / `b` / `e` by word, `0` / `$` line start / end, `g` / `G` top / bottom of the history, `PgUp` / `PgDn` a page.
   `v` / `Shift+V` start, switch or drop a character / line selection; entering copy mode clears a mouse selection.
   `y` or `Enter` copy it (a trailing newline of a line selection is trimmed) and leave; `Ctrl+Shift+C` copies it too and stays in copy mode; `Ctrl+Shift+L` sends it to an agent's composer and leaves copy mode; `Ctrl+Shift+F` opens the find bar, whose match moves the cursor.
@@ -1167,9 +1168,8 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
 
 ## §11 UI: per-session status
 
-Status shows in three places: the pane header, the tab
-status icon, the sidebar row.
-Always icon + text, never color alone (the tab's tooltip gives the text).
+Status shows in two places: the tab status icon (and its tooltip) and the sidebar row. A pane has no header and shows no status pill, elapsed time or context share (the composer shows the context share).
+The tab icon shows only a pane that needs input (bell) or an agent that works (hourglass); the tooltip gives the status in words, the time and the turns, so color is never the only signal.
 
 | State | Icon | Extra |
 | --- | --- | --- |
@@ -1182,25 +1182,18 @@ Always icon + text, never color alone (the tab's tooltip gives the text).
 | unknown | · | |
 
 - Each state's mark has its own color (`status_working`, `status_needs_input`, `status_done`, `status_exited`, `status_idle`; dark and light), drawn beside its icon or text, never alone. Nothing loops while an agent works: the dot is still and the time text moves (ADR 0086). The loading mark (a pane being started, a transcription, a Jira fetch) is three dots taking turns on the status tick.
-- Pane status (ADR 0054, ADR 0106), shown in the compact header every pane has, a single pane too: the task folder (only for a task
-  that runs in a worktree, shown as its branch without `mkrew/`), **one status pill** (the
-  status mark and `Working · 1h 25m`; a done pane adds the last turn, `Done · 3 files · 4m`;
-  hovering it shows the source and last change), a conflict warning, `⧗ N queued`, the context
-  share, then an agent's Reading width toggle and `Share` menu (for now one item, "Follow in
-  Zed", ✓ while on; the button is highlighted while following). Each part shows only when it has
-  something to say. "Turns…" is in the tab menu (right-click a tab) and the pane menu.
-  The header starts with the agent badge and has no title; the badge's tooltip gives the pane's full title.
-  A pane is renamed with F2, the pane menu's "Rename pane" or a double-click on a tab that keeps its default name: the field shows in the pane's header (Enter saves, Esc cancels, blank clears; run panes keep their command name, ADR 0031).
+- Pane signals (ADR 0054, ADR 0106): a pane has no header. Transient signals are a small stack of floating badges in the pane's top-right corner, drawn only while they apply and taking clicks only on themselves: a conflict warning, `⧗ N queued`, `Copy mode` with the key hints, and while the pane is zoomed `⤢ Pane zoomed` with a "Show all panes" button. Nothing is drawn in the normal case.
+  The agent controls (Terminal | Chat, Reading width, `Share`) are icon toggles in the title bar (§10), acting on the focused agent pane; `Share` (its menu has "Follow in Zed", ✓ while on) shows only with `[features] share`. "Turns…" and "Follow in Zed" are in the tab menu (right-click a tab).
+  A pane is renamed with F2, the tab menu's "Rename pane" or a double-click on a tab that keeps its default name: the field shows in the tab chip (Enter saves, Esc cancels, blank clears; run panes keep their command name, ADR 0031).
   A tab still named `Terminal` / `Terminal N` shows its focused pane's session title (cut with `…`, full on hover) and follows the focus to another pane; a name the user gave the tab always wins; a double-click on a default-named tab renames the focused pane, on a named tab the tab.
   Without a title an agent pane shows the title its agent gave the terminal, e.g. Claude's conversation summary; everywhere a session is named the order is: user title > terminal title > agent name.
-  While a pane is zoomed its header shows `⤢ Pane zoomed` and a "Show all panes" button.
   The active tab has a solid card fill (the Tern chip look); in a split the panes keep only their thin
   border, the unfocused ones are dimmed. The sidebar session row also puts the badge
   before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
   color, ADR 0058); it also shows on board cards and in agent menus.
-- **Chat mode** (ADR 0104): an agent pane whose profile has a readable transcript (Claude, Codex, omp) has a `Terminal | Chat` switch in its header and `Ctrl+Alt+T` toggles it (palette: "Agent: Toggle chat view").
+- **Chat mode** (ADR 0104): an agent pane whose profile has a readable transcript (Claude, Codex, omp) has a Terminal | Chat toggle in the title bar and `Ctrl+Alt+T` toggles it (palette: "Agent: Toggle chat view").
   The mode is kept per pane in the tab layout: the pane's leaf holds `chat: true` or `chat: false` (it survives a UI restart and the daemon's startup resume), and a leaf without the flag follows `[ui] chat_default` (default `false`).
-  Picking Terminal or Chat (the switch, `Ctrl+Alt+T`, the palette) also writes `[ui] chat_default` (the last pick) and pins the panes that had no saved mode, so new agent panes and the next start use it (ADR 0105).
+  Picking Terminal or Chat (the title bar toggle, `Ctrl+Alt+T`, the palette) also writes `[ui] chat_default` (the last pick, shown in Settings as "Chat view by default") and pins the panes that had no saved mode, so new agent panes and the next start use it (ADR 0105).
   Chat draws the last 50 turns of the transcript: the prompt as a right-aligned card, the agent's text as Markdown (selectable inside one message), tool calls as collapsed rows `name target` that open to the arguments and the result (an error result in the danger color), thinking as a collapsed row (Claude, omp), the latest plan as a card, a pending Claude question as a card whose "Answer in terminal" button switches to Terminal, and a tray of the turn's running Claude subagents.
   The plan comes from Claude `TodoWrite`, Claude's task tools (`TaskCreate`, `TaskUpdate`, `TaskList`, which current Claude Code uses by default) or Codex `update_plan`.
   A Claude subagent started in the background stays in the tray until its `<task-notification>` arrives.
@@ -1210,11 +1203,10 @@ Always icon + text, never color alone (the tab's tooltip gives the text).
   An omp turn ends with omp's recap line when it is not older than the turn's prompt and the agent is not working.
   The composer is a floating card in the same column (§20B).
   The terminal keeps running underneath and still reports the state.
-- Pane menu (right-click a split pane's header or a sidebar session row, or Shift+F10 with the pane focused): **Pin**, **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise), **Rename** (inline
-  like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears). A
-  colored pane tints its agent chip and draws a thin line under its header (a single pane: on
-  top of its terminal); the border still shows state (ADR 0037).
-- Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
+- Pane menu (right-click a sidebar session row, or Shift+F10 with a terminal focused; a pane has no header to right-click): **Pin**, **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise), **Rename** (inline
+  like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears). The tab menu has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane, and the palette has "Pane: Pin / Unpin" and "Agent: Mark unread". A
+  colored pane draws a 2 px line of its color at its top; the border still shows state (ADR 0037).
+- Tab icon: a bell while any pane needs input, else an hourglass while an agent works, else none (§10, Terminals).
 - Workspace row: `● N working` (a pill, a still dot) while an agent works, else `N idle`; amber
   `? N` while N need input; no token total (the Session tab shows usage). Sidebar session rows
   sit indented in the workspace's card (ADR 0062): agent chip (an accent chip while working;
@@ -1681,10 +1673,10 @@ The terminal is the hero; everything else steps back.
 2. **Soft.** Moderate corner radius; very light shadows only on floating layers (popover, dialog,
    palette). No saturated colors besides the accent and status colors. Workspace colors
    (ADR 0020) and pane colors (ADR 0037) are the exception: a small tinted letter avatar per
-   workspace and a 3 px stripe on its sidebar card, and a tinted agent chip with a thin line
-   under the header of a colored pane.
+   workspace and a 3 px stripe on its sidebar card, and a 2 px line of its color at the top
+   of a colored pane.
 3. **One accent color** for selection, primary buttons, focus. Status colors only for agent states.
-4. **Progressive disclosure.** Secondary actions on cards, pane headers and rows appear on hover/focus.
+4. **Progressive disclosure.** Secondary actions on cards and rows appear on hover/focus.
 5. **Gentle motion.** Panels, view switches, drag & drop: 120–180 ms ease-out. Nothing loops while an agent works: its mark is a still dot and its time text moves (ADR 0086).
    Respect the OS reduce-motion setting.
 6. **Helpful empty states.** One short sentence plus one primary action with its shortcut.
@@ -1746,7 +1738,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the Editor's file-tab strip and the right panel tab row 44, Git repo strip 42 (px at 13 px body).
 - Tab chip (Tern look, ADR 0106): height `CONTROL_HEIGHT`, radius 8 (`radius::MEDIUM`), no border; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
   Chips shrink to `TAB_MIN_WIDTH` (120, room for the status icon, a pane icon, about five title letters and the ×) before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
-- Pane header: every pane header has the same height, `CONTROL_HEIGHT` scaled with `[ui] font_size` plus the fixed `PANE_HEADER_FIXED` (2 × `space::XS` padding and the accent line), so side-by-side panes line up whether or not they have the agent controls.
+- Pane (ADR 0106): no header. A pane in a split tab has a `PANE_GRIP_HEIGHT` (6 px) strip along its top edge that shows a grip on hover and drags the pane; floating badges (`pane_badges`: `surface_raised` fill, 1 px `border`, radius 8, META text) sit in its top-right corner `space::S` from the edges, at most `PANE_BADGE_MAX_WIDTH` wide; a colored pane has a `PANE_ACCENT_WIDTH` (2 px) line of its color at the top. The title bar's pane toggles are 30 px icon buttons, accent while on.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
   buttons, 30 px icon button, search box, status pill, tinted chip, overline, key hint.
 - UI font = Inter when installed, else the system font (Segoe UI Variable / SF), unless
@@ -1775,8 +1767,8 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   spec names for those buttons map to Lucide: `+` plus, `▾ ▸ ‹ ›` chevrons, `⋯` ellipsis, `◷`
   history, `⌫` delete, `◐ ☀ ☾` sun-moon / sun / moon, `─ □ ❐ ✕` minus / square / copy / x, `⌕`
   search, `◫` columns-2, `◧ ◨` panel-left / panel-right, `⇤ ⇥` panel-left-close / -open,
-  `↻ ■ ▶` rotate-cw / circle-stop / play, `✦` sparkles, Fetch `↓` arrow-down-to-line. The pane
-  header has no close button: Close pane is in the pane menu (right-click the header) and the tab menu. Frequent toolbar, header, card and
+  `↻ ■ ▶` rotate-cw / circle-stop / play, `✦` sparkles, Fetch `↓` arrow-down-to-line. A pane has no
+  close button: Close pane is in the tab menu and the palette. Frequent toolbar, card and
   empty-state actions carry a 14 px icon before their text (Share, idle Run, Save, Find,
   Comment, Send to agent, Open in Zed, Push, …; the list is in ADR 0051); a `▾` after a label
   is a chevron-down icon. Dialog footers, Retry, thread actions, row actions and danger buttons
@@ -2041,7 +2033,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 - [ ] `mk integration install claude` and `codex` work: backup, idempotent, uninstall.
 - [ ] Claude Code asks for approval → within 2 s the session is needs_input, Inbox has an entry, OS notification fires.
 - [ ] Clicking the OS notification brings the app up focused on that pane.
-- [ ] Per-session status correct on pane header, tab label and sidebar (§11); hover shows source.
+- [ ] Per-session status correct on tab icon and sidebar (§11); the tab tooltip gives the status in words.
 - [ ] omp (screen detection) transitions correctly between working and idle.
 - [ ] Unit tests for the state machine; e2e tests with the fake agent for every transition.
 
@@ -2109,7 +2101,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
       and its quick reply answers a fake agent's "(y/n)" without leaving the view (e2e
       for the request + manual check for the popover).
 - [ ] Turns start and end as §20A.3 defines; a fake agent that edits 2 files in one turn produces
-      `session.turn` with both paths (+/− counts arrive in M11); the pane header shows the summary.
+      `session.turn` with both paths (+/− counts arrive in M11); the tab tooltip shows the summary.
 - [ ] `notify.needs_input` / `notify.done` / `notify.sound` switches are respected (unit tests on
       the decision; manual check for the sound).
 - [ ] Keep awake: inhibitor held while an agent works and released ≤ 5 s after the last one
@@ -2149,7 +2141,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
       cleanly on conflict; Remove keeps an unmerged branch (real-git tests).
 - [ ] Fan-out runs 2–5 agents in their own worktrees; Compare and Pick work; e2e with fake profiles.
 - [ ] Usage: fixture transcripts in the current Claude and Codex formats give the expected
-      input/output/context tokens, read incrementally; shown on pane header, card and sidebar.
+      input/output/context tokens, read incrementally; shown in the composer, on cards and sidebar.
 - [ ] M9–M11 and M13 manual checks listed in HUMAN_CHECKS.
 
 ---
@@ -2251,6 +2243,7 @@ max_seconds = 120           # 1–600; a recording stops by itself after this
 [features]                  # ADR 0046; optional modules, off by default
 docs = false                # §12 Docs view, "Review in Docs"; applies live
 turns = false               # §20C.1–2 turn snapshots + "Turns…"; read when a session starts
+share = false               # ADR 0106; the pane's Share button (title bar toggle, Follow in Zed); applies live
 [web]                       # ADR 0053; phone access
 enabled = false             # the daemon runs `mk web` while true; the Phone access dialog writes it
 push = false                # ADR 0067; mk web notifies phones that opted in (sends while `mk web` runs); the Phone access dialog writes it
@@ -2310,7 +2303,7 @@ context_window = 200000        # tokens, for the % shown
    `ended_at` and `files` = paths attributed to the session during the turn (the hook-reported
    edits and file-watcher batches already attributed in M5, deduplicated, relative). From M11 each
    file also carries `added`/`removed` (numstat between the turn's start and end snapshots).
-   The pane header of a `done` session shows `✓ Done · 3 files · 4m` (no files → `✓ Done · 4m`;
+   The tab tooltip of a `done` session shows `Done · 3 files · 4m` (no files → `Done · 4m`;
    durations as everywhere else, ADR 0011). The summary text is UI-side; the event carries the data.
 4. **Last line.** (Removed with the Inbox card, ADR 0036: no list shows it any more; the peek popover shows the last 8 lines.)
 5. **Keep awake.** While at least one agent session (not shell) is `working` and
@@ -2366,7 +2359,7 @@ context_window = 200000        # tokens, for the % shown
    (first line each) with ✕ to remove. Daemon: each queued text gets a `send_id`; `session.send`
    returns `{send_id, queued: bool}`; `session.unqueue` removes a not-yet-written text (`not_found`
    once written); event `session.queue` carries the session's current queue after every change
-   (an exiting session announces it empty). The pane header shows `⧗ 2 queued`.
+   (an exiting session announces it empty). A floating badge in the pane shows `⧗ 2 queued`.
 3. **Prompt library.** Markdown files in `<config>/mkrew/prompts/*.md`; file stem = name; optional
    first line `# Title`. Variables: `{file}` (current file of the Editor/Git, project-relative),
    `{selection}` (picked lines, as quoted text), `{task}` (task title), `{project}` (name). An unknown
@@ -2449,7 +2442,7 @@ without trees, like outside git.
    turn start (`UserPromptSubmit`) the `hook.report` reply is sent after the snapshot, so the agent
    has not edited yet; screen-detected starts are best effort (the snapshot may include the first
    edits — documented in ADR 0010).
-2. **Restore to before turn n.** Pane header menu "Turns…" lists the session's turns (n, time,
+2. **Restore to before turn n.** The tab menu's "Turns…" lists the session's turns (n, time,
    files, +/−). "Restore before turn n" opens a preview like task undo (§5, ADR 0005):
    files to restore/delete and the diff, then confirm. Restore = `git read-tree` into a temp index +
    `git checkout-index -f` of the paths under the project folder that differ from the start tree
@@ -2462,7 +2455,7 @@ without trees, like outside git.
 4. **Changed by.** The Git view's file list gains a filter "Changed by: All | <session>…" listing
    sessions that have `files_changed`/hook edits in this project in the last 24 h; it keeps only
    files attributed to that session (data: `session.files`, below).
-5. **Follow in Zed.** Pane header `Share` menu → "Follow in Zed" (also a palette command). While on, each
+5. **Follow in Zed.** The tab menu's "Follow in Zed" (also a palette command, and the `Share` toggle in the title bar with `[features] share`). While on, each
    hook-reported edit by that session runs `zed <path>:<line?>` (line from the hook payload when
    present), debounced by `zed.follow_debounce_ms` (the last path wins). Off by default; resets on
    UI restart. UI-side; it reacts to the `session.edited` event.
@@ -2548,7 +2541,7 @@ and milestone numbers are not reused.
    the newest non-sidechain message; Codex: `last_token_usage.total_tokens`. `model` = Claude
    `message.model` of the newest non-sidechain, non-`<synthetic>` assistant line; Codex `model` of
    the newest `turn_context` line. Event `session.usage` (`input`, `output`, `cache_read`,
-   `cache_write`, `context`, `context_window?`, `model?`, `transcript?` (the located transcript file's absolute path, sent again when it changes)); the pane header shows `ctx 62%` (warning
+   `cache_write`, `context`, `context_window?`, `model?`, `transcript?` (the located transcript file's absolute path, sent again when it changes)); the composer shows `ctx 62%` (warning
    color ≥ 80 %), task cards show total tokens (the workspace row shows a session summary, ADR 0036). No money estimate.
    omp (per API call, summed): `message.usage` `input` (already fresh), `cacheRead`, `cacheWrite`,
    `output` of `type: "message"` assistant lines; context = `input` + `cacheRead` + `cacheWrite` of the

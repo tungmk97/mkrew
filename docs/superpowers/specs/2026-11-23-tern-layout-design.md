@@ -19,8 +19,8 @@ Success means:
 - There is one top bar, full width (no Tern-style floating bubble), and the terminal tabs live in it.
 - The view switch `Terminals | Board | Docs | Editor | Diff` is gone; every view stays one click away.
 - The top bar shows only what is used often; the rest stays in the palette, its shortcut and Settings.
-- Every pane has a slim header without a title; the tab shows the title of the focused pane.
-- The terminal area gains the 44 px of the old strip and the 24 px of the widget bar, minus one pane header row for a single pane.
+- Panes have no header; the tab shows the title of the focused pane and its status as an icon.
+- The terminal area gains the 44 px of the old strip, the 24 px of the widget bar and the row every pane header took.
 
 ## 2. What the user said, and what was assumed
 
@@ -49,7 +49,7 @@ One bar, `TITLE_BAR_HEIGHT` (42), full width, background `theme.chrome`, 1 px bo
 | Left | macOS inset (`title_bar_inset`) when on mac; machine chip (machine windows only, as today); sidebar toggle `PanelLeft`; workspace switcher (avatar, name, ▾). |
 | Tab area | View chips (Editor, Diff, each only while open) │ pinned tabs │ other tabs │ `+ ▾`. A 1 px rule (`TITLE_RULE_HEIGHT`) separates the view chips from the tabs, and the pinned tabs from the rest. |
 | Drag space | `flex_1` spacer with `WindowControlArea::Drag`. |
-| Right | Limits chip (only at 80% or more); Run pill ▾; update button (only when an update is known); Board icon; Docs icon (only with `[features] docs`); Split ▾ (`Columns2`); right panel toggle `PanelRight`. |
+| Right | Limits chip (only at 80% or more); Run pill ▾; update button (only when an update is known); the focused agent pane's toggles (Terminal │ Chat, Reading width, Share with `[features] share`); Board icon; Docs icon (only with `[features] docs`); Split ▾ (`Columns2`); right panel toggle `PanelRight`. |
 | Window | Windows only: 1 px rule, then minimize, maximize, close, as today. |
 
 Removed from the top bar:
@@ -124,8 +124,8 @@ While a session starts, the button shows the starting spinner as `+ New ▾` did
 | `tab_error` | `toast_error`. The field and its host routing go. |
 | `tab_notice` (`show_tab_notice`) | `toast_info`. The field goes. |
 | Running warning ("N sessions running…") | One `toast_info` when the count rises above `RUNNING_WARN_ABOVE`, not repeated until it drops back to or below it. |
-| `⤢ Pane zoomed` + "Show all panes" | The zoomed pane's header (section 4). |
-| Single pane status and controls | The pane header (section 4). |
+| `⤢ Pane zoomed` + "Show all panes" | A floating badge in the zoomed pane's top-right corner (section 4). |
+| Single pane status and controls | Status: the tab icon and tooltip. Controls: the top bar right group (section 4). |
 | Split button | Top bar right group. |
 
 ### 3.6 Detached windows
@@ -135,15 +135,17 @@ It switches to the same top bar function with a flag that leaves out the workspa
 The tab chip keeps its workspace-name prefix there.
 The duplicate bar and strip code in `detached_render.rs` is deleted.
 
-## 4. Pane header
+## 4. No pane header
 
-- Every pane has the compact header, including a single pane (today a single pane has none and its controls sit in the strip).
-- The header has no title: `pane_title` is removed from `pane_header` (`pane_render.rs:969`).
-- Contents: agent chip (tinted by the pane color, as today), status parts (`pane_status`), agent controls (`pane_controls`: Terminal │ Chat, Reading width, Share), and while zoomed `⤢ Pane zoomed` with the Show all panes button.
-- The agent chip's tooltip gives the pane's full title.
-- Right-click opens the pane menu and the header stays the drag handle for the pane, as today.
-- Renaming a pane: F2, pane menu "Rename pane", or a double-click on the tab while the tab keeps its default name (section 4.1).
-- `pane_text::header_room` drops the title from its width sum; its tests follow.
+The first design gave every pane a compact header without a title; the second UI feedback round removed the header entirely (ADR 0106).
+
+- `pane_header`, `pane_controls`, `pane_status`, `pane_rename`, `header_room`, `PANE_HEADER_FIXED` and the pane status pill, elapsed time, context share and agent chip are deleted. The context share stays in the composer.
+- Transient signals are a stack of floating badges in the pane's top-right corner (`pane_badges`), drawn only while they apply, over the terminal and taking clicks only on themselves: the conflict warning (`conflict_badge`), `N queued`, Copy mode with its hint, and while zoomed `⤢ Pane zoomed` with the Show all panes button.
+- The agent controls are icon toggles in the title bar right group, before Board, acting on the focused agent pane (`pane_toggles`): Terminal | Chat (`MessageSquare`, only when `chat_available`, accent while Chat shows, Ctrl+Alt+T), Reading width (`AlignCenter`, accent while on) and Share (`Share2`, only with `[features] share`, default false). The palette keeps "Agent: Toggle chat view" and "Pane: Reading width (on / off)"; `[ui] chat_default` is the setting for the mode of new agent panes.
+- The header's right-click pane menu is deleted from the pane. The tab menu (right-click a tab) has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane; the palette has Pin / Unpin and Mark unread; the sidebar session row keeps the pane menu; Shift+F10 on a terminal opens it under the pane's top edge (`Anchor::Pane`).
+- In a split tab each pane has a strip along its top edge, `PANE_GRIP_HEIGHT` (6 px) tall. Hovering it shows a slim grip (`group_hover`); dragging it starts the pane drag the header used (`draggable_pane`). A lone pane has no strip.
+- A pane with a color has a 2 px line of it at the top; the focus border stays.
+- Renaming a pane: F2 or a double-click on the tab while the tab keeps its default name (section 4.1); the field shows in the tab chip, `tab_renaming`.
 
 ### 4.1 Tab title from the focused pane
 
@@ -218,7 +220,7 @@ Unit tests, pure logic only:
 - `session_label`: focused pane title on a default-named tab; a user-named tab wins; focus change changes the label; empty tab gives none.
 - Limits chip: below 80% none; 80% amber; 95% danger; the highest of several wins; tie rule.
 - Settings: a file with `widget_bar` and `widgets_hidden` loads.
-- `header_room` without the title.
+- Tab icons: active vs inactive, more than three panes give `+N`, needs input beats working, an empty tab, an agent without a brand logo; the `brand logo` contrast rule.
 
 Deleted tests: widget bar model and renderer tests, `ToggleWidgetBar` keymap and palette tests, `MachineStats` protocol and daemon tests, `View::bar`, the widget bar settings tests, `redraw.rs` widget bar tests (replaced by the limits redraw rule).
 
@@ -235,8 +237,8 @@ Smoke on the real app (PrintWindow screenshots, dark and light), saved to `docs/
 
 ## 8. Docs
 
-- ADR 0106 "Tern layout": supersedes the bar part of ADR 0102; records the strip in the title bar, the removed view switch, the pane header without a title, the removed machine stats and protocol 58.
-- SPEC §7 (protocol 58, `machine.stats` gone), §10 (window diagram, and the title bar height becomes 42 everywhere: §10 said 44, §14 said 48), §11 (pane header without a title, tab title from the focused pane), §13 (shortcut rows of the widget bar go), §14 (tab chip look, `TAB_MIN_WIDTH`), §20.0 (`[ui] widget_bar` and `widgets_hidden` retired).
+- ADR 0106 "Tern layout": supersedes the bar part of ADR 0102; records the strip in the title bar, the removed view switch, the removed pane header with its badges and top bar toggles, the tab icons, the removed machine stats and protocol 58.
+- SPEC §7 (protocol 58, `machine.stats` gone), §10 (window diagram, and the title bar height becomes 42 everywhere: §10 said 44, §14 said 48), §11 (no pane header, tab icons and tooltip, tab title from the focused pane), §13 (shortcut rows of the widget bar go), §14 (tab chip look, `TAB_MIN_WIDTH`, pane badges and drag strip), §20.0 (`[ui] widget_bar` and `widgets_hidden` retired, `[features] share`).
 
 ## 9. Order of work
 
@@ -245,7 +247,7 @@ Each step is one commit and passes `scripts/verify.sh`.
 1. Protocol 58 and daemon: remove `MachineStats` and `machine.rs`.
 2. UI: remove the widget bar, add `limits.rs` and the limits chip, retire the two settings keys.
 3. Top bar: tab area in the title bar, view chips, Board / Docs icons, merged `+ ▾`, `⋯` removed, strip notices to toasts, detached windows on the same bar, removed buttons.
-4. Pane header on every pane without a title; `session_label` from the focused pane.
+4. No pane header; floating pane badges, top bar toggles, top edge drag strip; `session_label` from the focused pane.
 5. Docs: ADR 0106, SPEC, HUMAN_CHECKS, screenshots.
 
 ## 10. Out of scope

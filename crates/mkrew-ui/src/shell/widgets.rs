@@ -1244,6 +1244,26 @@ pub(crate) fn conflict_badge(
         )
 }
 
+/// A floating badge over a pane (`pane_badges`): a raised, bordered pill with muted META text,
+/// so it reads over any terminal output. Not a button.
+pub(crate) fn badge_frame(theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::MEDIUM))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.border))
+        .bg(rgb(theme.surface_raised))
+        .font_family(theme.ui_font_family.clone())
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text_muted))
+        .whitespace_nowrap()
+}
+
 /// A session's status mark (SPEC §11): one still dot in the state's color while working, else
 /// the state's glyph in its color. Fixed width, so rows with different states line up.
 pub(crate) fn status_mark(state: SessionState, theme: &Theme) -> gpui::AnyElement {

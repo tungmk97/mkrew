@@ -25,14 +25,25 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 Screenshots: `docs/screenshots/tern-layout-<view>-<dark|light>.png`.
 
-- [ ] **Look (dark + light, Mkrew Light and one palette theme):** one 42 px bar across the window: sidebar toggle, workspace switcher, tabs, `+ ▾`, a drag space, then Run, Board, Docs (with `[features] docs`), Split (only while Terminals show) and the right panel toggle; no bottom bar; the sidebar and the terminals reach the window bottom.
+- [ ] **Look (dark + light, Mkrew Light and one palette theme):** one 42 px bar across the window: sidebar toggle, workspace switcher, tabs, `+ ▾`, a drag space, then Run, the focused agent pane's Chat and Reading toggles, Board, Docs (with `[features] docs`), Split (only while Terminals show) and the right panel toggle; no bottom bar; the sidebar and the terminals reach the window bottom.
   The active tab is a solid lighter card with rounded corners and no border, inactive tabs are muted with a hover fill, the × shows on the active tab and on hover.
 - [ ] **Views:** a click on a terminal tab shows Terminals from Board, Docs, Editor and Diff; Board and Docs icons turn accent while shown and a second click goes back; open a file: an Editor chip appears, × closes all file tabs; open a diff: a Diff chip appears, × closes it; the Split button shows only while the main window shows Terminals.
 - [ ] **Many tabs:** open 10 or more tabs in an 1100 px wide window: the area scrolls sideways, the active tab stays in view when you switch with Ctrl+Tab, `+ ▾` stays visible, chips shrink to a minimum before scrolling.
 - [ ] **`+ ▾`:** rows are the agent profiles (default first with a check and Ctrl+Shift+A), Shell (Ctrl+Shift+T), Empty tab; each opens a new tab and shows Terminals, also from Board; the button shows the spinner while the agent starts; Alt+Shift+A and Alt+Shift+S add a pane to the current tab instead.
 - [ ] **Window drag:** drag the empty space: the window moves; double-click it: maximize and restore; a click or a drag on a tab never moves the window (Windows and macOS); with many tabs the empty space keeps at least 32 px, so the window stays movable.
-- [ ] **Pane header:** a single pane has the compact header with no title; the agent chip's tooltip shows the full pane title; Terminal | Chat, Reading width and Share work there; zoom a pane (Ctrl+Shift+M): the header shows `Pane zoomed` and "Show all panes".
-- [ ] **Tab title:** a tab named `Terminal` shows the focused pane's session title and follows when you move focus in a split; rename the tab (F2 on a named tab, or double-click): the name wins; double-click a default-named tab: the focused pane's rename field shows in its header.
+- [ ] **No pane header (dark + light):** panes have no header row: a single pane is the terminal alone and a split shows only the thin borders; the status pill, elapsed time and context % are not in the pane (the context % is in the composer).
+  The tab shows the focused pane's title, and its tooltip gives the title, the status in words and the time.
+  Double-click a default-named tab, or press F2: the focused pane's rename field shows in the tab chip (Enter saves, Esc cancels); in a detached window too.
+- [ ] **Tab title:** a tab named `Terminal` shows the focused pane's session title and follows when you move focus in a split; rename the tab (F2 on a named tab, or double-click): the name wins; double-click a default-named tab: the focused pane's rename field shows in its tab chip.
+- [ ] **Top bar Chat and Reading toggles (dark + light):** focus a Claude pane: a Chat icon and a Reading width icon show before Board; Chat is accent while the chat view shows and Ctrl+Alt+T flips it; Reading is accent while on and narrows the terminal.
+  Focus a shell pane, a Copilot pane, or the Board: the Chat toggle is gone (Reading too for a shell); a detached window shows them too.
+  Both tooltips say what a click does; the palette has "Agent: Toggle chat view" and "Pane: Reading width (on / off)"; Settings > General > "Chat view by default" sets the mode of new agent panes.
+- [ ] **Floating badges:** nothing is drawn over a quiet pane.
+  Zoom a pane (Ctrl+Shift+M): a `Pane zoomed` badge with "Show all panes" shows at the top-right and the button restores the split; queue a send to a busy agent: `⧗ 1 queued`; Alt+Shift+C: `Copy mode` with its hints; two agents editing one file: a conflict badge whose Dismiss works.
+  Several badges stack downward; clicks anywhere else in the pane still reach the terminal (select text under and beside a badge).
+- [ ] **Top-edge drag strip (dark + light):** in a split tab, hover the top edge of a pane: a slim grip shows and the cursor is a hand; drag it onto another pane: the drop overlay shows and the pane moves; a lone pane has no strip; selecting terminal text below the first 6 px is unaffected; a colored pane (tab menu > Change color) has a 2 px line of its color at its top.
+- [ ] **Pane actions without a header:** right-click a tab: Rename pane, Close pane, Zoom pane / Show all panes (several panes), Follow in Zed and Turns… (agent), and the Change color swatches act on the focused pane; Shift+F10 in a terminal opens the pane menu under its top edge; a sidebar session row's menu is unchanged.
+- [ ] **Share hidden:** with `[features] share` unset or `false` no Share button shows anywhere; "Follow in Zed" is in the tab menu and the palette; set `share = true` in `settings.toml` (or Settings > Features > Share button): a Share icon shows with the other toggles, accent while following, and opens the Follow in Zed menu.
 - [ ] **Notices as toasts:** a failed action that used to print in the strip (close a tab while the daemon is down, open links with none on screen) shows a toast; open 13 sessions in one workspace: one toast "sessions running", not repeated until the count drops to 12 or fewer and rises again.
 - [ ] **Limits chip:** with no data or below 80 % there is no chip; report 85 % (amber `⚠ Claude 5h 85%`), then 96 % (red); the tooltip lists the windows with reset times in local time; a click opens Settings > Integrations; it is inert behind a dialog.
 - [ ] **Detached window:** drag a tab out: same bar with the workspace name on its chip, Move all back, Split; no switcher, `+ ▾`, view chips, Board, Docs or limits chip; drag a tab out and back onto the main tab area (drop line shows); a click on its chip does not move the window.
@@ -54,7 +65,6 @@ Screenshots: `docs/screenshots/tern-layout-<view>-<dark|light>.png`.
 - [ ] **Sidebar without the filter row (dark + light):** the All / Working / Needs you control is the top of the sidebar; there is no filter box, Remove idle, collapse or `+` button; without workspaces the "Workspaces" header with `+` and the empty state stay.
 - [ ] **Sidebar filter on demand:** Alt+0 and `/` show the filter box and focus it (also from a hidden or compact sidebar); typing filters; Esc on an empty box hides it and gives the keyboard back to the pane; Esc on a box with text clears it and does the same; with text left in an unfocused box the box stays visible with its `×`; Alt+0 again returns to the pane.
 - [ ] **Sidebar palette entries:** "Sidebar: Remove idle agents and terminals (N)" shows only while N is above 0 and removes them; "Sidebar: Collapse all workspaces" turns into "Sidebar: Expand all workspaces" after it runs, and the sidebar follows.
-- [ ] **Aligned pane headers (dark + light):** put an agent pane (with Reading and Share) beside a shell pane: the two headers have the same height and the status pills (`Needs input`, `Idle`) line up on one row, with and without a pane color.
 
 ### To verify - 2026-11-23 Chat look (ADR 0105, plan docs/superpowers/plans/2026-11-23-chat-look.md)
 
@@ -192,8 +202,8 @@ With a real omp, a real Claude Code and a real Codex session, dark and light the
 ### To verify - 2026-11-22 Chat view (ADR 0104, plan docs/superpowers/plans/2026-11-22-chat-view.md)
 
 With a real Claude Code session, a real Codex session (and omp if installed), dark and light themes:
-- [ ] The pane header shows `Terminal | Chat` for Claude, Codex and omp; a shell pane and a Copilot pane show none. A single pane has the same compact header as a split pane (ADR 0106). In a split, the header is as tall with the switch as without it.
-- [ ] Ctrl+Alt+T and the palette entry "Agent: Toggle chat view" switch the pane, also while the composer has the keys; the choice survives restarting the UI and moving the pane. Both segments' tooltips show Ctrl+Alt+T. From the Board or Docs view the key does nothing.
+- [ ] The title bar shows a Chat toggle (before Board) while a Claude, Codex or omp pane has the focus; a shell pane and a Copilot pane show none (ADR 0106: panes have no header).
+- [ ] Ctrl+Alt+T and the palette entry "Agent: Toggle chat view" switch the pane, also while the composer has the keys; the choice survives restarting the UI and moving the pane. The toggle's tooltip shows Ctrl+Alt+T. From the Board or Docs view the key does nothing.
 - [ ] Chat shows the prompt card on the right, the agent text as Markdown, tool rows that open to arguments and result; a failing command shows its result in the error color.
 - [ ] Thinking rows (Claude, omp) are collapsed and open to the text.
 - [ ] **Claude plan from the task tools:** ask Claude Code to plan a job with its task list (`TaskCreate`, `TaskUpdate`): the plan card shows the steps, and their marks follow as it works (ring, half ring, check; the step in progress in full text color).
@@ -288,7 +298,7 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
   Press and hold a tab chip, then drag it: the chip does not stay dimmed after the drop.
 - [ ] **Share and find bar (dark + light):** hover the Share button of a pane; with a followed share it shows a pointer and no fill and still opens its menu.
   Open the terminal find bar (Ctrl+F in a terminal) and hover its X: the fill is visible on the bar.
-- [ ] **Reading width (dark + light):** with reading width on, hover its icon in the pane header: the hover is visible against the on fill.
+- [ ] **Reading width (dark + light):** with reading width on, hover its icon in the title bar: the hover fill is visible and the icon is accent.
 - [ ] **Pane divider:** hover the divider between two panes: the tint shows; drag still resizes.
 - [ ] **Tabs and panes look changes (spec 5.2, not bugs):** the tab chips and Share turn their label to full text on hover.
   A followed Share no longer dims while pressed.

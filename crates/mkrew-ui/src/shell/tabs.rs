@@ -254,8 +254,8 @@ impl Shell {
         }
     }
 
-    /// Starts editing `session_id`'s title inline in its pane header (F2, double-click),
-    /// from the user's own title. Run sessions are named by their command: left alone.
+    /// Starts editing `session_id`'s title inline in its tab's chip (F2, double-click), from
+    /// the user's own title. Run sessions are named by their command: left alone.
     pub(crate) fn start_pane_rename(
         &mut self,
         session_id: Ulid,

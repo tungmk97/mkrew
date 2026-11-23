@@ -1344,7 +1344,7 @@ pub(crate) fn session_row(
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                // Show the pane first: the menu's Rename edits the pane header's title, which
+                // Show the pane first: the menu's Rename edits the title in its tab chip, which
                 // exists only for the pane on screen (same as a left click).
                 shell.open_session(session_id, window, cx);
                 shell.open_pane_menu(session_id, event.position, window, cx);
@@ -1552,7 +1552,7 @@ pub(crate) fn compact_session_row(
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                // As in `session_row`: show the pane first (Rename edits its header).
+                // As in `session_row`: show the pane first (Rename edits its tab chip).
                 shell.open_session(session_id, window, cx);
                 shell.open_pane_menu(session_id, event.position, window, cx);
             }),

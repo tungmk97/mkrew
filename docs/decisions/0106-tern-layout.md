@@ -15,7 +15,7 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
 
 - One full-width top bar of `TITLE_BAR_HEIGHT` (42).
   Left: macOS inset, machine chip (machine windows), sidebar toggle, workspace switcher.
-  Then the tab area, a drag spacer (at least 32 px wide, so the window stays movable with many tabs), and on the right the limits chip, Run pill, update button, Board and Docs icons, Split (in the main window only while Terminals show), right panel toggle, and on Windows the window controls.
+  Then the tab area, a drag spacer (at least 32 px wide, so the window stays movable with many tabs), and on the right the limits chip, Run pill, update button, the focused agent pane's toggles (Terminal | Chat, Reading width, Share), Board and Docs icons, Split (in the main window only while Terminals show), right panel toggle, and on Windows the window controls.
 - The tab strip lives in the tab area: Editor and Diff chips (only while open), pinned tabs, other tabs, and a `+ ▾` button.
   The area scrolls sideways; a chip shrinks to `TAB_MIN_WIDTH` first; `+ ▾` stays visible.
   Only the spacer drags the window, so a click on a tab never moves it.
@@ -28,8 +28,13 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
 - Removed from the bar: logo, branch chip and repo menu (the Git panel has the repository strip), History, theme toggle, phone button, `⋯` tab menu button (right-click on a tab opens the same menu).
   All stay in the palette, their shortcuts and Settings.
 - The strip's notices become toasts: errors `toast_error`, notices `toast_info`, and the running warning one `toast_info` when the count rises above `RUNNING_WARN_ABOVE` (again only after it dropped back).
-- Every pane, a single one too, has the compact header; the header has no title.
-  The agent chip's tooltip gives the full pane title; the zoom notice and "Show all panes" live in the zoomed pane's header.
+- Panes have no header (UI feedback round 2): the status pill, elapsed time, context share, agent chip and task folder are gone from the pane; the status lives in the tab icon and its tooltip, and the context share in the composer.
+  Transient signals are a small stack of floating badges in the pane's top-right corner, drawn only while they apply: the conflict warning, `N queued`, Copy mode with its hint, and while zoomed "Pane zoomed" with "Show all panes".
+  The agent controls move to the title bar right group, before Board, as icon toggles that act on the focused agent pane: Terminal | Chat (only when the pane can chat), Reading width, and Share (only with `[features] share`, default false; the code stays and Follow in Zed stays in the tab menu and the palette).
+  The header's right-click pane menu is gone from the pane: the tab menu has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane, the palette has Pin and Mark unread; the sidebar session row keeps the pane menu, and Shift+F10 on a terminal opens it under the pane's top edge.
+  A pane in a split tab has a 6 px strip along its top edge (`PANE_GRIP_HEIGHT`) that shows a grip on hover and drags the pane onto another; a lone pane has none.
+  A pane with a color has a 2 px line of it at the top; the focus border stays.
+  A pane is renamed in its tab chip (F2, or a double-click on a tab that keeps its default name).
 - The tab title follows the focused pane: a tab that keeps its default name shows the focused pane's session title, a name the user gave always wins.
   A double-click on a default-named tab renames the focused pane, on a named tab the tab.
 - The widget bar is deleted.
@@ -50,7 +55,6 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
 - A 1 px rule sets the title bar groups apart: left group, tab area, drag space, right group (the rule before the window controls stays).
 - The sidebar's filter row is gone: the All / Working / Needs you control is its top, the filter box shows only while it is focused or holds text (Alt+0 and `/` show it), and Remove idle agents and terminals, Collapse all and Expand all workspaces are palette entries.
   Adding a workspace stays in the switcher, the palette and the empty state.
-- Every pane header has the fixed height `PANE_HEADER_HEIGHT`, so side-by-side headers line up.
 
 ## Alternatives
 
@@ -61,7 +65,7 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
 
 ## Consequences
 
-- The terminal area gains the 44 px of the old strip and the 24 px of the widget bar, minus one pane header row for a single pane.
+- The terminal area gains the 44 px of the old strip, the 24 px of the widget bar and the row every pane header took.
 - Protocol 58: a UI from before it shows a version mismatch with an old daemon; the user restarts the daemon.
 - A UI from before protocol 58 cannot connect to the new daemon (the version check blocks the connection), so no `machine.stats` event ever reaches a client that cannot read it.
 - The title bar height is 42 everywhere; SPEC section 10 said 44 and section 14 said 48.

@@ -43,6 +43,9 @@ pub struct FeatureSettings {
     /// The right panel's Session tab (session cards and thread). Off for now: the panel
     /// shows `Files │ Git` and a saved `right_panel = "session"` opens on Files.
     pub session: bool,
+    /// The pane's Share button (its menu: Follow in Zed). Off: the code stays, nothing draws it;
+    /// Follow in Zed stays in the tab menu and the palette.
+    pub share: bool,
 }
 
 /// `[web]` (ADR 0053, ADR 0067): the daemon runs `mk web` while `enabled` is true; `mk web`
@@ -689,11 +692,12 @@ pub fn template() -> &'static str {
      \n\
      # Optional modules, off by default. docs: the Docs view. turns: the agent's turn\n\
      # snapshots and its Turns… dialog (applies to sessions started after the change).\n\
-     # session: the right panel's Session tab.\n\
+     # session: the right panel's Session tab. share: the pane's Share button.\n\
      [features]\n\
      # docs = false\n\
      # turns = false\n\
      # session = false\n\
+     # share = false\n\
      \n\
      # Phone access (ADR 0053): while enabled is true the daemon runs `mk web`, so a phone on your\n\
      # tailnet can reach Mkrew. The phone icon in the title bar writes it; the port is fixed (8787).\n\
@@ -949,6 +953,7 @@ push = true
                     docs: true,
                     turns: false,
                     session: false,
+                    share: false,
                 },
                 web: WebSettings {
                     enabled: true,

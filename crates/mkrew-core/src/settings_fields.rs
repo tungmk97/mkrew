@@ -442,6 +442,15 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         Features,
+        "Panels",
+        "features",
+        "share",
+        Bool,
+        "Share button",
+        "The pane's Share button (Follow in Zed).",
+    ),
+    row(
+        Features,
         "Sessions",
         "features",
         "turns",

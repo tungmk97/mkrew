@@ -1,5 +1,5 @@
 //! Conflict warnings (SPEC §11, M5): `conflict.detected` says two sessions of a workspace edited
-//! the same file within 60 s. The board cards of their tasks and their pane headers show a
+//! the same file within 60 s. The board cards of their tasks and their panes (a floating badge) show a
 //! warning until the tasks leave Running / Needs input (sessions: until they exit) or the user
 //! dismisses it. Pure and tested headlessly; `main.rs` renders it.
 
@@ -91,7 +91,7 @@ impl Conflicts {
         self.paths(|c| c.task_ids.contains(&task_id))
     }
 
-    /// The files `session_id`'s pane header warns about, in detection order.
+    /// The files `session_id`'s pane badge warns about, in detection order.
     pub fn for_session(&self, session_id: Ulid) -> Vec<&str> {
         self.paths(|c| c.session_ids.contains(&session_id))
     }

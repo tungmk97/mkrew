@@ -1,10 +1,10 @@
-//! Drag a tab (from the tab area) or a pane (by its header) onto a pane to split it (SPEC §10):
+//! Drag a tab (from the tab area) or a pane (by the grip on its top edge) onto a pane to split it (SPEC §10):
 //! the half of the pane under the pointer lights up, and the drop puts the dragged panes right
 //! of it or below it, whichever side the pointer leans to.
 
 use crate::*;
 
-/// Payload of a pane header drag: the pane of `session`.
+/// Payload of a pane drag: the pane of `session`.
 #[derive(Debug, Clone)]
 pub(crate) struct DraggedPane {
     pub(crate) session: Ulid,
@@ -20,13 +20,13 @@ pub(crate) struct PaneDrop {
 }
 
 impl Shell {
-    /// Makes `header` (of `info`'s pane) draggable onto another pane.
+    /// Makes `handle` (the top-edge strip of `info`'s pane) draggable onto another pane.
     pub(crate) fn draggable_pane(
         &self,
-        header: gpui::Div,
+        handle: gpui::Div,
         info: &Session,
         theme: &Theme,
-    ) -> gpui::AnyElement {
+    ) -> gpui::Stateful<gpui::Div> {
         let pane = DraggedPane {
             session: info.id,
             title: (run::pane_title(info, self.ports.get(info.id)))
@@ -35,8 +35,8 @@ impl Shell {
         };
         let style = PopupStyle::of(theme);
         let accent = theme.accent;
-        header
-            .id(SharedString::from(format!("pane-header-{}", info.id)))
+        handle
+            .id(SharedString::from(format!("pane-grip-{}", info.id)))
             .on_drag(pane, move |pane, offset, _, cx| {
                 let (style, title) = (style.clone(), pane.title.clone());
                 cx.new(|_| DragChip {
@@ -46,7 +46,6 @@ impl Shell {
                     offset,
                 })
             })
-            .into_any_element()
     }
 
     /// Makes the frame of `session`'s pane take dragged tabs and panes.

@@ -388,6 +388,11 @@ impl Shell {
                     .map(IntoElement::into_any_element),
             );
         }
+        // The focused agent pane's toggles (Chat, Reading width, Share), while its terminals
+        // are on screen.
+        if !main || (workspace.is_some() && view == View::Terminals) {
+            right.extend(self.pane_toggles(window, theme, cx));
+        }
         if workspace.is_some() {
             right.push(
                 self.view_icon(View::Board, Icon::SquareKanban, view, theme, cx)

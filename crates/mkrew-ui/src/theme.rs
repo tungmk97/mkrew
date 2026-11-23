@@ -144,9 +144,6 @@ pub const CONTROL_HEIGHT: f32 = 30.0;
 pub const INPUT_HEIGHT: f32 = 32.0;
 /// One segment of a segmented control.
 pub const SEGMENT_HEIGHT: f32 = 26.0;
-/// A segment of the pane header's `Terminal | Chat` switch: with its padding and border the
-/// switch is as tall as [`CONTROL_HEIGHT`], so headers line up with and without it.
-pub const COMPACT_SEGMENT_HEIGHT: f32 = CONTROL_HEIGHT - 2.0 * (SEGMENT_PADDING + BORDER_WIDTH);
 /// A status pill (Idle, In Progress) and an area chip / Git `M` badge.
 pub const PILL_HEIGHT: f32 = 22.0;
 pub const CHIP_HEIGHT: f32 = 20.0;
@@ -234,13 +231,12 @@ pub mod opacity {
 /// and `space::XS` from the tab's edges.
 pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
 
-/// Thickness of the accent line under the header of a colored pane (ADR 0037).
+/// Thickness of the line at the top of a colored pane (ADR 0037) and of the grip shown on the
+/// drag strip.
 pub const PANE_ACCENT_WIDTH: f32 = 2.0;
-/// Fixed part of every pane header's height: the 4 px padding above and below and the accent
-/// line. It does not scale with `[ui] font_size`; the content ([`CONTROL_HEIGHT`], the Terminal
-/// | Chat switch and the Reading / Share buttons) does. Together they give every header the same
-/// height, so side-by-side headers line up whatever they hold.
-pub const PANE_HEADER_FIXED: f32 = 2.0 * space::XS + PANE_ACCENT_WIDTH;
+/// Height of the strip along the top edge of a pane in a split tab: hovering it shows a grip,
+/// dragging it moves the pane (ADR 0106).
+pub const PANE_GRIP_HEIGHT: f32 = 6.0;
 
 /// Thickness of the accent line marking where a dragged sidebar row or tab will land.
 pub const DROP_LINE_WIDTH: f32 = 2.0;
@@ -451,9 +447,6 @@ pub const HISTORY_DIALOG_FRACTION: f32 = 0.9;
 
 /// Width of the "History" dialog's session list.
 pub const HISTORY_LIST_WIDTH: f32 = 280.0;
-
-/// Widest share of a pane header a conflict warning may take (it ellipsizes past that).
-pub const PANE_CONFLICT_MAX_FRACTION: f32 = 0.5;
 
 /// Width of the Docs view's file list.
 pub const DOC_LIST_WIDTH: f32 = 240.0;
@@ -2377,8 +2370,8 @@ pub const STATUS_DOT_LARGE: f32 = 6.0;
 /// One breath of the voice input ring ([`crate::voice::pulse`]); its lowest opacity.
 pub const PULSE_PERIOD: Duration = Duration::from_millis(1600);
 pub const PULSE_MIN_OPACITY: f32 = 0.35;
-/// A pane's status pill ("Idle · 2m") in the pane header.
-pub const STATUS_PILL_HEIGHT: f32 = 24.0;
+/// Widest a floating badge over a pane gets: a long conflict warning ellipsizes past it.
+pub const PANE_BADGE_MAX_WIDTH: f32 = 320.0;
 /// Longest tab title before it truncates.
 pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
 /// Narrowest a terminal tab chip gets: the chips shrink to this before the tab area scrolls.
