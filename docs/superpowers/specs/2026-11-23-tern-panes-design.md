@@ -223,6 +223,8 @@ Callers moved to `open_document` (the entry points of today):
   A composer that is hidden takes no drop.
 - OS files outside the root and the notes folder do not open: one `toast_error` says "Only files inside the workspace or the notes folder open in Mkrew"; folders are skipped.
 - Tear-off of a tab out of every window is unchanged and carries file and diff leaves.
+- Only the main window's tab strip takes drops that make a new tab (files, panes, OS files); a detached window's strip keeps tab reorder only, since new tabs belong to the main window.
+- A file row dropped on a pane when the file is already open moves that file's pane there (section 4.2); dropped on the tab strip it only activates its tab.
 
 ## 7. The `+` row
 
@@ -240,13 +242,15 @@ On hover or keyboard focus it grows to the right, on the same line, into:
 | New note | Note icon (Lucide `notebook-pen`, or the nearest icon in the shipped set) | `New note` + `NewNote` shortcut | Create the note (section 7.2) and open it in a new tab | Create the note, leaf at the drop edge |
 | `▾` | Chevron | `More…` | Opens today's menu (`new_menu_rows`: every profile, Shell, Empty tab) | Not draggable |
 
-- Grows in 150 ms ease-out; with reduce-motion it shows at once.
+- Grows with `motion::FAST` (120 ms) ease-out; with reduce-motion it shows at once (gpui draws `with_animation` in its end state).
 - Collapses 150 ms after the pointer leaves both `+` and the row, so the pointer can travel to the items.
 - Keyboard: Tab reaches `+`; ← / → move between items; Enter picks; Esc collapses.
 - While a pane starts (`starting_pane`), `loading_dots` replace the row, as today.
 - Items are `pressable(Look::Icon, ..)` (UI skill rule 11) with a visible focus ring.
-- With no agent profile, the default agent item is hidden; `▾` still lists "Agent" as today.
-- Detached windows show the same row (the note goes to the window's workspace).
+- The default agent item shows only when the workspace has a default agent (`Project.default_agent`); otherwise it is hidden and `▾` lists every profile as today.
+  With no default shell, the terminal item goes through today's `ask_for_default`.
+- Clicking `+` itself opens the `▾` menu, as today.
+- Detached windows show the row without `▾` (the new-tab menu belongs to the main window): their items split the window's tab at the right edge instead of opening a new tab, and the note goes to the window's workspace.
 
 ### 7.2 New note
 
