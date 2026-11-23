@@ -209,6 +209,57 @@ impl Shell {
         cx.notify();
     }
 
+    /// The user picked Terminal or Chat for `session`'s pane (the switch, Ctrl+Alt+T, the
+    /// palette): saves it on the pane and as `[ui] chat_default`, so new agent panes and the
+    /// next start use the last pick (ADR 0105). Panes with no saved mode follow the default,
+    /// so they are pinned to their current mode first and do not flip with it.
+    pub(crate) fn pick_chat(
+        &mut self,
+        session: Ulid,
+        on: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.set_chat(session, on, window, cx);
+        let Some(default) = chat::default_after_pick(self.chat_default, on) else {
+            return;
+        };
+        let unsaved: Vec<(Ulid, Ulid)> = (self.tabs.iter())
+            .flat_map(|(project, tabs)| {
+                (tabs.tabs().iter())
+                    .flat_map(|tab| tab.sessions())
+                    .filter(|id| tabs.chat_of(*id).is_none())
+                    .map(|id| (*project, id))
+            })
+            .collect();
+        for (project, id) in unsaved {
+            let on = (self.sidebar.sessions().iter())
+                .find(|s| s.id == id && self.chat_available(s))
+                .map(|info| self.chat_on(info));
+            let write = on.and_then(|on| {
+                (self.tabs.get_mut(&project)).and_then(|tabs| tabs.set_chat(id, Some(on)))
+            });
+            if let Some(write) = write {
+                self.save_layout(project, write, window, cx);
+            }
+        }
+        let Some(setting) =
+            (mkrew_core::settings_fields::SETTINGS.iter()).find(|s| s.id() == "ui.chat_default")
+        else {
+            return;
+        };
+        match setting.write(&self.settings_file, &default.to_string()) {
+            Ok(()) => {
+                // Now, not at the next mtime poll (or window focus).
+                self.settings_modified = std::fs::metadata(&self.settings_file)
+                    .and_then(|m| m.modified())
+                    .ok();
+                self.apply_settings_file(window, cx);
+            }
+            Err(error) => tracing::warn!("cannot save [ui] chat_default: {error}"),
+        }
+    }
+
     /// Chat <-> Terminal for `session`'s pane, when it can show Chat.
     pub(crate) fn toggle_chat(
         &mut self,
@@ -220,7 +271,7 @@ impl Shell {
             .find(|s| s.id == session && self.chat_available(s))
             .map(|info| self.chat_on(info));
         if let Some(on) = on {
-            self.set_chat(session, !on, window, cx);
+            self.pick_chat(session, !on, window, cx);
         }
     }
 
@@ -252,7 +303,7 @@ impl Shell {
                     ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         if chat {
-                            shell.set_chat(session, false, window, cx);
+                            shell.pick_chat(session, false, window, cx);
                         }
                     })),
                 )
@@ -271,7 +322,7 @@ impl Shell {
                     ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         if !chat {
-                            shell.set_chat(session, true, window, cx);
+                            shell.pick_chat(session, true, window, cx);
                         }
                     })),
                 )
@@ -346,10 +397,13 @@ impl Shell {
         ui.stops.borrow_mut().end();
         // A list at its end stays there when its viewport shrinks (the tray or the composer's
         // key hint appearing): `at_bottom` reads the last frame, the jump uses this frame's size.
-        if super::thread_panel::at_bottom(&ui.scroll) {
+        // Scrolled up from the end, a round button jumps back down.
+        let at_end = super::thread_panel::at_bottom(&ui.scroll);
+        if at_end {
             ui.scroll.scroll_to_bottom();
         }
         div()
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -392,6 +446,30 @@ impl Shell {
                 el.child(chat_tray(&view.tray, now, theme))
             })
             .children(question)
+            .when(!at_end, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom(px(space::S))
+                        .child(chat_column(
+                            div().flex().justify_end().child(
+                                float_button("chat-scroll-end", Icon::ArrowDown, theme)
+                                    .tooltip(tooltip(theme, "Scroll to the latest message", ""))
+                                    .on_press(
+                                        true,
+                                        cx.listener(move |shell, _, _, cx| {
+                                            if let Some(ui) = shell.chats.get(&session) {
+                                                ui.scroll.scroll_to_bottom();
+                                            }
+                                            cx.notify();
+                                        }),
+                                    ),
+                            ),
+                        )),
+                )
+            })
             .into_any_element()
     }
 

@@ -30,6 +30,12 @@ pub fn effective(available: bool, saved: Option<bool>, default: bool) -> bool {
     available && saved.unwrap_or(default)
 }
 
+/// The `[ui] chat_default` to write after the user picked Chat (`picked_chat`) or Terminal for a
+/// pane while the default is `current`: the pick when it differs, else nothing to write.
+pub fn default_after_pick(current: bool, picked_chat: bool) -> Option<bool> {
+    (current != picked_chat).then_some(picked_chat)
+}
+
 /// A row that opens and closes: (turn key, item index, call index; 0 for thinking,
 /// `usize::MAX` for an activity row).
 pub type RowKey = (u64, usize, usize);
@@ -525,6 +531,8 @@ pub struct ComposerStats {
     pub context: Option<(u64, Option<u64>)>,
     pub tok_s: Option<u32>,
     pub elapsed_ms: Option<u64>,
+    /// The local wall-clock time (`09:44:27`) the newest turn ended; `None` while working.
+    pub ended_clock: Option<String>,
 }
 
 /// The branch chip: `name` and `*changed` files.
@@ -534,10 +542,23 @@ pub struct BranchChip {
     pub changed: usize,
 }
 
+/// `09:44:27`: the local wall-clock time of Unix time `at` (seconds). `utc_offset(t)` is the
+/// local offset in seconds east of UTC at `t`.
+pub fn clock_hms(at: i64, utc_offset: &dyn Fn(i64) -> i32) -> String {
+    let rest = (at + i64::from(utc_offset(at))).rem_euclid(86_400);
+    format!(
+        "{:02}:{:02}:{:02}",
+        rest / 3600,
+        rest % 3600 / 60,
+        rest % 60
+    )
+}
+
 /// The chips of the session behind `page`. Model and context come from the transcript's
 /// `SessionMeta`, else from the usage event; the profile's context window wins over the
 /// transcript's. tok/s and elapsed time are the newest turn's: elapsed runs to `now` (epoch ms)
-/// while `working`. The branch shows only when the session runs at the workspace root.
+/// while `working`; the end clock shows once the turn ended (local time via `utc_offset`).
+/// The branch shows only when the session runs at the workspace root.
 pub fn composer_stats(
     page: Option<&Page>,
     usage: Option<&SessionUsageEvent>,
@@ -545,6 +566,7 @@ pub fn composer_stats(
     at_root: bool,
     working: bool,
     now: i64,
+    utc_offset: &dyn Fn(i64) -> i32,
 ) -> ComposerStats {
     let meta = page.map(|page| &page.meta);
     let last = page.and_then(|page| page.turns.last());
@@ -584,6 +606,10 @@ pub fn composer_stats(
         context: used.map(|used| (used, window)),
         tok_s,
         elapsed_ms,
+        ended_clock: last
+            .filter(|_| !working)
+            .and_then(|turn| turn.ended_at)
+            .map(|ended| clock_hms(ended / 1000, utc_offset)),
     }
 }
 
@@ -658,6 +684,8 @@ pub struct Chips {
     pub permission: bool,
     pub branch: bool,
     pub stats: bool,
+    /// The local time the last turn ended.
+    pub clock: bool,
 }
 
 impl Chips {
@@ -669,11 +697,12 @@ impl Chips {
             permission: stats.permission.is_some(),
             branch: stats.branch.is_some(),
             stats: !stat_parts(stats).is_empty(),
+            clock: stats.ended_clock.is_some(),
         }
     }
 }
 
-/// What of `want` fits in `room` px: chips drop from the right, in the order stats,
+/// What of `want` fits in `room` px: chips drop from the right, in the order clock, stats,
 /// permission, effort, branch; the model chip and the fixed part (send, ✦, Prompts) stay.
 pub fn fit_chips(want: Chips, room: f32) -> Chips {
     let width = |chips: &Chips| {
@@ -684,13 +713,15 @@ pub fn fit_chips(want: Chips, room: f32) -> Chips {
                 (chips.permission, theme::COMPOSER_CHIP_PERMISSION_WIDTH),
                 (chips.branch, theme::COMPOSER_CHIP_BRANCH_WIDTH),
                 (chips.stats, theme::COMPOSER_CHIP_STATS_WIDTH),
+                (chips.clock, theme::COMPOSER_CHIP_CLOCK_WIDTH),
             ]
             .into_iter()
             .filter(|(shown, _)| *shown)
             .map(|(_, width)| width)
             .sum::<f32>()
     };
-    let drops: [fn(&mut Chips); 4] = [
+    let drops: [fn(&mut Chips); 5] = [
+        |chips| chips.clock = false,
         |chips| chips.stats = false,
         |chips| chips.permission = false,
         |chips| chips.effort = false,
@@ -765,6 +796,18 @@ mod tests {
         let mut file = ThreadFile::new(&format, CHAT_TURNS).unwrap();
         file.apply(0, jsonl.as_bytes());
         file.page()
+    }
+
+    /// `super::composer_stats` in UTC.
+    fn composer_stats(
+        page: Option<&Page>,
+        usage: Option<&SessionUsageEvent>,
+        git: Option<&GitSummary>,
+        at_root: bool,
+        working: bool,
+        now: i64,
+    ) -> ComposerStats {
+        super::composer_stats(page, usage, git, at_root, working, now, &|_| 0)
     }
 
     fn call(name: &str) -> ToolCall {
@@ -1221,6 +1264,14 @@ mod tests {
     }
 
     #[test]
+    fn a_pick_updates_the_default_only_when_it_differs() {
+        assert_eq!(default_after_pick(false, true), Some(true));
+        assert_eq!(default_after_pick(true, false), Some(false));
+        assert_eq!(default_after_pick(true, true), None);
+        assert_eq!(default_after_pick(false, false), None);
+    }
+
+    #[test]
     fn the_stats_text_lists_only_what_is_known() {
         let stats = ComposerStats {
             context: Some((74_000, Some(200_000))),
@@ -1230,6 +1281,30 @@ mod tests {
         };
         assert_eq!(stat_parts(&stats), ["74K", "102 tok/s", "2m 46s"]);
         assert!(stat_parts(&ComposerStats::default()).is_empty());
+    }
+
+    #[test]
+    fn the_end_clock_is_the_local_time_the_last_turn_ended() {
+        let utc = |_: i64| 0;
+        assert_eq!(clock_hms(0, &utc), "00:00:00");
+        assert_eq!(clock_hms(35_067, &utc), "09:44:27");
+        // Seven hours east; a day boundary wraps.
+        assert_eq!(clock_hms(35_067, &|_| 25_200), "16:44:27");
+        assert_eq!(clock_hms(86_399, &|_| 3_600), "00:59:59");
+        // West of UTC before the epoch still lands in 0..24 h.
+        assert_eq!(clock_hms(60, &|_| -3_600), "23:01:00");
+
+        let mut page = turn_page(vec![]);
+        page.turns[0].ended_at = Some(T0 + 35_067_000);
+        let at = |page: &Page, working, offset: i32| {
+            super::composer_stats(Some(page), None, None, true, working, T0, &move |_| offset)
+                .ended_clock
+        };
+        assert_eq!(at(&page, false, 0).as_deref(), Some("09:44:27"));
+        assert_eq!(at(&page, false, 25_200).as_deref(), Some("16:44:27"));
+        assert_eq!(at(&page, true, 0), None, "a working turn has not ended");
+        page.turns[0].ended_at = None;
+        assert_eq!(at(&page, false, 0), None);
     }
 
     #[test]
@@ -1268,7 +1343,7 @@ mod tests {
         use crate::theme::{
             COMPOSER_CHIP_BRANCH_WIDTH as BRANCH, COMPOSER_CHIP_EFFORT_WIDTH as EFFORT,
             COMPOSER_CHIP_MODEL_WIDTH as MODEL, COMPOSER_CHIP_PERMISSION_WIDTH as PERMISSION,
-            COMPOSER_FIXED_WIDTH as FIXED,
+            COMPOSER_CHIP_STATS_WIDTH as STATS, COMPOSER_FIXED_WIDTH as FIXED,
         };
         let all = Chips {
             model: true,
@@ -1276,19 +1351,30 @@ mod tests {
             permission: true,
             branch: true,
             stats: true,
+            clock: true,
         };
         assert_eq!(fit_chips(all, 10_000.0), all);
-        let room = FIXED + MODEL + EFFORT + PERMISSION + BRANCH;
+        let room = FIXED + MODEL + EFFORT + PERMISSION + BRANCH + STATS;
         assert_eq!(
             fit_chips(all, room),
             Chips {
+                clock: false,
+                ..all
+            }
+        );
+        // The clock goes first, then the stats.
+        assert_eq!(
+            fit_chips(all, room - 1.0),
+            Chips {
+                clock: false,
                 stats: false,
                 ..all
             }
         );
         assert_eq!(
-            fit_chips(all, room - 1.0),
+            fit_chips(all, FIXED + MODEL + EFFORT + BRANCH),
             Chips {
+                clock: false,
                 stats: false,
                 permission: false,
                 ..all
@@ -1297,6 +1383,7 @@ mod tests {
         assert_eq!(
             fit_chips(all, FIXED + MODEL + BRANCH),
             Chips {
+                clock: false,
                 stats: false,
                 permission: false,
                 effort: false,
@@ -1312,7 +1399,8 @@ mod tests {
                 effort: false,
                 permission: false,
                 branch: false,
-                stats: false
+                stats: false,
+                clock: false,
             }
         );
         // A chip that is not wanted costs nothing.
@@ -1321,6 +1409,7 @@ mod tests {
             permission: false,
             branch: false,
             stats: false,
+            clock: false,
             ..all
         };
         assert_eq!(fit_chips(few, FIXED + MODEL), few);

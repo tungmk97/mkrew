@@ -48,7 +48,7 @@ impl Shell {
 }
 
 /// Seconds east of UTC at Unix time `at`, from the OS time zone (0 when it cannot say).
-fn local_offset(at: i64) -> i32 {
+pub(crate) fn local_offset(at: i64) -> i32 {
     use chrono::TimeZone;
     chrono::Local
         .timestamp_opt(at, 0)
