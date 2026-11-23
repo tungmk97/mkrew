@@ -78,7 +78,15 @@ impl Shell {
                                 cx,
                             )
                             .child(record_strip(strip.clone(), Some(slot)));
-                        self.reorderable(chip.into_any_element(), item, true, space::XS, theme, cx)
+                        self.reorderable_shrinking(
+                            chip.into_any_element(),
+                            item,
+                            true,
+                            space::XS,
+                            Some(theme::TAB_MIN_WIDTH),
+                            theme,
+                            cx,
+                        )
                     }
                 }
             })
@@ -145,6 +153,7 @@ impl Shell {
                 div()
                     .id("tab-area-scroll")
                     .min_w_0()
+                    .flex_shrink_1()
                     .flex()
                     .items_center()
                     .gap(px(space::XS))
@@ -152,7 +161,7 @@ impl Shell {
                     .track_scroll(&scroll)
                     .children(chips),
             )
-            .children(trailing)
+            .children(trailing.map(|el| div().flex_none().child(el)))
             .children(self.drop_hint_line(host, theme))
     }
 

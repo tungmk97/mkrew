@@ -281,7 +281,8 @@ impl Shell {
         // An open dialog keeps the mouse too: the bar's controls are inert, only the drag area
         // and the window controls stay live (they never touch the app's state).
         let modal = self.modal_open() || self.reconnecting();
-        let mut left = div().min_w_0().flex().items_center().gap(px(space::S));
+        // Never shrinks: the tab area gives way first.
+        let mut left = div().flex_none().flex().items_center().gap(px(space::S));
         if main {
             left = left
                 .children(self.machine_chip(theme))
@@ -346,6 +347,8 @@ impl Shell {
             .children(tab_area.map(|area| {
                 div()
                     .min_w_0()
+                    .flex_shrink_1()
+                    .overflow_hidden()
                     .h_full()
                     .flex()
                     .items_center()

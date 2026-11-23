@@ -188,7 +188,15 @@ impl Shell {
                         cx,
                     )
                     .child(record_strip(strip.clone(), Some(index)));
-                Some(self.reorderable(chip.into_any_element(), item, true, space::XS, theme, cx))
+                Some(self.reorderable_shrinking(
+                    chip.into_any_element(),
+                    item,
+                    true,
+                    space::XS,
+                    Some(theme::TAB_MIN_WIDTH),
+                    theme,
+                    cx,
+                ))
             })
             .collect();
         // The key is the scroll target only, as in `render_tab_area`.

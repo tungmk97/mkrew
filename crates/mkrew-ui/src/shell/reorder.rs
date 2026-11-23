@@ -57,6 +57,21 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        self.reorderable_shrinking(element, item, horizontal, gap, None, theme, cx)
+    }
+
+    /// [`Self::reorderable`] for a chip that shrinks down to `shrink_to` px in a row.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reorderable_shrinking(
+        &self,
+        element: gpui::AnyElement,
+        item: DraggedItem,
+        horizontal: bool,
+        gap: f32,
+        shrink_to: Option<f32>,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
         let (list, index) = (item.list, item.index);
         let current = self
             .reorder
@@ -73,6 +88,9 @@ impl Shell {
         div()
             .id(SharedString::from(format!("reorder-{list:?}-{index}")))
             .relative()
+            // A shrinking tab: the wrapper is a flex row too (the chip inside shrinks with it)
+            // and keeps the chip's minimum, or its content width would stop the shrinking.
+            .when_some(shrink_to, |el, min| el.flex().min_w(px(min)))
             .when(dragging, |el| el.opacity(opacity::DRAG_SOURCE))
             .on_drag(item, move |item, offset, _, cx| {
                 let start = Reorder {
