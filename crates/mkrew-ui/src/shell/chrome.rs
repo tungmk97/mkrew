@@ -292,13 +292,16 @@ impl Shell {
         }
         // The tab area; its strip is only recorded (for drops from other windows) while it is
         // painted.
-        let tab_area = workspace.and_then(|project_id| {
-            let tabs = self.tabs.get(&project_id)?;
-            Some(
-                self.render_tab_area(project_id, tabs, now, theme, cx)
-                    .into_any_element(),
-            )
-        });
+        let tab_area = match host {
+            HostId::Main => workspace.and_then(|project_id| {
+                let tabs = self.tabs.get(&project_id)?;
+                Some(
+                    self.render_tab_area(project_id, tabs, now, theme, cx)
+                        .into_any_element(),
+                )
+            }),
+            HostId::Detached(key) => Some(self.render_detached_tab_area(key, theme, cx)),
+        };
         if main
             && tab_area.is_none()
             && let Some(ui) = self.hosts.get(&HostId::Main)
@@ -379,6 +382,15 @@ impl Shell {
                         .docs
                         .then(|| self.view_icon(View::Docs, Icon::BookOpen, view, theme, cx)),
                 );
+        }
+        if let HostId::Detached(key) = host {
+            right = right.child(
+                icon_button("move-all-back", Icon::Minimize2, theme)
+                    .tooltip(tooltip(theme, "Move all tabs back to the main window", ""))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.move_all_back(key, window, cx);
+                    })),
+            );
         }
         // Split acts on the shown terminal tab: only while Terminals shows in the main window.
         if !main || (workspace.is_some() && view == View::Terminals) {

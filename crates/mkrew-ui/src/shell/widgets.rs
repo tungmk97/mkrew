@@ -1313,22 +1313,6 @@ pub(crate) fn voice_meter(bars: &[f32], color: gpui::Rgba) -> gpui::Div {
         }))
 }
 
-/// The app mark at the left of the title bar: a small accent tile with a dark "m".
-pub(crate) fn app_logo(theme: &Theme) -> gpui::Div {
-    div()
-        .flex_none()
-        .size(theme::rems_px(theme::APP_LOGO_TILE))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(radius::CHIP))
-        .bg(rgb(theme.accent))
-        .text_size(font_size::BODY)
-        .font_weight(FontWeight(weight::SEMIBOLD))
-        .text_color(rgb(theme.on_accent))
-        .child("m")
-}
-
 /// An agent badge (ADR 0025) as a small square chip, so logos, glyphs and letters line up and
 /// never read as part of the name. Logos (ADR 0058) have no border at rest; the border keeps its
 /// width, so a caller's status `border_color` still rings them. `fg` paints text and logo.

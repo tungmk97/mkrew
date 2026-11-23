@@ -161,8 +161,6 @@ pub const PIN_ICON_SIZE: f32 = 13.0;
 pub const SEGMENT_PADDING: f32 = 3.0;
 /// The thin vertical rule before the window controls.
 pub const TITLE_RULE_HEIGHT: f32 = 18.0;
-/// The app logo tile at the left of the title bar.
-pub const APP_LOGO_TILE: f32 = 22.0;
 /// The bottom edge of a key hint (a key cap look).
 pub const KBD_BOTTOM_BORDER: f32 = 2.0;
 /// The Jira list (Board): a row's height, the key column, the toolbar's filter input and the
