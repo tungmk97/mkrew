@@ -1750,6 +1750,24 @@ fn update_leaf_writes_only_a_change_and_never_moves_the_key() {
 }
 
 #[test]
+fn update_leaf_refuses_a_change_of_the_key_and_keeps_the_leaf() {
+    let project = Ulid::new();
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "one", 1.0, file("a.md"))]);
+    let key = file_key("a.md");
+    let renamed = tabs.update_leaf(&key, |leaf| {
+        *leaf = Leaf::File {
+            file: "b.md".into(),
+            md: None,
+            preview: false,
+        };
+    });
+    assert_eq!(renamed, None);
+    assert!(tabs.tab_with(&key).is_some(), "the leaf is as it was");
+    assert!(tabs.tab_with(&file_key("b.md")).is_none());
+}
+
+#[test]
 fn preview_tab_is_the_tab_holding_the_preview_file() {
     let project = Ulid::new();
     let [a, b] = [Ulid::new(), Ulid::new()];

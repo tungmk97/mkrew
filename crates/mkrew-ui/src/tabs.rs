@@ -761,8 +761,9 @@ impl Tabs {
     }
 
     /// Changes the leaf of `key` with `change` (a Markdown mode, a preview flag, a chat flag):
-    /// the write to send, `None` when no tab holds it or `change` left it as it was. `change`
-    /// must not change which pane the leaf is (its key).
+    /// the write to send, `None` when no tab holds it or `change` left it as it was. A `change`
+    /// that would change which pane the leaf is (its key) is refused: the leaf stays as it was
+    /// and nothing is written.
     pub fn update_leaf(
         &mut self,
         key: &PaneKey,
@@ -773,7 +774,10 @@ impl Tabs {
         let leaf = tab.layout.as_mut()?.leaf_mut(key)?;
         let before = leaf.clone();
         change(leaf);
-        debug_assert!(leaf.has_key(key), "a leaf keeps its key");
+        if !leaf.has_key(key) {
+            *leaf = before;
+            return None;
+        }
         let changed = *leaf != before;
         changed.then(|| tab.write())
     }
