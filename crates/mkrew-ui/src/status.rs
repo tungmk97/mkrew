@@ -112,20 +112,22 @@ pub fn redraw_due(sessions: &[Session], last_ms: i64, now_ms: i64) -> bool {
     })
 }
 
-/// Pane border color: amber while the session needs input, the faint accent when focused
-/// among several panes, else none (a lone pane blends into the window).
-pub fn pane_border(
+/// Color of the stripe along the top of a pane, first match wins: amber while the session
+/// needs input, the session's own color, the faint accent when focused among several panes,
+/// else none (ADR 0108; a lone pane blends into the frame).
+pub fn pane_stripe(
     theme: &Theme,
     state: Option<SessionState>,
+    color: Option<u32>,
     several: bool,
     focused: bool,
 ) -> Option<u32> {
     if state == Some(SessionState::NeedsInput) {
         Some(theme.status_needs_input)
+    } else if color.is_some() {
+        color
     } else if several && focused {
         Some(theme.pane_focus_stripe)
-    } else if several {
-        Some(theme.border)
     } else {
         None
     }
@@ -242,24 +244,55 @@ mod tests {
     }
 
     #[test]
-    fn needs_input_highlights_the_pane_border() {
+    fn needs_input_wins_the_stripe_over_a_color_and_focus() {
         for theme in [Theme::dark(), Theme::light()] {
             let needs = Some(SessionState::NeedsInput);
+            let color = Some(0x112233);
+            for (several, focused) in [(false, false), (true, false), (true, true)] {
+                assert_eq!(
+                    pane_stripe(&theme, needs, color, several, focused),
+                    Some(theme.status_needs_input),
+                    "several={several} focused={focused}"
+                );
+            }
             assert_eq!(
-                pane_border(&theme, needs, false, false),
-                Some(theme.status_needs_input)
+                pane_stripe(&theme, needs, None, false, false),
+                Some(theme.status_needs_input),
+                "a lone pane needing input still shows it"
             );
+        }
+    }
+
+    #[test]
+    fn a_session_color_wins_the_stripe_over_focus() {
+        for theme in [Theme::dark(), Theme::light()] {
+            let color = Some(0x112233);
+            let working = Some(SessionState::Working);
+            assert_eq!(pane_stripe(&theme, working, color, true, true), color);
+            assert_eq!(pane_stripe(&theme, working, color, true, false), color);
             assert_eq!(
-                pane_border(&theme, needs, true, true),
-                Some(theme.status_needs_input)
+                pane_stripe(&theme, None, color, false, false),
+                color,
+                "a lone colored pane keeps its stripe (ADR 0037)"
             );
+        }
+    }
+
+    #[test]
+    fn focus_marks_the_stripe_only_among_several_panes() {
+        for theme in [Theme::dark(), Theme::light()] {
             let working = Some(SessionState::Working);
             assert_eq!(
-                pane_border(&theme, working, true, true),
+                pane_stripe(&theme, working, None, true, true),
                 Some(theme.pane_focus_stripe)
             );
-            assert_eq!(pane_border(&theme, None, true, false), Some(theme.border));
-            assert_eq!(pane_border(&theme, working, false, true), None, "lone pane");
+            assert_eq!(pane_stripe(&theme, working, None, true, false), None);
+            assert_eq!(
+                pane_stripe(&theme, working, None, false, true),
+                None,
+                "lone pane"
+            );
+            assert_eq!(pane_stripe(&theme, None, None, false, false), None);
         }
     }
 

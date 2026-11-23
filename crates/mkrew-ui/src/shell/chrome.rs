@@ -342,9 +342,7 @@ impl Shell {
                 Os::CURRENT,
                 window.is_fullscreen(),
             )))
-            .bg(rgb(theme.chrome))
-            .border_b(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
+            .bg(rgb(theme.pane_gap))
             .font_family(theme.ui_font_family.clone())
             .child(left.when(modal, |el| el.relative().child(inert_layer())))
             // Rules set the groups apart: left | tabs | drag | right (never drag or press

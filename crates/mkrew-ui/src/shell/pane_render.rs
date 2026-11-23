@@ -477,6 +477,7 @@ impl Shell {
                 None,
             )
             .flex_1()
+            .bg(rgb(theme.pane_gap))
             .child(match self.starting_pane {
                 Some(kind) => starting_button("empty-starting", kind, now, theme, true),
                 None => div()
@@ -512,8 +513,15 @@ impl Shell {
             .child(content_canvas(content));
         }
         let focused = tab.and_then(Tab::focused_session);
-        let rects = tab.map(Tab::rects).unwrap_or_default();
+        let rects: Vec<_> = tab
+            .map(Tab::rects)
+            .unwrap_or_default()
+            .into_iter()
+            // File and diff panes are drawn from Task 4 / Task 5 on.
+            .filter_map(|(key, rect)| Some((key.session()?, rect)))
+            .collect();
         let dividers = tab.map(Tab::dividers).unwrap_or_default();
+        // Only the panes drawn count: a lone terminal next to a file leaf is not "several".
         let several = rects.len() > 1;
         let zoomed = tab.is_some_and(|tab| tab.zoomed().is_some());
         let half_gap = px(theme::PANE_HALF_GAP);
@@ -521,8 +529,6 @@ impl Shell {
         let area = f32::from(content.get().width) - 2.0 * theme::PANE_HALF_GAP;
         let panes: Vec<_> = rects
             .into_iter()
-            // File and diff panes are drawn from Task 4 / Task 5 on.
-            .filter_map(|(key, rect)| Some((key.session()?, rect)))
             .map(|(session, rect)| {
                 let is_focused = focused == Some(session);
                 let width = rect.w as f32 * area - 2.0 * theme::PANE_HALF_GAP;
@@ -554,6 +560,8 @@ impl Shell {
         div()
             .flex_1()
             .min_h_0()
+            // The frame: behind and between the panes, the same color as the title bar.
+            .bg(rgb(theme.pane_gap))
             .p(half_gap)
             .relative()
             .child(content_canvas(content))
@@ -589,10 +597,12 @@ impl Shell {
     }
 
     /// One pane: the terminal (or why it is not shown; at reading width, centered, for an agent
-    /// pane with it on), its composer, its border. A colored pane has a line of its color at
-    /// the top; among several the unfocused ones get a dim and a slim handle on the top edge
-    /// drags the pane. Transient signals float in the top-right corner (`pane_badges`).
-    /// `zoomed`: the pane fills the tab. `voice_ring`: the listening ring over the border;
+    /// pane with it on), its composer, a stripe along the top edge (`status::pane_stripe`: needs
+    /// input, the session color or the focus among several; ADR 0108). No border: the pane sits
+    /// on the frame color (`pane_gap`) with rounded corners. Among several the unfocused ones get
+    /// a dim and a slim handle on the top edge drags the pane. Transient signals float in the
+    /// top-right corner (`pane_badges`).
+    /// `zoomed`: the pane fills the tab. `voice_ring`: the listening ring over the pane;
     /// `width`: the pane's width in px in the last frame (the composer's room).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pane_frame(
@@ -622,10 +632,10 @@ impl Shell {
                 }
             }
         };
-        let border = status::pane_border(theme, info.map(|s| s.state), several, is_focused);
         let reading = info.is_some_and(|info| self.reading_on(info));
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));
+        let stripe = status::pane_stripe(theme, info.map(|s| s.state), color, several, is_focused);
         let accent_border = theme.accent;
         let frame = div()
             .relative()
@@ -698,17 +708,9 @@ impl Shell {
                         .opacity(theme.unfocused_pane_dim),
                 )
             })
-            // Drawn above the terminal so its corners stay rounded.
-            .when_some(border, |el, border| {
-                el.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .rounded(px(radius::MEDIUM))
-                        .border(px(theme::BORDER_WIDTH))
-                        .border_color(rgb(border)),
-                )
-            })
+            // The terminal paints a square quad and gpui clips to rectangles: the frame color
+            // over the four corners gives the pane its rounded look.
+            .child(corner_masks(theme.pane_gap))
             // The drop ring: an overlay, so the terminal keeps its size and the pointer.
             .child(
                 div()
@@ -722,7 +724,7 @@ impl Shell {
                     }),
             )
             .children(self.pane_drop_overlay(session, theme, cx))
-            .when_some(color, |el, color| {
+            .when_some(stripe, |el, stripe| {
                 el.child(
                     div()
                         .absolute()
@@ -730,7 +732,7 @@ impl Shell {
                         .left(px(radius::MEDIUM))
                         .right(px(radius::MEDIUM))
                         .h(px(theme::PANE_ACCENT_WIDTH))
-                        .bg(rgb(color)),
+                        .bg(rgb(stripe)),
                 )
             })
             .children(info.and_then(|info| self.pane_badges(info, zoomed, theme, cx)))
@@ -1216,6 +1218,54 @@ fn content_canvas(content: Rc<Cell<gpui::Size<Pixels>>>) -> impl IntoElement {
             }
         },
         |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
+/// Paints the four slivers between the corners of its parent and a rounded rectangle of
+/// radius `radius::MEDIUM`, in `color` (the frame behind the pane). It paints nothing else and
+/// has no hitbox, so the pane keeps every click and drop.
+fn corner_masks(color: u32) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let r = px(radius::MEDIUM);
+            let (left, top) = (bounds.origin.x, bounds.origin.y);
+            let right = bounds.origin.x + bounds.size.width;
+            let bottom = bounds.origin.y + bounds.size.height;
+            // (the corner, the point where the arc starts, the point where it ends): the arc
+            // is a quarter circle around the point `r` inside the corner, drawn from the first
+            // point to the second one counterclockwise on screen.
+            let corners = [
+                (point(left, top), point(left + r, top), point(left, top + r)),
+                (
+                    point(right, top),
+                    point(right, top + r),
+                    point(right - r, top),
+                ),
+                (
+                    point(right, bottom),
+                    point(right - r, bottom),
+                    point(right, bottom - r),
+                ),
+                (
+                    point(left, bottom),
+                    point(left, bottom - r),
+                    point(left + r, bottom),
+                ),
+            ];
+            for (corner, from, to) in corners {
+                let mut path = PathBuilder::fill();
+                path.move_to(corner);
+                path.line_to(from);
+                path.arc_to(point(r, r), px(0.0), false, false, to);
+                path.close();
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, gpui::Hsla::from(rgb(color)));
+                }
+            }
+        },
     )
     .absolute()
     .size_full()

@@ -198,7 +198,12 @@ mod tests {
             // Row, Chip and Icon rest on the page, a panel or a bar.
             for look in [Look::Row, Look::Chip, Look::Icon] {
                 let hover = press_style(look, true, &t).hover_bg.unwrap();
-                for (rest, name) in [(t.bg, "bg"), (t.surface, "surface"), (t.chrome, "chrome")] {
+                for (rest, name) in [
+                    (t.bg, "bg"),
+                    (t.surface, "surface"),
+                    (t.chrome, "chrome"),
+                    (t.pane_gap, "pane_gap"),
+                ] {
                     assert_ne!(hover, rest, "{} {look:?} hover equals {name}", t.name);
                 }
                 assert_ne!(
