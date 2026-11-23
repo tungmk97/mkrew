@@ -3,10 +3,9 @@
 use crate::*;
 
 impl Shell {
-    /// The tab area of the main window's title bar: the Diff chip (while open), the pinned
-    /// tabs, the other tabs, a rule between groups; then `+` outside the scrolled part. With a
-    /// view other than Terminals shown, its chip is the active one and every terminal
-    /// tab looks inactive. A click on a tab shows Terminals (`tab_chip`).
+    /// The tab area of the main window's title bar: the pinned tabs, the other tabs, a rule
+    /// between groups; then `+` outside the scrolled part. A click on a tab shows Terminals
+    /// (`tab_chip`).
     pub(crate) fn render_tab_area(
         &self,
         project_id: Ulid,
@@ -26,16 +25,13 @@ impl Shell {
             .collect();
         let pinned_count = tabs.tabs().iter().filter(|tab| tab.pinned).count();
         let pinned: Vec<bool> = drawn.iter().map(|(_, tab)| tab.pinned).collect();
-        let items = area_items(self.diff_open(project_id), &pinned);
+        let items = area_items(&pinned);
         let strip = (self.hosts.get(&HostId::Main))
             .map(|ui| ui.strip.clone())
             .unwrap_or_default();
         let chips: Vec<gpui::AnyElement> = items
             .iter()
             .map(|item| match *item {
-                AreaItem::View(chip) => self
-                    .view_chip(chip, project_id, view, theme, cx)
-                    .into_any_element(),
                 AreaItem::Rule => title_rule(theme).into_any_element(),
                 AreaItem::Tab(slot) => {
                     let (place, tab) = drawn[slot];
@@ -48,6 +44,7 @@ impl Shell {
                         // A file or the focused pane's title stands in for a default tab name.
                         let file = file_label(tab, self.documents.get(&project_id));
                         let label = (file.as_ref().map(|file| file.name.as_str()))
+                            .or_else(|| diff_label(tab))
                             .or_else(|| session_label(tab, self.sidebar.sessions()));
                         let item = DraggedItem {
                             list: ReorderList::Tabs(project_id, tab.pinned),
@@ -88,12 +85,10 @@ impl Shell {
             })
             .collect();
         let active_slot = active.and_then(|id| drawn.iter().position(|(_, tab)| tab.id == id));
-        // The key is the scroll target only: the shown chip, or the active tab.
-        let key = SharedString::from(match view {
-            View::Terminals => format!("tab/{active:?}"),
-            other => format!("view/{other:?}"),
-        });
-        let scroll_to = scroll_index(&items, view, active_slot).map(|index| (key, index));
+        // The key is the scroll target only: the active tab, while Terminals shows.
+        let scroll_to = scroll_index(&items, active_slot)
+            .filter(|_| view == View::Terminals)
+            .map(|index| (SharedString::from(format!("tab/{active:?}")), index));
         self.tab_area_frame(
             HostId::Main,
             chips,
@@ -161,53 +156,6 @@ impl Shell {
             .children(self.drop_hint_line(host, theme))
     }
 
-    /// The Editor / Diff chip: icon, name and ✕ (all file tabs / the diff). The chip of the
-    /// shown view takes the active tab look. Not draggable.
-    fn view_chip(
-        &self,
-        chip: View,
-        project_id: Ulid,
-        shown: View,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let active = chip == shown;
-        let name = chip.title();
-        debug_assert_eq!(chip, View::Diff, "the Diff is the only view chip");
-        let (glyph, close_tip) = (Icon::FileDiff, "Close diff");
-        let group = SharedString::from(format!("view-{name}"));
-        tab_frame(group.clone(), active, theme)
-            .flex_none()
-            .tooltip(tooltip(theme, name, self.keymap.label(chip.command())))
-            .on_press(
-                true,
-                cx.listener(move |shell, _, window, cx| shell.show_view(chip, window, cx)),
-            )
-            .child(icon_svg(
-                glyph,
-                theme::ICON_SIZE_SMALL,
-                if active { theme.text } else { theme.text_muted },
-            ))
-            .child(name)
-            .child(
-                row_action(
-                    SharedString::from(format!("view-close-{name}")),
-                    icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
-                    theme,
-                )
-                // Always on the shown chip, on hover for the other.
-                .when(!active, |el| {
-                    el.opacity(opacity::HIDDEN)
-                        .group_hover(group, |style| style.opacity(opacity::FULL))
-                })
-                .tooltip(tooltip(theme, close_tip, ""))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.close_git_diff(project_id, window, cx);
-                })),
-            )
-    }
-
     /// The Board / Docs icon on the right of the title bar: accent while that view shows (a
     /// second click goes back to Terminals).
     pub(crate) fn view_icon(
@@ -254,6 +202,7 @@ impl Shell {
         // unsaved text and italics the preview tab.
         let file = file_label(tab, self.documents.get(&project_id));
         let label = (file.as_ref().map(|file| file.name.as_str()))
+            .or_else(|| diff_label(tab))
             .or_else(|| session_label(tab, self.sidebar.sessions()));
         // A double-click renames that pane while the tab keeps its default name, else the tab.
         let rename_pane = double_click_renames(tab, self.sidebar.sessions());
@@ -297,6 +246,10 @@ impl Shell {
                     .into_any_element(),
                 PaneIcon::File(_) => icon_svg(Icon::File, theme::ICON_SIZE_SMALL, theme.text_muted)
                     .into_any_element(),
+                PaneIcon::Diff => {
+                    icon_svg(Icon::FileDiff, theme::ICON_SIZE_SMALL, theme.text_muted)
+                        .into_any_element()
+                }
             })
             .collect();
         let title = label.unwrap_or(&tab.title);
@@ -633,10 +586,7 @@ impl Shell {
                 }
             }
             PaneKey::File(path) => self.render_file_pane(project_id, path, window, theme, cx),
-            // Task 5 draws the diff pane here.
-            PaneKey::Diff => message(theme, None, "Diff".into(), None)
-                .size_full()
-                .into_any_element(),
+            PaneKey::Diff => self.render_diff_pane(project_id, theme, window, cx),
         };
         let reading = info.is_some_and(|info| self.reading_on(info));
         let color = (info.and_then(|info| info.color.as_deref()))

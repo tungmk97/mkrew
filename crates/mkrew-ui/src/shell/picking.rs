@@ -7,8 +7,9 @@ impl Shell {
     /// Shift+↓ / Shift+↑ (`PickDown` / `PickUp`): picks the first line or block in view (Git:
     /// the first line of the current hunk), or grows / shrinks the pick one line or block, then
     /// scrolls the moved end into view. A text field never gets here: `run` hands the key to it.
-    pub(crate) fn pick_step(&mut self, down: bool, cx: &mut Context<'_, Self>) {
-        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context()) else {
+    pub(crate) fn pick_step(&mut self, down: bool, window: &Window, cx: &mut Context<'_, Self>) {
+        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context(window))
+        else {
             return;
         };
         let moved = match context {
@@ -77,8 +78,10 @@ impl Shell {
                     }
                     _ => None,
                 });
-                if row.is_some() {
-                    self.git_diff_reveal.set(row);
+                if row.is_some()
+                    && let Some(state) = self.diff_views.get(&project_id)
+                {
+                    state.reveal.set(row);
                 }
             }
         }

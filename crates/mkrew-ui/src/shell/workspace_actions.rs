@@ -712,7 +712,9 @@ impl Shell {
                 (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk, mode),
                 _ => None,
             });
-        self.scroll_diff_to(hunk_row.unwrap_or(0));
+        if let Some(project_id) = self.workspace {
+            self.scroll_diff_to(project_id, hunk_row.unwrap_or(0));
+        }
         true
     }
 

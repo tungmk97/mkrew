@@ -137,7 +137,7 @@ impl Shell {
 
     /// The views the right panel is drawn next to.
     pub(crate) fn panel_view(&self) -> bool {
-        matches!(self.view(), View::Terminals | View::Diff)
+        self.view() == View::Terminals
     }
 
     /// The right panel is drawn.
@@ -170,10 +170,10 @@ impl Shell {
         self.panel_shown() && self.right_panel.tab == PanelTab::Git
     }
 
-    /// Some of the active workspace's Git is drawn (the panel's list or the diff), so it
+    /// Some of the active workspace's Git is drawn (the panel's list or a diff pane), so it
     /// follows `git.changed` and refreshes when it comes back (SPEC §12B).
     pub(crate) fn git_shown(&self) -> bool {
-        self.view() == View::Diff || self.git_panel_shown()
+        self.diff_on_screen() || self.git_panel_shown()
     }
 
     /// The pane the Session tab describes: the active tab's focused pane, also while a file
@@ -181,6 +181,14 @@ impl Shell {
     pub(crate) fn panel_session(&self) -> Option<Ulid> {
         let tabs = self.tabs.get(&self.workspace?)?;
         tabs.active()?.focused_session()
+    }
+
+    /// The active tab's focused pane is the diff (like [`Self::panel_session`]: not tied to a
+    /// window).
+    pub(crate) fn panel_diff_focused(&self, project_id: Ulid) -> bool {
+        (self.tabs.get(&project_id))
+            .and_then(|tabs| tabs.active())
+            .is_some_and(|tab| tab.focused() == Some(&PaneKey::Diff))
     }
 
     /// Every session on screen with the window that shows it: the main window's tab (none for a
@@ -313,6 +321,14 @@ impl Shell {
                 _ => self.attach(session, window, cx),
             }
         }
+        // A Diff leaf that came on screen (opened, restored, its tab shown) loads Git, as the
+        // Diff view did when it was shown.
+        let drawn = self.diff_on_screen();
+        let came = drawn && !self.diff_drawn;
+        self.diff_drawn = drawn;
+        if came && let Some(project_id) = self.workspace {
+            self.refresh_git(project_id, window, cx);
+        }
         self.focus_pane(window, cx);
     }
 
@@ -355,6 +371,12 @@ impl Shell {
                 Some(view) => window.focus(&view.editor_focus, cx),
                 None => window.focus(&self.focus_handle, cx),
             }
+            return;
+        }
+        // The Git keyboard: the panel's list, or the diff pane itself while the panel's Git
+        // tab is not drawn (both track `git_focus`).
+        if matches!(self.focused_key(window), Some(PaneKey::Diff)) {
+            window.focus(&self.git_focus, cx);
             return;
         }
         // A pane in Chat mode keeps its terminal out of the tree: the keys go to its composer.

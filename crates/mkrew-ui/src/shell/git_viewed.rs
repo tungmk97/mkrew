@@ -60,7 +60,7 @@ impl Shell {
         // Marked: the review goes on with the next file that is not viewed.
         let next = self.git_view(project_id).next_unviewed(&target);
         if next.diff.is_some() {
-            self.scroll_diff_to(0);
+            self.scroll_diff_to(project_id, 0);
             self.reveal_git_selection(project_id);
         }
         self.git_requests(project_id, next, window, cx);

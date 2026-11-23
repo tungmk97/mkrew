@@ -181,6 +181,7 @@ impl Shell {
         };
         let sessions = self.sidebar.sessions();
         let file = self.focused_file(window);
+        let diff = matches!(self.focused_key(window), Some(PaneKey::Diff));
         let (file_path, prefill, task) = match self.view() {
             View::Terminals if file.is_some() => {
                 let picked = (file.as_deref())
@@ -192,17 +193,20 @@ impl Shell {
                 let prefill = composer::selection_prefill(Some((&path, start, end)), &text);
                 (format!("{path}:{start}-{end}"), prefill, None)
             }
-            view @ (View::Diff | View::Docs) => {
-                let picked = self
-                    .picked_lines(project_id, view)
-                    .filter(|(_, _, _, text)| !text.trim().is_empty());
+            view @ (View::Docs | View::Terminals) if view == View::Docs || diff => {
+                let picked = if diff {
+                    self.picked_diff_lines(project_id)
+                } else {
+                    (self.docs.get(&project_id)).and_then(|docs| docs.picked_lines())
+                }
+                .filter(|(_, _, _, text)| !text.trim().is_empty());
                 let Some((path, start, end, text)) = picked else {
                     return;
                 };
                 let task = self
                     .git
                     .get(&project_id)
-                    .filter(|_| view == View::Diff)
+                    .filter(|_| diff)
                     .and_then(|git| git.since_session(sessions));
                 let prefill = composer::selection_prefill(Some((&path, start, end)), &text);
                 (format!("{path}:{start}-{end}"), prefill, task)

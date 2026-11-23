@@ -11,8 +11,7 @@ fn each_view_maps_to_its_own_show_command() {
         [
             Command::ShowTerminals,
             Command::ShowBoard,
-            Command::ShowDocs,
-            Command::ShowDiff
+            Command::ShowDocs
         ]
     );
 }

@@ -48,11 +48,11 @@ pub struct Context {
     pub terminal: bool,
     /// The Git list's selected file can be discarded (unstaged or untracked).
     pub discard: bool,
-    /// The active workspace's Git is on screen (the panel's Git tab or the Diff view): the
+    /// The active workspace's Git is on screen (the panel's Git tab or a diff pane): the
     /// Git keys act.
     pub git: bool,
-    /// The active workspace has an open diff (the Diff view exists).
-    pub diff: bool,
+    /// The focused pane is the diff: the diff comments and Send selection act on it.
+    pub diff_pane: bool,
     /// The selected board card offers "View changes".
     pub task_changes: bool,
     /// The selected board card offers "Merge back…" and "Remove worktree…".
@@ -751,8 +751,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ToggleInspector
         | Command::NewTask
         | Command::ContextMenu
+        | Command::ShowDiff
         | Command::FocusSidebar => context.workspace,
-        Command::ShowDiff => context.workspace && context.diff,
         Command::ShowDocs => context.workspace && context.features.docs,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
         Command::Tab(n) => context.workspace && usize::from(n) <= context.tabs,
@@ -780,7 +780,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::ToggleChat => on_panes && context.agent_pane && context.chat,
         Command::SendSelection => {
             context.file_pane
-                || in_view(View::Diff)
+                || context.diff_pane
                 || in_view(View::Docs)
                 || (on_panes && context.terminal)
         }
@@ -796,7 +796,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::NextComment
         | Command::PreviousComment
         | Command::ReplyComment
-        | Command::ResolveComment => in_view(View::Docs) || in_view(View::Diff),
+        | Command::ResolveComment => in_view(View::Docs) || context.diff_pane,
         Command::MoveTabLeft | Command::MoveTabRight => on_panes,
         Command::MoveTabToNewWindow => {
             context.workspace && context.view == View::Terminals && context.tabs > 0

@@ -466,11 +466,8 @@ impl Shell {
             git_repo_query: Input::default(),
             git_repo_query_focus: cx.focus_handle(),
             git_files_scroll: UniformListScrollHandle::new(),
-            git_diff_list: ListState::new(0, ListAlignment::Top, px(theme::GIT_DIFF_OVERDRAW)),
-            git_diff_layout: Cell::new(None),
-            git_diff_looks: Cell::new(None),
-            git_diff_scroll_to: Cell::new(None),
-            git_diff_reveal: Cell::new(None),
+            diff_views: HashMap::new(),
+            diff_drawn: false,
             diff_mode,
             diff_wrap,
             features,
@@ -1201,6 +1198,7 @@ impl Shell {
             sidebar: self.sidebar_layout.mode(),
             modal: self.modal_open(),
             all_board: self.all_board_shown(),
+            diff: self.diff_on_screen(),
         }
     }
 

@@ -63,6 +63,7 @@ impl Shell {
         let file = file_label(tab, self.documents.get(&project)).map(|label| label.name);
         let label = file
             .as_deref()
+            .or_else(|| diff_label(tab))
             .or_else(|| session_label(tab, self.sidebar.sessions()))
             .unwrap_or(&tab.title);
         Some(format!("{label} - {name}"))

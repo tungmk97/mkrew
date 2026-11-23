@@ -1285,53 +1285,59 @@ fn a_new_pane_is_born_with_the_given_mode() {
     );
 }
 
-/// The tab area's children, in paint order: the Diff chip, a rule, the tabs, a rule between
-/// the pinned tabs and the rest; never a rule at an end.
+/// The tab area's children, in paint order: the tabs, a rule between the pinned tabs and the
+/// rest; never a rule at an end.
 #[test]
-fn the_tab_area_orders_the_diff_chip_pinned_tabs_and_the_rest() {
-    use AreaItem::{Rule, Tab, View as Chip};
-    assert_eq!(area_items(false, &[]), []);
+fn the_tab_area_orders_pinned_tabs_and_the_rest() {
+    use AreaItem::{Rule, Tab};
+    assert_eq!(area_items(&[]), []);
     assert_eq!(
-        area_items(false, &[true, true, false]),
+        area_items(&[true, true, false]),
         [Tab(0), Tab(1), Rule, Tab(2)]
     );
     assert_eq!(
-        area_items(false, &[true, true]),
+        area_items(&[true, true]),
         [Tab(0), Tab(1)],
         "no rule after the last group"
     );
-    assert_eq!(
-        area_items(true, &[false, false]),
-        [Chip(View::Diff), Rule, Tab(0), Tab(1)]
-    );
-    assert_eq!(
-        area_items(true, &[true, false]),
-        [Chip(View::Diff), Rule, Tab(0), Rule, Tab(1)]
-    );
-    assert_eq!(
-        area_items(true, &[]),
-        [Chip(View::Diff)],
-        "no tabs, no rule"
-    );
+    assert_eq!(area_items(&[false, false]), [Tab(0), Tab(1)]);
+    assert_eq!(area_items(&[true, false]), [Tab(0), Rule, Tab(1)]);
 }
 
-/// The child to scroll into view: the active tab while Terminals shows, else the chip of the
-/// shown view; nothing for Board and Docs (they are icons, not children).
+/// The child to scroll into view is the active tab (`active` is its drawn slot).
 #[test]
-fn the_scroll_target_is_the_shown_chip_or_the_active_tab() {
-    let items = area_items(true, &[true, false, false]);
-    // [Diff, Rule, Tab(0), Rule, Tab(1), Tab(2)]
-    assert_eq!(scroll_index(&items, View::Terminals, Some(2)), Some(5));
-    assert_eq!(scroll_index(&items, View::Terminals, Some(0)), Some(2));
-    assert_eq!(scroll_index(&items, View::Diff, Some(2)), Some(0));
-    assert_eq!(scroll_index(&items, View::Board, Some(2)), None);
-    assert_eq!(scroll_index(&items, View::Terminals, None), None);
-    let no_diff = area_items(false, &[true, false, false]);
+fn the_scroll_target_is_the_active_tab() {
+    let items = area_items(&[true, false, false]);
+    // [Tab(0), Rule, Tab(1), Tab(2)]
+    assert_eq!(scroll_index(&items, Some(2)), Some(3));
+    assert_eq!(scroll_index(&items, Some(0)), Some(0));
+    assert_eq!(scroll_index(&items, None), None);
+}
+
+/// A tab whose focused pane is the diff is titled "Diff" while it keeps its default name, and
+/// its chip shows the diff icon (an inactive chip shows its focused pane only).
+#[test]
+fn a_tab_whose_focused_pane_is_the_diff_is_titled_diff() {
+    let project = Ulid::new();
+    let a = Ulid::new();
+    let tree = json!({"split": "vertical", "ratio": 0.5, "children": [
+        {"session": a.to_string()}, {"diff": true}
+    ]});
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "Terminal", 1.0, tree)]);
     assert_eq!(
-        scroll_index(&no_diff, View::Diff, Some(1)),
+        diff_label(tabs.active().unwrap()),
         None,
-        "no Diff chip"
+        "a session has the focus"
     );
+    assert!(tabs.focus(&PaneKey::Diff));
+    let tab = tabs.active().unwrap();
+    assert_eq!(diff_label(tab), Some("Diff"));
+    assert_eq!(tab_icons(tab, &[], false).panes, [PaneIcon::Diff]);
+    // A name the user gave the tab wins.
+    let mut named = Tabs::new(project);
+    named.load(vec![wire(project, "Review", 1.0, json!({"diff": true}))]);
+    assert_eq!(diff_label(named.active().unwrap()), None);
 }
 
 #[test]

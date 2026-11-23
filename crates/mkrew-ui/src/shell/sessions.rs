@@ -408,9 +408,9 @@ impl Shell {
                     {
                         self.open_doc_in_zed(project_id, cx);
                     }
-                    // Git opens the selected changed file.
+                    // Git opens the selected changed file while the diff pane is the focused pane.
                     Some(project_id)
-                        if self.view() == View::Diff
+                        if matches!(self.focused_key(window), Some(PaneKey::Diff))
                             && self
                                 .git
                                 .get(&project_id)
@@ -450,8 +450,8 @@ impl Shell {
             Command::ShowFileTree => self.show_file_tree(window, cx),
             Command::ShowGitPanel => self.show_git_panel(window, cx),
             Command::ShowDiff => {
-                if self.workspace.is_some_and(|id| self.diff_open(id)) {
-                    self.show_view(View::Diff, window, cx);
+                if let Some(project_id) = self.workspace {
+                    self.open_diff(project_id, documents::Place::NewTab, window, cx);
                 }
             }
             Command::QuickOpen | Command::SearchInFiles => {
@@ -549,14 +549,16 @@ impl Shell {
             }
             Command::AddComment => {
                 // Only bound while Docs are shown or the Git list or diff has focus.
-                if let (Some(project_id), Some(context)) = (self.workspace, self.comment_context())
+                if let (Some(project_id), Some(context)) =
+                    (self.workspace, self.comment_context(window))
                 {
                     self.start_comment(project_id, context, window, cx);
                 }
             }
             Command::SendComments => {
                 // Only bound while Docs are shown or the Git list or diff has focus.
-                if let (Some(project_id), Some(context)) = (self.workspace, self.comment_context())
+                if let (Some(project_id), Some(context)) =
+                    (self.workspace, self.comment_context(window))
                 {
                     self.open_send_dialog(project_id, context, window, cx);
                 }
@@ -564,7 +566,7 @@ impl Shell {
             Command::PickDown | Command::PickUp => {
                 // Only bound while Docs are shown or the Git list or diff has focus; a focused text
                 // field, comment draft or dialog never gets here (the guards above).
-                self.pick_step(*command == Command::PickDown, cx);
+                self.pick_step(*command == Command::PickDown, window, cx);
             }
             Command::NewTask => {
                 if let Some(project_id) = self.workspace {
@@ -575,8 +577,8 @@ impl Shell {
             }
             Command::RunTask if self.jira_side_shown() => {}
             // Only bound while Docs are shown or the Git list or diff has focus.
-            Command::NextComment => self.step_comment(true, cx),
-            Command::PreviousComment => self.step_comment(false, cx),
+            Command::NextComment => self.step_comment(true, window, cx),
+            Command::PreviousComment => self.step_comment(false, window, cx),
             Command::ReplyComment => self.reply_selected_comment(window, cx),
             Command::ResolveComment => self.resolve_selected_comment(window, cx),
             Command::MoveTabLeft => self.move_active_tab(-1, window, cx),

@@ -109,12 +109,7 @@ impl Shell {
             .into_iter()
             .any(|focus| focus.is_focused(window))
         {
-            if self.view() == View::Diff {
-                // The diff card holds `git_focus` itself.
-                window.focus(&self.git_focus, cx);
-            } else {
-                self.focus_center(window, cx);
-            }
+            self.focus_center(window, cx);
         }
         let value = format!("\"{}\"", self.right_panel.mode().name());
         if self.right_panel.mode() != mode_before
@@ -128,8 +123,7 @@ impl Shell {
     }
 
     /// The keyboard back to the center after the panel's focused tab went away: the focused
-    /// pane (a file pane keeps it in its editor). (In the Git / Diff view the diff card holds
-    /// `git_focus` itself: `git_shown` stays true there.)
+    /// pane (a file pane keeps it in its editor, a diff pane in `git_focus`).
     pub(crate) fn focus_center(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.focus_pane(window, cx);
     }

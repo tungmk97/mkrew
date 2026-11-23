@@ -337,17 +337,17 @@ impl Shell {
                 .and_then(|view| view.selected.as_ref())
                 .map(|target| target.path.clone())
         });
-        // The shown view's pick first (one picked earlier elsewhere may linger).
-        let file_pick = self
-            .panel_file(project_id)
-            .and_then(|path| self.picked_file_lines(project_id, &path));
-        let diff_pick = self.picked_lines(project_id, View::Diff);
-        let selection = if self.view() == View::Diff {
-            diff_pick.or(file_pick)
+        // The pane in front first (one picked earlier elsewhere may linger).
+        let diff_pick = || self.picked_diff_lines(project_id);
+        let file_pick = || {
+            (self.panel_file(project_id)).and_then(|path| self.picked_file_lines(project_id, &path))
+        };
+        let picked = if self.panel_diff_focused(project_id) {
+            diff_pick().or_else(file_pick)
         } else {
-            file_pick.or(diff_pick)
-        }
-        .map(|(_, _, _, text)| text);
+            file_pick().or_else(diff_pick)
+        };
+        let selection = picked.map(|(_, _, _, text)| text);
         PromptVars {
             file,
             selection,
@@ -366,27 +366,17 @@ impl Shell {
         self.doc(project_id, path)?.picked_lines()
     }
 
-    /// The lines picked in `project_id`'s Docs view (its comment selection) or Git diff (new
-    /// side): the file, first and last line, and their text (§20B.4).
-    pub(crate) fn picked_lines(
-        &self,
-        project_id: Ulid,
-        view: View,
-    ) -> Option<(String, u32, u32, String)> {
-        match view {
-            View::Diff => {
-                let git = self.git.get(&project_id)?;
-                let (Some(target), Some(selection), git_view::Diff::Shown(shown)) =
-                    (&git.selected, git.comments.selection, &git.diff)
-                else {
-                    return None;
-                };
-                let text = shown.new_side_text(selection)?;
-                Some((target.path.clone(), selection.start, selection.end, text))
-            }
-            View::Docs => self.docs.get(&project_id)?.picked_lines(),
-            _ => None,
-        }
+    /// The new-side lines picked in `project_id`'s diff: the file, first and last line, and
+    /// their text (§20B.4).
+    pub(crate) fn picked_diff_lines(&self, project_id: Ulid) -> Option<(String, u32, u32, String)> {
+        let git = self.git.get(&project_id)?;
+        let (Some(target), Some(selection), git_view::Diff::Shown(shown)) =
+            (&git.selected, git.comments.selection, &git.diff)
+        else {
+            return None;
+        };
+        let text = shown.new_side_text(selection)?;
+        Some((target.path.clone(), selection.start, selection.end, text))
     }
 
     /// Opens the prompt picker typing into `target`; the library is read (seeded the first

@@ -507,7 +507,7 @@ mod tests {
         // Nothing focused, a filter with nothing highlighted, a tree without a cursor and
         // without a tab, a Board without a selected card, Docs and Git: the workspace menu.
         assert_eq!(owner(&Focus::default()), Owner::Workspace);
-        for view in [View::Terminals, View::Docs, View::Diff] {
+        for view in [View::Terminals, View::Docs] {
             let focus = Focus {
                 view,
                 ..Focus::default()

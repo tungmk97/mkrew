@@ -791,8 +791,12 @@ impl Shell {
                     self.close_file_pane(project_id, path, window, cx);
                 }
             }
-            // Task 5 closes the diff here.
-            Some(PaneKey::Diff) | None => {}
+            Some(PaneKey::Diff) => {
+                if let Some((project_id, _)) = self.tab_scope(window) {
+                    self.close_git_diff(project_id, window, cx);
+                }
+            }
+            None => {}
         }
     }
 

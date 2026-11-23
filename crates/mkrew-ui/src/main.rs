@@ -110,8 +110,9 @@ use mkrew_ui::split::{Axis, Direction, Divider, Edge, Leaf, PaneKey, Preset, dro
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{
-    AreaItem, FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, area_items, double_click_renames,
-    file_label, newest_unplaced, on_screen, rename_params, scroll_index, session_label, tab_icons,
+    AreaItem, FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, area_items, diff_label,
+    double_click_renames, file_label, newest_unplaced, on_screen, rename_params, scroll_index,
+    session_label, tab_icons,
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
@@ -141,6 +142,7 @@ mod shell;
 use shell::board::*;
 use shell::cards::*;
 use shell::chat_view::*;
+use shell::diff_pane::DiffViewState;
 use shell::doc_view::{DocFocus, DocView};
 use shell::files_render::*;
 use shell::files_split;
@@ -801,16 +803,10 @@ struct Shell {
     git_repo_query_focus: FocusHandle,
     /// Keep the selected changed file in view.
     git_files_scroll: UniformListScrollHandle,
-    /// The diff rows (a variable-height list: wrapped lines are taller). `git_diff_layout` is
-    /// what it was last laid out for (the diff, mode, row count; another resets it) and
-    /// `git_diff_looks` what changes row heights in place (wrap, picked lines: remeasured).
-    /// `git_diff_scroll_to` is a row to scroll to once the list is laid out for the shown diff.
-    git_diff_list: ListState,
-    git_diff_layout: Cell<Option<(usize, DiffMode, usize)>>,
-    git_diff_looks: Cell<Option<(bool, Option<Selection>)>>,
-    git_diff_scroll_to: Cell<Option<usize>>,
-    /// A diff row to scroll into view once the list is laid out (a keyboard pick moved).
-    git_diff_reveal: Cell<Option<usize>>,
+    /// The diff list of each workspace's Diff leaf (`ensure_diff_views` creates it).
+    diff_views: HashMap<Ulid, DiffViewState>,
+    /// A Diff leaf was drawn at the last `sync_panes`: one that comes on screen refreshes Git.
+    diff_drawn: bool,
     /// How the Git diff viewer lays out a file (`[ui] diff_mode`, §12B); global, every repo.
     diff_mode: DiffMode,
     /// Long diff lines wrap (`[ui] diff_wrap`, on by default); global, every repo.
@@ -949,6 +945,7 @@ struct Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        self.ensure_diff_views();
         let theme = cx.theme().clone();
         // A menu closed behind the keyboard's back (workspace switched, dialog opened, daemon
         // event) must not leave it on the hidden menu: give it back to the pane. A menu whose

@@ -10,7 +10,6 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
-use crate::board::View;
 use crate::documents::{Doc, Documents};
 use crate::split::{
     Axis, Direction, Divider, Edge, Leaf, Node, PaneKey, Preset, RESIZE_STEP, Rect,
@@ -904,6 +903,8 @@ pub enum PaneIcon {
     Run,
     /// A file pane; its stored path (the caller draws the file icon).
     File(String),
+    /// The diff pane.
+    Diff,
 }
 
 /// What a tab chip shows in front of its title.
@@ -946,8 +947,7 @@ pub fn tab_icons(tab: &Tab, sessions: &[Session], active: bool) -> TabIcons {
     let pane_icon = |key: &PaneKey| match key {
         PaneKey::Session(id) => known(id).map(icon),
         PaneKey::File(path) => Some(PaneIcon::File(path.clone())),
-        // Task 5 adds the diff icon.
-        PaneKey::Diff => None,
+        PaneKey::Diff => Some(PaneIcon::Diff),
     };
     let mut panes: Vec<PaneIcon> = if active {
         tab.keys().iter().filter_map(pane_icon).collect()
@@ -985,6 +985,12 @@ pub fn session_label<'a>(tab: &Tab, sessions: &'a [Session]) -> Option<&'a str> 
         .iter()
         .find(|s| s.id == focused)
         .and_then(crate::history::title)
+}
+
+/// The title a tab shows while its focused pane is the diff and it keeps its default name (a
+/// name the user gave the tab always wins), like [`session_label`].
+pub fn diff_label(tab: &Tab) -> Option<&'static str> {
+    (tab.focused() == Some(&PaneKey::Diff) && has_default_title(tab)).then_some("Diff")
 }
 
 /// What a tab chip shows for a focused file pane: its name, a dot while it has unsaved text,
@@ -1034,26 +1040,19 @@ pub fn double_click_renames(tab: &Tab, sessions: &[Session]) -> Option<Ulid> {
 /// One child of the title bar's tab area, in paint order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AreaItem {
-    /// The Diff chip.
-    View(View),
     /// The 1 px rule between two groups.
     Rule,
     /// The `n`th terminal tab this window draws (detached tabs are not counted).
     Tab(usize),
 }
 
-/// The children of the tab area: the Diff chip (only while open), a rule, the tabs
-/// (`pinned[n]` is whether the `n`th drawn tab is pinned; pinned ones lead), and a rule
-/// between the pinned tabs and the rest. A rule only sits between two groups.
-pub fn area_items(diff: bool, pinned: &[bool]) -> Vec<AreaItem> {
-    let mut items = Vec::new();
-    if diff {
-        items.push(AreaItem::View(View::Diff));
-    }
+/// The children of the tab area: the tabs (`pinned[n]` is whether the `n`th drawn tab is
+/// pinned; pinned ones lead) and a rule between the pinned tabs and the rest. A rule only sits
+/// between two groups.
+pub fn area_items(pinned: &[bool]) -> Vec<AreaItem> {
+    let mut items = Vec::with_capacity(pinned.len() + 1);
     for (at, &pin) in pinned.iter().enumerate() {
-        let after_chips = at == 0 && !items.is_empty();
-        let after_pinned = at > 0 && pinned[at - 1] && !pin;
-        if after_chips || after_pinned {
+        if at > 0 && pinned[at - 1] && !pin {
             items.push(AreaItem::Rule);
         }
         items.push(AreaItem::Tab(at));
@@ -1062,14 +1061,11 @@ pub fn area_items(diff: bool, pinned: &[bool]) -> Vec<AreaItem> {
 }
 
 /// The index in `items` of the child to scroll into view: the active tab (`active` is its
-/// drawn slot) while Terminals shows, else the chip of the shown view. `None` for Board and
-/// Docs, which are icons on the right.
-pub fn scroll_index(items: &[AreaItem], shown: View, active: Option<usize>) -> Option<usize> {
-    items.iter().position(|item| match *item {
-        AreaItem::View(view) => view == shown,
-        AreaItem::Tab(at) => shown == View::Terminals && active == Some(at),
-        AreaItem::Rule => false,
-    })
+/// drawn slot).
+pub fn scroll_index(items: &[AreaItem], active: Option<usize>) -> Option<usize> {
+    items
+        .iter()
+        .position(|item| matches!(item, AreaItem::Tab(at) if active == Some(*at)))
 }
 
 /// Sessions to attach (in `after` only) and to detach (in `before` only) when the visible

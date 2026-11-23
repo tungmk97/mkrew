@@ -18,12 +18,28 @@ impl Shell {
         }
     }
 
-    /// Whose comments the shown view has: the Docs view's or the Git view's.
-    pub(crate) fn comment_context(&self) -> Option<CommentContext> {
-        match self.view() {
-            View::Docs => Some(CommentContext::Doc),
-            View::Diff => Some(CommentContext::Diff),
-            _ => None,
+    /// Whose comments the comment commands act on: the Docs view's while Docs shows, the
+    /// diff's while the focused pane is the Diff leaf.
+    pub(crate) fn comment_context(&self, window: &Window) -> Option<CommentContext> {
+        if self.view() == View::Docs {
+            Some(CommentContext::Doc)
+        } else if matches!(self.focused_key(window), Some(PaneKey::Diff)) {
+            Some(CommentContext::Diff)
+        } else {
+            None
+        }
+    }
+
+    /// Whose comment draft is drawn (what typing in it edits): the Docs view's while Docs
+    /// shows, else the Diff leaf's while one is drawn. Needs no window: the field only exists
+    /// where it is drawn.
+    pub(crate) fn drawn_comment_context(&self) -> Option<CommentContext> {
+        if self.view() == View::Docs {
+            Some(CommentContext::Doc)
+        } else if self.diff_on_screen() {
+            Some(CommentContext::Diff)
+        } else {
+            None
         }
     }
 
@@ -63,7 +79,7 @@ impl Shell {
     /// field is on screen (the Docs margin shows with the doc, also while it is re-read).
     pub(crate) fn comment_draft(&self) -> Option<&comments::Draft> {
         let project_id = self.workspace?;
-        match self.comment_context()? {
+        match self.drawn_comment_context()? {
             CommentContext::Doc => {
                 let docs = self.docs.get(&project_id)?;
                 if !margin_shown(&docs.doc) {
@@ -158,8 +174,14 @@ impl Shell {
 
     /// F8 / Shift+F8: the next / previous thread is selected (its lines picked, like a click on
     /// its anchor), scrolled into view in the doc or diff and in the margin.
-    pub(crate) fn step_comment(&mut self, forward: bool, cx: &mut Context<'_, Self>) {
-        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context()) else {
+    pub(crate) fn step_comment(
+        &mut self,
+        forward: bool,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context(window))
+        else {
             return;
         };
         let Some(comments) = self.comments_mut(project_id, context) else {
@@ -181,7 +203,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context()) else {
+        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context(window))
+        else {
             return;
         };
         let root = self
@@ -198,7 +221,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context()) else {
+        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context(window))
+        else {
             return;
         };
         let target = self
@@ -210,11 +234,13 @@ impl Shell {
     }
 
     pub(crate) fn close_comment_draft(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let shown = self.workspace.zip(self.comment_context());
-        if let Some(comments) = shown.and_then(|(id, context)| self.comments_mut(id, context)) {
+        let context = self.drawn_comment_context();
+        if let Some(comments) =
+            (self.workspace.zip(context)).and_then(|(id, context)| self.comments_mut(id, context))
+        {
             comments.draft = None;
         }
-        if self.view() == View::Diff {
+        if matches!(context, Some(CommentContext::Diff)) {
             window.focus(&self.git_focus, cx);
         } else {
             window.focus(&self.focus_handle, cx);
@@ -236,7 +262,8 @@ impl Shell {
         let paste = (key == DialogKey::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
-        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context()) else {
+        let (Some(project_id), Some(context)) = (self.workspace, self.drawn_comment_context())
+        else {
             return;
         };
         let Some(draft) = self
@@ -258,7 +285,8 @@ impl Shell {
 
     /// A press or drag in the comment draft: the caret goes there.
     fn click_comment_draft(&mut self, caret: Caret) {
-        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context()) else {
+        let (Some(project_id), Some(context)) = (self.workspace, self.drawn_comment_context())
+        else {
             return;
         };
         if let Some(draft) = self
@@ -303,7 +331,7 @@ impl Shell {
                     comments.submitted(serial, saved);
                 }
                 if ok && shell.comment_focus.is_focused(window) && shell.comment_draft().is_none() {
-                    if shell.view() == View::Diff {
+                    if matches!(shell.drawn_comment_context(), Some(CommentContext::Diff)) {
                         window.focus(&shell.git_focus, cx);
                     } else {
                         window.focus(&shell.focus_handle, cx);

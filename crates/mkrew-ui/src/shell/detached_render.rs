@@ -10,6 +10,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        self.ensure_diff_views();
         let theme = cx.theme().clone();
         let host = HostId::Detached(key);
         // A menu closed behind the keyboard's back, or a dialog control that vanished while
@@ -172,6 +173,7 @@ impl Shell {
                     list: ReorderList::Detached(key),
                     index,
                     title: (file.as_ref().map(|file| file.name.as_str()))
+                        .or_else(|| diff_label(tab))
                         .or_else(|| session_label(tab, sessions))
                         .unwrap_or(&tab.title)
                         .to_owned()

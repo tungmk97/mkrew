@@ -22,6 +22,7 @@ pub(crate) mod widgets;
 mod comments;
 pub(crate) mod confirm_prompt;
 mod diagram_dialog;
+pub(crate) mod diff_pane;
 pub(crate) mod doc_view;
 pub(crate) mod docs;
 mod file_pane;

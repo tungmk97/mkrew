@@ -143,7 +143,7 @@ pub enum Command {
     ToggleFileSplit,
     /// Open the right panel on the Git tab and give its list the keyboard.
     ShowGitPanel,
-    /// Show the Diff view while a diff is open.
+    /// Open the diff in a new tab, or focus its pane while it is open.
     ShowDiff,
     /// Git only: switch between Working changes and Against base.
     GitToggleMode,

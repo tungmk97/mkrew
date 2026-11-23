@@ -173,39 +173,6 @@ impl Shell {
             .into_any_element()
     }
 
-    /// The center of the Git view (SPEC §12B): the selected file's diff card. While the
-    /// panel's Git tab is not drawn, the card holds the Git keyboard (`git_focus`,
-    /// `GIT_CONTEXT`) so its keys keep working; one element tracks `git_focus` per frame.
-    pub(crate) fn render_diff_view(
-        &self,
-        project_id: Ulid,
-        theme: &Theme,
-        window: &Window,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
-        let Some(view) = self.git.get(&project_id) else {
-            return message(theme, None, "Loading changes…".into(), None)
-                .flex_1()
-                .into_any_element();
-        };
-        let card = self.render_git_diff(project_id, view, theme, window, cx);
-        let card = if self.git_panel_shown() {
-            card
-        } else {
-            card.track_focus(&self.git_focus)
-                .key_context(GIT_CONTEXT)
-                .on_key_down(cx.listener(Self::git_key_down))
-        };
-        div()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .flex()
-            .font_family(theme.ui_font_family.clone())
-            .child(card)
-            .into_any_element()
-    }
-
     /// The workspace's name (the root repository's tab label).
     pub(crate) fn workspace_name(&self, project_id: Ulid) -> &str {
         self.sidebar

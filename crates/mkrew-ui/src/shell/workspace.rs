@@ -409,7 +409,7 @@ impl Shell {
     }
 
     /// The view of the active workspace; Docs reads as Terminals while `[features] docs` is
-    /// off (ADR 0046), the Diff while it has no open diff.
+    /// off (ADR 0046).
     pub(crate) fn view(&self) -> View {
         let Some(id) = self.workspace else {
             return View::default();
@@ -419,20 +419,14 @@ impl Shell {
             .copied()
             .filter(|&view| match view {
                 View::Docs => self.features.docs,
-                View::Diff => self.diff_open(id),
                 View::Board | View::Terminals => true,
             })
             .unwrap_or_default()
     }
 
-    /// The workspace has an open diff (the Diff view exists).
-    pub(crate) fn diff_open(&self, project_id: Ulid) -> bool {
-        self.git.get(&project_id).is_some_and(GitView::diff_open)
-    }
-
     /// Switches the active workspace to `view`; leaving Terminals detaches its panes. Showing
-    /// Docs re-lists its files (agents may have written new ones); Git (the panel's tab or the
-    /// diff) coming on screen refreshes its changes.
+    /// Docs re-lists its files (agents may have written new ones); Git (the panel's tab) coming
+    /// on screen refreshes its changes (a diff pane does it in `sync_panes`).
     pub(crate) fn show_view(
         &mut self,
         view: View,
@@ -447,7 +441,7 @@ impl Shell {
         }
         self.close_menus();
         let tree_before = self.files_on_screen();
-        let git_before = self.git_shown();
+        let git_before = self.git_panel_shown();
         let shown = self.views.insert(project_id, view).unwrap_or_default();
         if !self.panel_view() {
             // The panel (and its grip) leaves with the views that draw it: end a drag in progress.
@@ -459,11 +453,8 @@ impl Shell {
         if self.files_on_screen() && !tree_before {
             self.refresh_files(project_id, window, cx);
         }
-        if self.git_shown() && !git_before {
+        if self.git_panel_shown() && !git_before {
             self.refresh_git(project_id, window, cx);
-        }
-        if view == View::Diff {
-            window.focus(&self.git_focus, cx);
         }
         self.sync_watches(cx);
         if shown != view {
