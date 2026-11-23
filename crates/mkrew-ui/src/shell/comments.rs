@@ -23,7 +23,7 @@ impl Shell {
     pub(crate) fn comment_context(&self, window: &Window) -> Option<CommentContext> {
         if self.view() == View::Docs {
             Some(CommentContext::Doc)
-        } else if matches!(self.focused_key(window), Some(PaneKey::Diff)) {
+        } else if self.focused_diff(window).is_some() {
             Some(CommentContext::Diff)
         } else {
             None

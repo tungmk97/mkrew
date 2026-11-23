@@ -139,6 +139,16 @@ impl Shell {
         }
     }
 
+    /// The active workspace, when the focused pane of `window` is its Diff leaf. A Diff leaf of
+    /// another workspace (a detached window) never counts: Git keys and comment commands act
+    /// on the active workspace only.
+    pub(crate) fn focused_diff(&self, window: &Window) -> Option<Ulid> {
+        let (project, tab_id) = self.tab_scope(window)?;
+        let tab = self.tabs.get(&project)?.tab(tab_id)?;
+        (tab.focused() == Some(&PaneKey::Diff) && self.workspace == Some(project))
+            .then_some(project)
+    }
+
     pub(crate) fn focused_file(&self, window: &Window) -> Option<String> {
         self.focused_doc(window).map(|(_, path)| path)
     }

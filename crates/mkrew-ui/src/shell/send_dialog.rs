@@ -181,7 +181,7 @@ impl Shell {
         };
         let sessions = self.sidebar.sessions();
         let file = self.focused_file(window);
-        let diff = matches!(self.focused_key(window), Some(PaneKey::Diff));
+        let diff = self.focused_diff(window).is_some();
         let (file_path, prefill, task) = match self.view() {
             View::Terminals if file.is_some() => {
                 let picked = (file.as_deref())

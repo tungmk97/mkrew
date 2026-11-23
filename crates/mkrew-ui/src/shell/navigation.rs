@@ -318,7 +318,7 @@ impl Shell {
             terminal: terminal.is_some(),
             discard,
             git: self.git_shown(),
-            diff_pane: matches!(self.focused_key(window), Some(PaneKey::Diff)),
+            diff_pane: self.focused_diff(window).is_some(),
             worktree_task,
             task_changes,
             fan_out,

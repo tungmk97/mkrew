@@ -322,12 +322,21 @@ impl Shell {
             }
         }
         // A Diff leaf that came on screen (opened, restored, its tab shown) loads Git, as the
-        // Diff view did when it was shown.
+        // Diff view did when it was shown; the Git panel's tab keeps its own Git fresh, so a
+        // diff beside it must not re-request (the new diff would reset the list's scroll).
         let drawn = self.diff_on_screen();
         let came = drawn && !self.diff_drawn;
+        let changed = drawn != self.diff_drawn;
         self.diff_drawn = drawn;
-        if came && let Some(project_id) = self.workspace {
+        if came
+            && !self.git_panel_shown()
+            && let Some(project_id) = self.workspace
+        {
             self.refresh_git(project_id, window, cx);
+        }
+        // A task-worktree watch follows what Git shows (`git_shown`).
+        if changed {
+            self.sync_watches(cx);
         }
         self.focus_pane(window, cx);
     }
@@ -375,7 +384,7 @@ impl Shell {
         }
         // The Git keyboard: the panel's list, or the diff pane itself while the panel's Git
         // tab is not drawn (both track `git_focus`).
-        if matches!(self.focused_key(window), Some(PaneKey::Diff)) {
+        if self.focused_diff(window).is_some() {
             window.focus(&self.git_focus, cx);
             return;
         }

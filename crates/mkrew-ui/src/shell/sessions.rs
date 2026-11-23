@@ -410,7 +410,7 @@ impl Shell {
                     }
                     // Git opens the selected changed file while the diff pane is the focused pane.
                     Some(project_id)
-                        if matches!(self.focused_key(window), Some(PaneKey::Diff))
+                        if self.focused_diff(window).is_some()
                             && self
                                 .git
                                 .get(&project_id)

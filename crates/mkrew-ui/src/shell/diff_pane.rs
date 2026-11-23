@@ -104,6 +104,19 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        // A Diff leaf of another workspace (torn off to a window while the main window shows
+        // a different one): Git and its keys belong to the active workspace only, so this
+        // pane never acts on the wrong one.
+        if self.workspace != Some(project_id) {
+            return message(
+                theme,
+                None,
+                "This diff belongs to another workspace.".into(),
+                Some("Switch to that workspace to review its changes.".into()),
+            )
+            .size_full()
+            .into_any_element();
+        }
         let Some(view) = self.git.get(&project_id) else {
             return message(theme, None, "Loading changes…".into(), None)
                 .size_full()

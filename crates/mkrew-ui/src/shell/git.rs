@@ -565,9 +565,7 @@ impl Shell {
                 cx.stop_propagation();
                 return self.clear_diff_pick(project_id, cx);
             }
-            if let Some(project_id) = self.workspace
-                && matches!(self.focused_key(window), Some(PaneKey::Diff))
-            {
+            if let Some(project_id) = self.focused_diff(window) {
                 cx.stop_propagation();
                 return self.close_git_diff(project_id, window, cx);
             }
