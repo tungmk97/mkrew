@@ -321,6 +321,14 @@ impl Shell {
                     None => self.toast_info(format!("No heading #{anchor} here"), cx),
                 }
             }
+            // A file opens in the Editor of the main window.
+            Some(LinkTarget::File { .. }) if self.host_of(window) != HostId::Main => {
+                let action = action.clone();
+                self.in_window(HostId::Main, cx, move |shell, window, cx| {
+                    window.activate_window();
+                    shell.open_preview_link(&action, window, cx);
+                });
+            }
             Some(LinkTarget::File { path, line }) if shown_target == target => {
                 self.reveal_file(project_id, target, path, line, Open::Kept, window, cx);
             }
