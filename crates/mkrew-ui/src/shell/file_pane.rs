@@ -103,6 +103,7 @@ impl Shell {
             })
         };
         let markdown = doc.is_markdown();
+        let worktree = worktree_target::label(path.task, project_id, self.board.tasks());
         let review_path = path.path.clone();
         let header = div()
             .flex_none()
@@ -116,12 +117,27 @@ impl Shell {
                     .flex_1()
                     .min_w(px(theme::FILE_NAME_MIN_WIDTH))
                     .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(format!("{}{}", if dirty { "● " } else { "" }, path.path)),
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(font_size::CARD_TITLE)
+                            .font_weight(FontWeight(weight::SEMIBOLD))
+                            .text_color(rgb(theme.text))
+                            .child(format!("{}{}", if dirty { "● " } else { "" }, path.path)),
+                    )
+                    // A worktree's file says which worktree: it looks like the project's otherwise.
+                    .children(worktree.map(|worktree| {
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(worktree)
+                    })),
             )
             // The buttons give way first: in a narrow pane the left ones are cut, the name stays.
             .child(

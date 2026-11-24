@@ -72,6 +72,10 @@ Screenshots: `docs/screenshots/tern-panes-<view>-<dark|light>.png`.
 - [ ] **Files of a worktree (final review, ADR 0108):** in an agent that runs in a task worktree, Ctrl+click a path in its terminal: the file opens (the tree follows that worktree), edit it, quit and restart the app: the pane comes back and reads the worktree's copy; Save writes the worktree's file, not the project's (compare the two files on disk).
   Then choose another worktree (or the project) in the tree: no file pane closes and no question is asked.
   Delete the worktree and restart: the file's pane says it cannot read the file; it does not show the project's copy.
+- [ ] **Worktree watch while a file tab is hidden:** open a file of a task worktree, switch to another tab (or the Board and back), have the agent edit that file, then show the tab again: the pane shows the new text (or the changed-on-disk banner when you had unsaved text) without touching the Files tree.
+  Close the last file of that worktree and the tree no longer shows it: `mk daemon` logs `watch released` for it (debug level).
+- [ ] **Which worktree a file is of:** a file opened from a task worktree shows the task's title in muted text after its path in the pane header, the tab chip's tooltip reads `name · title` and the label stays the file name; a project file shows nothing extra; with unsaved text, close that tab: the question's detail reads `path (title) in workspace`.
+  Dark and light; a long title is cut with … before the path is.
 - [ ] **Two file panes side by side:** drag a file next to another file pane; in the right one click Save, Find, the mode toggle and ✕: each works there (not only in the left one).
 - [ ] **Dragging keeps the preview tab:** single-click a file (italic tab), drag its tab or its pane next to a terminal, then single-click another file in the tree: the dragged file stays and the other opens in its own tab.
 - [ ] **Narrow file pane:** make a file pane about 250 px wide: the file name keeps room (cut with …) and the buttons on the right give way.

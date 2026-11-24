@@ -254,11 +254,19 @@ impl Shell {
                 }
             })
             .collect();
+        // A file of a task worktree names it: a project file and a worktree file look alike.
+        let worktree = match tab.focused() {
+            Some(PaneKey::File(file)) => {
+                worktree_target::label(file.task, project_id, self.board.tasks())
+            }
+            _ => None,
+        };
         let title = label.unwrap_or(&tab.title);
         let dirty = file.as_ref().is_some_and(|file| file.dirty);
         let tip = match urgent {
             Some(pane) => format!(
-                "{title}\n{}",
+                "{}\n{}",
+                worktree_target::with_worktree(title, worktree.as_deref()),
                 pane_text::pill_text(
                     pane.state,
                     pane.exit_code,
@@ -267,8 +275,10 @@ impl Shell {
                     self.turns.get(pane.id),
                 )
             ),
-            None if dirty => format!("{title} (unsaved)"),
-            None => title.to_owned(),
+            None if dirty => {
+                worktree_target::with_worktree(&format!("{title} (unsaved)"), worktree.as_deref())
+            }
+            None => worktree_target::with_worktree(title, worktree.as_deref()),
         };
         tab_frame(group.clone(), is_active, theme)
             // Shrinks to `TAB_MIN_WIDTH` before the tab area scrolls.

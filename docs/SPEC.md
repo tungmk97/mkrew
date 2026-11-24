@@ -1339,6 +1339,8 @@ Only edit this file. When done, for EACH comment run:
   A file is closed with the tab's ×, the tab menu's Close pane, `Ctrl+W` or `Ctrl+Shift+X` (both close the focused file pane) or a middle click on its tab; each asks "Save / Don't save / Cancel" first for a file with unsaved text (Cancel closes nothing).
   The window's find bar belongs to the shown file pane: one find bar per file pane, searched on that file.
   `git.changed` reads the files of the shown panes; files of tabs that are not shown are read when shown.
+  A workspace keeps the worktree of every open file pane watched, in a shown tab or not, until its last file closes (unless the Files or Git view shows that worktree).
+  A file of a task worktree shows the task's title in muted text after its path in the pane header, in the tab chip's tooltip and in the unsaved-changes question; the tab chip's label stays the file name.
   Moving a file (drag to an edge, to another tab, tear-off, merge) never asks.
 - **Change gutter** (ADR 0047): right of each line number a thin bar marks how the line differs
   from the file's text in the git index (what the Git tab calls unstaged): added

@@ -689,11 +689,9 @@ impl Shell {
             .to_owned();
         let workspace = (self.sidebar.projects().iter())
             .find(|project| project.id == project_id)
-            .map_or_else(String::new, |project| format!(" in {}", project.name));
-        let detail = format!(
-            "{}{workspace} — your changes are lost if you don't save them.",
-            path.path
-        );
+            .map(|project| project.name.as_str());
+        let worktree = worktree_target::label(path.task, project_id, self.board.tasks());
+        let detail = worktree_target::leave_detail(&path.path, worktree.as_deref(), workspace);
         let answer = window.prompt(
             PromptLevel::Warning,
             &format!("Save changes to {name}?"),
