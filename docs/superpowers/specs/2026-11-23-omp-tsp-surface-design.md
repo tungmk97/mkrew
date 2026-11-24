@@ -245,6 +245,35 @@ Phase list (the `full` card, the `reminder` and the `hud` popover):
 - The `hud` click opens the list in a floating panel (`floating_panel`, glass) anchored above the status row, at most 60% of the pane height, scrolling; Esc or a click outside closes it.
   The panel's open state is UI-only: nothing is sent to omp.
 
+### 7.8 The dock as Tern's composer (added 2026-11-24 after the first smoke)
+
+The first smoke on a real omp 18.13.2 showed the dock drawn generically: a flat meter, a plain editor line and a row of loose chips, unlike Tern (`docs/screenshots/` Tern composer).
+The dock reuses the pieces of the Chat composer card (ADR 0105, `shell/composer.rs`), so Chat and an omp pane look the same, with omp as the only source of their content.
+Roles below are omp 18.13.2's (`omp.editor` and its children, `omp.hud*`, `omp.working*`); a dock without them (another omp version) is drawn generically as before.
+
+| Node from omp | Looks like | Sent to omp |
+|---|---|---|
+| `col` `role=omp.editor` | the composer card: `surface_raised`, `radius::LARGE`, glass border, float shadow, `space::M` padding, in the centered column `space::M` above the pane's bottom edge; never collapsed to a pill | - |
+| `meter` `role=omp.composer.context` (`style=bar`) | the Chat context meter above the card: a `CONTEXT_METER_HEIGHT` pill bar (fill `accent`, `status_needs_input` past `thresholds.warn` of the remaining room as omp marks it, `danger_text` past `bad`), its `label` on the left and `total` on the right in `text_muted` `META`; `marks` as small ticks with their `title` as tooltip; the node `title` as the meter's tooltip | click: `action` (`status.context`) |
+| `row` `role=omp.composer.line` with its `editor` | the card's field: `BODY` text; the placeholder as the Chat placeholder row (sparkle icon, italic, `text_muted`); `ghost` as `text_subtle` text right after the caret on the same line, never on its own line | - (keys go through the PTY) |
+| `row` `role=omp.composer.bar` | the card's chip row: never wraps or overlaps, `min_w_0`, children in omp's order, the send or stop button always shown at the end | - |
+| `row` `role=omp.composer.model` | the Chat model pill (pill border `raised_border`, `accent_text`, chevron); loading dots in it while the session is working | click: `action` |
+| `row` `role=omp.composer.effort` | a quiet chip (its effort glyph and level) | click: `action` |
+| `status` `role=omp.composer.extras` of `seg` `role=omp.composer.fact` | quiet mono chips; a span styled `accent` (omp's `⚡ yolo`) takes the Chat permission chip look; when the row is too narrow, facts drop in order of their `priority` (highest number first), then the effort chip, and the model pill last truncates its name | click: `action` |
+| `text` `role=omp.composer.usage`, `rate` `role=omp.composer.rate` | quiet mono chips (`$0.14`, `65 tok/s`) | click: `action` |
+| `kbd` `role=omp.composer.send` | the Chat round send button (`CornerDownLeft`), enabled when the editor has text | click: `action` (`submit`) |
+| `text` `role=omp.composer.stop` | a round button of the same size with a stop square, `danger_text` on hover | click: `action` (`interrupt`) |
+| `row` `role=omp.composer.chips` | attachment chips above the field, wrapping | - |
+| `row` `role=omp.composer.focus` | a strip above the field: eye icon, "Viewing", the crumbs, and the `omp.composer.exit` chip | click: `action` |
+| `col` `role=omp.hud.status` with `row` `role=omp.working` | the status row above the meter, as Tern: a spinner (loading dots on the status tick), the elapsed time in mono `text_muted`, a divider, the `omp.working.label` in `status_needs_input`; `omp.working.stop` as a small ghost button | click: `action` |
+| `row` `role=omp.hud` of `row` `role=omp.hud.seg` | glass pills on the right of the status row (icon, then the count in mono), as Tern's subagent and jobs pills; the node `title` as tooltip | click: `action` (`agents.open`, `jobs.open`) |
+| `checklist` `role=omp.hud.todo` | as 7.7, on the right of the status row, left of the pills | - |
+
+Text glyphs: a span styled `icon` (omp sends Nerd Font private-use glyphs in native mode, reference 6.2) is drawn in the terminal font, which carries those glyphs; never a missing-glyph box.
+
+Tern's look is the target: the same order, sizes from `theme.rs` (the Chat composer's tokens), dark and light.
+The smoke compares the composer in Tern and in Mkrew on the same omp session: idle, typing, working (Stop), a narrow pane, a subagent running.
+
 ## 8. Error handling
 
 | Case | Behavior |
