@@ -93,20 +93,17 @@ impl Shell {
         match event {
             PageEvent::Started => browser.page.loading = true,
             PageEvent::Title(title) => browser.page.title = title,
-            PageEvent::Open(url) => {
-                let scheme = scheme_of(&url);
-                if is_web(&url) {
+            PageEvent::Open(url) => match mkrew_ui::browser::new_window_target(&url) {
+                mkrew_ui::browser::NewWindow::Load => {
                     if let Some(native) = &browser.native {
                         native.load(&url);
                     }
-                } else if !scheme.is_empty()
-                    && !["file", "javascript", "data"]
-                        .iter()
-                        .any(|blocked| scheme.eq_ignore_ascii_case(blocked))
-                {
-                    cx.open_url(&url);
                 }
-            }
+                mkrew_ui::browser::NewWindow::System => cx.open_url(&url),
+                mkrew_ui::browser::NewWindow::Drop => {
+                    tracing::debug!(%id, "browser: dropped a new-window request: {url}");
+                }
+            },
             PageEvent::Finished(url) => {
                 browser.page.loading = false;
                 if !browser.editing {

@@ -72,6 +72,54 @@ pub enum PageEvent {
     Key(String),
 }
 
+/// Where a page's new-window request goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewWindow {
+    /// Into the pane (`http`, `https`).
+    Load,
+    /// To the system (`mailto`).
+    System,
+    /// Nowhere: a page must not start other protocol handlers.
+    Drop,
+}
+
+/// The scheme allowlist for `target=_blank` and `window.open`.
+pub fn new_window_target(url: &str) -> NewWindow {
+    let scheme = url.split_once(':').map_or("", |(scheme, _)| scheme);
+    if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") {
+        NewWindow::Load
+    } else if scheme.eq_ignore_ascii_case("mailto") {
+        NewWindow::System
+    } else {
+        NewWindow::Drop
+    }
+}
+
+#[cfg(test)]
+mod new_window_tests {
+    use super::*;
+
+    #[test]
+    fn only_web_loads_and_mailto_goes_to_the_system() {
+        for url in ["http://a.b", "HTTPS://a.b/x"] {
+            assert_eq!(new_window_target(url), NewWindow::Load, "{url}");
+        }
+        assert_eq!(new_window_target("mailto:a@b.c"), NewWindow::System);
+        for url in [
+            "file:///C:/x",
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "vbscript:x",
+            "ms-settings:network",
+            "blob:http://a/1",
+            "example.com/x",
+            "",
+        ] {
+            assert_eq!(new_window_target(url), NewWindow::Drop, "{url}");
+        }
+    }
+}
+
 /// An IPC message of the init script: `{"t":"focus"}` or `{"t":"key","k":"alt-shift-b"}`.
 pub fn parse_ipc(body: &str) -> Option<PageEvent> {
     let value: serde_json::Value = serde_json::from_str(body).ok()?;
