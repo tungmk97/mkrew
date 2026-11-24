@@ -78,6 +78,12 @@ pub fn init_script(keys: &[String]) -> String {
     e.stopPropagation();
     post({{ t: "key", k: name }});
   }}, true);
+  // A lone Alt keyup the page leaves unhandled reaches the host window, and DefWindowProc
+  // enters the Win32 system menu (SC_KEYMENU), which captures the mouse and eats the next
+  // keys. Alt combos are untouched: they are other keys with e.altKey set.
+  for (const type of ["keydown", "keyup"]) {{
+    addEventListener(type, (e) => {{ if (e.key === "Alt") e.preventDefault(); }}, true);
+  }}
 }})();"#,
         keys = json_list(keys)
     )
@@ -136,6 +142,7 @@ mod tests {
         let script = init_script(&keys);
         assert!(script.contains(r#"["alt-shift-b"]"#));
         assert!(script.contains("window.ipc.postMessage"));
+        assert!(script.contains(r#"e.key === "Alt""#));
         assert!(set_keys_script(&keys).contains(r#"["alt-shift-b"]"#));
     }
 }
