@@ -254,7 +254,7 @@ Roles below are omp 18.13.2's (`omp.editor` and its children, `omp.hud*`, `omp.w
 | Node from omp | Looks like | Sent to omp |
 |---|---|---|
 | `col` `role=omp.editor` | the composer card: `surface_raised`, `radius::LARGE`, glass border, float shadow, `space::M` padding, in the centered column `space::M` above the pane's bottom edge; never collapsed to a pill | - |
-| `meter` `role=omp.composer.context` (`style=bar`) | the Chat context meter above the card: a `CONTEXT_METER_HEIGHT` pill bar (fill `accent`, `status_needs_input` past `thresholds.warn` of the remaining room as omp marks it, `danger_text` past `bad`), its `label` on the left and `total` on the right in `text_muted` `META`; `marks` as small ticks with their `title` as tooltip; the node `title` as the meter's tooltip | click: `action` (`status.context`) |
+| `meter` `role=omp.composer.context` (`style=bar`) | the Chat context meter above the card: a `CONTEXT_METER_HEIGHT` pill bar (fill `accent`, `status_needs_input` past `thresholds.warn`, `danger_text` past `bad`, both compared with the used fraction), its `label` on the left and `total` on the right in `text_muted` `META`; `marks` as small ticks with their `title` as tooltip; the node `title` as the meter's tooltip | click: `action` (`status.context`) |
 | `row` `role=omp.composer.line` with its `editor` | the card's field: `BODY` text; the placeholder as the Chat placeholder row (sparkle icon, italic, `text_muted`); `ghost` as `text_subtle` text right after the caret on the same line, never on its own line | - (keys go through the PTY) |
 | `row` `role=omp.composer.bar` | the card's chip row: never wraps or overlaps, `min_w_0`, children in omp's order, the send or stop button always shown at the end | - |
 | `row` `role=omp.composer.model` | the Chat model pill (pill border `raised_border`, `accent_text`, chevron); loading dots in it while the session is working | click: `action` |
@@ -273,6 +273,15 @@ Text glyphs: a span styled `icon` (omp sends Nerd Font private-use glyphs in nat
 
 Tern's look is the target: the same order, sizes from `theme.rs` (the Chat composer's tokens), dark and light.
 The smoke compares the composer in Tern and in Mkrew on the same omp session: idle, typing, working (Stop), a narrow pane, a subagent running.
+
+Notes from the smoke record (omp 18.13.2):
+
+- The rate is a `rate` child of the `token_rate` fact, not its own node; both shapes draw the same chip.
+- `omp.hud` (the pills) is a sibling of `omp.hud.status` in the dock, not inside it; Mkrew still draws the pills at the right of the status row.
+- omp puts effort before the model in the bar; Mkrew keeps omp's order.
+- The editor's `sendable` is true even when empty: Send is enabled by text or an attachment chip.
+- Fact spans use omp's `statusLine*` palette names: the stats Chat also shows take Chat's colors (context `syntax_keyword`, branch `syntax_string`, rate `text`, clock and session `text_subtle`), others stay `text_muted`.
+- `thresholds` (`warn`, `bad`) compare with the used fraction (`bad` equals the auto-compact mark).
 
 ## 8. Error handling
 

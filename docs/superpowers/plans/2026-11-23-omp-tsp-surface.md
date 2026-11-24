@@ -10953,6 +10953,2332 @@ git add crates/mkrew-ui/src/shell/tsp_view.rs crates/mkrew-ui/src/shell.rs crate
 git -c user.email=tungnv975@gmail.com commit -m "feat(ui): draw an omp pane from its native surface (TSP view)"
 ```
 
+### Task 10b: omp dock as Tern's composer
+
+**Controller amendment (fact colors):** fact spans carry omp palette names (`statusLine*`). Map the ones whose stat Chat's composer also shows to Chat's colors, in the same pure style table, with a test: the context fact to `syntax_keyword`, a branch fact to `syntax_string`, the rate to `text`, the clock and session facts to `text_subtle`; any other `statusLine*` token stays `text_muted`. This keeps an omp pane and a Chat pane the same, as spec 7.8 asks.
+
+
+Spec 7.8. Task 10 drew the dock generically (flat meter, plain editor line, loose chips). This task draws it as the Chat composer card (ADR 0105) with omp as the only source of content. Order: after Task 10 is committed, before Task 11. Task 10's ask card (7.6) and todo hud (7.7) stay as they are and must keep working next to it.
+
+What the real session (`.superpowers/sdd/2026-11-23-omp-tsp-surface/smoke-omp-18.13.2-session.tsp.jsonl`, 843 frames, replayed op by op) says; the code below is built on these facts, not on the spec table alone:
+
+| Fact in the recording | Consequence in this task |
+|---|---|
+| The dock is `dock > [e, 6, d, h]`; the editor `col role=omp.editor` (`3`) sits inside the wrapper col `h`; `e` is the empty col `{id:e,k:col}` when idle and becomes `row role=omp.hud.activity > col role=omp.hud.status > row role=omp.working` while working (frame 15); `6` (`omp.hud`) is a dock sibling of `e`, hidden, with no children, never shown in this session | `DockModel.path` lists the wrapper ids; the view walks the dock and draws the card where the editor is; the status row is built from `e`/`6` and those two nodes are skipped where they stand |
+| `3.bar` children in omp's order: `effort`, `model`, `extras`, `usage`, then `send` (idle) or `stop` (working; the send node is deleted in the same frame) | The bar follows omp's order (effort before model, unlike Chat); send and stop never exist together |
+| There is no `rate role=omp.composer.rate`. The rate is a `rate{value:45.6,unit:"tok/s"}` child of the fact `seg 3.bar/extras/token_rate` (priority 6, icon `throughput`). The fact `time_spent` has `spans: []` and an `elapsed` child. The facts are NOT in priority order (`token_rate 6, cache_write 5, cache_read 4, token_out 3, token_in 2, time_spent 10, status 6, session 2, time 11`), priorities tie | A fact body is text, rate or elapsed; the drop order is priority descending, ties: the later fact goes first (pure test) |
+| Fact span styles are omp palette names (`statusLineOutput`, `statusLineSpend`, `statusLineModel`); only `accent` (`⚡ yolo`) maps to a Mkrew token | Facts are quiet muted chips; only an `accent` span gets the Chat permission look (the leading symbol is stripped, Chat draws its own `Zap`) |
+| Fact icon names `cache`, `input`, `output`, `throughput` have no entry in `tsp::icon` | Add `cache` (Database), `input` (ArrowDown), `output` (ArrowUp); `throughput` stays unmapped (the rate text carries its unit) |
+| `editor.sendable` is `true` while the editor is empty (frame 4 onwards) | Send is enabled by the text (or an attachment chip) AND `sendable`, never by `sendable` alone |
+| Ghost: `{text:"abc",cursor:3,ghost:"d"}`, then `{text:"q",cursor:1,ghost:"uestion"}`; cleared when the text changes or empties | The ghost is drawn only with the caret at the end of the text; it follows the caret on the same line |
+| The placeholder is `[{"t":"“\u{f14f7} README: List files and explain README”","s":"em"}]`: a private-use glyph inside an `em` span, not an `icon` span | The placeholder runs go through `styled_runs` (it cuts private-use glyphs into terminal-font runs), so the Chat placeholder row must accept an element, not only a `String` |
+| `3.context`: `thresholds {warn:0.15, bad:0.5}` against `value` (the used share; `bad` equals the auto-compact mark `at: 0.5`), `label:"3%"`, `total:"1M"`, `marks:[{at:0.5,title:"Auto-compact at 50%"}]`; the first frame has no `value` at all ("Context usage unknown") | Tone from the existing `meter_tone(value, thresholds)`; no `value` draws an empty track with the labels |
+| `3.bar/usage` is `""` in the first idle frames and while working starts; `3.bar/model/name` spans are styled `accent` idle and `statusLineModel` while working | An empty usage is not drawn; the model name ignores span styles (always `accent_text`) |
+| `omp.composer.chips` (`m`) is a hidden empty row; there is no `omp.composer.focus`, no `omp.hud.seg`, no `omp.editor.ask` in the recording | Those looks are built from the reference (section 8.2, 8.3) shapes, tested on those shapes, and compared with Tern in the manual smoke only |
+
+**Files:**
+- Modify: `crates/mkrew-ui/src/theme.rs:450` (seven tokens after `CONTEXT_METER_HEIGHT`)
+- Modify: `crates/mkrew-ui/src/tsp.rs:65-95` (`icon`: three names), insert the dock model above `#[cfg(test)]` (current line 1593), tests at the end of `mod tests` (before the final `}`, current line 3543)
+- Modify: `crates/mkrew-ui/src/shell/composer.rs:1141-1145`, `:1173-1216`, `:1228-1279`, `:1376-1386`, `:1439-1458` (extract the shared pieces; Chat output unchanged)
+- Modify: `crates/mkrew-ui/src/shell/widgets.rs:222` (`round_stop_button` after `round_button`)
+- Modify: `crates/mkrew-ui/src/shell/tsp_view.rs:20-29` (imports), `:773-960` (`render_tsp` dock), `:1813-1909` (`tsp_input` becomes `tsp_input` + `tsp_editor`), new `impl Shell` block after `tsp_status_hud` (current line 2243)
+- Test: `crates/mkrew-ui/src/tsp.rs` (inline). The drawing is checked by the manual smoke in Step 16; the Chat refactor by `cargo test -p mkrew-ui` plus the before/after capture in Steps 5 and 9.
+
+**Interfaces:**
+- Consumes: Task 9 (`mkrew_ui::tsp::{role_of, node_spans, spans_of, SpanStyle, icon, rate_label, meter_tone, tone_color, byte_at_utf16, has_click}`, `Document::{children, get, focus}`, `Node { id, kind, props, parent }`), Task 10 (`Paint`, `tsp_node`, `tsp_decorate`, `tsp_click`, the old `tsp_input` body (becomes `tsp_editor`), `styled_runs`, the todo hud and its popover through `tsp_node` on the `checklist` node, the `exited` notice), Chat: the `composer_card` pieces extracted in Step 9, `chat::{fit_chips, context_meter}` as the model for `fit_bar`, `widgets::{round_button, quiet_button, icon_text, loading_dots, tooltip}`, theme tokens `COMPOSER_*`, `CONTEXT_METER_HEIGHT`, `SEND_BUTTON_SIZE`, `PILL_HEIGHT`, `CHAT_COLUMN_WIDTH`.
+- Produces (pure, `mkrew_ui::tsp`): `DockRole`, `dock_role(&str) -> Option<DockRole>`, `dock_model(&Document, &Theme) -> Option<DockModel>`, `DockModel { editor, line, path, skip, context, field, focus, chips, bar, status }` with `can_send()`, `ContextMeter`, `Mark`, `EditorModel`, `BarModel { parts, effort, model, facts, usage, primary, working }`, `BarPart`, `Effort`, `ModelPill`, `Fact`, `FactBody`, `Usage`, `Primary`, `StatusModel`, `Working`, `HudPill`, `FocusStrip`, `permission_text`, `BarFit`, `bar_width`, `fit_bar`.
+- Produces (shared with Chat, `shell/composer.rs`, `pub(super)`): `composer_room`, `composer_card_frame`, `meter_bar`, `quiet_chip`, `permission_chip`, `model_pill`, `placeholder_row` (now generic over its content); `widgets::round_stop_button`.
+- Produces (view): `Shell::{tsp_dock, tsp_composer, tsp_dock_status, ...}`, `EditorLook`. No new `Shell` field, no new event: every click still goes through `tsp_click` / `tsp_decorate`, so omp receives the same `action {id, act}` events as before (`status.model`, `status.context`, `status.cost`, `thinking.cycle`, `submit`, `interrupt`, `agents.open`, `jobs.open`) and `focus {id}` for the editor.
+- Fallback: a dock without `omp.editor` + `omp.composer.line` (with an `editor`) + `omp.composer.bar`, or whose editor role is the ask card (`omp.editor.ask`), gives `dock_model(..) == None`; `render_tsp` then draws the dock exactly as Task 10 does (generic nodes, `tsp_ask`, `tsp_status_hud`). Covered by tests.
+
+Hard rules in force (mkrew-ui-design): every color, size, spacing, radius from `theme.rs` tokens; every clickable thing is a widget or `.pressable(..)` + `.on_press(..)`; no `.hover(`, `.active(`, `.cursor_pointer()` outside `widgets.rs` and `pressable.rs`; no looping animation; dark and light only through `Theme` fields.
+
+- [ ] **Step 1: Write the failing tests for the dock model**
+
+Append inside `mod tests` of `crates/mkrew-ui/src/tsp.rs`, before its final `}` (after `a_huge_age_does_not_overflow`). The helpers rebuild the real dock of the recording (same ids, props and order; frame 4 for idle, frame 25 for working, trimmed of the empty wrapper cols `7`, `8`, `9`, `a`, `b`, `c`, `f`, `g`, `i`):
+
+```rust
+
+    // ---- The dock as Tern's composer (Task 10b, spec 7.8) ----
+
+    use serde_json::Value;
+
+    fn fact(id: &str, priority: u32, icon: Option<&str>, spans: Value, children: Value) -> Value {
+        let mut props = json!({"role": "omp.composer.fact", "priority": priority, "spans": spans});
+        if let Some(icon) = icon {
+            props["icon"] = json!(icon);
+        }
+        json!({"id": format!("3.bar/extras/{id}"), "k": "seg", "p": props, "c": children})
+    }
+
+    /// The dock children of the recorded omp 18.13.2 session: `[e, 6, d, h]`. Idle is frame 4
+    /// (3 facts, Send, empty usage), working is frame 25 (9 facts with the rate and the elapsed
+    /// time, Stop, `$0.10`, the `omp.working` row). Paths used by the tests below:
+    /// `kids[3]` is `h`, `/c/0` the editor col, `/c/0/c/0` the hidden chips row, `/c/0/c/1` the
+    /// context meter, `/c/0/c/2` the line, `/c/0/c/2/c/0` the editor, `/c/0/c/3` the bar.
+    fn real_children(working: bool) -> Vec<Value> {
+        let facts = if working {
+            vec![
+                fact("token_rate", 6, Some("throughput"), json!([]), json!([{"id": "3.bar/extras/token_rate/rate", "k": "rate", "p": {"value": 45.6, "unit": "tok/s"}}])),
+                fact("cache_write", 5, Some("cache"), json!([{"t": "12K", "s": "statusLineOutput"}]), json!([])),
+                fact("cache_read", 4, Some("cache"), json!([{"t": "8.9K", "s": "statusLineSpend"}]), json!([])),
+                fact("token_out", 3, Some("output"), json!([{"t": "325", "s": "statusLineOutput"}]), json!([])),
+                fact("token_in", 2, Some("input"), json!([{"t": "1", "s": "statusLineSpend"}]), json!([])),
+                fact("time_spent", 10, Some("time"), json!([]), json!([{"id": "3.bar/extras/time_spent/timer", "k": "elapsed", "p": {"age": 12164, "format": "short"}}])),
+                fact("status", 6, None, json!([{"t": "⚡ yolo", "s": "accent"}]), json!([])),
+                fact("session", 2, Some("session"), json!([{"t": "01a20b2a"}]), json!([])),
+                fact("time", 11, Some("time"), json!([{"t": "8:28:43"}]), json!([])),
+            ]
+        } else {
+            vec![
+                fact("status", 6, None, json!([{"t": "⚡ yolo", "s": "accent"}]), json!([])),
+                fact("session", 2, Some("session"), json!([{"t": "01a20b2a"}]), json!([])),
+                fact("time", 11, Some("time"), json!([{"t": "8:27:18"}]), json!([])),
+            ]
+        };
+        let (cost, primary) = if working {
+            (
+                "$0.10",
+                json!({"id": "3.bar/stop", "k": "text", "p": {"role": "omp.composer.stop", "text": "Stop", "tone": "error", "title": "Stop  esc", "actions": {"click": "interrupt"}}}),
+            )
+        } else {
+            (
+                "",
+                json!({"id": "3.bar/send", "k": "kbd", "p": {"role": "omp.composer.send", "keys": ["enter"], "title": "Send  ⏎", "actions": {"click": "submit"}}}),
+            )
+        };
+        let effort = json!({"id": "3.bar/effort", "k": "row", "p": {"role": "omp.composer.effort", "gap": "xs", "align": "center", "title": "Thinking effort  ⇧⇥", "actions": {"click": "thinking.cycle"}}, "c": [
+            {"id": "3.bar/effort/glyph", "k": "effort", "p": {"level": "high"}},
+            {"id": "3.bar/effort/level", "k": "text", "p": {"text": "high", "wrap": "none"}}]});
+        // omp restyles the name while working (`statusLineModel` is one of its palette names).
+        let name_style = if working { "statusLineModel" } else { "accent" };
+        let model = json!({"id": "3.bar/model", "k": "row", "p": {"role": "omp.composer.model", "gap": "xs", "align": "center", "title": "Switch model  Alt+P", "actions": {"click": "status.model"}}, "c": [
+            {"id": "3.bar/model/icon", "k": "icon", "p": {"name": "model"}},
+            {"id": "3.bar/model/name", "k": "text", "p": {"spans": [{"t": "Opus 5.5", "s": name_style}], "wrap": "none"}},
+            {"id": "3.bar/model/chev", "k": "icon", "p": {"name": "chev"}}]});
+        let extras = json!({"id": "3.bar/extras", "k": "status", "p": {"role": "omp.composer.extras", "transparent": true, "grow": 1}, "c": facts});
+        let usage = json!({"id": "3.bar/usage", "k": "text", "p": {"role": "omp.composer.usage", "text": cost, "wrap": "none", "actions": {"click": "status.cost"}}});
+        let editor = json!({"id": "3", "k": "col", "p": {"role": "omp.editor"}, "c": [
+            {"id": "m", "k": "row", "p": {"gap": "sm", "wrap": true, "role": "omp.composer.chips", "hidden": true}},
+            {"id": "3.context", "k": "meter", "p": {"role": "omp.composer.context", "style": "bar", "thresholds": {"warn": 0.15, "bad": 0.5}, "marks": [{"at": 0.5, "icon": "context.compaction", "title": "Auto-compact at 50%"}], "total": "1M", "title": "Context 3% used\n27K of 1M tokens\nAuto-compact at 50%", "actions": {"click": "status.context"}, "value": 0.027201, "label": "3%"}},
+            {"id": "3.line", "k": "row", "p": {"role": "omp.composer.line", "align": "start", "gap": "sm"}, "c": [
+                {"id": "3.line/input", "k": "editor", "p": {"text": "", "cursor": 0, "sendable": true, "maxLines": 18, "placeholder": [{"t": "“\u{f14f7} README: List files and explain README”", "s": "em"}]}}]},
+            {"id": "3.bar", "k": "row", "p": {"role": "omp.composer.bar", "gap": "sm", "align": "center"}, "c": [effort, model, extras, usage, primary]}]});
+        let activity = if working {
+            json!({"id": "e", "k": "row", "p": {"role": "omp.hud.activity", "align": "center", "gap": "sm"}, "c": [
+                {"id": "e.status", "k": "col", "p": {"role": "omp.hud.status"}, "c": [
+                    {"id": "x", "k": "row", "p": {"role": "omp.working", "align": "center", "gap": "sm"}, "c": [
+                        {"id": "x.spinner", "k": "spinner", "p": {"style": "starburst", "tone": "accent"}},
+                        {"id": "x.elapsed", "k": "elapsed", "p": {"age": 12261, "format": "short"}},
+                        {"id": "x.sep", "k": "text", "p": {"text": "·", "role": "omp.working.sep"}},
+                        {"id": "x.label", "k": "shimmer", "p": {"spans": [{"t": "Reading simple-english skill", "s": "accent"}], "mode": "classic", "role": "omp.working.label"}},
+                        {"id": "x.fill", "k": "row", "p": {"grow": 1}},
+                        {"id": "x.stop", "k": "row", "p": {"role": "omp.working.stop", "gap": "xs", "align": "center", "title": "Stop  esc", "actions": {"click": "interrupt"}}, "c": [
+                            {"id": "x.stop/0", "k": "kbd", "p": {"keys": ["escape"]}},
+                            {"id": "x.stop/1", "k": "text", "p": {"text": "Stop"}}]}]}]}]})
+        } else {
+            json!({"id": "e", "k": "col"})
+        };
+        vec![
+            activity,
+            json!({"id": "6", "k": "row", "p": {"role": "omp.hud", "justify": "end", "hidden": true}}),
+            json!({"id": "d", "k": "col", "c": [{"id": "j", "k": "col", "p": {"role": "omp.hud.judge"}}]}),
+            json!({"id": "h", "k": "col", "c": [editor]}),
+        ]
+    }
+
+    fn dock_doc(kids: Vec<Value>) -> Document {
+        let mut ops = vec![json!(["add", "dock", "s:1", null, {"id": "dock", "k": "col"}])];
+        ops.extend(kids.into_iter().map(|kid| json!(["add", kid["id"].clone(), "dock", null, kid])));
+        doc(ops)
+    }
+
+    fn model_of(kids: Vec<Value>) -> Option<DockModel> {
+        dock_model(&dock_doc(kids), &Theme::dark())
+    }
+
+    #[test]
+    fn dock_roles_are_matched_whole_and_the_ask_card_is_not_the_composer() {
+        assert_eq!(dock_role("omp.editor"), Some(DockRole::Editor));
+        assert_eq!(dock_role("omp.editor.bash"), Some(DockRole::Editor));
+        assert_eq!(dock_role("omp.editor.python"), Some(DockRole::Editor));
+        assert_eq!(dock_role("omp.editor.ask"), None);
+        assert_eq!(dock_role("omp.editor.ask.hidden"), None);
+        assert_eq!(dock_role("omp.composer.model"), Some(DockRole::Model));
+        assert_eq!(dock_role("omp.composer.model.effort"), None);
+        assert_eq!(dock_role("omp.composer.effort"), Some(DockRole::Effort));
+        assert_eq!(dock_role("omp.composer.fact"), Some(DockRole::Fact));
+        assert_eq!(dock_role("omp.hud"), Some(DockRole::Hud));
+        assert_eq!(dock_role("omp.hud.seg"), Some(DockRole::HudSeg));
+        assert_eq!(dock_role("omp.hud.todo"), Some(DockRole::HudTodo));
+        assert_eq!(dock_role("omp.hud.pill"), None);
+        assert_eq!(dock_role("omp.working.sep"), None);
+        assert_eq!(dock_role("omp.composer"), None);
+        assert_eq!(dock_role(""), None);
+    }
+
+    #[test]
+    fn the_recorded_idle_dock_gives_the_composer_model() {
+        let m = model_of(real_children(false)).expect("composer");
+        assert_eq!((m.editor.as_str(), m.line.as_str()), ("3", "3.line"));
+        assert_eq!(m.path, ["h", "3"], "the wrapper col the editor sits in");
+        assert!(m.skip.is_empty(), "idle: no activity row, the hud row is hidden");
+
+        let c = m.context.as_ref().expect("context meter");
+        assert_eq!(c.id, "3.context");
+        assert!((c.fraction.expect("value") - 0.027201).abs() < 1e-6);
+        assert_eq!((c.tone, c.label.as_str(), c.total.as_str()), ("accent", "3%", "1M"));
+        assert_eq!(c.marks, [Mark { at: 0.5, title: "Auto-compact at 50%".into() }]);
+        assert!(c.title.as_deref().is_some_and(|t| t.contains("27K of 1M")));
+
+        assert_eq!(m.field.id, "3.line/input");
+        assert_eq!(m.field.text, "");
+        let placeholder: String = m.field.placeholder.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(placeholder.contains('\u{f14f7}') && placeholder.ends_with("README”"), "{placeholder}");
+        assert!(m.field.placeholder[0].1.italic, "the em span");
+        assert!(m.field.ghost.is_none());
+        assert!(m.field.sendable && !m.can_send(), "sendable is true when empty; the text decides");
+
+        let bar = &m.bar;
+        assert_eq!(bar.parts, [BarPart::Effort, BarPart::Model, BarPart::Facts, BarPart::Usage]);
+        let effort = bar.effort.as_ref().expect("effort");
+        assert_eq!((effort.id.as_str(), effort.label.as_str()), ("3.bar/effort", "high"));
+        assert_eq!(effort.glyph.as_deref(), Some("3.bar/effort/glyph"));
+        let model = bar.model.as_ref().expect("model");
+        assert_eq!((model.id.as_str(), model.name.as_str()), ("3.bar/model", "Opus 5.5"));
+        let texts: Vec<_> = bar.facts.iter().map(|f| &f.body).collect();
+        assert_eq!(
+            texts,
+            [
+                &FactBody::Text("yolo".into()),
+                &FactBody::Text("01a20b2a".into()),
+                &FactBody::Text("8:27:18".into())
+            ]
+        );
+        assert_eq!(bar.facts.iter().map(|f| f.priority).collect::<Vec<_>>(), [6, 2, 11]);
+        assert_eq!(bar.facts.iter().map(|f| f.permission).collect::<Vec<_>>(), [true, false, false]);
+        assert_eq!(bar.facts[1].icon, Some(Icon::SquareTerminal));
+        assert_eq!(bar.facts[2].icon, Some(Icon::Clock));
+        assert!(bar.usage.is_none(), "an empty usage text is not a chip");
+        assert_eq!(bar.primary, Primary::Send(Some("3.bar/send".into())));
+        assert!(!bar.working);
+
+        assert!(m.status.working.is_none() && m.status.todo.is_none());
+        assert!(m.status.pills.is_empty() && m.status.others.is_empty());
+        assert!(m.chips.is_empty() && m.focus.is_none());
+    }
+
+    #[test]
+    fn the_recorded_working_dock_swaps_send_for_stop_and_reads_rate_elapsed_and_the_working_row() {
+        let m = model_of(real_children(true)).expect("composer");
+        assert_eq!(m.skip, ["e", "e.status"], "drawn in the status row instead");
+        let bar = &m.bar;
+        assert_eq!(bar.primary, Primary::Stop("3.bar/stop".into()));
+        assert!(bar.working, "the model pill shows the loading dots");
+        assert_eq!(
+            bar.facts.iter().map(|f| f.priority).collect::<Vec<_>>(),
+            [6, 5, 4, 3, 2, 10, 6, 2, 11],
+            "omp's order, not sorted"
+        );
+        assert_eq!(bar.facts[0].body, FactBody::Rate("46 tok/s".into()));
+        assert_eq!(bar.facts[0].icon, None, "`throughput` has no Mkrew icon");
+        assert_eq!(bar.facts[1].icon, Some(Icon::Database), "cache");
+        assert_eq!(bar.facts[3].icon, Some(Icon::ArrowUp), "output");
+        assert_eq!(bar.facts[4].icon, Some(Icon::ArrowDown), "input");
+        assert_eq!(bar.facts[5].body, FactBody::Elapsed("3.bar/extras/time_spent/timer".into()));
+        assert_eq!(bar.usage.as_ref().map(|u| u.text.as_str()), Some("$0.10"));
+        assert!(!m.can_send(), "Stop shows, there is nothing to send");
+
+        let w = m.status.working.as_ref().expect("working row");
+        assert_eq!(w.id, "x");
+        assert_eq!(w.elapsed.as_deref(), Some("x.elapsed"));
+        assert_eq!(w.label, "Reading simple-english skill");
+        assert_eq!(w.stop.as_deref(), Some("x.stop"));
+        assert!(m.status.others.is_empty(), "the working row is not drawn twice");
+        assert!(m.status.todo.is_none() && m.status.pills.is_empty());
+    }
+
+    fn with_editor(text: &str, cursor: u64, ghost: Option<&str>) -> Option<DockModel> {
+        let mut kids = real_children(false);
+        let props = kids[3].pointer_mut("/c/0/c/2/c/0/p").expect("editor props");
+        props["text"] = json!(text);
+        props["cursor"] = json!(cursor);
+        if let Some(ghost) = ghost {
+            props["ghost"] = json!(ghost);
+        }
+        model_of(kids)
+    }
+
+    #[test]
+    fn typing_gives_text_caret_ghost_and_enables_send() {
+        let m = with_editor("abc", 3, Some("d")).expect("composer");
+        assert_eq!((m.field.text.as_str(), m.field.cursor), ("abc", 3));
+        assert_eq!(m.field.ghost.as_deref(), Some("d"), "recorded at frame 12");
+        assert!(m.can_send());
+        // The cursor counts UTF-16 units; the model holds a byte index: `a😀b`, caret after 😀.
+        let m = with_editor("a😀b", 3, None).expect("composer");
+        assert_eq!(m.field.cursor, 5);
+        // A ghost belongs after the caret at the end of the text only.
+        assert!(with_editor("abc", 1, Some("d")).expect("m").field.ghost.is_none());
+        assert!(with_editor("", 0, Some("d")).expect("m").field.ghost.is_none());
+        assert!(with_editor("abc", 3, Some("")).expect("m").field.ghost.is_none());
+        // Blank text sends nothing.
+        assert!(!with_editor("  \n ", 4, None).expect("m").can_send());
+    }
+
+    #[test]
+    fn send_needs_omp_to_say_sendable_and_text_or_an_attachment() {
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/c/0/p").expect("chips")["hidden"] = json!(false);
+        kids[3].pointer_mut("/c/0/c/0").expect("chips")["c"] =
+            json!([{"id": "m/1", "k": "card", "p": {"role": "omp.composer.chip", "tone": "accent", "head": "#1"}}]);
+        let m = model_of(kids).expect("composer");
+        assert_eq!(m.chips, ["m/1"], "reference 8.2: attachment chips above the field");
+        assert!(m.can_send(), "an attachment alone can be sent");
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/c/2/c/0/p").expect("editor")["sendable"] = json!(false);
+        kids[3].pointer_mut("/c/0/c/2/c/0/p").expect("editor")["text"] = json!("abc");
+        assert!(!model_of(kids).expect("composer").can_send());
+        // A bar with neither Send nor Stop still gets a (disabled) Send.
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/c/3/c").expect("bar").as_array_mut().expect("array").pop();
+        assert_eq!(model_of(kids).expect("composer").bar.primary, Primary::Send(None));
+    }
+
+    #[test]
+    fn the_context_meter_reads_value_thresholds_marks_and_labels() {
+        let at = |value: Option<f64>| {
+            let mut kids = real_children(false);
+            let props = kids[3].pointer_mut("/c/0/c/1/p").expect("meter props");
+            match value {
+                Some(v) => props["value"] = json!(v),
+                None => {
+                    props.as_object_mut().expect("object").remove("value");
+                }
+            }
+            model_of(kids).expect("composer").context.expect("meter")
+        };
+        assert_eq!(at(Some(0.014)).tone, "accent");
+        assert_eq!(at(Some(0.15)).tone, "warning", "warn = status_needs_input");
+        assert_eq!(at(Some(0.49)).tone, "warning");
+        assert_eq!(at(Some(0.5)).tone, "error", "bad = danger_text");
+        let full = at(Some(1.7));
+        assert_eq!((full.fraction, full.tone), (Some(1.0), "error"), "clamped to the track");
+        let unknown = at(None);
+        assert_eq!(unknown.fraction, None, "the first frame has no value: an empty track");
+        assert_eq!((unknown.tone, unknown.label.as_str(), unknown.total.as_str()), ("accent", "3%", "1M"));
+        let t = Theme::dark();
+        assert_eq!(tone_color(at(Some(0.15)).tone, &t), t.status_needs_input);
+        assert_eq!(tone_color(at(Some(0.6)).tone, &t), t.danger_text);
+        assert_eq!(tone_color(at(Some(0.01)).tone, &t), t.accent);
+    }
+
+    #[test]
+    fn a_narrow_bar_drops_facts_by_priority_then_effort_then_truncates_the_model() {
+        let m = model_of(real_children(true)).expect("composer");
+        let bar = &m.bar;
+        let all = BarFit::all(bar);
+        let natural = bar_width(bar, &all);
+        assert_eq!(fit_bar(bar, natural), all, "fits as it is");
+        assert_eq!(fit_bar(bar, 10_000.0), all);
+        // Shrink the room 1 px at a time: facts leave highest priority number first; of two
+        // equal priorities the later one leaves first; then the effort chip; then the model.
+        let mut dropped: Vec<usize> = Vec::new();
+        let mut effort_gone_after = None;
+        let mut room = natural;
+        while room > 0.0 {
+            room -= 1.0;
+            let fit = fit_bar(bar, room);
+            for (i, shown) in fit.facts.iter().enumerate() {
+                if !shown && !dropped.contains(&i) {
+                    dropped.push(i);
+                }
+            }
+            if !fit.effort && effort_gone_after.is_none() {
+                effort_gone_after = Some(dropped.len());
+            }
+            if fit.model_name.is_some() {
+                assert!(!fit.effort && fit.facts.iter().all(|shown| !shown), "the model truncates last");
+            }
+        }
+        // time 11, time_spent 10, status 6 (later), token_rate 6, cache_write 5, cache_read 4,
+        // token_out 3, session 2 (later), token_in 2.
+        assert_eq!(dropped, [8, 5, 6, 0, 1, 2, 3, 7, 4]);
+        assert_eq!(effort_gone_after, Some(9), "the effort chip goes after the last fact");
+
+        let bare = BarFit { facts: vec![false; bar.facts.len()], effort: false, model_name: None };
+        let room = bar_width(bar, &bare) - 5.0;
+        let fit = fit_bar(bar, room);
+        assert!(fit.model_name.is_some());
+        assert!((bar_width(bar, &fit) - room).abs() < 0.01, "the name gives back exactly the overflow");
+        let floor = theme::TSP_MODEL_MIN_CHARS as f32 * theme::COMPOSER_MONO_CHAR_WIDTH;
+        assert_eq!(fit_bar(bar, 0.0).model_name, Some(floor), "never below the floor");
+    }
+
+    #[test]
+    fn working_costs_the_model_pill_the_loading_dots() {
+        let idle = model_of(real_children(false)).expect("composer");
+        let mut working = idle.bar.clone();
+        working.working = true;
+        let fit = BarFit::all(&idle.bar);
+        assert!(
+            (bar_width(&working, &fit) - bar_width(&idle.bar, &fit) - theme::COMPOSER_CHIP_LOADING_WIDTH).abs() < 0.01
+        );
+    }
+
+    #[test]
+    fn a_dock_without_the_composer_roles_is_not_a_composer() {
+        // Another omp version: an editor with no roles at all.
+        let plain = json!({"id": "a", "k": "col", "c": [{"id": "b", "k": "editor", "p": {"text": "x"}}]});
+        assert!(model_of(vec![plain]).is_none());
+        // The ask card replaces the editor: Task 10's `tsp_ask` draws it.
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/p").expect("editor col")["role"] = json!("omp.editor.ask");
+        assert!(model_of(kids).is_none());
+        // A hidden editor, no line, no bar, no editor node in the line.
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/p").expect("editor col")["hidden"] = json!(true);
+        assert!(model_of(kids).is_none());
+        for (index, what) in [(2, "line"), (3, "bar")] {
+            let mut kids = real_children(false);
+            kids[3].pointer_mut("/c/0/c").expect("children").as_array_mut().expect("array").remove(index);
+            assert!(model_of(kids).is_none(), "no {what}");
+        }
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/c/2/c").expect("line children").as_array_mut().expect("array").clear();
+        assert!(model_of(kids).is_none(), "no editor in the line");
+        // No dock children at all.
+        assert!(model_of(Vec::new()).is_none());
+    }
+
+    #[test]
+    fn hud_pills_come_from_the_visible_hud_row_per_the_reference() {
+        // Reference 8.3 (the recording never shows the pills): row omp.hud > row omp.hud.pill >
+        // row omp.hud.seg [icon, text N].
+        let mut kids = real_children(false);
+        kids[1] = json!({"id": "6", "k": "row", "p": {"role": "omp.hud", "justify": "end"}, "c": [
+            {"id": "6.pill", "k": "row", "p": {"role": "omp.hud.pill"}, "c": [
+                {"id": "6.agents", "k": "row", "p": {"role": "omp.hud.seg", "gap": "xs", "align": "center", "title": "2 agents running  Ctrl+B", "actions": {"click": "agents.open"}}, "c": [
+                    {"id": "6.agents/i", "k": "icon", "p": {"name": "users", "tone": "accent"}},
+                    {"id": "6.agents/n", "k": "text", "p": {"spans": [{"t": "2", "s": "num"}], "wrap": "none"}}]},
+                {"id": "6.jobs", "k": "row", "p": {"role": "omp.hud.seg", "title": "1 job running  /jobs", "actions": {"click": "jobs.open"}}, "c": [
+                    {"id": "6.jobs/i", "k": "icon", "p": {"name": "job", "tone": "warning"}},
+                    {"id": "6.jobs/n", "k": "text", "p": {"text": "1"}},
+                    {"id": "6.jobs/g", "k": "text", "p": {"role": "omp.hud.glance", "text": "build"}}]}]}]});
+        let m = model_of(kids).expect("composer");
+        assert_eq!(m.skip, ["6"]);
+        let pills: Vec<_> = m.status.pills.iter().map(|p| (p.id.as_str(), p.icon, p.tone.as_deref(), p.count.as_str())).collect();
+        assert_eq!(
+            pills,
+            [
+                ("6.agents", Some(Icon::Users), Some("accent"), "2"),
+                ("6.jobs", Some(Icon::Zap), Some("warning"), "1"),
+            ],
+            "the glance text is not the count"
+        );
+    }
+
+    #[test]
+    fn a_status_node_with_a_todo_and_other_rows_keeps_them_for_the_status_row() {
+        let mut kids = real_children(true);
+        kids[0].pointer_mut("/c/0/c").expect("status children").as_array_mut().expect("array").extend([
+            json!({"id": "1k", "k": "row", "p": {"role": "omp.hint.retry"}}),
+            json!({"id": "tt", "k": "checklist", "p": {"mode": "hud", "role": "omp.hud.todo", "phases": []}}),
+        ]);
+        let m = model_of(kids).expect("composer");
+        assert_eq!(m.status.todo.as_deref(), Some("tt"));
+        assert_eq!(m.status.others, ["1k"]);
+        assert!(m.status.working.is_some());
+    }
+
+    #[test]
+    fn the_focus_strip_follows_the_reference() {
+        // Reference 8.2: row omp.composer.focus [icon eye, "Viewing", crumbs, row omp.composer.exit [kbd, "main"]].
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/c").expect("children").as_array_mut().expect("array").insert(
+            1,
+            json!({"id": "f", "k": "row", "p": {"role": "omp.composer.focus", "title": "Viewing subagent 0-Foo: what you send goes to it"}, "c": [
+                {"id": "f/eye", "k": "icon", "p": {"name": "eye"}},
+                {"id": "f/t", "k": "text", "p": {"text": "Viewing"}},
+                {"id": "f/crumb", "k": "text", "p": {"text": "0-Foo", "actions": {"click": "focus:0-Foo"}}},
+                {"id": "f/exit", "k": "row", "p": {"role": "omp.composer.exit", "title": "Back to the main session  Ctrl+X", "actions": {"click": "focus:main"}}, "c": [
+                    {"id": "f/exit/k", "k": "kbd", "p": {"keys": ["ctrl+x"]}},
+                    {"id": "f/exit/t", "k": "text", "p": {"text": "main"}}]}]}),
+        );
+        let f = model_of(kids).expect("composer").focus.expect("focus strip");
+        assert_eq!(f.id, "f");
+        assert_eq!(f.rest, ["f/t", "f/crumb"], "the eye icon and the exit chip are drawn by the view");
+        assert_eq!(f.exit, Some(("f/exit".to_owned(), "main".to_owned())));
+    }
+
+    #[test]
+    fn a_leading_symbol_is_not_part_of_the_permission_text() {
+        assert_eq!(permission_text("⚡ yolo"), "yolo");
+        assert_eq!(permission_text("\u{f0e7} on-request"), "on-request");
+        assert_eq!(permission_text("yolo"), "yolo");
+        assert_eq!(permission_text("⚡"), "⚡", "nothing left: keep what omp sent");
+    }
+
+    #[test]
+    fn dock_fact_icons_resolve() {
+        assert_eq!(icon("cache"), Some(Icon::Database));
+        assert_eq!(icon("input"), Some(Icon::ArrowDown));
+        assert_eq!(icon("output"), Some(Icon::ArrowUp));
+        assert_eq!(icon("throughput"), None);
+    }
+```
+
+`Icon` is already in scope in `mod tests` through `use super::*` (the module imports it); no new import.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cargo test -p mkrew-ui --lib tsp::tests::dock tsp::tests::the_ tsp::tests::typing tsp::tests::send_needs tsp::tests::a_ tsp::tests::hud_pills tsp::tests::working_costs`
+Expected: FAIL to compile, "cannot find function `dock_model` in this scope" and the other new names (`DockRole`, `BarFit`, `Primary`, `permission_text`...).
+
+- [ ] **Step 3: Add the three icon names**
+
+In `crates/mkrew-ui/src/tsp.rs`, in `pub fn icon`, after `"time" => Icon::Clock,` add:
+
+```rust
+        "cache" => Icon::Database,
+        "input" => Icon::ArrowDown,
+        "output" => Icon::ArrowUp,
+```
+
+(`throughput` stays unmapped on purpose: the rate fact prints its own `tok/s`; the existing negative list of `every_icon_name_of_the_fixture_and_the_reference_resolves_and_others_do_not` does not name it.)
+
+- [ ] **Step 4: Add the theme tokens**
+
+In `crates/mkrew-ui/src/theme.rs`, after `pub const CONTEXT_METER_HEIGHT: f32 = 2.0;` (current line 450) add:
+
+```rust
+
+/// The hover area of a tick on the context meter of an omp dock (a mark such as the
+/// auto-compact point; its tooltip is the mark's title). The 1 px line sits in the middle.
+pub const CONTEXT_MARK_HIT_WIDTH: f32 = space::M;
+pub const CONTEXT_MARK_HIT_HEIGHT: f32 = space::M;
+
+/// Room reckoned for the bar of an omp dock (px at 13 px UI size, like the `COMPOSER_*` ones):
+/// the round send or stop button and its gap.
+pub const TSP_BAR_FIXED_WIDTH: f32 = SEND_BUTTON_SIZE + space::S;
+/// The model pill without its name: padding, border, chevron, gaps and the gap after it.
+pub const TSP_MODEL_CHROME_WIDTH: f32 = 48.0;
+/// The model name never truncates below this many characters.
+pub const TSP_MODEL_MIN_CHARS: usize = 6;
+/// The four-step effort glyph of the effort chip.
+pub const TSP_EFFORT_GLYPH_WIDTH: f32 = 28.0;
+/// Characters reckoned for a live elapsed time inside a fact (`12m 03s`).
+pub const TSP_ELAPSED_CHARS: usize = 7;
+```
+
+No test (constants); `cargo check` in Step 14 covers it.
+
+- [ ] **Step 5: Capture the Chat composer before the refactor**
+
+Run: `cargo run -p mkrew-ui`, open a Claude or omp pane in Chat mode and capture four screenshots of its composer card into `.superpowers/sdd/2026-11-23-omp-tsp-surface/10b-chat-before-*.png`: idle with the model, effort, permission and branch chips; with a draft typed; working (loading dots in the model pill); a narrow pane (chips dropped), each in dark and light. These are the reference for Step 9 ("Chat byte-identical").
+
+- [ ] **Step 6: Implement the dock model**
+
+In `crates/mkrew-ui/src/tsp.rs`, insert this above `#[cfg(test)]` (current line 1593; the `Icon`, `Theme`, `theme`, `Document`, `Node`, `Value` imports already exist at the top of the file):
+
+```rust
+// ---------------------------------------------------------------------------------------------
+// The dock as Tern's composer (ADR 0107, spec 7.8)
+
+/// The roles of omp 18.13.2's dock that the composer look reads. Whole-string matches: the ask
+/// card (`omp.editor.ask`, spec 7.6) is not the composer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockRole {
+    Editor,
+    Context,
+    Line,
+    Bar,
+    Model,
+    Effort,
+    Extras,
+    Fact,
+    Usage,
+    Rate,
+    Send,
+    Stop,
+    Chips,
+    Focus,
+    Exit,
+    HudStatus,
+    Activity,
+    Working,
+    WorkingLabel,
+    WorkingStop,
+    Hud,
+    HudSeg,
+    HudTodo,
+}
+
+pub fn dock_role(role: &str) -> Option<DockRole> {
+    Some(match role {
+        "omp.editor" | "omp.editor.bash" | "omp.editor.python" => DockRole::Editor,
+        "omp.composer.context" => DockRole::Context,
+        "omp.composer.line" => DockRole::Line,
+        "omp.composer.bar" => DockRole::Bar,
+        "omp.composer.model" => DockRole::Model,
+        "omp.composer.effort" => DockRole::Effort,
+        "omp.composer.extras" => DockRole::Extras,
+        "omp.composer.fact" => DockRole::Fact,
+        "omp.composer.usage" => DockRole::Usage,
+        "omp.composer.rate" => DockRole::Rate,
+        "omp.composer.send" => DockRole::Send,
+        "omp.composer.stop" => DockRole::Stop,
+        "omp.composer.chips" => DockRole::Chips,
+        "omp.composer.focus" => DockRole::Focus,
+        "omp.composer.exit" => DockRole::Exit,
+        "omp.hud.status" => DockRole::HudStatus,
+        "omp.hud.activity" => DockRole::Activity,
+        "omp.working" => DockRole::Working,
+        "omp.working.label" => DockRole::WorkingLabel,
+        "omp.working.stop" => DockRole::WorkingStop,
+        "omp.hud" => DockRole::Hud,
+        "omp.hud.seg" => DockRole::HudSeg,
+        "omp.hud.todo" => DockRole::HudTodo,
+        _ => return None,
+    })
+}
+
+fn dock_role_of(node: &Node) -> Option<DockRole> {
+    role_of(node).and_then(dock_role)
+}
+
+fn hidden(node: &Node) -> bool {
+    node.props.get("hidden").and_then(Value::as_bool) == Some(true)
+}
+
+/// The first visible node of `want` under `from`, in document order; a hidden node hides its
+/// subtree.
+fn find<'a>(doc: &'a Document, from: &str, want: DockRole) -> Option<&'a Node> {
+    doc.children(from)
+        .filter(|node| !hidden(node))
+        .find_map(|node| {
+            if dock_role_of(node) == Some(want) {
+                Some(node)
+            } else {
+                find(doc, &node.id, want)
+            }
+        })
+}
+
+/// The visible direct child of `parent` with the role `want`.
+fn child<'a>(doc: &'a Document, parent: &str, want: DockRole) -> Option<&'a Node> {
+    doc.children(parent)
+        .find(|node| !hidden(node) && dock_role_of(node) == Some(want))
+}
+
+/// The text of a text-like node, trimmed.
+fn text_of(node: &Node, theme: &Theme) -> String {
+    node_spans(&node.props, theme)
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+fn str_of(node: &Node, key: &str) -> Option<String> {
+    node.props.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
+/// A tick on the context meter (omp's auto-compact point).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Mark {
+    /// 0 to 1 along the track.
+    pub at: f32,
+    pub title: String,
+}
+
+/// `meter role=omp.composer.context`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextMeter {
+    pub id: String,
+    /// The used share, clamped to 0..=1; `None` before omp knows it (an empty track).
+    pub fraction: Option<f32>,
+    /// `accent`, `warning` (past `thresholds.warn`) or `error` (past `bad`), for `tone_color`.
+    pub tone: &'static str,
+    pub label: String,
+    pub total: String,
+    pub marks: Vec<Mark>,
+    pub title: Option<String>,
+}
+
+/// The `editor` of the line: text, caret (a byte index), placeholder and ghost.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EditorModel {
+    pub id: String,
+    pub text: String,
+    pub cursor: usize,
+    pub placeholder: Vec<(String, SpanStyle)>,
+    /// omp's inline suggestion; only with a non-empty text and the caret at its end.
+    pub ghost: Option<String>,
+    pub sendable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Effort {
+    pub id: String,
+    /// The `effort` glyph child (the view draws it through `tsp_node`).
+    pub glyph: Option<String>,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelPill {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FactBody {
+    Text(String),
+    /// `rate_label` of a `rate` child.
+    Rate(String),
+    /// The id of an `elapsed` child (it ticks on the status tick).
+    Elapsed(String),
+}
+
+/// One `seg role=omp.composer.fact` of the extras.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fact {
+    pub id: String,
+    pub icon: Option<Icon>,
+    pub body: FactBody,
+    /// omp's drop priority: the highest number goes first. A loose `rate` has 0.
+    pub priority: u32,
+    /// A span styled `accent` (omp's `⚡ yolo`): the Chat permission chip look.
+    pub permission: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Usage {
+    pub id: String,
+    pub text: String,
+}
+
+/// The button at the end of the bar.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Primary {
+    /// `None`: omp sent neither Send nor Stop (disabled Send).
+    Send(Option<String>),
+    Stop(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BarPart {
+    Effort,
+    Model,
+    Facts,
+    Usage,
+}
+
+/// `row role=omp.composer.bar`, children in omp's order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarModel {
+    pub parts: Vec<BarPart>,
+    pub effort: Option<Effort>,
+    pub model: Option<ModelPill>,
+    pub facts: Vec<Fact>,
+    pub usage: Option<Usage>,
+    pub primary: Primary,
+    /// The session works (Stop shows or the working row exists): loading dots in the model pill.
+    pub working: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Working {
+    pub id: String,
+    pub elapsed: Option<String>,
+    pub label: String,
+    pub stop: Option<String>,
+}
+
+/// A `row role=omp.hud.seg` of the hud pills.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HudPill {
+    pub id: String,
+    pub icon: Option<Icon>,
+    pub tone: Option<String>,
+    pub count: String,
+}
+
+/// What the status row above the meter shows.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct StatusModel {
+    pub working: Option<Working>,
+    /// The id of the `checklist` hud (drawn by `tsp_node`).
+    pub todo: Option<String>,
+    pub pills: Vec<HudPill>,
+    /// Any other visible child of the activity row or of `omp.hud.status` (omp's retry hint):
+    /// drawn generically on the left.
+    pub others: Vec<String>,
+}
+
+/// `row role=omp.composer.focus`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FocusStrip {
+    pub id: String,
+    /// Children drawn generically after the eye icon (the "Viewing" text, the crumbs).
+    pub rest: Vec<String>,
+    /// `(id, label)` of the `omp.composer.exit` chip.
+    pub exit: Option<(String, String)>,
+}
+
+/// The dock of omp 18.13.2 read as a composer (spec 7.8). `None` for a dock without the roles
+/// (another omp version, or the ask card): the dock is then drawn generically.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockModel {
+    /// The id of `col role=omp.editor`: the card is drawn where this node stands.
+    pub editor: String,
+    pub line: String,
+    /// Ids from the dock's child down to the editor, inclusive: wrappers to walk through.
+    pub path: Vec<String>,
+    /// Nodes drawn in the status row instead of where they stand (activity row, status col, hud).
+    pub skip: Vec<String>,
+    pub context: Option<ContextMeter>,
+    pub field: EditorModel,
+    pub focus: Option<FocusStrip>,
+    /// Ids of the attachment chips (the row is hidden while there are none).
+    pub chips: Vec<String>,
+    pub bar: BarModel,
+    pub status: StatusModel,
+}
+
+impl DockModel {
+    /// Send is enabled when omp says `sendable` and there is text or an attachment, and the
+    /// button is not Stop. (omp says `sendable: true` for an empty editor.)
+    pub fn can_send(&self) -> bool {
+        self.field.sendable
+            && (!self.field.text.trim().is_empty() || !self.chips.is_empty())
+            && !matches!(self.bar.primary, Primary::Stop(_))
+    }
+}
+
+/// `⚡ yolo` is `yolo`: the Chat permission chip draws its own icon, so the leading symbol (or
+/// private-use glyph) and the space after it go. Nothing left: what omp sent.
+pub fn permission_text(text: &str) -> String {
+    let rest = text
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .trim();
+    if rest.is_empty() {
+        text.trim().to_owned()
+    } else {
+        rest.to_owned()
+    }
+}
+
+pub fn dock_model(doc: &Document, theme: &Theme) -> Option<DockModel> {
+    let editor = find(doc, "dock", DockRole::Editor)?;
+    let line = child(doc, &editor.id, DockRole::Line)?;
+    let bar = child(doc, &editor.id, DockRole::Bar)?;
+    let field = doc
+        .children(&line.id)
+        .find(|node| node.kind == "editor" && !hidden(node))?;
+
+    let mut path = vec![editor.id.clone()];
+    let mut at = editor;
+    while let Some(parent) = at
+        .parent
+        .as_deref()
+        .filter(|id| *id != "dock")
+        .and_then(|id| doc.get(id))
+    {
+        path.push(parent.id.clone());
+        at = parent;
+    }
+    path.reverse();
+
+    let activity = find(doc, "dock", DockRole::Activity);
+    let status_node = find(doc, "dock", DockRole::HudStatus);
+    let hud = find(doc, "dock", DockRole::Hud);
+    let status = status_model(doc, activity, status_node, hud, theme);
+    let skip = [activity, status_node, hud]
+        .into_iter()
+        .flatten()
+        .map(|node| node.id.clone())
+        .collect();
+    let mut bar = bar_model(doc, bar, theme);
+    bar.working = matches!(bar.primary, Primary::Stop(_)) || status.working.is_some();
+
+    Some(DockModel {
+        editor: editor.id.clone(),
+        line: line.id.clone(),
+        path,
+        skip,
+        context: child(doc, &editor.id, DockRole::Context).map(context_model),
+        field: editor_model(field, theme),
+        focus: child(doc, &editor.id, DockRole::Focus).map(|row| focus_model(doc, row, theme)),
+        chips: child(doc, &editor.id, DockRole::Chips)
+            .map(|row| {
+                doc.children(&row.id)
+                    .filter(|node| !hidden(node))
+                    .map(|node| node.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        bar,
+        status,
+    })
+}
+
+fn context_model(node: &Node) -> ContextMeter {
+    let value = node.props.get("value").and_then(Value::as_f64);
+    let marks = node
+        .props
+        .get("marks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|mark| {
+            Some(Mark {
+                at: mark.get("at")?.as_f64()?.clamp(0.0, 1.0) as f32,
+                title: mark
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+            })
+        })
+        .collect();
+    ContextMeter {
+        id: node.id.clone(),
+        fraction: value.map(|v| v.clamp(0.0, 1.0) as f32),
+        tone: value.map_or("accent", |v| meter_tone(v, node.props.get("thresholds"))),
+        label: str_of(node, "label").unwrap_or_default(),
+        total: str_of(node, "total").unwrap_or_default(),
+        marks,
+        title: str_of(node, "title"),
+    }
+}
+
+fn editor_model(node: &Node, theme: &Theme) -> EditorModel {
+    let text = str_of(node, "text").unwrap_or_default();
+    let cursor = node
+        .props
+        .get("cursor")
+        .and_then(Value::as_u64)
+        .map_or(text.len(), |units| byte_at_utf16(&text, units as usize));
+    let ghost = str_of(node, "ghost").filter(|g| !g.is_empty() && !text.is_empty() && cursor == text.len());
+    EditorModel {
+        id: node.id.clone(),
+        cursor,
+        placeholder: node
+            .props
+            .get("placeholder")
+            .map(|value| spans_of(value, theme))
+            .unwrap_or_default(),
+        ghost,
+        sendable: node.props.get("sendable").and_then(Value::as_bool) == Some(true),
+        text,
+    }
+}
+
+fn focus_model(doc: &Document, row: &Node, theme: &Theme) -> FocusStrip {
+    let exit = child(doc, &row.id, DockRole::Exit);
+    FocusStrip {
+        id: row.id.clone(),
+        rest: doc
+            .children(&row.id)
+            .filter(|node| {
+                !hidden(node)
+                    && Some(node.id.as_str()) != exit.map(|e| e.id.as_str())
+                    && !(node.kind == "icon"
+                        && node.props.get("name").and_then(Value::as_str) == Some("eye"))
+            })
+            .map(|node| node.id.clone())
+            .collect(),
+        exit: exit.map(|node| {
+            let label = doc
+                .children(&node.id)
+                .filter(|n| n.kind == "text")
+                .map(|n| text_of(n, theme))
+                .collect::<Vec<_>>()
+                .join(" ");
+            (node.id.clone(), label)
+        }),
+    }
+}
+
+fn rate_of(node: &Node) -> String {
+    rate_label(
+        node.props.get("value").and_then(Value::as_f64).unwrap_or(0.0),
+        node.props.get("unit").and_then(Value::as_str).unwrap_or(""),
+    )
+}
+
+fn fact_of(doc: &Document, node: &Node, theme: &Theme) -> Option<Fact> {
+    if dock_role_of(node) != Some(DockRole::Fact) {
+        return None;
+    }
+    let runs = node_spans(&node.props, theme);
+    let accent = runs
+        .iter()
+        .any(|(text, style)| style.color == Some(theme.accent) && !text.trim().is_empty());
+    let text: String = runs.iter().map(|(text, _)| text.as_str()).collect();
+    let body = if let Some(rate) = doc.children(&node.id).find(|n| n.kind == "rate") {
+        FactBody::Rate(rate_of(rate))
+    } else if let Some(timer) = doc.children(&node.id).find(|n| n.kind == "elapsed") {
+        FactBody::Elapsed(timer.id.clone())
+    } else if text.trim().is_empty() {
+        return None;
+    } else if accent {
+        FactBody::Text(permission_text(&text))
+    } else {
+        FactBody::Text(text.trim().to_owned())
+    };
+    Some(Fact {
+        id: node.id.clone(),
+        icon: node
+            .props
+            .get("icon")
+            .and_then(Value::as_str)
+            .and_then(icon),
+        permission: accent && matches!(body, FactBody::Text(_)),
+        body,
+        priority: node
+            .props
+            .get("priority")
+            .and_then(Value::as_u64)
+            .map_or(0, |p| u32::try_from(p).unwrap_or(u32::MAX)),
+    })
+}
+
+fn bar_model(doc: &Document, bar: &Node, theme: &Theme) -> BarModel {
+    let mut m = BarModel {
+        parts: Vec::new(),
+        effort: None,
+        model: None,
+        facts: Vec::new(),
+        usage: None,
+        primary: Primary::Send(None),
+        working: false,
+    };
+    let facts_part = |m: &mut BarModel| {
+        if !m.parts.contains(&BarPart::Facts) {
+            m.parts.push(BarPart::Facts);
+        }
+    };
+    for node in doc.children(&bar.id).filter(|node| !hidden(node)) {
+        match (dock_role_of(node), node.kind.as_str()) {
+            (Some(DockRole::Effort), _) => {
+                let glyph = doc.children(&node.id).find(|n| n.kind == "effort");
+                let label = doc
+                    .children(&node.id)
+                    .find(|n| n.kind == "text")
+                    .map(|n| text_of(n, theme))
+                    .filter(|text| !text.is_empty())
+                    .or_else(|| glyph.and_then(|g| str_of(g, "level")))
+                    .unwrap_or_default();
+                m.effort = Some(Effort {
+                    id: node.id.clone(),
+                    glyph: glyph.map(|g| g.id.clone()),
+                    label,
+                });
+                m.parts.push(BarPart::Effort);
+            }
+            (Some(DockRole::Model), _) => {
+                let name = doc
+                    .children(&node.id)
+                    .find(|n| n.kind == "text")
+                    .map(|n| text_of(n, theme))
+                    .unwrap_or_default();
+                if !name.is_empty() {
+                    m.model = Some(ModelPill { id: node.id.clone(), name });
+                    m.parts.push(BarPart::Model);
+                }
+            }
+            (Some(DockRole::Extras), _) => {
+                m.facts.extend(
+                    doc.children(&node.id)
+                        .filter(|n| !hidden(n))
+                        .filter_map(|n| fact_of(doc, n, theme)),
+                );
+                facts_part(&mut m);
+            }
+            // Reference 8.2 sends the rate as a bar child; the recording sends it inside a fact.
+            (Some(DockRole::Rate), _) | (None, "rate") => {
+                m.facts.push(Fact {
+                    id: node.id.clone(),
+                    icon: None,
+                    body: FactBody::Rate(rate_of(node)),
+                    priority: 0,
+                    permission: false,
+                });
+                facts_part(&mut m);
+            }
+            (Some(DockRole::Usage), _) => {
+                let text = text_of(node, theme);
+                if !text.is_empty() {
+                    m.usage = Some(Usage { id: node.id.clone(), text });
+                    m.parts.push(BarPart::Usage);
+                }
+            }
+            (Some(DockRole::Stop), _) => m.primary = Primary::Stop(node.id.clone()),
+            (Some(DockRole::Send), _) => {
+                if !matches!(m.primary, Primary::Stop(_)) {
+                    m.primary = Primary::Send(Some(node.id.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+    m
+}
+
+fn collect_pills(doc: &Document, from: &str, theme: &Theme, out: &mut Vec<HudPill>) {
+    for node in doc.children(from).filter(|node| !hidden(node)) {
+        if dock_role_of(node) != Some(DockRole::HudSeg) {
+            collect_pills(doc, &node.id, theme, out);
+            continue;
+        }
+        let glyph = doc.children(&node.id).find(|n| n.kind == "icon");
+        out.push(HudPill {
+            id: node.id.clone(),
+            icon: glyph
+                .and_then(|g| g.props.get("name"))
+                .and_then(Value::as_str)
+                .and_then(icon),
+            tone: glyph.and_then(|g| str_of(g, "tone")),
+            // The count is the text without a role: `omp.hud.glance` is a second text.
+            count: doc
+                .children(&node.id)
+                .filter(|n| n.kind == "text" && role_of(n).is_none())
+                .map(|n| text_of(n, theme))
+                .collect::<Vec<_>>()
+                .join(" "),
+        });
+    }
+}
+
+fn status_model(
+    doc: &Document,
+    activity: Option<&Node>,
+    status: Option<&Node>,
+    hud: Option<&Node>,
+    theme: &Theme,
+) -> StatusModel {
+    let row = status.and_then(|s| find(doc, &s.id, DockRole::Working));
+    let working = row.map(|row| Working {
+        id: row.id.clone(),
+        elapsed: doc
+            .children(&row.id)
+            .find(|n| n.kind == "elapsed")
+            .map(|n| n.id.clone()),
+        label: child(doc, &row.id, DockRole::WorkingLabel)
+            .map(|n| text_of(n, theme))
+            .unwrap_or_default(),
+        stop: child(doc, &row.id, DockRole::WorkingStop).map(|n| n.id.clone()),
+    });
+    let mut others: Vec<String> = Vec::new();
+    if let Some(status) = status {
+        others.extend(
+            doc.children(&status.id)
+                .filter(|n| {
+                    !hidden(n)
+                        && n.kind != "checklist"
+                        && Some(n.id.as_str()) != row.map(|r| r.id.as_str())
+                })
+                .map(|n| n.id.clone()),
+        );
+    }
+    if let Some(activity) = activity {
+        others.extend(
+            doc.children(&activity.id)
+                .filter(|n| !hidden(n) && Some(n.id.as_str()) != status.map(|s| s.id.as_str()))
+                .map(|n| n.id.clone()),
+        );
+    }
+    let mut pills = Vec::new();
+    if let Some(hud) = hud {
+        collect_pills(doc, &hud.id, theme, &mut pills);
+    }
+    StatusModel {
+        working,
+        todo: status
+            .and_then(|s| {
+                doc.children(&s.id)
+                    .find(|n| n.kind == "checklist" && !hidden(n))
+            })
+            .map(|n| n.id.clone()),
+        pills,
+        others,
+    }
+}
+
+/// What of the bar fits: which facts show (indexes of `BarModel.facts`), whether the effort chip
+/// shows, and, when even that is too wide, the room (px at 13 px UI size) the model name gets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarFit {
+    pub facts: Vec<bool>,
+    pub effort: bool,
+    pub model_name: Option<f32>,
+}
+
+impl BarFit {
+    pub fn all(bar: &BarModel) -> Self {
+        Self {
+            facts: vec![true; bar.facts.len()],
+            effort: bar.effort.is_some(),
+            model_name: None,
+        }
+    }
+}
+
+fn text_room(text: &str) -> f32 {
+    text.chars().count() as f32 * theme::COMPOSER_MONO_CHAR_WIDTH
+}
+
+fn fact_width(fact: &Fact) -> f32 {
+    let icon = if fact.icon.is_some() || fact.permission {
+        theme::ICON_SIZE_SMALL + space::XS
+    } else {
+        0.0
+    };
+    let body = match &fact.body {
+        FactBody::Text(text) | FactBody::Rate(text) => text_room(text),
+        FactBody::Elapsed(_) => theme::TSP_ELAPSED_CHARS as f32 * theme::COMPOSER_MONO_CHAR_WIDTH,
+    };
+    icon + body + space::S
+}
+
+/// The room the bar takes (px at 13 px UI size), every chip `flex_none` and the stats cell
+/// shrinking last, like `chat::chips_width`.
+pub fn bar_width(bar: &BarModel, fit: &BarFit) -> f32 {
+    let effort = bar
+        .effort
+        .as_ref()
+        .filter(|_| fit.effort)
+        .map_or(0.0, |e| {
+            theme::TSP_EFFORT_GLYPH_WIDTH + space::XS + text_room(&e.label) + space::S
+        });
+    let model = bar.model.as_ref().map_or(0.0, |m| {
+        theme::TSP_MODEL_CHROME_WIDTH
+            + fit.model_name.unwrap_or_else(|| text_room(&m.name))
+            + if bar.working { theme::COMPOSER_CHIP_LOADING_WIDTH } else { 0.0 }
+    });
+    let facts: f32 = bar
+        .facts
+        .iter()
+        .zip(&fit.facts)
+        .filter(|(_, shown)| **shown)
+        .map(|(fact, _)| fact_width(fact))
+        .sum();
+    let usage = bar
+        .usage
+        .as_ref()
+        .map_or(0.0, |u| text_room(&u.text) + space::S);
+    theme::TSP_BAR_FIXED_WIDTH + effort + model + facts + usage
+}
+
+/// What of `bar` fits in `room` px (13 px UI size): facts drop highest priority number first
+/// (of equal priorities the later one first), then the effort chip, then the model name
+/// truncates down to `TSP_MODEL_MIN_CHARS`. The send or stop button always stays. Mirrors
+/// `chat::fit_chips`.
+pub fn fit_bar(bar: &BarModel, room: f32) -> BarFit {
+    let mut fit = BarFit::all(bar);
+    let mut order: Vec<usize> = (0..bar.facts.len()).collect();
+    order.sort_by_key(|&i| (std::cmp::Reverse(bar.facts[i].priority), std::cmp::Reverse(i)));
+    for i in order {
+        if bar_width(bar, &fit) <= room {
+            return fit;
+        }
+        fit.facts[i] = false;
+    }
+    if bar_width(bar, &fit) <= room {
+        return fit;
+    }
+    fit.effort = false;
+    if bar_width(bar, &fit) <= room {
+        return fit;
+    }
+    if let Some(model) = &bar.model {
+        let over = bar_width(bar, &fit) - room;
+        let natural = text_room(&model.name);
+        let floor = theme::TSP_MODEL_MIN_CHARS as f32 * theme::COMPOSER_MONO_CHAR_WIDTH;
+        fit.model_name = Some((natural - over).max(floor).min(natural));
+    }
+    fit
+}
+
+```
+
+`SpanStyle` derives `PartialEq, Eq`, so the models derive `PartialEq` without trouble.
+
+- [ ] **Step 7: Run the dock tests to verify they pass**
+
+Run: `cargo test -p mkrew-ui --lib tsp::`
+Expected: PASS (the new dock tests and every existing `tsp::` test).
+
+- [ ] **Step 8: Run fmt and clippy on the pure part**
+
+Run: `cargo fmt --all && cargo clippy -p mkrew-ui --lib --tests -- -D warnings`
+Expected: no warnings.
+
+- [ ] **Step 9: Extract the shared pieces out of the Chat composer (no change to Chat)**
+
+Pure refactor of `crates/mkrew-ui/src/shell/composer.rs`: move code into free functions and call them from `composer_card`, change nothing else. Do it in this order, `cargo check -p mkrew-ui` after each edit.
+
+(a) Replace the room computation (current lines 1212-1216):
+
+```rust
+        // Room for the chips: the pane's width, capped by the column, less the page padding
+        // and the card's own padding. The chip widths are in rems (`theme::rems_px`, designed
+        // at 13 px), so the room is measured in the same unit.
+        let room = (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M)
+            / (cx.global::<theme::Fonts>().ui_size / 13.0);
+```
+
+with
+
+```rust
+        let room = composer_room(width, cx);
+```
+
+(b) Replace the meter (current lines 1173-1211, the whole `let meter = stats.context...;`) with:
+
+```rust
+        let meter = stats
+            .context
+            .and_then(|(used, window)| chat::context_meter(used, window?))
+            .map(|meter| {
+                let fill = if meter.warning {
+                    theme.status_needs_input
+                } else {
+                    theme.accent
+                };
+                meter_bar(
+                    meter.fraction,
+                    fill,
+                    format!("{}%", meter.percent),
+                    meter.window_label,
+                    Vec::new(),
+                    theme,
+                )
+            });
+```
+
+(c) Replace the `quiet` closure (current lines 1228-1235) with:
+
+```rust
+        let quiet = |el: gpui::Div| quiet_chip(el, theme);
+```
+
+(d) Replace the model chip (current lines 1237-1268) with:
+
+```rust
+        let model_chip = stats.model.clone().filter(|_| shown.model).map(|model| {
+            model_pill("composer-model", model, working, !exited, now, theme)
+                .tooltip(tooltip(
+                    theme,
+                    "Change the model (types /model in the terminal)",
+                    "",
+                ))
+                .on_press(
+                    !exited,
+                    cx.listener(move |shell, _, window, cx| {
+                        shell.open_model_picker(session, window, cx);
+                    }),
+                )
+        });
+```
+
+(e) Replace the permission chip (current lines 1269-1279) with:
+
+```rust
+        let permission_chip = stats
+            .permission
+            .clone()
+            .filter(|_| shown.permission)
+            .map(|permission| permission_chip(permission, theme));
+```
+
+(f) Replace the card frame (current lines 1376-1386, from `let card = div()` through `.font_family(theme.ui_font_family.clone())`) with:
+
+```rust
+        let card = composer_card_frame(theme)
+```
+
+keeping the following `.on_mouse_down(` chain as it is.
+
+(g) Replace `placeholder_row` at the end of the file (current lines 1439-1458) with the shared functions below. The Chat call `placeholder_row(placeholder, theme)` (line 1144) stays as it is: a `String` is an element.
+
+```rust
+/// The Chat field's placeholder: a small sparkle icon, then `content` in italic muted (Tern
+/// look). `caret_text` draws the caret before it. An omp dock passes styled runs (its placeholder
+/// holds a private-use glyph that needs the terminal font).
+pub(super) fn placeholder_row(content: impl IntoElement, theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .child(icon_svg(
+            Icon::Sparkles,
+            theme::ICON_SIZE_SMALL,
+            theme.text_subtle,
+        ))
+        .child(
+            div()
+                .min_w_0()
+                .italic()
+                .text_color(rgb(theme.text_muted))
+                .child(content),
+        )
+}
+
+/// Room for the chips of a composer card: the pane's width, capped by the column, less the page
+/// padding and the card's own padding. The chip widths are in rems (`theme::rems_px`, designed
+/// at 13 px), so the room is measured in the same unit.
+pub(super) fn composer_room(width: f32, cx: &gpui::App) -> f32 {
+    (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M)
+        / (cx.global::<theme::Fonts>().ui_size / 13.0)
+}
+
+/// The floating card of a composer: Chat's, and an omp pane's dock (spec 7.8). Callers add the
+/// children and the press handler.
+pub(super) fn composer_card_frame(theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(space::S))
+        .p(px(space::M))
+        .rounded(px(radius::LARGE))
+        .bg(rgb(theme.surface_raised))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::rgba(theme.glass_border))
+        .shadow(theme::shadow_float(theme))
+        .font_family(theme.ui_font_family.clone())
+}
+
+/// The thin context meter over the card: a `CONTEXT_METER_HEIGHT` track filled to `fraction` in
+/// `fill`, `left` and `right` under it in `META` muted. `marks` (position 0..1, tooltip) are
+/// small ticks on the track (omp's auto-compact point); Chat has none.
+pub(super) fn meter_bar(
+    fraction: f32,
+    fill: u32,
+    left: String,
+    right: String,
+    marks: Vec<(f32, String)>,
+    theme: &Theme,
+) -> gpui::Div {
+    let ticks = marks.into_iter().enumerate().map(|(i, (at, title))| {
+        div()
+            .id(("context-mark", i))
+            .absolute()
+            .left(relative(at.clamp(0.0, 1.0)))
+            .ml(px(-theme::CONTEXT_MARK_HIT_WIDTH / 2.0))
+            .top(px(
+                -(theme::CONTEXT_MARK_HIT_HEIGHT - theme::CONTEXT_METER_HEIGHT) / 2.0
+            ))
+            .w(px(theme::CONTEXT_MARK_HIT_WIDTH))
+            .h(px(theme::CONTEXT_MARK_HIT_HEIGHT))
+            .flex()
+            .justify_center()
+            .tooltip(tooltip(theme, &title, ""))
+            .child(
+                div()
+                    .w(px(theme::BORDER_WIDTH))
+                    .h_full()
+                    .bg(rgb(theme.text_muted)),
+            )
+    });
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(space::XS))
+        .px(px(space::S))
+        .pb(px(space::XS))
+        .child(
+            div()
+                .relative()
+                .h(px(theme::CONTEXT_METER_HEIGHT))
+                .w_full()
+                .rounded(px(radius::PILL))
+                .bg(rgb(theme.divider))
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(fraction))
+                        .rounded(px(radius::PILL))
+                        .bg(rgb(fill)),
+                )
+                .children(ticks),
+        )
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .child(left)
+                .child(right),
+        )
+}
+
+/// A quiet chip: `META` muted text, icon and text with `space::XS` between, never shrinking.
+pub(super) fn quiet_chip(el: gpui::Div, theme: &Theme) -> gpui::Div {
+    el.flex()
+        .flex_none()
+        .items_center()
+        .gap(px(space::XS))
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text_muted))
+}
+
+/// The permission chip: a lightning icon and `text` in `status_needs_input`.
+pub(super) fn permission_chip(text: String, theme: &Theme) -> gpui::Div {
+    quiet_chip(div(), theme)
+        .text_color(rgb(theme.status_needs_input))
+        .child(icon_svg(Icon::Zap, theme::ICON_SIZE_SMALL, theme.status_needs_input))
+        .child(text)
+}
+
+/// The model pill: a raised border, `accent_text`, loading dots while `loading`, the name and a
+/// chevron. Callers add the tooltip and `.on_press(..)`.
+pub(super) fn model_pill(
+    id: impl Into<gpui::ElementId>,
+    name: impl IntoElement,
+    loading: bool,
+    enabled: bool,
+    now: i64,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(space::XS))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::PILL))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme::raised_border(theme)))
+        .text_size(font_size::META)
+        .text_color(rgb(theme.accent_text))
+        .pressable(Look::Chip, enabled, theme)
+        .when(loading, |el| el.child(loading_dots(now, rgb(theme.accent_text))))
+        .child(name)
+        .child(icon_svg(
+            Icon::ChevronDown,
+            theme::ICON_SIZE_SMALL,
+            theme.text_muted,
+        ))
+}
+```
+
+Notes on the move: the meter track gained `.relative()` and `.children(ticks)` (an empty iterator for Chat: no node is added); the meter outer wrapper, the fill and the label row are the old code verbatim; `quiet_chip` and `permission_chip` are the old closure bodies; `model_pill` is the old `model_chip` with the tooltip and the press handler left to the caller and the loading dots after the pill's own style calls (children order stays dots, name, chevron). If `cx.global` is not callable on `&gpui::App` in the pinned gpui, take `&gpui::Context<'_, Shell>` instead; the call site passes `cx` either way.
+
+Run: `cargo check -p mkrew-ui`
+Expected: compiles. A `Look` or `relative` name missing from `crate::*` is fixed with the same import the file already uses for the call it was cut from.
+
+Run: `cargo test -p mkrew-ui`
+Expected: PASS (nothing in the pure tests changed).
+
+Re-capture the four Chat screenshots of Step 5 as `10b-chat-after-*.png` and compare each pair (same size, same pixels; a flicker of one pixel row at the meter is a bug in `meter_bar`, not noise).
+
+- [ ] **Step 10: Add the stop button widget**
+
+In `crates/mkrew-ui/src/shell/widgets.rs`, after `round_button` (current line 222) add:
+
+```rust
+
+/// The round stop button of an omp pane's dock (spec 7.8): the size and neutral look of
+/// [`round_button`], a stop square instead of the send glyph; the square turns `danger_text` on
+/// hover (through the id group: an svg does not inherit its parent's hover color). Attach the
+/// handler with `.on_press(true, ..)`.
+pub(crate) fn round_stop_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    let danger = theme.danger_text;
+    div()
+        .id(id)
+        .group(id)
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(theme::SEND_BUTTON_SIZE))
+        .rounded(px(radius::PILL))
+        .bg(rgb(theme.surface_raised))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme::raised_border(theme)))
+        .pressable(Look::Raised, true, theme)
+        .child(
+            icon_svg(Icon::Square, theme::ICON_SIZE_SMALL, theme.text_muted)
+                .group_hover(id, move |style| style.text_color(rgb(danger))),
+        )
+}
+```
+
+- [ ] **Step 11: Let `tsp_editor` draw the composer field**
+
+In `crates/mkrew-ui/src/shell/tsp_view.rs`:
+
+Imports: after `use super::chat_view::chat_column;` add
+
+```rust
+use super::composer::{
+    composer_card_frame, composer_room, meter_bar, model_pill, permission_chip, placeholder_row,
+    quiet_chip,
+};
+```
+
+Replace `tsp_input` (current `impl Shell` block, lines 1813-1909, from `/// editor, input, image.` through the end of the function) with the version below. It is the old body with three changes marked `// 10b`: the rows are `Div`s so the composer's ghost can follow the caret on the last line, the placeholder takes the Chat placeholder row, and a `look` argument chooses between the two.
+
+```rust
+/// How [`Shell::tsp_editor`] draws an `editor`.
+#[derive(Clone, Copy)]
+enum EditorLook<'a> {
+    /// Anywhere in the surface: the placeholder in `text_dim`, the ghost under the text.
+    Plain,
+    /// The dock's field (spec 7.8): the Chat placeholder row, the ghost (already checked by
+    /// `DockModel`: caret at the end) right after the caret on the same line in `text_subtle`.
+    Composer { ghost: Option<&'a str> },
+}
+
+impl Shell {
+    /// editor, input, image.
+    fn tsp_input(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        if node.kind == "image" {
+            return self.tsp_image(p, node, cx);
+        }
+        self.tsp_editor(p, node, EditorLook::Plain, cx)
+    }
+
+    /// An `editor` or `input`: omp's text with the caret, its decorations and its placeholder.
+    fn tsp_editor(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        look: EditorLook<'_>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let text = str_prop(node, "text").unwrap_or("");
+        let caret_at = (node.props.get("cursor").and_then(Value::as_u64))
+            .map(|units| tsp::byte_at_utf16(text, units as usize));
+        // omp says which editable node has the focus (`focus` op); until it does, the pane's
+        // only editor is the one.
+        let has_focus = p.focused && p.doc.focus().is_none_or(|id| id == node.id);
+        let caret = || div().w(px(theme::BORDER_WIDTH)).bg(rgb(theme.text));
+        let part = |s: &str, color: u32| {
+            div().min_w_0().child(styled_runs(
+                &[(s.to_owned(), SpanStyle::default())],
+                color,
+                false,
+                theme,
+            ))
+        };
+        let piece = |s: &str, decor: tsp::Decor| {
+            div().min_w_0().child(styled_runs_wavy(
+                &[(s.to_owned(), decor.style)],
+                theme.text,
+                false,
+                weight::REGULAR,
+                decor.typo,
+                theme,
+            ))
+        };
+        let line_height = theme::rems_px(space::L + space::XS);
+        // The prompt starts the first line, before the caret and the text.
+        let mut lead = (node.props.get("prompt"))
+            .map(|v| tsp::spans_of(v, theme))
+            .filter(|runs| !runs.is_empty())
+            .map(|runs| {
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .child(styled_runs(&runs, theme.text_muted, false, theme))
+                    .into_any_element()
+            });
+        // 10b: rows stay `Div`s until the end.
+        let mut lines: Vec<Div> = Vec::new();
+        if text.is_empty() {
+            let placeholder = (node.props.get("placeholder"))
+                .map(|v| tsp::spans_of(v, theme))
+                .unwrap_or_default();
+            let mut row = div().flex().items_center().min_h(line_height);
+            row = row.children(lead.take());
+            if has_focus {
+                row = row.child(caret());
+            }
+            lines.push(match look {
+                EditorLook::Plain => {
+                    row.child(styled_runs(&placeholder, theme.text_dim, false, theme))
+                }
+                EditorLook::Composer { .. } => row.child(placeholder_row(
+                    styled_runs(&placeholder, theme.text_muted, false, theme),
+                    theme,
+                )),
+            });
+        } else {
+            // Decorations (mention colors, hidden markers, typos) cut the text into pieces.
+            let pieces = tsp::decor_pieces(text, array_prop(node, "decor"), theme);
+            let caret_at = caret_at.filter(|_| has_focus);
+            let mut start = 0;
+            for line in text.split('\n') {
+                let end = start + line.len();
+                let mut row = div().flex().items_center().min_h(line_height);
+                row = row.children(lead.take());
+                for atom in tsp::line_atoms(&pieces, start..end, caret_at) {
+                    row = match atom {
+                        tsp::Atom::Caret => row.child(caret()),
+                        tsp::Atom::Text(range, decor) => row.child(piece(&text[range], decor)),
+                    };
+                }
+                lines.push(row);
+                start = end + 1;
+            }
+        }
+        // Inline suggestion: after the caret on the last line (composer), else under the text.
+        let (under, inline) = match look {
+            EditorLook::Plain => (
+                str_prop(node, "ghost").filter(|g| !g.is_empty() && !text.is_empty()),
+                None,
+            ),
+            EditorLook::Composer { ghost } => (None, ghost),
+        };
+        if let Some(ghost) = inline
+            && let Some(last) = lines.pop()
+        {
+            lines.push(last.child(part(ghost, theme.text_subtle)));
+        }
+        let session = p.session;
+        let id = node.id.clone();
+        // A text field: exempt from the press look, so a plain mouse-down sends the focus.
+        let el = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .children(lines)
+            .children(under.map(|g| part(g, theme.text_dim)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |shell, _, _, cx| {
+                    shell.tsp_click(session, &id, false, cx);
+                }),
+            );
+        let el = if grows(node) || matches!(look, EditorLook::Composer { .. }) {
+            el.flex_1()
+        } else {
+            el
+        };
+        el.into_any_element()
+    }
+```
+
+(the following `/// An inline image from the blob bytes...` function `tsp_image` stays right after.)
+
+- [ ] **Step 12: Draw the dock as the composer card**
+
+In `crates/mkrew-ui/src/shell/tsp_view.rs`, add a new block after `tsp_status_hud` (current line 2243, the closing `}` of its `impl Shell` block):
+
+```rust
+
+impl Shell {
+    /// The dock of an omp pane that has the composer roles (spec 7.8): the dock's own children in
+    /// order, except that the node where the editor stands becomes the status row, the meter and
+    /// the card, and the nodes the status row took over are skipped.
+    fn tsp_dock(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        width: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<AnyElement> {
+        let mut out = Vec::new();
+        for node in p.doc.children("dock") {
+            self.tsp_dock_node(p, m, node, width, &mut out, cx);
+        }
+        out
+    }
+
+    fn tsp_dock_node(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        node: &Node,
+        width: f32,
+        out: &mut Vec<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if m.skip.contains(&node.id) {
+            return;
+        }
+        if node.id == m.editor {
+            out.push(self.tsp_composer(p, m, width, cx));
+        } else if m.path.contains(&node.id) {
+            for child in p.doc.children(&node.id) {
+                self.tsp_dock_node(p, m, child, width, out, cx);
+            }
+        } else {
+            out.push(self.tsp_node(p, node, cx));
+        }
+    }
+
+    /// `node` as a chip: its `title` tooltip and, when it has an action, the press that sends the
+    /// same `action` event as before (`tsp_decorate`). A node the document no longer has is drawn
+    /// as it is.
+    fn tsp_chip(
+        &self,
+        p: &Paint<'_>,
+        id: &str,
+        look: Look,
+        el: Div,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        match p.doc.get(id) {
+            Some(node) => self.tsp_decorate(el, p, node, look, false, cx),
+            None => el.into_any_element(),
+        }
+    }
+
+    /// The status row (when it has anything), the context meter and the card: the Chat composer
+    /// with omp's content.
+    fn tsp_composer(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        width: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let doc = p.doc;
+        let status = self.tsp_dock_status(p, m, cx);
+        let meter = m.context.as_ref().map(|c| {
+            let marks = c.marks.iter().map(|k| (k.at, k.title.clone())).collect();
+            let bar = meter_bar(
+                c.fraction.unwrap_or(0.0),
+                tsp::tone_color(c.tone, theme),
+                c.label.clone(),
+                c.total.clone(),
+                marks,
+                theme,
+            );
+            self.tsp_chip(p, &c.id, Look::Text, bar, cx)
+        });
+        let focus = m.focus.as_ref().map(|f| self.tsp_dock_focus(p, f, cx));
+        let chips: Vec<AnyElement> = (m.chips.iter())
+            .filter_map(|id| doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx))
+            .collect();
+        let line: Vec<AnyElement> = doc
+            .children(&m.line)
+            .map(|node| {
+                if node.id == m.field.id {
+                    let look = EditorLook::Composer {
+                        ghost: m.field.ghost.as_deref(),
+                    };
+                    self.tsp_editor(p, node, look, cx)
+                } else {
+                    self.tsp_node(p, node, cx)
+                }
+            })
+            .collect();
+        let field = div()
+            .id(SharedString::from(format!("tsp-field-{}", p.session)))
+            .flex()
+            .items_start()
+            .gap(px(space::S))
+            .cursor(CursorStyle::IBeam)
+            .max_h(px(theme::COMPOSER_MAX_HEIGHT))
+            .overflow_y_scroll()
+            .text_size(font_size::BODY)
+            .text_color(rgb(theme.text))
+            .children(line);
+        let card = composer_card_frame(theme)
+            .children(focus)
+            .when(!chips.is_empty(), |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(space::S))
+                        .children(chips),
+                )
+            })
+            .child(field)
+            .child(self.tsp_dock_bar(p, m, width, cx));
+        div()
+            .flex()
+            .flex_col()
+            .children(status)
+            .children(meter)
+            .child(card)
+            .into_any_element()
+    }
+
+    /// The chip row: omp's order, never wrapping, `min_w_0`; what does not fit is dropped by
+    /// `fit_bar`; the send or stop button always ends it.
+    fn tsp_dock_bar(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        width: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let exited = self.is_exited(p.session);
+        let fit = tsp::fit_bar(&m.bar, composer_room(width, cx));
+        let mut cells: Vec<AnyElement> = Vec::new();
+        for part in &m.bar.parts {
+            match part {
+                tsp::BarPart::Effort => {
+                    if let (true, Some(effort)) = (fit.effort, &m.bar.effort) {
+                        let mut chip = quiet_chip(div(), theme);
+                        if let Some(glyph) = effort.glyph.as_deref().and_then(|id| p.doc.get(id)) {
+                            chip = chip.child(self.tsp_node(p, glyph, cx));
+                        }
+                        let chip = chip.child(effort.label.clone());
+                        cells.push(self.tsp_chip(p, &effort.id, Look::Chip, chip, cx));
+                    }
+                }
+                tsp::BarPart::Model => {
+                    if let Some(model) = &m.bar.model {
+                        cells.push(self.tsp_dock_model(
+                            p,
+                            model,
+                            m.bar.working,
+                            fit.model_name,
+                            exited,
+                            cx,
+                        ));
+                    }
+                }
+                tsp::BarPart::Facts => {
+                    let facts: Vec<AnyElement> = (m.bar.facts.iter().zip(&fit.facts))
+                        .filter(|(_, shown)| **shown)
+                        .map(|(fact, _)| self.tsp_dock_fact(p, fact, cx))
+                        .collect();
+                    cells.push(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .items_center()
+                            .gap(px(space::S))
+                            .font_family(theme.terminal_font_family.clone())
+                            .children(facts)
+                            .into_any_element(),
+                    );
+                }
+                tsp::BarPart::Usage => {
+                    if let Some(usage) = &m.bar.usage {
+                        let chip = quiet_chip(div(), theme)
+                            .font_family(theme.terminal_font_family.clone())
+                            .child(usage.text.clone());
+                        cells.push(self.tsp_chip(p, &usage.id, Look::Chip, chip, cx));
+                    }
+                }
+            }
+        }
+        div()
+            .flex()
+            .min_w_0()
+            .overflow_hidden()
+            .items_center()
+            .gap(px(space::S))
+            .children(cells)
+            .child(self.tsp_dock_primary(p, m, exited, cx))
+            .into_any_element()
+    }
+
+    /// The Chat model pill (loading dots while the session works, the name truncated to what
+    /// `fit_bar` left it), a click is omp's `status.model`.
+    fn tsp_dock_model(
+        &self,
+        p: &Paint<'_>,
+        model: &tsp::ModelPill,
+        working: bool,
+        name_room: Option<f32>,
+        exited: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let node = p.doc.get(&model.id);
+        let click = !exited && node.is_some_and(|n| tsp::has_click(p.doc, n));
+        let title = node.and_then(|n| str_prop(n, "title")).filter(|_| p.tips());
+        let name = div()
+            .min_w_0()
+            .truncate()
+            .when_some(name_room, |el, room| el.max_w(theme::rems_px(room)))
+            .child(model.name.clone());
+        let (session, id) = (p.session, model.id.clone());
+        model_pill(
+            SharedString::from(format!("tsp-model-{session}")),
+            name,
+            working,
+            click,
+            p.now,
+            theme,
+        )
+        .when_some(title, |el, title| el.tooltip(tooltip(theme, title, "")))
+        .on_press(
+            click,
+            cx.listener(move |shell, event: &ClickEvent, _, cx| {
+                shell.tsp_click(session, &id, event.click_count() > 1, cx);
+            }),
+        )
+        .into_any_element()
+    }
+
+    /// One fact: a quiet mono chip with its icon; the `accent` one is the Chat permission chip;
+    /// a rate in `text`, an elapsed time drawn by its own node (it ticks on the status tick).
+    fn tsp_dock_fact(
+        &self,
+        p: &Paint<'_>,
+        fact: &tsp::Fact,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let el = match &fact.body {
+            tsp::FactBody::Text(text) if fact.permission => permission_chip(text.clone(), theme),
+            body => {
+                let mut el = quiet_chip(div(), theme);
+                if let Some(icon) = fact.icon {
+                    el = el.child(icon_svg(icon, theme::ICON_SIZE_SMALL, theme.text_muted));
+                }
+                match body {
+                    tsp::FactBody::Text(text) => el.child(text.clone()),
+                    tsp::FactBody::Rate(text) => el.text_color(rgb(theme.text)).child(text.clone()),
+                    tsp::FactBody::Elapsed(id) => {
+                        el.children(p.doc.get(id).map(|node| self.tsp_node(p, node, cx)))
+                    }
+                }
+            }
+        };
+        self.tsp_chip(p, &fact.id, Look::Chip, el, cx)
+    }
+
+    /// The round Send (enabled with text, `submit`) or Stop (`interrupt`) button, the same size,
+    /// at the end of the bar.
+    fn tsp_dock_primary(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        exited: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let session = p.session;
+        let title = |id: &str, fallback: &'static str| {
+            p.doc
+                .get(id)
+                .and_then(|node| str_prop(node, "title"))
+                .unwrap_or(fallback)
+                .to_owned()
+        };
+        match &m.bar.primary {
+            tsp::Primary::Stop(id) => {
+                let (tip, id) = (title(id, "Stop"), id.clone());
+                round_stop_button("tsp-stop", theme)
+                    .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "")))
+                    .on_press(
+                        !exited,
+                        cx.listener(move |shell, _, _, cx| shell.tsp_click(session, &id, false, cx)),
+                    )
+                    .into_any_element()
+            }
+            tsp::Primary::Send(id) => {
+                let can = m.can_send() && !exited && id.is_some();
+                let tip = id.as_deref().map_or_else(|| "Send".to_owned(), |id| title(id, "Send"));
+                let id = id.clone().unwrap_or_default();
+                round_button("tsp-send", Icon::CornerDownLeft, can, theme)
+                    .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "")))
+                    .on_press(
+                        can,
+                        cx.listener(move |shell, _, _, cx| shell.tsp_click(session, &id, false, cx)),
+                    )
+                    .into_any_element()
+            }
+        }
+    }
+
+    /// The row above the meter, as Tern: on the left the working row (loading dots, elapsed time,
+    /// a divider, the label in `status_needs_input`, a small ghost Stop) and any other status
+    /// node; on the right the todo hud and the glass hud pills. `None` when there is nothing.
+    fn tsp_dock_status(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<AnyElement> {
+        let s = &m.status;
+        if s.working.is_none() && s.todo.is_none() && s.pills.is_empty() && s.others.is_empty() {
+            return None;
+        }
+        let doc = p.doc;
+        let working = s.working.as_ref().map(|w| self.tsp_dock_working(p, w, cx));
+        let others: Vec<AnyElement> = (s.others.iter())
+            .filter_map(|id| doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx))
+            .collect();
+        // The checklist builder draws the hud chip and its popover (Task 10).
+        let todo = (s.todo.as_deref())
+            .and_then(|id| doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx));
+        let pills: Vec<AnyElement> = (s.pills.iter())
+            .map(|pill| self.tsp_dock_pill(p, pill, cx))
+            .collect();
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::M))
+                .min_w_0()
+                .px(px(space::S))
+                .pb(px(space::XS))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::S))
+                        .children(working)
+                        .children(others),
+                )
+                .children(todo)
+                .children(pills)
+                .into_any_element(),
+        )
+    }
+
+    fn tsp_dock_working(
+        &self,
+        p: &Paint<'_>,
+        w: &tsp::Working,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let session = p.session;
+        let exited = self.is_exited(session);
+        let elapsed = (w.elapsed.as_deref())
+            .and_then(|id| p.doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx));
+        let stop = w.stop.clone().map(|id| {
+            let tip = (p.doc.get(&id))
+                .and_then(|node| str_prop(node, "title"))
+                .filter(|_| p.tips())
+                .map(str::to_owned);
+            quiet_button(
+                "tsp-working-stop",
+                icon_text(Icon::Square, "Stop", theme.text_muted),
+                theme,
+                theme.hover,
+            )
+            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .when_some(tip, |el, tip| el.tooltip(tooltip(theme, &tip, "")))
+            .on_press(
+                !exited,
+                cx.listener(move |shell, _, _, cx| shell.tsp_click(session, &id, false, cx)),
+            )
+        });
+        div()
+            .flex()
+            .flex_1()
+            .items_center()
+            .gap(px(space::S))
+            .min_w_0()
+            .text_size(font_size::META)
+            .child(loading_dots(p.now, rgb(theme.status_working)))
+            .children(elapsed)
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(theme::BORDER_WIDTH))
+                    .h(theme::rems_px(space::M))
+                    .bg(rgb(theme.divider)),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(rgb(theme.status_needs_input))
+                    .child(w.label.clone()),
+            )
+            .child(div().flex_1())
+            .children(stop)
+            .into_any_element()
+    }
+
+    /// A glass pill (subagents, jobs): the icon in its tone, then the count in mono; the node's
+    /// `title` is the tooltip and a click is its action (`agents.open`, `jobs.open`).
+    fn tsp_dock_pill(
+        &self,
+        p: &Paint<'_>,
+        pill: &tsp::HudPill,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let tone = pill
+            .tone
+            .as_deref()
+            .map_or(theme.text_muted, |tone| tsp::tone_color(tone, theme));
+        let el = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(space::XS))
+            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .px(px(space::S))
+            .rounded(px(theme::radius::PILL))
+            .bg(gpui::rgba(theme.glass))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(gpui::rgba(theme.glass_border))
+            .font_family(theme.terminal_font_family.clone())
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .children(pill.icon.map(|icon| icon_svg(icon, theme::ICON_SIZE_SMALL, tone)))
+            .child(pill.count.clone());
+        self.tsp_chip(p, &pill.id, Look::Chip, el, cx)
+    }
+
+    /// The strip above the field while omp's input goes to a subagent: an eye, omp's own
+    /// children ("Viewing", the crumbs) and the exit chip.
+    fn tsp_dock_focus(
+        &self,
+        p: &Paint<'_>,
+        f: &tsp::FocusStrip,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let exit = f.exit.as_ref().map(|(id, label)| {
+            let chip = div()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .h(theme::rems_px(theme::PILL_HEIGHT))
+                .px(px(space::S))
+                .rounded(px(theme::radius::PILL))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme::raised_border(theme)))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text))
+                .child(label.clone());
+            self.tsp_chip(p, id, Look::Chip, chip, cx)
+        });
+        let rest: Vec<AnyElement> = (f.rest.iter())
+            .filter_map(|id| p.doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx))
+            .collect();
+        let strip = div()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .child(icon_svg(Icon::Eye, theme::ICON_SIZE_SMALL, theme.text_muted))
+            .children(rest)
+            .child(div().flex_1())
+            .children(exit);
+        self.tsp_chip(p, &f.id, Look::Text, strip, cx)
+    }
+}
+```
+
+Behavior notes the code relies on: `tsp_decorate` adds the id, the tooltip and the press for a node with `actions`, so Send/Stop/model/effort/usage/facts/pills/meter keep their `action {id, act}` events; the editor keeps its `focus {id}` press; the model pill and the Send/Stop buttons call `tsp_click` directly (their ids come from the model). `tsp_click` ignores an exited session already (`tsp_emit`), the `exited` arguments only fade the controls.
+
+- [ ] **Step 13: Wire the dock into `render_tsp`**
+
+In `crates/mkrew-ui/src/shell/tsp_view.rs`, in `render_tsp`, replace
+
+```rust
+        let dock: Vec<AnyElement> = (doc.children("dock"))
+            .map(|node| self.tsp_node(&paint, node, cx))
+            .collect();
+```
+
+with
+
+```rust
+        // The dock as the Chat composer when omp sent its composer roles; any other dock (another
+        // omp version, the ask card) is drawn generically, as before.
+        let dock_model = tsp::dock_model(doc, theme);
+        let dock: Vec<AnyElement> = match dock_model.as_ref() {
+            Some(m) => self.tsp_dock(&paint, m, width, cx),
+            None => (doc.children("dock"))
+                .map(|node| self.tsp_node(&paint, node, cx))
+                .collect(),
+        };
+```
+
+and replace
+
+```rust
+        .child(chat_column(
+            div().flex().flex_col().pb(px(space::S)).children(dock),
+        ))
+```
+
+with
+
+```rust
+        .child(
+            chat_column(
+                div()
+                    .flex()
+                    .flex_col()
+                    .when(dock_model.is_none(), |el| el.pb(px(space::S)))
+                    .children(dock),
+            )
+            // Chat: the card sits `space::M` above the pane's bottom edge.
+            .when(dock_model.is_some(), |el| el.pb(px(space::M))),
+        )
+```
+
+- [ ] **Step 14: Build, fix API mismatches, check the rules**
+
+Run: `cargo check -p mkrew-ui --all-targets`
+Expected: compiles. This view was written against the pinned gpui without a compiler; the places to look first:
+- `when_some` (gpui `FluentBuilder`), `.cursor(CursorStyle::IBeam)` on a `Stateful<Div>`, `Div::children(Option<AnyElement>)`, `.id(("context-mark", i))` (`ElementId` from `(&'static str, usize)`), `Svg::group_hover`: if one is missing use the closest `FluentBuilder` / `InteractiveElement` equivalent already used in `composer.rs` or `widgets.rs` (`window_control` uses `group_hover` on an `icon_svg`).
+- `Look`, `Pressable`, `round_button`, `quiet_button`, `icon_text`, `loading_dots`, `tooltip`, `CursorStyle`, `SharedString` come from `use crate::*;` like the rest of the file; `round_stop_button` lives in `widgets.rs`, so it comes the same way (if the glob does not carry it, add it to the `use` of `shell/widgets` names in `main.rs` where `round_button` is imported).
+- `quiet_button(..).h(..)`: the later `h` wins over the button's own height; if the pinned gpui keeps the first, build the button from `quiet_button` and wrap it in a `div().h(rems_px(PILL_HEIGHT))`.
+- A `composer_room(width, cx)` argument that is `&mut Context` coerces to `&App` by deref; if not, write `&*cx`.
+- Unused-parameter warnings are fixed by dropping the parameter, not by `_`-prefixing.
+
+Run: `cargo fmt --all && cargo clippy -p mkrew-ui --all-targets -- -D warnings`
+Expected: no warnings.
+
+Run: `grep -nE "0x[0-9A-Fa-f]{6}|\.hover\(|\.active\(|\.cursor_pointer\(" crates/mkrew-ui/src/shell/tsp_view.rs crates/mkrew-ui/src/shell/composer.rs`
+Expected: no output.
+
+Run: `grep -nE "px\([0-9]" crates/mkrew-ui/src/shell/tsp_view.rs`
+Expected: no output (every size is a token or an expression of tokens; `composer.rs` keeps the `2.0 *` of the old room formula and the half-width of the mark's hit area, pure arithmetic on tokens).
+
+Run: `grep -nE "px\(-?[0-9]|0x[0-9A-Fa-f]{6}" crates/mkrew-ui/src/shell/widgets.rs`
+Expected: no new hit from `round_stop_button`.
+
+- [ ] **Step 15: Run the UI crate's tests**
+
+Run: `cargo test -p mkrew-ui`
+Expected: PASS (the new `tsp::` dock tests and every existing test; no test of `chat::` changed).
+
+- [ ] **Step 16: Manual smoke: Tern and Mkrew on the same omp session**
+
+Prerequisites as Task 10 Step 24 (daemon, CLI and fake agent built, ConPTY files next to the binaries, omp 18.13.2, `tsp` on). Open the same omp session in Tern (`omp --resume <session id>`) and in a Mkrew pane, side by side, same width (about 900 px), and compare in this order. Record any difference in `docs/HUMAN_CHECKS.md` under "2026-11-23 omp native surface" (Task 12 owns the entry; add its one line for this task: "omp dock vs Tern composer: idle, typing with ghost, working with Stop, narrow pane, subagent pill, dark and light").
+
+1. Idle. Expected, top to bottom, in Mkrew and in Tern: a thin context meter (accent fill, `3%` left and `1M` right in small muted text, a small tick at 50% with the tooltip "Auto-compact at 50%", hovering the bar shows "Context 3% used ..."), a raised rounded card (glass border, soft shadow) with the placeholder row (sparkle icon, italic muted `“<glyph> README: ...”`, the Nerd Font glyph is an icon and never a missing-glyph box), then one chip row: the effort chip (4-step glyph and `high`), the model pill with border and chevron (`Opus 5.5`, accent text), quiet mono facts (a `yolo` chip in the amber permission look with a lightning icon, session id, clock time), and at the right a round Send button (neutral and inert while the editor is empty). No Stop, no status row, no hud pills. The card never collapses to a pill when the pane loses focus.
+2. Typing with ghost. Click into the card (the caret appears; a click reaches omp as `focus`). Type `abc`: the characters show in `BODY` text with the caret; Send turns accent. In a session that has a prompt history starting with it, omp's suggestion appears in a quiet color right after the caret on the same line (never on its own line); Tab/Right keys behave as in Tern (they go to omp). Type text that wraps past 8 lines: the field scrolls inside the card at `COMPOSER_MAX_HEIGHT`, the card stops growing. Paste an image: an attachment chip row appears above the field and Send is enabled with no text.
+3. Working with Stop. Send a prompt that makes omp run tools for 20 s. Expected: above the meter a status row with loading dots, the elapsed time in mono muted, a thin divider and the label ("Reading ...") in the amber `status_needs_input` color, and a small ghost Stop button at the right end; the model pill shows loading dots before the name; the Send button is replaced by a round Stop button of the same size whose square turns red on hover; the facts row shows the rate (`46 tok/s`) and an elapsed fact stepping every status tick. Click the round Stop and the small Stop: each interrupts (omp ends the turn), the row disappears and Send comes back. The dots and the elapsed time stop moving when the turn ends (no redraw loop at idle).
+4. Narrow pane. Drag the split until the pane is about 420 px, 360 px and 300 px wide. Expected: facts leave one at a time, the clock time first, then the elapsed time, then the others by omp's priority numbers; then the effort chip; last the model name truncates with an ellipsis (never shorter than about six characters); the round Send or Stop button never leaves the card and nothing wraps or overlaps. Widen the pane again: everything comes back.
+5. Subagent running pill. Ask omp: "Use two parallel subagents to read README.md and Cargo.toml and summarize each". While they run: a glass pill with the users icon and `2` appears at the right of the status row (left of it the todo hud when a todo exists), hover shows "2 agents running ..." with its shortcut, a click opens omp's Agent Hub (`agents.open`); start a background command (`/jobs`, a long `sleep` through bash in the background): a second pill with the job icon and the count opens the Jobs panel (`jobs.open`). When the subagents end the pill goes away or shows only its muted icon, as in Tern. If a pill looks different from Tern (icon, count, spacing), note it: these two shapes come from the reference, not from the recording.
+6. Subagent focus. Focus a subagent (Agent Hub, Enter): a strip appears at the top of the card with an eye icon, "Viewing", the crumbs and an exit chip; clicking the chip returns to the main session (`focus:<id>` action).
+7. Ask card and todo HUD still fine. Ask omp: "Use the ask tool with two questions ..." (Task 10 Step 24 item 15) and check the card exactly as there; answer it and check the composer comes back with its draft and chips. Ask for a todo (item 13 there): the hud chip sits on the right of the status row (also while the session works, with the working row on the left), its popover opens above it and closes with Esc and on an outside click, and the count steps up. Both with the new card present and absent (idle, no working row).
+8. Dark and light. Switch the theme (palette "Theme") on each of the states above: meter track visible in light, the facts and the ghost legible, the permission chip amber in both, Stop red on hover in both, the glass pills visible on both backgrounds.
+9. Other panes. A Claude Chat pane and a shell pane look and behave as before (compare with the `10b-chat-after-*` captures). An omp pane with `tsp = false` is the terminal grid, unchanged.
+10. A dock without the composer roles (an older omp, or the fake agent's `--tsp` fixture with the roles stripped) is drawn generically as after Task 10, not blank: run `cargo run -p mkrew-fakeagent -- --tsp <fixture>` in a pane for that.
+
+- [ ] **Step 17: Commit**
+
+```bash
+git add crates/mkrew-ui/src/tsp.rs crates/mkrew-ui/src/theme.rs crates/mkrew-ui/src/shell/composer.rs crates/mkrew-ui/src/shell/widgets.rs crates/mkrew-ui/src/shell/tsp_view.rs
+git -c user.email=tungnv975@gmail.com commit -m "feat(ui): draw the omp dock as the Tern composer card"
+```
+
 ### Task 11: mk web notice
 
 **Files:**
