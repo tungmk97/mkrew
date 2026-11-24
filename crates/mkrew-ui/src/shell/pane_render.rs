@@ -862,7 +862,7 @@ impl Shell {
     /// and, among `several` panes, it holds the drag handle at its centre (ADR 0110): a slim bar
     /// while the pointer is over the pane (hover group `pane_hover_group`), a chip with a six-dot
     /// grip while it is over the handle, and dragging the handle moves the pane onto another. A
-    /// file or diff pane has the handle but no anchor.
+    /// file, diff or browser pane has the handle but no anchor.
     /// Only the handle has a hitbox; the rest of the edge passes the mouse to the pane. The
     /// handle blocks the mouse (not the wheel): gpui hit-tests every hitbox until one blocks, so
     /// without it the terminal under it would also get the mouse down and start a selection.
