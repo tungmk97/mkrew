@@ -187,16 +187,48 @@ fn the_deadline_runs_from_the_first_output_until_a_hello_is_answered() {
 }
 
 #[test]
-fn a_hello_after_the_fall_back_passes_through_unanswered() {
+fn a_hello_after_the_deadline_is_answered_and_goes_live_at_every_chunk_split() {
+    let mut stream = hello_query(json!([1]));
+    stream.extend_from_slice(b"\x1b[c");
+    for cut in 0..=stream.len() {
+        let t = Instant::now();
+        let mut e = Engine::new(120, true);
+        e.on_output(t, b"rows");
+        e.on_deadline(t + HELLO_WAIT);
+        assert_eq!(e.state(), TspState::Fallback);
+        let late = t + HELLO_WAIT;
+        let mut steps = e.on_output(late, &stream[..cut]);
+        steps.extend(e.on_output(late, &stream[cut..]));
+        let steps = merged(steps);
+        assert!(
+            matches!(steps.as_slice(), [Step::Reply(r), Step::State(TspState::Live), Step::Plain(p)]
+                if parse(r).1["r"] == "hello" && p[..] == b"\x1b[c"[..]),
+            "cut {cut}: {steps:?}"
+        );
+        assert_eq!(e.state(), TspState::Live);
+        assert_eq!(e.snapshot().reason, None);
+        // The surface opens as in a first start.
+        e.on_output(late, &open_bytes());
+        assert_eq!(e.snapshot().surfaces.len(), 1);
+    }
+}
+
+#[test]
+fn a_hello_after_an_explicit_fallback_passes_through_unanswered() {
     let t = Instant::now();
-    let mut e = Engine::new(120, true);
-    e.on_output(t, b"rows");
-    e.on_deadline(t + HELLO_WAIT);
     let hello = hello_query(json!([1]));
-    assert_eq!(
-        e.on_output(t + HELLO_WAIT, &hello),
-        vec![Step::Plain(hello)]
-    );
+
+    let mut e = Engine::new(120, true);
+    e.on_output(t, &hello_query(json!([2])));
+    assert_eq!(e.state(), TspState::Fallback);
+    assert_eq!(e.on_output(t, &hello), vec![Step::Plain(hello.clone())]);
+    assert_eq!(e.state(), TspState::Fallback);
+
+    let (mut e, t) = live();
+    e.on_output(t, &apc(b'x', json!({"id": SF, "keep": false})));
+    assert_eq!(e.state(), TspState::Fallback);
+    assert_eq!(e.on_output(t, &hello), vec![Step::Plain(hello)]);
+    assert_eq!(e.state(), TspState::Fallback);
 }
 
 #[test]

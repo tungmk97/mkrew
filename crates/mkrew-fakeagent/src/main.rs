@@ -8,7 +8,7 @@
 //! `--tsp <fixture.jsonl>` plays omp's native-surface protocol (TSP, spec 2026-11-23-omp-tsp):
 //! raw console input, a hello query, a wait of up to 10 s for the terminal's hello reply, then
 //! every `out` line of the fixture as an APC message. `--record <file>` receives every byte read
-//! from stdin (the terminal's reply, acks and events).
+//! from stdin (the terminal's reply, acks and events). `--hello-delay-ms <n>` prints a line and waits `n` ms before the hello.
 
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
@@ -22,7 +22,7 @@ use anyhow::{Context, Result, bail};
 use mkrew_core::tsp::wire;
 use mkrew_fakeagent::{DEFAULT_SCENARIO, SCENARIO_ENV, load, run};
 
-const USAGE: &str = "usage: mkrew-fakeagent [--scenario <file|name>] [--resume <id>] [--listen] [--tsp <fixture.jsonl> [--record <file>]] [<prompt>]";
+const USAGE: &str = "usage: mkrew-fakeagent [--scenario <file|name>] [--resume <id>] [--listen] [--tsp <fixture.jsonl> [--record <file>] [--hello-delay-ms <n>]] [<prompt>]";
 
 /// What `--tsp` sends first; omp sends this (then a DA1 query) when it starts.
 const TSP_HELLO: &[u8] =
@@ -50,7 +50,11 @@ fn real_main() -> Result<i32> {
         return listen();
     }
     if let Some(fixture) = &args.tsp {
-        return tsp(Path::new(fixture), args.record.as_deref().map(Path::new));
+        return tsp(
+            Path::new(fixture),
+            args.record.as_deref().map(Path::new),
+            args.hello_delay,
+        );
     }
     let spec = match args.scenario {
         Some(spec) => spec,
@@ -85,7 +89,7 @@ fn listen() -> Result<i32> {
 
 /// `--tsp`: prints the hello query, records what the terminal writes back, and once the
 /// hello reply is in, replays the fixture's `out` messages; never returns.
-fn tsp(fixture: &Path, record: Option<&Path>) -> Result<i32> {
+fn tsp(fixture: &Path, record: Option<&Path>, hello_delay: Option<Duration>) -> Result<i32> {
     let text = std::fs::read_to_string(fixture)
         .with_context(|| format!("read fixture {}", fixture.display()))?;
     let messages = fixture_messages(&text)?;
@@ -115,6 +119,12 @@ fn tsp(fixture: &Path, record: Option<&Path>) -> Result<i32> {
     });
 
     let mut out = io::stdout().lock();
+    if let Some(delay) = hello_delay {
+        // Output first, so the daemon's hello wait has started; omp loading a session does the same.
+        out.write_all(b"fake tsp: starting\r\n")?;
+        out.flush()?;
+        thread::sleep(delay);
+    }
     out.write_all(TSP_HELLO)?;
     out.flush()?;
     let deadline = Instant::now() + TSP_REPLY_WAIT;
@@ -219,6 +229,8 @@ struct Args {
     tsp: Option<String>,
     /// `--record <file>` (with `--tsp`): everything read from stdin.
     record: Option<String>,
+    /// `--hello-delay-ms <n>` (with `--tsp`): a line of text, then a pause before the hello.
+    hello_delay: Option<Duration>,
 }
 
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args> {
@@ -243,6 +255,12 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args> {
                 Some(value) => parsed.tsp = Some(value),
                 None => bail!("--tsp needs a value\n{USAGE}"),
             }
+        } else if arg == "--hello-delay-ms" {
+            let ms = args.next().and_then(|v| v.parse::<u64>().ok());
+            match ms {
+                Some(ms) => parsed.hello_delay = Some(Duration::from_millis(ms)),
+                None => bail!("--hello-delay-ms needs a number\n{USAGE}"),
+            }
         } else if arg == "--record" {
             match args.next() {
                 Some(value) => parsed.record = Some(value),
@@ -254,8 +272,8 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args> {
             parsed.prompt = Some(arg);
         }
     }
-    if parsed.record.is_some() && parsed.tsp.is_none() {
-        bail!("--record needs --tsp\n{USAGE}");
+    if (parsed.record.is_some() || parsed.hello_delay.is_some()) && parsed.tsp.is_none() {
+        bail!("--record and --hello-delay-ms need --tsp\n{USAGE}");
     }
     Ok(parsed)
 }

@@ -45,12 +45,13 @@ The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already
 - Mkrew ships the newer ConPTY on Windows: `conpty.dll` and `OpenConsole.exe` from the MIT-licensed `Microsoft.Windows.Console.ConPTY` NuGet package 1.24.260710001 (the files of the spike's passing row), pinned by SHA-256 and fetched by `scripts/fetch-conpty.sh` (and `.ps1`), installed by `packaging/mkrew.iss` into `{app}\bin` next to `mkrew-daemon.exe`.
   This applies to every PTY the daemon opens, not only omp's.
   The daemon logs once at start which ConPTY it loaded (`conpty = "sideloaded"` or `"system"`).
-  Without the files the daemon runs as before on the system ConPTY, no hello arrives, and the pane falls back to the terminal grid 2 s after the session's first output.
+  Without the files the daemon runs as before on the system ConPTY, no hello arrives, and the pane falls back to the terminal grid 10 s after the session's first output (the wait is long because resumed and concurrent omp starts need over 2 s to send the hello).
 - The pane (`shell/tsp_view.rs`): while `Session.tsp` is `live` the pane draws the surface in the Chat page's centered column instead of the terminal grid.
   Since ADR 0106 a pane is only its content, so the surface fills the pane; the title bar shows no `Terminal | Chat` toggle while that pane has the focus, and `Ctrl+Alt+T` and the palette entry do nothing for it.
   `main` scrolls and follows its end, `dock` stays under it, `layer` and `overlay` are a modal inside the pane, a `screen` surface covers the pane.
   Keys, paste and drops go to the PTY as in a terminal pane; clicks on nodes with actions go to omp as `tsp.event`.
   `fallback` shows the terminal grid and one info toast.
+  The hello timer's fallback is provisional: after 10 s the pane shows the terminal grid with a notice, and a hello that still arrives later is answered and the pane switches to the native surface (omp's startup can exceed any fixed wait under load); explicit fallbacks (unsupported hello version, omp closing the surface with `x {keep:false}`) are final.
   An exited session keeps its last document, read-only.
 - The dock is drawn as Tern's composer, from the pieces of the Chat composer card (ADR 0105, `shell/composer.rs`), so Chat and an omp pane look the same with omp as the only source of the content (spec 7.8).
   The pieces are the context meter, the card, the model pill, quiet fact chips (with Chat's fact colors for the stats Chat also shows), the round Send and Stop buttons, the working row with its Stop, the hud as one glass pill split by dividers, and the todo HUD.

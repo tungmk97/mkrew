@@ -187,7 +187,7 @@ Kinds omp sends whatever the hello says (`agent chart diff math prefs`) and any 
 | `off` | today's terminal pane, with the `Terminal | Chat` toggle |
 | `waiting` (TSP on, no surface yet) | the starting state of an agent pane |
 | `live` | the surface |
-| `fallback` (no hello within 2 s of the session's first output, or omp closed the surface with `x {keep:false}`, which it does when it goes back to drawing rows) | today's terminal grid without the Chat toggle, and one `toast_info` "omp is drawing as text: <reason>". Once in `fallback` the daemon no longer answers TSP for that session, so a late hello falls back on omp's side too. |
+| `fallback` (no hello within 10 s of the session's first output, because resumed and concurrently started omp sessions need over 2 s to send it; or an explicit end: an unsupported hello version, or omp closing the surface with `x {keep:false}`, which it does when it goes back to drawing rows) | today's terminal grid without the Chat toggle, and one `toast_info` "omp is drawing as text: <reason>". The timer's fallback is provisional: a hello that still arrives is answered and the session goes `live` (the text stays in the grid, the surface replaces the view). An explicit fallback is final: the daemon no longer answers TSP for that session, so a late hello falls back on omp's side too. |
 | exited | the last document, read-only, with the existing exited notice |
 
 ### 7.4 Events sent in P1
@@ -287,7 +287,7 @@ Notes from the smoke record (omp 18.13.2):
 
 | Case | Behavior |
 |---|---|
-| ConPTY files missing (Windows) | No hello reaches the daemon; 2 s after the first output, `fallback` with the reason "no TSP reply from the terminal layer". Logged once at startup. |
+| No hello within 10 s of the first output (ConPTY files missing on Windows, or omp slow to start; resumed and concurrent starts need over 2 s) | The pane shows the terminal grid with a notice, `fallback` with the reason "no TSP reply from the terminal layer" (logged once at startup when the files are missing). A hello that still arrives later is answered and the pane switches to the native surface; explicit fallbacks are final. |
 | omp without TSP or too old (hello `v` other than 1) | No surface; `fallback` with the reason. |
 | Malformed message or JSON | Dropped, `warn` logged; the stream continues. |
 | Failing ops | Skipped, one `ev:error` per frame (6.3). |

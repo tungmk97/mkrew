@@ -233,7 +233,7 @@ fn a_tsp_profile_whose_agent_says_no_hello_falls_back_to_the_terminal() {
     let spawned: SessionSpawnResult = client.spawn(&project, "tsp").into_result().unwrap();
     let id = spawned.session_id;
 
-    // Within the 2 s hello wait after the first output (TIMEOUT only bounds the test).
+    // Within the 10 s hello wait after the first output (TIMEOUT only bounds the test).
     wait_tsp(&mut client, id, TspState::Fallback);
     // The pane is today's terminal: the screen still drives the state, the text is logged.
     client.wait_state(id, SessionState::NeedsInput);
@@ -244,6 +244,37 @@ fn a_tsp_profile_whose_agent_says_no_hello_falls_back_to_the_terminal() {
     kill(&mut client, id);
     let log = session_log(&env, id);
     assert!(log.contains("Fake agent ready."), "{log}");
+    client.stop();
+}
+
+#[test]
+fn a_hello_after_the_timer_fallback_is_answered_and_the_session_goes_live() {
+    let env = Env::new();
+    let record = env.dir.path().join("late-record.bin");
+    // The agent prints a line, waits past the 10 s hello wait, then says hello (omp loading a session).
+    let args = format!(
+        "['--tsp', '{FIXTURE}', '--record', '{}', '--hello-delay-ms', '11500']",
+        record.display()
+    );
+    write_tsp_profile(&env, "tsp", &args);
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "tsp").into_result().unwrap();
+    let id = spawned.session_id;
+
+    wait_tsp(&mut client, id, TspState::Fallback);
+    assert_eq!(tsp_snapshot(&mut client, id).state, TspState::Fallback);
+
+    // The late hello is answered and the surface follows (events are kept, so ask for Live alone).
+    client.wait_event_where(
+        |e| matches!(e, Event::SessionUpdated(s) if s.id == id && s.tsp == TspState::Live),
+    );
+    let snapshot = wait_frames(&mut client, id);
+    assert_eq!(snapshot.state, TspState::Live);
+    assert_eq!(snapshot.surfaces.len(), 1, "{snapshot:?}");
+    assert_eq!(client.session(id).tsp, TspState::Live);
+    wait_record(&record, |text| text.contains("\u{1b}_tsp;r;"));
+    kill(&mut client, id);
     client.stop();
 }
 

@@ -15,7 +15,9 @@ use super::doc::{Applied, Document, MAX_NODES, MAX_TEXT};
 use super::wire::{self, Incoming, Piece, Splitter};
 
 /// How long after the first output a hello may take before the pane falls back to the terminal grid.
-pub const HELLO_WAIT: Duration = Duration::from_secs(2);
+/// Resuming a session and several omp starting together take over 2 s to send it; the pane shows its
+/// Starting view meanwhile, and only a terminal layer that drops TSP pays the whole wait.
+pub const HELLO_WAIT: Duration = Duration::from_secs(10);
 
 /// The kinds advertised in the hello (spec 7.1).
 pub const P1_KINDS: &[&str] = &[
@@ -123,6 +125,9 @@ pub struct Engine {
     max_blob_bytes: usize,
     /// Why the engine fell back, for the UI's toast (`TspSnapshot.reason`).
     fallback_reason: Option<String>,
+    /// The fallback came from the hello timer only: a hello that still arrives is answered and the
+    /// engine goes Live. Every other fallback is final.
+    provisional: bool,
 }
 
 impl Engine {
@@ -141,6 +146,7 @@ impl Engine {
             limits: (MAX_NODES, MAX_TEXT),
             max_blob_bytes: MAX_BLOB_BYTES,
             fallback_reason: None,
+            provisional: false,
         }
     }
 
@@ -157,19 +163,24 @@ impl Engine {
         self.state
     }
 
+    /// Fallen back for good: the daemon copies output as plain and the engine answers nothing.
+    pub fn is_passthrough(&self) -> bool {
+        self.state == TspState::Fallback && !self.provisional
+    }
+
     /// Splits output; answers hello (Reply before any later Plain), applies frames (Update then ack Reply), opens and closes surfaces, evicts.
-    /// In Fallback everything passes as Plain (no replies).
+    /// After a final fallback everything passes as Plain (no replies); after the timer's, a late hello is still answered.
     pub fn on_output(&mut self, now: Instant, bytes: &[u8]) -> Vec<Step> {
         if bytes.is_empty() {
             return Vec::new();
         }
-        if self.state == TspState::Fallback {
+        if self.is_passthrough() {
             return vec![Step::Plain(bytes.to_vec())];
         }
         self.first_output.get_or_insert(now);
         let mut steps = Vec::new();
         for piece in self.splitter.feed(bytes) {
-            if self.state == TspState::Fallback {
+            if self.is_passthrough() {
                 // The engine fell back inside this chunk: TSP messages still queued are dropped, plain bytes go on.
                 if let Piece::Plain(b) = piece {
                     steps.push(Step::Plain(b));
@@ -190,7 +201,7 @@ impl Engine {
                 "tsp: {dropped} oversized message(s) dropped"
             )));
         }
-        if self.state == TspState::Fallback {
+        if self.is_passthrough() {
             self.pass_pending(&mut steps);
         }
         steps
@@ -213,12 +224,13 @@ impl Engine {
         }
     }
 
-    /// Waiting -> Fallback once the deadline passed.
+    /// Waiting -> provisional Fallback once the deadline passed (a late hello still wins).
     pub fn on_deadline(&mut self, now: Instant) -> Vec<Step> {
         let mut steps = Vec::new();
         if self.deadline().is_some_and(|d| now >= d) {
             self.pass_pending(&mut steps);
             self.fall_back("no TSP reply from the terminal layer".into(), &mut steps);
+            self.provisional = true;
         }
         steps
     }
@@ -337,6 +349,13 @@ impl Engine {
             "reduceMotion": false, "hour12": false
         });
         push_reply(steps, b'r', &reply);
+        if self.state == TspState::Fallback {
+            // A hello after the timer's fallback: the reply is out, the surface follows.
+            self.provisional = false;
+            self.fallback_reason = None;
+            self.state = TspState::Live;
+            steps.push(Step::State(TspState::Live));
+        }
     }
 
     fn open(&mut self, meta: TspSurface, steps: &mut Vec<Step>) {
@@ -426,6 +445,7 @@ impl Engine {
 
     fn fall_back(&mut self, reason: String, steps: &mut Vec<Step>) {
         self.state = TspState::Fallback;
+        self.provisional = false;
         self.surfaces.clear();
         self.blobs.clear();
         self.blob_order.clear();

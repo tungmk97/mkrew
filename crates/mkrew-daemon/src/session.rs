@@ -1381,12 +1381,9 @@ impl Actor {
     }
 
     fn on_output(&mut self, bytes: &[u8]) {
-        // Fallen back: the engine would only copy every chunk into a `Plain` step.
-        let Some(engine) = self
-            .tsp
-            .as_mut()
-            .filter(|e| e.state() != TspState::Fallback)
-        else {
+        // Fallen back for good: the engine would only copy every chunk into a `Plain` step.
+        // (After the hello timer's fallback it still listens for a late hello.)
+        let Some(engine) = self.tsp.as_mut().filter(|e| !e.is_passthrough()) else {
             self.on_plain(bytes);
             return;
         };

@@ -58,8 +58,11 @@ With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow p
 - [ ] **Daemon restart:** `mk daemon stop`, then open Mkrew; the omp pane resumes as a new session with a new surface and an empty conversation (nothing of the old one is restored).
 - [ ] **TSP off:** put `tsp = false` in the omp profile (before `[state]`) and start a new omp pane; it is today's terminal pane with the title bar's `Terminal | Chat` toggle, omp draws ANSI rows, and there is no first-paint wait.
   An omp started by hand in a shell pane also draws rows.
-- [ ] **Fallback:** rename `conpty.dll` next to the daemon, restart the daemon, start an omp pane; about 2 s after its first output the pane shows the terminal grid, with one toast "omp is drawing as text: ..." and a log line `conpty = "system"`; nothing is blank.
+- [ ] **Fallback:** rename `conpty.dll` next to the daemon, restart the daemon, start an omp pane; about 10 s after its first output (resumed and concurrent starts need over 2 s to send the hello) the pane shows the terminal grid, with one toast "omp is drawing as text: ..." and a log line `conpty = "system"`; nothing is blank.
   Put the file back and restart the daemon.
+  On Windows 11 24H2 (build 26100) the system ConPTY also passes TSP through (observed: a fresh omp went Live with `conpty="system"`), so renaming `conpty.dll` does not force the fallback there; use `PI_TUI_NATIVE` / an omp without TSP or an older Windows to see it.
+- [ ] **Restart with three panes:** restart the daemon (`mk daemon stop`, start the UI) with three omp panes open: all three come back as native surfaces, none falls back to text.
+- [ ] **Slow start:** start three omp panes at once right after a reboot or under load: any that showed text switches to the native surface once omp is up.
 - [ ] **Exited omp:** quit omp (`/exit`); the pane keeps its last conversation read-only under the exited notice.
 - [ ] **Hook-only state:** with the hooks installed the sidebar and the tab icon (hourglass, bell) follow omp (working, idle, needs input, done) while the surface is live; after a fallback, screen detection works again.
 - [ ] **Text glyphs:** the Nerd Font glyphs omp sends (the placeholder, the status facts) are drawn upright in the terminal font; if a box still shows (for example U+F14F7 with an older MesloLGS NF), install a current Nerd Font (Symbols Nerd Font Mono) and look again.
