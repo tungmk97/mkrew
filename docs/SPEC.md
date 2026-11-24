@@ -1340,7 +1340,6 @@ Only edit this file. When done, for EACH comment run:
   The window's find bar belongs to the shown file pane: one find bar per file pane, searched on that file.
   `git.changed` reads the files of the shown panes; files of tabs that are not shown are read when shown.
   Moving a file (drag to an edge, to another tab, tear-off, merge) never asks.
-  Switching the Files view to another worktree closes the workspace's file panes (asking "Save / Don't save / Cancel" about unsaved text first), so a pane never shows a file of a folder the tree no longer shows.
 - **Change gutter** (ADR 0047): right of each line number a thin bar marks how the line differs
   from the file's text in the git index (what the Git tab calls unstaged): added
   (`diff-add-text`), changed (`diff-mod-text`), and a short `diff-del-text` mark at the top of
