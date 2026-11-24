@@ -266,7 +266,7 @@ Roles below are omp 18.13.2's (`omp.editor` and its children, `omp.hud*`, `omp.w
 | `row` `role=omp.composer.chips` | attachment chips above the field, wrapping | - |
 | `row` `role=omp.composer.focus` | a strip above the field: eye icon, "Viewing", the crumbs, and the `omp.composer.exit` chip | click: `action` |
 | `col` `role=omp.hud.status` with `row` `role=omp.working` | the status row above the meter, as Tern: a spinner (loading dots on the status tick), the elapsed time in mono `text_muted`, a divider, the `omp.working.label` in `status_needs_input`; `omp.working.stop` as a small ghost button | click: `action` |
-| `row` `role=omp.hud` of `row` `role=omp.hud.seg` | glass pills on the right of the status row (icon, then the count in mono), as Tern's subagent and jobs pills; the node `title` as tooltip | click: `action` (`agents.open`, `jobs.open`) |
+| `row` `role=omp.hud` of `row` `role=omp.hud.seg` | one glass pill, its segments split by a divider, as Tern's, on the right of the status row (each segment: icon, then the count in mono); the segment's `title` as tooltip | click: `action` (`agents.open`, `jobs.open`) |
 | `checklist` `role=omp.hud.todo` | as 7.7, on the right of the status row, left of the pills | - |
 
 Text glyphs: a span styled `icon` (omp sends Nerd Font private-use glyphs in native mode, reference 6.2) is drawn in the terminal font, which carries those glyphs; never a missing-glyph box.

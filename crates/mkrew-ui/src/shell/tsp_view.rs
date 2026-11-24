@@ -2661,9 +2661,7 @@ impl Shell {
         let todo = (s.todo.as_deref())
             .and_then(|id| doc.get(id))
             .map(|node| self.tsp_node(p, node, cx));
-        let pills: Vec<AnyElement> = (s.pills.iter())
-            .map(|pill| self.tsp_dock_pill(p, pill, cx))
-            .collect();
+        let pills = (!s.pills.is_empty()).then(|| self.tsp_dock_pills(p, &s.pills, cx));
         Some(
             div()
                 .flex()
@@ -2751,8 +2749,9 @@ impl Shell {
             .into_any_element()
     }
 
-    /// A glass pill (subagents, jobs): the icon in its tone, then the count in mono; the node's
-    /// `title` is the tooltip and a click is its action (`agents.open`, `jobs.open`).
+    /// One segment of the hud's glass pill (subagents, jobs): the icon in its tone, then the
+    /// count in mono; the node's `title` is the tooltip and a click is its action
+    /// (`agents.open`, `jobs.open`).
     fn tsp_dock_pill(
         &self,
         p: &Paint<'_>,
@@ -2769,8 +2768,44 @@ impl Shell {
             .flex_none()
             .items_center()
             .gap(px(space::XS))
-            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .h_full()
             .px(px(space::S))
+            .rounded(px(theme::radius::PILL))
+            .children(
+                pill.icon
+                    .map(|icon| icon_svg(icon, theme::ICON_SIZE_SMALL, tone)),
+            )
+            .child(pill.count.clone());
+        self.tsp_chip(p, &pill.id, Look::Chip, el, cx)
+    }
+
+    /// The hud row as Tern draws it: ONE glass pill, its segments split by a thin divider.
+    fn tsp_dock_pills(
+        &self,
+        p: &Paint<'_>,
+        pills: &[tsp::HudPill],
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let mut segs: Vec<AnyElement> = Vec::new();
+        for (i, pill) in pills.iter().enumerate() {
+            if i > 0 {
+                segs.push(
+                    div()
+                        .flex_none()
+                        .w(px(theme::BORDER_WIDTH))
+                        .h(theme::rems_px(space::M))
+                        .bg(rgb(theme.border))
+                        .into_any_element(),
+                );
+            }
+            segs.push(self.tsp_dock_pill(p, pill, cx));
+        }
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(theme::rems_px(theme::PILL_HEIGHT))
             .rounded(px(theme::radius::PILL))
             .bg(gpui::rgba(theme.glass))
             .border(px(theme::BORDER_WIDTH))
@@ -2778,12 +2813,8 @@ impl Shell {
             .font_family(theme.terminal_font_family.clone())
             .text_size(font_size::META)
             .text_color(rgb(theme.text_muted))
-            .children(
-                pill.icon
-                    .map(|icon| icon_svg(icon, theme::ICON_SIZE_SMALL, tone)),
-            )
-            .child(pill.count.clone());
-        self.tsp_chip(p, &pill.id, Look::Chip, el, cx)
+            .children(segs)
+            .into_any_element()
     }
 
     /// The strip above the field while omp's input goes to a subagent: an eye, omp's own
