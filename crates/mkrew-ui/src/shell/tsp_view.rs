@@ -988,6 +988,13 @@ impl Shell {
         if node.kind != "overlay" {
             return self.tsp_node(p, node, cx);
         }
+        let kids = self.tsp_children(p, node, cx);
+        Self::tsp_overlay(p, node, kids)
+    }
+
+    /// The modal card of an `overlay` around its built children.
+    #[inline(never)]
+    fn tsp_overlay(p: &Paint<'_>, node: &Node, kids: Vec<AnyElement>) -> AnyElement {
         // Bounded to the pane: the card keeps its head and hints, a growing list scrolls inside.
         let holder = div().w_full().h_full().flex().flex_col().items_center();
         let holder = match str_prop(node, "anchor") {
@@ -1010,7 +1017,7 @@ impl Shell {
                     .bg(rgb(p.theme.surface))
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(rgb(p.theme.border))
-                    .children(self.tsp_children(p, node, cx)),
+                    .children(kids),
             )
             .into_any_element()
     }
@@ -1118,132 +1125,120 @@ impl Shell {
 
     /// col, row, card, section, rule, spacer, overlay, toast.
     fn tsp_layout(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
-        let theme = p.theme;
-        let gap = px(tsp::gap_px(str_prop(node, "gap")));
         match node.kind.as_str() {
             // Toasts go to Mkrew's toast layer when their frame arrives (`tsp_update`).
             "toast" => div().into_any_element(),
-            "spacer" => {
-                let size = tsp::gap_px(str_prop(node, "size"));
-                let el = if grows(node) {
-                    div().flex_1()
-                } else {
-                    div().h(px(size)).w(px(size))
-                };
-                el.into_any_element()
-            }
-            "rule" => {
-                let label = (node.props.get("label"))
-                    .map(|label| tsp::spans_of(label, theme))
-                    .unwrap_or_default();
-                let line = || {
-                    div()
-                        .flex_1()
-                        .h(px(theme::BORDER_WIDTH))
-                        .bg(rgb(theme.divider))
-                };
-                if label.is_empty() {
-                    return div()
-                        .w_full()
-                        .py(px(space::S))
-                        .child(line())
-                        .into_any_element();
-                }
-                div()
-                    .w_full()
-                    .py(px(space::S))
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .child(line())
-                    .child(styled_runs(&label, theme.text_muted, false, theme))
-                    .child(line())
-                    .into_any_element()
-            }
-            "row" => {
-                let el = div().flex().flex_row().items_center().gap(gap).min_w_0();
-                let el = Self::tsp_flow(el, node).children(self.tsp_children(p, node, cx));
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
-            }
+            "spacer" => Self::tsp_spacer(node),
+            "rule" => Self::tsp_rule(p, node),
+            "row" => self.tsp_row(p, node, cx),
             "card" | "section" => self.tsp_card(p, node, cx),
             // "col" and an `overlay` met outside `layer` (an autocomplete under the editor).
-            _ => {
-                let mut el = div().flex().flex_col().gap(gap).min_w_0();
-                if node.kind == "overlay" {
-                    el = el
-                        .p(px(space::M))
-                        .rounded(px(theme::radius::MEDIUM))
-                        .bg(rgb(theme.surface_raised))
-                        .border(px(theme::BORDER_WIDTH))
-                        .border_color(rgb(theme.border));
-                    if let Some(head) = node.props.get("head") {
-                        let head = tsp::spans_of(head, theme);
-                        el = el.child(styled_runs(&head, theme.text, false, theme));
-                    }
-                }
-                // In the overlay a column is bounded by its card: its growing list scrolls.
-                let el = if p.in_layer { el.overflow_hidden() } else { el };
-                let el = Self::tsp_flow(el, node).children(self.tsp_children(p, node, cx));
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
+            _ => self.tsp_col(p, node, cx),
+        }
+    }
+
+    #[inline(never)]
+    fn tsp_spacer(node: &Node) -> AnyElement {
+        let size = tsp::gap_px(str_prop(node, "size"));
+        let el = if grows(node) {
+            div().flex_1()
+        } else {
+            div().h(px(size)).w(px(size))
+        };
+        el.into_any_element()
+    }
+    #[inline(never)]
+    fn tsp_rule(p: &Paint<'_>, node: &Node) -> AnyElement {
+        let theme = p.theme;
+        let label = (node.props.get("label"))
+            .map(|label| tsp::spans_of(label, theme))
+            .unwrap_or_default();
+        let line = || {
+            div()
+                .flex_1()
+                .h(px(theme::BORDER_WIDTH))
+                .bg(rgb(theme.divider))
+        };
+        if label.is_empty() {
+            return div()
+                .w_full()
+                .py(px(space::S))
+                .child(line())
+                .into_any_element();
+        }
+        div()
+            .w_full()
+            .py(px(space::S))
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .child(line())
+            .child(styled_runs(&label, theme.text_muted, false, theme))
+            .child(line())
+            .into_any_element()
+    }
+    #[inline(never)]
+    fn tsp_row(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let kids = self.tsp_children(p, node, cx);
+        self.tsp_row_el(p, node, kids, cx)
+    }
+
+    #[inline(never)]
+    fn tsp_row_el(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        kids: Vec<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let gap = px(tsp::gap_px(str_prop(node, "gap")));
+        let el = div().flex().flex_row().items_center().gap(gap).min_w_0();
+        let el = Self::tsp_flow(el, node).children(kids);
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+    #[inline(never)]
+    fn tsp_col(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let kids = self.tsp_children(p, node, cx);
+        self.tsp_col_el(p, node, kids, cx)
+    }
+
+    #[inline(never)]
+    fn tsp_col_el(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        kids: Vec<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let gap = px(tsp::gap_px(str_prop(node, "gap")));
+        let mut el = div().flex().flex_col().gap(gap).min_w_0();
+        if node.kind == "overlay" {
+            el = el
+                .p(px(space::M))
+                .rounded(px(theme::radius::MEDIUM))
+                .bg(rgb(theme.surface_raised))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.border));
+            if let Some(head) = node.props.get("head") {
+                let head = tsp::spans_of(head, theme);
+                el = el.child(styled_runs(&head, theme.text, false, theme));
             }
         }
+        // In the overlay a column is bounded by its card: its growing list scrolls.
+        let el = if p.in_layer { el.overflow_hidden() } else { el };
+        let el = Self::tsp_flow(el, node).children(kids);
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
     }
 
     /// card (a raised box) and section (a titled group); `collapsible` ones toggle on their head.
     fn tsp_card(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
-        let theme = p.theme;
-        let card = node.kind == "card";
-        let collapsible = bool_prop(node, "collapsible");
-        let collapsed = bool_prop(node, "collapsed");
-        let head_source = tsp::head_of(p.doc, node);
-        let head_child = match head_source {
+        let head_child = match tsp::head_of(p.doc, node) {
             tsp::Head::Child(child) => Some(child),
             _ => None,
         };
-        let head = match head_source {
-            tsp::Head::Spans(head) => tsp::spans_of(head, theme),
-            _ => Vec::new(),
-        };
-        let head_color =
-            str_prop(node, "tone").map_or(theme.text, |tone| tsp::tone_color(tone, theme));
-        let head_el = (!head.is_empty() || head_child.is_some()).then(|| {
-            let mut row = div().flex().items_center().gap(px(space::S));
-            if collapsible {
-                let chevron = if collapsed {
-                    Icon::ChevronRight
-                } else {
-                    Icon::ChevronDown
-                };
-                row = row.child(icon_svg(chevron, theme::ICON_SIZE_SMALL, theme.text_muted));
-            }
-            let row = match head_child {
-                Some(child) => row.child(self.tsp_node(p, child, cx)),
-                None => row.child(
-                    div()
-                        .font_weight(FontWeight(weight::SEMIBOLD))
-                        .child(styled_runs(&head, head_color, false, theme)),
-                ),
-            };
-            if !collapsible {
-                return row.into_any_element();
-            }
-            let (session, id) = (p.session, node.id.clone());
-            row.id(SharedString::from(format!(
-                "tsp-head-{}-{}",
-                p.session, node.id
-            )))
-            .pressable(Look::Text, true, theme)
-            .on_press(
-                true,
-                cx.listener(move |shell, _, _, cx| {
-                    if let Some(event) = tsp::toggle_event(&id, !collapsed) {
-                        shell.tsp_emit(session, event, cx);
-                    }
-                }),
-            )
-            .into_any_element()
-        });
-        let body = if collapsed {
+        let head_el = self.tsp_card_head(p, node, cx);
+        let body: Vec<AnyElement> = if bool_prop(node, "collapsed") {
             Vec::new()
         } else {
             (p.doc.children(&node.id))
@@ -1251,6 +1246,20 @@ impl Shell {
                 .map(|child| self.tsp_node(p, child, cx))
                 .collect()
         };
+        self.tsp_card_el(p, node, head_el, body, cx)
+    }
+
+    #[inline(never)]
+    fn tsp_card_el(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        head_el: Option<AnyElement>,
+        body: Vec<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let card = node.kind == "card";
         let mut el = div().flex().flex_col().gap(px(space::S)).min_w_0();
         if p.in_layer {
             // The overlay container is the card; it bounds this one.
@@ -1264,101 +1273,185 @@ impl Shell {
         let el = Self::tsp_flow(el, node).children(head_el).children(body);
         self.tsp_decorate(el, p, node, Look::Text, false, cx)
     }
+
+    /// The head of a card or section: its `head` spans or its head child; `None` without one.
+    #[inline(never)]
+    fn tsp_card_head(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<AnyElement> {
+        let head_source = tsp::head_of(p.doc, node);
+        let head_child = match head_source {
+            tsp::Head::Child(child) => Some(child),
+            _ => None,
+        };
+        let head = match head_source {
+            tsp::Head::Spans(head) => tsp::spans_of(head, p.theme),
+            _ => Vec::new(),
+        };
+        if head.is_empty() && head_child.is_none() {
+            return None;
+        }
+        let child = head_child.map(|child| self.tsp_node(p, child, cx));
+        Some(Self::tsp_card_head_row(p, node, &head, child, cx))
+    }
+
+    /// The head row around its built child or spans; a collapsible one toggles on a press.
+    #[inline(never)]
+    fn tsp_card_head_row(
+        p: &Paint<'_>,
+        node: &Node,
+        head: &[(String, SpanStyle)],
+        child: Option<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let collapsible = bool_prop(node, "collapsible");
+        let collapsed = bool_prop(node, "collapsed");
+        let head_color =
+            str_prop(node, "tone").map_or(theme.text, |tone| tsp::tone_color(tone, theme));
+        let mut row = div().flex().items_center().gap(px(space::S));
+        if collapsible {
+            let chevron = if collapsed {
+                Icon::ChevronRight
+            } else {
+                Icon::ChevronDown
+            };
+            row = row.child(icon_svg(chevron, theme::ICON_SIZE_SMALL, theme.text_muted));
+        }
+        let row = match child {
+            Some(child) => row.child(child),
+            None => row.child(
+                div()
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .child(styled_runs(head, head_color, false, theme)),
+            ),
+        };
+        if !collapsible {
+            return row.into_any_element();
+        }
+        let (session, id) = (p.session, node.id.clone());
+        row.id(SharedString::from(format!(
+            "tsp-head-{}-{}",
+            p.session, node.id
+        )))
+        .pressable(Look::Text, true, theme)
+        .on_press(
+            true,
+            cx.listener(move |shell, _, _, cx| {
+                if let Some(event) = tsp::toggle_event(&id, !collapsed) {
+                    shell.tsp_emit(session, event, cx);
+                }
+            }),
+        )
+        .into_any_element()
+    }
 }
 
 impl Shell {
     /// text, md, code, ansi, rows, shimmer.
     fn tsp_text(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        match node.kind.as_str() {
+            "md" | "code" => self.tsp_md(p, node, cx),
+            "ansi" | "rows" => self.tsp_ansi(p, node, cx),
+            _ => self.tsp_plain(p, node, cx),
+        }
+    }
+
+    #[inline(never)]
+    fn tsp_md(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let text = str_prop(node, "text").unwrap_or("");
+        // The cache keys on the node's revision; a fence is built on a miss only.
+        let (kind, lang) = (node.kind.as_str(), str_prop(node, "lang"));
+        let rev = p.mirror.rev(p.shown_id, &node.id);
+        let shown = p.ui.md.borrow_mut().get(&node.id, rev, || match kind {
+            "code" => docs::Shown::from_text(&tsp::code_fence(lang, text)),
+            _ => docs::Shown::from_text(text),
+        });
+        // Selectable inside this node as in Chat: the painted texts go to `hits`.
+        let hits =
+            p.ui.hits
+                .borrow_mut()
+                .entry(node.id.clone())
+                .or_default()
+                .clone();
+        let selection = (p.ui.selecting.as_ref())
+            .filter(|(id, _)| *id == node.id)
+            .map(|(_, selection)| *selection);
+        let blocks = preview::message(
+            &shown,
+            selection,
+            &hits,
+            preview::Flavor::Chat { session: p.session },
+            theme,
+        );
+        let (session, id) = (p.session, node.id.clone());
+        let el = div()
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .line_height(relative(theme::doc::LINE_HEIGHT))
+            .min_w_0()
+            .children(blocks)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                    shell.tsp_press(session, id.clone(), event, window, cx);
+                }),
+            );
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+    #[inline(never)]
+    fn tsp_ansi(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let lines: Vec<&str> = if node.kind == "rows" {
+            array_prop(node, "lines")
+                .iter()
+                .filter_map(Value::as_str)
+                .collect()
+        } else {
+            str_prop(node, "text").unwrap_or("").split('\n').collect()
+        };
+        let rows = lines.iter().map(|line| {
+            let mut runs = tsp::ansi_runs(line, theme);
+            if runs.is_empty() {
+                // An empty line keeps its height.
+                runs.push((" ".to_owned(), SpanStyle::default()));
+            }
+            div()
+                .whitespace_nowrap()
+                .child(styled_runs(&runs, theme.text, true, theme))
+        });
+        let el = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .text_size(px(theme.terminal_font_size))
+            .children(rows);
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+    /// text and shimmer (plain text in P1).
+    #[inline(never)]
+    fn tsp_plain(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
         let theme = p.theme;
         let base = str_prop(node, "tone").map_or(theme.text, |tone| tsp::tone_color(tone, theme));
-        match node.kind.as_str() {
-            "md" | "code" => {
-                let text = str_prop(node, "text").unwrap_or("");
-                // The cache keys on the node's revision; a fence is built on a miss only.
-                let (kind, lang) = (node.kind.as_str(), str_prop(node, "lang"));
-                let rev = p.mirror.rev(p.shown_id, &node.id);
-                let shown = p.ui.md.borrow_mut().get(&node.id, rev, || match kind {
-                    "code" => docs::Shown::from_text(&tsp::code_fence(lang, text)),
-                    _ => docs::Shown::from_text(text),
-                });
-                // Selectable inside this node as in Chat: the painted texts go to `hits`.
-                let hits =
-                    p.ui.hits
-                        .borrow_mut()
-                        .entry(node.id.clone())
-                        .or_default()
-                        .clone();
-                let selection = (p.ui.selecting.as_ref())
-                    .filter(|(id, _)| *id == node.id)
-                    .map(|(_, selection)| *selection);
-                let blocks = preview::message(
-                    &shown,
-                    selection,
-                    &hits,
-                    preview::Flavor::Chat { session: p.session },
-                    theme,
-                );
-                let (session, id) = (p.session, node.id.clone());
-                let el = div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(space::M))
-                    .line_height(relative(theme::doc::LINE_HEIGHT))
-                    .min_w_0()
-                    .children(blocks)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                            shell.tsp_press(session, id.clone(), event, window, cx);
-                        }),
-                    );
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
-            }
-            "ansi" | "rows" => {
-                let lines: Vec<&str> = if node.kind == "rows" {
-                    array_prop(node, "lines")
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .collect()
-                } else {
-                    str_prop(node, "text").unwrap_or("").split('\n').collect()
-                };
-                let rows = lines.iter().map(|line| {
-                    let mut runs = tsp::ansi_runs(line, theme);
-                    if runs.is_empty() {
-                        // An empty line keeps its height.
-                        runs.push((" ".to_owned(), SpanStyle::default()));
-                    }
-                    div()
-                        .whitespace_nowrap()
-                        .child(styled_runs(&runs, theme.text, true, theme))
-                });
-                let el = div()
-                    .flex()
-                    .flex_col()
-                    .min_w_0()
-                    .text_size(px(theme.terminal_font_size))
-                    .children(rows);
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
-            }
-            // text and shimmer (plain text in P1).
-            _ => {
-                let runs = tsp::node_spans(&node.props, theme);
-                let mut el = div()
-                    .min_w_0()
-                    .child(styled_runs(&runs, base, false, theme));
-                if node.props.get("wrap").and_then(Value::as_str) == Some("none") {
-                    el = el.whitespace_nowrap();
-                }
-                if str_prop(node, "truncate").is_some() {
-                    el = el.truncate();
-                }
-                if grows(node) {
-                    el = el.flex_1();
-                }
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
-            }
+        let runs = tsp::node_spans(&node.props, theme);
+        let mut el = div()
+            .min_w_0()
+            .child(styled_runs(&runs, base, false, theme));
+        if node.props.get("wrap").and_then(Value::as_str) == Some("none") {
+            el = el.whitespace_nowrap();
         }
+        if str_prop(node, "truncate").is_some() {
+            el = el.truncate();
+        }
+        if grows(node) {
+            el = el.flex_1();
+        }
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
     }
 }
 
@@ -1378,317 +1471,369 @@ impl Shell {
 
     /// kv, table, list, item, tabs, badge, kbd, icon, status, seg.
     fn tsp_data(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        match node.kind.as_str() {
+            "kv" => self.tsp_kv(p, node, cx),
+            "table" => self.tsp_table(p, node, cx),
+            "list" => self.tsp_list(p, node, cx),
+            "item" => self.tsp_item(p, node, cx),
+            "tabs" => self.tsp_tabs(p, node, cx),
+            "badge" => self.tsp_badge(p, node, cx),
+            "kbd" => self.tsp_kbd(p, node, cx),
+            "icon" => self.tsp_icon_node(p, node, cx),
+            "status" => self.tsp_status(p, node, cx),
+            _ => self.tsp_seg(p, node, cx),
+        }
+    }
+
+    #[inline(never)]
+    fn tsp_kv(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let items = array_prop(node, "items");
+        let rows = items.iter().map(|item| {
+            let spans = |key: &str| {
+                item.get(key)
+                    .map(|v| tsp::spans_of(v, theme))
+                    .unwrap_or_default()
+            };
+            div()
+                .flex()
+                .gap(px(space::M))
+                .child(
+                    div()
+                        .w(px(theme::TSP_KEY_WIDTH))
+                        .flex_none()
+                        .child(styled_runs(&spans("k"), theme.text_muted, false, theme)),
+                )
+                .child(div().flex_1().min_w_0().child(styled_runs(
+                    &spans("v"),
+                    theme.text,
+                    false,
+                    theme,
+                )))
+        });
+        let el = div().flex().flex_col().gap(px(space::XS)).children(rows);
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+    #[inline(never)]
+    fn tsp_table(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let cols = array_prop(node, "cols");
+        let rows = array_prop(node, "rows");
+        let cell = |col: &Value, runs: Vec<(String, SpanStyle)>, color: u32, head: bool| {
+            let mut el = div().flex_1().min_w_0().truncate();
+            if col.get("align").and_then(Value::as_str) == Some("end") {
+                el = el.flex().justify_end();
+            }
+            if head {
+                el = el.font_weight(FontWeight(weight::SEMIBOLD));
+            }
+            el.child(styled_runs(&runs, color, false, theme))
+        };
+        let header = div()
+            .flex()
+            .gap(px(space::M))
+            .children(cols.iter().map(|col| {
+                let head = col
+                    .get("head")
+                    .map(|h| tsp::spans_of(h, theme))
+                    .unwrap_or_default();
+                cell(col, head, theme.text_muted, true)
+            }));
+        let body = rows.iter().map(|row| {
+            div()
+                .flex()
+                .gap(px(space::M))
+                .children(cols.iter().map(|col| {
+                    let id = col.get("id").and_then(Value::as_str).unwrap_or("");
+                    let runs = (row.get("cells").and_then(|cells| cells.get(id)))
+                        .map(|v| tsp::spans_of(v, theme))
+                        .unwrap_or_default();
+                    cell(col, runs, theme.text, false)
+                }))
+        });
+        let el = div()
+            .flex()
+            .flex_col()
+            .gap(px(space::XS))
+            .child(header)
+            .children(body);
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+    #[inline(never)]
+    fn tsp_list(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let kids = self.tsp_children(p, node, cx);
+        self.tsp_list_el(p, node, kids, cx)
+    }
+
+    #[inline(never)]
+    fn tsp_list_el(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        kids: Vec<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let empty = (kids.is_empty())
+            .then(|| node.props.get("empty").map(|e| tsp::spans_of(e, theme)))
+            .flatten();
+        let items = div()
+            .flex()
+            .flex_col()
+            .gap(px(space::XS))
+            .children(kids)
+            .children(empty.map(|runs| {
+                div()
+                    .p(px(space::S))
+                    .child(styled_runs(&runs, theme.text_muted, false, theme))
+            }));
+        // A growing list takes the height left in its card and scrolls inside; its
+        // selected item is kept in view.
+        let el = if grows(node) {
+            let handle = list_handle(&p.ui.lists, &node.id);
+            let selected = str_prop(node, "selected");
+            if let Some(ix) = tsp::selected_index(p.doc, node)
+                && let Some(state) = p.ui.lists.borrow_mut().get_mut(&node.id)
+                && state.selected.as_deref() != selected
+            {
+                state.selected = selected.map(str::to_owned);
+                handle.scroll_to_item(ix);
+            }
+            let scroller = items
+                .id(SharedString::from(format!(
+                    "tsp-list-{}-{}",
+                    p.session, node.id
+                )))
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&handle);
+            div().flex().flex_col().flex_1().min_h_0().child(scroller)
+        } else {
+            items
+        };
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+    #[inline(never)]
+    fn tsp_item(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
         let theme = p.theme;
         let tone = str_prop(node, "tone").map(|tone| tsp::tone_color(tone, theme));
-        match node.kind.as_str() {
-            "kv" => {
-                let items = array_prop(node, "items");
-                let rows = items.iter().map(|item| {
-                    let spans = |key: &str| {
-                        item.get(key)
-                            .map(|v| tsp::spans_of(v, theme))
-                            .unwrap_or_default()
-                    };
+        let selected = (node.parent.as_deref())
+            .and_then(|id| p.doc.get(id))
+            .and_then(|list| str_prop(list, "selected"))
+            == Some(node.id.as_str());
+        let spans = |key: &str| {
+            node.props
+                .get(key)
+                .map(|v| tsp::spans_of(v, theme))
+                .unwrap_or_default()
+        };
+        let icon = str_prop(node, "icon")
+            .and_then(|name| self.tsp_icon(p, name, tone.unwrap_or(theme.text_muted)));
+        let detail = spans("detail");
+        let value = spans("value");
+        // The label shortens, never wraps; the value keeps its width at the right.
+        let mut el = div()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::S))
+            .py(px(space::XS))
+            .rounded(px(theme::radius::SMALL))
+            .children(icon)
+            .child(div().flex_1().min_w_0().truncate().child(styled_runs(
+                &spans("label"),
+                theme.text,
+                false,
+                theme,
+            )))
+            .when(!detail.is_empty(), |el| {
+                el.child(
                     div()
-                        .flex()
-                        .gap(px(space::M))
-                        .child(
-                            div()
-                                .w(px(theme::TSP_KEY_WIDTH))
-                                .flex_none()
-                                .child(styled_runs(&spans("k"), theme.text_muted, false, theme)),
-                        )
-                        .child(div().flex_1().min_w_0().child(styled_runs(
-                            &spans("v"),
-                            theme.text,
-                            false,
-                            theme,
-                        )))
-                });
-                let el = div().flex().flex_col().gap(px(space::XS)).children(rows);
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
-            }
-            "table" => {
-                let cols = array_prop(node, "cols");
-                let rows = array_prop(node, "rows");
-                let cell = |col: &Value, runs: Vec<(String, SpanStyle)>, color: u32, head: bool| {
-                    let mut el = div().flex_1().min_w_0().truncate();
-                    if col.get("align").and_then(Value::as_str) == Some("end") {
-                        el = el.flex().justify_end();
-                    }
-                    if head {
-                        el = el.font_weight(FontWeight(weight::SEMIBOLD));
-                    }
-                    el.child(styled_runs(&runs, color, false, theme))
-                };
-                let header = div()
-                    .flex()
-                    .gap(px(space::M))
-                    .children(cols.iter().map(|col| {
-                        let head = col
-                            .get("head")
-                            .map(|h| tsp::spans_of(h, theme))
-                            .unwrap_or_default();
-                        cell(col, head, theme.text_muted, true)
-                    }));
-                let body = rows.iter().map(|row| {
-                    div()
-                        .flex()
-                        .gap(px(space::M))
-                        .children(cols.iter().map(|col| {
-                            let id = col.get("id").and_then(Value::as_str).unwrap_or("");
-                            let runs = (row.get("cells").and_then(|cells| cells.get(id)))
-                                .map(|v| tsp::spans_of(v, theme))
-                                .unwrap_or_default();
-                            cell(col, runs, theme.text, false)
-                        }))
-                });
-                let el = div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(space::XS))
-                    .child(header)
-                    .children(body);
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
-            }
-            "list" => {
-                let kids = self.tsp_children(p, node, cx);
-                let empty = (kids.is_empty())
-                    .then(|| node.props.get("empty").map(|e| tsp::spans_of(e, theme)))
-                    .flatten();
-                let items = div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(space::XS))
-                    .children(kids)
-                    .children(empty.map(|runs| {
-                        div().p(px(space::S)).child(styled_runs(
-                            &runs,
-                            theme.text_muted,
-                            false,
-                            theme,
-                        ))
-                    }));
-                // A growing list takes the height left in its card and scrolls inside; its
-                // selected item is kept in view.
-                let el = if grows(node) {
-                    let handle = list_handle(&p.ui.lists, &node.id);
-                    let selected = str_prop(node, "selected");
-                    if let Some(ix) = tsp::selected_index(p.doc, node)
-                        && let Some(state) = p.ui.lists.borrow_mut().get_mut(&node.id)
-                        && state.selected.as_deref() != selected
-                    {
-                        state.selected = selected.map(str::to_owned);
-                        handle.scroll_to_item(ix);
-                    }
-                    let scroller = items
-                        .id(SharedString::from(format!(
-                            "tsp-list-{}-{}",
-                            p.session, node.id
-                        )))
                         .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .track_scroll(&handle);
-                    div().flex().flex_col().flex_1().min_h_0().child(scroller)
-                } else {
-                    items
-                };
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
-            }
-            "item" => {
-                let selected = (node.parent.as_deref())
-                    .and_then(|id| p.doc.get(id))
-                    .and_then(|list| str_prop(list, "selected"))
-                    == Some(node.id.as_str());
-                let spans = |key: &str| {
-                    node.props
-                        .get(key)
-                        .map(|v| tsp::spans_of(v, theme))
-                        .unwrap_or_default()
-                };
-                let icon = str_prop(node, "icon")
-                    .and_then(|name| self.tsp_icon(p, name, tone.unwrap_or(theme.text_muted)));
-                let detail = spans("detail");
-                let value = spans("value");
-                // The label shortens, never wraps; the value keeps its width at the right.
-                let mut el = div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
+                        .min_w_0()
+                        .truncate()
+                        .text_color(rgb(theme.text_muted))
+                        .child(styled_runs(&detail, theme.text_muted, false, theme)),
+                )
+            })
+            .when(!value.is_empty(), |el| {
+                el.child(div().flex_none().whitespace_nowrap().child(styled_runs(
+                    &value,
+                    theme.text_muted,
+                    false,
+                    theme,
+                )))
+            });
+        // The picked row reads on any card: the selection fill and the accent bar (the
+        // bar's width is reserved on the other rows, so nothing shifts).
+        el = el
+            .border_l(px(theme::TSP_ASK_BAR_WIDTH))
+            .border_color(if selected {
+                rgb(theme.accent).into()
+            } else {
+                gpui::transparent_black()
+            })
+            .when(selected, |el| el.bg(rgb(theme.selected)));
+        if bool_prop(node, "disabled") {
+            el = el.opacity(theme::opacity::SECONDARY);
+        }
+        self.tsp_decorate(el, p, node, Look::Row, selected, cx)
+    }
+    #[inline(never)]
+    fn tsp_tabs(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let active = str_prop(node, "active").unwrap_or("");
+        let items = array_prop(node, "items");
+        let tabs = items.iter().filter_map(|tab| {
+            let id = tab.get("id")?.as_str()?.to_owned();
+            let label = tab
+                .get("label")
+                .map(|l| tsp::spans_of(l, theme))
+                .unwrap_or_default();
+            let (session, list) = (p.session, node.id.clone());
+            let picked = id == active;
+            let tab_id = id.clone();
+            Some(
+                div()
+                    .id(SharedString::from(format!(
+                        "tsp-{}-{}-{id}",
+                        p.session, node.id
+                    )))
                     .px(px(space::S))
                     .py(px(space::XS))
                     .rounded(px(theme::radius::SMALL))
-                    .children(icon)
-                    .child(div().flex_1().min_w_0().truncate().child(styled_runs(
-                        &spans("label"),
-                        theme.text,
-                        false,
-                        theme,
-                    )))
-                    .when(!detail.is_empty(), |el| {
-                        el.child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(rgb(theme.text_muted))
-                                .child(styled_runs(&detail, theme.text_muted, false, theme)),
-                        )
-                    })
-                    .when(!value.is_empty(), |el| {
-                        el.child(div().flex_none().whitespace_nowrap().child(styled_runs(
-                            &value,
-                            theme.text_muted,
-                            false,
-                            theme,
-                        )))
-                    });
-                // The picked row reads on any card: the selection fill and the accent bar (the
-                // bar's width is reserved on the other rows, so nothing shifts).
-                el = el
-                    .border_l(px(theme::TSP_ASK_BAR_WIDTH))
-                    .border_color(if selected {
-                        rgb(theme.accent).into()
-                    } else {
-                        gpui::transparent_black()
-                    })
-                    .when(selected, |el| el.bg(rgb(theme.selected)));
-                if bool_prop(node, "disabled") {
-                    el = el.opacity(theme::opacity::SECONDARY);
-                }
-                self.tsp_decorate(el, p, node, Look::Row, selected, cx)
-            }
-            "tabs" => {
-                let active = str_prop(node, "active").unwrap_or("");
-                let items = array_prop(node, "items");
-                let tabs = items.iter().filter_map(|tab| {
-                    let id = tab.get("id")?.as_str()?.to_owned();
-                    let label = tab
-                        .get("label")
-                        .map(|l| tsp::spans_of(l, theme))
-                        .unwrap_or_default();
-                    let (session, list) = (p.session, node.id.clone());
-                    let picked = id == active;
-                    let tab_id = id.clone();
-                    Some(
-                        div()
-                            .id(SharedString::from(format!(
-                                "tsp-{}-{}-{id}",
-                                p.session, node.id
-                            )))
-                            .px(px(space::S))
-                            .py(px(space::XS))
-                            .rounded(px(theme::radius::SMALL))
-                            .pressable_unless(picked, Look::Chip, theme)
-                            .on_press(
-                                true,
-                                cx.listener(move |shell, _, _, cx| {
-                                    if !tsp::root_owned(&list) {
-                                        shell.tsp_emit(
-                                            session,
-                                            tsp::select_event(&list, &tab_id, false),
-                                            cx,
-                                        );
-                                    }
-                                }),
-                            )
-                            .child(styled_runs(&label, theme.text, false, theme)),
+                    .pressable_unless(picked, Look::Chip, theme)
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, _, _, cx| {
+                            if !tsp::root_owned(&list) {
+                                shell.tsp_emit(
+                                    session,
+                                    tsp::select_event(&list, &tab_id, false),
+                                    cx,
+                                );
+                            }
+                        }),
                     )
-                });
+                    .child(styled_runs(&label, theme.text, false, theme)),
+            )
+        });
+        div()
+            .flex()
+            .gap(px(space::XS))
+            .children(tabs)
+            .into_any_element()
+    }
+    #[inline(never)]
+    fn tsp_badge(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let tone = str_prop(node, "tone").map(|tone| tsp::tone_color(tone, theme));
+        let runs = tsp::node_spans(&node.props, theme);
+        let el = div()
+            .px(px(space::S))
+            .rounded(px(theme::radius::TAG))
+            .bg(rgb(theme.hover))
+            .text_size(font_size::META)
+            .child(styled_runs(
+                &runs,
+                tone.unwrap_or(theme.text_muted),
+                false,
+                theme,
+            ));
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+    #[inline(never)]
+    fn tsp_kbd(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let keys = (node.props.get("keys").and_then(Value::as_array))
+            .map(|keys| {
+                keys.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let el = div()
+            .flex()
+            .gap(px(space::XS))
+            .children(keys.into_iter().map(|key| {
                 div()
-                    .flex()
-                    .gap(px(space::XS))
-                    .children(tabs)
-                    .into_any_element()
-            }
-            "badge" => {
-                let runs = tsp::node_spans(&node.props, theme);
-                let el = div()
-                    .px(px(space::S))
-                    .rounded(px(theme::radius::TAG))
-                    .bg(rgb(theme.hover))
+                    .px(px(space::XS))
+                    .rounded(px(theme::radius::SMALL))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.border))
+                    .font_family(theme.terminal_font_family.clone())
                     .text_size(font_size::META)
-                    .child(styled_runs(
-                        &runs,
-                        tone.unwrap_or(theme.text_muted),
-                        false,
-                        theme,
-                    ));
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
-            }
-            "kbd" => {
-                let keys = (node.props.get("keys").and_then(Value::as_array))
-                    .map(|keys| {
-                        keys.iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let el = div()
-                    .flex()
-                    .gap(px(space::XS))
-                    .children(keys.into_iter().map(|key| {
-                        div()
-                            .px(px(space::XS))
-                            .rounded(px(theme::radius::SMALL))
-                            .border(px(theme::BORDER_WIDTH))
-                            .border_color(rgb(theme.border))
-                            .font_family(theme.terminal_font_family.clone())
-                            .text_size(font_size::META)
-                            .text_color(rgb(theme.text_muted))
-                            .child(key)
-                    }));
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
-            }
-            "icon" => {
-                let icon = str_prop(node, "name")
-                    .and_then(|name| self.tsp_icon(p, name, tone.unwrap_or(theme.text_muted)));
-                self.tsp_decorate(div().children(icon), p, node, Look::Icon, false, cx)
-            }
-            "status" => {
-                // Segments with `side: "right"` sit at the far end; low priority ones are not
-                // dropped on overflow in P1 (the row clips).
-                let (right, left): (Vec<_>, Vec<_>) = p
-                    .doc
-                    .children(&node.id)
-                    .partition(|seg| str_prop(seg, "side") == Some("right"));
-                let draw = |segs: Vec<&Node>, cx: &mut Context<'_, Self>| -> Vec<AnyElement> {
-                    segs.into_iter()
-                        .map(|seg| self.tsp_node(p, seg, cx))
-                        .collect()
-                };
-                let (left, right) = (draw(left, cx), draw(right, cx));
-                let mut el = div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .overflow_hidden()
-                    .children(left);
-                if !right.is_empty() {
-                    el = el.child(div().flex_1()).children(right);
-                }
-                if grows(node) {
-                    el = el.flex_1();
-                }
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
-            }
-            // seg
-            _ => {
-                let runs = tsp::node_spans(&node.props, theme);
-                let color = tone.unwrap_or(theme.text_muted);
-                let icon = str_prop(node, "icon").and_then(|name| self.tsp_icon(p, name, color));
-                let el = div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::XS))
-                    .text_size(font_size::META)
-                    .children(icon)
-                    .child(styled_runs(&runs, color, false, theme));
-                self.tsp_decorate(el, p, node, Look::Text, false, cx)
-            }
+                    .text_color(rgb(theme.text_muted))
+                    .child(key)
+            }));
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+    #[inline(never)]
+    fn tsp_icon_node(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let tone = str_prop(node, "tone").map(|tone| tsp::tone_color(tone, theme));
+        let icon = str_prop(node, "name")
+            .and_then(|name| self.tsp_icon(p, name, tone.unwrap_or(theme.text_muted)));
+        self.tsp_decorate(div().children(icon), p, node, Look::Icon, false, cx)
+    }
+    #[inline(never)]
+    fn tsp_status(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        // Segments with `side: "right"` sit at the far end; low priority ones are not
+        // dropped on overflow in P1 (the row clips).
+        let (right, left): (Vec<_>, Vec<_>) = p
+            .doc
+            .children(&node.id)
+            .partition(|seg| str_prop(seg, "side") == Some("right"));
+        let draw = |segs: Vec<&Node>, cx: &mut Context<'_, Self>| -> Vec<AnyElement> {
+            segs.into_iter()
+                .map(|seg| self.tsp_node(p, seg, cx))
+                .collect()
+        };
+        let (left, right) = (draw(left, cx), draw(right, cx));
+        self.tsp_status_el(p, node, left, right, cx)
+    }
+
+    #[inline(never)]
+    fn tsp_status_el(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        left: Vec<AnyElement>,
+        right: Vec<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let mut el = div()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .overflow_hidden()
+            .children(left);
+        if !right.is_empty() {
+            el = el.child(div().flex_1()).children(right);
         }
+        if grows(node) {
+            el = el.flex_1();
+        }
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+    /// seg
+    #[inline(never)]
+    fn tsp_seg(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let tone = str_prop(node, "tone").map(|tone| tsp::tone_color(tone, theme));
+        let runs = tsp::node_spans(&node.props, theme);
+        let color = tone.unwrap_or(theme.text_muted);
+        let icon = str_prop(node, "icon").and_then(|name| self.tsp_icon(p, name, color));
+        let el = div()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .text_size(font_size::META)
+            .children(icon)
+            .child(styled_runs(&runs, color, false, theme));
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
     }
 }
 
@@ -1717,114 +1862,166 @@ impl Shell {
 
     /// spinner, elapsed, progress, rate, meter, effort: redrawn on the status tick (ADR 0086).
     fn tsp_live(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
-        let theme = p.theme;
-        let tone = str_prop(node, "tone").map(|tone| tsp::tone_color(tone, theme));
-        let label = |key: &str| {
-            node.props
-                .get(key)
-                .map(|v| tsp::spans_of(v, theme))
-                .unwrap_or_default()
-        };
         let el = match node.kind.as_str() {
-            "spinner" => div()
-                .flex()
-                .items_center()
-                .gap(px(space::S))
-                .child(loading_dots(
-                    p.now,
-                    rgb(tone.unwrap_or(theme.status_working)),
-                ))
-                .child(styled_runs(&label("label"), theme.text_muted, false, theme)),
-            "elapsed" => {
-                let age = node.props.get("age").and_then(Value::as_u64).unwrap_or(0);
-                let stopped = node.props.get("stopped").and_then(Value::as_u64);
-                let since = {
-                    let mut seen = p.ui.elapsed_seen.borrow_mut();
-                    let entry = seen.entry(node.id.clone()).or_insert((age, p.now));
-                    if entry.0 != age {
-                        *entry = (age, p.now);
-                    }
-                    u64::try_from(p.now - entry.1).unwrap_or(0)
-                };
-                let text = tsp::elapsed_label(tsp::elapsed_ms(age, stopped, since));
-                div()
-                    .font_family(theme.terminal_font_family.clone())
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child(text)
-            }
-            "progress" => div()
-                .flex()
-                .items_center()
-                .gap(px(space::S))
-                .child(Self::tsp_bar(
-                    p,
-                    num_prop(node, "value"),
-                    tone.unwrap_or(theme.accent),
-                ))
-                .child(styled_runs(&label("label"), theme.text_muted, false, theme)),
-            "rate" => {
-                let text = tsp::rate_label(
-                    num_prop(node, "value").unwrap_or(0.0),
-                    str_prop(node, "unit").unwrap_or(""),
-                );
-                div()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child(text)
-            }
-            // A timeout ring (the ask card): a ring with the seconds left. The arc is not drawn.
-            "meter" if str_prop(node, "style") == Some("ring") => div()
-                .size(px(theme::TSP_RING_SIZE))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(theme.accent))
-                .text_size(font_size::META)
-                .child(styled_runs(&label("label"), theme.text_muted, false, theme)),
-            "meter" => {
-                // bar, blocks and segmented all draw as a bar in P1.
-                let value = num_prop(node, "value");
-                let color = tsp::tone_color(
-                    tsp::meter_tone(value.unwrap_or(0.0), node.props.get("thresholds")),
-                    theme,
-                );
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .child(Self::tsp_bar(p, value, color))
-                    .child(div().text_size(font_size::META).child(styled_runs(
-                        &label("label"),
-                        theme.text_muted,
-                        false,
-                        theme,
-                    )))
-            }
-            // effort
-            _ => {
-                let filled = tsp::effort_steps(str_prop(node, "level").unwrap_or(""));
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::XS))
-                    .children((0..4).map(move |i| {
-                        div()
-                            .w(px(space::XS))
-                            .h(px(space::M))
-                            .rounded(px(theme::radius::SMALL))
-                            .bg(rgb(if i < filled {
-                                theme.accent
-                            } else {
-                                theme.divider
-                            }))
-                    }))
-            }
+            "spinner" => Self::tsp_spinner(p, node),
+            "elapsed" => Self::tsp_elapsed(p, node),
+            "progress" => Self::tsp_progress(p, node),
+            "rate" => Self::tsp_rate(p, node),
+            "meter" if str_prop(node, "style") == Some("ring") => Self::tsp_ring(p, node),
+            "meter" => Self::tsp_meter(p, node),
+            _ => Self::tsp_effort(p, node),
         };
         self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+
+    /// The tone of a live node, when it has one.
+    fn live_tone(p: &Paint<'_>, node: &Node) -> Option<u32> {
+        str_prop(node, "tone").map(|tone| tsp::tone_color(tone, p.theme))
+    }
+
+    /// A live node's `label` prop as spans.
+    fn live_label(p: &Paint<'_>, node: &Node) -> Vec<(String, SpanStyle)> {
+        (node.props.get("label"))
+            .map(|v| tsp::spans_of(v, p.theme))
+            .unwrap_or_default()
+    }
+
+    #[inline(never)]
+    fn tsp_spinner(p: &Paint<'_>, node: &Node) -> Div {
+        let theme = p.theme;
+        div()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .child(loading_dots(
+                p.now,
+                rgb(Self::live_tone(p, node).unwrap_or(theme.status_working)),
+            ))
+            .child(styled_runs(
+                &Self::live_label(p, node),
+                theme.text_muted,
+                false,
+                theme,
+            ))
+    }
+
+    #[inline(never)]
+    fn tsp_elapsed(p: &Paint<'_>, node: &Node) -> Div {
+        let theme = p.theme;
+        let age = node.props.get("age").and_then(Value::as_u64).unwrap_or(0);
+        let stopped = node.props.get("stopped").and_then(Value::as_u64);
+        let since = {
+            let mut seen = p.ui.elapsed_seen.borrow_mut();
+            let entry = seen.entry(node.id.clone()).or_insert((age, p.now));
+            if entry.0 != age {
+                *entry = (age, p.now);
+            }
+            u64::try_from(p.now - entry.1).unwrap_or(0)
+        };
+        let text = tsp::elapsed_label(tsp::elapsed_ms(age, stopped, since));
+        div()
+            .font_family(theme.terminal_font_family.clone())
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .child(text)
+    }
+
+    #[inline(never)]
+    fn tsp_progress(p: &Paint<'_>, node: &Node) -> Div {
+        let theme = p.theme;
+        div()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .child(Self::tsp_bar(
+                p,
+                num_prop(node, "value"),
+                Self::live_tone(p, node).unwrap_or(theme.accent),
+            ))
+            .child(styled_runs(
+                &Self::live_label(p, node),
+                theme.text_muted,
+                false,
+                theme,
+            ))
+    }
+
+    #[inline(never)]
+    fn tsp_rate(p: &Paint<'_>, node: &Node) -> Div {
+        let theme = p.theme;
+        let text = tsp::rate_label(
+            num_prop(node, "value").unwrap_or(0.0),
+            str_prop(node, "unit").unwrap_or(""),
+        );
+        div()
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .child(text)
+    }
+
+    /// A timeout ring (the ask card): a ring with the seconds left. The arc is not drawn.
+    #[inline(never)]
+    fn tsp_ring(p: &Paint<'_>, node: &Node) -> Div {
+        let theme = p.theme;
+        div()
+            .size(px(theme::TSP_RING_SIZE))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.accent))
+            .text_size(font_size::META)
+            .child(styled_runs(
+                &Self::live_label(p, node),
+                theme.text_muted,
+                false,
+                theme,
+            ))
+    }
+
+    #[inline(never)]
+    fn tsp_meter(p: &Paint<'_>, node: &Node) -> Div {
+        let theme = p.theme;
+        // bar, blocks and segmented all draw as a bar in P1.
+        let value = num_prop(node, "value");
+        let color = tsp::tone_color(
+            tsp::meter_tone(value.unwrap_or(0.0), node.props.get("thresholds")),
+            theme,
+        );
+        div()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .child(Self::tsp_bar(p, value, color))
+            .child(div().text_size(font_size::META).child(styled_runs(
+                &Self::live_label(p, node),
+                theme.text_muted,
+                false,
+                theme,
+            )))
+    }
+
+    #[inline(never)]
+    fn tsp_effort(p: &Paint<'_>, node: &Node) -> Div {
+        let theme = p.theme;
+        let filled = tsp::effort_steps(str_prop(node, "level").unwrap_or(""));
+        div()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .children((0..4).map(move |i| {
+                div()
+                    .w(px(space::XS))
+                    .h(px(space::M))
+                    .rounded(px(theme::radius::SMALL))
+                    .bg(rgb(if i < filled {
+                        theme.accent
+                    } else {
+                        theme.divider
+                    }))
+            }))
     }
 }
 
@@ -2036,28 +2233,51 @@ fn todo_mark(mark: tsp::ItemMark, color: u32) -> AnyElement {
 impl Shell {
     /// `checklist`: the hud chip with its popover, the `full` card, the `reminder` notice.
     fn tsp_checklist(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
-        let theme = p.theme;
         let list = tsp::Checklist::from_props(&node.props);
         match list.mode {
             tsp::ChecklistMode::Hud => self.tsp_todo_hud(p, node, &list, cx),
-            tsp::ChecklistMode::Full => div()
-                .p(px(space::M))
-                .rounded(px(theme::radius::MEDIUM))
-                .bg(rgb(theme.surface_raised))
-                .child(self.tsp_phases(p, node, &list, cx))
-                .into_any_element(),
-            tsp::ChecklistMode::Reminder => div()
-                .flex()
-                .flex_col()
-                .gap(px(space::S))
-                .children(
-                    list.note
-                        .as_ref()
-                        .map(|note| div().text_color(rgb(theme.text_muted)).child(note.clone())),
-                )
-                .child(self.tsp_phases(p, node, &list, cx))
-                .into_any_element(),
+            tsp::ChecklistMode::Full => self.tsp_checklist_full(p, node, &list, cx),
+            tsp::ChecklistMode::Reminder => self.tsp_checklist_reminder(p, node, &list, cx),
         }
+    }
+
+    #[inline(never)]
+    fn tsp_checklist_full(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        list: &tsp::Checklist,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        div()
+            .p(px(space::M))
+            .rounded(px(theme::radius::MEDIUM))
+            .bg(rgb(theme.surface_raised))
+            .child(self.tsp_phases(p, node, list, cx))
+            .into_any_element()
+    }
+
+    #[inline(never)]
+    fn tsp_checklist_reminder(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        list: &tsp::Checklist,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .children(
+                list.note
+                    .as_ref()
+                    .map(|note| div().text_color(rgb(theme.text_muted)).child(note.clone())),
+            )
+            .child(self.tsp_phases(p, node, list, cx))
+            .into_any_element()
     }
 
     /// The phases and their items (the `full` card, the `reminder` and the popover).
@@ -2291,6 +2511,11 @@ impl Shell {
             .into_iter()
             .map(|child| self.tsp_node(p, child, cx))
             .collect();
+        Self::tsp_status_hud_el(left, right)
+    }
+
+    #[inline(never)]
+    fn tsp_status_hud_el(left: Vec<AnyElement>, right: Vec<AnyElement>) -> AnyElement {
         div()
             .flex()
             .items_center()
@@ -2875,84 +3100,113 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         use tsp::AskLook;
-        let theme = p.theme;
         match look {
             // The card is on `surface`, so the picked row (`surface_raised`) and the active tab
             // (`card`) show on it.
             // A hidden card is one row: "Question ..", Skip and Show.
-            AskLook::Hidden => div()
-                .flex()
-                .flex_col()
-                .px(px(space::M))
-                .py(px(space::S))
-                .min_w_0()
-                .rounded(px(theme::radius::MEDIUM))
-                .bg(rgb(theme.surface))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(theme.border))
-                .children(self.tsp_children(p, node, cx))
-                .into_any_element(),
-            AskLook::Card => div()
-                .flex()
-                .flex_col()
-                .gap(px(space::M))
-                .p(px(space::M))
-                .min_w_0()
-                .rounded(px(theme::radius::MEDIUM))
-                .bg(rgb(theme.surface))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(theme.border))
-                .children(self.tsp_children(p, node, cx))
-                .into_any_element(),
-            AskLook::Head => div()
-                .flex()
-                .items_center()
-                .children(self.tsp_children(p, node, cx))
-                .into_any_element(),
+            AskLook::Hidden => self.tsp_ask_card(p, node, true, cx),
+            AskLook::Card => self.tsp_ask_card(p, node, false, cx),
+            AskLook::Head => Self::tsp_ask_head(self.tsp_children(p, node, cx)),
             AskLook::Tabs => self.tsp_ask_tabs(p, node, cx),
-            AskLook::Question => {
-                let text = str_prop(node, "text").unwrap_or("");
-                div()
-                    .child(styled_runs_w(
-                        &[(text.to_owned(), SpanStyle::default())],
-                        theme.text,
-                        false,
-                        weight::SEMIBOLD,
-                        theme,
-                    ))
-                    .into_any_element()
-            }
-            AskLook::Options => div()
-                .flex()
-                .flex_col()
-                .gap(px(space::XS))
-                .children(self.tsp_children(p, node, cx))
-                .into_any_element(),
+            AskLook::Question => Self::tsp_ask_question(p, node),
+            AskLook::Options => Self::tsp_ask_options(self.tsp_children(p, node, cx)),
             AskLook::Choice | AskLook::Check | AskLook::Other | AskLook::OtherCheck => {
                 self.tsp_ask_choice(p, node, look, cx)
             }
             AskLook::Preview => self.tsp_text(p, node, cx),
             AskLook::Answers => self.tsp_data(p, node, cx),
             AskLook::Actions => self.tsp_layout(p, node, cx),
-            AskLook::Notice => {
-                let runs = tsp::node_spans(&node.props, theme);
-                div()
-                    .text_size(font_size::META)
-                    .child(styled_runs(&runs, theme.text_muted, false, theme))
-                    .into_any_element()
-            }
-            AskLook::Summary => {
-                let runs = tsp::node_spans(&node.props, theme);
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(font_size::META)
-                    .child(styled_runs(&runs, theme.text_muted, false, theme))
-                    .into_any_element()
-            }
+            AskLook::Notice => Self::tsp_ask_notice(p, node),
+            AskLook::Summary => Self::tsp_ask_summary(p, node),
             AskLook::Button => self.tsp_ask_button(p, node, cx),
         }
+    }
+
+    #[inline(never)]
+    fn tsp_ask_head(kids: Vec<AnyElement>) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .children(kids)
+            .into_any_element()
+    }
+
+    #[inline(never)]
+    fn tsp_ask_options(kids: Vec<AnyElement>) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(space::XS))
+            .children(kids)
+            .into_any_element()
+    }
+
+    #[inline(never)]
+    fn tsp_ask_notice(p: &Paint<'_>, node: &Node) -> AnyElement {
+        let theme = p.theme;
+        let runs = tsp::node_spans(&node.props, theme);
+        div()
+            .text_size(font_size::META)
+            .child(styled_runs(&runs, theme.text_muted, false, theme))
+            .into_any_element()
+    }
+
+    /// The ask card; a hidden one is a single row.
+    #[inline(never)]
+    fn tsp_ask_card(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        hidden: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let kids = self.tsp_children(p, node, cx);
+        Self::tsp_ask_card_el(p, hidden, kids)
+    }
+
+    #[inline(never)]
+    fn tsp_ask_card_el(p: &Paint<'_>, hidden: bool, kids: Vec<AnyElement>) -> AnyElement {
+        let theme = p.theme;
+        let el = div().flex().flex_col().min_w_0();
+        let el = if hidden {
+            el.px(px(space::M)).py(px(space::S))
+        } else {
+            el.gap(px(space::M)).p(px(space::M))
+        };
+        el.rounded(px(theme::radius::MEDIUM))
+            .bg(rgb(theme.surface))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .children(kids)
+            .into_any_element()
+    }
+
+    #[inline(never)]
+    fn tsp_ask_question(p: &Paint<'_>, node: &Node) -> AnyElement {
+        let theme = p.theme;
+        let text = str_prop(node, "text").unwrap_or("");
+        div()
+            .child(styled_runs_w(
+                &[(text.to_owned(), SpanStyle::default())],
+                theme.text,
+                false,
+                weight::SEMIBOLD,
+                theme,
+            ))
+            .into_any_element()
+    }
+
+    #[inline(never)]
+    fn tsp_ask_summary(p: &Paint<'_>, node: &Node) -> AnyElement {
+        let theme = p.theme;
+        let runs = tsp::node_spans(&node.props, theme);
+        div()
+            .flex_1()
+            .min_w_0()
+            .truncate()
+            .text_size(font_size::META)
+            .child(styled_runs(&runs, theme.text_muted, false, theme))
+            .into_any_element()
     }
 
     /// The question tabs: chips, the active one on the `card` fill. A click selects that tab
@@ -3035,42 +3289,7 @@ impl Shell {
                 .map(|v| tsp::spans_of(v, theme))
                 .unwrap_or_default()
         };
-        let size = theme::rems_px(theme::ICON_SIZE_SMALL);
-        let mark = if look.boxed() {
-            div()
-                .size(size)
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(theme::radius::SMALL))
-                .when(filled, |el| {
-                    el.bg(rgb(theme.accent)).child(icon_svg(
-                        Icon::Check,
-                        theme::ICON_SIZE_SMALL,
-                        theme.on_accent,
-                    ))
-                })
-                .when(!filled, |el| {
-                    el.border(px(theme::BORDER_WIDTH))
-                        .border_color(rgb(theme.text_muted))
-                })
-        } else {
-            div()
-                .size(size)
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(if filled {
-                    theme.accent
-                } else {
-                    theme.text_muted
-                }))
-                .when(filled, |el| el.child(status_dot(theme.accent, false)))
-        };
+        let mark = Self::tsp_choice_mark(theme, look.boxed(), filled);
         let detail = spans("detail");
         let value = spans("value");
         let el = div()
@@ -3125,6 +3344,47 @@ impl Shell {
             });
         // Click selects, double click activates (`click_event` of an item in a list).
         self.tsp_decorate(el, p, node, Look::Row, selected, cx)
+    }
+
+    /// The radio (or check box) of an option.
+    #[inline(never)]
+    fn tsp_choice_mark(theme: &Theme, boxed: bool, filled: bool) -> Div {
+        let size = theme::rems_px(theme::ICON_SIZE_SMALL);
+        if boxed {
+            div()
+                .size(size)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(theme::radius::SMALL))
+                .when(filled, |el| {
+                    el.bg(rgb(theme.accent)).child(icon_svg(
+                        Icon::Check,
+                        theme::ICON_SIZE_SMALL,
+                        theme.on_accent,
+                    ))
+                })
+                .when(!filled, |el| {
+                    el.border(px(theme::BORDER_WIDTH))
+                        .border_color(rgb(theme.text_muted))
+                })
+        } else {
+            div()
+                .size(size)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(if filled {
+                    theme.accent
+                } else {
+                    theme.text_muted
+                }))
+                .when(filled, |el| el.child(status_dot(theme.accent, false)))
+        }
     }
 
     /// `omp.btn`: a pill in the card's bottom row. `tone: accent` is `accent` with `on_accent`
