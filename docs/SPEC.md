@@ -18,8 +18,8 @@
 - §10 UI: layout, workspaces & terminals
 - §11 UI: per-session status
 - §12 UI: Markdown review
-- §12A UI: Files (tree and Editor)
-- §12B UI: Git (right panel tab and Diff view)
+- §12A UI: Files (tree and file pane)
+- §12B UI: Git (right panel tab and Diff pane)
 - §13 UI: keyboard shortcuts
 - §14 UI: visual design system
 - §15 Non-functional requirements
@@ -64,7 +64,7 @@ mid-range machine. Windows native is first-class; Linux and macOS are supported.
 
 **Non-goals**
 
-- Not an IDE: no LSP, completion or multi-cursor. The Editor view has a plain editor (ADR 0028); diffs are read-only; bigger edits happen in Zed.
+- Not an IDE: no LSP, completion or multi-cursor. A file pane has a plain editor (ADR 0028); diffs are read-only; bigger edits happen in Zed.
 - No native mobile app, cloud sync or user accounts. A browser on the user's own tailnet can watch and answer sessions through `mk web` (ADR 0052). Optional phone notifications (§20.0 `[web] push`, ADR 0067) are the other exception to "no cloud" and are described below.
 - No GitHub/Linear integration in v1.
 - Mkrew never calls LLM APIs itself; it only runs CLI agents the user installed. One exception:
@@ -280,7 +280,7 @@ CREATE TABLE terminal_tab (
   project_id TEXT NOT NULL REFERENCES project(id),
   title      TEXT NOT NULL,
   position   REAL NOT NULL,
-  layout     TEXT NOT NULL               -- JSON split tree, leaves are session ids
+  layout     TEXT NOT NULL               -- JSON split tree; leaves are sessions, files or the diff (ADR 0108)
 );
 
 -- migrations/0003_session_state.sql (M3, ADR 0003)
@@ -346,6 +346,9 @@ v2 migrations 0008 (M11) and 0009 (M13) are listed in §20; `0010_session_interr
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
 is the first child's share; every split has exactly two children; `null` = a tab without panes.
+Leaves are sessions, files or the diff (ADR 0108): `{"session": "<ulid>", "chat": true}` (`chat` optional), `{"file": "src/a.rs", "md": "split", "preview": true}` (`md` and `preview` optional; the path is relative to the workspace root with `/`, or absolute for a note in an absolute notes folder) and `{"diff": true}`.
+A key (a session, a file path, the diff) appears at most once in a tab, and a file or the diff at most once per workspace.
+The daemon reads only the leaves with a `session` key (`cut`, `layout_sessions`) and keeps the others as they are; a leaf the UI cannot parse is dropped with a warning and the rest of the tab loads.
 
 ```json
 {"split":"vertical","ratio":0.5,"children":[
@@ -598,9 +601,9 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.resume` | `session_id`, `tab_id?` | `SessionSpawnResult` — relaunches an exited agent session into its conversation with the profile's `resume` command, as a new session (same title, color, pin, plan, size; a task's session stays the task's, in its worktree); placed where the old pane still is, else into `tab_id` when that tab is empty (the client places it otherwise). `invalid_state` while the session is live, for a shell, without `native_session_id` or `resume`, in an archived workspace, or while a live session has the same `native_session_id` or task (ADR 0055) |
 | `session.link_plan` | `session_id`, `path?` (a `.md` file, absolute or project-relative; `null` unlinks) | the Session (also `session.updated`) — live sessions only (`invalid_state`/`not_found` otherwise); `invalid_request` when the file is not `.md`, missing, a folder, over 2 MiB or not UTF-8; the daemon then watches that one file (ADR 0039) |
 | `session.plan` | `project_id` | `[{session_id, name, done, total, items[], error?}]` of the project's live sessions with a plan (the last announced checklist, for a client that connects later) |
-| `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab and removes every session with a pane in it, like `session.remove`; no `tab` event, ADR 0041) |
+| `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab and removes every session with a session leaf in it (file and diff leaves have nothing to remove), like `session.remove`; no `tab` event, ADR 0041) |
 | `tab.pin` | `tab_id`, `pinned` | TerminalTab, also broadcast as `tab.updated`; `position` is left alone, so unpinning puts the tab back |
-| `tab.set_layout` | `tab_id`, `layout` | ok |
+| `tab.set_layout` | `tab_id`, `layout` | ok (the daemon stores the JSON as given and validates nothing; leaves are sessions, files or the diff, §5; `cut` and `layout_sessions` read only session leaves) |
 | `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`omp`/`copilot`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
 | `agent.profiles` | – | AgentProfile[] (each with `installed`: its program, or the OS shell for a shell without `command`, is found on PATH) + parse errors |
 | `slash.list` | `profile_id`, `project_id`, `worktree_task_id?` | `cli?` (absent when the profile's CLI is unknown, then `items` is empty), `items[]` (`name` without `/`, `description`, `argument_hint?`, `source`: `built_in`, `project`, `user`, `managed`, `{"plugin": name}` or `profile`; `group?` on the omp `skill:` row), `errors[]` (files that could not be read); the `/` commands of the profile's agent CLI in the project folder, or the task's worktree, read on the daemon's machine |
@@ -609,9 +612,10 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `comment.list/create/reply/resolve/reopen` | `file_path`, `start_line`, `end_line`, `quote`, `body` | DocComment (every comment carries `context`: `doc` (default) or `diff`, replies = their root's; `list`: `project_id` + `file_path?` + `context?` → DocComment[], roots and replies oldest first; `create`: `project_id`, 1-based inclusive lines, `context?` (`diff` = new-side lines of a diff); `reply`: `comment_id`, `body`, `mkrew_session_id?` (set by `mk comment reply` = agent author); `resolve`/`reopen`: `comment_id`). Ids are `c_` + ULID; the prefix is optional when parsing |
 | `comment.send_to_agent` | `comment_ids[]`, `session_id` | the thread roots, now `sent` (`sent_to`, `sent_snapshot` = file content), request order; reply ids stand for their thread; all on one file of the live session's project and of one `context` (`diff` → the prompt asks to "Fix the code in <file>" instead of "Update <file>", without "Only edit this file"). The §12 prompt is queued like `session.send` (submit); multi-line sends are wrapped as a bracketed paste when the program enabled mode 2004 |
 | `fs.list` | `project_id`, `dir`, `show_ignored` | children (lazy) with git status |
-| `fs.read` | `project_id`, `path`, `index_text?` (bool) | content (≤ 2 MB), binary flag, language, `hash?` (opaque, set with `content`), `index_text?` (asked for: the file's text in the git index, ADR 0047) |
-| `fs.write` | `project_id`, `path`, `content`, `expected_hash` | `saved`, `hash` — writes an existing file (≤ 2 MB text, in place) only if it still hashes to `expected_hash`; else `saved: false`, nothing written, `hash` = the disk's (ADR 0028) |
+| `fs.read` | `project_id`, `path`, `index_text?` (bool) | content (≤ 2 MB), binary flag, language, `hash?` (opaque, set with `content`), `index_text?` (asked for: the file's text in the git index, ADR 0047); `path` is relative to the root, or an absolute path inside the daemon's absolute notes folder (`[notes] folder`, normalized, no `..`; ADR 0108); any other absolute path is refused as before |
+| `fs.write` | `project_id`, `path`, `content`, `expected_hash` | `saved`, `hash` — writes an existing file (≤ 2 MB text, in place) only if it still hashes to `expected_hash`; else `saved: false`, nothing written, `hash` = the disk's (ADR 0028); `path` follows the same rule as `fs.read`: root-relative, or absolute inside the notes folder (ADR 0108) |
 | `fs.create` | `project_id`, `worktree_task_id?`, `dir?` (`/`-separated, `""` = the root), `name` (may hold `/` or `\`: missing folders are made), `folder` | `path` of the new empty file or folder, relative to the root. `already_exists` for an existing entry; `invalid_request` for an empty name, `.`/`..`/drive parts, or a `dir`/`name` outside the root or inside `.git` (checked before anything is created) |
+| `fs.new_note` | `project_id`, `worktree_task_id?` | `FsCreated { path }` - creates an empty `note-YYYYMMDD-HHMMSS.md` (local time; `-2`, `-3`, ... while the name exists, so `already_exists` is never answered) in the daemon's `[notes] folder` (§20.0: empty = the root of the project or task worktree, relative = under it, absolute = as is), making missing folders; `path` is relative to the root when the note is inside it, else absolute. `invalid_request` (the message names the reason) for a bad folder setting (`..`, `~`, an unusable drive, not a folder) and for a create failure (the OS message: no write access, disk full); `internal` when the blocking task fails to join; nothing is created on an error (ADR 0108) |
 | `fs.ignore` | `project_id`, `worktree_task_id?`, `path`, `is_dir` | `null` — appends `/path` (`/path/` for a folder) to the root `.gitignore`, creating it, keeping its line endings, not twice. `invalid_request` for a path outside the root or inside `.git` |
 | `fs.find` | `project_id`, `query`, `limit` | fuzzy file matches |
 | `fs.search` | `project_id`, `worktree_task_id?`, `query`, `regex?` (default false), `limit?` (default 200) | `{hits: SearchHit[], truncated}`; a `SearchHit` is `{path, line, preview, ranges: [[start, end]]}` (byte ranges in `preview`, at most 200 chars of the line, trimmed); text files up to 2 MiB under the root, smart case (case-insensitive unless the query has an upper-case letter), `invalid_request` for an invalid regex; runs beside the read loop, and a newer `fs.search` on the same connection stops an older one, which answers `invalid_state` |
@@ -706,6 +710,8 @@ Protocol 56 (ADR 0103): `git.discard` takes `hunk`.
 Protocol 57 (ADR 0105): `session.transcript` result gains `recap`.
 
 Protocol 58 (ADR 0106): event `machine.stats` and `MachineStats` removed; `agent.limits`, `limits.get` and `limits.report` stay.
+
+Protocol 60 (ADR 0108): a tab layout's leaves can be files (`{"file": "..."}`) and the diff (`{"diff": true}`) as well as sessions; request `fs.new_note`; `fs.read` and `fs.write` accept an absolute path inside the daemon's notes folder.
 
 Protocol 41: `session.move` and `Session.position`.
 
@@ -822,7 +828,7 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ ◧ A api ▾ │[Editor*][Diff*]│ [▣ ● tab ✕] [>_ ○ tab ✕] +▾   ⚠ Claude 5h 84% (● 2 running ▾) ▦ ▤ ◫ ◨ ─ □ ✕ │
+│ ◧ A api ▾ │ [▣ ● tab ✕] [>_ ○ tab ✕] [▤ a.rs ● ✕] [± Diff ✕] +  ⚠ Claude 5h 84% (● 2 running ▾) ▦ ▤ ◫ ◨ ─ □ ✕ │
 ├──────────────┬────────────────────────────────────────────────────────────────────────┤
 │ [⌕ Filter… /]⇲+│ ┌ the terminal pane, no header ──────────── ⤢ Pane zoomed ┐              │
 │ [All│Working│Needs you]│                                                              │
@@ -837,8 +843,8 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 ```
 ADR 0054 simplified this screen: one place per piece of information, color for status only,
 empty things hidden, detail on hover / in menus. It removed the old status bar; ADR 0102 added a thin widget bar along the bottom and ADR 0106 removed it again: there is no bottom bar, the terminal tabs live in the title bar, and the agents' limits show as a chip in it (see "Limits chip" below).
-The right panel (below) is a third column right of Terminals, the Editor and the Diff while open.
-Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the title bar's tab area only while a file tab or a diff is open.
+The right panel (below) is a third column right of Terminals.
+Its tab row is `[Files│Session│Git]`; files and the diff open as tabs and panes of Terminals (ADR 0108), so the title bar has no Editor or Diff chip.
 
 - **Sidebar:** workspaces; expanding one lists its live sessions with status (§11); a session that
   exited leaves the list and its pane leaves its tab (ADR 0033; History keeps it).
@@ -909,17 +915,26 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
 - **Reorder:** drag a workspace card in the full sidebar to move it among the pinned or the
   unpinned workspaces (`project.update` `position`, the group numbered `1..=n`; ADR 0069), with
   the same drag look as tabs and rows; off while filtering and in the compact rail.
-- **Views per workspace:** Terminals (a click on any terminal tab), Board and Docs (icons in the title bar, only with `[features] docs` for Docs; a second click returns to Terminals), Editor (a chip, only while a file tab is open), Diff (a chip, only while a diff is open).
+- **Views per workspace:** Terminals (a click on any tab: terminal, file or diff), Board and Docs (icons in the title bar, only with `[features] docs` for Docs; a second click returns to Terminals).
+  There is no Editor view and no Diff view: files and the diff are tabs and panes of Terminals (ADR 0108).
 - **Title bar** (42 px, ADR 0027, ADR 0034, ADR 0054, ADR 0106), one bar across both columns, left to right:
   in a machine window (ADR 0089) the machine chip (below); the sidebar toggle `◧`; the workspace avatar + name ▾ (a dropdown of the workspaces, click switches, plus "Add workspace…");
   the tab area; a drag space; the right group; on Windows the window controls.
-  A 1 px rule (`title_rule`) sets the groups apart: between the left group and the tab area, between `+ ▾` and the drag space, and before the right group (the one before the window controls stays).
+  A 1 px rule (`title_rule`) sets the groups apart: between the left group and the tab area, between the `+` row and the drag space, and before the right group (the one before the window controls stays).
   A rule is never a drag or press target; a detached window draws the rules where its groups exist (no rule for a missing left group).
-  - **Tab area:** the Editor and Diff chips (icon, name, × that closes all file tabs or the diff; only while open; a click shows the view), a 1 px rule, the pinned tabs, a rule, the other tabs, and `+ ▾` (below).
-    The area scrolls sideways when the tabs do not fit; the active tab is scrolled into view; a chip shrinks to `TAB_MIN_WIDTH` before the area scrolls, `TAB_TITLE_MAX_WIDTH` is its maximum; `+ ▾` stays visible after the scrolled tabs.
+  - **Tab area:** the pinned tabs, a 1 px rule, the other tabs (terminal tabs, file tabs and the Diff tab alike), and the `+` row (below).
+    The area scrolls sideways when the tabs do not fit; the active tab is scrolled into view; a chip shrinks to `TAB_MIN_WIDTH` before the area scrolls, `TAB_TITLE_MAX_WIDTH` is its maximum; the `+` row stays visible after the scrolled tabs.
     Only the drag space moves the window, so a click on a tab never does.
     A tab shows a status icon, pane icons (see Terminals below), 📌 when pinned, its title and ×; the active tab has a solid `tab_active` fill (never equal to `chrome`, a `theme::problems()` rule) with radius 8 and no border, the others are transparent with muted text and a hover fill; a click activates the tab and shows Terminals.
-  - **`+ ▾`:** one row per installed agent profile (the workspace's default first with ✓ and Ctrl+Shift+A), "Agent" when none is listed, Shell (Ctrl+Shift+T), Empty tab; each row opens a new tab and shows Terminals; while a session starts the button shows the starting spinner.
+  - **`+` row** (ADR 0108): the button is a `+`.
+    On hover or keyboard focus it grows to the right, on the same line, in 150 ms ease-out (at once with reduce motion), into `[+] [default agent] [default terminal] [new note] [▾]`.
+    It collapses 150 ms after the pointer leaves both the `+` and the row, so the pointer can travel to the items.
+    The items are the default agent profile's logo (tooltip "New <agent> tab" with Ctrl+Shift+A; hidden when no profile is installed), `square-terminal` (tooltip "New <shell> tab" with Ctrl+Shift+T; the workspace's default shell), `notebook-pen` (tooltip "New note" with Ctrl+Alt+N) and `▾`.
+    A click on an agent, shell or note item opens a new tab right after the active one; a drag starts the same thing as a leaf at the drop edge of a pane (see Drops below) or a new tab on the tab area.
+    `▾` (tooltip "More…") opens the menu of before: one row per installed agent profile (the workspace's default first with ✓ and Ctrl+Shift+A), "Agent" when none is listed, Shell (Ctrl+Shift+T), Empty tab; each row opens a new tab; it is not draggable.
+    Keyboard: Tab reaches `+`, ← / → move between the items, Enter picks, Esc collapses.
+    While a session starts the row shows the starting spinner (loading dots) instead.
+    Every item is a `Look::Icon` button with a focus ring.
     Alt+Shift+A and Alt+Shift+S add a pane to the current tab instead.
   - **Right group:** the voice status while the sidebar is hidden, the limits chip (main window, only at 80% or more, see "Limits chip"), the Run pill, the update button (only when an update is known), the toggles of the focused agent pane (below), Board (`SquareKanban`), Docs (`BookOpen`, only with `[features] docs`), Split ▾ (`◫`: Split right, Split down, Equalize panes, layouts, as before; in the main window only while Terminals show, a detached window always has it) and the right panel toggle (`◨`, ADR 0038, ADR 0081).
     Board and Docs show in the accent color while their view is shown.
@@ -971,14 +986,18 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   The arrows, Ctrl+Enter, `a`, `e` and Shift+F10 act on every card of the All workspaces board.
   Show Board (Ctrl+Shift+2) again switches Tasks / Jira, and the card keys walk the Jira rows.
   Shift+F10 on the selected card opens its menu: Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents… (each as its hover button; the buttons stay and call the same functions).
-- **Terminals:** the tabs are in the title bar (above); each tab is a split tree of panes; each pane is a session with no header of its own (ADR 0106): the terminal fills it.
+- **Terminals:** the tabs are in the title bar (above); each tab is a split tree of panes; each pane is a session, a file or the diff (ADR 0108) with no header of its own (ADR 0106): a terminal fills its pane, a file pane shows the editor (§12A) and the diff pane the diff (§12B).
+  A file or the diff opens as a tab right after the active tab, or as a pane when dropped on a pane (below).
+  Panes sit on a frame with an 8 px gap and no border; a stripe at the top edge marks the focused pane, a pane that needs input or a pane color (§14).
+  Each file and the diff exist at most once per workspace, in one pane across all tabs and windows.
   Each tab chip starts with a status icon only when the user should notice (§11): an hourglass in `status-working` while an agent works, a bell in `status-needs-input` when a pane needs input (needs input wins); none for idle, done, exited and starting.
   Then come the pane icons, all 14 px: `square-terminal` in `text-muted` for a shell, `play` in `text-muted` for a run pane, an agent's brand logo (claude, codex, copilot, omp) in its brand color (`brand-claude`, `brand-codex`, `brand-copilot`, `brand-omp`; each 3:1 on `chrome` and `tab-active`, a `theme::problems()` rule), and an agent without a logo its glyph in `text-muted`.
   The active tab shows one icon per pane in pane order, at most three, then `+N`; an inactive tab shows only its focused pane's icon; a tab without panes shows none.
   Next come 📌 when pinned, the title and a ✕ (always on the active tab, on hover for the others); closing never
   activates the tab first.
   The chip's tooltip says the status in words.
-  `+ ▾` (new tab) follows the tabs.
+  A file or diff pane adds its file-type icon or the diff icon (in `text-muted`) to the pane icons, and the tab's title follows the focused pane (§11).
+  The `+` row (below) follows the tabs.
   The split button (title bar, right group) opens
   the layout menu: Split right, Split down, Equalize panes, then the layouts 2 columns, 2 rows,
   3 columns, 1 + 2 and 2 × 2, each with a small drawing and its shortcut (§13). Equalize panes
@@ -999,11 +1018,14 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   among the pinned or the unpinned tabs only; tabs and sidebar rows share one drag look: a small
   title chip follows the pointer, the item stays dim in place and an accent line marks the gap
   it lands in.
-  Drag a tab onto a pane of the shown tab, or a pane by the grip on its top edge (an 8 px strip that shows a grip on hover; only in a split tab) onto
-  another pane, to split that pane: the half under the pointer lights up (the right half when
-  the pointer is further right than down, else the bottom half) and the drop puts the dragged
-  panes there, a tab keeping its layout. A pane moves within its tab or out of another one; an
-  emptied tab closes after both layouts are saved (`tab.set_layout`, then `tab.close`).
+  **Drops** (ADR 0108): a pane has four drop zones, one per edge, and no zone in the middle: the edge nearest the pointer wins (ties: right, then bottom).
+  The half of the pane that the new leaf will take lights up (the accent tint), and the drop splits the pane 50 / 50 there.
+  Every draggable uses them: a file row of the Files tree (opens the file), a `+` row item (starts that agent, shell or note), a tab (merges its panes, keeping its layout) and a pane by the grip on its top edge (an 8 px strip that shows a grip on hover; only in a split tab), which moves the whole leaf, of any kind.
+  A pane or tab dropped on the empty part of the tab area becomes a tab of its own; a file row or a `+` row item dropped there becomes a new tab after the last one.
+  A pane dropped on itself, or a tab on the tab that holds only that pane, does nothing; nothing drops while a dialog is open.
+  A file row dropped on an agent pane's composer inserts the path (§20B.5) and is not accepted by any terminal.
+  A pane moves within its tab or out of another one; an emptied tab closes after both layouts are saved (`tab.set_layout`, then `tab.close`).
+  OS files dropped on a terminal pane type their paths (§20B.5); on a file or diff pane they open as new tabs.
   Sessions are `agent` (from a profile) or `shell` (a shell profile, §6: the workspace's default
   shell, picked in the workspace menu under "Default shell for new panes" like the default agent;
   a new shell pane without one asks the user to pick; ADR 0032).
@@ -1018,16 +1040,16 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   resize sends `session.resize` (nothing reflows its output). Agent panes start with
   `[ui] reading_width` (default `true`); the toggle holds per pane until restart. Shell and run
   panes are always full width.
-- **Right panel** (ADR 0038, ADR 0081, ADR 0084): a column right of the Terminals, Editor and Diff views with
+- **Right panel** (ADR 0038, ADR 0081, ADR 0084): a column right of the Terminals view (the tab's panes) with
   tabs `Files │ Session │ Git` (a click switches the tab; the `Git` tab shows the changed count). The title bar's `◨` and `Ctrl+Shift+Y` hide
   and show it and keep the tab; from the Board or Docs view the key shows Terminals with the
   panel open. `[ui] right_panel` (`"files"`, `"session"`, `"git"` or `"hidden"`, default hidden) remembers
   it across restarts. Drag its left edge to resize (240–560 px, one width for all three tabs, saved as
   `[ui] inspector_width` when the button is released); the terminals lose that width, so an agent
   redraws once. **Files tab:** the file tree of §12A. **Session tab:** the session of the active
-  tab's focused pane, also while the Editor is shown; shown only while `[features] session` is
+  tab's focused pane (nothing for a file or diff pane); shown only while `[features] session` is
   true (default false: the tabs are `Files │ Git` and a saved `"session"` opens on Files).
-  **Git tab:** the Git list (header, Working / Vs. base / History, filter, Changed by, changes, commit box); a file's diff shows in the Diff view (§12B).
+  **Git tab:** the Git list (header, Working / Vs. base / History, filter, Changed by, changes, commit box); a file's diff shows in the Diff pane (§12B).
   **Session card:** agent, title, state + time, the usage of §20E.3 (context
   share, tokens, cache, model; rows without data are left out), **Open transcript** (the agent's
   `.jsonl` in Zed; disabled until the daemon located it) and **Stop** (`session.kill`; a running
@@ -1083,7 +1105,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
   paths, relative (`./src/a.rs`, `crates/x/main.rs`) or absolute (`/home/u/a.rs`,
   `C:\x\a.rs`), with an optional `:line` or `:line:col`. A path is a link only if it names an
   existing file inside the pane's folder (the project folder, or the worktree of the pane's
-  task); it opens in the Editor (§12A) with the caret on that line. Trailing `.,;:!?`,
+  task); it opens in a file pane (§12A) with the caret on that line. Trailing `.,;:!?`,
   unbalanced closing brackets and quotes are not part of a link. `file(12)` (the path before
   the bracket is the link, without the line), `~/…` paths and links wrapped over two rows are
   not detected. Perf: the row text comes from the cached grid, for the hovered row only, while
@@ -1158,12 +1180,12 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are chips in the
 ### Detached windows (ADR 0096)
 
 - A terminal tab moves into a window of its own by dragging its chip outside every Mkrew window (the new window opens at the pointer), with `Shift+F4`, or from the tab menu and the palette.
-- A detached window draws the same title bar (ADR 0106): its tabs as chips with the workspace name in front, Move all back, Split ▾ and the window controls; it has no workspace switcher, `+ ▾`, Board, Docs, Editor and Diff chips, Run pill or limits chip. Below it are the tab's panes.
+- A detached window draws the same title bar (ADR 0106): its tabs as chips with the workspace name in front, Move all back, Split ▾ and the window controls; it has no workspace switcher, Board, Docs, Run pill or limits chip; it has the `+` row (a note goes to the window's workspace). Below it are the tab's panes.
 - Tabs move between windows by dragging their chip onto another window (onto its strip: at the gap under the pointer) or with the tab menu's Move to main window / Move to window: `<tab> - <workspace>` (named by the tab that window shows).
 - Its keys act on its own tab only: tab and pane commands of §13, the palette (its commands only: also Window: Close and Window: Move all tabs back), the context menu, the composer. The `/` and `@` pickers and the prompt picker open in the window of their composer. Turns… opens in the main window. Settings (Ctrl+, or ⌘,) opens in the main window on every OS (not over another dialog, not while reconnecting).
 - Closing a detached window (✕ or Window: Close) closes its tabs (one confirmation for running agents); quitting Mkrew keeps them and reopens the windows on the next start (`<data>/windows.json`).
 - A hidden or minimized detached window detaches its panes like the main window.
-- File tabs stay in the main window (until the Editor part of the spec ships).
+- File and diff tabs tear off like terminal tabs (ADR 0108): a detached window draws file and diff panes from the workspace's store, one pane per file across all windows; opening a file that is open in another window focuses it there and raises that window.
 
 ---
 
@@ -1178,7 +1200,7 @@ The tooltip gives the status in words, the time and the turns, so color is never
 | --- | --- | --- |
 | starting | ◌ | |
 | working | ● a still dot in the working color (no animation, ADR 0086) | elapsed time |
-| needs_input | ? | highlighted pane border, counted in "Needs you" |
+| needs_input | ? | `status-needs-input` stripe at the pane's top edge, counted in "Needs you" |
 | idle | ○ | idle time |
 | done | ✓ | counted in "Needs you" until viewed |
 | exited | ✕ | exit code (History); its sidebar row and pane close (ADR 0033) |
@@ -1198,10 +1220,12 @@ The tooltip gives the status in words, the time and the turns, so color is never
   A tab still named `Terminal` / `Terminal N` shows its focused pane's session title (cut with `…`, full on hover) and follows the focus to another pane.
   A name the user gave the tab always wins.
   A double-click on a default-named tab renames the focused pane, on a named tab the tab.
+  The focused pane decides the chip's title and icon for every kind of leaf (ADR 0108): a session as above; a file shows its file-type icon and file name, `●` while unsaved, and an italic title while it is the preview tab; the Diff pane shows the diff icon and `Diff`.
+  Only a session pane can be renamed: F2 and a double-click on a tab whose focused pane is a file or the diff rename the tab.
   Without a title an agent pane shows the title its agent gave the terminal, e.g. Claude's conversation summary.
   Everywhere a session is named the order is: user title > terminal title > agent name.
-  The active tab has a solid card fill (the Tern chip look); in a split the panes keep only their thin
-  border, the unfocused ones are dimmed. The sidebar session row also puts the badge
+  The active tab has a solid card fill (the Tern chip look); in a split the focused pane has a stripe
+  at its top edge (§14), the unfocused ones are dimmed. The sidebar session row also puts the badge
   before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
   color, ADR 0058); it also shows on board cards and in agent menus.
 - **Chat mode** (ADR 0104): an agent pane whose profile has a readable transcript (Claude, Codex, omp) has a Terminal | Chat toggle in the title bar and `Ctrl+Alt+T` toggles it (palette: "Agent: Toggle chat view").
@@ -1212,7 +1236,7 @@ The tooltip gives the status in words, the time and the turns, so color is never
   A Claude subagent started in the background stays in the tray until its `<task-notification>` arrives.
   Codex tool output is read in the shapes current Codex writes: a JSON string with `metadata.exit_code`, or text with an `Exit code: N` or `Process exited with code N` line before `Output:`.
   The tool and thinking row toggles, the "earlier turns" link and "Answer in terminal" are Tab stops (Enter or Space presses them); PageUp, PageDown, Home, End and the arrows scroll the list, and Esc ends a selection, else returns to the composer.
-  ADR 0105 gives the page a centered column of 760 px with `space::XL` side padding: the prompt is a right-aligned bubble, the agent's text has accent headings and bullet dots, inline code and file paths are pills (a path in a Chat message opens the file in the Editor view at its `:line`), code blocks are cards with a language label and a Copy button, and thinking and tool calls between two texts are one activity row ("Thought for 4s · 3 commands, 2 reads", "Working…" while it runs) that opens to the thinking text and the tool rows.
+  ADR 0105 gives the page a centered column of 760 px with `space::XL` side padding: the prompt is a right-aligned bubble, the agent's text has accent headings and bullet dots, inline code and file paths are pills (a path in a Chat message opens the file in a file pane at its `:line`), code blocks are cards with a language label and a Copy button, and thinking and tool calls between two texts are one activity row ("Thought for 4s · 3 commands, 2 reads", "Working…" while it runs) that opens to the thinking text and the tool rows.
   An omp turn ends with omp's recap line when it is not older than the turn's prompt and the agent is not working.
   The composer is a floating card in the same column (§20B).
   The terminal keeps running underneath and still reports the state.
@@ -1282,7 +1306,7 @@ Only edit this file. When done, for EACH comment run:
 
 ---
 
-## §12A UI: Files (tree and Editor)
+## §12A UI: Files (tree and file pane)
 
 - **Tree** (the right panel's Files tab, ADR 0081; opens with `Ctrl+Shift+3`; its rows drag onto
   panes, §20B.5): lazily loaded per folder, respects `.gitignore` (an
@@ -1291,11 +1315,17 @@ Only edit this file. When done, for EACH comment run:
   folders containing changes. In a workspace with child repositories (ADR 0029) the markers come
   from the project folder's repository and from each child repository the listed folder is in
   (all of them when the root is listed). Updates live when agents create/delete/rename files.
-- **Editor view:** shown by the Editor chip in the title bar's tab area only while a file tab is open. A tree click or Enter,
-  the palette, a terminal link and "New file…" show it (a tree click keeps the keyboard in the
-  tree); `Ctrl+Shift+6` shows it again. Closing the last tab, or switching to another worktree,
-  shows Terminals.
-- **Editor** (the center Editor view; ADR 0028): the opened file with line numbers and syntax highlighting via
+- **File pane** (ADR 0108, replaces the Editor view): an open file is a leaf of a terminal tab's split tree.
+  It is a tab in the title bar's tab area (file-type icon, file name, `●` while unsaved, × to close) or a pane inside the tab in front, inside the same frame, stripe and dim as a terminal pane (§14).
+  There is no Editor view, no Editor chip and no file tab strip.
+  A workspace has at most one pane per file across all its tabs and windows: opening a file that is open focuses its pane (its tab and window come to the front) and jumps to the line.
+  A single click on a file in the tree opens the workspace's **preview tab** (italic title), which the next single click replaces while it is clean; a double click, Enter in the tree, Alt+Enter, an edit, Pin or a drag keeps it.
+  A tree click keeps the keyboard in the tree.
+  Every other open (palette, a terminal link, a Markdown link, a chat path pill, "New file…", Search hits) opens a kept tab right after the active tab.
+  Dragging a tree row onto a pane opens the file as a split at that edge (§10 "Drops").
+  The open files are saved in the tab layout (`{"file": "src/a.rs"}`, plus `md` and `preview`) and come back after a restart in the same place; their text is read when the pane is first drawn.
+  A file deleted on disk shows "This file was removed." with a Close button.
+- **Editor** (the text editor of a file pane; ADR 0028): the opened file with line numbers and syntax highlighting via
   `syntect` (lazy-loaded syntax set; re-highlighted 150 ms after typing stops). A plain editor:
   click places the caret, Shift+click / drag select; arrows (Ctrl = by word), Home/End
   (Ctrl = file), PgUp/PgDn, Backspace/Delete (Ctrl = word), Enter keeps the indent, Tab, Ctrl+A,
@@ -1304,17 +1334,12 @@ Only edit this file. When done, for EACH comment run:
   or binary: a read-only notice and "Open in Zed". A scroll bar on the right shows where the
   view is (only when the file is taller than the view): drag its thumb, or press the track to
   jump there.
-- **Tabs** (ADR 0080): every opened file has a tab above the header (pinned tabs first; the
-  strip scrolls sideways). A single click (tree, Enter, the palette, a terminal link) opens a
-  transient tab (italic) that the next one replaces while it is clean; a double click, an edit,
-  Pin or "New file…" keeps it. `●` marks unsaved text; ✕ (on the active tab and on hover), a
-  middle click, `Ctrl+W` or `Ctrl+Shift+W` closes a tab, asking "Save / Don't save / Cancel"
-  first (Cancel closes nothing); the right neighbour, else the left one, is shown. Right-click:
-  Close, Close others, Close to the right, Close all (these three skip pinned tabs), Pin /
-  Unpin, Copy path. Tabs are dragged within their group (pinned / unpinned). `Ctrl+Tab` /
-  `Ctrl+Shift+Tab` cycle, `Ctrl+Alt+1–9` jump (9 = last). One find bar for the view, searched
-  on the shown tab. `git.changed` reads the shown tab; the others are read when shown. Tabs
-  live in memory only; another worktree starts with none (and shows Terminals).
+- **Closing and tabs** (ADR 0108, replaces the file tab strip of ADR 0080): a file's tab is a tab of the title bar (§10), so pinning, reordering, Ctrl+Tab, Ctrl+Alt+1-9, Rename, Close, Close others, Close to the right and the tab menu work as for terminal tabs.
+  A file is closed with the tab's ×, the tab menu's Close pane, `Ctrl+W` or `Ctrl+Shift+X` (both close the focused file pane) or a middle click on its tab; each asks "Save / Don't save / Cancel" first for a file with unsaved text (Cancel closes nothing).
+  The window's find bar belongs to the shown file pane: one find bar per file pane, searched on that file.
+  `git.changed` reads the files of the shown panes; files of tabs that are not shown are read when shown.
+  Moving a file (drag to an edge, to another tab, tear-off, merge) never asks.
+  Switching the Files view to another worktree closes the workspace's file panes (asking "Save / Don't save / Cancel" about unsaved text first), so a pane never shows a file of a folder the tree no longer shows.
 - **Change gutter** (ADR 0047): right of each line number a thin bar marks how the line differs
   from the file's text in the git index (what the Git tab calls unstaged): added
   (`diff-add-text`), changed (`diff-mod-text`), and a short `diff-del-text` mark at the top of
@@ -1324,9 +1349,9 @@ Only edit this file. When done, for EACH comment run:
   have no bars; the bar column is always there so the text never moves.
 - Unsaved text is never replaced (§2.5). If the file changes on disk meanwhile (an agent), or
   Save finds another version on disk, a banner "Changed on disk — Reload · Keep mine" offers
-  "Reload" (drop your changes) or "Keep mine" (Save overwrites it). Closing a tab, switching
-  to another worktree or closing the window with unsaved changes asks "Save / Don't save /
-  Cancel" (once per unsaved tab). Switching workspace or view keeps them.
+  "Reload" (drop your changes) or "Keep mine" (Save overwrites it). Closing a pane, a tab, a window or a workspace, switching
+  to another worktree or quitting with unsaved changes asks "Save / Don't save /
+  Cancel" (once per unsaved file). Switching workspace or tab keeps them; a preview tab with unsaved edits is kept, not replaced.
 - **Markdown preview:** a `.md` file opens as a rendered preview, by the Docs renderer (§12,
   §14: the same typography tokens for light and dark, highlighted code blocks, ```` ```mermaid ````
   blocks drawn as diagrams, built off the UI thread). The header has a `Preview | Split | Source`
@@ -1348,14 +1373,14 @@ Only edit this file. When done, for EACH comment run:
   unticks it in the source (one undo step, unsaved; refused with a toast while the page is of an
   older text). The preview's links are clickable (Editor and Docs, ADR 0092): `http`, `https`
   and `mailto` open in the browser, `#heading` scrolls to that heading (GitHub anchors), a
-  relative path opens that file of the folder in the Editor (`/path` from the folder root,
+  relative path opens that file of the folder in a file pane (`/path` from the folder root,
   `#L12` at a line); other schemes and paths leaving the folder open nothing (a toast says so).
   GitHub alerts (`> [!NOTE]` / `TIP` / `IMPORTANT` / `WARNING` / `CAUTION`) show a colored bar
   with an icon and title; YAML front matter at the top shows as a bordered card of `key value`
   rows; code blocks show "Copy" on hover. `.md` files also offer "Review in Docs". The page is a virtual
   list (only the blocks on screen are laid out; every block's height is measured once per page)
   with the editor's scroll bar, so long files scroll smoothly; Docs shows its preview the same
-  way. A re-read or edited page keeps the scroll position; another tab (or the same file
+  way. A re-read or edited page keeps the scroll position; another file pane (or the same file
   opened again) starts at the top, and a live font change measures the page again.
 - **Markdown Split view** (ADR 0092): the editor on the left, the live page on the right, a
   divider between them. Dragging the divider resizes both sides (each keeps 20–80 %); a
@@ -1378,8 +1403,8 @@ Only edit this file. When done, for EACH comment run:
   shown folder's `.gitignore`, once), "Open in File Explorer" ("Reveal in Finder" on macOS) and "Open in Zed" (§10). The app
   does these on the local disk; the watcher's `git.changed` lists the tree again. Failures show
   in the sidebar. A click outside or Esc closes the menu.
-  Shift+F10 (⌃⌘M on macOS) opens it on the cursor row (on the active tab's menu while the editor has the keyboard).
-- **Open at a line:** Ctrl+Click on a file path in a terminal (§10) opens that file in the Editor with the
+  Shift+F10 (⌃⌘M on macOS) opens it on the cursor row (on the active tab's menu while a file pane has the keyboard).
+- **Open at a line:** Ctrl+Click on a file path in a terminal (§10) opens that file in a file pane (a new tab, or the pane that already shows it) with the
   caret on the line, scrolled into view. A path in another task's worktree switches to
   that worktree (asking about unsaved text first).
 - **Find & replace** (VS Code style): `Ctrl+F` (also `Ctrl+Shift+F` or "Find" in the header)
@@ -1389,12 +1414,23 @@ Only edit this file. When done, for EACH comment run:
   current match and goes to the next; Ctrl+Alt+Enter (⌥⌘↩ on macOS; in either field) or "Replace all" replaces
   every match as one undo step. Replacing does not save. Esc closes the bar and returns to the
   editor.
+- **New note** (ADR 0108): the `+` row's note button, `Ctrl+Alt+N` (⌥⌘N) and the palette's "Tabs: New note" create a Markdown file in the notes folder and open it in a new tab, kept, in source mode, with the caret in the editor.
+  The daemon makes it (`fs.new_note`, §7): the folder is `[notes] folder` of the daemon's own `settings.toml` (§20.0; empty = the workspace root, relative = under the root, absolute = as is), the name is `note-YYYYMMDD-HHMMSS.md` in local time, `-2`, `-3`, ... is added while the name exists, missing folders are created, the file starts empty.
+  A note inside the root is stored in the layout as a root-relative path, a note in an absolute folder as its absolute path.
+  Dragging the note button onto a pane creates the note and opens it at that edge.
+  An error (no write access, disk full, a folder that cannot be made) shows a toast with the reason and opens nothing.
+  If the notes folder setting changes while a note from the old folder is open, the pane shows the read error with its reason and Close.
 
-## §12B UI: Git (right panel tab and Diff view)
+## §12B UI: Git (right panel tab and Diff pane)
 
 The Git tab of the right panel holds the header, Working / Vs. base / History, the filter and "Changed by", the list and the commit box, as wide as the panel (240-560 px; the filter row wraps).
-The `Diff` view holds the toolbar, unified / split, hunks, the comment margin and Send to agent, and has a chip in the title bar's tab area only while a diff is open.
-A click or Enter opens it; `×`, `Esc` or an emptied list close it; a selection moving by itself keeps it open.
+The Diff pane (ADR 0108) holds the toolbar (file, Unified / Split, Wrap, Viewed, Open in Zed, Discard, Stage file, `…`, ✕), unified / split, hunks, the comment margin and Send to agent.
+It is a leaf of a tab's split tree like a file: a tab of its own in the title bar (diff icon, `Diff`) or a pane next to terminals and files.
+A workspace has at most one Diff pane, across all its tabs and windows; it shows the diff of the Git list's selected file.
+A click or Enter on a file of the Git list opens the Diff pane after the active tab, or focuses it where it is open; ↑ / ↓ in the list move it; `Ctrl+Shift+7` and the palette's "View: Diff" open or focus it.
+The pane's ✕ or the tab's × closes it; `Esc` in the list unselects the picked lines and does not close it.
+With nothing changed the pane shows the Diff empty state and stays.
+A Diff pane in a detached window and one in the main window never share scroll or layout state.
 
 All git actions are user-initiated; Mkrew never commits or switches branches by itself.
 The daemon shells out to `git` (porcelain v2, `-z` output) behind a `GitBackend` trait, so a
@@ -1405,9 +1441,9 @@ Windows (tens of ms, worse with antivirus), so:
   lookup and (Working mode) the staged/unstaged `git diff --numstat` for the +/− counts
   (ADR 0007); Against-base mode adds `merge-base` (cached until HEAD or base moves) and one
   numstat diff since it.
-- Refresh is triggered by the file watcher (debounced 300 ms, §7 `git.changed`) and when its tab or the Diff view comes on screen; never polled.
+- Refresh is triggered by the file watcher (debounced 300 ms, §7 `git.changed`) and when its tab or a Diff pane comes on screen; never polled.
 - Diffs are computed per file on demand and cached by (path, mode, mtime/size, HEAD).
-- Never run git for workspaces whose Git tab or Diff view is not on screen, except the cheap status used for
+- Never run git for workspaces whose Git tab or Diff pane is not on screen, except the cheap status used for
   sidebar markers (at most once per 2 s per workspace).
 
 - **Header:** with two or more repositories (`git.repos`, ADR 0029) a "Repo" chip row (the
@@ -1486,7 +1522,7 @@ All shortcuts live in `<config>/mkrew/keymap.toml`, which the Settings dialog's 
 (applied at once, ADR 0073); below are defaults. While a terminal has focus,
 only combinations bound in the keymap are intercepted; everything else goes to the agent. Defaults
 therefore avoid plain `Ctrl+<letter>` and favor `Ctrl+Shift`/`Alt`, like Windows Terminal.
-Editor-only commands may use plain `Ctrl+<letter>` (no terminal has focus there, ADR 0028); the
+Editor-only commands may use plain `Ctrl+<letter>` (ADR 0028): the Editor context is set on a file pane's own element, so no terminal has the keyboard while it applies (ADR 0108); the
 editor's own keys (arrows, Ctrl+Z/Y/A/C/X/V) are not in the keymap.
 One exception on Windows and Linux: plain Ctrl+C copies while terminal text is selected (ADR 0022); without a selection it reaches the agent as ^C. Anything sent to the agent clears the selection.
 Plain Ctrl+V pastes in a terminal pane; ^V reaches the program only when the clipboard holds no
@@ -1538,9 +1574,8 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Workspace | Add workspace (folder or clone) | Ctrl+Shift+K |
 | View | Terminals / Board / Docs | Ctrl+Shift+1 / 2 / 5 |
 | View | Show Git panel (right panel, the Git list gets the keyboard; ADR 0084) | Ctrl+Shift+4 |
-| View | Show diff (only while a diff is open) | Ctrl+Shift+7 |
+| View | Show the diff: opens the Diff tab after the active tab, or focuses the Diff pane where it is open (ADR 0108) | Ctrl+Shift+7 |
 | View | Show file tree (right panel, the tree gets the keyboard; ADR 0081) | Ctrl+Shift+3 |
-| View | Show editor (only while a file tab is open) | Ctrl+Shift+6 |
 | Inbox | Jump to next / previous item needing attention (sessions asking for input first, then newest first) | Ctrl+Shift+I / Ctrl+Alt+I |
 | Task | New task / run selected task | Ctrl+Shift+N / Ctrl+Enter |
 | Board | Select a card (↑/↓ in the column, ←/→ the same row of the next column with cards) / move it one column (the same `task.move`s as a drag) | ↑↓←→ / Shift+← Shift+→ |
@@ -1549,16 +1584,17 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Board | Show Board while the Board is shown and Jira is set up: switch Tasks / Jira | Ctrl+Shift+2 |
 | Run | Start all / restart all / stop all (§10 Run) | Ctrl+F5 / Ctrl+Shift+F5 / Ctrl+Alt+F5 |
 | Tabs | New shell tab / new agent tab (pick profile) | Ctrl+Shift+T / Ctrl+Shift+A |
-| Tabs | Next / previous tab (file tabs while the Editor is shown) | Ctrl+Tab / Ctrl+Shift+Tab |
-| Tabs | Jump to tab 1–9 (file tabs while the Editor is shown; 9 = the last) | Ctrl+Alt+1 … Ctrl+Alt+9 |
-| Tabs | Rename / close tab (close: the active file tab while the Editor is shown) | Ctrl+Shift+R / Ctrl+Shift+W |
-| Tabs | Move the active tab (the active file tab in the Editor) one place left / right inside its pinned or unpinned group | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn |
+| Tabs | Next / previous tab (file and diff tabs are tabs like the others) | Ctrl+Tab / Ctrl+Shift+Tab |
+| Tabs | Jump to tab 1–9 (9 = the last) | Ctrl+Alt+1 … Ctrl+Alt+9 |
+| Tabs | Rename / close tab (a tab with unsaved files asks Save / Don't save / Cancel) | Ctrl+Shift+R / Ctrl+Shift+W |
+| Tabs | Move the active tab one place left / right inside its pinned or unpinned group | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn |
+| Tabs | New note: creates a note file in the notes folder (§20.0 `[notes]`) and opens it in a new tab (ADR 0108) | Ctrl+Alt+N |
 | Tabs | Move to new window | Shift+F4 |
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
-| Panes | New agent pane / new shell pane (split right with the workspace's default agent / shell; the title bar `+ ▾` menu and Ctrl+Shift+A / Ctrl+Shift+T create tabs) | Alt+Shift+A / Alt+Shift+S |
-| Panes | Move focus; past the outer pane (or from Board, Docs, Editor, Diff) ← enters the sidebar filter and → the right panel's file tree or Git list, only while on screen (the compact rail widens); from those ← / → come back to the center | Alt+←↑→↓ |
+| Panes | New agent pane / new shell pane (split right with the workspace's default agent / shell; the title bar's `+` row and Ctrl+Shift+A / Ctrl+Shift+T create tabs) | Alt+Shift+A / Alt+Shift+S |
+| Panes | Move focus (file and diff panes count as panes); past the outer pane (or from Board or Docs) ← enters the sidebar filter and → the right panel's file tree or Git list, only while on screen (the compact rail widens); from those ← / → come back to the center | Alt+←↑→↓ |
 | Panes | Resize | Alt+Shift+←↑→↓ |
 | Panes | Zoom / unzoom pane | Ctrl+Shift+M |
 | Panes | Toggle Terminal / Chat of the focused agent pane (ADR 0104; works while its composer has the keys) | Ctrl+Alt+T |
@@ -1582,7 +1618,7 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | File tree | Open the tree's cursor file in a kept tab (Enter opens a transient one) | Alt+Enter |
 | Editor | Save the opened file | Ctrl+S |
 | Editor | Find / replace in the opened file (replace all: Ctrl+Alt+Enter in the bar, ⌥⌘↩ on macOS) | Ctrl+F / Ctrl+H |
-| Editor | Close the active file tab (asks about unsaved text; ADR 0080) | Ctrl+W |
+| Editor | Close the focused file pane (asks about unsaved text; ADR 0080, 0108) | Ctrl+W |
 | Git | Next / previous file | ↓ / ↑ (or j / k) |
 | Git | Open the selected file's diff | Enter |
 | Git | Close an open menu, else unselect the picked lines, else close the diff | Esc |
@@ -1618,10 +1654,10 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Terminal copy / paste / page up / page down / copy mode / link hints | ⌘C / ⌘V / ⌘↑ / ⌘↓ / ⌥⌘C / ⌥⌘O |
 | Find / Open in Zed / next Inbox item / peek | ⌘F / ⌥⌘E / ⇧⌘I / ⇧⌘Space |
 | Composer / chat view / send selection / Ask AI / voice input | ⇧⌘↩ / ⇧⌘T / ⇧⌘L / ⇧⌘G / ⌃⌘V |
-| Terminals, Board, File tree, Git, Docs, Editor, Diff | ⌃⌘1 … ⌃⌘7 |
+| Terminals, Board, File tree, Git, Docs / Diff | ⌃⌘1 … ⌃⌘5 / ⌃⌘7 |
 | Docs source / send comments / next / previous comment | ⇧⌘E / ⇧⌘S / ⌘] / ⌘[ |
 | File tree: show ignored | ⇧⌘H |
-| Editor: save / find / replace / close tab / preview | ⌘S / ⌥⇧⌘F / ⌥⌘F / ⌘W / ⇧⌘V |
+| Editor: save / find / replace / close pane / preview | ⌘S / ⌥⇧⌘F / ⌥⌘F / ⌘W / ⇧⌘V |
 | Editor find bar: replace all | ⌥⌘↩ |
 | Search in files | ⇧⌘F |
 | Quick open / new task / run task (Board) | ⌘P / ⌘N / ⌘↩ |
@@ -1629,8 +1665,9 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Command palette / settings / toggle theme / full screen | ⇧⌘P / ⌘, / ⇧⌘J / ⌃⌘F |
 | Sidebar / right panel / context menu | ⌘B / ⇧⌘Y / ⌃⌘M |
 | Move tab left / right / to a new window | ⌃⌘← / ⌃⌘→ / ⇧⌘N |
+| New note | ⌥⌘N |
 
-In the Editor, and while the Git list (or the diff, with the list hidden) has the keyboard, the terminal never has focus, so single-key shortcuts are safe there.
+In a file pane, and while the Git list (or the diff, with the list hidden) has the keyboard, the terminal never has focus, so single-key shortcuts are safe there.
 Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A / S used to be
 ESC A / ESC S, a readline binding); rebind `split_agent` / `split_shell` / `rename_pane` in
 Settings → Keyboard if needed.
@@ -1717,6 +1754,7 @@ before it (`Theme::classic`).
 | `control-border` | #262A31 | #D9DCE1 |
 | `divider` | #1E2126 | #E9EBEE |
 | `terminal-bg` | #0B0C0E | #FCFCFD |
+| `pane-gap` (the frame behind and between panes, and the title bar) | #000000 | #F3F4F6 |
 | `text` | #ECEDEF | #1B1D22 |
 | `text-dim` | #D5D8DD | #3A3E46 |
 | `text-muted` | #A3A8B0 | #5A606B |
@@ -1745,18 +1783,28 @@ before it (`Theme::classic`).
 | `qr-dark` | #101114 | #101114 |
 | `qr-light` | #FFFFFF | #FFFFFF |
 
+`pane-gap` is darker than `terminal-bg` in dark themes when `terminal-bg` leaves room, a step darker in light themes, and always differs from `terminal-bg` by at least 1.06:1 (`theme::problems()` rule "pane gap"); a generated theme derives it with a mix from `terminal-bg` toward black or `text`.
+
 Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
 - Radius 5 (area chips, key hints), 6 (chips, segments, tree rows), 8 (buttons, inputs, rows),
   9 (segmented container), 10 (cards), 12 (dialogs, palette), 999 (pills); 4 for old badges.
-- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the Editor's file-tab strip and the right panel tab row 44, Git repo strip 42 (px at 13 px body).
+- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the right panel tab row 44, Git repo strip 42 (px at 13 px body).
 - Tab chip (Tern look, ADR 0106): height `CONTROL_HEIGHT`, radius 8 (`radius::MEDIUM`), no border; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
   Chips shrink to `TAB_MIN_WIDTH` (120, room for the status icon, a pane icon, about five title letters and the ×) before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
-- Pane (ADR 0106): no header.
+- Pane (ADR 0106, ADR 0108): no header and no border.
+  Panes sit on a frame of `pane-gap` with `2 * PANE_HALF_GAP` (8 px) between them and from the edge of the area (`PANE_HALF_GAP = space::XS`); corners are `radius::MEDIUM` (8).
+  One `PANE_ACCENT_WIDTH` (2 px) stripe sits at the pane's top edge, inset by the corner radius.
+  Its color, first match wins: `status-needs-input` while a session pane needs input, the pane's own color, `pane-focus-stripe` while the pane is focused and its tab has two or more panes, else no stripe.
+  A lone pane has no stripe unless it needs input or has a color.
+  A pane that is not focused is dimmed by about 5 % (`unfocused_pane_dim`).
+  File and diff panes use the same frame, stripe and dim as terminal panes.
+  The gap between two panes drags to resize them and shows a grip only on hover.
   A pane in a split tab has a `PANE_GRIP_HEIGHT` (8 px) strip along its top edge that shows a grip on hover and drags the pane.
   Floating badges (`pane_badges`: `surface_raised` fill, 1 px `border`, radius 8, META text) sit in its top-right corner `space::S` from the edges, at most `PANE_BADGE_MAX_WIDTH` wide.
-  A colored pane has a `PANE_ACCENT_WIDTH` (2 px) line of its color at the top.
+  The title bar uses `pane-gap` instead of `chrome`, so the bar and the frame read as one surface; the sidebar and the right panel keep their colors.
+  The `+` row (§10) is a row of 30 px `Look::Icon` buttons: the `+` button, then the default agent's logo, `square-terminal`, `notebook-pen` and `chevron-down`, `space::XS` apart, growing in 150 ms ease-out (shown at once with reduce motion).
   The title bar's pane toggles are 30 px icon buttons, accent while on.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
   buttons, 30 px icon button, search box, status pill, tinted chip, overline, key hint.
@@ -1778,7 +1826,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   harmonized with the theme.
 - Terminal: `terminal-bg` fill, 16 px padding on every side, line height 1.75;
   bar cursor in the text color (hollow block when the pane is unfocused; a program's DECSCUSR
-  shape wins); a lone pane has no border, borders mark the focused split pane and needs-input.
+  shape wins); a pane has no border; the top stripe marks needs-input, a color and the focused split pane.
   Editor code rows keep line height 1.35 (`code_line_height`).
 - Icons (ADR 0051): icon-only buttons, toggles, window controls, row actions and row chevrons
   draw Lucide SVG icons (`icon/lucide/`, `crates/mkrew-ui/src/icons.rs`) in a theme token color,
@@ -1855,10 +1903,10 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   Banner: `warning-bg` #322B23 / #F4EDE2 fill, a `BORDER_WIDTH` bottom edge in `divider`, `space::M` x `space::S` padding, `META` text in `text` (the detail line in `text-muted`), **Try now** a primary button.
   The Machines rows and Add card use `space::S` / `space::M`, `radius::MEDIUM` and `surface-raised`; a broken-file error shows `status-exited` ✕ and `text`.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
-- Focused pane: faint 1 px accent border; unfocused panes dimmed ~5%.
+- Focused pane: a 2 px stripe of `pane-focus-stripe` at its top edge when its tab has two or more panes (needs-input and a pane color win); unfocused panes dimmed ~5%.
 - Focus ring (ADR 0085): a dialog control that has the keyboard shows a 1 px border in `focus-ring` (the text color) over its own border, only while it was reached with the keyboard (`focus_visible`), in both themes.
   A click never shows it.
-- Derived tokens (accent mixed into `bg`): `pane-focus-border` #49518D / #A4AAE7;
+- Derived tokens (accent mixed into `bg`): `pane-focus-stripe` #49518D / #A4AAE7 (also the focus border of cards, comments and inputs);
   `terminal-selection-bg` #3A406B / #CFD2F0 (selected terminal text is drawn in `text`).
   Find matches (`status-needs-input` amber mixed into `bg`, text drawn in `text`):
   `terminal-match-bg` #3F3524 / #F6EBCF; `terminal-match-current-bg` #7A5A1F / #E9C46A.
@@ -2230,8 +2278,8 @@ file_ref = "@{path}"        # §20B.1; how a picked file is typed; "{path}" alon
 [zed]
 follow_debounce_ms = 1500   # §20C.4
 
-[notes]                     # Tern panes spec 2026-11-23 §7.2; where New note saves its file
-folder = ""                 # "" = the workspace root; relative = below it; absolute = used as is (not ~; no ..), for every workspace; the daemon reads it
+[notes]                     # §10, §12A; where New note saves its file (ADR 0108)
+folder = ""                 # §10, §20.0; '' = the workspace root, relative = under the root, absolute = as is (not ~; no ..); one folder for every workspace (ADR 0108); the daemon reads it
 
 [ui]
 font_family = ""            # §14; "" = system UI font; other UI sizes keep their ratio to it
@@ -2394,24 +2442,29 @@ context_window = 200000        # tokens, for the % shown
    The picker's last row "Manage prompts…" and the palette's "Global: Manage prompts…" open Settings → Prompts (§14), where prompts are added, edited, renamed and deleted with `mkrew_core::prompt::{validate_name, create, save, rename, delete, read}`.
    A name is at most 64 characters and cannot be empty, start with a dot, contain `/ \ : * ? " < > |` or a control character, end in a space or a dot, or be a Windows reserved name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, also before a first dot); it is unique ignoring case, except that a prompt may be renamed to a new case of its own name.
    `save` writes a temp file in the folder and renames it over the target.
-4. **Send selection to agent.** `Ctrl+Shift+L` in the Editor (a Markdown preview's selection as its blocks' source lines; else the editor's selected lines, else the caret's line), Docs (the comment selection), Git diff (picked new-side
+4. **Send selection to agent.** `Ctrl+Shift+L` in a file pane (a Markdown preview's selection as its blocks' source lines; else the editor's selected lines, else the caret's line), Docs (the comment selection), Git diff (picked new-side
    lines) and a terminal (selected text) opens a session picker (default: the task's session for
    Git task changes, else the workspace's most recently active agent session; same list as
    §12's send dialog), then that session's composer prefilled with
    `` `<path>:<a>-<b>` `` + a fenced block of the text (terminal: fenced block only). The user edits
    and sends.
-5. **Drop files / paste images.** Dropping files from the OS onto an agent pane (gpui
+5. **Drop files / paste images.** Dropping files from the OS onto an agent or shell pane (gpui
    `ExternalPaths`) types their absolute paths, each quoted with `"` if needed, separated by spaces,
    with no Enter. The whole pane accepts the drop (terminal, composer, and the top-edge drag strip). While the pane's
    composer is shown, the paths go into its draft instead of the terminal. `Ctrl+V` /
    `Ctrl+Shift+V` with an image on the clipboard (gpui `ClipboardEntry::Image`; a BMP image is
    re-encoded as PNG) saves it through `attachment.save` and types the returned path the same
    way; copied files type their paths. Text clipboard behaves as before.
-   **Drag from the file tree.** Dragging a row of the file tree (§12A) onto a pane types
-   `composer.file_ref` with the path relative to the tree's folder (the project, or the task
-   worktree) on an agent pane, the bare path on a shell pane, a folder ending with `/`, then one
-   space; no Enter. The same rules as above: the whole pane accepts it, the paths go into the
-   composer draft while it is shown, and the pane shows an accent ring while the row hovers it.
+   **Drag from the file tree** (ADR 0108).
+   Dragging a row of the file tree (§12A) onto an agent pane's composer inserts `composer.file_ref` with the path relative to the tree's folder (the project, or the task worktree); a folder inserts its path ending with `/`, then one space; no Enter.
+   A composer that is not shown takes no drop, and a row dropped on a terminal types nothing.
+   The composer shows an accent ring while a row hovers it.
+   A file row dropped on a pane (terminal, file or diff) opens the file there, at the edge under the pointer: the pane splits and the new file pane takes that side (§10 "Drops").
+   A folder row is accepted only by a composer.
+   **Drops on file and diff panes.**
+   OS files dropped on a file or diff pane open each file that is inside the workspace root or the notes folder as a new tab.
+   Folders and files outside both are skipped, and one error toast says "Only files inside the workspace or the notes folder open in Mkrew".
+   A terminal pane keeps typing the dropped paths, as above.
    **Task dialog.** The Prompt box of the task dialog takes the same inputs (ADR 0095).
    A pasted image is saved with `attachment.save` and owner `project` (the dialog's project), because a new task has no id and no session yet.
    Dropped OS files type their absolute paths as on a pane, quoted and separated the same way.

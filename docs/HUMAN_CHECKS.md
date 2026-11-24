@@ -21,9 +21,60 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-23 Tern panes (ADR 0108, plan docs/superpowers/plans/2026-11-23-tern-panes.md)
+
+Screenshots: `docs/screenshots/tern-panes-<view>-<dark|light>.png`.
+
+- [ ] **Restart the daemon first** (protocol 60; a window from before it shows a version mismatch).
+  Open the app on an existing workspace: the tabs from before the update load unchanged.
+- [ ] **Pane look (dark + light, Mkrew Light, Classic and one palette theme):** panes have no border, they sit on a darker frame (a little lighter in light themes) with an 8 px gap between them and from the edge, and the title bar has the same color as the frame.
+  The focused pane has a 2 px stripe along its top edge only while the tab has two or more panes; a lone pane has none.
+  A pane that needs input has an amber stripe even when it is not focused; a colored pane keeps its color; amber wins over color, color wins over focus.
+  Unfocused panes are dimmed a little.
+  The sidebar and the right panel keep their colors.
+- [ ] **Four panes:** one tab with an agent, a shell, a `.rs` file and a Markdown file in split mode, one pane focused and one (the fake agent) needing input.
+  All four use the same frame, stripe and dim; the file panes keep header, gutter, find (Ctrl+F), save (Ctrl+S) and Markdown buttons; Ctrl+S saves the focused file pane only.
+- [ ] **No Editor or Diff view:** the title bar has no Editor or Diff chip, no view switch; a click on a file in the tree opens a tab with its icon and name; `Ctrl+Shift+6` does nothing; `Ctrl+W` in a file pane closes that pane (asking about unsaved text); `Ctrl+Shift+W` closes the tab.
+- [ ] **Preview tab:** a single click on a file in the tree opens an italic tab; the next single click on another file replaces it; a double click, Alt+Enter, typing in it or dragging it keeps it (the title turns upright); an edited preview tab is not replaced.
+- [ ] **One pane per file:** open a file, move to another tab and open the same file again from the tree, the palette (Ctrl+Shift+O), a terminal link with `:line` and a chat path pill: each time its own tab comes up, the pane is focused and the line is shown, and there is never a second pane; the same holds when the file is in a detached window (that window comes to the front).
+- [ ] **Drops on four edges (dark + light):** drag a file row of the tree over a terminal pane, a file pane and the diff pane: the half under the pointer lights up for the nearest edge (left, right, top, bottom; near a corner the nearest wins), and a drop splits there 50 / 50.
+  Drag a tab onto a pane edge: its panes merge there.
+  Drag a pane by its top-edge grip onto another pane's edge: it moves, whatever its kind (terminal, file, diff).
+  Drag a pane or a tab onto the empty part of the tab area: it becomes its own tab; drag a file row there: a new tab after the last one.
+  A pane dropped on itself, or a tab on the tab that holds only that pane, does nothing; with a dialog open nothing drops.
+  Dropping a tree row on a terminal does not type its path; dropped on an agent's open composer it inserts the path as before; a folder row is accepted only by a composer.
+- [ ] **OS files:** drop a file from Explorer on a terminal pane: the path is typed as before.
+  Drop it on a file pane or the diff pane: it opens as a new tab if it is inside the workspace or the notes folder.
+  Drop one from outside both (Desktop): one error toast "Only files inside the workspace or the notes folder open in Mkrew"; folders are skipped silently.
+- [ ] **The `+` row (dark + light):** the tab area ends with a `+`; hover it: it grows to the right in about 150 ms into default agent logo, terminal icon, note icon and `▾`; move the pointer to an item without it collapsing; leave: it collapses after about 150 ms.
+  Tooltips: "New <agent> tab" with the shortcut, "New <shell> tab" with the shortcut, "New note" with `Ctrl+Alt+N`, "More…".
+  A click on each opens a new tab right after the active tab; `▾` opens the old menu (profiles, Shell, Empty tab).
+  Drag each item onto an edge of a pane: it starts there as a split; drag onto the tab area: a new tab.
+  With no agent profile the agent item is hidden.
+  A detached window has the same row.
+- [ ] **`+` row by keyboard:** Tab from the tab chips reaches `+` and it expands with a focus ring; ← / → move between the items, Enter picks, Esc collapses it and keeps the focus; Shift+Tab leaves.
+- [ ] **Reduce motion:** with Windows "Animation effects" off (or macOS "Reduce motion"), the row shows and hides at once.
+- [ ] **New note:** with `[notes] folder` empty, the note button creates `note-YYYYMMDD-HHMMSS.md` (local time) in the workspace root and opens it in a new tab in source mode with the caret in the editor; two notes in the same second give `-2`; set the folder to `notes/inbox` (relative: made under the root, also nested) and to an absolute path outside the workspace such as `D:\Notes` (the note opens, its tab title is the note's name, saving works); then a path with `..` or `~` shows an error toast and creates nothing; a drive that does not exist shows an error toast and creates nothing.
+  `Ctrl+Alt+N` and the palette's "New note" do the same.
+  Change the folder setting while an old note from the previous absolute folder is open: its pane shows a read error with Close.
+- [ ] **Notes on a remote machine:** in a machine window (`mkrew --machine <name>`) the note is created on that machine, in the folder of that machine's `settings.toml`; an absolute folder that exists only on this computer does not work there.
+- [ ] **Diff pane:** select a changed file in the Git panel (`right_panel = "git"`): the Diff tab opens after the active tab with the toolbar; ↑ / ↓ in the list move the diff; drop the Diff tab's pane onto a terminal's edge: it is a pane there; `Ctrl+Shift+7` focuses it; commit everything: the pane shows the empty state and stays; its ✕ closes it; a comment on a diff line goes to the right session.
+- [ ] **Close and the unsaved question:** edit a file, then close its tab (×), close the pane, close the tab menu's "Close others", close the window and close the workspace: each asks "Save / Don't save / Cancel" and Cancel closes nothing; quit the app: it asks too.
+  Dragging an edited file pane to another edge, to another tab and out into a detached window never asks.
+- [ ] **Restart:** with tabs holding a file, a note, a Markdown split and the diff, quit and restart the app (and, separately, `mk daemon stop` then start): every file and diff leaf is in the same tab and place, the files load when first shown, the Markdown mode is kept, and the preview tab comes back italic.
+  Unsaved edits are not restored.
+- [ ] **A session ends in a mixed tab:** exit the shell in a tab that has a shell and a file: the tab stays with the file focused.
+  A tab with only a file does not close when you close a session elsewhere; closing it removes no session.
+- [ ] **Detached file tab (dark + light):** drag a file tab out of the window: a window opens with the file pane (same frame and stripe); edit and save there; drag it back.
+  A file tab does not stay in the main window any more.
+- [ ] **Deleted file:** delete an open file on disk: its pane shows "This file was removed." with Close.
+- [ ] **Contrast:** the gap color is visible against the terminal in every theme (the Settings page of a theme with a low-contrast `bg` shows no "pane gap" warning), dark and light.
+
 ### To verify - 2026-11-23 Tern layout (ADR 0106, plan docs/superpowers/plans/2026-11-23-tern-layout.md)
 
 Screenshots: `docs/screenshots/tern-layout-<view>-<dark|light>.png`.
+
+Superseded in part by Tern panes (ADR 0108): the Editor and Diff chips, `+ ▾` and the thin pane borders of the items "Look", "Views", "`+ ▾`", "Many tabs" and "No pane header" are replaced; check those in the Tern panes section.
 
 - [ ] **Look (dark + light, Mkrew Light and one palette theme):** one 42 px bar across the window: sidebar toggle, workspace switcher, tabs, `+ ▾`, a drag space, then Run, the focused agent pane's Chat and Reading toggles, Board, Docs (with `[features] docs`), Split (only while Terminals show) and the right panel toggle; no bottom bar; the sidebar and the terminals reach the window bottom.
   The active tab is a solid lighter card with rounded corners and no border, inactive tabs are muted with a hover fill, the × shows on the active tab and on hover.
