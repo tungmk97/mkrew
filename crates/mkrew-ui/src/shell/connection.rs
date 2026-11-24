@@ -85,6 +85,20 @@ impl Shell {
             shell.record_bounds(HostId::Main, window);
         })
         .detach();
+        let (page_events, page_inbox) = async_channel::unbounded();
+        cx.spawn_in(window, async move |this, cx| {
+            while let Ok((id, event)) = page_inbox.recv().await {
+                if this
+                    .update_in(cx, |shell, window, cx| {
+                        shell.page_event(id, event, window, cx)
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
         // The tray icon (Windows): its clicks arrive here from the tray thread. A machine
         // window keeps the hidden tray window (the single-instance target) but shows no icon.
         let (desktop, tray_events) = Desktop::new(window, &id, local);
@@ -445,6 +459,7 @@ impl Shell {
             comment_focus: cx.focus_handle(),
             documents: HashMap::new(),
             browsers: HashMap::new(),
+            page_events,
             doc_views: HashMap::new(),
             files: HashMap::new(),
             files_focus: cx.focus_handle(),

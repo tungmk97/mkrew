@@ -288,7 +288,7 @@ impl Shell {
         self.keep_main_active_visible();
         self.prune_detached(cx);
         self.sync_documents(window, cx);
-        self.sync_browsers();
+        self.sync_browsers(cx);
         let hosted = self.hosted_sessions(self.main_visible);
         let here = self.host_of(window);
         let visible: Vec<Ulid> = hosted.iter().map(|&(_, session)| session).collect();
@@ -383,6 +383,13 @@ impl Shell {
                 Some(view) => window.focus(&view.editor_focus, cx),
                 None => window.focus(&self.focus_handle, cx),
             }
+            return;
+        }
+        // A browser pane keeps the keyboard on its pane (the page takes it on a click).
+        if let Some(PaneKey::Web(id)) = self.focused_key(window)
+            && let Some(browser) = self.browsers.get(&id)
+        {
+            window.focus(&browser.focus, cx);
             return;
         }
         // The Git keyboard: the panel's list, or the diff pane itself while the panel's Git

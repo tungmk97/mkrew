@@ -11,6 +11,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         self.ensure_diff_views();
+        self.prepare_browsers(HostId::Detached(key), window, cx);
         let theme = cx.theme().clone();
         let host = HostId::Detached(key);
         // A menu closed behind the keyboard's back, or a dialog control that vanished while

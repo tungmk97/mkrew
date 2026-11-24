@@ -668,6 +668,11 @@ impl Shell {
         self.keymap_error = keymap::notice(&errors);
         self.keymap_errors = errors;
         self.keymap = keymap;
+        let keys = mkrew_ui::browser::keys::forwarded(&self.keymap);
+        let script = mkrew_ui::browser::keys::set_keys_script(&keys);
+        for native in self.browsers.values().filter_map(|b| b.native.as_ref()) {
+            native.script(&script);
+        }
         cx.notify();
     }
 

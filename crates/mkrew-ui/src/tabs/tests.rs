@@ -2152,3 +2152,21 @@ fn every_move_of_a_preview_file_keeps_it() {
     tabs.merge_tab(preview_id, &k(a), Edge::Right).unwrap();
     assert!(tabs.preview_tab().is_none());
 }
+
+#[test]
+fn closing_a_browser_pane_or_its_tab_drops_its_key() {
+    let project = Ulid::new();
+    let (a, web) = (Ulid::new(), Ulid::new());
+    let tree = json!({"split": "vertical", "ratio": 0.5, "children": [
+        {"session": a.to_string()}, {"web": "https://x.dev", "id": web.to_string()}
+    ]});
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "Terminal", 1.0, tree)]);
+    assert!(tabs.tab_with(&PaneKey::Web(web)).is_some());
+    assert!(tabs.close_leaf(&PaneKey::Web(web)).is_some());
+    assert!(
+        tabs.tab_with(&PaneKey::Web(web)).is_none(),
+        "the pane left every layout"
+    );
+    assert_eq!(tabs.active().unwrap().keys(), [k(a)]);
+}

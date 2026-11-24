@@ -5,6 +5,13 @@
 pub mod address;
 pub mod keys;
 
+#[cfg(any(windows, target_os = "macos"))]
+mod native;
+#[cfg(not(any(windows, target_os = "macos")))]
+#[path = "no_native.rs"]
+mod native;
+pub use native::{NativeView, WebSurface};
+
 use std::fmt;
 use std::sync::LazyLock;
 

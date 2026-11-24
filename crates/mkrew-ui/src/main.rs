@@ -80,8 +80,8 @@ use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::inspector::{self, PanelTab};
 use mkrew_ui::jira_board::{JiraView, Load, Source};
 use mkrew_ui::keymap::{
-    self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, EDITOR_CONTEXT,
-    FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Os, Run,
+    self as keymap, BOARD_CONTEXT, BROWSER_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT,
+    EDITOR_CONTEXT, FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Os, Run,
 };
 use mkrew_ui::launch::Launch;
 use mkrew_ui::launcher::Launcher;
@@ -764,6 +764,8 @@ struct Shell {
     documents: HashMap<Ulid, Documents>,
     /// Browser panes' page state, by leaf id (ADR 0110); follows the layouts (`sync_browsers`).
     browsers: HashMap<Ulid, shell::browser::Browser>,
+    /// Page events of every browser pane (`wry` callbacks), read by one task (`page_event`).
+    page_events: async_channel::Sender<(Ulid, mkrew_ui::browser::PageEvent)>,
     /// The view state of each open file pane, keyed like the store.
     doc_views: HashMap<(Ulid, FileKey), DocView>,
     /// The Files view of every workspace it was shown for.
@@ -955,6 +957,7 @@ struct Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.ensure_diff_views();
+        self.prepare_browsers(HostId::Main, window, cx);
         let theme = cx.theme().clone();
         // A menu closed behind the keyboard's back (workspace switched, dialog opened, daemon
         // event) must not leave it on the hidden menu: give it back to the pane. A menu whose

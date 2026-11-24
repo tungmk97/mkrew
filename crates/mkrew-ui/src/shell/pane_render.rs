@@ -623,6 +623,10 @@ impl Shell {
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));
         let stripe = status::pane_stripe(theme, info.map(|s| s.state), color, several, is_focused);
+        let key_web_focus = match &key {
+            PaneKey::Web(id) => self.browsers.get(id).map(|browser| &browser.focus),
+            _ => None,
+        };
         let frame = div()
             .relative()
             .size_full()
@@ -632,7 +636,11 @@ impl Shell {
             // The file pane's own keys (Ctrl+S, Ctrl+F, ...), not the root's.
             .when(matches!(key, PaneKey::File(_)), |el| {
                 el.key_context(EDITOR_CONTEXT)
-            });
+            })
+            .when(matches!(key, PaneKey::Web(_)), |el| {
+                el.key_context(BROWSER_CONTEXT)
+            })
+            .when_some(key_web_focus, |el, focus| el.track_focus(focus));
         let frame = self.pane_drop_target(frame, project_id, &key, cx);
         frame
             .on_mouse_down(MouseButton::Left, {
