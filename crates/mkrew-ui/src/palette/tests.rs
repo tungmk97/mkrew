@@ -2308,3 +2308,26 @@ fn reading_width_is_not_listed_while_a_tsp_surface_shows() {
         "the rest of the agent pane's entries stay"
     );
 }
+
+/// Copy mode, link hints and Find work on the terminal grid, which a surface pane does not have.
+#[test]
+fn grid_commands_are_not_listed_while_a_tsp_surface_shows() {
+    let terminal = Context {
+        agent_pane: true,
+        terminal: true,
+        ..context(View::Terminals)
+    };
+    let listed = commands(&terminal);
+    for command in [Command::CopyMode, Command::LinkHints, Command::Find] {
+        assert!(listed.contains(&command), "{command:?} on a grid");
+    }
+    let surface = Context {
+        surface: true,
+        ..terminal
+    };
+    let listed = commands(&surface);
+    for command in [Command::CopyMode, Command::LinkHints, Command::Find] {
+        assert!(!listed.contains(&command), "{command:?} on a surface");
+    }
+    assert!(listed.contains(&Command::Copy), "Copy reaches the surface");
+}

@@ -485,7 +485,8 @@ impl Shell {
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
-        let screen = match (peek::native_notice(session.tsp), &peek.screen) {
+        let view = self.tsp_pane_view(session);
+        let screen = match (peek::native_notice(view), &peek.screen) {
             (Some(notice), _) => muted(notice.into()),
             (None, peek::Screen::Reading) => muted("Reading the screen…".into()),
             (None, peek::Screen::Failed(error)) => {

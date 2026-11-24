@@ -378,11 +378,28 @@ pub fn enters_fallback(before: Option<TspState>, after: TspState) -> bool {
     matches!(before, Some(TspState::Waiting | TspState::Live)) && after == TspState::Fallback
 }
 
-/// The toast text for a fallback; `reason` is the daemon's (`TspSnapshot.reason`).
+/// The toast text for a fallback; `reason` is the daemon's (`TspSnapshot.reason`). The timer
+/// fallback is provisional (a late hello still wins), so it says so instead of the reason.
 pub fn fallback_toast(reason: Option<&str>) -> String {
     match reason.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(mkrew_core::tsp::engine::NO_REPLY_REASON) => {
+            "omp is drawing as text for now. The pane switches to the native view when omp is ready."
+                .to_owned()
+        }
         Some(reason) => format!("omp is drawing as text: {reason}"),
         None => "omp is drawing as text".to_owned(),
+    }
+}
+
+/// Whether applying `change` may remove nodes (or surfaces), so UI caches keyed by node id are
+/// worth pruning.
+pub fn removes_nodes(change: &TspChange) -> bool {
+    match change {
+        TspChange::Frame { ops, .. } => ops
+            .iter()
+            .any(|op| op.get(0).and_then(Value::as_str) == Some("del")),
+        TspChange::Closed { keep } => !keep,
+        TspChange::Open { .. } => false,
     }
 }
 
@@ -406,6 +423,9 @@ pub struct Mirror {
     node_revs: HashMap<String, HashMap<String, u64>>,
     /// Per surface, the revision it was (re)loaded at: every node is at least this new.
     bases: HashMap<String, u64>,
+    /// Surfaces closed without keep: a late frame for one is ignored, not a gap. Ids are tiny and
+    /// omp numbers them, so the set is not bounded.
+    closed: HashSet<String>,
 }
 
 /// Revisions are unique across mirrors (a snapshot builds a new one): a counter, never hashing.
@@ -474,6 +494,7 @@ impl Mirror {
     }
 
     fn insert(&mut self, surface: TspSurface, doc: Document) {
+        self.closed.remove(&surface.id);
         self.opened.insert(surface.id.clone(), self.next_open);
         self.next_open += 1;
         self.bases.insert(surface.id.clone(), next_revision());
@@ -507,7 +528,12 @@ impl Mirror {
         match &update.change {
             TspChange::Frame { seq, ops, blobs } => {
                 let Some((meta, doc)) = self.surfaces.get_mut(&update.surface) else {
-                    return MirrorResult::Gap;
+                    // A frame already on its way when the surface closed is not a gap.
+                    return if self.closed.contains(&update.surface) {
+                        MirrorResult::Applied
+                    } else {
+                        MirrorResult::Gap
+                    };
                 };
                 if *seq <= meta.seq {
                     return MirrorResult::Applied;
@@ -544,6 +570,7 @@ impl Mirror {
                 self.opened.remove(&update.surface);
                 self.bases.remove(&update.surface);
                 self.node_revs.remove(&update.surface);
+                self.closed.insert(update.surface.clone());
                 self.prune_blobs();
             }
         }
@@ -566,23 +593,33 @@ impl Mirror {
         self.surfaces.get(id)
     }
 
-    /// The most recently opened surface of `mode`.
-    fn newest(&self, mode: &str) -> Option<&(TspSurface, Document)> {
+    /// The most recently opened surface of `mode` (`only_live`: not a kept, read-only one).
+    fn newest(&self, mode: &str, only_live: bool) -> Option<&(TspSurface, Document)> {
         self.surfaces
             .iter()
-            .filter(|(_, (meta, _))| meta.mode == mode)
+            .filter(|(_, (meta, _))| meta.mode == mode && !(only_live && meta.read_only))
             .max_by_key(|(id, _)| self.opened.get(*id))
             .map(|(_, surface)| surface)
     }
 
-    /// The surface the pane draws: the newest `screen` one covers the inline one.
+    /// The surface the pane draws: the newest live `screen` one covers the inline one. A closed
+    /// (read-only) screen is history: it shows only when nothing else is left, which is an exited
+    /// session's last document.
     pub fn shown(&self) -> Option<&(TspSurface, Document)> {
-        self.newest("screen").or_else(|| self.newest("inline"))
+        (self.newest("screen", true))
+            .or_else(|| self.newest("inline", false))
+            .or_else(|| self.newest("screen", false))
+    }
+
+    /// Whether any surface has a node `id`.
+    pub fn has_node(&self, id: &str) -> bool {
+        self.surfaces.values().any(|(_, doc)| doc.get(id).is_some())
     }
 
     /// The inline surface's id: the target of `theme` events.
     pub fn inline_id(&self) -> Option<&str> {
-        self.newest("inline").map(|(meta, _)| meta.id.as_str())
+        self.newest("inline", false)
+            .map(|(meta, _)| meta.id.as_str())
     }
 
     pub fn blob(&self, id: &str) -> Option<&TspBlob> {
@@ -917,8 +954,7 @@ pub fn overlay_width(size: Option<&str>) -> f32 {
 
 /// Parsed values by node id, kept while the node's revision ([`Mirror::rev`]) is unchanged: a
 /// streaming `text append` re-parses only the node it grew, and nothing is hashed per frame.
-// ponytail: entries of deleted nodes stay until the pane's state is dropped; prune if a session
-// ever streams millions of distinct nodes.
+// Entries of deleted nodes are dropped by `retain` after a frame that deletes and after a snapshot.
 pub struct TextCache<T> {
     entries: HashMap<String, (u64, Rc<T>)>,
 }
@@ -948,6 +984,16 @@ impl<T> TextCache<T> {
     pub fn peek(&self, id: &str) -> Option<Rc<T>> {
         self.entries.get(id).map(|(_, value)| value.clone())
     }
+
+    /// Drops the entries whose node id `keep` rejects.
+    pub fn retain(&mut self, keep: impl Fn(&str) -> bool) {
+        self.entries.retain(|id, _| keep(id));
+    }
+}
+
+/// Drops the entries of `map` (keyed by node or blob id) whose id `keep` rejects.
+pub fn retain_known<V>(map: &mut HashMap<String, V>, keep: impl Fn(&str) -> bool) {
+    map.retain(|id, _| keep(id));
 }
 
 /// When a mirror needs a snapshot: it has none yet, or a gap was seen after the last request
@@ -2169,8 +2215,8 @@ mod tests {
     #[test]
     fn the_fallback_toast_names_the_reason_when_there_is_one() {
         assert_eq!(
-            fallback_toast(Some("no TSP reply from the terminal layer")),
-            "omp is drawing as text: no TSP reply from the terminal layer"
+            fallback_toast(Some("omp offered TSP versions [2], Mkrew speaks 1")),
+            "omp is drawing as text: omp offered TSP versions [2], Mkrew speaks 1"
         );
         assert_eq!(fallback_toast(None), "omp is drawing as text");
         assert_eq!(
@@ -2866,6 +2912,110 @@ mod tests {
         r.begin();
         r.failed();
         assert!(r.wanted(true), "a failed request leaves it open");
+    }
+
+    #[test]
+    fn the_timer_fallback_is_provisional_and_the_toast_says_so() {
+        let toast = fallback_toast(Some(mkrew_core::tsp::engine::NO_REPLY_REASON));
+        assert!(toast.contains("for now"), "{toast}");
+        assert!(toast.contains("native view when omp is ready"), "{toast}");
+        assert!(
+            !toast.contains("no TSP reply"),
+            "the reason is not repeated"
+        );
+        assert_eq!(
+            fallback_toast(Some("omp closed its surface and draws rows again")),
+            "omp is drawing as text: omp closed its surface and draws rows again"
+        );
+    }
+
+    #[test]
+    fn a_read_only_screen_never_covers_the_live_inline_surface() {
+        let d = doc(main_added());
+        let mut m = mirror(vec![surface("s:1", "inline", 1, &d)]);
+        m.apply(&update(
+            "s:2",
+            TspChange::Open {
+                surface: surface("s:2", "screen", 0, &Document::new("s:2")),
+            },
+        ));
+        assert_eq!(m.shown().unwrap().0.id, "s:2");
+        m.apply(&update("s:2", TspChange::Closed { keep: true }));
+        assert_eq!(
+            m.shown().unwrap().0.id,
+            "s:1",
+            "the closed screen is history"
+        );
+        // Only a kept screen left (the session exited): its document is still what shows.
+        m.apply(&update("s:1", TspChange::Closed { keep: false }));
+        assert_eq!(m.shown().unwrap().0.id, "s:2");
+    }
+
+    #[test]
+    fn a_late_frame_for_a_closed_surface_is_ignored_not_a_gap() {
+        let d = doc(main_added());
+        let mut m = mirror(vec![
+            surface("s:1", "inline", 1, &d),
+            surface("s:2", "screen", 1, &d),
+        ]);
+        m.apply(&update("s:2", TspChange::Closed { keep: false }));
+        assert_eq!(
+            m.apply(&frame("s:2", 2, add_x())),
+            MirrorResult::Applied,
+            "closed, then a frame that was already on its way"
+        );
+        assert!(m.surface("s:2").is_none());
+        assert_eq!(
+            m.apply(&frame("s:9", 1, add_x())),
+            MirrorResult::Gap,
+            "a surface never seen is still a gap"
+        );
+        let reopen = TspChange::Open {
+            surface: surface("s:2", "screen", 0, &d),
+        };
+        m.apply(&update("s:2", reopen));
+        assert_eq!(m.apply(&frame("s:2", 1, add_x())), MirrorResult::Applied);
+        assert!(
+            m.surface("s:2").unwrap().1.get("x").is_some(),
+            "reopened id works"
+        );
+    }
+
+    #[test]
+    fn caches_drop_the_entries_of_nodes_that_are_gone() {
+        let mut cache = TextCache::<u8>::default();
+        cache.get("a", 1, || 1);
+        cache.get("b", 1, || 2);
+        cache.retain(|id| id == "a");
+        assert!(cache.peek("a").is_some());
+        assert!(cache.peek("b").is_none());
+        let mut map = HashMap::from([("a".to_owned(), 1), ("b".to_owned(), 2)]);
+        retain_known(&mut map, |id| id == "b");
+        assert_eq!(map.keys().collect::<Vec<_>>(), ["b"]);
+
+        let d = with_node(json!({"id": "x", "k": "text"}));
+        let mut m = mirror(vec![surface("s:1", "inline", 1, &d)]);
+        assert!(m.has_node("x") && m.has_node("main"));
+        m.apply(&frame("s:1", 2, vec![json!(["del", "x"])]));
+        assert!(!m.has_node("x"));
+    }
+
+    #[test]
+    fn only_deleting_changes_make_the_caches_worth_pruning() {
+        let del = TspChange::Frame {
+            seq: 2,
+            ops: vec![json!(["set", "x", {}]), json!(["del", "x"])],
+            blobs: Vec::new(),
+        };
+        let set = TspChange::Frame {
+            seq: 2,
+            ops: vec![json!(["set", "x", {}])],
+            blobs: Vec::new(),
+        };
+        assert!(removes_nodes(&del));
+        assert!(!removes_nodes(&set));
+        assert!(removes_nodes(&TspChange::Closed { keep: false }));
+        assert!(!removes_nodes(&TspChange::Closed { keep: true }));
     }
 
     #[test]

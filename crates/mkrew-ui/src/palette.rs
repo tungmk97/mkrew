@@ -780,14 +780,16 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ZoomPane
         | Command::RenamePane
         | Command::ClosePane => on_panes,
-        Command::Copy
-        | Command::Paste
-        | Command::PageUp
-        | Command::PageDown
-        | Command::CopyMode
-        | Command::LinkHints => on_panes && context.terminal,
+        // A surface pane has no grid: Copy, Paste, PageUp and PageDown reach it (`tsp_command`),
+        // copy mode, link hints and find do not.
+        Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
+            on_panes && context.terminal
+        }
+        Command::CopyMode | Command::LinkHints => on_panes && context.terminal && !context.surface,
         Command::Find => {
-            (on_panes && context.terminal) || in_view(View::Editor) || in_view(View::Docs)
+            (on_panes && context.terminal && !context.surface)
+                || in_view(View::Editor)
+                || in_view(View::Docs)
         }
         Command::OpenComposer => on_panes && context.agent_pane,
         Command::ToggleChat => on_panes && context.agent_pane && context.chat,

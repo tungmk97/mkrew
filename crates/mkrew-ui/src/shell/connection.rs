@@ -697,6 +697,7 @@ impl Shell {
                 }
                 shell.reconnect_attempts = 0;
                 shell.connection = Some(connection);
+                shell.tsp_reconnected();
                 shell.report_machine_state(MachineState::Connected);
                 shell.refresh(window, cx);
                 if !shell.target.is_machine() {

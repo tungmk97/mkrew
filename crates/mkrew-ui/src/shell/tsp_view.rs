@@ -116,11 +116,26 @@ impl TspUi {
         let y = tsp::paged_offset(f32::from(offset.y), page, max, up);
         self.scroll.set_offset(point(offset.x, px(y)));
     }
+
+    /// Drops the cache entries of nodes and blobs the mirror no longer has (after a frame that
+    /// deletes, a closed surface or a snapshot), so a long session does not keep them.
+    fn prune(&mut self) {
+        let Some(mirror) = &self.mirror else { return };
+        let known = |id: &str| mirror.has_node(id);
+        self.md.get_mut().retain(known);
+        tsp::retain_known(self.elapsed_seen.get_mut(), known);
+        tsp::retain_known(self.hits.get_mut(), known);
+        tsp::retain_known(self.lists.get_mut(), known);
+        tsp::retain_known(self.images.get_mut(), |id| mirror.blob(id).is_some());
+    }
 }
 
 impl Shell {
     /// What `info`'s pane shows (spec 7.3 table).
     pub(crate) fn tsp_pane_view(&self, info: &Session) -> PaneView {
+        if info.tsp == TspState::Off {
+            return PaneView::Terminal;
+        }
         let has_surface = (self.tsps.get(&info.id))
             .and_then(|ui| ui.mirror.as_ref())
             .is_some_and(|mirror| mirror.shown().is_some());
@@ -163,6 +178,7 @@ impl Shell {
                 match reply {
                     Ok(snapshot) => {
                         ui.mirror = Some(Mirror::from_snapshot(snapshot));
+                        ui.prune();
                         ui.failures = 0;
                         ui.retry_at = None;
                     }
@@ -202,10 +218,13 @@ impl Shell {
             }
             return;
         }
+        if tsp::removes_nodes(&update.change) {
+            ui.prune();
+        }
         let TspChange::Frame { ops, .. } = &update.change else {
             return;
         };
-        let Some((_, doc)) = mirror.surface(&update.surface) else {
+        let Some((_, doc)) = (ui.mirror.as_ref()).and_then(|m| m.surface(&update.surface)) else {
             return;
         };
         let toasts = tsp::toast_texts(doc, ops);
@@ -357,6 +376,12 @@ impl Shell {
     /// snapshot of each pane on screen that has none (or fell behind), and tells omp the theme.
     /// Called on the status tick. The PTY's width follows the pane in `render_tsp`.
     pub(crate) fn sync_tsps(&mut self, cx: &mut Context<'_, Self>) {
+        // Most sessions have no TSP: nothing to keep, nothing to allocate.
+        if self.tsps.is_empty()
+            && !(self.sidebar.sessions().iter()).any(|s| s.tsp == TspState::Live)
+        {
+            return;
+        }
         let live: HashSet<Ulid> = (self.sidebar.sessions().iter())
             .filter(|s| s.tsp == TspState::Live)
             .map(|s| s.id)
@@ -385,12 +410,33 @@ impl Shell {
         }
     }
 
+    /// The connection is new (the daemon restarted or the link dropped): every mirror may have
+    /// missed frames, and a fetch or back-off from the old connection means nothing. Each mirror
+    /// stays on screen, marked stale, and the next tick fetches a fresh snapshot over it (no
+    /// flash, unlike clearing `tsps`).
+    pub(crate) fn tsp_reconnected(&mut self) {
+        for ui in self.tsps.values_mut() {
+            ui.resync.gap();
+            ui.fetch = None;
+            ui.retry_at = None;
+            ui.failures = 0;
+        }
+    }
+
     /// Something on screen changes with time (the starting dots, a spinner, a running elapsed,
     /// a bar without an amount): the status tick redraws (ADR 0086). Only panes on screen
     /// count.
     pub(crate) fn tsp_animating(&self) -> bool {
+        let sessions = self.sidebar.sessions();
+        if !sessions
+            .iter()
+            .any(|s| matches!(s.tsp, TspState::Waiting | TspState::Live))
+        {
+            return false;
+        }
         let visible = self.visible_sessions();
-        (self.sidebar.sessions().iter())
+        sessions
+            .iter()
             .filter(|s| visible.contains(&s.id))
             .any(|s| match self.tsp_pane_view(s) {
                 PaneView::Starting => true,
