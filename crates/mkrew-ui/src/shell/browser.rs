@@ -101,13 +101,20 @@ impl Shell {
             }
             PageEvent::Focus => {
                 browser.page_keys = true;
-                if browser.editing || browser.address_focus.is_focused(window) {
+                if browser.editing {
                     // The page took the keyboard from the address field.
                     browser.editing = false;
                     let url = browser.page.url.clone();
                     browser.address.clear();
                     browser.address.insert(&url);
-                    window.focus(&browser.focus, cx);
+                }
+                if let Some(host) = browser.host {
+                    // GPUI focus moves in the page's own window.
+                    self.in_window(host, cx, move |shell, window, cx| {
+                        if let Some(browser) = shell.browsers.get(&id) {
+                            window.focus(&browser.focus, cx);
+                        }
+                    });
                 }
                 if let Some(project) = self.web_project(id) {
                     self.focus_pane_key(project, &PaneKey::Web(id));
@@ -237,7 +244,7 @@ impl Shell {
                 }
             }
             // Focus moved to another pane: the address field is left, its text restored.
-            if here && browser.editing && focused != Some(PaneKey::Web(*id)) {
+            if browser.host == Some(host) && browser.editing && focused != Some(PaneKey::Web(*id)) {
                 browser.editing = false;
                 let url = browser.page.url.clone();
                 browser.address.clear();
@@ -511,9 +518,8 @@ impl Shell {
         .relative()
         .child(self.typing(&browser.address_focus, Self::web_address_key_down, cx))
         .on_click(cx.listener(move |shell, _, window, cx| {
-            let has_keys =
-                (shell.browsers.get(&id)).is_some_and(|b| b.address_focus.is_focused(window));
-            if !has_keys {
+            // Entry is decided by `editing`: the field's mouse-down already focused it.
+            if !shell.browsers.get(&id).is_some_and(|b| b.editing) {
                 shell.focus_address(id, window, cx);
             }
         }));
