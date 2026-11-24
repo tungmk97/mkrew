@@ -277,7 +277,7 @@ impl Shell {
                 self.read_file(project, file, window, cx);
             }
         }
-        // A file pane of a worktree keeps its watcher.
+        // An open file pane of a worktree, shown or not, keeps its watcher.
         self.sync_watches(cx);
     }
 

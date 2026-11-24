@@ -16,9 +16,9 @@ pub struct Needs(BTreeSet<(Ulid, Option<Ulid>)>);
 impl Needs {
     /// What showing `workspace` uses: always its project watcher (the title bar summary
     /// follows `git.changed`), plus the worktree of the Files view (`files`) and of the Git
-    /// view (`git`) while that view is on screen, and the worktrees of the file panes on
-    /// screen (`open`: each file is of its own folder). Callers pass `None` for a view that
-    /// is hidden or that shows the project folder.
+    /// view (`git`) while that view is on screen, and the worktrees of every open file pane
+    /// of the workspace (`open`: each file is of its own folder, in a shown tab or not).
+    /// Callers pass `None` for a view that is hidden or that shows the project folder.
     pub fn of(
         workspace: Option<Ulid>,
         files: Option<Ulid>,

@@ -1255,6 +1255,31 @@ fn closing_tabs_and_panes_are_told_from_moves_by_the_remaining_open_set() {
 }
 
 #[test]
+fn a_hidden_worktree_file_keeps_its_worktree_in_the_watch_set() {
+    let (t1, t2) = (Ulid::new(), Ulid::new());
+    let tabs = tabs_of(vec![
+        file("a.rs"),
+        json!({"file": "b.rs", "task": t1.to_string()}),
+        json!({"split": "vertical", "ratio": 0.5, "children": [
+            json!({"file": "c.rs", "task": t2.to_string()}),
+            json!({"file": "d.rs", "task": t2.to_string()}),
+        ]}),
+    ]);
+    // The first tab is the shown one: t1 and t2 are of hidden tabs and still count.
+    assert_eq!(worktrees(open_files(&tabs)), HashSet::from([t1, t2]));
+    // Closing the last file of t1 drops it; t2 still has two files.
+    let closed = PaneKey::File(FileKey::new("b.rs", Some(t1)));
+    let rest = worktrees(open_files_without(&tabs, &[], &[closed]));
+    assert_eq!(rest, HashSet::from([t2]));
+    // The Files tree on t1 keeps it regardless.
+    let needs = crate::watches::Needs::of(Some(Ulid(1)), Some(t1), None, rest);
+    assert_eq!(
+        needs,
+        crate::watches::Needs::of(Some(Ulid(1)), None, None, [t1, t2])
+    );
+}
+
+#[test]
 fn a_doc_loads_once_on_its_first_draw() {
     let mut docs = Documents::new();
     docs.ensure(&k("a.rs"), MdMode::Source);

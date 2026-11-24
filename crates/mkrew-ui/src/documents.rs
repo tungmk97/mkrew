@@ -993,6 +993,13 @@ pub fn open_files(tabs: &Tabs) -> HashSet<FileKey> {
     open_files_without(tabs, &[], &[])
 }
 
+/// The worktrees (task ids) of `files`, e.g. of [`open_files`]: the file leaves of every tab,
+/// shown or not, so a workspace keeps the watchers its hidden panes need and an agent's edit
+/// is there when the tab comes back.
+pub fn worktrees(files: impl IntoIterator<Item = FileKey>) -> HashSet<Ulid> {
+    files.into_iter().filter_map(|file| file.task).collect()
+}
+
 /// [`open_files`] as it would be once the tabs `skip_tabs` and the leaves `skip_keys` are
 /// gone: what a close leaves open.
 pub fn open_files_without(
