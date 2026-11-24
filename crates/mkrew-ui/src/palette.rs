@@ -786,8 +786,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::BrowserAddress
         | Command::BrowserBack
         | Command::BrowserForward
-        | Command::BrowserReload
-        | Command::BrowserOpenExternal => context.web_pane,
+        | Command::BrowserReload => context.web_pane && context.browser,
+        Command::BrowserOpenExternal => context.web_pane,
         Command::RenameTab
         | Command::CloseTab
         | Command::Focus(_)

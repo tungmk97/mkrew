@@ -407,6 +407,21 @@ fn availability_follows_the_view() {
     ] {
         assert!(web.contains(&command), "{command:?}");
     }
+    // Without a web view in Mkrew only "Open in system browser" stays (it needs no page).
+    let no_view = commands(&Context {
+        web_pane: true,
+        browser: false,
+        ..context(View::Terminals)
+    });
+    assert!(no_view.contains(&Command::BrowserOpenExternal));
+    for command in [
+        Command::BrowserAddress,
+        Command::BrowserBack,
+        Command::BrowserForward,
+        Command::BrowserReload,
+    ] {
+        assert!(!no_view.contains(&command), "{command:?}");
+    }
     // Like the buttons: from any view (they show Terminals first), once a tab exists.
     for command in [
         Command::SplitAgent,

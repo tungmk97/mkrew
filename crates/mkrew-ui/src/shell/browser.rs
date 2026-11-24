@@ -195,6 +195,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if mkrew_ui::browser::available().is_err() {
+            return;
+        }
         let Some(project_id) = (at.as_ref().map(|(project, ..)| *project))
             .or_else(|| self.tab_scope(window).map(|(project, _)| project))
             .or(self.workspace)
