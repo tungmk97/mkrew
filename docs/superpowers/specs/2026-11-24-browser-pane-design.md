@@ -113,8 +113,8 @@ pub fn web_place(tab: Option<&Tab>, from: Option<&PaneKey>) -> WebPlace;
 ```
 
 - The tab is the one shown in the window the click happened in (`tab_scope(window)`): the main window's front tab, or a detached window's tab.
-- `Load` takes the first web leaf of the tab in reading order (left to right, then top to bottom, as `rects` returns them).
-- `Split` anchors on the pane the link was in when it is known (a terminal link carries its session; a Chat message knows its session), else the tab's focused pane.
+- `Load` takes the first web leaf of the tab in tree order (first child first: left before right, top before bottom).
+- `Split` anchors on the pane the link was in when it is known (a terminal link carries its session; a Chat link carries its session in `preview::OpenLink.session`, new), else the tab's focused pane.
 - `NewTab` is used when no tab is shown (a link in the Docs view): the browser opens as a new tab of the workspace and the Terminals view comes to the front, as a file does from Docs (ADR 0108).
 - Loading into an existing leaf focuses it; if another pane of the tab is zoomed, the zoom ends first.
 - Placement goes through `place_leaf(project, leaf, place, window, cx)` (`shell/places.rs`) with `Place::Split(key, Edge::Right)` or `Place::NewTab`, so the layout is saved the same way as for files.
@@ -123,12 +123,12 @@ pub fn web_place(tab: Option<&Tab>, from: Option<&PaneKey>) -> WebPlace;
 ### 4.2 `+` row (`crates/mkrew-ui/src/plus_row.rs`, `shell/plus_row.rs`)
 
 - `NewKind::Browser` and `RowItem::Browser` are added; the row is Agent (when a default exists), Shell, Note, Browser, then `▾` More.
-- Label "New browser", glyph `Icon::Globe` (Lucide `globe`, added to `icons.rs` and `assets/icons/lucide/`).
+- Label "New browser", glyph `Icon::Globe` (Lucide `globe`, added to `icons.rs` and `icon/lucide/`).
 - Click: a new tab with an empty web leaf (`url = ""`) right after the active tab, the address field focused.
   In a detached window, click splits right of the focused pane, as the other items do there.
 - Drag (`DraggedNew`): onto a pane edge, an empty web leaf at that edge; onto empty tab strip space, a new tab.
 - The item is not in the row when the browser is not available (section 8).
-- The `▾` full menu gets "New browser" too.
+- The `▾` full menu gets a "Browser" row between "Shell" and "Empty tab".
 
 ### 4.3 Keys and palette
 
@@ -155,7 +155,7 @@ pub fn web_place(tab: Option<&Tab>, from: Option<&PaneKey>) -> WebPlace;
 - A browser pane uses the same `pane_frame` as every pane: stripe, unfocused dim, badges, drag strip, drop overlay.
 - Whatever `pane_frame` paints above the content (the unfocused dim, corner masks if any are left after "Seamless panes" ADR 0109) covers the toolbar only: GPUI cannot paint above the native page.
   The focused stripe sits on the toolbar's top edge, so it stays visible.
-- Tab chip: `PaneIcon::Web` (the globe) and the page title, or the host while there is no title, or "New browser" for an empty leaf.
+- Tab chip: `PaneIcon::Web` (the globe) and the page title, or the URL while there is no title, or "New browser" for an empty leaf.
 
 ### 5.2 Toolbar
 
@@ -203,7 +203,7 @@ One row at the top of the pane, the height and padding of the file pane's header
 
 ### 6.3 Storage
 
-- Windows: one `WebContext` with the data folder `<local data>/mkrew/WebView2` (`%LOCALAPPDATA%\mkrew\WebView2`), shared by every browser pane, so cookies and logins survive a restart and do not mix with the system browser.
+- Windows: a `WebContext` with the data folder `<data>/mkrew/WebView2` (`%APPDATA%\mkrew\WebView2`, next to Mkrew's other data, so `MKREW_DATA_DIR` moves it too), shared by every browser pane, so cookies and logins survive a restart and do not mix with the system browser.
 - macOS: the default persistent `WKWebsiteDataStore` of the app.
 - Devtools are on (`with_devtools(true)`), so F12 opens the platform inspector.
 - The page follows Mkrew's theme (`with_theme`, and `set_theme` when the theme changes on Windows), so `prefers-color-scheme` matches.
@@ -242,14 +242,17 @@ Tooltips of other panes that reach over a page are covered by it; accepted.
 
 ### 7.3 Moving between windows
 
-- When a web leaf moves to another window (tab tear-off, Move back, Move all back, a pane dragged across windows, a detached window closing), its view is moved with `reparent` (`WebViewExtWindows::reparent(hwnd)`, `WebViewExtMacOS::reparent(ns_window)`), so the page keeps its state.
+- When a web leaf moves to another window (tab tear-off, Move back, Move all back, a pane dragged across windows, a detached window closing), Windows moves its view with `WebViewExtWindows::reparent(hwnd)`, so the page keeps its state.
+  macOS rebuilds the view in the new window on the same URL (history is lost): `reparent` there takes an `NSWindow` pointer, which needs `unsafe`, and the crate denies `unsafe_code`.
+- The Shell notices a move by itself: at the start of each window's render it compares the window a page was built in with the window that shows its leaf now, so no window-move code path needs a hook.
 - Minimizing a window hides its child views with it (the OS does that).
 
 ### 7.4 Focus and keys
 
 - A click in the page gives the page the keyboard; GPUI does not see the click.
 - An initialization script (`with_initialization_script`) posts `{"t":"focus"}` over IPC on `mousedown` and `focusin`, and the Shell then focuses that pane (`focus_pane_key`), so the stripe, the tab and the palette's pane commands follow.
-- The same script receives the key combos Mkrew takes back: every binding with the global context, plus the browser pane context's bindings (`Ctrl+L`).
+- The same script receives the key combos Mkrew takes back: every binding with the global context, plus the browser pane context's bindings (`Ctrl+L`), that hold Ctrl, Alt or Cmd (or are F-keys).
+  Ctrl / Cmd + A, C, V, X, Y, Z alone are never taken: they edit text in the page's fields, whatever the keymap says.
   On a match it calls `preventDefault` and `stopPropagation` and posts `{"t":"key","k":"<keystroke>"}`; the Shell runs the bound command as if GPUI had received the key.
   The list is passed as JSON when the view is built and replaced (`evaluate_script`) when the keymap changes (ADR 0073).
 - So `Alt+←` / `Alt+→` (global `Focus` left / right in Mkrew) move pane focus, not page history; page history is the toolbar, the mouse buttons and the palette.
@@ -296,7 +299,7 @@ A `localhost` page is the UI machine's localhost, not the remote machine's; forw
 | `crates/mkrew-ui/src/shell/files_split.rs`, `shell/navigation.rs` | web links call `open_web` |
 | `crates/mkrew-ui/src/plus_row.rs`, `shell/plus_row.rs` | the Browser item |
 | `crates/mkrew-ui/src/keymap.rs` | the commands of section 4.3, `BROWSER_CONTEXT` |
-| `crates/mkrew-ui/src/icons.rs`, `assets/icons/lucide/globe.svg` | `Icon::Globe` |
+| `crates/mkrew-ui/src/icons.rs`, `icon/lucide/globe.svg`, `arrow-left.svg`, `arrow-right.svg` | `Icon::Globe`, `ArrowLeft`, `ArrowRight` |
 | `crates/mkrew-ui/Cargo.toml` | `wry` for Windows and macOS |
 | `crates/mkrew-protocol/src/lib.rs` | `PROTOCOL_VERSION = 61` |
 | `crates/mkrew-daemon/src/tabs.rs` | tests only |
@@ -311,7 +314,7 @@ Permanent unit tests:
 
 - `address::normalize`: each rule of section 6.2, plus `localhost:5173/path`, `127.0.0.1:8080`, `[::1]:3000`, `docs.rs/wry`, `two words`, `  ` and a percent-encoded search.
 - `split`: a web leaf round-trips through JSON unchanged; the same `id` twice in a tab is `LayoutError::Duplicate`; a web leaf without `id` is dropped and its split collapses to the sibling.
-- `tabs::web_place`: a tab with a web leaf gives `Load` with the first one in reading order; a tab without one gives `Split` of the link's pane, or of the focused pane when the link has none; no tab gives `NewTab`.
+- `tabs::web_place`: a tab with a web leaf gives `Load` with the first one in tree order; a tab without one gives `Split` of the link's pane, or of the focused pane when the link has none; no tab gives `NewTab`.
 - `plus_row_items`: Browser comes after Note and before More when the browser is available, and is absent when it is not.
 - `keymap`: `Alt+Shift+B` / `Cmd+Alt+B` are `SplitBrowser`; `Ctrl+L` is `BrowserAddress` only in `BROWSER_CONTEXT`; the key list passed to a page holds the global bindings and the browser bindings and no terminal or editor binding.
 - Daemon `tabs.rs`: the two tests of section 3.3.
