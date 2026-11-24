@@ -45,10 +45,10 @@ The page itself needs a web engine, and a GPUI window has none.
   So `Alt+←` and `Alt+→` (pane focus) do not move page history; the toolbar, the mouse buttons and the palette do.
   The key list follows the keymap (ADR 0073).
 - **DirectComposition off on Windows.**
-  `GPUI_DISABLE_DIRECT_COMPOSITION=1` is set at the top of `main()` unless the user set it.
+  `GPUI_DISABLE_DIRECT_COMPOSITION=1` is set at the top of `main()` unless the user set it or the WebView2 Runtime is missing (no page can show, so DirectComposition stays on).
   gpui-pre-windows 0.3.7 draws through a topmost DirectComposition visual that covers child windows, so the page was invisible.
   The whole app now draws through the HWND swap chain path; resize flicker or a performance change is possible.
-  Mkrew strips the variable from the environment of the daemon, Zed and the installer when Mkrew set it itself, so a GPUI-based Zed or a relaunched Mkrew does not take it for a user setting.
+  Mkrew strips the variable from the environment of the daemon, Zed, the installer and its machine windows when Mkrew set it itself, so none of them takes it for a user setting; each machine window decides for itself at its start.
 - **First build blocks input briefly.**
   The first build of a page pumps messages inside GPUI's borrow (wry `wait_with_pump`), so a click or key in the first ~400 ms may be dropped, with `RefCell already borrowed` in the log.
   Any GPUI callback holds the `App` borrow, so building outside it needs a change in GPUI.
@@ -74,7 +74,7 @@ The page itself needs a web engine, and a GPUI window has none.
   `WebSurface` is modeled on it instead.
 - **A new pane per link (Tern).**
   Ten links would be ten panes.
-  One link-taking pane per tab keeps the layout, at the cost of replacing the page the user was reading; the toolbar's `+` and `Alt+Shift+B` make more.
+  One link-taking pane per tab keeps the layout, at the cost of replacing the page the user was reading; `Alt+Shift+B` and the palette make more.
 - **`reparent` on a window move.**
   Keeps history, but it left the keyboard with the old window (see Decision), and macOS needs `unsafe`.
   Rejected for now; revisit when wry fixes the focus parent.
@@ -87,10 +87,13 @@ The page itself needs a web engine, and a GPUI window has none.
 - While an overlay or a drag is open, the page shows as a title card, not a picture of it (`ponytail:` a capture through WebView2 `CapturePreview` or `WKWebView.takeSnapshot` if it looks jarring).
 - The dim of an unfocused pane, and anything else GPUI paints above a pane, covers only the toolbar: GPUI cannot paint above the native page.
   Tooltips of other panes that reach over a page are covered by it.
-- The square page covers the pane's rounded bottom corners; the focused stripe sits on the toolbar's top edge, so it stays visible.
+- The square page covers the pane's bottom corners (square since ADR 0109); the focused stripe sits on the toolbar's top edge, so it stays visible.
 - Windows draws the whole app without DirectComposition.
   A user who sets `GPUI_DISABLE_DIRECT_COMPOSITION` themselves keeps their value, and Mkrew does not remove it from children.
 - The keys the init script gives back come from `e.code`, so a non-QWERTY layout may match a combo at the US key position.
+- A page is not trusted: its IPC key messages run only while it has the keyboard in the focused pane, only for combos in the forwarded list, and only global and Browser-context commands (`Keymap::forwarded_command`).
+  A focused page can still fake those shortcuts (open the palette, split panes); it cannot reach a context-bound command (Git, Board, editor, terminal).
+  A page that is not on screen cannot move the window's focus.
 - Checked by smoke on Windows: link, `+`, load, hiding under overlays and tabs, tear-off, restart, Stop.
   Not checked by hand: page-focused key forwarding, a lone Alt, a click into the page while editing the address, a page that autofocuses next to a terminal, Move back, drags, the first ~400 ms of a build, macOS, and Windows without the Runtime.
   They are in `docs/HUMAN_CHECKS.md`.

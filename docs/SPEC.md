@@ -3078,7 +3078,7 @@ Windows and macOS show the page with the OS web view; Linux and machines without
 5. **Native view.**
    The view is a native child of the window (`wry` 0.57) below the toolbar; it paints above GPUI, so Mkrew hides it with every overlay: palette, dialog, menu, the `+` menu, a peek popover and any drag (the title card, the page's title and URL, shows in its place), with a tab or view change, a zoomed neighbour and while it is off screen.
    Moving a browser pane to another window (tear-off, Move back, a drag, a closing detached window) rebuilds the page there on the same URL, so back / forward history is lost; `wry` 0.57 `reparent` keeps the first parent's keyboard target, and macOS would need `unsafe`.
-   On Windows `GPUI_DISABLE_DIRECT_COMPOSITION=1` is set at the start of `main()` unless the user set it, because gpui-pre-windows 0.3.7 draws through a topmost DirectComposition visual that covers child windows; it is removed from the environment of the daemon, Zed and the updater.
+   On Windows `GPUI_DISABLE_DIRECT_COMPOSITION=1` is set at the start of `main()` unless the user set it or the WebView2 Runtime is missing, because gpui-pre-windows 0.3.7 draws through a topmost DirectComposition visual that covers child windows; it is removed from the environment of the daemon, Zed, the updater and machine windows.
    The first build of a page pumps messages inside GPUI's borrow, so a click or key in the first ~400 ms may be dropped (accepted).
 6. **Keys.**
    A click in the page gives it the keyboard and focuses its pane in Mkrew (stripe, tab chip and the palette's pane commands follow).

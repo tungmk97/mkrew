@@ -78,7 +78,7 @@ Seen in Tern, and not taken (non-goals, section 12): picture in picture cards, a
 ### 3.2 Browser state (UI only)
 
 - `Shell.browsers: HashMap<Ulid, Browser>`, keyed by the leaf `id`.
-- `Browser` holds the leaf's live page: the native web view (Windows and macOS only), the window it belongs to, title, loading flag, `can_go_back` / `can_go_forward` when the platform reports them, and the address field's text while it is edited.
+- `Browser` holds the leaf's live page: the native web view (Windows and macOS only), the window it belongs to, title, loading flag and the address field's text while it is edited.
 - A `Browser` is created when its leaf is drawn the first time with a non-empty `url`, and dropped when its leaf leaves every layout of every window.
 - After a restart only `url` comes back (from the layout); the page loads again.
 
@@ -134,7 +134,7 @@ pub fn web_place(tab: Option<&Tab>, from: Option<&PaneKey>) -> WebPlace;
 
 | Command | Windows / Linux | macOS | Context | Palette label |
 |---|---|---|---|---|
-| `SplitBrowser` | `Alt+Shift+B` | `Cmd+Alt+B` | global | Browser: Split right |
+| `SplitBrowser` | `Alt+Shift+B` | `Cmd+Alt+B` | global | Panes: New browser pane |
 | `BrowserAddress` | `Ctrl+L` | `Cmd+L` | browser pane | Browser: Focus address |
 | `BrowserBack` | none | none | browser pane | Browser: Back |
 | `BrowserForward` | none | none | browser pane | Browser: Forward |
@@ -209,7 +209,7 @@ One row at the top of the pane, the height and padding of the file pane's header
 - The page follows Mkrew's theme (`with_theme`, and `set_theme` when the theme changes on Windows), so `prefers-color-scheme` matches.
 - Downloads, permission prompts (camera, location) and file pickers behave as the platform web view does by default.
 
-## 7. The native web view (`crates/mkrew-ui/src/browser/surface.rs`)
+## 7. The native web view (`crates/mkrew-ui/src/browser/native.rs`)
 
 Built only with `cfg(any(windows, target_os = "macos"))`.
 
@@ -279,7 +279,7 @@ Tooltips of other panes that reach over a page are covered by it; accepted.
 
 - `wry` is a dependency for Windows and macOS only: `[target.'cfg(any(windows, target_os = "macos"))'.dependencies] wry = { version = "0.57", features = ["devtools"] }` in `crates/mkrew-ui/Cargo.toml`.
   CI on Linux installs nothing new.
-- `browser/address.rs` and the leaf, placement and toolbar code build on every OS; only `browser/surface.rs` is `cfg`-gated.
+- `browser/address.rs` and the leaf, placement and toolbar code build on every OS; only `browser/native.rs` is `cfg`-gated.
 
 ### 8.3 Remote machines
 
@@ -294,7 +294,7 @@ A `localhost` page is the UI machine's localhost, not the remote machine's; forw
 | `crates/mkrew-ui/src/tabs.rs` | `WebPlace`, `web_place`, `PaneIcon::Web` |
 | `crates/mkrew-ui/src/browser/mod.rs` (new) | `Browser`, `available()`, events |
 | `crates/mkrew-ui/src/browser/address.rs` (new) | `normalize` |
-| `crates/mkrew-ui/src/browser/surface.rs` (new, Windows and macOS) | `WebSurface` element, `wry` builder, init script |
+| `crates/mkrew-ui/src/browser/native.rs` (new, Windows and macOS) | `WebSurface` element, `wry` builder, init script |
 | `crates/mkrew-ui/src/shell/browser.rs` (new) | `open_web`, the event task, the shown set, overlays, toolbar render, commands |
 | `crates/mkrew-ui/src/shell/pane_render.rs` | the `Web` arm of the pane content |
 | `crates/mkrew-ui/src/shell/files_split.rs`, `shell/navigation.rs` | web links call `open_web` |
@@ -331,7 +331,7 @@ Smoke run (`scripts/smoke.ps1`, Windows), with screenshots in `docs/screenshots/
 7. Quitting and starting Mkrew brings the pane back on the same URL.
 8. Dark and light theme screenshots of the toolbar, the empty state and the title card.
 
-`docs/HUMAN_CHECKS.md` gets: "Browser pane on macOS (open, keys, reparent, theme)", "Browser pane on Windows without the WebView2 runtime (toast, unavailable state)", and "check the browser pane visually (dark / light)".
+`docs/HUMAN_CHECKS.md` gets: "Browser pane on macOS (open, keys, theme)", "Browser pane on Windows without the WebView2 runtime (toast, unavailable state)", and "check the browser pane visually (dark / light)".
 
 ## 11. Docs
 
