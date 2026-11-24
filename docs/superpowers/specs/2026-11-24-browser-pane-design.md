@@ -3,8 +3,8 @@
 - Date: 2026-11-24
 - Status: design approved in chat by the user (2026-11-24), section by section; this file waits for the user's review.
 - Branch and worktree: `feat/browser-pane` in `.worktrees/browser-pane`, from `master` at `20a2202` (after the Tern panes merge).
-- ADR: `docs/decisions/0109-browser-pane.md`.
-  `master` has 0108; `feat/omp-tsp` (unmerged) holds 0107.
+- ADR: `docs/decisions/0110-browser-pane.md`.
+  `master` has 0108; `feat/omp-tsp` (unmerged) holds 0107; uncommitted work in the main checkout ("Seamless panes", 2026-11-24) holds 0109.
 - Protocol: 60 -> 61.
   `master` is at 60; `feat/omp-tsp` is at 59 and not rebased, so it needs a number above 60 when it merges.
   Re-check both numbers when this branch merges; take the next free ones if they moved.
@@ -153,7 +153,8 @@ pub fn web_place(tab: Option<&Tab>, from: Option<&PaneKey>) -> WebPlace;
 ### 5.1 Frame
 
 - A browser pane uses the same `pane_frame` as every pane: stripe, unfocused dim, badges, drag strip, drop overlay.
-- The dim and the rounded corner masks cover the toolbar only: GPUI cannot paint above the native page.
+- Whatever `pane_frame` paints above the content (the unfocused dim, corner masks if any are left after "Seamless panes" ADR 0109) covers the toolbar only: GPUI cannot paint above the native page.
+  The focused stripe sits on the toolbar's top edge, so it stays visible.
 - Tab chip: `PaneIcon::Web` (the globe) and the page title, or the host while there is no title, or "New browser" for an empty leaf.
 
 ### 5.2 Toolbar
@@ -330,7 +331,7 @@ Smoke run (`scripts/smoke.ps1`, Windows), with screenshots in `docs/screenshots/
 
 ## 11. Docs
 
-- ADR 0109 "Browser pane": wry child view over CEF and an external window; one link-taking browser pane per tab; Linux falls back to the system browser; protocol 61.
+- ADR 0110 "Browser pane": wry child view over CEF and an external window; one link-taking browser pane per tab; Linux falls back to the system browser; protocol 61.
 - SPEC §5 (web leaf JSON), §7 (`tab.set_layout` leaves, protocol 61 line), §10 (links open in a browser pane), §13 (the commands of section 4.3), and a new §20M "Browser pane" with sections 4 to 8 in short.
 - `docs/PROGRESS.md` note for the next session.
 
