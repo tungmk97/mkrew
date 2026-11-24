@@ -101,6 +101,14 @@ impl Shell {
             }
             PageEvent::Focus => {
                 browser.page_keys = true;
+                if browser.editing || browser.address_focus.is_focused(window) {
+                    // The page took the keyboard from the address field.
+                    browser.editing = false;
+                    let url = browser.page.url.clone();
+                    browser.address.clear();
+                    browser.address.insert(&url);
+                    window.focus(&browser.focus, cx);
+                }
                 if let Some(project) = self.web_project(id) {
                     self.focus_pane_key(project, &PaneKey::Web(id));
                 }
@@ -227,6 +235,13 @@ impl Shell {
                         browser.error = Some(error);
                     }
                 }
+            }
+            // Focus moved to another pane: the address field is left, its text restored.
+            if here && browser.editing && focused != Some(PaneKey::Web(*id)) {
+                browser.editing = false;
+                let url = browser.page.url.clone();
+                browser.address.clear();
+                browser.address.insert(&url);
             }
             let Some(native) = &browser.native else {
                 continue;
@@ -451,7 +466,21 @@ impl Shell {
             button.tooltip(tooltip(theme, tip, self.keymap.label(command)))
         };
         let reload = if browser.page.loading {
-            nav("web-stop", Icon::X, "Stop", Command::BrowserReload)
+            // Spec 5.2: while loading the button stops the load.
+            let stop = if has_page {
+                icon_button("web-stop", Icon::X, theme).on_click(cx.listener(
+                    move |shell, _, _, _| {
+                        if let Some(native) =
+                            shell.browsers.get(&id).and_then(|b| b.native.as_ref())
+                        {
+                            native.script("window.stop()");
+                        }
+                    },
+                ))
+            } else {
+                disabled_icon_button("web-stop", Icon::X, theme.text_muted, theme)
+            };
+            stop.tooltip(tooltip(theme, "Stop", ""))
         } else {
             nav(
                 "web-reload",
@@ -481,11 +510,6 @@ impl Shell {
         .on_key_down(cx.listener(Self::web_address_key_down))
         .relative()
         .child(self.typing(&browser.address_focus, Self::web_address_key_down, cx))
-        // The pane frame's mouse down focuses the pane, which would take the keyboard back.
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|_, _, _, cx| cx.stop_propagation()),
-        )
         .on_click(cx.listener(move |shell, _, window, cx| {
             let has_keys =
                 (shell.browsers.get(&id)).is_some_and(|b| b.address_focus.is_focused(window));
@@ -493,6 +517,17 @@ impl Shell {
                 shell.focus_address(id, window, cx);
             }
         }));
+        // The pane frame's mouse down focuses the pane, which would take the keyboard back.
+        // Stopped here, on a parent: the field's own mouse-down (caret, selection) runs first.
+        let field = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| cx.stop_propagation()),
+            )
+            .child(field);
         let row = div()
             .flex_none()
             .flex()
@@ -541,6 +576,19 @@ impl Shell {
         div().flex_none().flex().flex_col().child(row).child(line)
     }
 
+    /// Leaves the address field for the page: GPUI focus goes to the pane first, then the
+    /// page takes the keyboard (a pane without a page keeps it on the pane).
+    fn address_to_page(&mut self, id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Some(browser) = self.browsers.get_mut(&id) {
+            window.focus(&browser.focus, cx);
+            if let Some(native) = &browser.native {
+                native.focus();
+                browser.page_keys = true;
+            }
+        }
+        cx.notify();
+    }
+
     /// Typing in an address field (`typing` takes a plain fn): the pane whose field has the
     /// keyboard.
     fn web_address_key_down(
@@ -584,10 +632,9 @@ impl Shell {
                     .map(|b| b.address.as_str().to_owned())
                     .unwrap_or_default();
                 if let Some(url) = mkrew_ui::browser::address::normalize(&typed) {
+                    // `navigate` ends the editing and shows the new URL.
                     self.navigate(id, url, window, cx);
-                    if let Some(native) = self.browsers.get(&id).and_then(|b| b.native.as_ref()) {
-                        native.focus();
-                    }
+                    self.address_to_page(id, window, cx);
                 }
             }
             "escape" => {
@@ -596,12 +643,8 @@ impl Shell {
                     let url = browser.page.url.clone();
                     browser.address.clear();
                     browser.address.insert(&url);
-                    match &browser.native {
-                        Some(native) => native.focus(),
-                        None => window.focus(&browser.focus, cx),
-                    }
                 }
-                cx.notify();
+                self.address_to_page(id, window, cx);
             }
             _ => {}
         }
