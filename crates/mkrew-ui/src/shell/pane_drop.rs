@@ -113,6 +113,12 @@ impl PaneDragged for DraggedPath {
     }
 }
 
+/// The element id of a pane's frame: it scopes the fixed ids of what the pane draws, so two
+/// panes of one kind (two files) never share a click state.
+pub(crate) fn pane_id(key: &PaneKey) -> SharedString {
+    SharedString::from(format!("pane-{key:?}"))
+}
+
 /// The element id (and hover group) of a pane's grip.
 pub(crate) fn grip_id(key: &PaneKey) -> SharedString {
     SharedString::from(format!("pane-grip-{key:?}"))

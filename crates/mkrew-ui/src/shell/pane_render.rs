@@ -479,6 +479,7 @@ impl Shell {
                 let is_focused = focused == Some(&key);
                 let width = rect.w as f32 * area - 2.0 * theme::PANE_HALF_GAP;
                 div()
+                    .id(pane_id(&key))
                     .absolute()
                     .left(relative(rect.x as f32))
                     .top(relative(rect.y as f32))
