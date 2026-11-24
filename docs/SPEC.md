@@ -28,7 +28,6 @@
 - §18 Milestones & acceptance criteria
 - §19 Risks, open questions, backlog
 - §20 v2: working with agents (M9–M11, M13)
-- §20M Browser pane (outside the milestones, ADR 0111)
 
 ---
 
@@ -1637,15 +1636,15 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
 | Panes | New agent pane / new shell pane (split right with the workspace's default agent / shell; the title bar's `+` row and Ctrl+Shift+A / Ctrl+Shift+T create tabs) | Alt+Shift+A / Alt+Shift+S |
-| Panes | New browser pane (split right, empty, address field focused; global, also while a page has the keyboard; not offered where the browser is unavailable, §20M) | Alt+Shift+B |
-| Browser pane | Focus the address field (selects all; Esc gives the keyboard back to the page) | Ctrl+L |
-| Browser pane | Back, Forward, Reload, Open in system browser: palette only ("Browser: Back" and so on), no default key | none |
 | Panes | Move focus (file and diff panes count as panes); past the outer pane (or from Board or Docs) ← enters the sidebar filter and → the right panel's file tree or Git list, only while on screen (the compact rail widens); from those ← / → come back to the center | Alt+←↑→↓ |
 | Panes | Resize | Alt+Shift+←↑→↓ |
 | Panes | Zoom / unzoom pane | Ctrl+Shift+M |
 | Panes | Toggle Terminal / Chat of the focused agent pane (ADR 0104; works while its composer has the keys) | Ctrl+Alt+T |
 | Panes | Close pane (asks if agent running) | Ctrl+Shift+X |
 | Panes | Rename pane (also: double-click a tab that keeps its default name) | F2 |
+| Panes | New browser pane (split right, empty, address field focused; global, also while a page has the keyboard; not offered where the browser is unavailable, §20M) | Alt+Shift+B |
+| Browser pane | Focus the address field (selects all; Esc gives the keyboard back to the page) | Ctrl+L |
+| Browser pane | Back, Forward, Reload, Open in system browser | command palette only |
 | Terminal | Copy / paste | Ctrl+Shift+C (or Ctrl+C while text is selected) / Ctrl+V or Ctrl+Shift+V |
 | Terminal / Editor / Docs | Find in scrollback / in the opened file / filter the Docs list | Ctrl+Shift+F |
 | Terminal | Page up / down | Shift+PgUp / Shift+PgDn |
@@ -3054,12 +3053,12 @@ Windows and macOS show the page with the OS web view; Linux and machines without
    Otherwise the link splits right of the pane it came from (the tab's focused pane when it is not known).
    A link in a view with no tab (Docs) opens a new tab and brings Terminals to the front.
    Hovering `+` shows a Browser item (Agent, Shell, Note, Browser, `▾`): a click opens a new tab with an empty browser and its address field focused, a drag splits a pane at the drop edge; the `▾` menu has a "Browser" row.
-   `Alt+Shift+B` (`⌥⌘B`) splits right with an empty browser; its palette label is "Browser: Split right".
+   `Alt+Shift+B` (`⌥⌘B`) splits right with an empty browser; its palette label is "Panes: New browser pane".
 2. **Look.**
    A browser pane has the frame of every pane (stripe, dim, grip, divider, drop overlay); the dim covers the toolbar only, because GPUI cannot paint above the native page.
    Its tab chip shows the globe and the page title, else the URL, else "New browser".
    The toolbar is one row: back, forward, reload (stop while loading), the address field, Open in system browser, close.
-   Back and forward are disabled only when the platform says there is nothing to go to.
+   Back and forward are enabled whenever the pane has a page and disabled when it has none; the platform's history is not queried.
    A 2 px accent line under the toolbar shows while the page loads, without animation.
    An empty pane shows "Type an address or paste a link" below the toolbar.
    Load errors (no server, no DNS) are the platform's own error page.
@@ -3071,10 +3070,10 @@ Windows and macOS show the page with the OS web view; Linux and machines without
    No space and a dot in the host part: `https://` in front.
    Anything else: a Google search of the text.
 4. **Pages.**
-   The leaf's `url` follows the page and is saved when a load finishes, so a restart brings the pane back on its last page; back / forward history is not kept across a restart, cookies and logins are.
+   The leaf's `web` field follows the page and is saved when a load finishes, so a restart brings the pane back on its last page; back / forward history is not kept across a restart, cookies and logins are.
    A page that asks for a new window loads in the same pane.
    Windows keeps its data in `<data>/mkrew/WebView2` (shared by all panes, apart from the system browser); macOS uses the app's default data store.
-   F12 opens the platform inspector, and the page follows Mkrew's theme (`prefers-color-scheme`).
+   F12 opens the platform inspector; on Windows the page follows Mkrew's theme (`prefers-color-scheme`), on macOS it follows the app appearance.
    Downloads, permission prompts and file pickers are the platform's.
 5. **Native view.**
    The view is a native child of the window (`wry` 0.57) below the toolbar; it paints above GPUI, so Mkrew hides it with every overlay: palette, dialog, menu, the `+` menu, a peek popover and any drag (the title card, the page's title and URL, shows in its place), with a tab or view change, a zoomed neighbour and while it is off screen.
@@ -3085,13 +3084,14 @@ Windows and macOS show the page with the OS web view; Linux and machines without
    A click in the page gives it the keyboard and focuses its pane in Mkrew (stripe, tab chip and the palette's pane commands follow).
    An initialization script gives back every combo with Ctrl, Alt or Cmd (and F-keys) of a global binding or of the browser context (`Ctrl+L`); `Ctrl+` / `Cmd+` A, C, V, X, Y and Z, every key without a modifier and a lone Alt stay in the page.
    So `Alt+←` / `Alt+→` move pane focus, not page history; the page's history is the toolbar, the mouse buttons and the palette.
-   F5, Ctrl+R, F12 and zoom keys work in the page.
+   F5, Ctrl+R, F12 and zoom keys work in the page; on macOS Cmd+R and Cmd+0 are Mkrew's own bindings, so the page gives them back.
    When focus moves to another pane or an overlay opens, the keyboard goes back to Mkrew.
    The key list follows the keymap (ADR 0073).
 7. **Where it is not available.**
-   Linux, Windows without the WebView2 Runtime, and a machine where building a view failed use the system browser: links call the OS, with one toast per run ("Web pages open in your browser: <reason>").
-   The `+` row has no Browser item, and `Alt+Shift+B` and the browser commands are not offered.
+   Linux and Windows without the WebView2 Runtime use the system browser: links call the OS, with one toast per run ("Web pages open in your browser: <reason>").
+   The `+` row has no Browser item, `Alt+Shift+B` does nothing and the palette lists no "Panes: New browser pane", "Browser: Focus address", "Back", "Forward" or "Reload" (only "Open in system browser" stays on a browser pane).
    A browser pane already in a layout (written on another machine, or restored) stays and shows the reason and an "Open in system browser" button.
+   If building a view fails on a machine that has the Runtime, the pane shows the error and the button; the next link or Enter in the address field tries again.
    A `localhost` page is the UI machine's localhost, not a remote daemon's.
 8. **Not done.**
    Picture in picture cards, agents reading or driving the page, an element picker, screenshots into the composer, a browser on Linux, port forwarding of a remote machine, back / forward history across a restart, a setting that sends links to the system browser, find in page, bookmarks, a tab strip inside the pane and a download panel.

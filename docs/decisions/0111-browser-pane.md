@@ -15,7 +15,7 @@ The page itself needs a web engine, and a GPUI window has none.
 ## Decision
 
 - **A fourth leaf.**
-  A leaf can be `{"web": "<url>", "id": "<ulid>"}` (`Leaf::Web`, key `PaneKey::Web(id)`); `url` is `""` before the first page.
+  A leaf can be `{"web": "<url>", "id": "<ulid>"}` (`Leaf::Web`, key `PaneKey::Web(id)`); `web` is `""` before the first page.
   `id` is required, so two panes can show the same URL, and a leaf without it is dropped with a warning like any bad leaf.
   The layout stays untagged JSON in `terminal_tab.layout`, so there is no migration.
   The daemon reads only session leaves and keeps the others, so it needs no code change, only tests.
@@ -29,9 +29,10 @@ The page itself needs a web engine, and a GPUI window has none.
   The tab shown in the window loads the link in its first browser pane; with none, the link splits right of the pane it came from.
   One browser pane per tab takes links; Tern opens a new block per link instead.
 - **Not available.**
-  Linux, Windows without the WebView2 Runtime, and a machine where building a view failed use the system browser, with one toast per run naming the reason.
-  Those machines have no Browser item in the `+` row and no browser key or palette entry.
+  Linux and Windows without the WebView2 Runtime use the system browser, with one toast per run naming the reason.
+  Those machines have no Browser item in the `+` row, `Alt+Shift+B` does nothing, and the palette offers no new browser pane, address, back, forward or reload; "Open in system browser" stays on a browser pane.
   A browser pane already in a layout stays and shows the reason and "Open in system browser".
+  If building a view fails where the Runtime exists, the pane shows the error and the same button; the next link or Enter in the address field tries again.
 - **Every window move rebuilds the page.**
   A tab torn off, moved back, or a pane dragged to another window rebuilds the view in the new window on the same URL, so back / forward history is lost.
   wry 0.57 `reparent` keeps the first parent for a child view's focus target (`focus_parent` would raise the old window), and macOS would need `unsafe` for its `NSWindow`, which the crate denies.
@@ -55,6 +56,7 @@ The page itself needs a web engine, and a GPUI window has none.
 - **Protocol 62.**
   An older UI would drop the unknown leaf and write the layout back without it, so a version check must refuse the pairing.
 - **Storage and theme.**
+  The page follows Mkrew's theme on Windows (`prefers-color-scheme`), and the app appearance on macOS.
   Windows keeps its data in `<data>/mkrew/WebView2`, shared by all panes and apart from the system browser; macOS uses the app's default store.
   Cookies and logins survive a restart; back / forward history does not.
 
@@ -85,7 +87,7 @@ The page itself needs a web engine, and a GPUI window has none.
 - While an overlay or a drag is open, the page shows as a title card, not a picture of it (`ponytail:` a capture through WebView2 `CapturePreview` or `WKWebView.takeSnapshot` if it looks jarring).
 - The dim of an unfocused pane, and anything else GPUI paints above a pane, covers only the toolbar: GPUI cannot paint above the native page.
   Tooltips of other panes that reach over a page are covered by it.
-- A pane's page covers its square bottom corners; the focused stripe sits on the toolbar's top edge, so it stays visible.
+- The square page covers the pane's rounded bottom corners; the focused stripe sits on the toolbar's top edge, so it stays visible.
 - Windows draws the whole app without DirectComposition.
   A user who sets `GPUI_DISABLE_DIRECT_COMPOSITION` themselves keeps their value, and Mkrew does not remove it from children.
 - The keys the init script gives back come from `e.code`, so a non-QWERTY layout may match a combo at the US key position.

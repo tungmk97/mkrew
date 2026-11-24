@@ -22,8 +22,8 @@ pub const DISABLE_DCOMP_ENV: &str = "GPUI_DISABLE_DIRECT_COMPOSITION";
 pub static DCOMP_SET_BY_MKREW: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// Takes the variable Mkrew set for itself out of a child's environment (the daemon, Zed);
-/// a value the user set is kept.
+/// Takes the variable Mkrew set for itself out of a child's environment (the daemon, Zed, the
+/// updater); a value the user set is kept.
 pub fn strip_own_env(command: &mut std::process::Command) -> &mut std::process::Command {
     if DCOMP_SET_BY_MKREW.load(std::sync::atomic::Ordering::Relaxed) {
         command.env_remove(DISABLE_DCOMP_ENV);

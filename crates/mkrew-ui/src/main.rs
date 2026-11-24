@@ -190,7 +190,7 @@ fn main() {
         unsafe {
             std::env::set_var(mkrew_ui::browser::DISABLE_DCOMP_ENV, "1");
         }
-        // Children (the daemon, Zed) get it removed again: `browser::strip_own_env`.
+        // Children (the daemon, Zed, the updater) get it removed again: `browser::strip_own_env`.
         mkrew_ui::browser::DCOMP_SET_BY_MKREW.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     let launched = Instant::now();
