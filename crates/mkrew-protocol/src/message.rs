@@ -2018,7 +2018,7 @@ pub enum TspState {
     Waiting,
     /// A surface is open: the pane draws it instead of the terminal grid.
     Live,
-    /// No hello within 10 s of the first output (a hello that still comes within 60 s makes it `Live`), or the agent went back to drawing rows.
+    /// No hello within 10 s of the first output (a hello that still comes within 60 s makes it `Live`), an unsupported hello, no surface opened within 60 s, a document over the bounds, or the agent went back to drawing rows.
     Fallback,
 }
 

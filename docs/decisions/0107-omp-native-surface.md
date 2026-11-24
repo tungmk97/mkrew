@@ -35,8 +35,10 @@ Older system ConPTYs drop APC; the newer one passes it. On Windows 11 24H2 (buil
 - Protocol 59 (ADR 0106 made it 58, this ADR follows it): requests `tsp.snapshot` and `tsp.event`, event `tsp.update`, and `Session.tsp` (`off`, `waiting`, `live`, `fallback`; daemon memory only, like `terminal_title`).
   A client asks `tsp.snapshot` when it attaches (each surface carries its last `seq`), then applies `tsp.update` events in order, and asks again when it sees a gap in `seq`.
   A UI sends the theme with `tsp.event` `{ev:"theme", dark}` when it attaches and when the theme changes.
-- Bounds: a document holds at most 50,000 nodes and 6 MiB of text, and the engine keeps at most 4 MiB of image blobs.
-  Both bounds keep a `tsp.snapshot` reply under the 16 MiB protocol frame limit.
+- Bounds: a document holds at most 20,000 nodes and 1 MiB of text (counted as JSON, escapes included), at most 3 surfaces stay open (a fourth drops the oldest read-only one, else the oldest), and the engine keeps at most 4 MiB of image blobs.
+  Together they keep a `tsp.snapshot` reply under the 16 MiB protocol frame limit: 3 x (1 MiB + 20,000 nodes at about 100 bytes) + 5.3 MiB of base64 is about 14 MiB.
+  If a reply still passes the frame, the daemon sends it without the blobs, then answers `internal` ("snapshot too large"); it never closes the connection for this.
+  A document that stays over a bound after eviction (the excess is in the dock or the layer) makes the session fall back.
   Past a bound the daemon evicts the oldest top-level children of `main` (never the dock, the layer or a `screen` surface), tells omp with `ev:gone`, and adds one synthetic first row "Earlier messages were trimmed" under the reserved id `mkrew.trimmed`.
 - Profile key `tsp` (bool, optional).
   Absent: on when the profile's `[usage] format` is `omp_jsonl`, so existing omp profiles (seeding never overwrites them) get it without an edit.
@@ -45,13 +47,14 @@ Older system ConPTYs drop APC; the newer one passes it. On Windows 11 24H2 (buil
 - Mkrew ships the newer ConPTY on Windows: `conpty.dll` and `OpenConsole.exe` from the MIT-licensed `Microsoft.Windows.Console.ConPTY` NuGet package 1.24.260710001 (the files of the spike's passing row), pinned by SHA-256 and fetched by `scripts/fetch-conpty.sh` (and `.ps1`), installed by `packaging/mkrew.iss` into `{app}\bin` next to `mkrew-daemon.exe`.
   This applies to every PTY the daemon opens, not only omp's.
   The daemon logs once at start which ConPTY it loaded (`conpty = "sideloaded"` or `"system"`).
-  Without the files the daemon runs as before on the system ConPTY, no hello arrives, and the pane falls back to the terminal grid 10 s after the session's first output (the wait is long because resumed and concurrent omp starts need over 2 s to send the hello).
+  Without the files the daemon runs as before on the system ConPTY, no hello arrives, and the pane falls back to the terminal grid 10 s after the session's first output (the wait is long because resumed and concurrent omp starts need over 2 s to send the hello; a hello within 60 s of the first output still switches it to the native surface).
 - The pane (`shell/tsp_view.rs`): while `Session.tsp` is `live` the pane draws the surface in the Chat page's centered column instead of the terminal grid.
   Since ADR 0106 a pane is only its content, so the surface fills the pane; the title bar shows no `Terminal | Chat` toggle while that pane has the focus, and `Ctrl+Alt+T` and the palette entry do nothing for it.
   `main` scrolls and follows its end, `dock` stays under it, `layer` and `overlay` are a modal inside the pane, a `screen` surface covers the pane.
   Keys, paste and drops go to the PTY as in a terminal pane; clicks on nodes with actions go to omp as `tsp.event`.
   `fallback` shows the terminal grid and one info toast.
-  The hello timer's fallback is provisional: after 10 s the pane shows the terminal grid with a notice, and a hello that still arrives within 60 s of the first output is answered and the pane switches to the native surface (omp's startup can exceed any fixed wait under load); after 60 s, and for the explicit fallbacks (unsupported hello version, omp closing the surface with `x {keep:false}`), the fallback is final.
+  The hello timer's fallback is provisional: after 10 s the pane shows the terminal grid with a notice, and a hello that still arrives within 60 s of the first output is answered and the pane switches to the native surface (omp's startup can exceed any fixed wait under load); after 60 s, and for the explicit fallbacks (unsupported hello version, omp closing the surface with `x {keep:false}`, closing the last surface), the fallback is final.
+  A hello without an `open` by 60 s after the first output is a final fallback too ("omp opened no surface").
   An exited session keeps its last document, read-only.
 - The dock is drawn as Tern's composer, from the pieces of the Chat composer card (ADR 0105, `shell/composer.rs`), so Chat and an omp pane look the same with omp as the only source of the content (spec 7.8).
   The pieces are the context meter, the card, the model pill, quiet fact chips (with Chat's fact colors for the stats Chat also shows), the round Send and Stop buttons, the working row with its Stop, the hud as one glass pill split by dividers, and the todo HUD.
