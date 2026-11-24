@@ -1179,41 +1179,16 @@ impl Shell {
                 } else {
                     theme.accent
                 };
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(space::XS))
-                    .px(px(space::S))
-                    .pb(px(space::XS))
-                    .child(
-                        div()
-                            .h(px(theme::CONTEXT_METER_HEIGHT))
-                            .w_full()
-                            .rounded(px(radius::PILL))
-                            .bg(rgb(theme.divider))
-                            .child(
-                                div()
-                                    .h_full()
-                                    .w(relative(meter.fraction))
-                                    .rounded(px(radius::PILL))
-                                    .bg(rgb(fill)),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .text_size(font_size::META)
-                            .text_color(rgb(theme.text_muted))
-                            .child(format!("{}%", meter.percent))
-                            .child(meter.window_label),
-                    )
+                meter_bar(
+                    meter.fraction,
+                    fill,
+                    format!("{}%", meter.percent),
+                    meter.window_label,
+                    Vec::new(),
+                    theme,
+                )
             });
-        // Room for the chips: the pane's width, capped by the column, less the page padding
-        // and the card's own padding. The chip widths are in rems (`theme::rems_px`, designed
-        // at 13 px), so the room is measured in the same unit.
-        let room = (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M)
-            / (cx.global::<theme::Fonts>().ui_size / 13.0);
+        let room = composer_room(width, cx);
         let shown = chat::fit_chips(
             chat::Chips::wanted(&stats),
             room,
@@ -1225,30 +1200,10 @@ impl Shell {
         );
         let mono = theme.terminal_font_family.clone();
         let glyph = |icon: Icon, color: u32| icon_svg(icon, theme::ICON_SIZE_SMALL, color);
-        let quiet = |el: gpui::Div| {
-            el.flex()
-                .flex_none()
-                .items_center()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
-        };
+        let quiet = |el: gpui::Div| quiet_chip(el, theme);
         let exited = self.is_exited(session);
         let model_chip = stats.model.clone().filter(|_| shown.model).map(|model| {
-            div()
-                .id("composer-model")
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(px(space::XS))
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::PILL))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(theme::raised_border(theme)))
-                .text_size(font_size::META)
-                .text_color(rgb(theme.accent_text))
-                .pressable(Look::Chip, !exited, theme)
+            model_pill("composer-model", model, working, !exited, now, theme)
                 .tooltip(tooltip(
                     theme,
                     "Change the model (types /model in the terminal)",
@@ -1260,23 +1215,12 @@ impl Shell {
                         shell.open_model_picker(session, window, cx);
                     }),
                 )
-                .when(working, |el| {
-                    el.child(loading_dots(now, rgb(theme.accent_text)))
-                })
-                .child(model)
-                .child(glyph(Icon::ChevronDown, theme.text_muted))
         });
-        let permission_chip =
-            stats
-                .permission
-                .clone()
-                .filter(|_| shown.permission)
-                .map(|permission| {
-                    quiet(div())
-                        .text_color(rgb(theme.status_needs_input))
-                        .child(glyph(Icon::Zap, theme.status_needs_input))
-                        .child(permission)
-                });
+        let permission_chip = stats
+            .permission
+            .clone()
+            .filter(|_| shown.permission)
+            .map(|permission| permission_chip(permission, theme));
         let effort_chip = stats
             .effort
             .clone()
@@ -1373,17 +1317,7 @@ impl Shell {
                     shell.send_composer(session, window, cx);
                 }),
             );
-        let card = div()
-            .flex()
-            .flex_col()
-            .gap(px(space::S))
-            .p(px(space::M))
-            .rounded(px(radius::LARGE))
-            .bg(rgb(theme.surface_raised))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(gpui::rgba(theme.glass_border))
-            .shadow(theme::shadow_float(theme))
-            .font_family(theme.ui_font_family.clone())
+        let card = composer_card_frame(theme)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |shell, _, window, cx| {
@@ -1436,9 +1370,10 @@ impl Shell {
     }
 }
 
-/// The Chat field's placeholder: a small sparkle icon, then `text` in italic muted (Tern look).
-/// `caret_text` draws the caret before it.
-fn placeholder_row(text: String, theme: &Theme) -> gpui::Div {
+/// The Chat field's placeholder: a small sparkle icon, then `content` in italic muted (Tern
+/// look). `caret_text` draws the caret before it. An omp dock passes styled runs (its placeholder
+/// holds a private-use glyph that needs the terminal font).
+pub(super) fn placeholder_row(content: impl IntoElement, theme: &Theme) -> gpui::Div {
     div()
         .flex()
         .items_center()
@@ -1453,6 +1388,152 @@ fn placeholder_row(text: String, theme: &Theme) -> gpui::Div {
                 .min_w_0()
                 .italic()
                 .text_color(rgb(theme.text_muted))
-                .child(text),
+                .child(content),
         )
+}
+
+/// Room for the chips of a composer card: the pane's width, capped by the column, less the page
+/// padding and the card's own padding. The chip widths are in rems (`theme::rems_px`, designed
+/// at 13 px), so the room is measured in the same unit.
+pub(super) fn composer_room(width: f32, cx: &gpui::App) -> f32 {
+    (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M)
+        / (cx.global::<theme::Fonts>().ui_size / 13.0)
+}
+
+/// The floating card of a composer: Chat's, and an omp pane's dock (spec 7.8). Callers add the
+/// children and the press handler.
+pub(super) fn composer_card_frame(theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(space::S))
+        .p(px(space::M))
+        .rounded(px(radius::LARGE))
+        .bg(rgb(theme.surface_raised))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::rgba(theme.glass_border))
+        .shadow(theme::shadow_float(theme))
+        .font_family(theme.ui_font_family.clone())
+}
+
+/// The thin context meter over the card: a `CONTEXT_METER_HEIGHT` track filled to `fraction` in
+/// `fill`, `left` and `right` under it in `META` muted. `marks` (position 0..1, tooltip) are
+/// small ticks on the track (omp's auto-compact point); Chat has none.
+pub(super) fn meter_bar(
+    fraction: f32,
+    fill: u32,
+    left: String,
+    right: String,
+    marks: Vec<(f32, String)>,
+    theme: &Theme,
+) -> gpui::Div {
+    let ticks = marks.into_iter().enumerate().map(|(i, (at, title))| {
+        div()
+            .id(("context-mark", i))
+            .absolute()
+            .left(relative(at.clamp(0.0, 1.0)))
+            .ml(px(-theme::CONTEXT_MARK_HIT_WIDTH / 2.0))
+            .top(px(-(theme::CONTEXT_MARK_HIT_HEIGHT
+                - theme::CONTEXT_METER_HEIGHT)
+                / 2.0))
+            .w(px(theme::CONTEXT_MARK_HIT_WIDTH))
+            .h(px(theme::CONTEXT_MARK_HIT_HEIGHT))
+            .flex()
+            .justify_center()
+            .tooltip(tooltip(theme, &title, ""))
+            .child(
+                div()
+                    .w(px(theme::BORDER_WIDTH))
+                    .h_full()
+                    .bg(rgb(theme.text_muted)),
+            )
+    });
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(space::XS))
+        .px(px(space::S))
+        .pb(px(space::XS))
+        .child(
+            div()
+                .relative()
+                .h(px(theme::CONTEXT_METER_HEIGHT))
+                .w_full()
+                .rounded(px(radius::PILL))
+                .bg(rgb(theme.divider))
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(fraction))
+                        .rounded(px(radius::PILL))
+                        .bg(rgb(fill)),
+                )
+                .children(ticks),
+        )
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .child(left)
+                .child(right),
+        )
+}
+
+/// A quiet chip: `META` muted text, icon and text with `space::XS` between, never shrinking.
+pub(super) fn quiet_chip(el: gpui::Div, theme: &Theme) -> gpui::Div {
+    el.flex()
+        .flex_none()
+        .items_center()
+        .gap(px(space::XS))
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text_muted))
+}
+
+/// The permission chip: a lightning icon and `text` in `status_needs_input`.
+pub(super) fn permission_chip(text: String, theme: &Theme) -> gpui::Div {
+    quiet_chip(div(), theme)
+        .text_color(rgb(theme.status_needs_input))
+        .child(icon_svg(
+            Icon::Zap,
+            theme::ICON_SIZE_SMALL,
+            theme.status_needs_input,
+        ))
+        .child(text)
+}
+
+/// The model pill: a raised border, `accent_text`, loading dots while `loading`, the name and a
+/// chevron. Callers add the tooltip and `.on_press(..)`.
+pub(super) fn model_pill(
+    id: impl Into<gpui::ElementId>,
+    name: impl IntoElement,
+    loading: bool,
+    enabled: bool,
+    now: i64,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(space::XS))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::PILL))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme::raised_border(theme)))
+        .text_size(font_size::META)
+        .text_color(rgb(theme.accent_text))
+        .pressable(Look::Chip, enabled, theme)
+        .when(loading, |el| {
+            el.child(loading_dots(now, rgb(theme.accent_text)))
+        })
+        .child(name)
+        .child(icon_svg(
+            Icon::ChevronDown,
+            theme::ICON_SIZE_SMALL,
+            theme.text_muted,
+        ))
 }

@@ -449,6 +449,23 @@ pub const SEND_BUTTON_SIZE: f32 = 28.0;
 /// The thin context meter above the Chat composer card.
 pub const CONTEXT_METER_HEIGHT: f32 = 2.0;
 
+/// The hover area of a tick on the context meter of an omp dock (a mark such as the
+/// auto-compact point; its tooltip is the mark's title). The 1 px line sits in the middle.
+pub const CONTEXT_MARK_HIT_WIDTH: f32 = space::M;
+pub const CONTEXT_MARK_HIT_HEIGHT: f32 = space::M;
+
+/// Room reckoned for the bar of an omp dock (px at 13 px UI size, like the `COMPOSER_*` ones):
+/// the round send or stop button and its gap.
+pub const TSP_BAR_FIXED_WIDTH: f32 = SEND_BUTTON_SIZE + space::S;
+/// The model pill without its name: padding, border, chevron, gaps and the gap after it.
+pub const TSP_MODEL_CHROME_WIDTH: f32 = 48.0;
+/// The model name never truncates below this many characters.
+pub const TSP_MODEL_MIN_CHARS: usize = 6;
+/// The four-step effort glyph of the effort chip.
+pub const TSP_EFFORT_GLYPH_WIDTH: f32 = 28.0;
+/// Characters reckoned for a live elapsed time inside a fact (`12m 03s`).
+pub const TSP_ELAPSED_CHARS: usize = 7;
+
 /// Width of the "Undo task" dialog (wider: it shows a diff).
 pub const UNDO_DIALOG_WIDTH: f32 = 720.0;
 

@@ -221,6 +221,31 @@ pub(crate) fn round_button(
     }
 }
 
+/// The round stop button of an omp pane's dock (spec 7.8): the size and neutral look of
+/// [`round_button`], a stop square instead of the send glyph; the square turns `danger_text` on
+/// hover (through the id group: an svg does not inherit its parent's hover color). Attach the
+/// handler with `.on_press(true, ..)`.
+pub(crate) fn round_stop_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    let danger = theme.danger_text;
+    div()
+        .id(id)
+        .group(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(theme::SEND_BUTTON_SIZE))
+        .rounded(px(radius::PILL))
+        .bg(rgb(theme.surface_raised))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme::raised_border(theme)))
+        .pressable(Look::Raised, true, theme)
+        .child(
+            icon_svg(Icon::Square, theme::ICON_SIZE_SMALL, theme.text_muted)
+                .group_hover(id, move |style| style.text_color(rgb(danger))),
+        )
+}
+
 /// A small floating round button (the Chat page's scroll to the end): the neutral look with a
 /// float shadow and the raised hover. It floats over a list, so it takes the mouse itself:
 /// only the wheel passes through.

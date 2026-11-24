@@ -26,6 +26,10 @@ use mkrew_ui::{docs, preview};
 use serde_json::{Value, json};
 
 use super::chat_view::chat_column;
+use super::composer::{
+    composer_card_frame, composer_room, meter_bar, model_pill, permission_chip, placeholder_row,
+    quiet_chip,
+};
 use crate::*;
 
 /// What a pane in TSP mode remembers: the mirror of the daemon's documents and the UI-only state.
@@ -872,9 +876,15 @@ impl Shell {
                     .map(|node| chat_column(self.tsp_node(&paint, node, cx)).into_any_element()),
             )
             .collect();
-        let dock: Vec<AnyElement> = (doc.children("dock"))
-            .map(|node| self.tsp_node(&paint, node, cx))
-            .collect();
+        // The dock as the Chat composer when omp sent its composer roles; any other dock (another
+        // omp version, the ask card) is drawn generically, as before.
+        let dock_model = tsp::dock_model(doc, theme);
+        let dock: Vec<AnyElement> = match dock_model.as_ref() {
+            Some(m) => self.tsp_dock(&paint, m, width, cx),
+            None => (doc.children("dock"))
+                .map(|node| self.tsp_node(&paint, node, cx))
+                .collect(),
+        };
         let layer: Vec<AnyElement> = (doc.children("layer"))
             .filter(|node| !bool_prop(node, "hidden"))
             .map(|node| self.tsp_layer_child(&layer_paint, node, cx))
@@ -933,9 +943,17 @@ impl Shell {
                     )
                 }),
         )
-        .child(chat_column(
-            div().flex().flex_col().pb(px(space::S)).children(dock),
-        ))
+        .child(
+            chat_column(
+                div()
+                    .flex()
+                    .flex_col()
+                    .when(dock_model.is_none(), |el| el.pb(px(space::S)))
+                    .children(dock),
+            )
+            // Chat: the card sits `space::M` above the pane's bottom edge.
+            .when(dock_model.is_some(), |el| el.pb(px(space::M))),
+        )
         // The session ended: the last document stays, read-only, under the usual notice.
         .children(exited.map(|code| exited_notice(code, theme)))
         .when(!layer.is_empty(), |el| {
@@ -1810,12 +1828,33 @@ impl Shell {
     }
 }
 
+/// How [`Shell::tsp_editor`] draws an `editor`.
+#[derive(Clone, Copy)]
+enum EditorLook<'a> {
+    /// Anywhere in the surface: the placeholder in `text_dim`, the ghost under the text.
+    Plain,
+    /// The dock's field (spec 7.8): the Chat placeholder row, the ghost (already checked by
+    /// `DockModel`: caret at the end) right after the caret on the same line in `text_subtle`.
+    Composer { ghost: Option<&'a str> },
+}
+
 impl Shell {
     /// editor, input, image.
     fn tsp_input(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
         if node.kind == "image" {
             return self.tsp_image(p, node, cx);
         }
+        self.tsp_editor(p, node, EditorLook::Plain, cx)
+    }
+
+    /// An `editor` or `input`: omp's text with the caret, its decorations and its placeholder.
+    fn tsp_editor(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        look: EditorLook<'_>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let theme = p.theme;
         let text = str_prop(node, "text").unwrap_or("");
         let caret_at = (node.props.get("cursor").and_then(Value::as_u64))
@@ -1854,7 +1893,8 @@ impl Shell {
                     .child(styled_runs(&runs, theme.text_muted, false, theme))
                     .into_any_element()
             });
-        let mut lines: Vec<AnyElement> = Vec::new();
+        // 10b: rows stay `Div`s until the end, so the composer's ghost can follow the caret.
+        let mut lines: Vec<Div> = Vec::new();
         if text.is_empty() {
             let placeholder = (node.props.get("placeholder"))
                 .map(|v| tsp::spans_of(v, theme))
@@ -1864,10 +1904,15 @@ impl Shell {
             if has_focus {
                 row = row.child(caret());
             }
-            lines.push(
-                row.child(styled_runs(&placeholder, theme.text_dim, false, theme))
-                    .into_any_element(),
-            );
+            lines.push(match look {
+                EditorLook::Plain => {
+                    row.child(styled_runs(&placeholder, theme.text_dim, false, theme))
+                }
+                EditorLook::Composer { .. } => row.child(placeholder_row(
+                    styled_runs(&placeholder, theme.text_muted, false, theme),
+                    theme,
+                )),
+            });
         } else {
             // Decorations (mention colors, hidden markers, typos) cut the text into pieces.
             let pieces = tsp::decor_pieces(text, array_prop(node, "decor"), theme);
@@ -1883,12 +1928,23 @@ impl Shell {
                         tsp::Atom::Text(range, decor) => row.child(piece(&text[range], decor)),
                     };
                 }
-                lines.push(row.into_any_element());
+                lines.push(row);
                 start = end + 1;
             }
         }
-        // Inline suggestion after the text.
-        let ghost = str_prop(node, "ghost").filter(|g| !g.is_empty() && !text.is_empty());
+        // Inline suggestion: after the caret on the last line (composer), else under the text.
+        let (under, inline) = match look {
+            EditorLook::Plain => (
+                str_prop(node, "ghost").filter(|g| !g.is_empty() && !text.is_empty()),
+                None,
+            ),
+            EditorLook::Composer { ghost } => (None, ghost),
+        };
+        if let Some(ghost) = inline
+            && let Some(last) = lines.pop()
+        {
+            lines.push(last.child(part(ghost, theme.text_subtle)));
+        }
         let session = p.session;
         let id = node.id.clone();
         // A text field: exempt from the press look, so a plain mouse-down sends the focus.
@@ -1897,14 +1953,18 @@ impl Shell {
             .flex_col()
             .min_w_0()
             .children(lines)
-            .children(ghost.map(|g| part(g, theme.text_dim)))
+            .children(under.map(|g| part(g, theme.text_dim)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |shell, _, _, cx| {
                     shell.tsp_click(session, &id, false, cx);
                 }),
             );
-        let el = if grows(node) { el.flex_1() } else { el };
+        let el = if grows(node) || matches!(look, EditorLook::Composer { .. }) {
+            el.flex_1()
+        } else {
+            el
+        };
         el.into_any_element()
     }
 
@@ -2239,6 +2299,526 @@ impl Shell {
             .child(div().flex_1().min_w_0().flex().flex_col().children(left))
             .children(right)
             .into_any_element()
+    }
+}
+
+impl Shell {
+    /// The dock of an omp pane that has the composer roles (spec 7.8): the dock's own children in
+    /// order, except that the node where the editor stands becomes the status row, the meter and
+    /// the card, and the nodes the status row took over are skipped.
+    fn tsp_dock(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        width: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<AnyElement> {
+        let mut out = Vec::new();
+        for node in p.doc.children("dock") {
+            self.tsp_dock_node(p, m, node, width, &mut out, cx);
+        }
+        out
+    }
+
+    fn tsp_dock_node(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        node: &Node,
+        width: f32,
+        out: &mut Vec<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if m.skip.contains(&node.id) {
+            return;
+        }
+        if node.id == m.editor {
+            out.push(self.tsp_composer(p, m, width, cx));
+        } else if m.path.contains(&node.id) {
+            for child in p.doc.children(&node.id) {
+                self.tsp_dock_node(p, m, child, width, out, cx);
+            }
+        } else {
+            out.push(self.tsp_node(p, node, cx));
+        }
+    }
+
+    /// `node` as a chip: its `title` tooltip and, when it has an action, the press that sends the
+    /// same `action` event as before (`tsp_decorate`). A node the document no longer has is drawn
+    /// as it is.
+    fn tsp_chip(
+        &self,
+        p: &Paint<'_>,
+        id: &str,
+        look: Look,
+        el: Div,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        match p.doc.get(id) {
+            Some(node) => self.tsp_decorate(el, p, node, look, false, cx),
+            None => el.into_any_element(),
+        }
+    }
+
+    /// The status row (when it has anything), the context meter and the card: the Chat composer
+    /// with omp's content.
+    fn tsp_composer(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        width: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let doc = p.doc;
+        let status = self.tsp_dock_status(p, m, cx);
+        let meter = m.context.as_ref().map(|c| {
+            let marks = c.marks.iter().map(|k| (k.at, k.title.clone())).collect();
+            let bar = meter_bar(
+                c.fraction.unwrap_or(0.0),
+                tsp::tone_color(c.tone, theme),
+                c.label.clone(),
+                c.total.clone(),
+                marks,
+                theme,
+            );
+            self.tsp_chip(p, &c.id, Look::Text, bar, cx)
+        });
+        let focus = m.focus.as_ref().map(|f| self.tsp_dock_focus(p, f, cx));
+        let chips: Vec<AnyElement> = (m.chips.iter())
+            .filter_map(|id| doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx))
+            .collect();
+        let line: Vec<AnyElement> = doc
+            .children(&m.line)
+            .map(|node| {
+                if node.id == m.field.id {
+                    let look = EditorLook::Composer {
+                        ghost: m.field.ghost.as_deref(),
+                    };
+                    self.tsp_editor(p, node, look, cx)
+                } else {
+                    self.tsp_node(p, node, cx)
+                }
+            })
+            .collect();
+        let field = div()
+            .id(SharedString::from(format!("tsp-field-{}", p.session)))
+            .flex()
+            .items_start()
+            .gap(px(space::S))
+            .cursor(CursorStyle::IBeam)
+            .max_h(px(theme::COMPOSER_MAX_HEIGHT))
+            .overflow_y_scroll()
+            .text_size(font_size::BODY)
+            .text_color(rgb(theme.text))
+            .children(line);
+        let card = composer_card_frame(theme)
+            .children(focus)
+            .when(!chips.is_empty(), |el| {
+                el.child(div().flex().flex_wrap().gap(px(space::S)).children(chips))
+            })
+            .child(field)
+            .child(self.tsp_dock_bar(p, m, width, cx));
+        div()
+            .flex()
+            .flex_col()
+            .children(status)
+            .children(meter)
+            .child(card)
+            .into_any_element()
+    }
+
+    /// The chip row: omp's order, never wrapping, `min_w_0`; what does not fit is dropped by
+    /// `fit_bar`; the send or stop button always ends it.
+    fn tsp_dock_bar(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        width: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let exited = self.is_exited(p.session);
+        let fit = tsp::fit_bar(&m.bar, composer_room(width, cx));
+        let mut cells: Vec<AnyElement> = Vec::new();
+        for part in &m.bar.parts {
+            match part {
+                tsp::BarPart::Effort => {
+                    if let (true, Some(effort)) = (fit.effort, &m.bar.effort) {
+                        let mut chip = quiet_chip(div(), theme);
+                        if let Some(glyph) = effort.glyph.as_deref().and_then(|id| p.doc.get(id)) {
+                            chip = chip.child(self.tsp_node(p, glyph, cx));
+                        }
+                        let chip = chip.child(effort.label.clone());
+                        cells.push(self.tsp_chip(p, &effort.id, Look::Chip, chip, cx));
+                    }
+                }
+                tsp::BarPart::Model => {
+                    if let Some(model) = &m.bar.model {
+                        cells.push(self.tsp_dock_model(
+                            p,
+                            model,
+                            m.bar.working,
+                            fit.model_name,
+                            exited,
+                            cx,
+                        ));
+                    }
+                }
+                tsp::BarPart::Facts => {
+                    let facts: Vec<AnyElement> = (m.bar.facts.iter().zip(&fit.facts))
+                        .filter(|(_, shown)| **shown)
+                        .map(|(fact, _)| self.tsp_dock_fact(p, fact, cx))
+                        .collect();
+                    cells.push(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .items_center()
+                            .gap(px(space::S))
+                            .font_family(theme.terminal_font_family.clone())
+                            .children(facts)
+                            .into_any_element(),
+                    );
+                }
+                tsp::BarPart::Usage => {
+                    if let Some(usage) = &m.bar.usage {
+                        let chip = quiet_chip(div(), theme)
+                            .font_family(theme.terminal_font_family.clone())
+                            .child(usage.text.clone());
+                        cells.push(self.tsp_chip(p, &usage.id, Look::Chip, chip, cx));
+                    }
+                }
+            }
+        }
+        div()
+            .flex()
+            .min_w_0()
+            .overflow_hidden()
+            .items_center()
+            .gap(px(space::S))
+            .children(cells)
+            .child(self.tsp_dock_primary(p, m, exited, cx))
+            .into_any_element()
+    }
+
+    /// The Chat model pill (loading dots while the session works, the name truncated to what
+    /// `fit_bar` left it), a click is omp's `status.model`.
+    fn tsp_dock_model(
+        &self,
+        p: &Paint<'_>,
+        model: &tsp::ModelPill,
+        working: bool,
+        name_room: Option<f32>,
+        exited: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let node = p.doc.get(&model.id);
+        let click = !exited && node.is_some_and(|n| tsp::has_click(p.doc, n));
+        let title = node.and_then(|n| str_prop(n, "title")).filter(|_| p.tips());
+        let name = div()
+            .min_w_0()
+            .truncate()
+            .when_some(name_room, |el, room| el.max_w(theme::rems_px(room)))
+            .child(model.name.clone());
+        let (session, id) = (p.session, model.id.clone());
+        model_pill(
+            SharedString::from(format!("tsp-model-{session}")),
+            name,
+            working,
+            click,
+            p.now,
+            theme,
+        )
+        .when_some(title, |el, title| el.tooltip(tooltip(theme, title, "")))
+        .on_press(
+            click,
+            cx.listener(move |shell, event: &ClickEvent, _, cx| {
+                shell.tsp_click(session, &id, event.click_count() > 1, cx);
+            }),
+        )
+        .into_any_element()
+    }
+
+    /// One fact: a quiet mono chip with its icon; the `accent` one is the Chat permission chip;
+    /// the text takes `fact.color` (Chat's colors for the stats Chat shows too); an elapsed time
+    /// is drawn by its own node (it ticks on the status tick).
+    fn tsp_dock_fact(
+        &self,
+        p: &Paint<'_>,
+        fact: &tsp::Fact,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let el = match &fact.body {
+            tsp::FactBody::Text(text) if fact.permission => permission_chip(text.clone(), theme),
+            body => {
+                let mut el = quiet_chip(div(), theme).text_color(rgb(fact.color));
+                if let Some(icon) = fact.icon {
+                    // Chat's clock icon is as quiet as its time; the others stay `text_muted`.
+                    let tint = if fact.color == theme.text_subtle {
+                        fact.color
+                    } else {
+                        theme.text_muted
+                    };
+                    el = el.child(icon_svg(icon, theme::ICON_SIZE_SMALL, tint));
+                }
+                match body {
+                    tsp::FactBody::Text(text) | tsp::FactBody::Rate(text) => el.child(text.clone()),
+                    tsp::FactBody::Elapsed(id) => {
+                        el.children(p.doc.get(id).map(|node| self.tsp_node(p, node, cx)))
+                    }
+                }
+            }
+        };
+        self.tsp_chip(p, &fact.id, Look::Chip, el, cx)
+    }
+
+    /// The round Send (enabled with text, `submit`) or Stop (`interrupt`) button, the same size,
+    /// at the end of the bar.
+    fn tsp_dock_primary(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        exited: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let session = p.session;
+        let title = |id: &str, fallback: &'static str| {
+            p.doc
+                .get(id)
+                .and_then(|node| str_prop(node, "title"))
+                .unwrap_or(fallback)
+                .to_owned()
+        };
+        match &m.bar.primary {
+            tsp::Primary::Stop(id) => {
+                let (tip, id) = (title(id, "Stop"), id.clone());
+                round_stop_button("tsp-stop", theme)
+                    .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "")))
+                    .on_press(
+                        !exited,
+                        cx.listener(move |shell, _, _, cx| {
+                            shell.tsp_click(session, &id, false, cx)
+                        }),
+                    )
+                    .into_any_element()
+            }
+            tsp::Primary::Send(id) => {
+                let can = m.can_send() && !exited && id.is_some();
+                let tip = id
+                    .as_deref()
+                    .map_or_else(|| "Send".to_owned(), |id| title(id, "Send"));
+                let id = id.clone().unwrap_or_default();
+                round_button("tsp-send", Icon::CornerDownLeft, can, theme)
+                    .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "")))
+                    .on_press(
+                        can,
+                        cx.listener(move |shell, _, _, cx| {
+                            shell.tsp_click(session, &id, false, cx)
+                        }),
+                    )
+                    .into_any_element()
+            }
+        }
+    }
+
+    /// The row above the meter, as Tern: on the left the working row (loading dots, elapsed time,
+    /// a divider, the label in `status_needs_input`, a small ghost Stop) and any other status
+    /// node; on the right the todo hud and the glass hud pills. `None` when there is nothing.
+    fn tsp_dock_status(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<AnyElement> {
+        let s = &m.status;
+        if s.working.is_none() && s.todo.is_none() && s.pills.is_empty() && s.others.is_empty() {
+            return None;
+        }
+        let doc = p.doc;
+        let working = s.working.as_ref().map(|w| self.tsp_dock_working(p, w, cx));
+        let others: Vec<AnyElement> = (s.others.iter())
+            .filter_map(|id| doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx))
+            .collect();
+        // The checklist builder draws the hud chip and its popover (Task 10).
+        let todo = (s.todo.as_deref())
+            .and_then(|id| doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx));
+        let pills: Vec<AnyElement> = (s.pills.iter())
+            .map(|pill| self.tsp_dock_pill(p, pill, cx))
+            .collect();
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::M))
+                .min_w_0()
+                .px(px(space::S))
+                .pb(px(space::XS))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::S))
+                        .children(working)
+                        .children(others),
+                )
+                .children(todo)
+                .children(pills)
+                .into_any_element(),
+        )
+    }
+
+    fn tsp_dock_working(
+        &self,
+        p: &Paint<'_>,
+        w: &tsp::Working,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let session = p.session;
+        let exited = self.is_exited(session);
+        let elapsed = (w.elapsed.as_deref())
+            .and_then(|id| p.doc.get(id))
+            .map(|node| {
+                div()
+                    .font_family(theme.terminal_font_family.clone())
+                    .text_color(rgb(theme.text_muted))
+                    .child(self.tsp_node(p, node, cx))
+            });
+        let stop = w.stop.clone().map(|id| {
+            let tip = (p.doc.get(&id))
+                .and_then(|node| str_prop(node, "title"))
+                .filter(|_| p.tips())
+                .map(str::to_owned);
+            quiet_button(
+                "tsp-working-stop",
+                icon_text(Icon::Square, "Stop", theme.text_muted),
+                theme,
+                theme.hover,
+            )
+            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .when_some(tip, |el, tip| el.tooltip(tooltip(theme, &tip, "")))
+            .on_press(
+                !exited,
+                cx.listener(move |shell, _, _, cx| shell.tsp_click(session, &id, false, cx)),
+            )
+        });
+        div()
+            .flex()
+            .flex_1()
+            .items_center()
+            .gap(px(space::S))
+            .min_w_0()
+            .text_size(font_size::META)
+            .child(loading_dots(p.now, rgb(theme.status_working)))
+            .children(elapsed)
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(theme::BORDER_WIDTH))
+                    .h(theme::rems_px(space::M))
+                    .bg(rgb(theme.divider)),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(rgb(theme.status_needs_input))
+                    .child(w.label.clone()),
+            )
+            .child(div().flex_1())
+            .children(stop)
+            .into_any_element()
+    }
+
+    /// A glass pill (subagents, jobs): the icon in its tone, then the count in mono; the node's
+    /// `title` is the tooltip and a click is its action (`agents.open`, `jobs.open`).
+    fn tsp_dock_pill(
+        &self,
+        p: &Paint<'_>,
+        pill: &tsp::HudPill,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let tone = pill
+            .tone
+            .as_deref()
+            .map_or(theme.text_muted, |tone| tsp::tone_color(tone, theme));
+        let el = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(space::XS))
+            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .px(px(space::S))
+            .rounded(px(theme::radius::PILL))
+            .bg(gpui::rgba(theme.glass))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(gpui::rgba(theme.glass_border))
+            .font_family(theme.terminal_font_family.clone())
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .children(
+                pill.icon
+                    .map(|icon| icon_svg(icon, theme::ICON_SIZE_SMALL, tone)),
+            )
+            .child(pill.count.clone());
+        self.tsp_chip(p, &pill.id, Look::Chip, el, cx)
+    }
+
+    /// The strip above the field while omp's input goes to a subagent: an eye, omp's own
+    /// children ("Viewing", the crumbs) and the exit chip.
+    fn tsp_dock_focus(
+        &self,
+        p: &Paint<'_>,
+        f: &tsp::FocusStrip,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let exit = f.exit.as_ref().map(|(id, label)| {
+            let chip = div()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .h(theme::rems_px(theme::PILL_HEIGHT))
+                .px(px(space::S))
+                .rounded(px(theme::radius::PILL))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme::raised_border(theme)))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text))
+                .child(label.clone());
+            self.tsp_chip(p, id, Look::Chip, chip, cx)
+        });
+        let rest: Vec<AnyElement> = (f.rest.iter())
+            .filter_map(|id| p.doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx))
+            .collect();
+        let strip = div()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .child(icon_svg(
+                Icon::Eye,
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ))
+            .children(rest)
+            .child(div().flex_1())
+            .children(exit);
+        self.tsp_chip(p, &f.id, Look::Text, strip, cx)
     }
 }
 
