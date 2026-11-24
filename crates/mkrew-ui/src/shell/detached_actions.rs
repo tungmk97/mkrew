@@ -397,6 +397,11 @@ impl Shell {
             Command::SplitDown => self.split(Axis::Horizontal, window, cx),
             Command::SplitAgent => self.new_pane(SessionKind::Agent, Axis::Vertical, window, cx),
             Command::SplitShell => self.new_pane(SessionKind::Shell, Axis::Vertical, window, cx),
+            Command::BrowserAddress
+            | Command::BrowserBack
+            | Command::BrowserForward
+            | Command::BrowserReload
+            | Command::BrowserOpenExternal => self.browser_command(command, window, cx),
             Command::Layout(preset) => self.apply_layout(preset, window, cx),
             Command::EqualizePanes | Command::Resize(_) => {
                 let write = match command {

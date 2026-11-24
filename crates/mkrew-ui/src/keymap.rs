@@ -71,6 +71,13 @@ pub enum Command {
     SplitAgent,
     /// Split the focused pane to the right with the workspace's default shell (+ Shell).
     SplitShell,
+    /// Focus the browser pane's address field (ADR 0110).
+    BrowserAddress,
+    BrowserBack,
+    BrowserForward,
+    BrowserReload,
+    /// The browser pane's page in the system browser.
+    BrowserOpenExternal,
     /// Lay the active tab out as a preset (SPEC §10), starting the panes it lacks.
     Layout(Preset),
     /// Give every pane of the active tab an equal share.
@@ -302,6 +309,11 @@ impl Command {
             Command::SplitDown,
             Command::SplitAgent,
             Command::SplitShell,
+            Command::BrowserAddress,
+            Command::BrowserBack,
+            Command::BrowserForward,
+            Command::BrowserReload,
+            Command::BrowserOpenExternal,
             Command::Layout(Preset::Columns2),
             Command::Layout(Preset::Rows2),
             Command::Layout(Preset::Columns3),
@@ -418,6 +430,11 @@ impl Command {
             Command::SplitDown => "split_down".into(),
             Command::SplitAgent => "split_agent".into(),
             Command::SplitShell => "split_shell".into(),
+            Command::BrowserAddress => "browser_address".into(),
+            Command::BrowserBack => "browser_back".into(),
+            Command::BrowserForward => "browser_forward".into(),
+            Command::BrowserReload => "browser_reload".into(),
+            Command::BrowserOpenExternal => "browser_open_external".into(),
             Command::Layout(preset) => format!("layout_{}", preset.name()),
             Command::EqualizePanes => "equalize_panes".into(),
             Command::Focus(Direction::Left) => "focus_left".into(),
@@ -546,6 +563,7 @@ impl Command {
             Command::SplitDown => "cmd-shift-d",
             Command::SplitAgent => "cmd-alt-a",
             Command::SplitShell => "cmd-alt-s",
+            Command::BrowserAddress => "cmd-l",
             Command::Layout(preset) => match preset {
                 Preset::Columns2 => "cmd-alt-1",
                 Preset::Rows2 => "cmd-alt-2",
@@ -638,6 +656,12 @@ impl Command {
             Command::SplitDown => "alt-shift--".into(),
             Command::SplitAgent => "alt-shift-a".into(),
             Command::SplitShell => "alt-shift-s".into(),
+            Command::BrowserAddress => "ctrl-l".into(),
+            // Palette only: an empty default binds nothing.
+            Command::BrowserBack
+            | Command::BrowserForward
+            | Command::BrowserReload
+            | Command::BrowserOpenExternal => String::new(),
             Command::Layout(preset) => match preset {
                 Preset::Columns2 => "alt-shift-1",
                 Preset::Rows2 => "alt-shift-2",
@@ -776,6 +800,11 @@ impl Command {
             | Command::CloseFileTab
             | Command::ToggleFilePreview
             | Command::ToggleFileSplit => Some(EDITOR_CONTEXT),
+            Command::BrowserAddress
+            | Command::BrowserBack
+            | Command::BrowserForward
+            | Command::BrowserReload
+            | Command::BrowserOpenExternal => Some(BROWSER_CONTEXT),
             Command::GitToggleMode
             | Command::GitToggleHistory
             | Command::GitNextHunk
@@ -802,6 +831,14 @@ impl Command {
             (self.context(), other.context()),
             (Some(TERMINAL_CONTEXT), Some(EDITOR_CONTEXT))
                 | (Some(EDITOR_CONTEXT), Some(TERMINAL_CONTEXT))
+                | (
+                    Some(BROWSER_CONTEXT),
+                    Some(TERMINAL_CONTEXT | EDITOR_CONTEXT)
+                )
+                | (
+                    Some(TERMINAL_CONTEXT | EDITOR_CONTEXT),
+                    Some(BROWSER_CONTEXT)
+                )
         )
     }
 }
@@ -818,7 +855,11 @@ pub fn template() -> String {
          # A keystroke bound twice, an unknown command or an invalid keystroke is listed in the\n\
          # command palette ({palette}) and that entry keeps its default.\n\n"
     );
-    for command in Command::all() {
+    // A command without a default key (palette only) has no line to uncomment.
+    for command in Command::all()
+        .into_iter()
+        .filter(|command| !command.default_keys().is_empty())
+    {
         text.push_str(&format!(
             "# {} = \"{}\"\n",
             command.name(),
@@ -1009,10 +1050,12 @@ impl Keymap {
         let bindings = Command::all()
             .into_iter()
             .filter_map(|command| {
-                Some((
-                    command,
-                    Keystroke::parse(&command.default_keys_for(os)).ok()?,
-                ))
+                let keys = command.default_keys_for(os);
+                // No default key: palette only.
+                if keys.is_empty() {
+                    return None;
+                }
+                Some((command, Keystroke::parse(&keys).ok()?))
             })
             .collect();
         Keymap { bindings }
@@ -1084,7 +1127,11 @@ impl Keymap {
             Some((i, other.0))
         }) {
             let (command, keys) = overrides.remove(index);
-            if let Ok(default) = Keystroke::parse(&command.default_keys_for(os)) {
+            let default = command.default_keys_for(os);
+            if default.is_empty() {
+                // A palette-only command's clashing override is dropped: it has no default.
+                keymap.bindings.retain(|(c, _)| *c != command);
+            } else if let Ok(default) = Keystroke::parse(&default) {
                 keymap.set(command, default);
             }
             errors.push(KeymapError::Duplicate {
@@ -1373,10 +1420,17 @@ mod tests {
         assert_eq!(Command::NewNote.name(), "new_note");
     }
 
+    /// Commands with a default key: the palette-only browser commands have none.
+    fn keyed() -> usize {
+        (Command::all().into_iter())
+            .filter(|command| !command.default_keys().is_empty())
+            .count()
+    }
+
     #[test]
     fn every_default_parses_and_is_unique() {
         let keymap = Keymap::defaults();
-        assert_eq!(keymap.bindings().len(), Command::all().len());
+        assert_eq!(keymap.bindings().len(), keyed());
         for (command, keys) in keymap.bindings() {
             for (other, bound) in keymap.bindings() {
                 assert!(
@@ -1390,7 +1444,7 @@ mod tests {
     #[test]
     fn every_mac_default_parses_and_is_unique() {
         let keymap = Keymap::defaults_for(Os::Mac);
-        assert_eq!(keymap.bindings().len(), Command::all().len());
+        assert_eq!(keymap.bindings().len(), keyed());
         for (command, keys) in keymap.bindings() {
             for (other, bound) in keymap.bindings() {
                 assert!(
@@ -1437,10 +1491,7 @@ mod tests {
     fn every_mac_binding_becomes_a_gpui_key_binding() {
         let keymap = Keymap::defaults_for(Os::Mac);
         let bindings = keymap.key_bindings(&gpui::DummyKeyboardMapper);
-        assert_eq!(
-            bindings.len(),
-            Command::all().len() + keymap.menu_shielded().count()
-        );
+        assert_eq!(bindings.len(), keyed() + keymap.menu_shielded().count());
     }
 
     #[test]
@@ -1686,6 +1737,27 @@ mod tests {
     }
 
     #[test]
+    fn browser_pane_keys() {
+        let keymap = Keymap::defaults_for(Os::Windows);
+        assert_eq!(
+            keymap.command_for(&keystroke("ctrl-l")),
+            Some(Command::BrowserAddress)
+        );
+        assert_eq!(Command::BrowserAddress.context(), Some(BROWSER_CONTEXT));
+        assert_eq!(Command::BrowserAddress.default_keys_for(Os::Mac), "cmd-l");
+        for command in [
+            Command::BrowserBack,
+            Command::BrowserForward,
+            Command::BrowserReload,
+            Command::BrowserOpenExternal,
+        ] {
+            assert_eq!(command.context(), Some(BROWSER_CONTEXT), "{command:?}");
+            assert_eq!(keymap.label(command), "", "{command:?} is palette only");
+        }
+        assert_eq!(Command::BrowserOpenExternal.name(), "browser_open_external");
+    }
+
+    #[test]
     fn move_tab_to_new_window_is_window_wide() {
         assert_eq!(Command::MoveTabToNewWindow.context(), None);
         assert_eq!(
@@ -1738,14 +1810,16 @@ mod tests {
                 "{keys}"
             );
         }
-        // No default is a plain Ctrl+<letter>, except in a file pane (ADR 0028): no
-        // terminal has focus there (SPEC §13).
+        // No default is a plain Ctrl+<letter>, except in a file pane (ADR 0028) and a browser
+        // pane's address key, like a browser's: no terminal has focus there (SPEC §13).
         for (command, keys) in keymap.bindings() {
             let m = keys.modifiers;
             let plain_ctrl = m.control && !m.shift && !m.alt && keys.key.len() == 1;
             let letter = keys.key.chars().all(|c| c.is_ascii_alphabetic());
             assert!(
-                !plain_ctrl || !letter || command.context() == Some(EDITOR_CONTEXT),
+                !plain_ctrl
+                    || !letter
+                    || matches!(command.context(), Some(EDITOR_CONTEXT | BROWSER_CONTEXT)),
                 "{command:?}"
             );
         }
@@ -1850,7 +1924,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (keymap, errors) = Keymap::load(&dir.path().join("keymap.toml"));
         assert_eq!(errors, []);
-        assert_eq!(keymap.bindings().len(), Command::all().len());
+        assert_eq!(keymap.bindings().len(), keyed());
     }
 
     #[test]
@@ -1858,10 +1932,7 @@ mod tests {
         let (keymap, _) = Keymap::parse("split_down = \"ctrl-alt--\"\n");
         let bindings = keymap.key_bindings(&gpui::DummyKeyboardMapper);
         // One binding per command, plus one `NoAction` shield per menu-shielded key.
-        assert_eq!(
-            bindings.len(),
-            Command::all().len() + keymap.menu_shielded().count()
-        );
+        assert_eq!(bindings.len(), keyed() + keymap.menu_shielded().count());
     }
 
     /// gpui-pre-windows reports Ctrl+Shift+2 as `ctrl-@` (Shift folded into the digit, layout
@@ -1913,7 +1984,7 @@ mod tests {
             .filter_map(|line| line.strip_prefix("# "))
             .filter(|line| line.contains(" = \""))
             .collect();
-        assert_eq!(lines.len(), Command::all().len());
+        assert_eq!(lines.len(), keyed());
         let (keymap, errors) = Keymap::parse(&lines.join("\n"));
         assert_eq!(errors, []);
         assert_eq!(keymap.bindings(), defaults.bindings());

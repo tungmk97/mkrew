@@ -13,6 +13,7 @@ fn context(view: View) -> Context {
         view,
         workspaces: 2,
         tabs: 2,
+        web_pane: false,
         file_pane: false,
         file_tree: false,
         terminal: false,
@@ -380,6 +381,21 @@ fn availability_follows_the_view() {
         off_panes.contains(&Command::ToggleInspector),
         "shows the terminals"
     );
+    // A browser pane's commands need the browser pane focused.
+    assert!(!terminals.contains(&Command::BrowserReload));
+    let web = commands(&Context {
+        web_pane: true,
+        ..context(View::Terminals)
+    });
+    for command in [
+        Command::BrowserAddress,
+        Command::BrowserBack,
+        Command::BrowserForward,
+        Command::BrowserReload,
+        Command::BrowserOpenExternal,
+    ] {
+        assert!(web.contains(&command), "{command:?}");
+    }
     // Like the buttons: from any view (they show Terminals first), once a tab exists.
     for command in [
         Command::SplitAgent,

@@ -353,6 +353,11 @@ impl Shell {
                 | Command::MoveTabLeft
                 | Command::MoveTabRight
                 | Command::ToggleChat
+                | Command::BrowserAddress
+                | Command::BrowserBack
+                | Command::BrowserForward
+                | Command::BrowserReload
+                | Command::BrowserOpenExternal
                 | Command::ClosePane => return,
                 _ => {}
             }
@@ -399,6 +404,11 @@ impl Shell {
             // Exactly the + Agent / + Shell buttons.
             Command::SplitAgent => self.new_pane(SessionKind::Agent, Axis::Vertical, window, cx),
             Command::SplitShell => self.new_pane(SessionKind::Shell, Axis::Vertical, window, cx),
+            Command::BrowserAddress
+            | Command::BrowserBack
+            | Command::BrowserForward
+            | Command::BrowserReload
+            | Command::BrowserOpenExternal => self.browser_command(*command, window, cx),
             Command::Layout(preset) => self.apply_layout(preset, window, cx),
             Command::Focus(direction) => self.move_focus(direction, window, cx),
             Command::Resize(direction) => {

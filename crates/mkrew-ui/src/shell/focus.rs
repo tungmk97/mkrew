@@ -389,7 +389,10 @@ impl Shell {
         if let Some(PaneKey::Web(id)) = self.focused_key(window)
             && let Some(browser) = self.browsers.get(&id)
         {
-            window.focus(&browser.focus, cx);
+            // Typing an address keeps the field's keyboard.
+            if !browser.address_focus.is_focused(window) {
+                window.focus(&browser.focus, cx);
+            }
             return;
         }
         // The Git keyboard: the panel's list, or the diff pane itself while the panel's Git

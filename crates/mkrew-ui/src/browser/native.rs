@@ -86,13 +86,11 @@ impl NativeView {
         }
     }
 
-    /// Shows or hides the page; hiding gives the keyboard back to the window first.
+    /// Shows or hides the page. Hiding never moves the keyboard (SetFocus on Windows can
+    /// activate a background window): the Shell gives it back while this window is active.
     pub fn set_shown(&self, shown: bool) {
         if self.shown.get() == shown {
             return;
-        }
-        if !shown {
-            let _ = self.view.focus_parent();
         }
         if let Err(error) = self.view.set_visible(shown) {
             tracing::warn!("browser: set_visible({shown}): {error}");
@@ -244,7 +242,6 @@ impl gpui::Element for WebSurface {
 
 fn hide(view: &wry::WebView, shown: &Cell<bool>) {
     if shown.replace(false) {
-        let _ = view.focus_parent();
         let _ = view.set_visible(false);
     }
 }

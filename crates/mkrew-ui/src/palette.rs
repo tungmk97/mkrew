@@ -44,6 +44,8 @@ pub struct Context {
     pub file_pane: bool,
     /// The file tree is painted in the right panel (Open in a kept tab acts on its cursor).
     pub file_tree: bool,
+    /// A browser pane is focused: its commands act on it.
+    pub web_pane: bool,
     /// A terminal pane had the keyboard (copy, paste, find… act on it).
     pub terminal: bool,
     /// The Git list's selected file can be discarded (unstaged or untracked).
@@ -624,6 +626,11 @@ pub fn title(command: Command) -> String {
         Command::SplitDown => "Panes: Split down".into(),
         Command::SplitAgent => "Panes: New agent pane".into(),
         Command::SplitShell => "Panes: New shell pane".into(),
+        Command::BrowserAddress => "Browser: Focus address".into(),
+        Command::BrowserBack => "Browser: Back".into(),
+        Command::BrowserForward => "Browser: Forward".into(),
+        Command::BrowserReload => "Browser: Reload".into(),
+        Command::BrowserOpenExternal => "Browser: Open in system browser".into(),
         Command::Layout(preset) => format!("Panes: Layout {}", preset.label()),
         Command::EqualizePanes => "Panes: Equalize pane sizes".into(),
         Command::Focus(d) => format!("Panes: Move focus {}", direction(d)),
@@ -763,6 +770,11 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::SplitAgent
         | Command::SplitShell
         | Command::Layout(_) => context.workspace && context.tabs > 0,
+        Command::BrowserAddress
+        | Command::BrowserBack
+        | Command::BrowserForward
+        | Command::BrowserReload
+        | Command::BrowserOpenExternal => context.web_pane,
         Command::RenameTab
         | Command::CloseTab
         | Command::Focus(_)

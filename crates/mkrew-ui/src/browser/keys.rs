@@ -111,8 +111,9 @@ mod tests {
     fn the_page_gives_back_global_combos_and_keeps_its_text_keys() {
         let keymap = Keymap::defaults_for(Os::Windows);
         let keys = forwarded(&keymap);
-        // Browser commands (SplitBrowser alt-shift-b, BrowserAddress ctrl-l) arrive with Task 4;
-        // global ones stand in.
+        // BrowserAddress (ctrl-l) is a browser pane binding; alt-shift-b (SplitBrowser) comes
+        // with Task 6.
+        assert!(keys.contains(&"ctrl-l".to_owned()), "BrowserAddress");
         assert!(keys.contains(&"alt-shift-a".to_owned()), "SplitAgent");
         assert!(
             keys.contains(&"alt-left".to_owned()),

@@ -303,6 +303,11 @@ pub fn handles(command: Command) -> bool {
             | Command::SplitDown
             | Command::SplitAgent
             | Command::SplitShell
+            | Command::BrowserAddress
+            | Command::BrowserBack
+            | Command::BrowserForward
+            | Command::BrowserReload
+            | Command::BrowserOpenExternal
             | Command::Layout(_)
             | Command::EqualizePanes
             | Command::Focus(_)

@@ -43,6 +43,8 @@ icons! {
         AlignCenter => "align-center",
         ArrowDown => "arrow-down",
         ArrowDownToLine => "arrow-down-to-line",
+        ArrowLeft => "arrow-left",
+        ArrowRight => "arrow-right",
         ArrowUp => "arrow-up",
         ArrowUpFromLine => "arrow-up-from-line",
         Bell => "bell",

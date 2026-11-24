@@ -15,8 +15,7 @@ pub(crate) struct Browser {
     /// The pane's keyboard (`BROWSER_CONTEXT`).
     pub(crate) focus: FocusHandle,
     pub(crate) address: Input,
-    // Read by the address bar (Task 6).
-    #[allow(dead_code)]
+    /// The address field's keyboard.
     pub(crate) address_focus: FocusHandle,
     /// The page has the keyboard (its last IPC was a focus).
     pub(crate) page_keys: bool,
@@ -144,9 +143,7 @@ impl Shell {
     }
 
     /// Loads `url` in browser pane `id`: in its page, or (no page yet) as the leaf's URL, which
-    /// builds the page on the next draw.
-    // Called by the address bar (Task 6).
-    #[allow(dead_code)]
+    /// builds the page on the next draw. A pane whose build failed tries again with it.
     pub(crate) fn navigate(
         &mut self,
         id: Ulid,
@@ -158,6 +155,7 @@ impl Shell {
             return;
         };
         browser.editing = false;
+        browser.error = None;
         browser.address.clear();
         browser.address.insert(&url);
         browser.page.url = url.clone();
@@ -195,6 +193,7 @@ impl Shell {
         let keys = mkrew_ui::browser::keys::forwarded(&self.keymap);
         let data_dir = self.paths.data_dir.join("WebView2");
         let usable = mkrew_ui::browser::available().is_ok();
+        let overlay = self.browser_overlay(cx);
         for (id, browser) in &mut self.browsers {
             let here = shown.contains(id);
             if here && browser.host != Some(host) {
@@ -219,7 +218,10 @@ impl Shell {
                     Some(&data_dir),
                     self.page_events.clone(),
                 ) {
-                    Ok(native) => browser.native = Some(native),
+                    Ok(native) => {
+                        browser.native = Some(native);
+                        browser.page_keys = false;
+                    }
                     Err(error) => {
                         tracing::warn!(%id, "browser: cannot build the page: {error}");
                         browser.error = Some(error);
@@ -234,8 +236,10 @@ impl Shell {
             }
             if here {
                 native.set_dark(dark);
-                // The keyboard left the page's pane: give it back to the window.
-                if browser.page_keys && focused != Some(PaneKey::Web(*id)) {
+                // The keyboard left the page's pane, or an overlay covers the page: give it
+                // back to the window (hiding a page never does, so a background window stays
+                // inactive).
+                if browser.page_keys && (focused != Some(PaneKey::Web(*id)) || overlay) {
                     native.focus_parent();
                     browser.page_keys = false;
                 }
@@ -282,7 +286,7 @@ impl Shell {
         id: Ulid,
         _is_focused: bool,
         theme: &Theme,
-        _window: &Window,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let Some(browser) = self.browsers.get(&id) else {
@@ -318,7 +322,8 @@ impl Shell {
             .flex()
             .flex_col()
             .bg(rgb(theme.surface))
-            .child(body)
+            .child(self.web_toolbar(id, browser, window, theme, cx))
+            .child(div().flex_1().min_h_0().relative().child(body))
             .into_any_element()
     }
 
@@ -365,6 +370,240 @@ impl Shell {
             .filter(|url| !url.is_empty())
         {
             cx.open_url(&url);
+        }
+    }
+
+    /// The focused pane of `window` if it is a browser pane.
+    pub(crate) fn focused_web(&self, window: &Window) -> Option<Ulid> {
+        match self.focused_key(window)? {
+            PaneKey::Web(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// Gives pane `id`'s address field the keyboard, its text selected.
+    pub(crate) fn focus_address(
+        &mut self,
+        id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some(project) = self.web_project(id) {
+            self.focus_pane_key(project, &PaneKey::Web(id));
+        }
+        let Some(browser) = self.browsers.get_mut(&id) else {
+            return;
+        };
+        if let Some(native) = &browser.native {
+            native.focus_parent();
+        }
+        browser.page_keys = false;
+        browser.editing = true;
+        browser.address.select_all();
+        window.focus(&browser.address_focus, cx);
+        cx.notify();
+    }
+
+    /// The browser pane commands, on the focused browser pane of `window`.
+    pub(crate) fn browser_command(
+        &mut self,
+        command: Command,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(id) = self.focused_web(window) else {
+            return;
+        };
+        let script = match command {
+            Command::BrowserAddress => return self.focus_address(id, window, cx),
+            Command::BrowserOpenExternal => return self.open_external(id, cx),
+            Command::BrowserBack => "history.back()",
+            Command::BrowserForward => "history.forward()",
+            Command::BrowserReload => "location.reload()",
+            _ => return,
+        };
+        if let Some(native) = self.browsers.get(&id).and_then(|b| b.native.as_ref()) {
+            native.script(script);
+        }
+    }
+
+    /// Back, forward, reload / stop, the address field, open in the system browser, close
+    /// (spec 5.2), and the loading line under it.
+    fn web_toolbar(
+        &self,
+        id: Ulid,
+        browser: &Browser,
+        window: &Window,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let has_page = browser.native.is_some();
+        let nav = |name: &'static str, glyph: Icon, tip: &'static str, command: Command| {
+            let button = if has_page {
+                icon_button(name, glyph, theme).on_click(cx.listener(
+                    move |shell, _, window, cx| {
+                        shell.browser_command(command, window, cx);
+                    },
+                ))
+            } else {
+                disabled_icon_button(name, glyph, theme.text_muted, theme)
+            };
+            button.tooltip(tooltip(theme, tip, self.keymap.label(command)))
+        };
+        let reload = if browser.page.loading {
+            nav("web-stop", Icon::X, "Stop", Command::BrowserReload)
+        } else {
+            nav(
+                "web-reload",
+                Icon::RotateCw,
+                "Reload",
+                Command::BrowserReload,
+            )
+        };
+        let focused = browser.address_focus.is_focused(window);
+        let field = caret_field(
+            "web-address",
+            &browser.address,
+            "Type an address or paste a link",
+            focused,
+            theme,
+            cx,
+            move |shell, caret| {
+                if let Some(browser) = shell.browsers.get_mut(&id) {
+                    browser.address.click(caret.at, caret.extend, caret.clicks);
+                }
+            },
+        )
+        .flex_1()
+        .min_w_0()
+        .h(theme::rems_px(theme::INPUT_HEIGHT))
+        .track_focus(&browser.address_focus)
+        .on_key_down(cx.listener(Self::web_address_key_down))
+        .relative()
+        .child(self.typing(&browser.address_focus, Self::web_address_key_down, cx))
+        // The pane frame's mouse down focuses the pane, which would take the keyboard back.
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_, _, _, cx| cx.stop_propagation()),
+        )
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            let has_keys =
+                (shell.browsers.get(&id)).is_some_and(|b| b.address_focus.is_focused(window));
+            if !has_keys {
+                shell.focus_address(id, window, cx);
+            }
+        }));
+        let row = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::L))
+            .py(px(space::S))
+            .child(nav(
+                "web-back",
+                Icon::ArrowLeft,
+                "Back",
+                Command::BrowserBack,
+            ))
+            .child(nav(
+                "web-forward",
+                Icon::ArrowRight,
+                "Forward",
+                Command::BrowserForward,
+            ))
+            .child(reload)
+            .child(field)
+            .child(
+                icon_button("web-external", Icon::ExternalLink, theme)
+                    .tooltip(tooltip(
+                        theme,
+                        "Open in system browser",
+                        self.keymap.label(Command::BrowserOpenExternal),
+                    ))
+                    .on_click(cx.listener(move |shell, _, _, cx| shell.open_external(id, cx))),
+            )
+            .child(
+                icon_button("web-close", Icon::X, theme)
+                    .tooltip(tooltip(
+                        theme,
+                        "Close",
+                        self.keymap.label(Command::ClosePane),
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.close_web_pane(id, window, cx);
+                    })),
+            );
+        let line = div()
+            .flex_none()
+            .h(px(theme::PANE_ACCENT_WIDTH))
+            .when(browser.page.loading, |el| el.bg(rgb(theme.accent)));
+        div().flex_none().flex().flex_col().child(row).child(line)
+    }
+
+    /// Typing in an address field (`typing` takes a plain fn): the pane whose field has the
+    /// keyboard.
+    fn web_address_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let id = (self.browsers.iter())
+            .find(|(_, browser)| browser.address_focus.is_focused(window))
+            .map(|(id, _)| *id);
+        if let Some(id) = id {
+            self.address_key_down(id, event, window, cx);
+        }
+    }
+
+    /// Typing in the address field: edits, Enter loads, Esc restores and gives the page the keys.
+    fn address_key_down(
+        &mut self,
+        id: Ulid,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let keystroke = &event.keystroke;
+        if let Some(edit) = field_edit(keystroke, cx) {
+            if let Some(browser) = self.browsers.get_mut(&id) {
+                browser.editing = true;
+                edit.apply(&mut browser.address, cx);
+            }
+            cx.notify();
+            return;
+        }
+        if keystroke.modifiers.modified() {
+            return;
+        }
+        match keystroke.key.as_str() {
+            "enter" => {
+                let typed = (self.browsers.get(&id))
+                    .map(|b| b.address.as_str().to_owned())
+                    .unwrap_or_default();
+                if let Some(url) = mkrew_ui::browser::address::normalize(&typed) {
+                    self.navigate(id, url, window, cx);
+                    if let Some(native) = self.browsers.get(&id).and_then(|b| b.native.as_ref()) {
+                        native.focus();
+                    }
+                }
+            }
+            "escape" => {
+                if let Some(browser) = self.browsers.get_mut(&id) {
+                    browser.editing = false;
+                    let url = browser.page.url.clone();
+                    browser.address.clear();
+                    browser.address.insert(&url);
+                    match &browser.native {
+                        Some(native) => native.focus(),
+                        None => window.focus(&browser.focus, cx),
+                    }
+                }
+                cx.notify();
+            }
+            _ => {}
         }
     }
 }
