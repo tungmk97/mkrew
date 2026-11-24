@@ -29,7 +29,7 @@ Option 2.
 - **Saving.** Saving uses `fs.write` (protocol 27). It sends the whole text and the `hash`
   that `fs.read` returned (`docs::hash` of the bytes). The daemon writes only if the file still
   hashes to that value. If not, it answers `saved: false` with the disk's hash. The editor then
-  shows "Changed on disk — Reload · Keep mine". "Keep mine" saves over that hash.
+  shows "Changed on disk: Reload · Keep mine". "Keep mine" saves over that hash.
 - **Unsaved text.** A re-read never replaces unsaved text. Leaving it asks "Save / Don't save /
   Cancel" (§2.5). That happens when the user opens another file, picks another worktree or
   closes the window.

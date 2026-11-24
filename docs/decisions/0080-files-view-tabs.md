@@ -1,7 +1,7 @@
 # 0080 — Files view tabs
 
 - Date: 2026-10-26
-- Status: accepted
+- Status: superseded by 0108
 - Milestone: none (user request: view and close several files at once, like Zed / VS Code)
 
 ## Context
@@ -35,3 +35,10 @@ Cancel" when it had unsaved text (SPEC §12A).
 - New key `ctrl-w` (`close_file_tab`) in the Files context only (ADR 0028 allows plain
   Ctrl+letter there).
 - A Markdown preview starts at the top when its tab is shown again (one shared page).
+
+## Superseded by 0108
+
+ADR 0108 removes the Editor view, the file tab strip, its keys and `FilesView.tabs`.
+An open file is a leaf of a terminal tab's split tree (a tab or a pane next to the terminals), its text lives in the per-workspace `Documents` store, and open files are saved in the tab layout, so they come back after a restart.
+What stays from this ADR: a single click opens an italic preview tab that the next single click replaces while it is clean (the leaf's `preview` flag); closing asks "Save / Don't save / Cancel" for each unsaved file; the find bar belongs to the shown file; Ctrl+W (`close_file_tab`) now closes the focused file pane.
+What goes: the strip, pinned file tabs, file-tab cycling under Ctrl+Tab and Ctrl+Alt+1-9, and "tabs are in memory only".

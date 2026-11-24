@@ -16,17 +16,12 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
-        // A framed card (`surface`, 1 px border) inset `space::M` from the view's edges; its
-        // height is what the row gives it minus the margins.
+        // The pane's frame rounds and spaces it: the card is the pane's whole content.
         let panel = div()
             .flex_1()
             .min_w_0()
             .flex()
             .flex_col()
-            .m(px(space::M))
-            .rounded(px(radius::CARD))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
             .overflow_hidden()
             .bg(rgb(theme.surface));
         let Some(selected) = view.selected.clone() else {
@@ -41,10 +36,15 @@ impl Shell {
                     "Select a commit to see its files.",
                     Some("Use ↑ ↓ (or j k) to move between commits.".to_owned()),
                 ),
-                None => (
-                    "Select a file to see its changes.",
-                    Some("Use ↑ ↓ (or j k) to move between files.".to_owned()),
-                ),
+                None => {
+                    // Nothing changed shows "Nothing to commit.", not a closed pane.
+                    let (sentence, detail) = view.no_file().message(view.section());
+                    let failed = match &view.status {
+                        git_view::Status::Failed(error) => Some(error.clone()),
+                        _ => None,
+                    };
+                    (sentence, failed.or_else(|| detail.map(str::to_owned)))
+                }
             };
             let retry = history
                 .filter(|history| matches!(history.detail, git_history::Detail::Failed(_)))
@@ -574,28 +574,33 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        let Some(state) = self.diff_views.get(&project_id) else {
+            return message(theme, None, "Loading…".into(), None)
+                .flex_1()
+                .into_any_element();
+        };
         let mode = self.diff_mode;
         let wrap = self.diff_wrap;
         let picked = view.comments.selection;
         let can_comment = view.can_comment();
         let rows = shown.list_len(mode);
         let layout = (Rc::as_ptr(shown) as usize, mode, rows);
-        if self.git_diff_layout.get() != Some(layout) {
-            self.git_diff_layout.set(Some(layout));
-            self.git_diff_looks.set(Some((wrap, picked)));
-            self.git_diff_list.reset(rows);
-        } else if self.git_diff_looks.get() != Some((wrap, picked)) {
-            self.git_diff_looks.set(Some((wrap, picked)));
-            self.git_diff_list.remeasure();
+        if state.layout.get() != Some(layout) {
+            state.layout.set(Some(layout));
+            state.looks.set(Some((wrap, picked)));
+            state.list.reset(rows);
+        } else if state.looks.get() != Some((wrap, picked)) {
+            state.looks.set(Some((wrap, picked)));
+            state.list.remeasure();
         }
-        if let Some(row) = self.git_diff_scroll_to.take() {
-            self.git_diff_list.scroll_to(ListOffset {
+        if let Some(row) = state.scroll_to.take() {
+            state.list.scroll_to(ListOffset {
                 item_ix: row,
                 offset_in_item: px(0.),
             });
         }
-        if let Some(row) = self.git_diff_reveal.take() {
-            self.git_diff_list.scroll_to_reveal_item(row);
+        if let Some(row) = state.reveal.take() {
+            state.list.scroll_to_reveal_item(row);
         }
         let shown = Rc::clone(shown);
         let current = view.hunk;
@@ -613,7 +618,7 @@ impl Shell {
             .then(|| self.keymap.label(Command::GitDiscard));
         let width = (!wrap).then(|| unwrapped_width(&shown, mode, theme, window));
         let list = list(
-            self.git_diff_list.clone(),
+            state.list.clone(),
             cx.processor(move |shell, index: usize, _, cx| {
                 let theme = &row_theme;
                 let pickable =
@@ -711,7 +716,7 @@ impl Shell {
             .rounded(px(radius::MEDIUM))
             .bg(rgb(theme.accent_bg))
             .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.pane_focus_border))
+            .border_color(rgb(theme.pane_focus_stripe))
             .font_family(theme.ui_font_family.clone())
             .text_size(font_size::BODY)
             .whitespace_nowrap()

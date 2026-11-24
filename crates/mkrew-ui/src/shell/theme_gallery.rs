@@ -374,7 +374,7 @@ impl Shell {
     }
 }
 
-/// A small window drawn in `card`'s own colors, whatever theme the app has: the chrome strip,
+/// A small window drawn in `card`'s own colors, whatever theme the app has: the title bar strip,
 /// the sidebar strip, two text bars, an accent pill and the six hues of its ANSI palette.
 fn theme_picture(card: &Theme) -> gpui::Div {
     let bar = |color: u32, width: f32| {
@@ -406,7 +406,7 @@ fn theme_picture(card: &Theme) -> gpui::Div {
                 .left_0()
                 .right_0()
                 .h(px(theme::THEME_PICTURE_CHROME))
-                .bg(rgb(card.chrome)),
+                .bg(rgb(card.pane_gap)),
         )
         .child(
             div()

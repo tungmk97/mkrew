@@ -11,6 +11,9 @@ impl Shell {
 
     pub(crate) fn open_new_menu(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.begin_menu(window, cx);
+        // Closing the menu gives the keyboard to the pane, not to `▾`, so the `+` row (open
+        // while it holds focus) collapses with it (SPEC §10).
+        self.menu_return = None;
         self.new_menu = true;
         self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
@@ -184,26 +187,10 @@ impl Shell {
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
-            (View::Editor, _) => main.child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .child(self.render_editor(project_id, theme, window, cx))
-                    .children(panel),
-            ),
-            (View::Diff, _) => main.child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .child(self.render_diff_view(project_id, theme, window, cx))
-                    .children(panel),
-            ),
             (View::Terminals, Some(tabs)) => {
                 // Voice text goes to the focused terminal when it has the keyboard: ring it.
                 let voice_ring = self.voice_ring(theme, cx).filter(|_| {
-                    (tabs.active().and_then(Tab::focused))
+                    (tabs.active().and_then(Tab::focused_session))
                         .and_then(|session| self.panes.get(&session))
                         .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
                 });
@@ -222,6 +209,7 @@ impl Shell {
                         .flex_1()
                     } else {
                         self.render_tab(
+                            project_id,
                             tabs.active(),
                             now,
                             self.composer_focus.is_focused(window),
@@ -231,6 +219,7 @@ impl Shell {
                                 .get(&HostId::Main)
                                 .map(|ui| ui.content.clone())
                                 .unwrap_or_default(),
+                            window,
                             cx,
                         )
                     },
@@ -259,7 +248,7 @@ impl Shell {
 
     /// The title bar above everything (SPEC §10, ADR 0106), one `TITLE_BAR_HEIGHT` bar: on the
     /// left (main window) the machine chip, the sidebar toggle and the workspace switcher; the
-    /// tab area (Editor / Diff chips, the terminal tabs, `+`); a drag area; on the right the
+    /// tab area (the terminal, file and Diff tabs, the `+` row); a drag area; on the right the
     /// voice status (only while the sidebar is hidden), the limits chip (main window, only at
     /// 80% or more; it shows without a workspace too), the Run pill, the update button, the
     /// Board and Docs icons, Split (while Terminals shows in the main window, always in a
@@ -299,11 +288,13 @@ impl Shell {
             HostId::Main => workspace.and_then(|project_id| {
                 let tabs = self.tabs.get(&project_id)?;
                 Some(
-                    self.render_tab_area(project_id, tabs, now, theme, cx)
+                    self.render_tab_area(project_id, tabs, now, theme, window, cx)
                         .into_any_element(),
                 )
             }),
-            HostId::Detached(key) => Some(self.render_detached_tab_area(key, theme, cx)),
+            HostId::Detached(key) => {
+                Some(self.render_detached_tab_area(key, now, theme, window, cx))
+            }
         };
         if main
             && tab_area.is_none()
@@ -342,9 +333,7 @@ impl Shell {
                 Os::CURRENT,
                 window.is_fullscreen(),
             )))
-            .bg(rgb(theme.chrome))
-            .border_b(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
+            .bg(rgb(theme.pane_gap))
             .font_family(theme.ui_font_family.clone())
             .child(left.when(modal, |el| el.relative().child(inert_layer())))
             // Rules set the groups apart: left | tabs | drag | right (never drag or press
@@ -605,87 +594,6 @@ impl Shell {
         });
         div()
             .min_w_0()
-            .child(button)
-            .children(menu)
-            .into_any_element()
-    }
-
-    /// `+ ▾` after the last tab: a dropdown to start a tab with an agent profile, the shell or
-    /// nothing (`new_menu_rows`). While a pane starts it shows the loading dots instead (one
-    /// start at a time).
-    pub(crate) fn render_new_tab_button(
-        &self,
-        now: i64,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
-        if let Some(kind) = self.starting_pane {
-            let what = match kind {
-                SessionKind::Agent => "Starting agent",
-                SessionKind::Shell => "Starting shell",
-            };
-            return div()
-                .id("new-tab")
-                .flex_none()
-                .min_w(theme::rems_px(theme::CONTROL_HEIGHT))
-                .h(theme::rems_px(theme::CONTROL_HEIGHT))
-                .px(px(space::S))
-                .flex()
-                .items_center()
-                .justify_center()
-                .tooltip(tooltip(theme, what, ""))
-                .child(loading_dots(now, rgb(theme.text_muted)))
-                .into_any_element();
-        }
-        let button = div()
-            .id("new-tab")
-            .flex_none()
-            .h(theme::rems_px(theme::CONTROL_HEIGHT))
-            .px(px(space::S))
-            .flex()
-            .items_center()
-            .gap(px(space::XS))
-            .rounded(px(radius::MEDIUM))
-            .text_color(rgb(theme.text_muted))
-            .pressable(Look::Icon, true, theme)
-            // Not while its dropdown is open: the tooltip would cover the rows.
-            .when(!self.new_menu, |el| {
-                el.tooltip(tooltip(
-                    theme,
-                    "New tab: agent, shell or empty",
-                    format!(
-                        "{} / {}",
-                        self.keymap.label(Command::NewAgentTab),
-                        self.keymap.label(Command::NewShellTab)
-                    ),
-                ))
-            })
-            // An open menu already closed on this mouse down (outside it): the click reopens it.
-            .on_press(
-                true,
-                cx.listener(|shell, _, window, cx| {
-                    shell.open_new_menu(window, cx);
-                }),
-            )
-            .child(icon_svg(Icon::Plus, theme::ICON_SIZE, theme.text_muted))
-            .child(icon_svg(
-                Icon::ChevronDown,
-                theme::ICON_SIZE_SMALL,
-                theme.text_muted,
-            ));
-        let menu = (self.new_menu && !self.modal_open()).then(|| {
-            render_menu(
-                self.menu_state(),
-                "new-tab-panel",
-                self.new_menu_rows(),
-                None,
-                Place::Dropdown,
-                theme,
-                cx,
-            )
-        });
-        div()
-            .flex_none()
             .child(button)
             .children(menu)
             .into_any_element()

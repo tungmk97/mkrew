@@ -1,5 +1,6 @@
 //! Edits of tab layouts the daemon makes itself (SPEC §5: the layout is the UI's split tree,
-//! stored as opaque JSON; only leaves and the splits around them are touched here).
+//! stored as opaque JSON; only session leaves and the splits around them are touched here, file
+//! and diff leaves pass through).
 
 use mkrew_protocol::Event;
 use mkrew_store::StoreError;
@@ -16,6 +17,8 @@ enum Cut {
     Became(Value),
 }
 
+/// Removes the pane of `session`; leaves without a `session` key (files, the diff) never match,
+/// and a split around the removed pane collapses to its sibling of any kind.
 fn cut(node: &Value, session: &str) -> Option<Cut> {
     if node.get("session").and_then(Value::as_str) == Some(session) {
         return Some(Cut::Gone);
@@ -50,7 +53,8 @@ fn without_session(layout: &Value, session: Ulid) -> Option<Value> {
     }
 }
 
-/// Every session with a pane in `layout` (the leaves of the split tree).
+/// Every session with a pane in `layout`: the leaves with a `session` key; file and diff leaves
+/// are skipped.
 pub fn layout_sessions(layout: &Value) -> Vec<Ulid> {
     if let Some(session) = layout.get("session").and_then(Value::as_str) {
         return session.parse().into_iter().collect();
@@ -176,5 +180,102 @@ mod tests {
         let layout =
             json!({"split": "vertical", "ratio": 0.5, "children": [chat.clone(), leaf(b)]});
         assert_eq!(without_session(&layout, b), Some(chat));
+    }
+
+    fn file(path: &str) -> Value {
+        json!({"file": path})
+    }
+
+    fn diff() -> Value {
+        json!({"diff": true})
+    }
+
+    fn split(axis: &str, first: Value, second: Value) -> Value {
+        json!({"split": axis, "ratio": 0.5, "children": [first, second]})
+    }
+
+    #[test]
+    fn layout_sessions_skips_file_and_diff_leaves() {
+        let [a, b] = [Ulid::new(), Ulid::new()];
+        let layout = split(
+            "vertical",
+            leaf(a),
+            split(
+                "horizontal",
+                file("src/a.rs"),
+                split("vertical", diff(), leaf(b)),
+            ),
+        );
+        assert_eq!(layout_sessions(&layout), [a, b]);
+        assert!(layout_sessions(&file("src/a.rs")).is_empty());
+        assert!(layout_sessions(&diff()).is_empty());
+        // A tab of files only has no session for `tab.close` to remove.
+        assert!(layout_sessions(&split("vertical", file("a"), diff())).is_empty());
+        // A file named like a session id is still a file.
+        assert!(layout_sessions(&file(&a.to_string())).is_empty());
+    }
+
+    #[test]
+    fn cut_leaves_file_and_diff_leaves_alone() {
+        let a = Ulid::new();
+        assert_eq!(without_session(&file("src/a.rs"), a), None);
+        assert_eq!(without_session(&diff(), a), None);
+        assert_eq!(
+            without_session(&split("vertical", file("src/a.rs"), diff()), a),
+            None
+        );
+        // A file leaf with the id as its path is not the session.
+        assert_eq!(without_session(&file(&a.to_string()), a), None);
+    }
+
+    #[test]
+    fn cut_collapses_a_split_around_a_leaf_of_any_kind() {
+        let a = Ulid::new();
+        // The sibling is a file or the diff: it becomes the whole layout, from either side.
+        assert_eq!(
+            without_session(&split("vertical", leaf(a), file("x")), a),
+            Some(file("x"))
+        );
+        assert_eq!(
+            without_session(&split("vertical", diff(), leaf(a)), a),
+            Some(diff())
+        );
+        // Deeper: the inner split goes, the outer ratio stays.
+        let nested = json!({"split": "vertical", "ratio": 0.3, "children": [
+            split("horizontal", leaf(a), file("x")),
+            diff()
+        ]});
+        assert_eq!(
+            without_session(&nested, a),
+            Some(json!({"split": "vertical", "ratio": 0.3, "children": [file("x"), diff()]}))
+        );
+        // The session beside a whole subtree of files: the subtree takes the tab.
+        let beside = split("vertical", leaf(a), split("horizontal", file("x"), diff()));
+        assert_eq!(
+            without_session(&beside, a),
+            Some(split("horizontal", file("x"), diff()))
+        );
+        // A file leaf keeps its own keys.
+        let full = json!({"file": "README.md", "md": "split", "preview": true});
+        assert_eq!(
+            without_session(&split("vertical", leaf(a), full.clone()), a),
+            Some(full)
+        );
+    }
+
+    #[test]
+    fn a_tab_that_loses_its_last_session_keeps_its_file_leaf() {
+        // `drop_panes` closes a tab only when the cut layout is `null`: a tab that still holds
+        // a file or the diff is written back with that leaf as its root, and stays.
+        let a = Ulid::new();
+        let cut = without_session(&split("vertical", leaf(a), file("x")), a);
+        assert_eq!(cut, Some(file("x")));
+        assert_ne!(cut, Some(Value::Null));
+        let cut = without_session(&split("vertical", diff(), leaf(a)), a);
+        assert_eq!(cut, Some(diff()));
+        // What is left has no session: `tab.close` of it removes none.
+        assert!(layout_sessions(&cut.unwrap()).is_empty());
+        // Only a tab whose last leaf was the session ends up empty (and closes unless pinned).
+        assert_eq!(without_session(&leaf(a), a), Some(Value::Null));
     }
 }

@@ -188,14 +188,16 @@ Run `mk integration install claude` again after updating Mkrew to get the status
 
 - **Sidebar**: workspaces with each session's status; `Ctrl+Shift+I` jumps to the next session
   that needs you.
-- **Terminals** (`Ctrl+Shift+1`): tabs split into panes, each an agent or a shell. New agent tab
-  `Ctrl+Shift+A`, shell tab `Ctrl+Shift+T`, split `Alt+Shift+=` / `Alt+Shift+-`.
+- **Terminals** (`Ctrl+Shift+1`): tabs split into panes, each an agent, a shell, a file or the diff. New agent tab
+  `Ctrl+Shift+A`, shell tab `Ctrl+Shift+T`, new note `Ctrl+Alt+N`, split `Alt+Shift+=` / `Alt+Shift+-`.
+  Hover the `+` after the tabs for the quick row (agent, shell, note, more).
+  Drag a file, a tab, a pane or a `+` item onto any edge of a pane to split it there.
 - **Chat view**: an agent pane (Claude Code, Codex, Oh My Pi) has a `Terminal | Chat` switch in its header; `Ctrl+Alt+T` flips it.
   Chat shows the conversation as messages, tool calls that open to their arguments and result, the plan, a question card and the running subagents, with the composer under it (Enter sends, Shift+Enter adds a line).
   The terminal keeps running underneath. `[ui] chat_default = true` opens agent panes in Chat.
 - **Task board** (`Ctrl+Shift+2`): new task `Ctrl+Shift+N`, run it `Ctrl+Enter`.
-- **File tree** (`Ctrl+Shift+3`, in the right panel), **Editor** (`Ctrl+Shift+6`) and **Git**
-  (`Ctrl+Shift+4`): browse files, diff against the base
+- **File tree** (`Ctrl+Shift+3`, in the right panel), the **file pane** (a click opens a file as a tab, a drop on a pane opens it there) and **Git**
+  (`Ctrl+Shift+4`, its diff opens as a tab or pane, `Ctrl+Shift+7`): browse files, diff against the base
   branch, stage, commit, comment on diff lines. Find a file `Ctrl+Shift+O`, search the text of the files `Ctrl+Alt+Shift+F`; "Open in Zed"
   `Ctrl+Shift+Z`.
 - **Docs** (`Ctrl+Shift+5`): review Markdown plans, comment on passages and send the comments

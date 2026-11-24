@@ -31,8 +31,8 @@ use mkrew_protocol::{
     CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
     DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
     FsContent, FsCreateParams, FsCreated, FsEntry, FsIgnoreParams, FsListParams, FsMatch,
-    FsReadParams, FsWriteParams, FsWritten, GitCheckoutParams, GitCommitResult, GitMarker, GitMode,
-    GitStatus, GitStatusParams, Outcome, Project, ProjectAddParams, ProjectClonedEvent, ProjectRef,
+    FsNewNoteParams, FsWritten, GitCheckoutParams, GitCommitResult, GitMarker, GitMode, GitStatus,
+    GitStatusParams, Outcome, Project, ProjectAddParams, ProjectClonedEvent, ProjectRef,
     ProjectUpdateParams, RemoveWorktreeResult, Request, RunStartParams, RunStarted, RunStopParams,
     Session, SessionAttachResult, SessionFiles, SessionKillParams, SessionKind,
     SessionLinkPlanParams, SessionListParams, SessionLogTail, SessionLogTailParams,
@@ -60,10 +60,11 @@ use mkrew_ui::diagram::Diagram;
 use mkrew_ui::dialog_focus::{self, Nav};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
+use mkrew_ui::documents::{self, Documents, MdMode, Resolution};
 use mkrew_ui::editor::{self, EditKey, Pos};
 use mkrew_ui::fanout::{self, Compare, FanOutPicker};
 use mkrew_ui::field::{Caret, caret_mouse, caret_text, copy_selection};
-use mkrew_ui::files_view::{self, Close, Content, FileTab, FilesView, MdMode, Open, Requests};
+use mkrew_ui::files_view::{self, FilesView, Requests};
 use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::git_actions::{self, Remote};
@@ -94,6 +95,7 @@ use mkrew_ui::peek::{self, Peek};
 use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, PushSwitch, SetUp, Switch};
 use mkrew_ui::plan::{self, Plans};
 use mkrew_ui::plan_dialog::PlanDialog;
+use mkrew_ui::plus_row::{NewKind, Reveals, RowItem, default_agent, plus_row_items};
 use mkrew_ui::ports::PortsDialog;
 use mkrew_ui::preview;
 use mkrew_ui::prompt_picker::{self, PromptPicker};
@@ -105,12 +107,13 @@ use mkrew_ui::scrollbar;
 use mkrew_ui::settings_dialog::{self, SettingsDialog};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::slash_picker::{self, SlashKey, SlashPicker};
-use mkrew_ui::split::{Axis, Direction, Divider, Preset, drop_axis};
+use mkrew_ui::split::{Axis, Direction, Divider, Edge, FileKey, Leaf, PaneKey, Preset};
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{
-    AreaItem, FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, area_items, double_click_renames,
-    newest_unplaced, on_screen, rename_params, scroll_index, session_label, tab_icons,
+    AreaItem, FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, area_items, diff_label,
+    double_click_renames, file_label, newest_unplaced, on_screen, rename_params, scroll_index,
+    session_label, tab_icons,
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
@@ -140,6 +143,8 @@ mod shell;
 use shell::board::*;
 use shell::cards::*;
 use shell::chat_view::*;
+use shell::diff_pane::DiffViewState;
+use shell::doc_view::{DocFocus, DocView};
 use shell::files_render::*;
 use shell::files_split;
 use shell::git_diff::*;
@@ -149,6 +154,7 @@ use shell::menu_render::*;
 use shell::menus::*;
 use shell::pane_drop::*;
 use shell::pane_render::*;
+use shell::plus_row::*;
 use shell::reorder::*;
 use shell::sidebar::*;
 use shell::tear_off::*;
@@ -420,15 +426,6 @@ struct FileMenu {
     position: gpui::Point<gpui::Pixels>,
 }
 
-/// The right-click menu of a Files tab (SPEC §12A): Close, Close others, Close to the right,
-/// Close all, Pin / Unpin, Copy path.
-struct FileTabMenu {
-    project_id: Ulid,
-    path: String,
-    /// Window position of the click.
-    position: gpui::Point<gpui::Pixels>,
-}
-
 /// The menu of a Board card (SPEC §10): its hover buttons as rows, for the keyboard.
 struct CardMenu {
     task_id: Ulid,
@@ -578,8 +575,6 @@ struct Shell {
     workspace_menu: Option<WorkspaceMenu>,
     /// The open right-click menu of the Files tree.
     file_menu: Option<FileMenu>,
-    /// The open right-click menu of a Files tab.
-    file_tab_menu: Option<FileTabMenu>,
     /// The open tab menu (Pin, Split right / down, Rename, Close).
     tab_menu: Option<TabMenu>,
     /// The open menu of a Board card (Shift+F10 on the selected card).
@@ -617,6 +612,11 @@ struct Shell {
     workspace_switcher: bool,
     /// The tab area's `+ ▾` dropdown is open.
     new_menu: bool,
+    /// The pointer holds the tab strip's `+` row open (`plus_row::Reveal`); a focused item
+    /// opens it too (`plus_focus`).
+    plus: Reveals<HostId>,
+    /// Wraps the `+` row: `contains_focused` keeps it open while `+` or an item has the keyboard.
+    plus_focus: FocusHandle,
     /// The sidebar's "N empty workspaces" line is expanded (in memory only).
     empty_workspaces_open: bool,
     /// Sidebar groups (a workspace's TERMINAL / RUN) folded to their label (in memory only).
@@ -733,7 +733,7 @@ struct Shell {
     composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
-    /// The right panel (Files / Session / Git tabs) next to Terminals, the Editor and the Diff;
+    /// The right panel (Files / Session / Git tabs) next to Terminals;
     /// from `[ui] right_panel`, written by its toggle and tab row (SPEC §10, ADR 0081, ADR 0084).
     right_panel: inspector::RightPanel,
     /// The transcripts being read, one per session (ADR 0104): the session panel's Thread
@@ -760,51 +760,31 @@ struct Shell {
     docs: HashMap<Ulid, Docs>,
     /// Focused while a Docs comment or reply draft takes keys (the draft stays on blur).
     comment_focus: FocusHandle,
+    /// The open files of every workspace (SPEC §12A, ADR 0108); one store per workspace.
+    documents: HashMap<Ulid, Documents>,
+    /// The view state of each open file pane, keyed like the store.
+    doc_views: HashMap<(Ulid, FileKey), DocView>,
     /// The Files view of every workspace it was shown for.
     files: HashMap<Ulid, FilesView>,
     /// Focused while the right panel's tree has the keyboard, so arrow keys move its cursor.
     files_focus: FocusHandle,
     /// Keeps the Files tree cursor in view.
     files_scroll: UniformListScrollHandle,
-    /// Keeps the active Files tab in view in the tab strip.
-    file_tabs_scroll: ScrollHandle,
-    /// The Editor's find field (outside `EDITOR_CONTEXT`'s arrow keys).
-    file_find_focus: FocusHandle,
-    /// The Files find bar's replace field.
-    file_replace_focus: FocusHandle,
-    /// Keeps the current find match of the Files viewer in view.
-    file_code_scroll: UniformListScrollHandle,
-    /// Where the Files editor's scroll bar thumb is held while it is dragged.
-    file_code_drag: scrollbar::Drag,
     /// What waits for a Files save in flight (a "Save" answered while one was already sent):
     /// `(workspace, path, then)`, run after that save succeeds.
-    files_after_save: Vec<(Ulid, String, AfterSave)>,
-    /// The Files editor (ADR 0028): typing goes there while it has focus.
-    file_editor_focus: FocusHandle,
-    /// The block edit field of the Files Markdown preview (ADR 0072).
-    file_block_focus: FocusHandle,
-    /// Where the editor's text starts on screen (set while painting), for clicks.
-    file_text_left: Rc<Cell<Pixels>>,
-    /// The Markdown Split view's preview (the editor beside it keeps `file_editor_focus`).
-    file_preview_focus: FocusHandle,
+    files_after_save: Vec<(Ulid, FileKey, AfterSave)>,
     /// The mode the next Markdown file opens in (`[ui] md_mode`, the last one switched to).
-    md_mode: files_view::MdMode,
+    md_mode: documents::MdMode,
     /// The source's share of the Markdown Split view (`[ui] md_split`, 0.2–0.8).
     md_split: f32,
     /// Its divider was dragged since the last mouse-up: the share is saved when it ends.
     md_split_dragging: bool,
-    /// Where the Split view's two halves were painted, for the divider drag.
-    md_split_bounds: Rc<Cell<Bounds<Pixels>>>,
-    /// The Split view's scroll sync (source → preview, SPEC §12A).
-    md_split_sync: files_split::Sync,
     /// The Docs list filter field.
     docs_filter_focus: FocusHandle,
-    /// The rendered Markdown page of Docs and of the Files view (virtual lists, kept across
-    /// frames).
+    /// The rendered Markdown page of Docs (a virtual list, kept across frames).
     doc_page: preview::Page,
     /// Scroll of the Docs source view: where Shift+↓ starts, and what keeps a pick in view.
     doc_source_scroll: UniformListScrollHandle,
-    file_page: preview::Page,
     /// The Git view of every workspace it was shown for.
     git: HashMap<Ulid, GitView>,
     /// The `git.repos` of each workspace whose Git view was shown (ADR 0029), for the "Repo"
@@ -830,16 +810,10 @@ struct Shell {
     git_repo_query_focus: FocusHandle,
     /// Keep the selected changed file in view.
     git_files_scroll: UniformListScrollHandle,
-    /// The diff rows (a variable-height list: wrapped lines are taller). `git_diff_layout` is
-    /// what it was last laid out for (the diff, mode, row count; another resets it) and
-    /// `git_diff_looks` what changes row heights in place (wrap, picked lines: remeasured).
-    /// `git_diff_scroll_to` is a row to scroll to once the list is laid out for the shown diff.
-    git_diff_list: ListState,
-    git_diff_layout: Cell<Option<(usize, DiffMode, usize)>>,
-    git_diff_looks: Cell<Option<(bool, Option<Selection>)>>,
-    git_diff_scroll_to: Cell<Option<usize>>,
-    /// A diff row to scroll into view once the list is laid out (a keyboard pick moved).
-    git_diff_reveal: Cell<Option<usize>>,
+    /// The diff list of each workspace's Diff leaf (`ensure_diff_views` creates it).
+    diff_views: HashMap<Ulid, DiffViewState>,
+    /// A Diff leaf was drawn at the last `sync_panes`: one that comes on screen refreshes Git.
+    diff_drawn: bool,
     /// How the Git diff viewer lays out a file (`[ui] diff_mode`, §12B); global, every repo.
     diff_mode: DiffMode,
     /// Long diff lines wrap (`[ui] diff_wrap`, on by default); global, every repo.
@@ -978,6 +952,7 @@ struct Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        self.ensure_diff_views();
         let theme = cx.theme().clone();
         // A menu closed behind the keyboard's back (workspace switched, dialog opened, daemon
         // event) must not leave it on the hidden menu: give it back to the pane. A menu whose
@@ -1043,9 +1018,6 @@ impl Render for Shell {
                 el.key_context(BOARD_CONTEXT)
             })
             .when(self.view() == View::Docs, |el| el.key_context(DOCS_CONTEXT))
-            .when(self.view() == View::Editor, |el| {
-                el.key_context(EDITOR_CONTEXT)
-            })
             .on_action(cx.listener(Self::run))
             .on_action(cx.listener(Self::expand_diagram))
             .on_action(cx.listener(Self::open_preview_link))
@@ -1264,15 +1236,6 @@ impl Render for Shell {
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_menu(menu, &theme, cx)),
-                    )
-                    .children(
-                        (self.file_tab_menu.as_ref())
-                            .filter(|menu| {
-                                self.workspace == Some(menu.project_id)
-                                    && self.view() == View::Editor
-                                    && !self.modal_open()
-                            })
-                            .map(|menu| self.render_file_tab_menu(menu, &theme, cx)),
                     )
                     .children(
                         self.card_menu

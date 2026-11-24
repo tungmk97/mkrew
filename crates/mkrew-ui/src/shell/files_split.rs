@@ -4,7 +4,7 @@
 //! task box, copy a code block.
 
 use crate::*;
-use mkrew_ui::files_view::StaleEdit;
+use mkrew_ui::documents::StaleEdit;
 use mkrew_ui::markdown::{self, LinkTarget};
 use mkrew_ui::preview::{CopyCode, OpenLink, ToggleTask};
 
@@ -21,26 +21,36 @@ pub(crate) struct Sync {
 }
 
 impl Shell {
-    /// Shows the active Markdown tab in `mode` (the Preview / Split / Source switch); the next
+    /// Shows the Markdown file `path` in `mode` (the Preview / Split / Source switch); the next
     /// Markdown file opens in it too (`[ui] md_mode`). Nothing for other files.
     pub(crate) fn set_file_mode(
         &mut self,
         project_id: Ulid,
+        path: &FileKey,
         mode: MdMode,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(tab) = self.active_file_tab(project_id) else {
+        let Some(doc) = self.doc_mut(project_id, path) else {
             return;
         };
-        let editable = tab
+        let editable = doc
             .shown()
             .is_some_and(|shown| !shown.code.binary && !shown.code.too_large);
-        if !(tab.is_markdown() && editable) || tab.mode == mode {
+        if !(doc.is_markdown() && editable) || doc.mode == mode {
             return;
         }
-        tab.set_mode(mode);
-        self.md_split_sync.followed.set(None);
+        doc.set_mode(mode);
+        if let Some(view) = self.doc_views.get_mut(&(project_id, path.clone())) {
+            view.split_sync.followed.set(None);
+        }
+        // The leaf remembers the mode across restarts.
+        let key = PaneKey::File(path.clone());
+        let write = (self.tabs.get_mut(&project_id))
+            .and_then(|tabs| tabs.update_leaf(&key, |leaf| documents::set_leaf_mode(leaf, mode)));
+        if let Some(write) = write {
+            self.save_layout(project_id, write, window, cx);
+        }
         if self.md_mode != mode {
             self.follow_md_mode(mode);
             let value = format!("\"{}\"", mode.name());
@@ -50,15 +60,17 @@ impl Shell {
                 self.settings_write_failed("the Markdown mode", error, cx);
             }
         }
-        self.build_preview(project_id, window, cx);
+        self.build_preview(project_id, path, window, cx);
         // The find fields are not drawn in Preview, nor the split page elsewhere: the keyboard
         // goes where the text is.
-        let fields =
-            self.file_find_focus.is_focused(window) || self.file_replace_focus.is_focused(window);
+        let fields = self.doc_focused(project_id, path, DocFocus::Find, window)
+            || self.doc_focused(project_id, path, DocFocus::Replace, window);
         if mode == MdMode::Preview && fields {
             window.focus(&self.focus_handle, cx);
-        } else if mode != MdMode::Split && self.file_preview_focus.is_focused(window) {
-            window.focus(&self.file_editor_focus, cx);
+        } else if mode != MdMode::Split
+            && self.doc_focused(project_id, path, DocFocus::Preview, window)
+        {
+            self.focus_doc(project_id, path, DocFocus::Editor, window, cx);
         }
         cx.notify();
     }
@@ -67,43 +79,42 @@ impl Shell {
     pub(crate) fn toggle_file_preview(
         &mut self,
         project_id: Ulid,
+        path: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(mode) = self.active_file_tab(project_id).map(|tab| tab.mode) else {
+        let Some(mode) = self.doc(project_id, path).map(|doc| doc.mode) else {
             return;
         };
         let next = match mode {
             MdMode::Preview => MdMode::Source,
             MdMode::Split | MdMode::Source => MdMode::Preview,
         };
-        self.set_file_mode(project_id, next, window, cx);
+        self.set_file_mode(project_id, path, next, window, cx);
     }
 
     /// Ctrl+Alt+V: Split, or back to Source from it.
     pub(crate) fn toggle_file_split(
         &mut self,
         project_id: Ulid,
+        path: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(mode) = self.active_file_tab(project_id).map(|tab| tab.mode) else {
+        let Some(mode) = self.doc(project_id, path).map(|doc| doc.mode) else {
             return;
         };
         let next = match mode {
             MdMode::Split => MdMode::Source,
             MdMode::Preview | MdMode::Source => MdMode::Split,
         };
-        self.set_file_mode(project_id, next, window, cx);
+        self.set_file_mode(project_id, path, next, window, cx);
     }
 
-    /// `[ui] md_mode` is `mode` (switched to, or edited in the settings): every Files view
-    /// opens its next Markdown tab in it.
+    /// `[ui] md_mode` is `mode` (switched to, or edited in the settings): the next Markdown
+    /// file opens in it.
     pub(crate) fn follow_md_mode(&mut self, mode: MdMode) {
         self.md_mode = mode;
-        for view in self.files.values_mut() {
-            view.md_mode = mode;
-        }
     }
 
     /// The Split view: the editor and the page, `md_split` of the width for the editor, the
@@ -111,16 +122,20 @@ impl Shell {
     pub(crate) fn render_md_split(
         &self,
         project_id: Ulid,
-        tab: &FileTab,
-        shown: &files_view::Shown,
+        doc: &documents::Doc,
+        shown: &documents::Shown,
         window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        self.follow_source_scroll(tab, cx);
-        let bounds = Rc::clone(&self.md_split_bounds);
-        let source = self.render_shown_file(project_id, shown, window, theme, cx);
-        let page = self.render_md_preview(project_id, tab, true, window, theme, cx);
+        let Some(view) = self.doc_view(project_id, &doc.file) else {
+            return div().into_any_element();
+        };
+        self.follow_source_scroll(doc, view, cx);
+        let bounds = Rc::clone(&view.split_bounds);
+        let path = doc.file.clone();
+        let source = self.render_shown_file(project_id, doc, shown, window, theme, cx);
+        let page = self.render_md_preview(project_id, doc, true, window, theme, cx);
         let divider = theme.divider;
         let grip = grip_hover(div().id("md-split-grip"), theme)
             .flex_none()
@@ -136,10 +151,14 @@ impl Shell {
                 "",
             ))
             .on_drag(MdSplitGrip, |_, _, _, cx| cx.new(|_| EmptyView))
-            .on_drag_move(
-                cx.listener(|shell, event: &DragMoveEvent<MdSplitGrip>, window, cx| {
+            .on_drag_move(cx.listener(
+                move |shell, event: &DragMoveEvent<MdSplitGrip>, window, cx| {
                     cx.set_active_drag_cursor_style(CursorStyle::ResizeLeftRight, window);
-                    let bounds = shell.md_split_bounds.get();
+                    let Some(bounds) =
+                        (shell.doc_view(project_id, &path)).map(|view| view.split_bounds.get())
+                    else {
+                        return;
+                    };
                     shell.md_split = files_view::md_split_share_at(
                         f32::from(bounds.origin.x),
                         f32::from(bounds.size.width),
@@ -147,8 +166,8 @@ impl Shell {
                     );
                     shell.md_split_dragging = true;
                     cx.notify();
-                }),
-            )
+                },
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|shell, event: &MouseDownEvent, _, cx| {
@@ -217,10 +236,10 @@ impl Shell {
     }
 
     /// The first source line the editor shows (0-based), from its scroll offset.
-    fn file_code_top_line(&self, cx: &App) -> usize {
+    fn file_code_top_line(view: &DocView, cx: &App) -> usize {
         let theme = cx.theme();
         let row = theme.terminal_font_size * theme.code_line_height;
-        let scrolled = -f32::from(self.file_code_scroll.0.borrow().base_handle.offset().y);
+        let scrolled = -f32::from(view.code_scroll.0.borrow().base_handle.offset().y);
         if row > 0.0 {
             (scrolled / row).floor().max(0.0) as usize
         } else {
@@ -230,12 +249,12 @@ impl Shell {
 
     /// Scrolls the Split view's page to the block the editor shows at its top, once per move
     /// of the editor (the page can be scrolled on its own meanwhile).
-    fn follow_source_scroll(&self, tab: &FileTab, cx: &App) {
-        let Some(page) = tab.preview() else {
+    fn follow_source_scroll(&self, doc: &documents::Doc, view: &DocView, cx: &App) {
+        let Some(page) = doc.preview() else {
             return;
         };
-        let at = Some((tab.opening, self.file_code_top_line(cx)));
-        let sync = &self.md_split_sync;
+        let at = Some((doc.opening, Self::file_code_top_line(view, cx)));
+        let sync = &view.split_sync;
         if sync.followed.get() == at {
             return;
         }
@@ -245,36 +264,48 @@ impl Shell {
         }
         let line = at.map_or(0, |(_, line)| line);
         // Shown first: a new opening resets the list, which would drop the scroll.
-        self.file_page.show(tab.opening, page);
+        view.page.show(doc.opening, page);
         let line = u32::try_from(line + 1).unwrap_or(u32::MAX);
         let (block, into) = markdown::block_at_line(&page.blocks, line).unwrap_or((0, 0.0));
-        self.file_page.scroll_to_block(block, into);
+        view.page.scroll_to_block(block, into);
     }
 
     /// A press on block `block` of the Split view's page: the editor's caret goes to its first
     /// line, scrolled into view when it is not shown (that move is not followed back).
-    pub(crate) fn split_caret_to_block(&mut self, project_id: Ulid, block: usize, cx: &App) {
-        let rows = self.file_page_lines(cx);
-        let top = self.file_code_top_line(cx);
-        let Some(tab) = self.active_file_tab(project_id) else {
+    pub(crate) fn split_caret_to_block(
+        &mut self,
+        project_id: Ulid,
+        path: &FileKey,
+        block: usize,
+        cx: &App,
+    ) {
+        let rows = self.file_page_lines(project_id, path, cx);
+        let Some(top) =
+            (self.doc_view(project_id, path)).map(|view| Self::file_code_top_line(view, cx))
+        else {
             return;
         };
-        let line = (tab.preview())
+        let Some(doc) = self.doc_mut(project_id, path) else {
+            return;
+        };
+        let line = (doc.preview())
             .and_then(|page| page.blocks.get(block))
             .map(|block| (block.lines.start as usize).saturating_sub(1));
-        let (Some(line), Some(editor)) = (line, tab.editor_mut()) else {
+        let (Some(line), Some(editor)) = (line, doc.editor_mut()) else {
             return;
         };
         editor.set_cursor(Pos::new(line, 0), false);
-        if !(top..top + rows).contains(&line) {
-            self.file_code_scroll
+        if !(top..top + rows).contains(&line)
+            && let Some(view) = self.doc_view(project_id, path)
+        {
+            view.code_scroll
                 .scroll_to_item(line, ScrollStrategy::Center);
-            self.md_split_sync.hold.set(true);
+            view.split_sync.hold.set(true);
         }
     }
 
     /// A click on a link in a preview: a web link opens in the browser, `#heading` scrolls the
-    /// page to it, a file of the folder opens in the Editor (at `#L12`'s line). A link outside
+    /// page to it, a file of the folder opens as a file tab (at `#L12`'s line). A link outside
     /// a page (a thread message) resolves against the folder root and has no headings.
     pub(crate) fn open_preview_link(
         &mut self,
@@ -286,13 +317,20 @@ impl Shell {
             return;
         };
         let shown_target = self.files.get(&project_id).and_then(|v| v.worktree_task_id);
-        // The file a page's link is in (the Editor's tab or the Docs file), the folder it is
+        // The file a page's link is in (the focused file pane or the Docs file), the folder it is
         // in, its page and blocks.
+        let file = self.focused_doc(window).map(|(_, file)| file);
         let (from, target, page) = match (action.on_page, self.view()) {
-            (true, View::Editor) => {
-                let tab = self.files.get(&project_id).and_then(FilesView::tab);
-                let page = tab.and_then(|tab| Some((&self.file_page, tab.preview()?.clone())));
-                (tab.map(|tab| tab.path.clone()), shown_target, page)
+            (true, View::Terminals) if file.is_some() => {
+                let doc = file.as_ref().and_then(|file| self.doc(project_id, file));
+                let view = file
+                    .as_ref()
+                    .and_then(|file| self.doc_view(project_id, file));
+                let page = doc
+                    .zip(view)
+                    .and_then(|(doc, view)| Some((&view.page, doc.preview()?.clone())));
+                let target = file.as_ref().and_then(|file| file.task);
+                (file.map(|file| file.path), target, page)
             }
             (true, View::Docs) => {
                 let docs = self.docs.get(&project_id);
@@ -321,7 +359,7 @@ impl Shell {
                     None => self.toast_info(format!("No heading #{anchor} here"), cx),
                 }
             }
-            // A file opens in the Editor of the main window.
+            // A file opens as a tab of the main window.
             Some(LinkTarget::File { .. }) if self.host_of(window) != HostId::Main => {
                 let action = action.clone();
                 self.in_window(HostId::Main, cx, move |shell, window, cx| {
@@ -329,10 +367,7 @@ impl Shell {
                     shell.open_preview_link(&action, window, cx);
                 });
             }
-            Some(LinkTarget::File { path, line }) if shown_target == target => {
-                self.reveal_file(project_id, target, path, line, Open::Kept, window, cx);
-            }
-            // A Docs link while the tree shows a task worktree: the project folder's file.
+            // The linked file is of the folder the link is in.
             Some(LinkTarget::File { path, line }) => {
                 self.open_file_at(project_id, target, path, line, window, cx);
             }
@@ -343,7 +378,7 @@ impl Shell {
         }
     }
 
-    /// A click on a task box of the Files preview: ticks or unticks it in the source (unsaved,
+    /// A click on a task box of a file pane's preview: ticks or unticks it in the source (unsaved,
     /// like any edit; Ctrl+Z takes it back).
     pub(crate) fn toggle_preview_task(
         &mut self,
@@ -351,15 +386,13 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace.filter(|_| self.view() == View::Editor) else {
+        let Some((project_id, path)) = self.focused_doc(window) else {
             return;
         };
-        let toggled = self
-            .active_file_tab(project_id)
-            .map(|tab| tab.toggle_task(action.0));
+        let toggled = (self.doc_mut(project_id, &path)).map(|doc| doc.toggle_task(action.0));
         match toggled {
             Some(Ok(true)) => {
-                self.file_edited(project_id, window, cx);
+                self.file_edited(project_id, &path, window, cx);
                 cx.notify();
             }
             Some(Err(StaleEdit)) => self.toast_error("The file changed; click again", cx),
@@ -391,7 +424,7 @@ impl Shell {
         .detach();
     }
 
-    /// A press on a path pill of a Chat message: the file opens in the Editor view of the
+    /// A press on a path pill of a Chat message: the file opens as a file tab of the
     /// session's workspace and worktree, at its `:line`. A path that leaves the workspace
     /// opens nothing. A file that does not exist gets the Files view's own message.
     pub(crate) fn open_chat_path(

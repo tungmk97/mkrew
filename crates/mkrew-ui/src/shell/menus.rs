@@ -300,7 +300,7 @@ impl Shell {
                 || self
                     .tabs
                     .values()
-                    .any(|tabs| tabs.tab(tab_id).is_some_and(|tab| tab.sessions().len() > 1))
+                    .any(|tabs| tabs.tab(tab_id).is_some_and(|tab| tab.keys().len() > 1))
             {
                 rows.push(
                     MenuItem::new(
@@ -371,7 +371,7 @@ impl Shell {
     pub(crate) fn layout_menu_rows(&self, menu: &LayoutMenu) -> Rows {
         let panes = (self.tabs.values())
             .find_map(|tabs| tabs.tab(menu.tab_id))
-            .map_or(0, |tab| tab.sessions().len());
+            .map_or(0, |tab| tab.keys().len());
         let key = |command: Command| self.keymap.label(command);
         let run =
             |command: Command| act(move |shell, window, cx| shell.run(&Run(command), window, cx));

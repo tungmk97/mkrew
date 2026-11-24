@@ -13,12 +13,12 @@ fn context(view: View) -> Context {
         view,
         workspaces: 2,
         tabs: 2,
-        file_tabs: 1,
+        file_pane: false,
         file_tree: false,
         terminal: false,
         discard: false,
-        git: view == View::Diff,
-        diff: true,
+        git: false,
+        diff_pane: false,
         task_changes: false,
         worktree_task: false,
         fan_out: false,
@@ -53,6 +53,16 @@ fn context(view: View) -> Context {
         },
         idle_removable: 0,
         workspaces_open: true,
+    }
+}
+
+/// The Terminals view with the Diff pane focused and Git on screen: the Git keys and the diff
+/// comments act.
+fn diff_context() -> Context {
+    Context {
+        git: true,
+        diff_pane: true,
+        ..context(View::Terminals)
     }
 }
 
@@ -340,7 +350,7 @@ fn availability_follows_the_view() {
     });
     assert!(agent.contains(&Command::OpenComposer));
 
-    let git = commands(&context(View::Diff));
+    let git = commands(&diff_context());
     assert!(git.contains(&Command::GitStage));
     assert!(git.contains(&Command::AddComment));
     assert!(git.contains(&Command::PickUp));
@@ -348,18 +358,26 @@ fn availability_follows_the_view() {
 
     let docs = commands(&context(View::Docs));
     assert!(docs.contains(&Command::SendSelection));
+    // Git on screen next to a view that is not Terminals (the panes are not drawn).
+    let off_panes = commands(&Context {
+        git: true,
+        ..context(View::Docs)
+    });
     assert!(
-        !git.contains(&Command::ClosePane),
+        !off_panes.contains(&Command::ClosePane),
         "panes are not on screen"
     );
     assert!(
-        !git.contains(&Command::RenamePane),
+        !off_panes.contains(&Command::RenamePane),
         "panes are not on screen"
     );
-    assert!(!git.contains(&Command::RunTask));
-    assert!(git.contains(&Command::NewShellTab), "shows the terminals");
+    assert!(!off_panes.contains(&Command::RunTask));
     assert!(
-        git.contains(&Command::ToggleInspector),
+        off_panes.contains(&Command::NewShellTab),
+        "shows the terminals"
+    );
+    assert!(
+        off_panes.contains(&Command::ToggleInspector),
         "shows the terminals"
     );
     // Like the buttons: from any view (they show Terminals first), once a tab exists.
@@ -369,7 +387,7 @@ fn availability_follows_the_view() {
         Command::Layout(Preset::Columns2),
     ] {
         assert!(terminals.contains(&command), "{command:?}");
-        assert!(git.contains(&command), "{command:?}");
+        assert!(off_panes.contains(&command), "{command:?}");
     }
     let no_tabs = commands(&Context {
         tabs: 0,
@@ -383,24 +401,10 @@ fn availability_follows_the_view() {
     assert!(docs.contains(&Command::SendComments));
     assert!(docs.contains(&Command::PickDown));
     assert!(commands(&context(View::Terminals)).contains(&Command::ToggleIgnored));
-    assert!(commands(&context(View::Editor)).contains(&Command::SaveFile));
-    assert!(commands(&context(View::Editor)).contains(&Command::ReplaceInFile));
-    assert!(commands(&context(View::Editor)).contains(&Command::CloseFileTab));
     assert!(!commands(&context(View::Terminals)).contains(&Command::CloseFileTab));
-    let no_files = Context {
-        file_tabs: 0,
-        ..context(View::Terminals)
-    };
-    assert!(!commands(&no_files).contains(&Command::ShowEditor));
-    assert!(commands(&context(View::Terminals)).contains(&Command::ShowEditor));
-    // Move tab: terminal tabs on the panes, file tabs in the Editor view (needs a file tab).
+    // Move tab: the terminal and file tabs of the panes.
     assert!(commands(&context(View::Terminals)).contains(&Command::MoveTabLeft));
-    assert!(commands(&context(View::Editor)).contains(&Command::MoveTabLeft));
-    let editor_no_files = Context {
-        file_tabs: 0,
-        ..context(View::Editor)
-    };
-    assert!(!commands(&editor_no_files).contains(&Command::MoveTabLeft));
+    assert!(!commands(&context(View::Docs)).contains(&Command::MoveTabLeft));
     // Open in a kept tab needs the tree on screen.
     assert!(!commands(&context(View::Terminals)).contains(&Command::OpenKept));
     let with_tree = Context {
@@ -456,13 +460,7 @@ fn availability_follows_the_view() {
 
 #[test]
 fn phone_access_is_listed_in_every_view_and_without_a_workspace() {
-    for view in [
-        View::Terminals,
-        View::Board,
-        View::Docs,
-        View::Editor,
-        View::Diff,
-    ] {
+    for view in [View::Terminals, View::Board, View::Docs] {
         assert!(Extra::PhoneAccess.available(&context(view)), "{view:?}");
     }
     let none = Context {
@@ -740,13 +738,13 @@ fn tab_pane_workspace_and_agent_extras_follow_their_state() {
 #[test]
 fn palette_only_actions_follow_the_view_and_state() {
     assert_eq!(extras(&context(View::Terminals)), []);
-    assert_eq!(extras(&context(View::Diff)), []);
+    assert_eq!(extras(&diff_context()), []);
     let git = Context {
         discard: true,
         task_changes: true,
         worktree_task: true,
         fan_out: true,
-        ..context(View::Diff)
+        ..diff_context()
     };
     assert_eq!(extras(&git), [], "Git actions are commands now");
     let board = Context {
@@ -988,7 +986,7 @@ fn git_jira_and_global_extras_follow_their_state() {
     assert!(!Extra::JiraRefresh.available(&Context {
         jira: true,
         git: true,
-        ..context(View::Diff)
+        ..diff_context()
     }));
     // The update and the toasts need no workspace.
     let none = Context {
@@ -1053,7 +1051,7 @@ fn run_entries_follow_each_commands_state() {
 
 #[test]
 fn git_and_board_key_commands_follow_the_view() {
-    let git = commands(&context(View::Diff));
+    let git = commands(&diff_context());
     for command in [
         Command::GitStageAll,
         Command::GitUnstageAll,
@@ -1068,7 +1066,7 @@ fn git_and_board_key_commands_follow_the_view() {
     );
     let discard = Context {
         discard: true,
-        ..context(View::Diff)
+        ..diff_context()
     };
     assert!(commands(&discard).contains(&Command::GitDiscard));
     let board = commands(&context(View::Board));
@@ -1175,13 +1173,7 @@ fn fuzzy_matches_subsequences_ignoring_case_and_spaces() {
 
 #[test]
 fn typing_filters_ranks_and_resets_the_pick() {
-    let mut palette = Palette::new(entries(
-        &Keymap::defaults(),
-        &context(View::Diff),
-        &[],
-        &[],
-        &[],
-    ));
+    let mut palette = Palette::new(entries(&Keymap::defaults(), &diff_context(), &[], &[], &[]));
     let all = palette.rows().len();
     assert_eq!(palette.picked(), Some(Action::Run(Command::AddWorkspace)));
     palette.step(-1);
@@ -1223,12 +1215,13 @@ fn typing_filters_ranks_and_resets_the_pick() {
 
 #[test]
 fn diff_and_git_commands_follow_what_is_on_screen() {
-    let no_diff = Context {
-        diff: false,
+    // Show diff opens (or focuses) the diff leaf: it is there whenever a workspace is.
+    assert!(commands(&context(View::Terminals)).contains(&Command::ShowDiff));
+    let none = Context {
+        workspace: false,
         ..context(View::Terminals)
     };
-    assert!(!commands(&no_diff).contains(&Command::ShowDiff));
-    assert!(commands(&context(View::Terminals)).contains(&Command::ShowDiff));
+    assert!(!commands(&none).contains(&Command::ShowDiff));
     // The Git tab in the panel next to the terminals: the Git keys act on its list.
     let git_tab = Context {
         git: true,
@@ -1236,9 +1229,10 @@ fn diff_and_git_commands_follow_what_is_on_screen() {
     };
     assert!(commands(&git_tab).contains(&Command::GitStage));
     assert!(!commands(&context(View::Terminals)).contains(&Command::GitStage));
-    // Diff comments only where the diff is drawn.
+    // Diff comments only while the focused pane is the diff.
     assert!(!commands(&git_tab).contains(&Command::AddComment));
-    assert!(commands(&context(View::Diff)).contains(&Command::AddComment));
+    assert!(commands(&diff_context()).contains(&Command::AddComment));
+    assert!(commands(&diff_context()).contains(&Command::SendSelection));
 }
 
 #[test]
@@ -1321,9 +1315,33 @@ fn window_extras_show_only_in_a_detached_window() {
     };
     assert!(!available(Command::MoveTabToNewWindow, &no_tabs));
     assert!(
-        !available(Command::MoveTabToNewWindow, &context(View::Editor)),
-        "file tabs move in Plan 2"
+        !available(Command::MoveTabToNewWindow, &context(View::Board)),
+        "only the terminals view moves tabs"
     );
+}
+
+#[test]
+fn the_file_commands_need_a_focused_file_pane() {
+    let mut on_file = context(View::Terminals);
+    on_file.file_pane = true;
+    let offered = commands(&on_file);
+    for command in [
+        Command::SaveFile,
+        Command::FindInFile,
+        Command::ReplaceInFile,
+        Command::CloseFileTab,
+        Command::ToggleFilePreview,
+        Command::ToggleFileSplit,
+        Command::SendSelection,
+    ] {
+        assert!(
+            offered.contains(&command),
+            "{command:?} acts on the focused file pane"
+        );
+    }
+    let elsewhere = commands(&context(View::Terminals));
+    assert!(!elsewhere.contains(&Command::SaveFile));
+    assert!(!elsewhere.contains(&Command::FindInFile));
 }
 
 #[test]

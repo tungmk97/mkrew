@@ -3,16 +3,16 @@
 use crate::*;
 
 impl Shell {
-    /// The tab area of the main window's title bar: the Editor / Diff chips (while open), the
-    /// pinned tabs, the other tabs, a rule between groups; then `+` outside the scrolled part.
-    /// With a view other than Terminals shown, its chip is the active one and every terminal
-    /// tab looks inactive. A click on a tab shows Terminals (`tab_chip`).
+    /// The tab area of the main window's title bar: the pinned tabs, the other tabs, a rule
+    /// between groups; then `+` outside the scrolled part. A click on a tab shows Terminals
+    /// (`tab_chip`).
     pub(crate) fn render_tab_area(
         &self,
         project_id: Ulid,
         tabs: &Tabs,
         now: i64,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let view = self.view();
@@ -26,20 +26,13 @@ impl Shell {
             .collect();
         let pinned_count = tabs.tabs().iter().filter(|tab| tab.pinned).count();
         let pinned: Vec<bool> = drawn.iter().map(|(_, tab)| tab.pinned).collect();
-        let items = area_items(
-            self.has_file_tabs(project_id),
-            self.diff_open(project_id),
-            &pinned,
-        );
+        let items = area_items(&pinned);
         let strip = (self.hosts.get(&HostId::Main))
             .map(|ui| ui.strip.clone())
             .unwrap_or_default();
         let chips: Vec<gpui::AnyElement> = items
             .iter()
             .map(|item| match *item {
-                AreaItem::View(chip) => self
-                    .view_chip(chip, project_id, view, theme, cx)
-                    .into_any_element(),
                 AreaItem::Rule => title_rule(theme).into_any_element(),
                 AreaItem::Tab(slot) => {
                     let (place, tab) = drawn[slot];
@@ -49,8 +42,11 @@ impl Shell {
                     if let Some(renaming) = self.tab_renaming(tab) {
                         self.render_rename(&renaming.draft, theme, cx)
                     } else {
-                        // The focused pane's title stands in for a default tab name.
-                        let label = session_label(tab, self.sidebar.sessions());
+                        // A file or the focused pane's title stands in for a default tab name.
+                        let file = file_label(tab, self.documents.get(&project_id));
+                        let label = (file.as_ref().map(|file| file.name.as_str()))
+                            .or_else(|| diff_label(tab))
+                            .or_else(|| session_label(tab, self.sidebar.sessions()));
                         let item = DraggedItem {
                             list: ReorderList::Tabs(project_id, tab.pinned),
                             index: if tab.pinned {
@@ -90,17 +86,15 @@ impl Shell {
             })
             .collect();
         let active_slot = active.and_then(|id| drawn.iter().position(|(_, tab)| tab.id == id));
-        // The key is the scroll target only: the shown chip, or the active tab.
-        let key = SharedString::from(match view {
-            View::Terminals => format!("tab/{active:?}"),
-            other => format!("view/{other:?}"),
-        });
-        let scroll_to = scroll_index(&items, view, active_slot).map(|index| (key, index));
+        // The key is the scroll target only: the active tab, while Terminals shows.
+        let scroll_to = scroll_index(&items, active_slot)
+            .filter(|_| view == View::Terminals)
+            .map(|index| (SharedString::from(format!("tab/{active:?}")), index));
         self.tab_area_frame(
             HostId::Main,
             chips,
             scroll_to,
-            Some(self.render_new_tab_button(now, theme, cx)),
+            Some(self.render_new_tab_button(HostId::Main, now, theme, window, cx)),
             theme,
             cx,
         )
@@ -145,6 +139,7 @@ impl Shell {
             .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
                 shell.drop_reordered(item, window, cx);
             }))
+            .when(host == HostId::Main, |el| self.strip_drops(el, theme, cx))
             // First: the strip records before its chips (prepaint goes parent first).
             .child(record_strip(strip, None))
             .child(
@@ -161,66 +156,6 @@ impl Shell {
             )
             .children(trailing.map(|el| div().flex_none().child(el)))
             .children(self.drop_hint_line(host, theme))
-    }
-
-    /// The Editor / Diff chip: icon, name and ✕ (all file tabs / the diff). The chip of the
-    /// shown view takes the active tab look. Not draggable.
-    fn view_chip(
-        &self,
-        chip: View,
-        project_id: Ulid,
-        shown: View,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let active = chip == shown;
-        let name = chip.title();
-        let (glyph, close_tip) = match chip {
-            View::Diff => (Icon::FileDiff, "Close diff"),
-            _ => (Icon::Code, "Close all files"),
-        };
-        let group = SharedString::from(format!("view-{name}"));
-        tab_frame(group.clone(), active, theme)
-            .flex_none()
-            .tooltip(tooltip(theme, name, self.keymap.label(chip.command())))
-            .on_press(
-                true,
-                cx.listener(move |shell, _, window, cx| shell.show_view(chip, window, cx)),
-            )
-            .child(icon_svg(
-                glyph,
-                theme::ICON_SIZE_SMALL,
-                if active { theme.text } else { theme.text_muted },
-            ))
-            .child(name)
-            .child(
-                row_action(
-                    SharedString::from(format!("view-close-{name}")),
-                    icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
-                    theme,
-                )
-                // Always on the shown chip, on hover for the other.
-                .when(!active, |el| {
-                    el.opacity(opacity::HIDDEN)
-                        .group_hover(group, |style| style.opacity(opacity::FULL))
-                })
-                .tooltip(tooltip(theme, close_tip, ""))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    match chip {
-                        View::Diff => shell.close_git_diff(project_id, window, cx),
-                        _ => {
-                            let path = (shell.files.get(&project_id))
-                                .and_then(FilesView::file)
-                                .map(str::to_owned);
-                            if let Some(path) = path {
-                                // All file tabs, pinned too; unsaved text is asked first.
-                                shell.close_file_tabs(project_id, &path, Close::Every, window, cx);
-                            }
-                        }
-                    }
-                })),
-            )
     }
 
     /// The Board / Docs icon on the right of the title bar: accent while that view shows (a
@@ -265,8 +200,12 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let tab_id = tab.id;
-        // The focused pane's title stands in for a default tab name.
-        let label = session_label(tab, self.sidebar.sessions());
+        // A file or the focused pane's title stands in for a default tab name; a dot marks
+        // unsaved text and italics the preview tab.
+        let file = file_label(tab, self.documents.get(&project_id));
+        let label = (file.as_ref().map(|file| file.name.as_str()))
+            .or_else(|| diff_label(tab))
+            .or_else(|| session_label(tab, self.sidebar.sessions()));
         // A double-click renames that pane while the tab keeps its default name, else the tab.
         let rename_pane = double_click_renames(tab, self.sidebar.sessions());
         // The most urgent pane (SPEC §11): the tooltip states its status in words.
@@ -307,12 +246,30 @@ impl Shell {
                 .into_any_element(),
                 PaneIcon::Run => icon_svg(Icon::Play, theme::ICON_SIZE_SMALL, theme.text_muted)
                     .into_any_element(),
+                PaneIcon::File(_) => icon_svg(Icon::File, theme::ICON_SIZE_SMALL, theme.text_muted)
+                    .into_any_element(),
+                PaneIcon::Diff => {
+                    icon_svg(Icon::FileDiff, theme::ICON_SIZE_SMALL, theme.text_muted)
+                        .into_any_element()
+                }
             })
             .collect();
+        // A file of a task worktree names it: a project file and a worktree file look alike.
+        let worktree = match tab.focused() {
+            Some(PaneKey::File(file)) => worktree_target::label(
+                file.task,
+                project_id,
+                self.board.tasks(),
+                self.board.is_loaded(),
+            ),
+            _ => None,
+        };
         let title = label.unwrap_or(&tab.title);
+        let dirty = file.as_ref().is_some_and(|file| file.dirty);
         let tip = match urgent {
             Some(pane) => format!(
-                "{title}\n{}",
+                "{}\n{}",
+                worktree_target::with_worktree(title, worktree.as_deref()),
                 pane_text::pill_text(
                     pane.state,
                     pane.exit_code,
@@ -321,7 +278,10 @@ impl Shell {
                     self.turns.get(pane.id),
                 )
             ),
-            None => title.to_owned(),
+            None if dirty => {
+                worktree_target::with_worktree(&format!("{title} (unsaved)"), worktree.as_deref())
+            }
+            None => worktree_target::with_worktree(title, worktree.as_deref()),
         };
         tab_frame(group.clone(), is_active, theme)
             // Shrinks to `TAB_MIN_WIDTH` before the tab area scrolls.
@@ -331,8 +291,8 @@ impl Shell {
                 true,
                 cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
                     select(shell);
-                    // A tab of the main window shows its terminals, also from Board, Docs,
-                    // the Editor or the Diff.
+                    // A tab of the main window shows its terminals, also from Board or
+                    // Docs.
                     if shell.host_of(window) == HostId::Main {
                         shell.show_view(View::Terminals, window, cx);
                     }
@@ -378,7 +338,10 @@ impl Shell {
                     .min_w_0()
                     .max_w(px(theme::TAB_TITLE_MAX_WIDTH))
                     .truncate()
-                    .child(label.unwrap_or(&tab.title).to_owned()),
+                    .when(file.as_ref().is_some_and(|file| file.preview), |el| {
+                        el.italic()
+                    })
+                    .child(format!("{}{title}", if dirty { "● " } else { "" })),
             )
             .child(
                 row_action(
@@ -433,7 +396,7 @@ impl Shell {
             .px(px(space::S))
             .rounded(px(radius::MEDIUM))
             .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.pane_focus_border))
+            .border_color(rgb(theme.pane_focus_stripe))
             .bg(rgb(theme.surface_raised))
             .whitespace_nowrap()
             .text_size(font_size::BODY)
@@ -460,12 +423,14 @@ impl Shell {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_tab(
         &self,
+        project_id: Ulid,
         tab: Option<&Tab>,
         now: i64,
         composer_focused: bool,
         voice_ring: Option<Hsla>,
         theme: &Theme,
         content: Rc<Cell<gpui::Size<Pixels>>>,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
         if tab.and_then(|tab| tab.layout()).is_none() {
@@ -477,6 +442,7 @@ impl Shell {
                 None,
             )
             .flex_1()
+            .bg(rgb(theme.pane_gap))
             .child(match self.starting_pane {
                 Some(kind) => starting_button("empty-starting", kind, now, theme, true),
                 None => div()
@@ -511,9 +477,10 @@ impl Shell {
             .relative()
             .child(content_canvas(content));
         }
-        let focused = tab.and_then(|tab| tab.focused());
-        let rects = tab.map(Tab::rects).unwrap_or_default();
+        let focused = tab.and_then(Tab::focused);
+        let rects: Vec<_> = tab.map(Tab::rects).unwrap_or_default();
         let dividers = tab.map(Tab::dividers).unwrap_or_default();
+        // Every pane drawn counts (a session, a file, the diff).
         let several = rects.len() > 1;
         let zoomed = tab.is_some_and(|tab| tab.zoomed().is_some());
         let half_gap = px(theme::PANE_HALF_GAP);
@@ -521,10 +488,11 @@ impl Shell {
         let area = f32::from(content.get().width) - 2.0 * theme::PANE_HALF_GAP;
         let panes: Vec<_> = rects
             .into_iter()
-            .map(|(session, rect)| {
-                let is_focused = focused == Some(session);
+            .map(|(key, rect)| {
+                let is_focused = focused == Some(&key);
                 let width = rect.w as f32 * area - 2.0 * theme::PANE_HALF_GAP;
                 div()
+                    .id(pane_id(&key))
                     .absolute()
                     .left(relative(rect.x as f32))
                     .top(relative(rect.y as f32))
@@ -532,7 +500,8 @@ impl Shell {
                     .h(relative(rect.h as f32))
                     .p(half_gap)
                     .child(self.pane_frame(
-                        session,
+                        project_id,
+                        key,
                         several,
                         zoomed,
                         width,
@@ -541,6 +510,7 @@ impl Shell {
                         voice_ring.filter(|_| is_focused),
                         now,
                         theme,
+                        window,
                         cx,
                     ))
             })
@@ -552,6 +522,8 @@ impl Shell {
         div()
             .flex_1()
             .min_h_0()
+            // The frame: behind and between the panes, the same color as the title bar.
+            .bg(rgb(theme.pane_gap))
             .p(half_gap)
             .relative()
             .child(content_canvas(content))
@@ -586,16 +558,20 @@ impl Shell {
             )
     }
 
-    /// One pane: the terminal (or why it is not shown; at reading width, centered, for an agent
-    /// pane with it on), its composer, its border. A colored pane has a line of its color at
-    /// the top; among several the unfocused ones get a dim and a slim handle on the top edge
-    /// drags the pane. Transient signals float in the top-right corner (`pane_badges`).
-    /// `zoomed`: the pane fills the tab. `voice_ring`: the listening ring over the border;
+    /// One pane: the terminal, the chat, the file or the diff (or why it is not shown; at
+    /// reading width, centered, for an agent pane with it on), a session's composer, a stripe
+    /// along the top edge (`status::pane_stripe`: needs input, the session color or the focus
+    /// among several; ADR 0108). No border: the pane sits on the frame color (`pane_gap`) with
+    /// rounded corners. Among several the unfocused ones get a dim and a session pane a slim
+    /// handle on the top edge that drags it. Transient signals float in the top-right corner
+    /// (`pane_badges`). A file pane is the editor (`render_file_pane`).
+    /// `zoomed`: the pane fills the tab. `voice_ring`: the listening ring over the pane;
     /// `width`: the pane's width in px in the last frame (the composer's room).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pane_frame(
         &self,
-        session: Ulid,
+        project_id: Ulid,
+        key: PaneKey,
         several: bool,
         zoomed: bool,
         width: f32,
@@ -604,66 +580,54 @@ impl Shell {
         voice_ring: Option<Hsla>,
         now: i64,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let info = self.sidebar.sessions().iter().find(|s| s.id == session);
-        let content = if info.is_some_and(|info| self.chat_on(info)) {
-            self.render_chat(session, is_focused, now, theme, cx)
-        } else {
-            match self.panes.get(&session) {
-                Some(pane) => pane.clone().into_any_element(),
-                None => {
-                    let (sentence, detail) = self.pane_placeholder(session);
-                    message(theme, None, sentence, detail)
-                        .size_full()
-                        .into_any_element()
+        let session = key.session();
+        let info = session.and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
+        let content = match &key {
+            PaneKey::Session(id) => {
+                if info.is_some_and(|info| self.chat_on(info)) {
+                    self.render_chat(*id, is_focused, now, theme, cx)
+                } else {
+                    match self.panes.get(id) {
+                        Some(pane) => pane.clone().into_any_element(),
+                        None => {
+                            let (sentence, detail) = self.pane_placeholder(*id);
+                            message(theme, None, sentence, detail)
+                                .size_full()
+                                .into_any_element()
+                        }
+                    }
                 }
             }
+            PaneKey::File(path) => self.render_file_pane(project_id, path, window, theme, cx),
+            PaneKey::Diff => self.render_diff_pane(project_id, theme, window, cx),
         };
-        let border = status::pane_border(theme, info.map(|s| s.state), several, is_focused);
         let reading = info.is_some_and(|info| self.reading_on(info));
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));
-        let accent_border = theme.accent;
+        let stripe = status::pane_stripe(theme, info.map(|s| s.state), color, several, is_focused);
         let frame = div()
             .relative()
             .size_full()
             .flex()
             .flex_col()
             .bg(rgb(theme.terminal_bg))
-            .on_drop(
-                cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
-                    if shell.workspace == Some(dragged.project_id) {
-                        shell.drop_tree_path(session, dragged, window, cx);
-                    }
-                }),
-            );
-        self.pane_drop_target(frame, session, cx)
-            .on_mouse_down(
-                MouseButton::Left,
+            // The file pane's own keys (Ctrl+S, Ctrl+F, ...), not the root's.
+            .when(matches!(key, PaneKey::File(_)), |el| {
+                el.key_context(EDITOR_CONTEXT)
+            });
+        let frame = self.pane_drop_target(frame, project_id, &key, cx);
+        frame
+            .on_mouse_down(MouseButton::Left, {
+                let key = key.clone();
                 cx.listener(move |shell, _, window, cx| {
-                    shell.focus_session_pane(session);
+                    shell.focus_pane_key(project_id, &key);
                     shell.focus_pane(window, cx);
                     cx.notify();
-                }),
-            )
-            .on_drag_move::<ExternalPaths>(cx.listener(
-                move |shell, event: &DragMoveEvent<ExternalPaths>, _, cx| {
-                    // A modal dialog covers the pane: its own box takes the drop, and this
-                    // pane's catcher (painted first) must not take the slot from it.
-                    if !shell.modal_open() && event.bounds.contains(&event.event.position) {
-                        shell.drop_hover =
-                            Some((DropTarget::Pane(session), event.drag(cx).clone()));
-                    } else if shell
-                        .drop_hover
-                        .as_ref()
-                        .is_some_and(|(hovered, _)| *hovered == DropTarget::Pane(session))
-                    {
-                        shell.drop_hover = None;
-                    }
-                },
-            ))
-            .child(drop_catcher(DropTarget::Pane(session), cx))
+                })
+            })
             // Reading width: the terminal element is narrower, so the PTY gets fewer columns
             // (the program wraps there); nothing reflows its output.
             .child(
@@ -675,17 +639,19 @@ impl Shell {
                         .child(content),
                 ),
             )
-            .children(self.composers.shown(session).map(|draft| {
-                self.composer_panel(
-                    session,
-                    draft,
-                    is_focused,
-                    composer_focused,
-                    width,
-                    now,
-                    theme,
-                    cx,
-                )
+            .children(session.and_then(|session| {
+                self.composers.shown(session).map(|draft| {
+                    self.composer_panel(
+                        session,
+                        draft,
+                        is_focused,
+                        composer_focused,
+                        width,
+                        now,
+                        theme,
+                        cx,
+                    )
+                })
             }))
             .when(several && !is_focused, |el| {
                 el.child(
@@ -696,31 +662,11 @@ impl Shell {
                         .opacity(theme.unfocused_pane_dim),
                 )
             })
-            // Drawn above the terminal so its corners stay rounded.
-            .when_some(border, |el, border| {
-                el.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .rounded(px(radius::MEDIUM))
-                        .border(px(theme::BORDER_WIDTH))
-                        .border_color(rgb(border)),
-                )
-            })
-            // The drop ring: an overlay, so the terminal keeps its size and the pointer.
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .rounded(px(radius::MEDIUM))
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(gpui::transparent_black())
-                    .drag_over::<DraggedPath>(move |style, _, _, _| {
-                        style.border_color(rgb(accent_border))
-                    }),
-            )
-            .children(self.pane_drop_overlay(session, theme, cx))
-            .when_some(color, |el, color| {
+            // The terminal paints a square quad and gpui clips to rectangles: the frame color
+            // over the four corners gives the pane its rounded look.
+            .child(corner_masks(theme.pane_gap))
+            .children(self.pane_drop_overlay(&key, theme, cx))
+            .when_some(stripe, |el, stripe| {
                 el.child(
                     div()
                         .absolute()
@@ -728,11 +674,11 @@ impl Shell {
                         .left(px(radius::MEDIUM))
                         .right(px(radius::MEDIUM))
                         .h(px(theme::PANE_ACCENT_WIDTH))
-                        .bg(rgb(color)),
+                        .bg(rgb(stripe)),
                 )
             })
             .children(info.and_then(|info| self.pane_badges(info, zoomed, theme, cx)))
-            .children(info.map(|info| self.pane_edge(info, several, theme, cx)))
+            .child(self.pane_edge(project_id, &key, several, theme, cx))
             .when_some(voice_ring, |el, color| {
                 el.child(
                     div()
@@ -770,7 +716,7 @@ impl Shell {
     pub(crate) fn tab_renaming(&self, tab: &Tab) -> Option<&Renaming> {
         (self.renaming.as_ref()).filter(|r| match &r.target {
             RenameTarget::Tab(id) => *id == tab.id,
-            RenameTarget::Session(session) => tab.contains(*session),
+            RenameTarget::Session(session) => tab.contains(&PaneKey::Session(*session)),
             RenameTarget::NewEntry(_) => false,
         })
     }
@@ -880,18 +826,20 @@ impl Shell {
         })
     }
 
-    /// The top edge of a pane: it records the anchor of the pane's keyboard menu and, among
-    /// `several` panes, is a slim handle (`PANE_GRIP_HEIGHT` tall, a grip shows on hover) that
-    /// drags the pane onto another.
+    /// The top edge of a pane: for a session it records the anchor of the pane's keyboard menu
+    /// and, among `several` panes, it is a slim handle (`PANE_GRIP_HEIGHT` tall, a grip shows on
+    /// hover) that drags the pane onto another; a file or diff pane has the handle but no
+    /// anchor.
     /// The handle blocks the mouse (not the wheel): gpui hit-tests every hitbox until one blocks,
     /// so without it the terminal under it would also get the mouse down and start a selection.
-    /// Drops are delivered to the hovered hitbox only, so the strip repeats the pane frame's drop
-    /// handlers (the frame's drag-move still sets the half that lights up).
+    /// Drops are delivered to the hovered hitbox only, so the strip carries the pane frame's drop
+    /// set (`pane_drops`); the frame's drag-move still sets the half that lights up.
     /// A lone pane has nothing to rearrange: its edge is an empty div, only the Shift+F10 menu
-    /// anchor, with no hitbox and no mouse handling.
+    /// anchor of a session, with no hitbox and no mouse handling.
     fn pane_edge(
         &self,
-        info: &Session,
+        project_id: Ulid,
+        key: &PaneKey,
         several: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -905,27 +853,16 @@ impl Shell {
             .flex()
             .items_center()
             .justify_center()
-            .child(record_bounds(Anchor::Pane(info.id), cx));
+            .children(
+                key.session()
+                    .map(|session| record_bounds(Anchor::Pane(session), cx)),
+            );
         if !several {
             return edge.into_any_element();
         }
-        let session = info.id;
-        let edge = edge
-            .on_drop(cx.listener(move |shell, pane: &DraggedPane, window, cx| {
-                shell.drop_pane(pane.session, session, window, cx);
-            }))
-            .on_drop(cx.listener(move |shell, item: &DraggedItem, window, cx| {
-                shell.drop_tab_on_pane(item, session, window, cx);
-            }))
-            .on_drop(
-                cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
-                    if shell.workspace == Some(dragged.project_id) {
-                        shell.drop_tree_path(session, dragged, window, cx);
-                    }
-                }),
-            );
-        let group = SharedString::from(format!("pane-grip-{}", info.id));
-        let handle = self.draggable_pane(edge.group(group.clone()), info, theme);
+        let edge = Self::pane_drops(edge, project_id, key, cx);
+        let group = grip_id(key);
+        let handle = self.draggable_pane(edge.group(group.clone()), project_id, key, theme);
         grip_hover(handle, theme)
             .block_mouse_except_scroll()
             .cursor(CursorStyle::OpenHand)
@@ -1107,10 +1044,12 @@ pub(crate) fn detach(connection: &Connection, session_id: Ulid, cx: &mut Context
 }
 
 /// What an OS file drag hovers (§20B.5, ADR 0095).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DropTarget {
-    /// An agent or shell pane.
-    Pane(Ulid),
+    /// A pane: a terminal types the paths, a file or diff pane opens the files.
+    Pane(PaneKey),
+    /// The main window's tab strip: the files open as new tabs.
+    Strip,
     /// The Prompt box of the open task dialog.
     TaskPrompt,
 }
@@ -1138,9 +1077,20 @@ pub(crate) fn drop_catcher(
                     let hovered = shell.drop_hover.take_if(|(hovered, _)| *hovered == target);
                     if let Some((_, paths)) = hovered {
                         cx.stop_propagation();
-                        match target {
-                            DropTarget::Pane(session) => {
-                                shell.drop_paths(session, &paths, window, cx);
+                        match &target {
+                            DropTarget::Pane(PaneKey::Session(session)) => {
+                                shell.drop_paths(*session, &paths, window, cx);
+                            }
+                            // The workspace of the window the pointer was released in.
+                            DropTarget::Pane(_) => {
+                                if let Some((project_id, _)) = shell.tab_scope(window) {
+                                    shell.drop_os_files(project_id, &paths, window, cx);
+                                }
+                            }
+                            DropTarget::Strip => {
+                                if let Some(project_id) = shell.workspace {
+                                    shell.drop_os_files(project_id, &paths, window, cx);
+                                }
                             }
                             DropTarget::TaskPrompt => shell.drop_prompt_paths(&paths, window, cx),
                         }
@@ -1214,6 +1164,54 @@ fn content_canvas(content: Rc<Cell<gpui::Size<Pixels>>>) -> impl IntoElement {
             }
         },
         |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
+/// Paints the four slivers between the corners of its parent and a rounded rectangle of
+/// radius `radius::MEDIUM`, in `color` (the frame behind the pane). It paints nothing else and
+/// has no hitbox, so the pane keeps every click and drop.
+fn corner_masks(color: u32) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let r = px(radius::MEDIUM);
+            let (left, top) = (bounds.origin.x, bounds.origin.y);
+            let right = bounds.origin.x + bounds.size.width;
+            let bottom = bounds.origin.y + bounds.size.height;
+            // (the corner, the point where the arc starts, the point where it ends): the arc
+            // is a quarter circle around the point `r` inside the corner, drawn from the first
+            // point to the second one counterclockwise on screen.
+            let corners = [
+                (point(left, top), point(left + r, top), point(left, top + r)),
+                (
+                    point(right, top),
+                    point(right, top + r),
+                    point(right - r, top),
+                ),
+                (
+                    point(right, bottom),
+                    point(right - r, bottom),
+                    point(right, bottom - r),
+                ),
+                (
+                    point(left, bottom),
+                    point(left, bottom - r),
+                    point(left + r, bottom),
+                ),
+            ];
+            for (corner, from, to) in corners {
+                let mut path = PathBuilder::fill();
+                path.move_to(corner);
+                path.line_to(from);
+                path.arc_to(point(r, r), px(0.0), false, false, to);
+                path.close();
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, gpui::Hsla::from(rgb(color)));
+                }
+            }
+        },
     )
     .absolute()
     .size_full()

@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hasher};
 use std::path::{Component, Path, PathBuf};
 
+use mkrew_core::notes::is_plain;
 use mkrew_core::review::{self, Anchor, ReviewGlobs};
 use mkrew_protocol::{CommentContext, CommentId, CommentStatus, DocComment, DocFile};
 use mkrew_store::SessionEvent;
@@ -52,7 +53,40 @@ pub fn relative_path(file_path: &str) -> Option<(String, PathBuf)> {
     let mut components = path.components().peekable();
     components.peek()?;
     components
-        .all(|c| matches!(c, Component::Normal(_)))
+        .all(|c| matches!(c, Component::Normal(name) if is_plain(name)))
+        .then_some((normalized, path))
+}
+
+/// A client-supplied absolute path inside `folder` (the notes folder, as
+/// [`mkrew_core::notes::folder`] normalized it), with `/` separators, and the same path for
+/// joining; `None` for a relative path, `folder` itself, a path outside it and one that steps
+/// out of it with `..`. The exception to [`relative_path`] for `fs.read` / `fs.write` of notes
+/// (Tern panes spec 2026-11-23 section 7.2).
+// ponytail: drive letters compare equal in any case (`Path` does), names compare ignoring ASCII
+// case on Windows only, like the UI's drop check; the daemon answers the path as the client
+// spelled it.
+pub fn notes_file(file_path: &str, folder: &Path) -> Option<(String, PathBuf)> {
+    let normalized = file_path.trim().replace('\\', "/");
+    let path = PathBuf::from(&normalized);
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut parts = path.components();
+    for want in folder.components() {
+        let have = parts.next()?;
+        let equal = if cfg!(windows) {
+            have.as_os_str().eq_ignore_ascii_case(want.as_os_str())
+        } else {
+            have == want
+        };
+        if !equal {
+            return None;
+        }
+    }
+    let mut inside = parts.peekable();
+    inside.peek()?;
+    inside
+        .all(|c| matches!(c, Component::Normal(name) if is_plain(name)))
         .then_some((normalized, path))
 }
 
@@ -241,6 +275,63 @@ mod tests {
         assert_eq!(relative_path(r"C:\x.md"), None);
         assert_ne!(hash(b"a"), hash(b"b"));
         assert_eq!(hash(b"a"), hash(b"a"));
+    }
+
+    #[test]
+    fn notes_file_accepts_absolute_paths_inside_the_folder_only() {
+        let (root, other) = if cfg!(windows) {
+            ("C:/notes", "C:/other")
+        } else {
+            ("/notes", "/other")
+        };
+        let folder = Path::new(root);
+        let inside = |path: &str| notes_file(path, folder).map(|(shown, _)| shown);
+        assert_eq!(
+            inside(&format!("{root}/a.md")),
+            Some(format!("{root}/a.md"))
+        );
+        assert_eq!(
+            inside(&format!("{root}\\sub\\a.md")),
+            Some(format!("{root}/sub/a.md"))
+        );
+        assert_eq!(
+            inside(&format!("  {root}/a.md ")),
+            Some(format!("{root}/a.md"))
+        );
+        let (_, joined) = notes_file(&format!("{root}/sub/a.md"), folder).unwrap();
+        assert_eq!(joined, Path::new(root).join("sub").join("a.md"));
+        for bad in [
+            String::new(),
+            "a.md".into(),
+            "notes/a.md".into(),
+            root.into(),
+            format!("{root}/"),
+            format!("{root}/../a.md"),
+            format!("{root}/sub/../../a.md"),
+            format!("{other}/../notes/a.md"),
+            format!("{root}x/a.md"),
+            format!("{other}/a.md"),
+        ] {
+            assert_eq!(inside(&bad), None, "{bad:?}");
+        }
+        #[cfg(windows)]
+        {
+            assert!(inside("C:\\notes\\a.md").is_some());
+            assert_eq!(inside("D:/notes/a.md"), None);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_part_inside_a_path_is_refused_and_notes_compare_ignoring_case() {
+        for bad in ["x/C:", "x/C:evil", "a/D:/x", "C:x", "x\\C:\\y"] {
+            assert_eq!(relative_path(bad), None, "{bad}");
+        }
+        let folder = Path::new("c:/users/me/notes");
+        assert!(notes_file("C:\\Users\\Me\\Notes\\a.md", folder).is_some());
+        assert_eq!(notes_file("C:/users/me/notes/D:/a.md", folder), None);
+        assert_eq!(notes_file("C:/users/me/notes/D:a.md", folder), None);
+        assert_eq!(notes_file("C:/users/me/other/a.md", folder), None);
     }
 
     #[test]

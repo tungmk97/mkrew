@@ -167,10 +167,10 @@ impl Shell {
         .detach();
     }
 
-    /// "Send selection" (Ctrl+Shift+L, §20B.4): the picked lines of Files (a Markdown preview's
-    /// selection included), Docs or the Git diff, or the focused terminal's selected text, go
-    /// to a session picked in the send dialog (the task's session for Git task changes, else
-    /// the most recently active agent).
+    /// "Send selection" (Ctrl+Shift+L, §20B.4): the picked lines of a file pane (a Markdown
+    /// preview's selection included), Docs or the Git diff, or the focused terminal's selected
+    /// text, go to a session picked in the send dialog (the task's session for Git task
+    /// changes, else the most recently active agent).
     pub(crate) fn open_selection_dialog(
         &mut self,
         window: &mut Window,
@@ -180,18 +180,34 @@ impl Shell {
             return;
         };
         let sessions = self.sidebar.sessions();
+        // The pane's own workspace (a detached window may show another one).
+        let file = self.focused_doc(window);
+        let diff = self.focused_diff(window).is_some();
         let (file_path, prefill, task) = match self.view() {
-            view @ (View::Editor | View::Diff | View::Docs) => {
-                let picked = self
-                    .picked_lines(project_id, view)
+            View::Terminals if file.is_some() => {
+                let picked = (file.as_ref())
+                    .and_then(|(project, file)| self.picked_file_lines(*project, file))
                     .filter(|(_, _, _, text)| !text.trim().is_empty());
+                let Some((path, start, end, text)) = picked else {
+                    return;
+                };
+                let prefill = composer::selection_prefill(Some((&path, start, end)), &text);
+                (format!("{path}:{start}-{end}"), prefill, None)
+            }
+            view @ (View::Docs | View::Terminals) if view == View::Docs || diff => {
+                let picked = if diff {
+                    self.picked_diff_lines(project_id)
+                } else {
+                    (self.docs.get(&project_id)).and_then(|docs| docs.picked_lines())
+                }
+                .filter(|(_, _, _, text)| !text.trim().is_empty());
                 let Some((path, start, end, text)) = picked else {
                     return;
                 };
                 let task = self
                     .git
                     .get(&project_id)
-                    .filter(|_| view == View::Diff)
+                    .filter(|_| diff)
                     .and_then(|git| git.since_session(sessions));
                 let prefill = composer::selection_prefill(Some((&path, start, end)), &text);
                 (format!("{path}:{start}-{end}"), prefill, task)
@@ -356,7 +372,7 @@ impl Shell {
                     // The pick has a focus-colored ring: it is the picked row, so it does not hover.
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(if picked {
-                        gpui::Hsla::from(rgb(theme.pane_focus_border))
+                        gpui::Hsla::from(rgb(theme.pane_focus_stripe))
                     } else {
                         gpui::transparent_black()
                     })

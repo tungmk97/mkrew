@@ -92,6 +92,7 @@ icons! {
         Minimize2 => "minimize-2",
         Minus => "minus",
         Moon => "moon",
+        NotebookPen => "notebook-pen",
         OctagonAlert => "octagon-alert",
         PanelLeft => "panel-left",
         PanelLeftClose => "panel-left-close",

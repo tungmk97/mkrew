@@ -195,7 +195,7 @@ impl Shell {
         self.move_cards(task_id, moves, "Cannot approve the task", window, cx);
     }
 
-    /// "Changes" on a Review card: the Git tab and Diff view with the task's changes since its checkpoint.
+    /// "Changes" on a Review card: the Git tab and Diff pane with the task's changes since its checkpoint.
     pub(crate) fn view_task_changes(
         &mut self,
         task_id: Ulid,
@@ -220,7 +220,7 @@ impl Shell {
         self.show_git_since(project_id, since, window, cx);
     }
 
-    /// The Git tab and Diff view listing the changes since `since`'s checkpoint.
+    /// The Git tab and Diff pane listing the changes since `since`'s checkpoint.
     pub(crate) fn show_git_since(
         &mut self,
         project_id: Ulid,

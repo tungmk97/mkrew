@@ -8,9 +8,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
+use mkrew_core::notes::{self, NotesFolder};
 use mkrew_protocol::{
-    ErrorCode, FsCreateParams, FsCreated, FsFindParams, FsIgnoreParams, FsListParams, FsReadParams,
-    FsSearchParams, FsWriteParams, Outcome,
+    ErrorCode, FsCreateParams, FsCreated, FsFindParams, FsIgnoreParams, FsListParams,
+    FsNewNoteParams, FsReadParams, FsSearchParams, FsWriteParams, Outcome,
 };
 use ulid::Ulid;
 
@@ -76,14 +77,23 @@ impl Daemon {
     }
 
     /// The checks `fs.read` and `fs.write` share: the project-relative path (outside `.git`),
-    /// the watched target, and the file's place inside it.
+    /// or an absolute path inside the absolute notes folder of `settings.toml` (Tern panes spec
+    /// 2026-11-23 section 7.2), the watched target, and the file's place.
     async fn file_target(
         &self,
         project_id: Ulid,
         worktree_task_id: Option<Ulid>,
         path: &str,
     ) -> Result<(String, PathBuf, Target), Outcome> {
-        let Some((path, relative)) = docs::relative_path(path) else {
+        let folder = match notes::folder(&self.settings.current().notes.folder) {
+            Ok(NotesFolder::Absolute(folder)) => Some(folder),
+            _ => None,
+        };
+        let Some((path, relative)) = docs::relative_path(path).or_else(|| {
+            folder
+                .as_deref()
+                .and_then(|folder| docs::notes_file(path, folder))
+        }) else {
             return Err(outside("path", path));
         };
         if in_git_dir(&path) {
@@ -92,6 +102,7 @@ impl Daemon {
         let target = self
             .watched_target(project_id, worktree_task_id, None)
             .await?;
+        // An absolute `relative` (a note outside the root) replaces `target.dir` in `join`.
         let file = target.dir.join(relative);
         Ok((path, file, target))
     }
@@ -105,7 +116,8 @@ impl Daemon {
             Err(outcome) => return outcome,
         };
         let shown = path.clone();
-        let (git, root, want_text) = (Arc::clone(&self.git), target.dir.clone(), params.index_text);
+        let want_text = params.index_text && !Path::new(&path).is_absolute();
+        let (git, root) = (Arc::clone(&self.git), target.dir.clone());
         let read = tokio::task::spawn_blocking(move || {
             files::read(&file, path).map(|mut content| {
                 if want_text && content.content.is_some() {
@@ -188,6 +200,42 @@ impl Daemon {
             }
             Ok(Err((_, message))) => Outcome::error(ErrorCode::InvalidRequest, message),
             Err(e) => Outcome::error(ErrorCode::Internal, format!("fs.create failed: {e}")),
+        }
+    }
+
+    /// `fs.new_note` (Tern panes spec 2026-11-23 section 7.2): an empty
+    /// `note-YYYYMMDD-HHMMSS.md` (local time) in the notes folder of `settings.toml`, read per
+    /// request so a changed setting applies at once. Empty folder = the target's root.
+    pub(super) async fn fs_new_note(&self, params: FsNewNoteParams) -> Outcome {
+        let folder = match notes::folder(&self.settings.current().notes.folder) {
+            Ok(NotesFolder::Relative(dir)) if in_git_dir(&dir) => {
+                return outside("[notes] folder", &dir);
+            }
+            Ok(NotesFolder::Absolute(dir))
+                if in_git_dir(&dir.to_string_lossy().replace('\\', "/")) =>
+            {
+                return outside("[notes] folder", &dir.to_string_lossy());
+            }
+            Ok(folder) => folder,
+            Err(error) => return Outcome::error(ErrorCode::InvalidRequest, error.to_string()),
+        };
+        let target = match self
+            .watched_target(params.project_id, params.worktree_task_id, None)
+            .await
+        {
+            Ok(target) => target,
+            Err(outcome) => return outcome,
+        };
+        let at = chrono::Local::now().naive_local();
+        let made =
+            tokio::task::spawn_blocking(move || file_ops::new_note(&target.dir, &folder, at)).await;
+        match made {
+            Ok(Ok(path)) => ok(&FsCreated { path }),
+            Ok(Err((ErrorKind::AlreadyExists, message))) => {
+                Outcome::error(ErrorCode::AlreadyExists, message)
+            }
+            Ok(Err((_, message))) => Outcome::error(ErrorCode::InvalidRequest, message),
+            Err(e) => Outcome::error(ErrorCode::Internal, format!("fs.new_note failed: {e}")),
         }
     }
 

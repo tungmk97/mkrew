@@ -293,7 +293,7 @@ impl Shell {
                         // The pick has a focus-colored ring and its own fill; it does not hover.
                         .border(px(theme::BORDER_WIDTH))
                         .border_color(if picked {
-                            gpui::Hsla::from(rgb(theme.pane_focus_border))
+                            gpui::Hsla::from(rgb(theme.pane_focus_stripe))
                         } else {
                             gpui::transparent_black()
                         })

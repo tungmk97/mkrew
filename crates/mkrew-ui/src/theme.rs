@@ -227,12 +227,17 @@ pub mod opacity {
     pub const DRAG_SOURCE: f32 = 0.4;
 }
 
-/// Half the gap between split panes: each pane is inset by it, so panes sit `space::XS` apart
-/// and `space::XS` from the tab's edges.
-pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
+/// Half the gap between split panes: each pane is inset by it, so panes sit `2 * PANE_HALF_GAP`
+/// (8 px) apart and the same from the frame's edges (the Tern look, ADR 0108).
+pub const PANE_HALF_GAP: f32 = space::XS;
 
-/// Thickness of the line at the top of a colored pane (ADR 0037) and of the grip shown on the
-/// drag strip.
+/// Least contrast ratio between [`Theme::pane_gap`] and [`Theme::terminal_bg`] (Tern measures
+/// about 1.07:1). A unit test holds every built-in theme to it and [`Theme::from_palette`]
+/// derives the gap to meet it.
+pub const PANE_GAP_MIN_CONTRAST: f32 = 1.06;
+
+/// Thickness of the stripe along the top edge of a pane (needs input, session color or focus
+/// among several, ADR 0108) and of the grip shown on the drag strip.
 pub const PANE_ACCENT_WIDTH: f32 = 2.0;
 /// Height of the strip along the top edge of a pane in a split tab: hovering it shows a grip,
 /// dragging it moves the pane (ADR 0106).
@@ -311,6 +316,9 @@ pub const PALETTE_SEARCH_DELAY: Duration = Duration::from_millis(150);
 
 /// Minimum width of a tab title while it is renamed inline.
 pub const TAB_RENAME_MIN_WIDTH: f32 = 120.0;
+
+/// Narrowest the file name of a file pane's header gets: in a narrow pane its buttons give way.
+pub const FILE_NAME_MIN_WIDTH: f32 = 96.0;
 
 /// Narrowest a board column gets; below that the board scrolls sideways.
 pub const BOARD_COLUMN_MIN_WIDTH: f32 = 200.0;
@@ -616,6 +624,10 @@ pub const PEEK_HOVER_DELAY: Duration = Duration::from_millis(300);
 /// How long a hover peek stays after the mouse left its row, so it can reach the popover.
 pub const PEEK_LEAVE_GRACE: Duration = Duration::from_millis(150);
 
+/// How long the tab strip's `+` row stays open after the pointer left `+` and the row, so the
+/// pointer can travel to its items (`plus_row::Reveal`).
+pub const PLUS_ROW_COLLAPSE_DELAY: Duration = Duration::from_millis(150);
+
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;
 
@@ -775,11 +787,12 @@ pub struct Theme {
     pub surface_raised: u32,
     /// The workspace sidebar, a shade off `bg`.
     pub sidebar: u32,
-    /// The title bar (the window chrome around the tabs and panes).
+    /// Inputs and segmented controls on the title bar, and the sidebar of derived themes. The
+    /// title bar itself is `pane_gap`.
     pub chrome: u32,
     /// Board cards and other blocks that sit on `bg`.
     pub card: u32,
-    /// The fill of the shown tab chip in the title bar; always differs from `chrome` (the
+    /// The fill of the shown tab chip in the title bar; always differs from `pane_gap` (the
     /// "active tab" rule of `problems`).
     pub tab_active: u32,
     /// A hovered row or quiet button.
@@ -834,8 +847,13 @@ pub struct Theme {
     /// `shared()`, not in `dark()` / `light()`.
     pub qr_dark: u32,
     pub qr_light: u32,
-    /// Faint accent border of the focused split pane (accent halfway to `bg`, SPEC §14).
-    pub pane_focus_border: u32,
+    /// The frame behind and between the panes, and the title bar fill (ADR 0108): a step off
+    /// `terminal_bg` (darker, or lighter when `terminal_bg` has no room below it), at least
+    /// [`PANE_GAP_MIN_CONTRAST`] away, so a pane looks raised.
+    pub pane_gap: u32,
+    /// Faint accent: the top stripe of the focused split pane, and the border of a picked card,
+    /// row or comment (accent halfway to `bg`, SPEC §14).
+    pub pane_focus_stripe: u32,
     /// The ring of a keyboard-focused dialog control (ADR 0085): a 1 px border in the text
     /// color, so it reads on `surface` and on an accent button in every theme.
     pub focus_ring: u32,
@@ -1055,7 +1073,9 @@ impl Theme {
             run_pill_text: 0xC9EED8,
             // ~14 %: chip and pill fills.
             tint_alpha: 0x24,
-            pane_focus_border: 0x4A528E,
+            // Black: 1.07:1 under `terminal_bg` (0B0C0E), the ratio Tern measures.
+            pane_gap: 0x000000,
+            pane_focus_stripe: 0x4A528E,
             focus_ring: 0xECEDEF,
             terminal_selection_bg: 0x353B60,
             terminal_match_bg: 0x3F3524,
@@ -1155,7 +1175,9 @@ impl Theme {
             run_pill_text: 0x1E6B3A,
             // ~12 %: chip and pill fills.
             tint_alpha: 0x1F,
-            pane_focus_border: 0xA7ADEA,
+            // 1.07:1 under `terminal_bg` (FCFCFD); 1.11:1 from `tab_active`, 1.04:1 from `hover`.
+            pane_gap: 0xF3F4F6,
+            pane_focus_stripe: 0xA7ADEA,
             focus_ring: 0x1B1D22,
             terminal_selection_bg: 0xCACEF2,
             terminal_match_bg: 0xF6EBCF,
@@ -1254,7 +1276,7 @@ impl Theme {
             run_pill_border: 0x2A4434,
             run_pill_text: 0xC9EED8,
             tint_alpha: 0x2E,
-            pane_focus_border: 0x4A528E,
+            pane_focus_stripe: 0x4A528E,
             focus_ring: 0xE4E5E9,
             terminal_selection_bg: 0x353B60,
             terminal_match_bg: 0x3F3524,
@@ -1326,7 +1348,7 @@ impl Theme {
             run_pill_border: 0xB4DEC8,
             run_pill_text: 0x1E6B3A,
             tint_alpha: 0x24,
-            pane_focus_border: 0xA7ADEA,
+            pane_focus_stripe: 0xA7ADEA,
             focus_ring: 0x1B1D22,
             terminal_selection_bg: 0xCACEF2,
             terminal_match_bg: 0xF6EBCF,
@@ -1407,7 +1429,8 @@ impl Theme {
             // The QR code of Phone access: near-black modules on white, in both appearances.
             qr_dark: 0x101114,
             qr_light: 0xFFFFFF,
-            pane_focus_border: 0,
+            pane_gap: 0,
+            pane_focus_stripe: 0,
             focus_ring: 0,
             terminal_selection_bg: 0,
             terminal_match_bg: 0,
@@ -1654,8 +1677,20 @@ impl Theme {
             add_word,
             del_word,
         ];
-        // A brand logo sits on `chrome` and, in the shown tab, on `tab_active`.
-        let brand_grounds = [p.chrome, mix(p.chrome, p.fg, 0.12)];
+        // The frame is a step off `bg` (the terminal ground): toward black, so panes look
+        // raised; toward `fg` when `bg` is already so dark that black is under the floor.
+        let pane_gap = {
+            let toward_black = mix(p.bg, 0x000000, if p.dark { 0.70 } else { 0.065 });
+            if contrast(toward_black, p.bg) >= PANE_GAP_MIN_CONTRAST {
+                toward_black
+            } else {
+                mix(p.bg, p.fg, 0.10)
+            }
+        };
+        // The shown tab chip sits on the title bar, which is `pane_gap`.
+        let tab_active = mix(pane_gap, p.fg, 0.12);
+        // A brand logo sits on the bar and, in the shown tab, on `tab_active`.
+        let brand_grounds = [pane_gap, tab_active];
         let text = |color| readable(color, p.fg, &grounds, 4.5);
         let on_accent = if contrast(p.bg, p.accent) >= contrast(p.fg, p.accent) {
             p.bg
@@ -1670,7 +1705,7 @@ impl Theme {
             chrome: p.chrome,
             surface: p.surface,
             card: p.surface,
-            tab_active: mix(p.chrome, p.fg, 0.12),
+            tab_active,
             surface_raised,
             selected: surface_raised,
             hover,
@@ -1693,7 +1728,8 @@ impl Theme {
             info_soft: p.blue,
             info_text: text(p.blue),
             accent_bg: tint(p.accent, 0.14),
-            pane_focus_border: mix(p.accent, p.bg, 0.50),
+            pane_gap,
+            pane_focus_stripe: mix(p.accent, p.bg, 0.50),
             focus_ring: p.fg,
             on_accent,
             terminal_selection_bg: fill(p.bg, p.accent, 0.30, p.fg),
@@ -2348,8 +2384,7 @@ pub fn title_bar_inset(os: Os, fullscreen: bool) -> f32 {
 /// Layout heights from the redesign (ADR 0027), in px at the default font size.
 /// The custom title bar (ADR 0034; was the 44 px toolbar of ADR 0027).
 pub const TITLE_BAR_HEIGHT: f32 = 42.0;
-/// The Editor's file tab strip and the right panel's tab row (the terminal tabs are in the
-/// title bar).
+/// The right panel's tab row (the terminal tabs are in the title bar).
 pub const TAB_STRIP_HEIGHT: f32 = 44.0;
 /// The Git view's repository tabs (multi-repo workspaces): a tab strip.
 pub const GIT_REPO_STRIP_HEIGHT: f32 = 42.0;
@@ -2533,19 +2568,22 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
     }
     // The taskbar badge numeral on the needs-input amber (WCAG 1.4.11, 3:1).
     check("badge ink", t.badge_ink(), t.status_needs_input, 3.0);
-    // The limits chip (ADR 0106) sits on `chrome` in the title bar in body text: 4.5:1 for the
+    // The limits chip (ADR 0106) sits on the title bar (`pane_gap`) in body text: 4.5:1 for the
     // amber (80 to 94%) and the red (95% and more).
     for fg in [t.status_needs_input, t.danger_text] {
-        check("limits chip", fg, t.chrome, 4.5);
+        check("limits chip", fg, t.pane_gap, 4.5);
     }
-    // The shown tab chip of the title bar (ADR 0106) must stand out from `chrome`, and its
+    // The shown tab chip of the title bar (ADR 0106) must stand out from the bar, and its
     // text must read on it.
-    check("active tab", t.tab_active, t.chrome, 1.1);
+    check("active tab", t.tab_active, t.pane_gap, 1.1);
     check("active tab", t.text, t.tab_active, 4.5);
-    // An agent's brand logo in a tab chip is an icon on `chrome` and, in the shown tab, on
+    // The frame the panes sit on is a step off the terminal ground, so a pane looks raised
+    // (Tern panes, ADR 0108).
+    check("pane gap", t.pane_gap, t.terminal_bg, PANE_GAP_MIN_CONTRAST);
+    // An agent's brand logo in a tab chip is an icon on the bar and, in the shown tab, on
     // `tab_active` (WCAG 1.4.11, 3:1).
     for logo in crate::icons::AgentLogo::ALL {
-        for ground in [t.chrome, t.tab_active] {
+        for ground in [t.pane_gap, t.tab_active] {
             check("brand logo", t.brand_color(*logo), ground, 3.0);
         }
     }
@@ -2608,6 +2646,58 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join("; ")
             );
+        }
+    }
+
+    /// `a` is darker than `b`: it reads less against black.
+    fn darker(a: u32, b: u32) -> bool {
+        contrast(a, 0x000000) < contrast(b, 0x000000)
+    }
+
+    #[test]
+    fn the_pane_gap_sits_a_step_off_the_terminal_ground_in_every_theme() {
+        for theme in all_themes() {
+            let ratio = contrast(theme.pane_gap, theme.terminal_bg);
+            assert!(
+                ratio >= PANE_GAP_MIN_CONTRAST,
+                "{}: pane_gap {:06X} on terminal_bg {:06X} reads {ratio:.3}:1",
+                theme.name,
+                theme.pane_gap,
+                theme.terminal_bg
+            );
+            // Light themes: a step darker. Dark themes: darker too, unless the ground is
+            // already nearly black (then the gap is lighter).
+            if !theme.dark || contrast(theme.terminal_bg, 0x000000) >= 1.2 {
+                assert!(
+                    darker(theme.pane_gap, theme.terminal_bg),
+                    "{}: pane_gap {:06X} should be darker than {:06X}",
+                    theme.name,
+                    theme.pane_gap,
+                    theme.terminal_bg
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_derived_pane_gap_goes_lighter_only_when_bg_has_no_room_below_it() {
+        let base = *THEMES[1].palette().expect("One Dark has a palette");
+        // (dark, bg, the gap is darker than bg)
+        for (dark, bg, below) in [
+            (true, 0x000000, false),
+            (true, 0x050505, false),
+            (true, 0x808080, true),
+            (false, 0xFFFFFF, true),
+            (false, 0x808080, true),
+        ] {
+            let theme = Theme::from_palette("Edge", &Palette { dark, bg, ..base });
+            let ratio = contrast(theme.pane_gap, theme.terminal_bg);
+            assert!(
+                ratio >= PANE_GAP_MIN_CONTRAST,
+                "bg {bg:06X}: {ratio:.3}:1 from {:06X}",
+                theme.pane_gap
+            );
+            assert_eq!(darker(theme.pane_gap, bg), below, "bg {bg:06X}");
         }
     }
 
@@ -2750,21 +2840,21 @@ mod tests {
             (
                 "limits chip",
                 Theme {
-                    chrome: t.status_needs_input,
+                    pane_gap: t.status_needs_input,
                     ..t.clone()
                 },
             ),
             (
                 "active tab",
                 Theme {
-                    tab_active: t.chrome,
+                    tab_active: t.pane_gap,
                     ..t.clone()
                 },
             ),
             (
                 "brand logo",
                 Theme {
-                    brand_claude: t.chrome,
+                    brand_claude: t.pane_gap,
                     ..t.clone()
                 },
             ),

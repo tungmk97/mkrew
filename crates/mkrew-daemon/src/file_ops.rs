@@ -2,7 +2,10 @@
 
 use std::fs;
 use std::io::{ErrorKind, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
+
+use chrono::NaiveDateTime;
+use mkrew_core::notes::{self, NotesFolder};
 
 /// `rel` (`/`-separated, relative to `base`) below `base` with native separators. An empty
 /// `rel` is `base` itself, without a trailing separator.
@@ -28,10 +31,7 @@ pub(crate) fn create(
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .collect();
-    let plain = |part: &&str| {
-        let mut components = Path::new(part).components();
-        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
-    };
+    let plain = |part: &&str| notes::is_plain(std::ffi::OsStr::new(part));
     if parts.is_empty() || !parts.iter().all(plain) {
         return Err((
             ErrorKind::InvalidInput,
@@ -57,6 +57,71 @@ pub(crate) fn create(
     match made {
         Ok(()) => Ok(rel),
         Err(error) => Err((error.kind(), format!("Cannot create {rel}: {error}"))),
+    }
+}
+
+/// The most names `new_note` tries before it gives up (`note-<time>.md`, `-2`, ... `-1000`).
+const NOTE_TRIES: u32 = 1000;
+
+/// An empty note named for local time `at` in `folder`: below `root` for a relative folder,
+/// where it says for an absolute one; missing folders are made. A taken name moves on to the
+/// next number (`create` never overwrites). Returns the note relative to `root` when it is
+/// inside it, else as an absolute `/`-separated path. An error carries its [`ErrorKind`] and a
+/// message for the user that names the folder.
+// ponytail: "inside the root" is a lexical prefix test; a root and a folder spelled differently
+// (8.3 names, another case on Windows) answer absolute, which `fs.read` / `fs.write` accept too.
+pub(crate) fn new_note(
+    root: &Path,
+    folder: &NotesFolder,
+    at: NaiveDateTime,
+) -> Result<String, (ErrorKind, String)> {
+    let (base, dir) = match folder {
+        NotesFolder::Relative(dir) => (root, dir.as_str()),
+        NotesFolder::Absolute(path) => (path.as_path(), ""),
+    };
+    // Make the folder first: a file standing where a folder should be answers `AlreadyExists`
+    // on Windows, which the loop below would mistake for a taken name.
+    let place = join_relative(base.to_path_buf(), dir);
+    if let Err(error) = fs::create_dir_all(&place) {
+        let kind = match error.kind() {
+            ErrorKind::AlreadyExists => ErrorKind::NotADirectory,
+            kind => kind,
+        };
+        return Err((
+            kind,
+            format!(
+                "Cannot create the notes folder {}: {error}",
+                place.display()
+            ),
+        ));
+    }
+    for attempt in 1..=NOTE_TRIES {
+        match create(base, dir, &notes::file_name(at, attempt), false) {
+            Ok(made) => return Ok(answer(root, folder, &made)),
+            Err((ErrorKind::AlreadyExists, _)) => {}
+            Err((kind, message)) => {
+                return Err((
+                    kind,
+                    format!("{message} (notes folder {})", place.display()),
+                ));
+            }
+        }
+    }
+    Err((
+        ErrorKind::AlreadyExists,
+        format!("No free note name in the notes folder after {NOTE_TRIES} tries"),
+    ))
+}
+
+/// `made` (relative to the folder `new_note` used) as the client sees it.
+fn answer(root: &Path, folder: &NotesFolder, made: &str) -> String {
+    let NotesFolder::Absolute(path) = folder else {
+        return made.to_owned();
+    };
+    match path.strip_prefix(root) {
+        Ok(inside) if inside.as_os_str().is_empty() => made.to_owned(),
+        Ok(inside) => format!("{}/{made}", inside.to_string_lossy().replace('\\', "/")),
+        Err(_) => format!("{}/{made}", path.to_string_lossy().replace('\\', "/")),
     }
 }
 
@@ -121,6 +186,99 @@ mod tests {
         }
         #[cfg(windows)]
         assert!(create(root, "", "C:/x", false).is_err());
+    }
+
+    use chrono::NaiveDate;
+
+    fn at() -> chrono::NaiveDateTime {
+        NaiveDate::from_ymd_opt(2026, 11, 23)
+            .unwrap()
+            .and_hms_opt(9, 5, 7)
+            .unwrap()
+    }
+
+    fn slash(path: &Path) -> String {
+        path.to_string_lossy().replace('\\', "/")
+    }
+
+    #[test]
+    fn new_note_numbers_a_taken_name_and_never_overwrites() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        let folder = NotesFolder::Relative(String::new());
+        let made: Vec<String> = (0..3)
+            .map(|_| new_note(root, &folder, at()).unwrap())
+            .collect();
+        assert_eq!(
+            made,
+            [
+                "note-20261123-090507.md",
+                "note-20261123-090507-2.md",
+                "note-20261123-090507-3.md"
+            ]
+        );
+        for name in &made {
+            assert_eq!(fs::read(root.join(name)).unwrap(), b"");
+        }
+        fs::write(root.join("note-20261123-090507.md"), "mine").unwrap();
+        assert_eq!(
+            new_note(root, &folder, at()).unwrap(),
+            "note-20261123-090507-4.md"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("note-20261123-090507.md")).unwrap(),
+            "mine"
+        );
+    }
+
+    #[test]
+    fn new_note_makes_a_relative_folder_and_answers_relative() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = NotesFolder::Relative("notes/inbox".into());
+        let made = new_note(root.path(), &folder, at()).unwrap();
+        assert_eq!(made, "notes/inbox/note-20261123-090507.md");
+        assert!(root.path().join(&made).is_file());
+    }
+
+    #[test]
+    fn new_note_answers_relative_inside_the_root_and_absolute_outside_it() {
+        let root = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+
+        let inside = root.path().join("docs").join("notes");
+        let made = new_note(root.path(), &NotesFolder::Absolute(inside.clone()), at()).unwrap();
+        assert_eq!(made, "docs/notes/note-20261123-090507.md");
+        assert!(inside.join("note-20261123-090507.md").is_file());
+
+        let outside = elsewhere.path().join("a").join("b");
+        let made = new_note(root.path(), &NotesFolder::Absolute(outside.clone()), at()).unwrap();
+        assert_eq!(made, format!("{}/note-20261123-090507.md", slash(&outside)));
+        assert!(
+            !made.contains('\\'),
+            "an absolute answer uses `/` only: {made}"
+        );
+        assert!(outside.join("note-20261123-090507.md").is_file());
+
+        let again = new_note(root.path(), &NotesFolder::Absolute(outside.clone()), at()).unwrap();
+        assert_eq!(
+            again,
+            format!("{}/note-20261123-090507-2.md", slash(&outside))
+        );
+    }
+
+    #[test]
+    fn new_note_in_a_folder_that_cannot_exist_is_an_error_that_names_the_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let blocker = root.path().join("blocker");
+        fs::write(&blocker, "a file, not a folder").unwrap();
+        let folder = NotesFolder::Absolute(blocker.join("notes"));
+        let (kind, message) = new_note(root.path(), &folder, at()).unwrap_err();
+        assert_ne!(kind, ErrorKind::AlreadyExists);
+        assert!(
+            message.contains("notes folder") && message.contains("blocker"),
+            "{message}"
+        );
+        assert!(blocker.is_file());
     }
 
     #[test]

@@ -108,6 +108,34 @@ impl Shell {
         {
             return;
         }
+        // Right after the active tab (`None` while the workspace has no tab: the first one).
+        let position = (self.tabs.get(&project_id)).and_then(Tabs::position_after_active);
+        self.create_tab_then(
+            project_id,
+            position,
+            move |shell, _tab_id, window, cx| {
+                if let Some((kind, profile)) = start
+                    && shell.workspace == Some(project_id)
+                {
+                    shell.new_pane_with(kind, profile, Axis::Vertical, window, cx);
+                }
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// `tab.create` at `position` (`None`: last), the tab applied and activated, then `then`
+    /// with its id. A failure toasts (or fails the workspace's first load) and `then` never
+    /// runs.
+    pub(crate) fn create_tab_then(
+        &mut self,
+        project_id: Ulid,
+        position: Option<f64>,
+        then: impl FnOnce(&mut Shell, Ulid, &mut Window, &mut Context<'_, Shell>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<'_, Shell>,
+    ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -122,7 +150,7 @@ impl Shell {
         let created = connection.call::<TerminalTab>(Request::TabCreate(TabCreateParams {
             project_id,
             title,
-            position: None,
+            position,
         }));
         cx.spawn_in(window, async move |this, cx| {
             let created = created.await;
@@ -143,11 +171,7 @@ impl Shell {
                         } else {
                             shell.sync_panes(window, cx);
                         }
-                        if let Some((kind, profile)) = start
-                            && shell.workspace == Some(project_id)
-                        {
-                            shell.new_pane_with(kind, profile, Axis::Vertical, window, cx);
-                        }
+                        then(shell, tab_id, window, cx);
                     }
                     Err(error) => {
                         tracing::warn!(%project_id, "tab.create failed: {error:#}");
@@ -313,20 +337,18 @@ impl Shell {
             && self.terminal_host(project_id, tab_id) != HostId::Main
         {
             if let Some(tabs) = self.tabs.get_mut(&project_id) {
-                tabs.focus_pane(tab_id, session);
+                tabs.focus_pane(tab_id, &PaneKey::Session(session));
             }
             return;
         }
         let detached = tab.filter(|id| self.terminal_host(project_id, *id) != HostId::Main);
         // A new agent pane is born with the default of the moment (ADR 0105), so a later
         // change of `[ui] chat_default` never flips it.
-        let chat = (self.sidebar.sessions().iter())
-            .any(|s| s.id == session && s.kind == SessionKind::Agent)
-            .then_some(self.chat_default);
+        let chat = self.born_chat(session);
         let Some(tabs) = self.tabs.get_mut(&project_id) else {
             return;
         };
-        if tabs.focus(session) {
+        if tabs.focus(&PaneKey::Session(session)) {
             return;
         }
         let write = match detached {
@@ -337,6 +359,53 @@ impl Shell {
         };
         if let Some(write) = write {
             self.save_layout(project_id, write, window, cx);
+        }
+    }
+
+    /// The saved mode a new pane of `session` is born with: an agent gets the default of the
+    /// moment (ADR 0105), so a later change of `[ui] chat_default` never flips it.
+    fn born_chat(&self, session: Ulid) -> Option<bool> {
+        (self.sidebar.sessions().iter())
+            .any(|s| s.id == session && s.kind == SessionKind::Agent)
+            .then_some(self.chat_default)
+    }
+
+    /// The tab of workspace `project_id` that holds the pane `key` (any window).
+    pub(crate) fn tab_holding(&self, project_id: Ulid, key: &PaneKey) -> Option<Ulid> {
+        (self.tabs.get(&project_id)?.tab_with(key)).map(|tab| tab.id)
+    }
+
+    /// Shows `session` on `edge` of `target`'s pane in tab `tab_id` of `project_id` (a drop
+    /// from the `+` row).
+    /// A session the daemon or an echo placed already stays; when `target` left the tab while
+    /// the session started, it lands beside the focused pane like any new pane.
+    pub(crate) fn place_session_at(
+        &mut self,
+        (project_id, tab_id): (Ulid, Ulid),
+        session: Ulid,
+        target: &PaneKey,
+        edge: Edge,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let chat = self.born_chat(session);
+        let Some(tabs) = self.tabs.get_mut(&project_id) else {
+            return;
+        };
+        if tabs.tab_of(session).is_some() {
+            return;
+        }
+        let write = tabs.insert_leaf(tab_id, Some(target), edge, Leaf::Session { session, chat });
+        match write {
+            Some(write) => self.save_layout(project_id, write, window, cx),
+            None => self.place_session(
+                project_id,
+                session,
+                Some(tab_id),
+                Axis::Vertical,
+                window,
+                cx,
+            ),
         }
     }
 
@@ -387,8 +456,7 @@ impl Shell {
     }
 
     /// The view of the active workspace; Docs reads as Terminals while `[features] docs` is
-    /// off (ADR 0046), the Editor while the workspace has no open file, the Diff while it has
-    /// no open diff.
+    /// off (ADR 0046).
     pub(crate) fn view(&self) -> View {
         let Some(id) = self.workspace else {
             return View::default();
@@ -398,29 +466,14 @@ impl Shell {
             .copied()
             .filter(|&view| match view {
                 View::Docs => self.features.docs,
-                View::Editor => self.has_file_tabs(id),
-                View::Diff => self.diff_open(id),
                 View::Board | View::Terminals => true,
             })
             .unwrap_or_default()
     }
 
-    /// The workspace has open file tabs (the Editor view exists).
-    pub(crate) fn has_file_tabs(&self, project_id: Ulid) -> bool {
-        self.files
-            .get(&project_id)
-            .is_some_and(|view| !view.tabs().is_empty())
-    }
-
-    /// The workspace has an open diff (the Diff view exists).
-    pub(crate) fn diff_open(&self, project_id: Ulid) -> bool {
-        self.git.get(&project_id).is_some_and(GitView::diff_open)
-    }
-
     /// Switches the active workspace to `view`; leaving Terminals detaches its panes. Showing
-    /// Docs re-lists its files (agents may have written new ones); showing the Editor refreshes
-    /// the tree and gives the editor the keyboard; Git (the panel's tab or the diff) coming on
-    /// screen refreshes its changes.
+    /// Docs re-lists its files (agents may have written new ones); Git (the panel's tab) coming
+    /// on screen refreshes its changes (a diff pane does it in `sync_panes`).
     pub(crate) fn show_view(
         &mut self,
         view: View,
@@ -435,8 +488,7 @@ impl Shell {
         }
         self.close_menus();
         let tree_before = self.files_on_screen();
-        let git_before = self.git_shown();
-        let tree_focused = self.files_focus.is_focused(window);
+        let git_before = self.git_panel_shown();
         let shown = self.views.insert(project_id, view).unwrap_or_default();
         if !self.panel_view() {
             // The panel (and its grip) leaves with the views that draw it: end a drag in progress.
@@ -448,26 +500,13 @@ impl Shell {
         if self.files_on_screen() && !tree_before {
             self.refresh_files(project_id, window, cx);
         }
-        if self.git_shown() && !git_before {
+        if self.git_panel_shown() && !git_before {
             self.refresh_git(project_id, window, cx);
-        }
-        if view == View::Diff {
-            window.focus(&self.git_focus, cx);
         }
         self.sync_watches(cx);
         if shown != view {
             self.sync_panes(window, cx);
             cx.notify();
-        }
-        // After `sync_panes` (its focus would win). A tree click keeps the keyboard in the
-        // tree; any other way in types in the editor.
-        if view == View::Editor {
-            let target = if tree_focused {
-                &self.files_focus
-            } else {
-                &self.file_editor_focus
-            };
-            window.focus(target, cx);
         }
     }
 
@@ -484,7 +523,9 @@ impl Shell {
             .then(|| self.workspace.and_then(|id| self.git.get(&id)))
             .flatten()
             .and_then(|view| view.worktree_task_id);
-        let needs = watches::Needs::of(self.workspace, files, git);
+        // Every file leaf of every workspace, in any tab or window, shown or not.
+        let open = documents::open_worktrees(&self.tabs);
+        let needs = watches::Needs::of(self.workspace, files, git, open);
         let released = self.watch_needs.released(&needs);
         self.watch_needs = needs;
         let Some(connection) = self.connection.clone() else {

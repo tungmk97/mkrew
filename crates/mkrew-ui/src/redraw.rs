@@ -31,6 +31,8 @@ pub struct Shown {
     pub modal: bool,
     /// The Board draws every workspace's cards (the All workspaces board).
     pub all_board: bool,
+    /// A Diff pane is drawn (in the main window or a visible detached one).
+    pub diff: bool,
 }
 
 /// Whether an event whose model reported "my data changed" must re-render the root. Events
@@ -83,13 +85,13 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
         Event::TaskUpdated(task) => tasks_drawn(shown, task.project_id),
         Event::TaskDeleted(deleted) => tasks_drawn(shown, deleted.project_id),
         Event::ConflictDetected(_) => conflicts_need_redraw(shown),
-        // Diff comments are drawn in the diff view, doc comments in Docs.
+        // Diff comments are drawn by a Diff pane, doc comments in Docs.
         Event::CommentUpdated(comment) => {
             in_workspace(comment.project_id)
-                && matches!(
-                    (shown.view, comment.context),
-                    (View::Diff, CommentContext::Diff) | (View::Docs, CommentContext::Doc)
-                )
+                && match comment.context {
+                    CommentContext::Diff => shown.diff,
+                    CommentContext::Doc => shown.view == View::Docs,
+                }
         }
         // The Git tab's commit message box and the pane composer.
         Event::AiGenerated(_) => {
@@ -204,14 +206,15 @@ mod tests {
             sidebar: SidebarMode::Compact,
             modal: false,
             all_board: false,
+            diff: false,
         }
     }
 
-    /// Editor view of `ws`: no pane drawn, no panel, no sidebar rows.
+    /// Docs view of `ws`: no pane drawn, no panel, no sidebar rows.
     fn nothing_shown(w: &World) -> Shown {
         Shown {
             workspace: Some(w.ws),
-            view: View::Editor,
+            view: View::Docs,
             panes: Vec::new(),
             focused: None,
             panel: None,
@@ -219,6 +222,7 @@ mod tests {
             sidebar: SidebarMode::Hidden,
             modal: false,
             all_board: false,
+            diff: false,
         }
     }
 
@@ -457,8 +461,8 @@ mod tests {
             "the All workspaces board draws it"
         );
         s.all_board = false;
-        s.view = View::Editor;
-        assert!(!redraws(&w, &s, &event(w.ws)), "Editor, no panel");
+        s.view = View::Docs;
+        assert!(!redraws(&w, &s, &event(w.ws)), "Docs, no panel");
         s.panel = Some(PanelTab::Session);
         assert!(!redraws(&w, &s, &event(w.ws)), "Session tab");
         for tab in [PanelTab::Files, PanelTab::Git] {
@@ -487,22 +491,20 @@ mod tests {
                 "{view:?}"
             );
         }
-        for view in [View::Docs, View::Editor, View::Diff] {
-            s.view = view;
-            assert!(
-                !conflicts_need_redraw(&s) && !redraws(&w, &s, &detected),
-                "{view:?}"
-            );
-        }
+        s.view = View::Docs;
+        assert!(
+            !conflicts_need_redraw(&s) && !redraws(&w, &s, &detected),
+            "Docs"
+        );
     }
 
-    /// Diff comments are drawn in the diff view, doc comments in Docs, both of the shown
+    /// Diff comments are drawn by a Diff pane, doc comments in Docs, both of the shown
     /// workspace; an AI answer goes to the Git tab's commit box or a pane composer.
     #[test]
     fn comments_and_ai_answers_follow_the_view_that_draws_them() {
         let w = world();
-        let mut s = nothing_shown(&w);
-        s.view = View::Diff;
+        let mut s = terminals(&w);
+        s.diff = true;
         assert!(redraws(&w, &s, &comment(w.ws, CommentContext::Diff)));
         assert!(
             !redraws(&w, &s, &comment(w.other, CommentContext::Diff)),
@@ -510,12 +512,15 @@ mod tests {
         );
         assert!(
             !redraws(&w, &s, &comment(w.ws, CommentContext::Doc)),
-            "Doc comment in Diff"
+            "Doc comment, no Docs view"
+        );
+        s.diff = false;
+        assert!(
+            !redraws(&w, &s, &comment(w.ws, CommentContext::Diff)),
+            "no Diff pane drawn"
         );
         s.view = View::Docs;
         assert!(redraws(&w, &s, &comment(w.ws, CommentContext::Doc)));
-        assert!(!redraws(&w, &s, &comment(w.ws, CommentContext::Diff)));
-        s.view = View::Terminals;
         assert!(!redraws(&w, &s, &comment(w.ws, CommentContext::Diff)));
 
         let ai = Event::AiGenerated(AiGeneratedEvent {
@@ -524,8 +529,9 @@ mod tests {
             text: Some("x".into()),
             error: None,
         });
+        s.view = View::Terminals;
         assert!(redraws(&w, &s, &ai), "pane composer");
-        s.view = View::Editor;
+        s.view = View::Docs;
         assert!(!redraws(&w, &s, &ai));
         s.panel = Some(PanelTab::Git);
         assert!(redraws(&w, &s, &ai), "commit box in the Git tab");

@@ -284,6 +284,10 @@ fn every_m1_request_round_trips() {
             name: "a.rs".into(),
             folder: false,
         }),
+        Request::FsNewNote(FsNewNoteParams {
+            project_id: sid(),
+            worktree_task_id: Some(sid()),
+        }),
         Request::FsIgnore(FsIgnoreParams {
             project_id: sid(),
             worktree_task_id: None,
@@ -1392,8 +1396,8 @@ fn a_report_replaces_an_older_different_one_only() {
 }
 
 #[test]
-fn the_tern_layout_protocol_is_version_58() {
-    assert_eq!(crate::PROTOCOL_VERSION, 58);
+fn the_tern_panes_protocol_is_version_60() {
+    assert_eq!(crate::PROTOCOL_VERSION, 60);
 }
 
 /// ADR 0105: the recap travels with the transcript reply; a reply without it (an older
@@ -1423,4 +1427,16 @@ fn the_transcript_reply_carries_an_optional_recap() {
     let old = json!({"found": true, "format": "omp_jsonl", "start": 0, "len": 2, "data": "aGk="});
     let decoded: SessionTranscript = serde_json::from_value(old).unwrap();
     assert_eq!(decoded.recap, None);
+}
+
+#[test]
+fn fs_new_note_is_on_the_wire_as_fs_new_note() {
+    let request = Request::FsNewNote(FsNewNoteParams {
+        project_id: sid(),
+        worktree_task_id: None,
+    });
+    assert_eq!(
+        serde_json::to_value(&request).unwrap()["method"],
+        "fs.new_note"
+    );
 }

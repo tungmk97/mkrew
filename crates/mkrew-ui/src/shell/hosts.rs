@@ -60,7 +60,12 @@ impl Shell {
         let name = &(self.sidebar.projects().iter())
             .find(|p| p.id == project)?
             .name;
-        let label = session_label(tab, self.sidebar.sessions()).unwrap_or(&tab.title);
+        let file = file_label(tab, self.documents.get(&project)).map(|label| label.name);
+        let label = file
+            .as_deref()
+            .or_else(|| diff_label(tab))
+            .or_else(|| session_label(tab, self.sidebar.sessions()))
+            .unwrap_or(&tab.title);
         Some(format!("{label} - {name}"))
     }
 
@@ -113,25 +118,72 @@ impl Shell {
         }
     }
 
-    /// The pane that has (or gets) the keyboard in `window`.
-    pub(crate) fn focused_session(&self, window: &Window) -> Option<Ulid> {
+    /// The pane that has (or gets) the keyboard in `window`, of any kind.
+    pub(crate) fn focused_key(&self, window: &Window) -> Option<PaneKey> {
         let (project, tab_id) = self.tab_scope(window)?;
-        self.tabs.get(&project)?.tab(tab_id)?.focused()
+        self.tabs.get(&project)?.tab(tab_id)?.focused().cloned()
     }
 
-    /// Focuses `session`'s pane in its tab; a tab in a detached window does not become the
+    /// The session pane that has (or gets) the keyboard in `window`: the focused pane when it
+    /// is a session, `None` when a file or the diff has the focus.
+    pub(crate) fn focused_session(&self, window: &Window) -> Option<Ulid> {
+        self.focused_key(window)?.session()
+    }
+
+    /// The workspace and file of the focused pane of `window`, when it is a file pane.
+    pub(crate) fn focused_doc(&self, window: &Window) -> Option<(Ulid, FileKey)> {
+        let (project, tab_id) = self.tab_scope(window)?;
+        match self.tabs.get(&project)?.tab(tab_id)?.focused()? {
+            PaneKey::File(file) => Some((project, file.clone())),
+            _ => None,
+        }
+    }
+
+    /// The active workspace, when the focused pane of `window` is its Diff leaf. A Diff leaf of
+    /// another workspace (a detached window) never counts: Git keys and comment commands act
+    /// on the active workspace only.
+    pub(crate) fn focused_diff(&self, window: &Window) -> Option<Ulid> {
+        let (project, tab_id) = self.tab_scope(window)?;
+        let tab = self.tabs.get(&project)?.tab(tab_id)?;
+        (tab.focused() == Some(&PaneKey::Diff) && self.workspace == Some(project))
+            .then_some(project)
+    }
+
+    pub(crate) fn focused_file(&self, window: &Window) -> Option<FileKey> {
+        self.focused_doc(window).map(|(_, path)| path)
+    }
+
+    /// The file the right panel and prompt variables mean: the shown workspace's active tab's
+    /// focused pane, when it is a file (also while a detached window has the keyboard).
+    pub(crate) fn panel_file(&self, project_id: Ulid) -> Option<FileKey> {
+        match self.tabs.get(&project_id)?.active()?.focused()? {
+            PaneKey::File(file) => Some(file.clone()),
+            _ => None,
+        }
+    }
+
+    /// Focuses the pane of `key` in its tab; a tab in a detached window does not become the
     /// main window's active tab (spec §4.4).
-    pub(crate) fn focus_session_pane(&mut self, session: Ulid) {
-        let Some((project, tab_id)) = self.tab_of_session(session) else {
+    pub(crate) fn focus_pane_key(&mut self, project: Ulid, key: &PaneKey) {
+        let Some(tab_id) = (self.tabs.get(&project))
+            .and_then(|tabs| tabs.tab_with(key))
+            .map(|tab| tab.id)
+        else {
             return;
         };
         let detached = self.terminal_host(project, tab_id) != HostId::Main;
         if let Some(tabs) = self.tabs.get_mut(&project) {
             if detached {
-                tabs.focus_pane(tab_id, session);
+                tabs.focus_pane(tab_id, key);
             } else {
-                tabs.focus(session);
+                tabs.focus(key);
             }
+        }
+    }
+
+    pub(crate) fn focus_session_pane(&mut self, session: Ulid) {
+        if let Some((project, _)) = self.tab_of_session(session) {
+            self.focus_pane_key(project, &PaneKey::Session(session));
         }
     }
 

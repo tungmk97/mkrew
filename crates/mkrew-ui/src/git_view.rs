@@ -674,6 +674,46 @@ pub enum PendingHunk {
     Last,
 }
 
+/// Why the diff pane has no file to show. The pane stays open and says so (spec 4.4): a leaf
+/// the user placed does not vanish when everything is committed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoFile {
+    /// The changes are being read.
+    Loading,
+    /// The changes could not be read.
+    Failed,
+    /// Nothing changed: everything is committed, or nothing differs from the base.
+    Clean,
+    /// Files are listed, but "Filter files" or "Changed by" hides every one of them.
+    Filtered,
+    /// Files are listed and none is picked.
+    Pick,
+}
+
+impl NoFile {
+    /// The pane's sentence and the line under it (`Failed` has none: the shell shows the error).
+    pub fn message(self, section: Section) -> (&'static str, Option<&'static str>) {
+        match (self, section) {
+            (NoFile::Loading, _) => ("Loading changes…", None),
+            (NoFile::Failed, _) => ("Cannot read the changes.", None),
+            (NoFile::Clean, Section::Base) => ("No changes against the base.", None),
+            (NoFile::Clean, Section::Since) => ("No changes since then.", None),
+            (NoFile::Clean, _) => (
+                "Nothing to commit.",
+                Some("The diff shows the next change you make."),
+            ),
+            (NoFile::Filtered, _) => (
+                "No file matches the filter.",
+                Some("Clear the filter or \"Changed by\" in the Git panel."),
+            ),
+            (NoFile::Pick, _) => (
+                "Select a file to see its changes.",
+                Some("Use ↑ ↓ (or j k) to move between files."),
+            ),
+        }
+    }
+}
+
 /// One workspace's Git view.
 #[derive(Debug)]
 pub struct GitView {
@@ -721,10 +761,6 @@ pub struct GitView {
     /// The files marked as viewed (SPEC §12B, ADR 0065): the daemon's last answer, plus the
     /// user's toggles since. Shared with the list's render closure.
     pub viewed: Rc<ViewedSet>,
-    /// The Diff view is open (SPEC §12B, ADR 0084): a click / Enter on a file or an entry
-    /// point opens it; `×`, `Esc` and an empty list close it. A selection moving by itself
-    /// (staging, ↑ ↓, a refresh) keeps it.
-    open: bool,
     /// The viewed file whose collapsed diff "Show diff" opened.
     unfolded: Option<Target>,
     /// Serial of the last `git.viewed` asked for or toggle made: an older answer is dropped.
@@ -776,7 +812,6 @@ impl GitView {
             filter: Input::default(),
             collapsed: HashSet::new(),
             viewed: Rc::new(ViewedSet::default()),
-            open: false,
             unfolded: None,
             viewed_asked: 0,
             commented: None,
@@ -910,8 +945,8 @@ impl GitView {
             Some(next) if Some(&next) == self.selected.as_ref() => None,
             Some(next) => self.select(next),
             None => {
-                // No file left (committed, discarded, clean): the open diff closes with it.
-                self.open = false;
+                // No file left (committed, discarded, clean): nothing is selected; a Diff pane
+                // shows the empty state (`no_file`) instead of closing (spec 4.4).
                 self.select_none();
                 None
             }
@@ -1034,19 +1069,15 @@ impl GitView {
         self.pending_hunk = None;
     }
 
-    /// Opens the Diff view on the selection (or the first file once listed).
-    pub fn open_diff(&mut self) {
-        self.open = true;
-    }
-
-    /// Closes the Diff view; the selection stays for the next open.
-    pub fn close_diff(&mut self) {
-        self.open = false;
-    }
-
-    /// The Diff view is open.
-    pub fn diff_open(&self) -> bool {
-        self.open
+    /// Why no file is selected while the changes (not the History) are listed.
+    pub fn no_file(&self) -> NoFile {
+        match &self.status {
+            Status::Loading => NoFile::Loading,
+            Status::Failed(_) => NoFile::Failed,
+            Status::Loaded(_) if self.status_files(false).is_empty() => NoFile::Clean,
+            Status::Loaded(_) if self.files().is_empty() => NoFile::Filtered,
+            Status::Loaded(_) => NoFile::Pick,
+        }
     }
 
     /// The listed section.

@@ -30,6 +30,8 @@ pub struct Settings {
     pub web: WebSettings,
     /// `[jira]`: Jira issues on the Board (SPEC §20I, ADR 0066).
     pub jira: JiraSettings,
+    /// `[notes]`: where New note saves its file (Tern panes spec 2026-11-23 section 7.2).
+    pub notes: NotesSettings,
 }
 
 /// `[features]` (ADR 0046): modules that are off unless switched on.
@@ -203,6 +205,15 @@ impl Default for JiraSettings {
     }
 }
 
+/// `[notes]` (Tern panes spec 2026-11-23 section 7.2): the folder New note saves its file in.
+/// Empty = the workspace root; relative = below the root; absolute = used as is, for every
+/// workspace. [`crate::notes::folder`] turns the text into a place; the daemon applies it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NotesSettings {
+    pub folder: String,
+}
+
 /// `[jira] layout` (SPEC §20I): how the Board shows the issues.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -348,7 +359,7 @@ impl SidebarMode {
     }
 }
 
-/// `[ui] right_panel`: the right panel next to Terminals / Editor / Diff at start, and its tab
+/// `[ui] right_panel`: the right panel next to Terminals at start, and its tab
 /// (SPEC §10). The panel toggle and its tab row write it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -637,12 +648,17 @@ pub fn template() -> &'static str {
      [zed]\n\
      # follow_debounce_ms = 1500\n\
      \n\
+     # New note: the folder a new note file is saved in. Empty: the workspace root; a relative\n\
+     # path is below the root; a full path (not ~) is used as is, for every workspace.\n\
+     [notes]\n\
+     # folder = \"\"\n\
+     \n\
      # App font: an installed family name (empty: the system UI font); size 8–32 px.\n\
      # Theme: system (follows the OS), light or dark; the title bar toggle writes it.\n\
      # Light / dark theme: a built-in name (Settings or \"Theme: Select theme…\" lists them).\n\
      # Session panel width in px (dragging its edge writes it; Mkrew keeps it 240–560).\n\
      # Sidebar: full, compact (icon rail) or hidden at start; the sidebar toggles write it.\n\
-     # Diff view: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
+     # Diff pane: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
      # Diff wrap: long lines wrap (true) or are cut at the pane edge (false); the Wrap toggle writes it.\n\
      # Reading width: agent panes start narrow (about 120-140 columns, centered) or full width.\n\
      # Close to tray (Windows): the window's ✕ hides it to the tray icon; false quits the UI.\n\
@@ -843,6 +859,20 @@ mod tests {
     }
 
     #[test]
+    fn notes_folder_defaults_to_empty_parses_and_is_in_the_template() {
+        assert_eq!(Settings::default().notes.folder, "");
+        let settings = parse(
+            Path::new("settings.toml"),
+            "[notes]\nfolder = 'C:\\notes'\n",
+        )
+        .unwrap();
+        assert_eq!(settings.notes.folder, "C:\\notes");
+        let message = parse_err("[notes]\npath = \"x\"\n");
+        assert!(message.contains("unknown field `path`"), "{message}");
+        assert!(template().contains("[notes]\n# folder = \"\"\n"));
+    }
+
+    #[test]
     fn empty_file_is_defaults() {
         let settings = parse(Path::new("settings.toml"), "").unwrap();
         assert_eq!(settings, Settings::default());
@@ -960,6 +990,7 @@ push = true
                     push: true,
                 },
                 jira: JiraSettings::default(),
+                notes: NotesSettings::default(),
             }
         );
     }

@@ -323,7 +323,7 @@ impl Shell {
     }
 
     /// The prompt variables known for `project_id` (§20B.3): its name, `task` (a task title)
-    /// and the file open in its Files view, else the one selected in its Git view.
+    /// and the file of its focused file pane, else the one selected in its Git view.
     pub(crate) fn prompt_vars(&self, project_id: Ulid, task: Option<String>) -> PromptVars {
         let project = self
             .sidebar
@@ -331,26 +331,23 @@ impl Shell {
             .iter()
             .find(|project| project.id == project_id)
             .map(|project| project.name.clone());
-        let file = self
-            .files
-            .get(&project_id)
-            .and_then(|view| view.file().map(str::to_owned))
-            .or_else(|| {
-                self.git
-                    .get(&project_id)
-                    .and_then(|view| view.selected.as_ref())
-                    .map(|target| target.path.clone())
-            });
-        // The shown view's pick first (one picked earlier elsewhere may linger).
-        let views = if self.view() == View::Diff {
-            [View::Diff, View::Editor]
-        } else {
-            [View::Editor, View::Diff]
+        let file = (self.panel_file(project_id).map(|file| file.path)).or_else(|| {
+            self.git
+                .get(&project_id)
+                .and_then(|view| view.selected.as_ref())
+                .map(|target| target.path.clone())
+        });
+        // The pane in front first (one picked earlier elsewhere may linger).
+        let diff_pick = || self.picked_diff_lines(project_id);
+        let file_pick = || {
+            (self.panel_file(project_id)).and_then(|path| self.picked_file_lines(project_id, &path))
         };
-        let selection = views
-            .into_iter()
-            .find_map(|view| self.picked_lines(project_id, view))
-            .map(|(_, _, _, text)| text);
+        let picked = if self.panel_diff_focused(project_id) {
+            diff_pick().or_else(file_pick)
+        } else {
+            file_pick().or_else(diff_pick)
+        };
+        let selection = picked.map(|(_, _, _, text)| text);
         PromptVars {
             file,
             selection,
@@ -359,29 +356,27 @@ impl Shell {
         }
     }
 
-    /// The lines picked in `project_id`'s Editor view (a Markdown preview's selection, or the
-    /// editor's lines, §12A), Docs view (its comment selection) or Git diff (new side): the
-    /// file, first and last line, and their text (§20B.4).
-    pub(crate) fn picked_lines(
+    /// The lines picked in the file pane of `path` (a Markdown preview's selection, or the
+    /// editor's lines, §12A): the file, first and last line, and their text (§20B.4).
+    pub(crate) fn picked_file_lines(
         &self,
         project_id: Ulid,
-        view: View,
+        path: &FileKey,
     ) -> Option<(String, u32, u32, String)> {
-        match view {
-            View::Editor => self.files.get(&project_id)?.tab()?.picked_lines(),
-            View::Diff => {
-                let git = self.git.get(&project_id)?;
-                let (Some(target), Some(selection), git_view::Diff::Shown(shown)) =
-                    (&git.selected, git.comments.selection, &git.diff)
-                else {
-                    return None;
-                };
-                let text = shown.new_side_text(selection)?;
-                Some((target.path.clone(), selection.start, selection.end, text))
-            }
-            View::Docs => self.docs.get(&project_id)?.picked_lines(),
-            _ => None,
-        }
+        self.doc(project_id, path)?.picked_lines()
+    }
+
+    /// The new-side lines picked in `project_id`'s diff: the file, first and last line, and
+    /// their text (§20B.4).
+    pub(crate) fn picked_diff_lines(&self, project_id: Ulid) -> Option<(String, u32, u32, String)> {
+        let git = self.git.get(&project_id)?;
+        let (Some(target), Some(selection), git_view::Diff::Shown(shown)) =
+            (&git.selected, git.comments.selection, &git.diff)
+        else {
+            return None;
+        };
+        let text = shown.new_side_text(selection)?;
+        Some((target.path.clone(), selection.start, selection.end, text))
     }
 
     /// Opens the prompt picker typing into `target`; the library is read (seeded the first
@@ -547,7 +542,7 @@ impl Shell {
                 .text_color(rgb(theme.text))
                 .border(px(theme::BORDER_WIDTH))
                 .border_color(if picked {
-                    gpui::Hsla::from(rgb(theme.pane_focus_border))
+                    gpui::Hsla::from(rgb(theme.pane_focus_stripe))
                 } else {
                     gpui::transparent_black()
                 })
@@ -919,6 +914,72 @@ impl Shell {
         .detach();
     }
 
+    /// A Files tree row, file or folder, dropped on `session`'s composer (§20B.5, ADR 0081):
+    /// `composer.file_ref` on an agent, the bare relative path on a shell, a folder ending in
+    /// `/`, typed into the draft with no Enter.
+    /// This was the pane's drop; a pane now opens the file, so only a composer that is shown
+    /// takes the row.
+    pub(crate) fn drop_tree_on_composer(
+        &mut self,
+        session: Ulid,
+        dragged: &DraggedPath,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let in_workspace = (self.tab_of_session(session))
+            .is_some_and(|(project_id, _)| project_id == dragged.project_id);
+        if self.modal_open() || !in_workspace || self.composers.shown(session).is_none() {
+            return;
+        }
+        let agent = (self.sidebar.sessions().iter())
+            .any(|s| s.id == session && s.kind == SessionKind::Agent);
+        // A missing or broken settings file types the default form (the daemon reports it).
+        let template = mkrew_core::settings::load(&self.settings_file)
+            .unwrap_or_default()
+            .composer
+            .file_ref;
+        let text = composer::dropped_ref(&template, &dragged.path, dragged.is_dir, agent);
+        self.focus_session_pane(session);
+        self.prompt_typed(composer::Target::Composer(session), &text, window, cx);
+        cx.notify();
+    }
+
+    /// Makes a composer element (the docked box, the chat card, its collapsed pill) take a
+    /// tree row: an accent ring while one hovers it, and the pane's edge half is put out
+    /// while the pointer is over the composer, because the drop lands here and not as a split.
+    /// The frame's drag-move runs first (capture phase, parent before child), this one clears.
+    fn composer_drops<E: gpui::InteractiveElement + gpui::ParentElement>(
+        el: E,
+        session: Ulid,
+        corner: f32,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> E {
+        let accent = theme.accent;
+        el.on_drop(
+            cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
+                shell.drop_tree_on_composer(session, dragged, window, cx);
+            }),
+        )
+        .on_drag_move(
+            cx.listener(|shell, event: &DragMoveEvent<DraggedPath>, _, cx| {
+                if event.bounds.contains(&event.event.position) && shell.pane_drop.take().is_some()
+                {
+                    cx.notify();
+                }
+            }),
+        )
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .rounded(px(corner))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(gpui::transparent_black())
+                .drag_over::<DraggedPath>(move |style, _, _, _| style.border_color(rgb(accent))),
+        )
+    }
+
     /// The composer docked under `session`'s pane (§20B.1). In Chat mode it is the floating
     /// card (`composer_card`, ADR 0105); in Terminal mode the docked box: the draft,
     /// then why the last send failed or the keys. Only the focused pane's composer takes the
@@ -974,47 +1035,45 @@ impl Shell {
             theme,
             cx,
         );
-        div()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap(px(space::XS))
-            .p(px(space::S))
-            .bg(rgb(theme.surface))
-            .font_family(theme.ui_font_family.clone())
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.focus_session_pane(session);
-                    window.focus(&shell.composer_focus, cx);
-                    cx.notify();
-                }),
-            )
-            .when(!queued.is_empty(), |el| {
-                el.child(
-                    div()
-                        .id("composer-queue")
-                        .flex_none()
-                        .max_h(px(theme::COMPOSER_QUEUE_MAX_HEIGHT))
-                        .overflow_y_scroll()
-                        .flex()
-                        .flex_col()
-                        .gap(px(space::XS))
-                        .children(queued),
+        let panel =
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap(px(space::XS))
+                .p(px(space::S))
+                .bg(rgb(theme.surface))
+                .font_family(theme.ui_font_family.clone())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
+                        shell.focus_session_pane(session);
+                        window.focus(&shell.composer_focus, cx);
+                        cx.notify();
+                    }),
                 )
-            })
-            .child(field)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .child(
+                .when(!queued.is_empty(), |el| {
+                    el.child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .children(status.map(|(icon, color, text)| {
+                            .id("composer-queue")
+                            .flex_none()
+                            .max_h(px(theme::COMPOSER_QUEUE_MAX_HEIGHT))
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .gap(px(space::XS))
+                            .children(queued),
+                    )
+                })
+                .child(field)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::S))
+                        .child(div().flex_1().min_w_0().children(status.map(
+                            |(icon, color, text)| {
                                 div()
                                     .flex()
                                     .min_w_0()
@@ -1039,11 +1098,11 @@ impl Shell {
                                             }))
                                             .child(text),
                                     )
-                            })),
-                    )
-                    .children(tools),
-            )
-            .into_any_element()
+                            },
+                        )))
+                        .children(tools),
+                );
+        Self::composer_drops(panel, session, radius::MEDIUM, theme, cx).into_any_element()
     }
 
     /// The Chat composer (ADR 0105): in the page's centered column, `space::M` above the pane's
@@ -1116,6 +1175,7 @@ impl Shell {
                     theme::ICON_SIZE_SMALL,
                     theme.text_muted,
                 ));
+            let pill = Self::composer_drops(pill, session, radius::PILL, theme, cx);
             return super::chat_view::chat_column(pill)
                 .pb(px(space::M))
                 .into_any_element();
@@ -1430,6 +1490,7 @@ impl Shell {
                     ))
                     .child(send),
             );
+        let card = Self::composer_drops(card, session, radius::LARGE, theme, cx);
         super::chat_view::chat_column(div().flex().flex_col().children(meter).child(card))
             .pb(px(space::M))
             .into_any_element()

@@ -2,6 +2,7 @@
 
 - Date: 2026-10-10
 - Status: accepted
+- Amended by: 0108 (a layout leaf is a session, a file or the diff; only session leaves are removed)
 - Milestone: none (outside the milestone loop; user request "khi Terminal tab bị đóng, agent/shell
   của tab đó phải xoá khỏi workspace sidebar")
 
@@ -32,3 +33,9 @@
 - SPEC §7 (`tab.close`) and §10 (Terminals) are updated in the same change.
 - To keep an agent running, hide its pane (pane ✕ → Hide) before closing the tab.
 - Sessions in no tab (hidden panes) are not touched by closing a tab.
+
+## Amendment 2026-11-23 (ADR 0108)
+
+A layout leaf can now be a file or the diff as well as a session.
+`tab.close` removes the sessions of the tab's session leaves and only those; file and diff leaves are dropped with the tab and need no `session.remove`.
+A tab whose last session ends while it still holds a file or the diff stays, with that leaf focused.

@@ -135,15 +135,15 @@ impl Shell {
             PromptLevel::Warning,
             &format!("Save changes to {label}?"),
             Some("Your changes are lost if you don't save them."),
-            &files_view::LEAVE_ANSWERS,
+            &documents::LEAVE_ANSWERS,
             cx,
         );
         cx.spawn_in(window, async move |this, cx| {
-            let choice = files_view::leave_choice(answer.await.ok());
+            let choice = documents::leave_choice(answer.await.ok());
             let _ = this.update_in(cx, |shell, window, cx| {
                 match choice {
-                    Some(files_view::Leave::Save) => shell.save_prompt(Some(then), window, cx),
-                    Some(files_view::Leave::DontSave) => {
+                    Some(documents::Leave::Save) => shell.save_prompt(Some(then), window, cx),
+                    Some(documents::Leave::DontSave) => {
                         then(shell, window, cx);
                         // A prompt whose file cannot be read leaves the list at once.
                         shell.sync_prompts();

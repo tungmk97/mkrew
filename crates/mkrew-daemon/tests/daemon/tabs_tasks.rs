@@ -163,6 +163,102 @@ fn restart_clears_the_panes_it_cannot_bring_back() {
     client.stop();
 }
 
+/// `tab.close` removes the sessions found in the tab's layout and only those (ADR 0041, amended
+/// by ADR 0108): file and diff leaves hold no session, and a session outside the layout stays.
+#[test]
+fn closing_a_tab_removes_only_the_sessions_of_its_layout() {
+    let env = Env::new();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    client
+        .call(set_default_shell(&project, Some("shell")))
+        .into_result::<Project>()
+        .unwrap();
+    let spawn_in = |client: &mut Client, tab: &TerminalTab| -> Ulid {
+        let spawned: SessionSpawnResult = client
+            .call(spawn_params(&project, SessionKind::Shell, Some(tab.id)))
+            .into_result()
+            .unwrap();
+        spawned.session_id
+    };
+    let set_layout = |client: &mut Client, tab: &TerminalTab, layout: serde_json::Value| {
+        client
+            .call(Request::TabSetLayout(TabSetLayoutParams {
+                tab_id: tab.id,
+                layout,
+            }))
+            .into_result::<()>()
+            .unwrap();
+    };
+    let sessions = |client: &mut Client| -> Vec<Ulid> {
+        client
+            .call(Request::SessionList(SessionListParams {
+                project_id: Some(project.id),
+            }))
+            .into_result::<Vec<Session>>()
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect()
+    };
+    let close = |client: &mut Client, tab: &TerminalTab| {
+        client
+            .call(Request::TabClose(TabRef { tab_id: tab.id }))
+            .into_result::<()>()
+            .unwrap();
+    };
+    let new_tab = |client: &mut Client, title: &str| -> TerminalTab {
+        client
+            .call(create_tab(&project, title))
+            .into_result()
+            .unwrap()
+    };
+
+    // A bystander in its own tab, a session in a tab with a file, and a tab of files only.
+    let other = new_tab(&mut client, "other");
+    let bystander = spawn_in(&mut client, &other);
+    let mixed = new_tab(&mut client, "mixed");
+    let doomed = spawn_in(&mut client, &mixed);
+    set_layout(
+        &mut client,
+        &mixed,
+        serde_json::json!({"split": "vertical", "ratio": 0.5, "children": [
+            {"session": doomed.to_string()},
+            {"file": "src/a.rs", "md": "split", "preview": true}
+        ]}),
+    );
+    let files = new_tab(&mut client, "files");
+    set_layout(
+        &mut client,
+        &files,
+        serde_json::json!({"split": "horizontal", "ratio": 0.5, "children": [
+            {"file": "README.md"},
+            {"diff": true}
+        ]}),
+    );
+    assert!(sessions(&mut client).contains(&doomed));
+
+    // Only file and diff leaves: no session goes, the others stay.
+    close(&mut client, &files);
+    let left = sessions(&mut client);
+    assert!(
+        left.contains(&bystander) && left.contains(&doomed),
+        "{left:?}"
+    );
+
+    // [session, file]: that session goes, nothing else.
+    close(&mut client, &mixed);
+    let left = sessions(&mut client);
+    assert!(!left.contains(&doomed), "{left:?}");
+    assert!(left.contains(&bystander), "{left:?}");
+    let titles: Vec<String> = list_tabs(&mut client, &project)
+        .into_iter()
+        .map(|t| t.title)
+        .collect();
+    assert_eq!(titles, ["other"]);
+    client.stop();
+}
+
 #[test]
 fn tasks_crud_and_order_persist_across_daemon_restart() {
     let env = Env::new();

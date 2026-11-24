@@ -357,7 +357,6 @@ impl Shell {
             comments_scroll: ScrollHandle::new(),
             workspace_menu: None,
             file_menu: None,
-            file_tab_menu: None,
             tab_menu: None,
             card_menu: None,
             menu_focus: cx.focus_handle(),
@@ -376,6 +375,8 @@ impl Shell {
             run_menu: None,
             workspace_switcher: false,
             new_menu: false,
+            plus: Reveals::default(),
+            plus_focus: cx.focus_handle(),
             empty_workspaces_open: false,
             collapsed_groups: HashSet::new(),
             reading_default,
@@ -442,28 +443,18 @@ impl Shell {
             views: HashMap::new(),
             docs: HashMap::new(),
             comment_focus: cx.focus_handle(),
+            documents: HashMap::new(),
+            doc_views: HashMap::new(),
             files: HashMap::new(),
             files_focus: cx.focus_handle(),
             files_scroll: UniformListScrollHandle::new(),
-            file_tabs_scroll: ScrollHandle::new(),
-            file_find_focus: cx.focus_handle(),
-            file_replace_focus: cx.focus_handle(),
             docs_filter_focus: cx.focus_handle(),
             doc_page: preview::Page::default(),
             doc_source_scroll: UniformListScrollHandle::new(),
-            file_page: preview::Page::default(),
-            file_code_scroll: UniformListScrollHandle::new(),
-            file_code_drag: scrollbar::Drag::default(),
             files_after_save: Vec::new(),
-            file_editor_focus: cx.focus_handle(),
-            file_block_focus: cx.focus_handle(),
-            file_text_left: Rc::default(),
-            file_preview_focus: cx.focus_handle(),
             md_mode,
             md_split,
             md_split_dragging: false,
-            md_split_bounds: Rc::default(),
-            md_split_sync: files_split::Sync::default(),
             git: HashMap::new(),
             git_repos: HashMap::new(),
             git_summary: None,
@@ -477,11 +468,8 @@ impl Shell {
             git_repo_query: Input::default(),
             git_repo_query_focus: cx.focus_handle(),
             git_files_scroll: UniformListScrollHandle::new(),
-            git_diff_list: ListState::new(0, ListAlignment::Top, px(theme::GIT_DIFF_OVERDRAW)),
-            git_diff_layout: Cell::new(None),
-            git_diff_looks: Cell::new(None),
-            git_diff_scroll_to: Cell::new(None),
-            git_diff_reveal: Cell::new(None),
+            diff_views: HashMap::new(),
+            diff_drawn: false,
             diff_mode,
             diff_wrap,
             features,
@@ -881,11 +869,14 @@ impl Shell {
             .into_iter()
             .filter_map(|(id, docs)| Some((id, docs.into_draft()?)))
             .collect();
-        // Unsaved Files text outlives the connection: Save writes it with the old hash (§8).
-        self.files = std::mem::take(&mut self.files)
+        // Unsaved file text outlives the connection: Save writes it with the old hash (§8).
+        self.documents = std::mem::take(&mut self.documents)
             .into_iter()
-            .filter_map(|(id, view)| Some((id, view.into_unsaved()?)))
+            .filter_map(|(id, docs)| Some((id, docs.into_unsaved()?)))
             .collect();
+        self.doc_views.clear();
+        // The tree is read again.
+        self.files.clear();
         self.git = std::mem::take(&mut self.git)
             .into_iter()
             .filter_map(|(id, view)| Some((id, view.into_commit_draft()?)))
@@ -965,6 +956,8 @@ impl Shell {
                             let listed = shell.sidebar.projects();
                             let known = |id: &Ulid| listed.iter().any(|project| project.id == *id);
                             shell.files.retain(|id, _| known(id));
+                            shell.documents.retain(|id, _| known(id));
+                            shell.doc_views.retain(|(id, _), _| known(id));
                             shell.docs.retain(|id, _| known(id));
                             shell.git.retain(|id, _| known(id));
                         }
@@ -1207,6 +1200,7 @@ impl Shell {
             sidebar: self.sidebar_layout.mode(),
             modal: self.modal_open(),
             all_board: self.all_board_shown(),
+            diff: self.diff_on_screen(),
         }
     }
 

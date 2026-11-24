@@ -86,26 +86,67 @@ impl Shell {
         }
     }
 
-    /// A file tree row dropped on `session`'s pane (§20B.5, ADR 0081): `composer.file_ref`
-    /// on an agent, the bare relative path on a shell.
-    pub(crate) fn drop_tree_path(
+    /// Files dropped from the OS on a file or diff pane or on the tab strip (§20B.5): each file
+    /// inside the workspace root or the notes folder opens as a new tab; one toast says that
+    /// the others do not; folders are skipped.
+    /// In a machine window these files are on this computer, not on the machine: refused.
+    pub(crate) fn drop_os_files(
         &mut self,
-        session: Ulid,
-        dragged: &DraggedPath,
+        project_id: Ulid,
+        paths: &ExternalPaths,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let agent = (self.sidebar.sessions().iter())
-            .any(|s| s.id == session && s.kind == SessionKind::Agent);
-        // A missing or broken settings file types the default form (the daemon reports it).
-        let template = mkrew_core::settings::load(&self.settings_file)
-            .unwrap_or_default()
-            .composer
-            .file_ref;
-        let text = composer::dropped_ref(&template, &dragged.path, dragged.is_dir, agent);
-        self.type_into_pane(session, &text, window, cx);
+        if self.modal_open() {
+            return;
+        }
+        if let Some(name) = self.machine_name().map(str::to_owned) {
+            self.toast_info(mkrew_ui::machines::local_files_refused(&name), cx);
+            return;
+        }
+        let Some(root) = (self.sidebar.projects().iter())
+            .find(|project| project.id == project_id)
+            .map(|project| PathBuf::from(&project.path))
+        else {
+            return;
+        };
+        let files: Vec<PathBuf> = (paths.paths().iter())
+            .filter(|path| !path.is_dir())
+            .cloned()
+            .collect();
+        let notes = self.notes_folder();
+        let found = mkrew_ui::drop_zone::classify_os_files(&root, notes.as_deref(), &files);
+        if found.refused > 0 {
+            self.toast_error(mkrew_ui::drop_zone::REFUSED_OS_FILES, cx);
+        }
+        for path in found.open {
+            self.open_document(
+                project_id,
+                FileKey::project(path),
+                None,
+                mkrew_ui::documents::Place::NewTab,
+                window,
+                cx,
+            );
+        }
     }
 
+    /// The absolute `[notes] folder` the daemon reads and writes files in (`fs.read` / `fs.write`
+    /// accept absolute paths inside it); `None` while the folder is empty, relative or unusable.
+    /// A folder inside the workspace root is returned too: `classify_os_files` lets the root win,
+    /// so those files open by their relative path. OS drops are local files, so this is the
+    /// local `settings.toml`; a remote machine's daemon has its own `[notes] folder`, and
+    /// `drop_os_files` refuses OS drops in a machine window before it asks.
+    fn notes_folder(&self) -> Option<PathBuf> {
+        let setting = mkrew_core::settings::load(&self.settings_file)
+            .ok()?
+            .notes
+            .folder;
+        match mkrew_core::notes::folder(&setting) {
+            Ok(mkrew_core::notes::NotesFolder::Absolute(folder)) => Some(folder),
+            _ => None,
+        }
+    }
     /// Types a drop into `session`'s pane: into its composer draft while the composer is
     /// shown, else into the terminal; no Enter either way. A modal dialog covers the panes,
     /// so a drop on it types nothing.
@@ -149,7 +190,7 @@ impl Shell {
         })
     }
 
-    /// Ctrl+Click on a terminal link: a URL opens in the browser, a file in the Editor view.
+    /// Ctrl+Click on a terminal link: a URL opens in the browser, a file as a file tab.
     pub(crate) fn open_terminal_link(
         &mut self,
         session: Ulid,
@@ -175,9 +216,9 @@ impl Shell {
         }
     }
 
-    /// Shows `path` of the files on `target` (the project, or a task worktree) with the
-    /// caret on `line`. Another target starts the view over, so unsaved tabs are asked about
-    /// first (as the chooser does).
+    /// Shows `path` of the files on `target` (the project, or a task worktree) as a file tab
+    /// with the caret on `line`. The file is of that folder for good (`FileKey::task`); the
+    /// Files tree follows it.
     pub(crate) fn open_file_at(
         &mut self,
         project_id: Ulid,
@@ -187,51 +228,33 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.files_view(project_id).worktree_task_id != target {
-            let unsaved = self.files_view(project_id).unsaved_paths();
-            if !unsaved.is_empty() {
-                let again: AfterSave = Box::new(move |shell, window, cx| {
-                    shell.open_file_at(project_id, target, path, line, window, cx);
-                });
-                return self.leave_files(project_id, unsaved, again, window, cx);
-            }
-            self.set_files_target(project_id, target, window, cx);
-        }
-        self.reveal_file(project_id, target, path, line, Open::Transient, window, cx);
+        self.set_files_target(project_id, target, window, cx);
+        self.reveal_file(project_id, target, path.clone(), window, cx);
+        self.open_document(
+            project_id,
+            FileKey::new(path, target),
+            line.map(|line| (line, 1)),
+            documents::Place::NewTab,
+            window,
+            cx,
+        );
     }
 
-    /// Puts the caret on the line a link asked for and scrolls there, once the file is shown
-    /// (after `reveal` when it already was, after the read otherwise).
-    pub(crate) fn show_pending_line(&mut self, project_id: Ulid, target: Option<Ulid>) {
-        if let Some(line) = (self.files_at(project_id, target))
-            .and_then(|view| view.tab_mut()?.apply_pending_line())
-        {
-            self.file_code_scroll
-                .scroll_to_item(line, ScrollStrategy::Center);
-        }
-    }
-
-    /// Shows `path` in the Editor view of `project_id` (its folders open, the cursor lands on
-    /// it, its tab shows).
-    #[allow(clippy::too_many_arguments)] // The open's target, file, line and kind.
+    /// Shows `path` in the tree of `project_id` (its folders open, the cursor lands on it). It
+    /// does not open the file.
     pub(crate) fn reveal_file(
         &mut self,
         project_id: Ulid,
         target: Option<Ulid>,
         path: String,
-        line: Option<u32>,
-        how: Open,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.workspace != Some(project_id) {
-            self.activate_workspace(project_id, window, cx);
-        }
         // Revealed only while the tree still shows the folder that was searched.
         let Some(view) = self.files_at(project_id, target) else {
             return;
         };
-        let requests = view.reveal(&path, line, how);
+        let requests = view.reveal(&path);
         let at = view.rows().iter().position(
             |row| matches!(row, files_view::Row::Entry { entry, .. } if entry.path == path),
         );
@@ -240,10 +263,6 @@ impl Shell {
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
         self.files_requests(project_id, requests, window, cx);
-        self.file_tab_shown(project_id, None, window, cx);
-        // The tab exists now; also when the Editor was already stored, the editor gets the
-        // keyboard back from the closed dialog.
-        self.show_view(View::Editor, window, cx);
     }
 
     /// The command palette (Ctrl+Shift+P) on All: the commands that can act where the keyboard
@@ -317,25 +336,20 @@ impl Shell {
             workspace: workspace.is_some(),
             view,
             workspaces: self.sidebar.projects().len(),
-            tabs: match (window_key, workspace, view) {
-                (Some(key), _, _) => self.detached.tabs_of(key).len(),
-                (None, Some(id), View::Editor) => {
-                    self.files.get(&id).map_or(0, |view| view.tabs().len())
-                }
-                (None, Some(id), _) => self.tabs.get(&id).map_or(0, |tabs| {
+            tabs: match (window_key, workspace) {
+                (Some(key), _) => self.detached.tabs_of(key).len(),
+                (None, Some(id)) => self.tabs.get(&id).map_or(0, |tabs| {
                     let main = |tab: &&Tab| self.terminal_host(id, tab.id) == HostId::Main;
                     tabs.tabs().iter().filter(main).count()
                 }),
-                (None, None, _) => 0,
+                (None, None) => 0,
             },
-            file_tabs: workspace.map_or(0, |id| {
-                self.files.get(&id).map_or(0, |view| view.tabs().len())
-            }),
+            file_pane: self.focused_file(window).is_some(),
             file_tree: self.file_tree_shown(),
             terminal: terminal.is_some(),
             discard,
             git: self.git_shown(),
-            diff: workspace.is_some_and(|id| self.diff_open(id)),
+            diff_pane: self.focused_diff(window).is_some(),
             worktree_task,
             task_changes,
             fan_out,
@@ -1093,7 +1107,7 @@ impl Shell {
     /// activating that window. Files, checkouts and commits all live in the main window (the
     /// Editor and Git views, the title bar summary), also when a detached window's palette
     /// picked them.
-    fn in_main_window(
+    pub(crate) fn in_main_window(
         &mut self,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -1108,7 +1122,7 @@ impl Shell {
         });
     }
 
-    /// Files and Search picks: the file in the Editor view (its folders open, the cursor lands
+    /// Files and Search picks: the file in a file pane (its folders open, the cursor lands
     /// on it), the caret on `line` for a search hit. A detached window's pick opens in the
     /// main one.
     fn open_palette_file(

@@ -10,8 +10,10 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
-use crate::board::View;
-use crate::split::{Axis, Direction, Divider, Node, Preset, RESIZE_STEP, Rect};
+use crate::documents::{self, Doc, Documents};
+use crate::split::{
+    Axis, Direction, Divider, Edge, Leaf, Node, PaneKey, Preset, RESIZE_STEP, Rect,
+};
 
 /// Title of a workspace's first tab; later ones are numbered.
 pub const FIRST_TAB_TITLE: &str = "Terminal";
@@ -26,9 +28,9 @@ pub struct Tab {
     /// `None` = a tab without panes. Private so every change goes through `write()`.
     layout: Option<Node>,
     /// Local only (not persisted): the pane keyboard input goes to.
-    focused: Option<Ulid>,
+    focused: Option<PaneKey>,
     /// Local only: the pane filling the whole tab (zoom); always the focused pane.
-    zoomed: Option<Ulid>,
+    zoomed: Option<PaneKey>,
     /// Layouts sent with `tab.set_layout`, oldest first, whose `tab.updated` echo has not
     /// arrived yet. While any are pending the local layout is the newest one, so layouts in
     /// other `tab.updated` events (renames, moves, older echoes) are not applied.
@@ -59,38 +61,46 @@ impl Tab {
         self.layout.as_ref()
     }
 
-    pub fn focused(&self) -> Option<Ulid> {
-        self.focused
+    pub fn focused(&self) -> Option<&PaneKey> {
+        self.focused.as_ref()
     }
 
-    pub fn zoomed(&self) -> Option<Ulid> {
-        self.zoomed
+    pub fn zoomed(&self) -> Option<&PaneKey> {
+        self.zoomed.as_ref()
     }
 
+    /// The focused pane's session; `None` when a file or the diff has the focus.
+    pub fn focused_session(&self) -> Option<Ulid> {
+        self.focused.as_ref()?.session()
+    }
+
+    /// Every pane in tree order, files and the diff included.
+    pub fn keys(&self) -> Vec<PaneKey> {
+        self.layout.as_ref().map(Node::keys).unwrap_or_default()
+    }
+
+    /// The session panes only, in tree order.
     pub fn sessions(&self) -> Vec<Ulid> {
         self.layout.as_ref().map(Node::sessions).unwrap_or_default()
     }
 
-    /// Sessions on screen: the zoomed pane alone, else every pane.
-    pub fn shown(&self) -> Vec<Ulid> {
-        match self.zoomed {
-            Some(session) => vec![session],
-            None => self.sessions(),
+    /// Panes on screen: the zoomed pane alone, else every pane.
+    pub fn shown(&self) -> Vec<PaneKey> {
+        match &self.zoomed {
+            Some(key) => vec![key.clone()],
+            None => self.keys(),
         }
     }
 
+    /// Sessions on screen: the sessions among [`Self::shown`] (the ones to attach).
+    pub fn shown_sessions(&self) -> Vec<Ulid> {
+        self.shown().iter().filter_map(PaneKey::session).collect()
+    }
+
     /// Area of each pane on screen: the zoomed pane fills the tab.
-    pub fn rects(&self) -> Vec<(Ulid, Rect)> {
-        match (self.zoomed, &self.layout) {
-            (Some(session), _) => vec![(
-                session,
-                Rect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: 1.0,
-                    h: 1.0,
-                },
-            )],
+    pub fn rects(&self) -> Vec<(PaneKey, Rect)> {
+        match (&self.zoomed, &self.layout) {
+            (Some(key), _) => vec![(key.clone(), Rect::WHOLE)],
             (None, Some(node)) => node.rects(),
             (None, None) => Vec::new(),
         }
@@ -98,23 +108,21 @@ impl Tab {
 
     /// Dividers drawn over the panes; none while a pane is zoomed.
     pub fn dividers(&self) -> Vec<Divider> {
-        match (self.zoomed, &self.layout) {
+        match (&self.zoomed, &self.layout) {
             (None, Some(node)) => node.dividers(),
             _ => Vec::new(),
         }
     }
 
-    pub fn contains(&self, session: Ulid) -> bool {
-        self.layout
-            .as_ref()
-            .is_some_and(|node| node.contains(session))
+    pub fn contains(&self, key: &PaneKey) -> bool {
+        self.layout.as_ref().is_some_and(|node| node.contains(key))
     }
 
     /// Keeps the focus on a pane of the tab: the first pane if it was lost. A zoom ends when
     /// the focus leaves the zoomed pane.
     fn fix_focus(&mut self) {
-        if !self.focused.is_some_and(|id| self.contains(id)) {
-            self.focused = self.sessions().first().copied();
+        if !self.focused.as_ref().is_some_and(|key| self.contains(key)) {
+            self.focused = self.keys().into_iter().next();
         }
         if self.zoomed != self.focused {
             self.zoomed = None;
@@ -163,8 +171,8 @@ impl Tabs {
             .map(|wire| {
                 let mut tab = Tab::from_wire(wire);
                 if let Some(previous) = old.iter().find(|old| old.id == tab.id) {
-                    tab.focused = previous.focused;
-                    tab.zoomed = previous.zoomed;
+                    tab.focused = previous.focused.clone();
+                    tab.zoomed = previous.zoomed.clone();
                     tab.fix_focus();
                 }
                 tab
@@ -250,7 +258,14 @@ impl Tabs {
 
     /// The tab whose layout holds `session`.
     pub fn tab_of(&self, session: Ulid) -> Option<&Tab> {
-        self.tabs.iter().find(|tab| tab.contains(session))
+        self.tab_with(&PaneKey::Session(session))
+    }
+
+    /// The tab whose layout holds `key`, of any kind. One workspace holds a file or the diff
+    /// in at most one tab (ADR 0108), main window and detached windows alike: they all draw
+    /// from this one `Tabs`.
+    pub fn tab_with(&self, key: &PaneKey) -> Option<&Tab> {
+        self.tabs.iter().find(|tab| tab.contains(key))
     }
 
     /// The mode saved for `session`'s pane (see [`Node::chat_of`]).
@@ -406,20 +421,20 @@ impl Tabs {
             .collect()
     }
 
-    /// Sessions shown on screen: the panes of the active tab (only the zoomed one while a pane
-    /// is zoomed). All others stay detached.
+    /// Sessions shown on screen: the session panes of the active tab (only the zoomed one
+    /// while a pane is zoomed). All others stay detached.
     pub fn visible(&self) -> Vec<Ulid> {
-        self.active().map(Tab::shown).unwrap_or_default()
+        self.active().map(Tab::shown_sessions).unwrap_or_default()
     }
 
-    /// Activates the tab holding `session` and focuses its pane; false if no tab holds it.
-    pub fn focus(&mut self, session: Ulid) -> bool {
-        let Some(tab_id) = self.tab_of(session).map(|tab| tab.id) else {
+    /// Activates the tab holding `key` and focuses its pane; false if no tab holds it.
+    pub fn focus(&mut self, key: &PaneKey) -> bool {
+        let Some(tab_id) = self.tab_with(key).map(|tab| tab.id) else {
             return false;
         };
         self.active = Some(tab_id);
         if let Some(tab) = self.tab_mut(tab_id) {
-            tab.focused = Some(session);
+            tab.focused = Some(key.clone());
             tab.fix_focus();
         }
         true
@@ -438,12 +453,12 @@ impl Tabs {
         Some(result)
     }
 
-    /// Focuses `session`'s pane in `tab_id` without making that tab active.
-    pub fn focus_pane(&mut self, tab_id: Ulid, session: Ulid) -> bool {
-        let Some(tab) = self.tab_mut(tab_id).filter(|tab| tab.contains(session)) else {
+    /// Focuses `key`'s pane in `tab_id` without making that tab active.
+    pub fn focus_pane(&mut self, tab_id: Ulid, key: &PaneKey) -> bool {
+        let Some(tab) = self.tab_mut(tab_id).filter(|tab| tab.contains(key)) else {
             return false;
         };
-        tab.focused = Some(session);
+        tab.focused = Some(key.clone());
         tab.fix_focus();
         true
     }
@@ -469,15 +484,16 @@ impl Tabs {
         let Some(tab) = self.active_mut() else {
             return false;
         };
-        let next = match (&tab.layout, tab.focused) {
+        let next = match (&tab.layout, &tab.focused) {
             (Some(node), Some(from)) => node.neighbour(from, direction),
             _ => None,
         };
-        if next.is_some() {
-            tab.focused = next;
-            tab.fix_focus();
-        }
-        next.is_some()
+        let Some(next) = next else {
+            return false;
+        };
+        tab.focused = Some(next);
+        tab.fix_focus();
+        true
     }
 
     /// Zooms the focused pane of the active tab to fill it, or ends the zoom. UI-only (not
@@ -490,10 +506,10 @@ impl Tabs {
             tab.zoomed = None;
             return true;
         }
-        if tab.sessions().len() < 2 {
+        if tab.keys().len() < 2 {
             return false;
         }
-        tab.zoomed = tab.focused;
+        tab.zoomed = tab.focused.clone();
         tab.zoomed.is_some()
     }
 
@@ -504,7 +520,7 @@ impl Tabs {
         if tab.zoomed.is_some() {
             return None;
         }
-        let focused = tab.focused?;
+        let focused = tab.focused.as_ref()?;
         if !tab.layout.as_mut()?.resize(focused, direction, RESIZE_STEP) {
             return None;
         }
@@ -553,17 +569,18 @@ impl Tabs {
             return None;
         }
         let tab = self.active_mut()?;
-        match (&mut tab.layout, tab.focused) {
+        let leaf = Node::Leaf(Leaf::Session { session: new, chat });
+        match (&mut tab.layout, &tab.focused) {
             (Some(node), Some(target)) => {
-                if !node.split_with(target, axis, Node::Pane { session: new, chat }) {
+                if !node.split_with(target, axis, leaf) {
                     return None;
                 }
             }
-            (layout @ None, _) => *layout = Some(Node::Pane { session: new, chat }),
+            (layout @ None, _) => *layout = Some(leaf),
             // `fix_focus` keeps a pane focused whenever the tab has one.
             (Some(_), None) => return None,
         }
-        tab.focused = Some(new);
+        tab.focused = Some(PaneKey::Session(new));
         tab.fix_focus();
         Some(tab.write())
     }
@@ -593,27 +610,30 @@ impl Tabs {
         writes
     }
 
-    /// Moves the pane of `session` next to the pane of `target` (right of it along
-    /// `Axis::Vertical`, below along `Horizontal`), within its tab or from another one. The
-    /// moved pane is focused and its new tab activated. Returns the writes, the source tab's
-    /// first when it differs; `None` if nothing moves (the same pane, or either is in no tab).
+    /// Moves the pane of `key` next to the pane of `target` on `edge` (the moved leaf takes that
+    /// half of the target), within its tab or from another one. The whole leaf travels: a file
+    /// keeps its Markdown mode, a session its chat flag; a dragged preview file is kept (it is
+    /// no longer the preview tab, spec 2026-11-23 section 6.1). The moved pane is
+    /// focused and its new tab activated. Returns the writes, the source tab's first when it
+    /// differs; `None` if nothing moves (the same pane, or either is in no tab).
     pub fn move_pane(
         &mut self,
-        session: Ulid,
-        target: Ulid,
-        axis: Axis,
+        key: &PaneKey,
+        target: &PaneKey,
+        edge: Edge,
     ) -> Option<Vec<TabSetLayoutParams>> {
-        let from = self.tab_of(session)?.id;
-        let to = self.tab_of(target)?.id;
-        if session == target {
+        if key == target {
             return None;
         }
-        let chat = self.chat_of(session);
+        let from = self.tab_with(key)?.id;
+        let to = self.tab_with(target)?.id;
+        let mut leaf = self.tab(from)?.layout.as_ref()?.leaf_of(key)?.clone();
+        documents::keep_leaf(&mut leaf);
         let mut writes = Vec::new();
         let source = self.tab_mut(from)?;
-        let closed = source.layout.take()?.close(session);
+        let closed = source.layout.take()?.close(key);
         source.layout = closed.remaining;
-        if source.focused == Some(session) {
+        if source.focused.as_ref() == Some(key) {
             source.focused = closed.focus;
         }
         source.fix_focus();
@@ -621,11 +641,11 @@ impl Tabs {
             writes.push(source.write());
         }
         let tab = self.tab_mut(to)?;
-        // `target` is still in the tab (it is not `session`), which no longer holds `session`.
+        // `target` is still in the tab (it is not `key`), which no longer holds `key`.
         let placed = (tab.layout.as_mut())
-            .is_some_and(|node| node.split_with(target, axis, Node::Pane { session, chat }));
+            .is_some_and(|node| node.insert_at(target, edge, Node::Leaf(leaf)));
         debug_assert!(placed, "the moved pane always fits next to its target");
-        tab.focused = Some(session);
+        tab.focused = Some(key.clone());
         tab.fix_focus();
         writes.push(tab.write());
         self.active = Some(to);
@@ -635,22 +655,29 @@ impl Tabs {
     /// Moves every pane of tab `source` next to the pane of `target` in another tab (as
     /// [`Self::move_pane`]), keeping their layout; `source` is left without panes, for the
     /// caller to close once both writes are saved. The target tab is activated with the first
-    /// moved pane focused. Returns the writes, the target tab's first; `None` if nothing moves
+    /// moved pane focused. A preview file among them is kept, as in [`Self::move_pane`].
+    /// Returns the writes, the target tab's first; `None` if nothing moves
     /// (`target` is in `source` or in no tab, or `source` has no panes).
     pub fn merge_tab(
         &mut self,
         source: Ulid,
-        target: Ulid,
-        axis: Axis,
+        target: &PaneKey,
+        edge: Edge,
     ) -> Option<[TabSetLayoutParams; 2]> {
-        let to = self.tab_of(target)?.id;
+        let to = self.tab_with(target)?.id;
         if to == source {
             return None;
         }
-        let moved = self.tab(source)?.layout.clone()?;
-        let first = *moved.sessions().first()?;
+        let mut moved = self.tab(source)?.layout.clone()?;
+        let keys = moved.keys();
+        for key in &keys {
+            if let Some(leaf) = moved.leaf_mut(key) {
+                documents::keep_leaf(leaf);
+            }
+        }
+        let first = keys.into_iter().next()?;
         let tab = self.tab_mut(to)?;
-        if !tab.layout.as_mut()?.split_with(target, axis, moved) {
+        if !tab.layout.as_mut()?.insert_at(target, edge, moved) {
             return None;
         }
         tab.focused = Some(first);
@@ -664,10 +691,34 @@ impl Tabs {
         Some([placed, emptied])
     }
 
+    /// Pane `key` leaves its tab, whole leaf (chat flag, Markdown mode; a preview file is
+    /// kept), for the empty tab `into`, where it becomes the root and takes the focus: a pane
+    /// dragged onto the tab strip gets a tab of its own. Returns the writes, `into`'s first, then the source's, so
+    /// a failure between them duplicates the pane rather than losing it.
+    /// `None`, nothing changed, if no tab holds `key`, `into` is missing, is the source or has
+    /// panes, or `key` is the only pane of its tab.
+    pub fn move_to_empty_tab(
+        &mut self,
+        key: &PaneKey,
+        into: Ulid,
+    ) -> Option<[TabSetLayoutParams; 2]> {
+        let source = self.tab_with(key)?;
+        if source.id == into || source.keys().len() < 2 || self.tab(into)?.layout().is_some() {
+            return None;
+        }
+        let mut leaf = source.layout()?.leaf_of(key)?.clone();
+        documents::keep_leaf(&mut leaf);
+        let out = self.close_leaf(key)?;
+        // `into` exists and is empty (checked above), so this cannot refuse.
+        let inn = self.insert_leaf(into, None, Edge::Right, leaf)?;
+        Some([inn, out])
+    }
+
     /// Lays tab `tab_id` out as `preset` (SPEC §10 layouts): its panes keep their tree
-    /// order, then come the `new` sessions it does not show yet. `None` (nothing changes)
-    /// unless that makes exactly the preset's panes, or when a new session is shown in
-    /// another tab. A zoom ends; the focus stays.
+    /// order, whole (a file keeps its Markdown mode, a session its chat flag), then come the
+    /// `new` sessions it does not show yet. `None` (nothing changes) unless that makes
+    /// exactly the preset's panes, or when a new session is shown in another tab. A zoom
+    /// ends; the focus stays.
     pub fn arrange(
         &mut self,
         tab_id: Ulid,
@@ -681,45 +732,121 @@ impl Tabs {
             return None;
         }
         let tab = self.tab_mut(tab_id)?;
-        let mut sessions = tab.sessions();
+        let mut leaves = tab.layout.as_ref().map(Node::leaves).unwrap_or_default();
         for id in new {
-            if !sessions.contains(id) {
-                sessions.push(*id);
+            let key = PaneKey::Session(*id);
+            if !leaves.iter().any(|leaf| leaf.has_key(&key)) {
+                leaves.push(Leaf::session(*id));
             }
         }
-        let kept: Vec<(Ulid, bool)> = sessions
-            .iter()
-            .filter_map(|id| {
-                let chat = tab.layout.as_ref()?.chat_of(*id)?;
-                Some((*id, chat))
-            })
-            .collect();
-        let mut built = preset.build(&sessions)?;
-        for (id, chat) in kept {
-            built.set_chat(id, Some(chat));
-        }
-        tab.layout = Some(built);
+        tab.layout = Some(preset.build(&leaves)?);
         tab.zoomed = None;
         tab.fix_focus();
         Some(tab.write())
     }
 
-    /// Removes the pane of `session` from whichever tab holds it; focus moves to the pane that
-    /// took its place. `None` if no tab holds it.
-    pub fn close_pane(&mut self, session: Ulid) -> Option<TabSetLayoutParams> {
-        let tab_id = self.tab_of(session)?.id;
+    /// Removes the pane of `key` from whichever tab holds it; focus moves to the pane that
+    /// took its place. `None` if no tab holds it. A tab left without panes stays (the caller
+    /// closes it).
+    pub fn close_leaf(&mut self, key: &PaneKey) -> Option<TabSetLayoutParams> {
+        let tab_id = self.tab_with(key)?.id;
         let tab = self.tab_mut(tab_id)?;
-        let closed = tab.layout.take()?.close(session);
+        let closed = tab.layout.take()?.close(key);
         tab.layout = closed.remaining;
-        if tab.focused == Some(session) {
+        if tab.focused.as_ref() == Some(key) {
             tab.focused = closed.focus;
         }
         tab.fix_focus();
         Some(tab.write())
     }
 
+    /// Places `leaf` in `tab_id` on `edge` of the pane of `target` (the new leaf takes that
+    /// half), or, with no `target`, as the root of an empty tab, and focuses it. The tab is not
+    /// activated. `None` (nothing changes) if the workspace already holds the leaf's key in
+    /// any tab (a file or the diff has one pane per workspace, ADR 0108), the tab is unknown,
+    /// `target` is not in that tab, or a root is placed in a tab that has panes.
+    pub fn insert_leaf(
+        &mut self,
+        tab_id: Ulid,
+        target: Option<&PaneKey>,
+        edge: Edge,
+        leaf: Leaf,
+    ) -> Option<TabSetLayoutParams> {
+        let key = leaf.key();
+        if self.tab_with(&key).is_some() {
+            return None;
+        }
+        let tab = self.tab_mut(tab_id)?;
+        let node = Node::Leaf(leaf);
+        match (target, &mut tab.layout) {
+            (Some(target), Some(root)) => {
+                if !root.insert_at(target, edge, node) {
+                    return None;
+                }
+            }
+            (None, layout @ None) => *layout = Some(node),
+            _ => return None,
+        }
+        tab.focused = Some(key);
+        tab.fix_focus();
+        Some(tab.write())
+    }
+
+    /// Changes the leaf of `key` with `change` (a Markdown mode, a preview flag, a chat flag):
+    /// the write to send, `None` when no tab holds it or `change` left it as it was. A `change`
+    /// that would change which pane the leaf is (its key) is refused: the leaf stays as it was
+    /// and nothing is written.
+    pub fn update_leaf(
+        &mut self,
+        key: &PaneKey,
+        change: impl FnOnce(&mut Leaf),
+    ) -> Option<TabSetLayoutParams> {
+        let tab_id = self.tab_with(key)?.id;
+        let tab = self.tab_mut(tab_id)?;
+        let leaf = tab.layout.as_mut()?.leaf_mut(key)?;
+        let before = leaf.clone();
+        change(leaf);
+        if !leaf.has_key(key) {
+            *leaf = before;
+            return None;
+        }
+        let changed = *leaf != before;
+        changed.then(|| tab.write())
+    }
+
+    /// The tab that holds the workspace's preview file (the leaf with `preview` set), which
+    /// the next single click in the Files tree replaces.
+    pub fn preview_tab(&self) -> Option<&Tab> {
+        self.tabs.iter().find(|tab| {
+            (tab.layout.as_ref()).is_some_and(|node| {
+                node.any_leaf(|leaf| matches!(leaf, Leaf::File { preview: true, .. }))
+            })
+        })
+    }
+
+    /// The `position` for a new (unpinned) tab that opens right after the active one: the
+    /// midpoint between the active tab and the next tab (as [`Self::move_tab`] places a tab),
+    /// or one past it when the active tab is last. While the active tab is pinned, the new
+    /// tab goes first among the unpinned tabs: their first position - 1.0, or 1.0 when there
+    /// is none. `None` without tabs.
+    pub fn position_after_active(&self) -> Option<f64> {
+        let active = self.active()?;
+        if active.pinned {
+            let first = self.tabs.iter().find(|tab| !tab.pinned);
+            return Some(first.map_or(1.0, |tab| tab.position - 1.0));
+        }
+        let next = (self.tabs.iter())
+            .skip_while(|tab| tab.id != active.id)
+            .nth(1);
+        Some(match next {
+            Some(next) => (active.position + next.position) / 2.0,
+            None => active.position + 1.0,
+        })
+    }
+
     /// Removes panes whose session `keep` rejects (e.g. sessions the daemon no longer knows)
-    /// and returns the layout writes to send.
+    /// and returns the layout writes to send. Files and the diff are not sessions: they stay,
+    /// and so does a tab that holds one.
     pub fn prune(&mut self, keep: impl Fn(Ulid) -> bool) -> Vec<TabSetLayoutParams> {
         let mut writes = Vec::new();
         for tab in &mut self.tabs {
@@ -731,7 +858,7 @@ impl Tabs {
                 tab.layout = tab
                     .layout
                     .take()
-                    .and_then(|node| node.close(session).remaining);
+                    .and_then(|node| node.close(&PaneKey::Session(session)).remaining);
             }
             tab.fix_focus();
             writes.push(tab.write());
@@ -760,7 +887,7 @@ impl Tabs {
 /// The session an empty active tab shows: the newest live session of the workspace that is in
 /// no tab yet. `None` if the active tab has panes (or there is no active tab).
 pub fn newest_unplaced(tabs: &Tabs, sessions: &[Session]) -> Option<Ulid> {
-    if tabs.active().is_none() || !tabs.visible().is_empty() {
+    if tabs.active()?.layout().is_some() {
         return None;
     }
     sessions
@@ -806,6 +933,10 @@ pub enum PaneIcon {
     Agent(String),
     Shell,
     Run,
+    /// A file pane; its stored path (the caller draws the file icon).
+    File(String),
+    /// The diff pane.
+    Diff,
 }
 
 /// What a tab chip shows in front of its title.
@@ -845,10 +976,15 @@ pub fn tab_icons(tab: &Tab, sessions: &[Session], active: bool) -> TabIcons {
         _ if mkrew_core::run::command_name(s).is_some() => PaneIcon::Run,
         _ => PaneIcon::Shell,
     };
+    let pane_icon = |key: &PaneKey| match key {
+        PaneKey::Session(id) => known(id).map(icon),
+        PaneKey::File(file) => Some(PaneIcon::File(file.path.clone())),
+        PaneKey::Diff => Some(PaneIcon::Diff),
+    };
     let mut panes: Vec<PaneIcon> = if active {
-        ids.iter().filter_map(known).map(icon).collect()
+        tab.keys().iter().filter_map(pane_icon).collect()
     } else {
-        tab.focused().iter().filter_map(known).map(icon).collect()
+        tab.focused().into_iter().filter_map(pane_icon).collect()
     };
     let more = panes.len().saturating_sub(MAX_PANE_ICONS);
     panes.truncate(MAX_PANE_ICONS);
@@ -870,16 +1006,55 @@ fn has_default_title(tab: &Tab) -> bool {
     }
 }
 
-/// The session title a tab shows instead of its own: the title of its focused pane (no pane
-/// header shows a title), while the tab keeps its default `Terminal` / `Terminal N` name. A
-/// name the user gave the tab always wins. It follows the focus; `None` for a tab without
-/// panes or a focused pane without a title.
+/// The session title a tab shows instead of its own: the title of its focused session pane (a
+/// focused file or the diff shows its own title from Task 4 / 5 on; no pane header shows a
+/// title), while the tab keeps its default `Terminal` / `Terminal N` name. A name the user gave
+/// the tab always wins. It follows the focus; `None` for a tab without session panes or a
+/// focused pane without a title.
 pub fn session_label<'a>(tab: &Tab, sessions: &'a [Session]) -> Option<&'a str> {
-    let focused = tab.focused().filter(|_| has_default_title(tab))?;
+    let focused = tab.focused_session().filter(|_| has_default_title(tab))?;
     sessions
         .iter()
         .find(|s| s.id == focused)
         .and_then(crate::history::title)
+}
+
+/// The title a tab shows while its focused pane is the diff and it keeps its default name (a
+/// name the user gave the tab always wins), like [`session_label`].
+pub fn diff_label(tab: &Tab) -> Option<&'static str> {
+    (tab.focused() == Some(&PaneKey::Diff) && has_default_title(tab)).then_some("Diff")
+}
+
+/// What a tab chip shows for a focused file pane: its name, a dot while it has unsaved text,
+/// italics while it is the preview tab (SPEC §5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileLabel {
+    pub name: String,
+    pub dirty: bool,
+    pub preview: bool,
+}
+
+/// The file label of `tab`: its focused pane is a file and the tab keeps its default name (a
+/// name the user gave the tab always wins, as for [`session_label`]).
+pub fn file_label(tab: &Tab, docs: Option<&Documents>) -> Option<FileLabel> {
+    if !has_default_title(tab) {
+        return None;
+    }
+    let key = tab.focused()?;
+    let PaneKey::File(file) = key else {
+        return None;
+    };
+    let preview = matches!(
+        tab.layout()?.leaf_of(key),
+        Some(Leaf::File { preview: true, .. })
+    );
+    Some(FileLabel {
+        name: (file.path.rsplit('/').next().unwrap_or(&file.path)).to_owned(),
+        dirty: docs
+            .and_then(|docs| docs.get(file))
+            .is_some_and(Doc::is_dirty),
+        preview,
+    })
 }
 
 /// The pane a double-click on `tab` renames (SPEC §11): its focused pane while the tab keeps
@@ -887,7 +1062,7 @@ pub fn session_label<'a>(tab: &Tab, sessions: &'a [Session]) -> Option<&'a str> 
 /// itself: a name the user gave it, a tab without panes, or a focused run pane (named by its
 /// command, never renamed).
 pub fn double_click_renames(tab: &Tab, sessions: &[Session]) -> Option<Ulid> {
-    let focused = tab.focused().filter(|_| has_default_title(tab))?;
+    let focused = tab.focused_session().filter(|_| has_default_title(tab))?;
     let session = sessions.iter().find(|s| s.id == focused)?;
     mkrew_core::run::command_name(session)
         .is_none()
@@ -897,29 +1072,19 @@ pub fn double_click_renames(tab: &Tab, sessions: &[Session]) -> Option<Ulid> {
 /// One child of the title bar's tab area, in paint order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AreaItem {
-    /// The Editor or Diff chip.
-    View(View),
     /// The 1 px rule between two groups.
     Rule,
     /// The `n`th terminal tab this window draws (detached tabs are not counted).
     Tab(usize),
 }
 
-/// The children of the tab area: the Editor / Diff chips (each only while open), a rule, the
-/// tabs (`pinned[n]` is whether the `n`th drawn tab is pinned; pinned ones lead), and a rule
-/// between the pinned tabs and the rest. A rule only sits between two groups.
-pub fn area_items(editor: bool, diff: bool, pinned: &[bool]) -> Vec<AreaItem> {
-    let mut items = Vec::new();
-    if editor {
-        items.push(AreaItem::View(View::Editor));
-    }
-    if diff {
-        items.push(AreaItem::View(View::Diff));
-    }
+/// The children of the tab area: the tabs (`pinned[n]` is whether the `n`th drawn tab is
+/// pinned; pinned ones lead) and a rule between the pinned tabs and the rest. A rule only sits
+/// between two groups.
+pub fn area_items(pinned: &[bool]) -> Vec<AreaItem> {
+    let mut items = Vec::with_capacity(pinned.len() + 1);
     for (at, &pin) in pinned.iter().enumerate() {
-        let after_chips = at == 0 && !items.is_empty();
-        let after_pinned = at > 0 && pinned[at - 1] && !pin;
-        if after_chips || after_pinned {
+        if at > 0 && pinned[at - 1] && !pin {
             items.push(AreaItem::Rule);
         }
         items.push(AreaItem::Tab(at));
@@ -928,14 +1093,11 @@ pub fn area_items(editor: bool, diff: bool, pinned: &[bool]) -> Vec<AreaItem> {
 }
 
 /// The index in `items` of the child to scroll into view: the active tab (`active` is its
-/// drawn slot) while Terminals shows, else the chip of the shown view. `None` for Board and
-/// Docs, which are icons on the right.
-pub fn scroll_index(items: &[AreaItem], shown: View, active: Option<usize>) -> Option<usize> {
-    items.iter().position(|item| match *item {
-        AreaItem::View(view) => view == shown,
-        AreaItem::Tab(at) => shown == View::Terminals && active == Some(at),
-        AreaItem::Rule => false,
-    })
+/// drawn slot).
+pub fn scroll_index(items: &[AreaItem], active: Option<usize>) -> Option<usize> {
+    items
+        .iter()
+        .position(|item| matches!(item, AreaItem::Tab(at) if active == Some(*at)))
 }
 
 /// Sessions to attach (in `after` only) and to detach (in `before` only) when the visible

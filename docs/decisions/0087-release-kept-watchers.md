@@ -1,7 +1,7 @@
 # 0087 - Release kept file watchers, 5 s batch cap while an agent works
 
 - Date: 2026-10-28
-- Status: accepted
+- Status: accepted; amended by 0108 (worktree watchers of open file panes)
 - Milestone: none (perf review, B5)
 
 ## Context
@@ -36,3 +36,9 @@ Shell and run sessions do not count.
 - Watchers kept by an earlier UI run of the same daemon are not released either; the new UI only releases what it used itself.
 - A second UI window that still shows a released workspace would lose `git.changed` for it until its next request re-keeps it; revisit with a reference count if multiple windows arrive.
 - An old UI against the new daemon gets `version_mismatch` and asks to restart the daemon (SPEC §7).
+
+## Amended by 0108
+
+Files are panes of the tab's split tree (ADR 0108), and each open file keeps its own worktree.
+The UI now also keeps a worktree watcher while any file of that worktree is open in any tab or window of any workspace, shown or not.
+It releases the watcher when the last such file closes, unless the Files or Git view still shows that worktree.

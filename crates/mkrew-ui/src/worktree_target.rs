@@ -60,6 +60,40 @@ pub fn branch_line(task: &Task) -> Option<String> {
     Some(format!("⎇ {branch}"))
 }
 
+/// What names a file's worktree beside its path: the task's title (the chooser's chip), or
+/// "Removed worktree" when the task or its worktree is gone. `None` = the project folder, or
+/// no answer yet: while the task list is not `loaded` (or failed) a gone worktree cannot be told.
+pub fn label(
+    target: Option<Ulid>,
+    project_id: Ulid,
+    tasks: &[Task],
+    loaded: bool,
+) -> Option<String> {
+    let task_id = target.filter(|_| loaded)?;
+    Some(if exists(project_id, target, tasks) {
+        let task = tasks.iter().find(|task| task.id == task_id);
+        task.map_or_else(String::new, |task| task.title.clone())
+    } else {
+        "Removed worktree".to_owned()
+    })
+}
+
+/// The tab chip's tooltip title: `title`, then the file's worktree.
+pub fn with_worktree(title: &str, worktree: Option<&str>) -> String {
+    match worktree {
+        Some(worktree) => format!("{title} · {worktree}"),
+        None => title.to_owned(),
+    }
+}
+
+/// The unsaved-changes question's detail: the path, its worktree when it is not the project
+/// folder, the workspace.
+pub fn leave_detail(path: &str, worktree: Option<&str>, workspace: Option<&str>) -> String {
+    let worktree = worktree.map_or_else(String::new, |worktree| format!(" ({worktree})"));
+    let workspace = workspace.map_or_else(String::new, |name| format!(" in {name}"));
+    format!("{path}{worktree}{workspace}. Your changes are lost if you don't save them.")
+}
+
 /// The worktree folder matching the project folder `project_path` (for "Open in Zed"): the
 /// worktree root plus the project's path inside its repository, the repository being the
 /// nearest folder up holding `.git` (a folder, or a file in a worktree). Outside a repository,
@@ -206,6 +240,48 @@ mod tests {
         assert_eq!(branch_line(&fix).as_deref(), Some("⎇ mkrew/fix-3"));
         fix.worktree_path = None;
         assert_eq!(branch_line(&fix), None);
+    }
+
+    #[test]
+    fn a_worktree_file_is_named_by_its_task_and_a_project_file_by_nothing() {
+        let project = Ulid(1);
+        let tasks = [
+            task(project, 3, "Fix login", true),
+            task(project, 4, "No", false),
+        ];
+        assert_eq!(label(None, project, &tasks, true), None);
+        assert_eq!(
+            label(Some(Ulid(3)), project, &tasks, true).as_deref(),
+            Some("Fix login")
+        );
+        assert_eq!(
+            label(Some(Ulid(4)), project, &tasks, true).as_deref(),
+            Some("Removed worktree")
+        );
+        assert_eq!(
+            label(Some(Ulid(9)), project, &tasks, true).as_deref(),
+            Some("Removed worktree")
+        );
+        // No task list yet, or it failed: a gone worktree cannot be told, so nothing is claimed.
+        assert_eq!(label(Some(Ulid(3)), project, &[], false), None);
+
+        assert_eq!(with_worktree("a.rs", None), "a.rs");
+        assert_eq!(
+            with_worktree("a.rs (unsaved)", Some("Fix login")),
+            "a.rs (unsaved) · Fix login"
+        );
+        assert_eq!(
+            leave_detail("src/a.rs", None, Some("api")),
+            "src/a.rs in api. Your changes are lost if you don't save them."
+        );
+        assert_eq!(
+            leave_detail("src/a.rs", Some("Fix login"), Some("api")),
+            "src/a.rs (Fix login) in api. Your changes are lost if you don't save them."
+        );
+        assert_eq!(
+            leave_detail("a.rs", None, None),
+            "a.rs. Your changes are lost if you don't save them."
+        );
     }
 
     #[test]

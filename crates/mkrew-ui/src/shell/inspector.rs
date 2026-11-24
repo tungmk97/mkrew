@@ -50,7 +50,7 @@ impl Shell {
         }
         self.show_panel_tab(PanelTab::Files, window, cx);
         // Without loaded tabs the Terminals view draws no panel: nothing to focus.
-        if self.view() == View::Editor || self.tabs.contains_key(&project_id) {
+        if self.tabs.contains_key(&project_id) {
             window.focus(&self.files_focus, cx);
         }
     }
@@ -109,12 +109,7 @@ impl Shell {
             .into_iter()
             .any(|focus| focus.is_focused(window))
         {
-            if self.view() == View::Diff {
-                // The diff card holds `git_focus` itself.
-                window.focus(&self.git_focus, cx);
-            } else {
-                self.focus_center(window, cx);
-            }
+            self.focus_center(window, cx);
         }
         let value = format!("\"{}\"", self.right_panel.mode().name());
         if self.right_panel.mode() != mode_before
@@ -127,15 +122,10 @@ impl Shell {
         cx.notify();
     }
 
-    /// The keyboard back to the center after the panel's focused tab went away: the editor
-    /// in the Editor view, else the focused pane. (In the Git / Diff view the diff card holds
-    /// `git_focus` itself: `git_shown` stays true there.)
+    /// The keyboard back to the center after the panel's focused tab went away: the focused
+    /// pane (a file pane keeps it in its editor, a diff pane in `git_focus`).
     pub(crate) fn focus_center(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if self.view() == View::Editor {
-            window.focus(&self.file_editor_focus, cx);
-        } else {
-            self.focus_pane(window, cx);
-        }
+        self.focus_pane(window, cx);
     }
 
     /// Alt+arrows (SPEC §13): the next pane that way. Past the edge (or without panes) ←
@@ -248,7 +238,7 @@ impl Shell {
     }
 
     /// The right panel (SPEC §10, §12A, §12B): `Files | Session | Git` tabs, right of
-    /// Terminals, the Editor and the diff. Rendered only while open; it is a sibling of the
+    /// Terminals. Rendered only while open; it is a sibling of the
     /// panes, never inside the terminal element.
     pub(crate) fn render_right_panel(
         &self,
@@ -290,7 +280,7 @@ impl Shell {
             );
         let tab = self.panel_tab();
         let changed = self.git_summary().map_or(0, GitSummary::changed);
-        // The tab row has the height of the Editor's file tab strip and the sidebar's filter
+        // The tab row has the height of the title bar's tab chips and the sidebar's filter
         // row on its left: same height, same bottom divider.
         let tabs = div()
             .flex_none()

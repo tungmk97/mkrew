@@ -573,7 +573,9 @@ impl Shell {
                 self.files_requests(project_id, requests, window, cx);
             }
         } else {
-            self.reveal_file(project_id, target, path, None, Open::Kept, window, cx);
+            self.reveal_file(project_id, target, path.clone(), window, cx);
+            let file = FileKey::new(path, target);
+            self.open_document(project_id, file, None, documents::Place::NewTab, window, cx);
         }
     }
 
@@ -711,7 +713,9 @@ impl Shell {
                 (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk, mode),
                 _ => None,
             });
-        self.scroll_diff_to(hunk_row.unwrap_or(0));
+        if let Some(project_id) = self.workspace {
+            self.scroll_diff_to(project_id, hunk_row.unwrap_or(0));
+        }
         true
     }
 
@@ -774,6 +778,15 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        // Its unsaved file text is lost with the workspace: ask first; the question runs this
+        // again once every file was answered (a Cancel stops it).
+        let unsaved =
+            (self.documents.get(&project_id)).map_or_else(Vec::new, Documents::unsaved_files);
+        if !unsaved.is_empty() {
+            let again: AfterSave =
+                Box::new(move |shell, window, cx| shell.archive_workspace(project_id, window, cx));
+            return self.leave_documents(project_id, unsaved, again, window, cx);
+        }
         self.workspace_menu = None;
         cx.notify();
         let Some(connection) = self.connection.clone() else {

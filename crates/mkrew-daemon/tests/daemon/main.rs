@@ -18,21 +18,21 @@ use mkrew_protocol::{
     CommentSendParams, CommentStatus, Commit, CommitDetail, DaemonStatusResult, DocChangedEvent,
     DocComment, DocContent, DocFile, DocListParams, DocReadParams, ErrorCode, Event, FileDiff,
     Frame, FrameDecoder, FsContent, FsCreateParams, FsCreated, FsEntry, FsFindParams,
-    FsIgnoreParams, FsListParams, FsMatch, FsReadParams, FsSearchParams, FsSearchResult,
-    FsWriteParams, FsWritten, GitBranchesParams, GitChangedEvent, GitCheckoutParams,
-    GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams, GitLogParams, GitMarker,
-    GitMode, GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams,
-    GitStatus, GitStatusParams, HelloParams, HelloResult, HookReportParams, HunkTarget, Message,
-    Outcome, PROTOCOL_VERSION, PlanItem, PortRow, PortStopParams, Project, ProjectAddParams,
-    ProjectCloneParams, ProjectClonedEvent, ProjectRef, ProjectUpdateParams, QueuedSend,
-    RemoveWorktreeResult, Request, ResponseError, RunCommand, RunStartParams, RunStarted,
-    RunStopParams, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent, SessionFiles,
-    SessionFilesParams, SessionHistory, SessionInputParams, SessionKillParams, SessionKind,
-    SessionLinkPlanParams, SessionListParams, SessionLogTail, SessionLogTailParams,
-    SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionQueueEvent,
-    SessionReadParams, SessionReadResult, SessionRef, SessionRenameParams, SessionResizeParams,
-    SessionResumeParams, SessionSendParams, SessionSendResult, SessionSetColorParams,
-    SessionSpawnParams, SessionSpawnResult, SessionState, SessionTranscript,
+    FsIgnoreParams, FsListParams, FsMatch, FsNewNoteParams, FsReadParams, FsSearchParams,
+    FsSearchResult, FsWriteParams, FsWritten, GitBranchesParams, GitChangedEvent,
+    GitCheckoutParams, GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams,
+    GitLogParams, GitMarker, GitMode, GitRemoteParams, GitSetBaseParams, GitSetViewedParams,
+    GitShowParams, GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult,
+    HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION, PlanItem, PortRow,
+    PortStopParams, Project, ProjectAddParams, ProjectCloneParams, ProjectClonedEvent, ProjectRef,
+    ProjectUpdateParams, QueuedSend, RemoveWorktreeResult, Request, ResponseError, RunCommand,
+    RunStartParams, RunStarted, RunStopParams, ScreenSnapshot, Session, SessionAttachResult,
+    SessionExitedEvent, SessionFiles, SessionFilesParams, SessionHistory, SessionInputParams,
+    SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams, SessionLogTail,
+    SessionLogTailParams, SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent,
+    SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef, SessionRenameParams,
+    SessionResizeParams, SessionResumeParams, SessionSendParams, SessionSendResult,
+    SessionSetColorParams, SessionSpawnParams, SessionSpawnResult, SessionState, SessionTranscript,
     SessionTranscriptParams, SessionUnqueueParams, SessionUsageEvent, SessionWaitParams,
     SessionWaitResult, StateSource, TabCreateParams, TabListParams, TabMoveParams, TabPinParams,
     TabRef, TabRenameParams, TabSetLayoutParams, Task, TaskConfirmParams, TaskCreateParams,
@@ -51,6 +51,7 @@ mod fs_ai;
 mod git;
 mod io;
 mod limits;
+mod notes;
 mod ports;
 mod remote_reads;
 mod runs;
@@ -119,6 +120,19 @@ impl Env {
         let dir = self.dir.path().join("config");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("settings.toml"), "[features]\nturns = true\n").unwrap();
+    }
+
+    /// `settings.toml` with `text`; the daemon reads it when it starts.
+    fn write_settings(&self, text: &str) {
+        let dir = self.dir.path().join("config");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.toml"), text).unwrap();
+    }
+
+    /// `[notes] folder = <folder>` as a TOML literal string, so Windows backslashes and
+    /// spaces stay as given.
+    fn set_notes_folder(&self, folder: &str) {
+        self.write_settings(&format!("[notes]\nfolder = '{folder}'\n"));
     }
 
     /// `<id>.toml`: an agent whose `oneshot` runs the built fake agent with `scenario`.

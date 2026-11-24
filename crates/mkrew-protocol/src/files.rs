@@ -536,8 +536,20 @@ pub struct FsCreateParams {
 /// `fs.create` result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FsCreated {
-    /// The new entry, `/`-separated, relative to the root.
+    /// The new entry, `/`-separated, relative to the root; `fs.new_note` answers an absolute
+    /// `/`-separated path for a note outside the root (inside the notes folder).
     pub path: String,
+}
+
+/// `fs.new_note` (Tern panes spec 2026-11-23 section 7.2): a new empty note file,
+/// `note-YYYYMMDD-HHMMSS.md` in the daemon's local time (`-2`, `-3`, ... when taken), in the
+/// notes folder of the daemon's `settings.toml` (`[notes] folder`; empty = the root of the
+/// project or task worktree). Returns [`FsCreated`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsNewNoteParams {
+    pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
 }
 
 /// `fs.ignore` (spec 2026-10-29 §5): adds one path to the root's `.gitignore`.

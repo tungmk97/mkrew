@@ -22,7 +22,7 @@ use mkrew_ui::client::Connection;
 use mkrew_ui::connect::{DaemonLauncher, POLL, TIMEOUT, connect_or_spawn};
 use mkrew_ui::lifecycle::{self, CloseAction};
 use mkrew_ui::sidebar::{Row, Sidebar};
-use mkrew_ui::split::Axis;
+use mkrew_ui::split::{Axis, PaneKey};
 use mkrew_ui::tabs::Tabs;
 use ulid::Ulid;
 
@@ -157,7 +157,7 @@ fn hidden_agent_survives_the_ui_and_can_be_killed_later() {
 
     // Closing the running agent's pane asks; "Hide pane" only changes the layout.
     assert_eq!(lifecycle::close_action(Some(&agent)), CloseAction::Ask);
-    let write = tabs.close_pane(b).unwrap();
+    let write = tabs.close_leaf(&PaneKey::Session(b)).unwrap();
     block_on(first.call::<()>(Request::TabSetLayout(write))).unwrap();
     drop(first);
 

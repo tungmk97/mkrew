@@ -346,7 +346,7 @@ impl Shell {
         .detach();
     }
 
-    /// "Open in Git" of the worktree dialog: the Git tab and Diff view on the task's
+    /// "Open in Git" of the worktree dialog: the Git tab and Diff pane on the task's
     /// worktree, to commit or unstage there (in the task's own workspace: a card of the All
     /// workspaces board may be another workspace's).
     pub(crate) fn worktree_dialog_git(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {

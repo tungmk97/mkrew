@@ -648,7 +648,7 @@ impl Shell {
                 .rounded(px(radius::SMALL))
                 .border(px(theme::BORDER_WIDTH))
                 .border_color(gpui::transparent_black())
-                .when(focused, |el| el.border_color(rgb(theme.pane_focus_border)))
+                .when(focused, |el| el.border_color(rgb(theme.pane_focus_stripe)))
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text))
                 .pressable(Look::Row, true, theme)

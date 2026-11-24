@@ -734,7 +734,7 @@ fn block_in(
                         .w(px(theme::DOC_QUOTE_BAR_WIDTH))
                         .rounded(px(radius::SMALL))
                         .bg(rgb(
-                            look.map_or(theme.pane_focus_border, |(_, _, color)| color)
+                            look.map_or(theme.pane_focus_stripe, |(_, _, color)| color)
                         )),
                 )
                 .child(

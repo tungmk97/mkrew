@@ -10,6 +10,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        self.ensure_diff_views();
         let theme = cx.theme().clone();
         let host = HostId::Detached(key);
         // A menu closed behind the keyboard's back, or a dialog control that vanished while
@@ -61,12 +62,14 @@ impl Shell {
             Some((project, tab_id)) => {
                 let tab = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id));
                 self.render_tab(
+                    project,
                     tab,
                     now,
                     self.composer_focus.is_focused(window),
                     None,
                     &theme,
                     content,
+                    window,
                     cx,
                 )
                 .into_any_element()
@@ -137,12 +140,14 @@ impl Shell {
     }
 
     /// The tab area of a detached window's title bar: a chip per tab, its workspace name in
-    /// front. No `+`: new tabs are made in the main window. The strip and chip bounds are kept
-    /// in `HostUi::strip` for drops from other windows (`record_strip`).
+    /// front. The `+` row has no `▾`: its items split this window's tab. The strip and chip
+    /// bounds are kept in `HostUi::strip` for drops from other windows (`record_strip`).
     pub(crate) fn render_detached_tab_area(
         &self,
         key: WindowKey,
+        now: i64,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let host = HostId::Detached(key);
@@ -165,10 +170,13 @@ impl Shell {
                 let workspace = (self.sidebar.projects().iter())
                     .find(|p| p.id == project)
                     .map(|p| p.name.as_str());
+                let file = file_label(tab, self.documents.get(&project));
                 let item = DraggedItem {
                     list: ReorderList::Detached(key),
                     index,
-                    title: session_label(tab, sessions)
+                    title: (file.as_ref().map(|file| file.name.as_str()))
+                        .or_else(|| diff_label(tab))
+                        .or_else(|| session_label(tab, sessions))
                         .unwrap_or(&tab.title)
                         .to_owned()
                         .into(),
@@ -208,7 +216,8 @@ impl Shell {
                 .position(|dock| Some(*dock) == active)?;
             Some((SharedString::from(format!("tab/{tab_id:?}")), index))
         });
-        self.tab_area_frame(host, chips, active_chip, None, theme, cx)
+        let new_row = self.render_new_tab_button(host, now, theme, window, cx);
+        self.tab_area_frame(host, chips, active_chip, Some(new_row), theme, cx)
             .into_any_element()
     }
 }
