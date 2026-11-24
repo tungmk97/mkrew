@@ -91,9 +91,8 @@ The page itself needs a web engine, and a GPUI window has none.
 - Windows draws the whole app without DirectComposition.
   A user who sets `GPUI_DISABLE_DIRECT_COMPOSITION` themselves keeps their value, and Mkrew does not remove it from children.
 - The keys the init script gives back come from `e.code`, so a non-QWERTY layout may match a combo at the US key position.
-- A page is not trusted: its IPC key messages run only while it has the keyboard in the focused pane, only for combos in the forwarded list, and only global and Browser-context commands (`Keymap::forwarded_command`).
-  A focused page can still fake those shortcuts (open the palette, split panes); it cannot reach a context-bound command (Git, Board, editor, terminal).
-  A page that is not on screen cannot move the window's focus.
+- A page is not trusted: its IPC messages act only while the page is on screen in the active window; a key message also needs the keyboard in the focused pane, a combo in the forwarded list, and a global or Browser-context command (`Keymap::forwarded_command`); a new-window request goes through a scheme allowlist (`http` and `https` load, `mailto` opens in the system, the rest is dropped).
+  Any page on screen in the active window can claim focus and fake the forwarded global shortcuts (open the palette, split panes); it cannot reach a context-bound command (Git, Board, editor, terminal).
 - Checked by smoke on Windows: link, `+`, load, hiding under overlays and tabs, tear-off, restart, Stop.
   Not checked by hand: page-focused key forwarding, a lone Alt, a click into the page while editing the address, a page that autofocuses next to a terminal, Move back, drags, the first ~400 ms of a build, macOS, and Windows without the Runtime.
   They are in `docs/HUMAN_CHECKS.md`.

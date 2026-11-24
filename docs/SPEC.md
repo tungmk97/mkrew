@@ -3087,6 +3087,7 @@ Windows and macOS show the page with the OS web view; Linux and machines without
    F5, Ctrl+R, F12 and zoom keys work in the page; on macOS Cmd+R and Cmd+0 are Mkrew's own bindings, so the page gives them back.
    When focus moves to another pane or an overlay opens, the keyboard goes back to Mkrew.
    The key list follows the keymap (ADR 0073).
+   A page is not trusted: only a page on screen in the active window can claim focus or post keys, and a key reaches only global and browser-context commands (a page can fake those, never a Git, Board, editor or terminal command).
 7. **Where it is not available.**
    Linux and Windows without the WebView2 Runtime use the system browser: links call the OS, with one toast per run ("Web pages open in your browser: <reason>").
    The `+` row has no Browser item, `Alt+Shift+B` does nothing and the palette lists no "Panes: New browser pane", "Browser: Focus address", "Back", "Forward" or "Reload" (only "Open in system browser" stays on a browser pane).
