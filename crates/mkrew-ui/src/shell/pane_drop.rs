@@ -140,6 +140,10 @@ impl Shell {
                 .to_owned()
                 .into(),
             PaneKey::Diff => "Diff".into(),
+            PaneKey::Web(id) => (self.browsers.get(id))
+                .map_or("New browser", |browser| browser.page.label())
+                .to_owned()
+                .into(),
         }
     }
 
@@ -482,6 +486,9 @@ impl Shell {
                 self.open_document(project_id, file, None, place, window, cx);
             }
             Leaf::Diff { .. } => self.open_diff(project_id, place, window, cx),
+            Leaf::Web { web, id } => {
+                self.place_leaf(project_id, Leaf::Web { web, id }, place, window, cx);
+            }
             Leaf::Session { .. } => {
                 tracing::warn!(%project_id, "a drop never places a session leaf");
             }

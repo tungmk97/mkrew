@@ -176,6 +176,11 @@ impl Shell {
                     index,
                     title: (file.as_ref().map(|file| file.name.as_str()))
                         .or_else(|| diff_label(tab))
+                        .or_else(|| {
+                            web_label(tab)
+                                .and_then(|id| self.browsers.get(&id))
+                                .map(|b| b.page.label())
+                        })
                         .or_else(|| session_label(tab, sessions))
                         .unwrap_or(&tab.title)
                         .to_owned()

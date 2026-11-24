@@ -113,7 +113,7 @@ use mkrew_ui::stt;
 use mkrew_ui::tabs::{
     AreaItem, FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, area_items, diff_label,
     double_click_renames, file_label, newest_unplaced, on_screen, rename_params, scroll_index,
-    session_label, tab_icons,
+    session_label, tab_icons, web_label,
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
@@ -762,6 +762,8 @@ struct Shell {
     comment_focus: FocusHandle,
     /// The open files of every workspace (SPEC §12A, ADR 0108); one store per workspace.
     documents: HashMap<Ulid, Documents>,
+    /// Browser panes' page state, by leaf id (ADR 0110); follows the layouts (`sync_browsers`).
+    browsers: HashMap<Ulid, shell::browser::Browser>,
     /// The view state of each open file pane, keyed like the store.
     doc_views: HashMap<(Ulid, FileKey), DocView>,
     /// The Files view of every workspace it was shown for.

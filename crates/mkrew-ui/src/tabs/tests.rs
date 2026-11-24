@@ -1347,6 +1347,37 @@ fn a_tab_whose_focused_pane_is_the_diff_is_titled_diff() {
 }
 
 #[test]
+fn a_tab_whose_focused_pane_is_a_browser_is_named_by_it() {
+    let project = Ulid::new();
+    let (a, web) = (Ulid::new(), Ulid::new());
+    let tree = json!({"split": "vertical", "ratio": 0.5, "children": [
+        {"session": a.to_string()}, {"web": "https://x.dev", "id": web.to_string()}
+    ]});
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "Terminal", 1.0, tree.clone())]);
+    assert_eq!(
+        web_label(tabs.active().unwrap()),
+        None,
+        "a session has the focus"
+    );
+    assert!(tabs.focus(&PaneKey::Web(web)));
+    let tab = tabs.active().unwrap();
+    assert_eq!(web_label(tab), Some(web));
+    assert_eq!(
+        tab_icons(tab, &[], false).panes.last(),
+        Some(&PaneIcon::Web)
+    );
+    let mut named = Tabs::new(project);
+    named.load(vec![wire(project, "Review", 1.0, tree)]);
+    assert!(named.focus(&PaneKey::Web(web)));
+    assert_eq!(
+        web_label(named.active().unwrap()),
+        None,
+        "the user's name wins"
+    );
+}
+
+#[test]
 fn a_file_leaf_is_a_pane_but_not_a_session() {
     let project = Ulid::new();
     let a = Ulid::new();

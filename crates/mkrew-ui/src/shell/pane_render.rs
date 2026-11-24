@@ -46,6 +46,11 @@ impl Shell {
                         let file = file_label(tab, self.documents.get(&project_id));
                         let label = (file.as_ref().map(|file| file.name.as_str()))
                             .or_else(|| diff_label(tab))
+                            .or_else(|| {
+                                web_label(tab)
+                                    .and_then(|id| self.browsers.get(&id))
+                                    .map(|b| b.page.label())
+                            })
                             .or_else(|| session_label(tab, self.sidebar.sessions()));
                         let item = DraggedItem {
                             list: ReorderList::Tabs(project_id, tab.pinned),
@@ -205,6 +210,11 @@ impl Shell {
         let file = file_label(tab, self.documents.get(&project_id));
         let label = (file.as_ref().map(|file| file.name.as_str()))
             .or_else(|| diff_label(tab))
+            .or_else(|| {
+                web_label(tab)
+                    .and_then(|id| self.browsers.get(&id))
+                    .map(|b| b.page.label())
+            })
             .or_else(|| session_label(tab, self.sidebar.sessions()));
         // A double-click renames that pane while the tab keeps its default name, else the tab.
         let rename_pane = double_click_renames(tab, self.sidebar.sessions());
@@ -252,6 +262,8 @@ impl Shell {
                     icon_svg(Icon::FileDiff, theme::ICON_SIZE_SMALL, theme.text_muted)
                         .into_any_element()
                 }
+                PaneIcon::Web => icon_svg(Icon::Globe, theme::ICON_SIZE_SMALL, theme.text_muted)
+                    .into_any_element(),
             })
             .collect();
         // A file of a task worktree names it: a project file and a worktree file look alike.
@@ -603,6 +615,9 @@ impl Shell {
             }
             PaneKey::File(path) => self.render_file_pane(project_id, path, window, theme, cx),
             PaneKey::Diff => self.render_diff_pane(project_id, theme, window, cx),
+            PaneKey::Web(id) => {
+                self.render_web_pane(project_id, *id, is_focused, theme, window, cx)
+            }
         };
         let reading = info.is_some_and(|info| self.reading_on(info));
         let color = (info.and_then(|info| info.color.as_deref()))

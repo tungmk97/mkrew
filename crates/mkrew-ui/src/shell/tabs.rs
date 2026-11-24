@@ -807,6 +807,7 @@ impl Shell {
                     self.close_git_diff(project_id, window, cx);
                 }
             }
+            Some(PaneKey::Web(id)) => self.close_web_pane(id, window, cx),
             None => {}
         }
     }

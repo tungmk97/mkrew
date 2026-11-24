@@ -937,6 +937,8 @@ pub enum PaneIcon {
     File(String),
     /// The diff pane.
     Diff,
+    /// A browser pane.
+    Web,
 }
 
 /// What a tab chip shows in front of its title.
@@ -980,6 +982,7 @@ pub fn tab_icons(tab: &Tab, sessions: &[Session], active: bool) -> TabIcons {
         PaneKey::Session(id) => known(id).map(icon),
         PaneKey::File(file) => Some(PaneIcon::File(file.path.clone())),
         PaneKey::Diff => Some(PaneIcon::Diff),
+        PaneKey::Web(_) => Some(PaneIcon::Web),
     };
     let mut panes: Vec<PaneIcon> = if active {
         tab.keys().iter().filter_map(pane_icon).collect()
@@ -1023,6 +1026,16 @@ pub fn session_label<'a>(tab: &Tab, sessions: &'a [Session]) -> Option<&'a str> 
 /// name the user gave the tab always wins), like [`session_label`].
 pub fn diff_label(tab: &Tab) -> Option<&'static str> {
     (tab.focused() == Some(&PaneKey::Diff) && has_default_title(tab)).then_some("Diff")
+}
+
+/// The browser pane whose page names the tab: the focused pane is a browser and the tab keeps
+/// its default name (a name the user gave the tab always wins), like [`diff_label`]. The
+/// caller looks the page title up.
+pub fn web_label(tab: &Tab) -> Option<Ulid> {
+    match tab.focused()? {
+        PaneKey::Web(id) if has_default_title(tab) => Some(*id),
+        _ => None,
+    }
 }
 
 /// What a tab chip shows for a focused file pane: its name, a dot while it has unsaved text,

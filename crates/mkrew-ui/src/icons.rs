@@ -77,6 +77,7 @@ icons! {
         FolderPlus => "folder-plus",
         GitCompare => "git-compare",
         GitBranch => "git-branch",
+        Globe => "globe",
         History => "history",
         Hourglass => "hourglass",
         Inbox => "inbox",

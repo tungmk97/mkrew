@@ -288,6 +288,7 @@ impl Shell {
         self.keep_main_active_visible();
         self.prune_detached(cx);
         self.sync_documents(window, cx);
+        self.sync_browsers();
         let hosted = self.hosted_sessions(self.main_visible);
         let here = self.host_of(window);
         let visible: Vec<Ulid> = hosted.iter().map(|&(_, session)| session).collect();

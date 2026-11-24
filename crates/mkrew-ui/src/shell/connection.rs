@@ -444,6 +444,7 @@ impl Shell {
             docs: HashMap::new(),
             comment_focus: cx.focus_handle(),
             documents: HashMap::new(),
+            browsers: HashMap::new(),
             doc_views: HashMap::new(),
             files: HashMap::new(),
             files_focus: cx.focus_handle(),
