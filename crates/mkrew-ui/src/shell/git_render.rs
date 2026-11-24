@@ -170,6 +170,7 @@ impl Shell {
             .when_some(status.filter(|_| view.commit_box_shown()), |el, status| {
                 el.child(self.git_commit_box(project_id, view, status, theme, window, cx))
             })
+            .child(self.git_branch_footer(project_id, view, status, theme, cx))
             .into_any_element()
     }
 
@@ -182,8 +183,9 @@ impl Shell {
             .map_or("Workspace", |p| p.name.as_str())
     }
 
-    /// The task worktree chooser, the repository tabs, the branch header, then the Working /
-    /// Vs. base / History switch and (on Vs. base) the base it compares to.
+    /// The task worktree chooser, the repository tabs and the Working / Vs. base / History tabs
+    /// flush on top, then (on Vs. base) the base it compares to and a refresh error. The branch
+    /// with Fetch and Push is the footer (`git_branch_footer`, ADR 0110).
     pub(crate) fn git_header(
         &self,
         project_id: Ulid,
@@ -195,43 +197,31 @@ impl Shell {
     ) -> gpui::Div {
         let chooser = self
             .target_chooser(project_id, view.worktree_task_id, true, theme, cx)
-            .map(|chooser| chooser.px(px(space::M)).pt(px(space::S)));
-        // Wrapped, not cut: git's push / fetch errors say what to do.
-        let error = |text: String| {
-            div()
-                .px(px(space::M))
-                .text_size(font_size::META)
-                .text_color(rgb(theme.text))
-                .child(text)
-        };
+            .map(|chooser| chooser.px(px(space::M)).py(px(space::S)));
         div()
             .flex_none()
             .flex()
             .flex_col()
-            .gap(px(space::S))
-            .pb(px(space::S))
             .children(chooser)
             .children(self.git_repo_strip(project_id, view, theme, window, cx))
-            .child(self.git_branch_header(project_id, view, status, theme, cx))
-            .children(
-                view.remotes
-                    .error
-                    .clone()
-                    .map(|text| error(format!("✕ {text}"))),
-            )
             .child(self.git_tabs(project_id, view, status, theme, cx))
-            .children(self.git_base_line(project_id, view, status, theme, cx))
-            .children(git_viewed_line(view, theme))
-            .children(
-                view.refresh_error
-                    .clone()
-                    .map(|text| error(format!("✕ Refresh failed: {text}"))),
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::S))
+                    .pt(px(space::S))
+                    .children(self.git_base_line(project_id, view, status, theme, cx))
+                    .children(view.refresh_error.clone().map(|text| {
+                        git_error_line(format!("✕ Refresh failed: {text}"), theme).px(px(space::M))
+                    })),
             )
     }
 
-    /// The branch card (`card` fill, 1 px border): a branch icon, the branch name over the
-    /// upstream it tracks, Fetch as an icon button and Push.
-    fn git_branch_header(
+    /// The footer under the list and the commit box, Tern style (ADR 0110): a branch icon, the
+    /// branch over the upstream it tracks, Fetch as an icon button and Push; a failed Fetch or
+    /// Push says why above them.
+    fn git_branch_footer(
         &self,
         project_id: Ulid,
         view: &GitView,
@@ -246,17 +236,10 @@ impl Shell {
                 .unwrap_or_else(|| "Detached HEAD".to_owned()),
             None => "Git".to_owned(),
         };
-        div()
-            .mx(px(space::M))
+        let line = div()
             .flex()
             .items_center()
             .gap(px(space::S))
-            .px(px(space::M))
-            .py(px(space::S))
-            .rounded(px(radius::CARD))
-            .bg(rgb(theme.card))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
             .child(icon_svg(
                 Icon::GitBranch,
                 theme::ICON_SIZE,
@@ -285,7 +268,23 @@ impl Shell {
                     })),
             )
             .child(self.git_fetch_button(project_id, view, theme, cx))
-            .child(self.git_push_button(project_id, view, status, theme, cx))
+            .child(self.git_push_button(project_id, view, status, theme, cx));
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(space::XS))
+            .px(px(space::M))
+            .py(px(space::S))
+            .border_t(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .children(
+                view.remotes
+                    .error
+                    .clone()
+                    .map(|text| git_error_line(format!("✕ {text}"), theme)),
+            )
+            .child(line)
     }
 
     /// Fetch as an icon: "⋯" while it runs, faded while Push runs.
@@ -377,7 +376,8 @@ impl Shell {
             .into_any_element()
     }
 
-    /// Working N / Vs. base / History: three equal segments (N = changed files).
+    /// Working N / Vs. base / History: underlined text tabs on a row with a divider under it
+    /// (N = changed files; ADR 0110).
     fn git_tabs(
         &self,
         project_id: Ulid,
@@ -401,11 +401,9 @@ impl Shell {
                 } else {
                     toggle_keys.clone()
                 };
-                segment(id, active, theme)
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .px(px(space::S))
+                underline_tab(id, active, theme)
+                    .text_size(font_size::BODY)
+                    .when(active, |el| el.font_weight(FontWeight(weight::MEDIUM)))
                     .when(!active, |el| {
                         el.on_click(cx.listener(move |shell, _, window, cx| {
                             shell.show_git_section(project_id, section, window, cx);
@@ -414,8 +412,13 @@ impl Shell {
                     .tooltip(tooltip(theme, tip, keys))
                     .child(label)
             };
-        segmented(theme)
-            .mx(px(space::M))
+        div()
+            .flex_none()
+            .h(theme::rems_px(theme::GIT_SECTION_TAB_HEIGHT))
+            .flex()
+            .px(px(space::XS))
+            .border_b(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
             .child(tab(
                 git_view::Section::Working,
                 "git-mode-working",
@@ -886,7 +889,7 @@ impl Shell {
             .gap(px(space::S))
             .p(px(space::M))
             .border_t(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
+            .border_color(rgb(theme.divider))
             .child(
                 caret_field(
                     "git-commit-message",
@@ -900,6 +903,8 @@ impl Shell {
                         text.click(caret.at, caret.extend, caret.clicks);
                     },
                 )
+                // Flat like the panel's other fields: the faint divider until it is focused.
+                .when(!focused, |el| el.border_color(rgb(theme.divider)))
                 .max_h(px(theme::GIT_COMMIT_BOX_MAX_HEIGHT))
                 .overflow_y_scroll()
                 .when(draft.busy || generating, |el| el.opacity(opacity::DISABLED))
@@ -967,4 +972,12 @@ impl Shell {
                     ))),
             )
     }
+}
+
+/// A git error line (Fetch, Push, refresh). Wrapped, not cut: git's errors say what to do.
+fn git_error_line(text: String, theme: &Theme) -> gpui::Div {
+    div()
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text))
+        .child(text)
 }

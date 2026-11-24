@@ -124,6 +124,12 @@ pub(crate) fn grip_id(key: &PaneKey) -> SharedString {
     SharedString::from(format!("pane-grip-{key:?}"))
 }
 
+/// The hover group of a whole pane: its drag handle shows a slim bar while the pointer is over
+/// the pane (ADR 0110).
+pub(crate) fn pane_hover_group(key: &PaneKey) -> SharedString {
+    SharedString::from(format!("pane-hover-{key:?}"))
+}
+
 impl Shell {
     /// What the chip of a dragged pane says: a session's title, a file's name, "Diff".
     fn pane_title(&self, key: &PaneKey) -> SharedString {

@@ -611,6 +611,8 @@ impl Shell {
             .flex()
             .flex_col()
             .bg(rgb(theme.terminal_bg))
+            // The drag handle's bar shows while the pointer is anywhere over the pane.
+            .group(pane_hover_group(&key))
             // The file pane's own keys (Ctrl+S, Ctrl+F, ...), not the root's.
             .when(matches!(key, PaneKey::File(_)), |el| {
                 el.key_context(EDITOR_CONTEXT)
@@ -820,15 +822,17 @@ impl Shell {
     }
 
     /// The top edge of a pane: for a session it records the anchor of the pane's keyboard menu
-    /// and, among `several` panes, it is a slim handle (`PANE_GRIP_HEIGHT` tall, a grip shows on
-    /// hover) that drags the pane onto another; a file or diff pane has the handle but no
-    /// anchor.
-    /// The handle blocks the mouse (not the wheel): gpui hit-tests every hitbox until one blocks,
-    /// so without it the terminal under it would also get the mouse down and start a selection.
-    /// Drops are delivered to the hovered hitbox only, so the strip carries the pane frame's drop
-    /// set (`pane_drops`); the frame's drag-move still sets the half that lights up.
-    /// A lone pane has nothing to rearrange: its edge is an empty div, only the Shift+F10 menu
-    /// anchor of a session, with no hitbox and no mouse handling.
+    /// and, among `several` panes, it holds the drag handle at its centre (ADR 0110): a slim bar
+    /// while the pointer is over the pane (hover group `pane_hover_group`), a chip with a six-dot
+    /// grip while it is over the handle, and dragging the handle moves the pane onto another. A
+    /// file or diff pane has the handle but no anchor.
+    /// Only the handle has a hitbox; the rest of the edge passes the mouse to the pane. The
+    /// handle blocks the mouse (not the wheel): gpui hit-tests every hitbox until one blocks, so
+    /// without it the terminal under it would also get the mouse down and start a selection.
+    /// Drops are delivered to the hovered hitbox only, so the handle carries the pane frame's
+    /// drop set (`pane_drops`); the frame's drag-move still sets the half that lights up.
+    /// A lone pane has nothing to rearrange: its edge is only the Shift+F10 menu anchor of a
+    /// session, with no hitbox and no mouse handling.
     fn pane_edge(
         &self,
         project_id: Ulid,
@@ -839,12 +843,12 @@ impl Shell {
     ) -> gpui::AnyElement {
         let edge = div()
             .absolute()
-            .top_0()
+            // Under the top stripe, so the handle's chip never hides it.
+            .top(px(theme::PANE_ACCENT_WIDTH))
             .left_0()
             .right_0()
             .h(px(theme::PANE_GRIP_HEIGHT))
             .flex()
-            .items_center()
             .justify_center()
             .children(
                 key.session()
@@ -853,22 +857,50 @@ impl Shell {
         if !several {
             return edge.into_any_element();
         }
-        let edge = Self::pane_drops(edge, project_id, key, cx);
         let group = grip_id(key);
-        let handle = self.draggable_pane(edge.group(group.clone()), project_id, key, theme);
-        grip_hover(handle, theme)
+        let handle = div()
+            .relative()
+            .w(px(theme::PANE_GRIP_WIDTH))
+            .h_full()
+            .flex()
+            .justify_center()
+            .group(group.clone());
+        let handle = Self::pane_drops(handle, project_id, key, cx);
+        let bar = div()
+            .mt(px(space::XS))
+            .w(px(theme::PANE_GRIP_BAR_WIDTH))
+            .h(px(theme::PANE_GRIP_BAR_HEIGHT))
+            .rounded_full()
+            .bg(rgb(theme.text_muted))
+            .opacity(opacity::HIDDEN)
+            .group_hover(pane_hover_group(key), |style| {
+                style.opacity(opacity::DIMMED)
+            });
+        // Over the bar once the pointer reaches the handle (opaque, so the bar does not show).
+        let chip = div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(radius::SMALL))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface_raised))
+            .opacity(opacity::HIDDEN)
+            .group_hover(group, |style| style.opacity(opacity::FULL))
+            .child(icon_svg(
+                Icon::GripHorizontal,
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ));
+        let handle = self
+            .draggable_pane(handle, project_id, key, theme)
             .block_mouse_except_scroll()
             .cursor(CursorStyle::OpenHand)
-            .child(
-                div()
-                    .w(px(space::XXL))
-                    .h(px(theme::PANE_ACCENT_WIDTH))
-                    .rounded_full()
-                    .bg(rgb(theme.text_muted))
-                    .opacity(opacity::HIDDEN)
-                    .group_hover(group, |style| style.opacity(opacity::FULL)),
-            )
-            .into_any_element()
+            .child(bar)
+            .child(chip);
+        edge.child(handle).into_any_element()
     }
 
     /// The title bar toggles of the focused agent pane, shown only while one has the focus:

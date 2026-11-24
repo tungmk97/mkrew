@@ -1041,7 +1041,7 @@ Its tab row is `[Files│Session│Git]`; files and the diff open as tabs and pa
   `[ui] reading_width` (default `true`); the toggle holds per pane until restart. Shell and run
   panes are always full width.
 - **Right panel** (ADR 0038, ADR 0081, ADR 0084): a column right of the Terminals view (the tab's panes) with
-  tabs `Files │ Session │ Git` (a click switches the tab; the `Git` tab shows the changed count). The title bar's `◨` and `Ctrl+Shift+Y` hide
+  tabs `Files │ Session │ Git` (icon tabs on the left of its tab row with the title in the tooltip, Tern style, ADR 0110; a click switches the tab; the `Git` tab shows the changed count). The title bar's `◨` and `Ctrl+Shift+Y` hide
   and show it and keep the tab; from the Board or Docs view the key shows Terminals with the
   panel open. `[ui] right_panel` (`"files"`, `"session"`, `"git"` or `"hidden"`, default hidden) remembers
   it across restarts. Drag its left edge to resize (240–560 px, one width for all three tabs, saved as
@@ -1310,7 +1310,7 @@ Only edit this file. When done, for EACH comment run:
 
 - **Tree** (the right panel's Files tab, ADR 0081; opens with `Ctrl+Shift+3`; its rows drag onto
   panes, §20B.5): lazily loaded per folder, respects `.gitignore` (an
-  `Ignored` toggle beside the search shows ignored files),
+  eye toggle beside the search shows ignored files; accent while they show, ADR 0110),
   git status markers next to names (M modified, A added, D deleted, ? untracked), a small dot on
   folders containing changes. In a workspace with child repositories (ADR 0029) the markers come
   from the project folder's repository and from each child repository the listed folder is in
@@ -1424,7 +1424,8 @@ Only edit this file. When done, for EACH comment run:
 
 ## §12B UI: Git (right panel tab and Diff pane)
 
-The Git tab of the right panel holds the header, Working / Vs. base / History, the filter and "Changed by", the list and the commit box, as wide as the panel (240-560 px; the filter row wraps).
+The Git tab of the right panel holds, top to bottom (ADR 0110): the Working / Vs. base / History tabs (underlined text tabs under the repository tabs), the filter row (field, `Viewed N/M`, "Changed by"), the list, the commit box and a footer with the branch, its upstream, Fetch and Push; as wide as the panel (240-560 px; the filter row wraps).
+Group headers are sentence case with a muted count (`Staged 0`); the empty Staged hint is a muted line; a file row is 28 px with its change letter colored and unfilled.
 The Diff pane (ADR 0108) holds the toolbar (file, Unified / Split, Wrap, Viewed, Open in Zed, Discard, Stage file, `…`, ✕), unified / split, hunks, the comment margin and Send to agent.
 It is a leaf of a tab's split tree like a file: a tab of its own in the title bar (diff icon, `Diff`) or a pane next to terminals and files.
 A workspace has at most one Diff pane, across all its tabs and windows; it shows the diff of the Git list's selected file.
@@ -1473,7 +1474,7 @@ Windows (tens of ms, worse with antivirus), so:
 - **Viewed files** (ADR 0065): each file row has a box (not in the History), the diff toolbar a
   "Viewed" button, key `v` (§13) and the palette "Git: Mark file as viewed / not viewed". A viewed
   row is dimmed and the selected viewed file's diff collapses to "Marked as viewed." with a
-  **Show diff** button. The Git tab's header shows `Viewed N/M` (M = every file of the shown
+  **Show diff** button. The Git tab's filter row shows `Viewed N/M` (M = every file of the shown
   list, whatever "Changed by" and the file filter hide). The daemon keeps each mark in SQLite
   with a hash of the file's diff text; it clears by itself as soon as that text changes or the
   file stops changing (checked with every status refresh). Staging a whole viewed file keeps the
@@ -1791,7 +1792,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
 - Radius 5 (area chips, key hints), 6 (chips, segments, tree rows), 8 (buttons, inputs, rows),
   9 (segmented container), 10 (cards), 12 (dialogs, palette), 999 (pills); 4 for old badges.
-- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the right panel tab row 44, Git repo strip 42 (px at 13 px body).
+- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the right panel tab row 44 with 28 px icon tabs, Git repo strip 42, Git section tabs 36, Files tree rows 24, Git file rows 28 (px at 13 px body; ADR 0110).
 - Tab chip (Tern look, ADR 0106): height `CONTROL_HEIGHT`, radius 8 (`radius::MEDIUM`), no border; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
   Chips shrink to `TAB_MIN_WIDTH` (120, room for the status icon, a pane icon, about five title letters and the ×) before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
 - Pane (ADR 0106, ADR 0108, ADR 0109): no header and no border.
@@ -1803,13 +1804,13 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   A pane that is not focused, in a tab with two or more panes, is dimmed by 20 % (`unfocused_pane_dim`).
   File and diff panes use the same layout, stripe and dim as terminal panes.
   The divider between two panes drags to resize them and shows a grip only on hover.
-  A pane in a split tab has a `PANE_GRIP_HEIGHT` (8 px) strip along its top edge that shows a grip on hover and drags the pane.
+  A pane in a split tab has a drag handle at the centre of its top edge (ADR 0110): while the pointer is over the pane a `PANE_GRIP_BAR_WIDTH` × `PANE_GRIP_BAR_HEIGHT` (32 × 4) muted bar shows; over the handle it becomes a `PANE_GRIP_WIDTH` × `PANE_GRIP_HEIGHT` (40 × 20) `surface_raised` chip with a `grip-horizontal` icon (two rows of three dots), and dragging it moves the pane. Only the handle takes the mouse.
   Floating badges (`pane_badges`: `surface_raised` fill, 1 px `border`, radius 8, META text) sit in its top-right corner `space::S` from the edges, at most `PANE_BADGE_MAX_WIDTH` wide.
   The title bar uses `pane-gap` instead of `chrome`; the sidebar and the right panel keep their colors.
   The `+` row (§10) is a row of 30 px `Look::Icon` buttons: the `+` button, then the default agent's logo, `square-terminal`, `notebook-pen` and `chevron-down`, `space::XS` apart, growing in 150 ms ease-out (shown at once with reduce motion).
   The title bar's pane toggles are 30 px icon buttons, accent while on.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
-  buttons, 30 px icon button, search box, status pill, tinted chip, overline, key hint.
+  buttons, 30 px icon button, panel icon tab, underlined tab, search box, status pill, tinted chip, overline, key hint.
 - UI font = Inter when installed, else the system font (Segoe UI Variable / SF), unless
   `[ui] font_family` is set (Inter is not bundled). Sizes 11 overline, 12 meta, 13 body, 15 card
   title, 20 view title at the default `[ui] font_size = 13`; other sizes keep their ratio to body
@@ -2452,7 +2453,7 @@ context_window = 200000        # tokens, for the % shown
    and sends.
 5. **Drop files / paste images.** Dropping files from the OS onto an agent or shell pane (gpui
    `ExternalPaths`) types their absolute paths, each quoted with `"` if needed, separated by spaces,
-   with no Enter. The whole pane accepts the drop (terminal, composer, and the top-edge drag strip). While the pane's
+   with no Enter. The whole pane accepts the drop (terminal, composer, and the drag handle at the top). While the pane's
    composer is shown, the paths go into its draft instead of the terminal. `Ctrl+V` /
    `Ctrl+Shift+V` with an image on the clipboard (gpui `ClipboardEntry::Image`; a BMP image is
    re-encoded as PNG) saves it through `attachment.save` and types the returned path the same

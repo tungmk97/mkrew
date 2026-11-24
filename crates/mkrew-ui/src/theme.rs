@@ -233,11 +233,16 @@ pub mod opacity {
 pub const PANE_GAP_MIN_CONTRAST: f32 = 1.06;
 
 /// Thickness of the stripe along the top edge of a pane (needs input, session color or focus
-/// among several, ADR 0108) and of the grip shown on the drag strip.
+/// among several, ADR 0108) and of an underlined tab (the Git panel's repo and section tabs).
 pub const PANE_ACCENT_WIDTH: f32 = 2.0;
-/// Height of the strip along the top edge of a pane in a split tab: hovering it shows a grip,
-/// dragging it moves the pane (ADR 0106).
-pub const PANE_GRIP_HEIGHT: f32 = 8.0;
+/// The drag handle at the top centre of a pane in a split tab (ADR 0110): while the pointer is
+/// over the pane a slim bar shows; over the handle it becomes a chip with a six-dot grip, and
+/// dragging it moves the pane. Only the handle takes the mouse, not the pane's whole top edge.
+pub const PANE_GRIP_WIDTH: f32 = 40.0;
+pub const PANE_GRIP_HEIGHT: f32 = 20.0;
+/// The slim bar of the handle, shown while the pointer is over the pane.
+pub const PANE_GRIP_BAR_WIDTH: f32 = 32.0;
+pub const PANE_GRIP_BAR_HEIGHT: f32 = 4.0;
 
 /// Thickness of the accent line marking where a dragged sidebar row or tab will land.
 pub const DROP_LINE_WIDTH: f32 = 2.0;
@@ -486,8 +491,9 @@ pub const FILE_TREE_INDENT: f32 = space::M;
 /// Side of the dot on a Files tree folder holding changes.
 pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 
-/// Height of a Files tree row (the tree is a uniform list: every row is this high).
-pub const TREE_ROW_HEIGHT: f32 = 28.0;
+/// Height of a Files tree row (the tree is a uniform list: every row is this high). Dense like
+/// Tern's trees (ADR 0110).
+pub const TREE_ROW_HEIGHT: f32 = 24.0;
 
 /// Folder / file icon in a Files tree row.
 pub const TREE_ICON_SIZE: f32 = 15.0;
@@ -543,9 +549,10 @@ pub const SLASH_HINT_MAX_FRACTION: f32 = 0.25;
 /// Tallest the Git view's commit message box grows (it scrolls past that, ~8 lines).
 pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
 
-/// One row of the Git changed-file list (uniform list: every row has this box).
-pub const GIT_FILE_ROW_HEIGHT: f32 = 34.0;
-/// The change-letter badge (M, A, D …) of a Git file row.
+/// One row of the Git changed-file list (uniform list: every row has this box; ADR 0110).
+pub const GIT_FILE_ROW_HEIGHT: f32 = 28.0;
+/// The box of the change letter (M, A, D …) of a Git file row: the letter is colored, the box
+/// has no fill (ADR 0110); it keeps the names in one column.
 pub const GIT_BADGE_SIZE: f32 = 18.0;
 
 /// The History's lane graph (SPEC §12B): one lane's width, a commit's dot, a line's width.
@@ -2382,8 +2389,12 @@ pub fn title_bar_inset(os: Os, fullscreen: bool) -> f32 {
 pub const TITLE_BAR_HEIGHT: f32 = 42.0;
 /// The right panel's tab row (the terminal tabs are in the title bar).
 pub const TAB_STRIP_HEIGHT: f32 = 44.0;
+/// One icon tab of the right panel's tab row (Files, Session, Git; ADR 0110).
+pub const PANEL_TAB_HEIGHT: f32 = 28.0;
 /// The Git view's repository tabs (multi-repo workspaces): a tab strip.
 pub const GIT_REPO_STRIP_HEIGHT: f32 = 42.0;
+/// The Git view's Working / Vs. base / History tabs: underlined text tabs (ADR 0110).
+pub const GIT_SECTION_TAB_HEIGHT: f32 = 36.0;
 pub const WORKSPACE_ROW_HEIGHT: f32 = 30.0;
 pub const SESSION_ROW_HEIGHT: f32 = 30.0;
 /// Height of the Plan card's progress bar, and of the thin one under the selected sidebar row

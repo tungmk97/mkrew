@@ -577,6 +577,63 @@ pub(crate) fn segment_in(
         })
 }
 
+/// An icon tab of the right panel's tab row (Files, Session, Git), Tern style (ADR 0110): the
+/// shown one has the `selected` fill and a full-color icon, the others a muted icon and the
+/// `pressable` hover. The caller adds a count chip, the tooltip and the press.
+pub(crate) fn panel_tab(
+    id: impl Into<gpui::ElementId>,
+    glyph: Icon,
+    active: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .h(theme::rems_px(theme::PANEL_TAB_HEIGHT))
+        .px(px(space::S))
+        .rounded(px(radius::MEDIUM))
+        .when(active, |el| el.bg(rgb(theme.selected)))
+        .pressable_unless(active, Look::Icon, theme)
+        .child(icon_svg(
+            glyph,
+            theme::ICON_SIZE,
+            if active { theme.text } else { theme.text_muted },
+        ))
+}
+
+/// A text tab underlined in the accent while shown (the Git panel's repository and section
+/// tabs): full text when shown, muted with the text hover otherwise. It fills its row's
+/// height; the caller sets the text size and adds the label and the press.
+pub(crate) fn underline_tab(
+    id: impl Into<gpui::ElementId>,
+    active: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .min_w_0()
+        .h_full()
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .px(px(space::M))
+        .border_b(px(theme::PANE_ACCENT_WIDTH))
+        .border_color(if active {
+            rgb(theme.accent).into()
+        } else {
+            gpui::transparent_black()
+        })
+        .whitespace_nowrap()
+        .when(active, |el| el.text_color(rgb(theme.text)))
+        .when(!active, |el| {
+            el.text_color(rgb(theme.text_muted))
+                .pressable(Look::Text, true, theme)
+        })
+}
+
 /// A tab of the top bar (a terminal, file or Diff tab), Tern style: the shown one is
 /// a solid `tab_active` chip (it always differs from `pane_gap`, see `theme::problems`) with full
 /// text and no border; the others are transparent and muted and get the `pressable` hover fill.
