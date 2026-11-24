@@ -38,9 +38,6 @@ impl NativeView {
     pub fn focus_parent(&self) {
         match *self {}
     }
-    pub fn move_to(&self, _window: &Window) -> bool {
-        match *self {}
-    }
     pub fn surface(&self, _show: bool) -> WebSurface {
         match *self {}
     }

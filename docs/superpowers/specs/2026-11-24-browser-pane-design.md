@@ -242,8 +242,9 @@ Tooltips of other panes that reach over a page are covered by it; accepted.
 
 ### 7.3 Moving between windows
 
-- When a web leaf moves to another window (tab tear-off, Move back, Move all back, a pane dragged across windows, a detached window closing), Windows moves its view with `WebViewExtWindows::reparent(hwnd)`, so the page keeps its state.
-  macOS rebuilds the view in the new window on the same URL (history is lost): `reparent` there takes an `NSWindow` pointer, which needs `unsafe`, and the crate denies `unsafe_code`.
+- When a web leaf moves to another window (tab tear-off, Move back, Move all back, a pane dragged across windows, a detached window closing), every OS rebuilds the view in the new window on the same URL (history is lost).
+  Reason: wry 0.57 `reparent` does not update the focus parent of a child view, so the keyboard would go back to the old window.
+  macOS would also need `unsafe` for its `NSWindow`, and the crate denies `unsafe_code`.
 - The Shell notices a move by itself: at the start of each window's render it compares the window a page was built in with the window that shows its leaf now, so no window-move code path needs a hook.
 - Minimizing a window hides its child views with it (the OS does that).
 

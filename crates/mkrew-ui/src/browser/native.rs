@@ -120,27 +120,6 @@ impl NativeView {
         let _ = self.view.focus_parent();
     }
 
-    /// Moves the page into `window` keeping its state (Windows). `false`: this OS cannot,
-    /// rebuild it there (macOS needs `unsafe` for its `NSWindow`, which this crate denies).
-    pub fn move_to(&self, window: &Window) -> bool {
-        #[cfg(windows)]
-        {
-            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            use wry::WebViewExtWindows as _;
-            if let Ok(RawWindowHandle::Win32(handle)) =
-                HasWindowHandle::window_handle(window).map(|handle| handle.as_raw())
-            {
-                return self.view.reparent(handle.hwnd.get()).is_ok();
-            }
-            false
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = window;
-            false
-        }
-    }
-
     /// The element that keeps the page over its bounds; `show` false while an overlay is open.
     pub fn surface(&self, show: bool) -> WebSurface {
         WebSurface {

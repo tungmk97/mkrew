@@ -20,7 +20,7 @@ Pure logic (address rule, key forwarding, IPC parsing, where a link goes) lives 
 - Verify at the end with `"C:/Program Files/Git/bin/bash.exe" scripts/verify.sh` (plain `bash` is WSL). Intermediate tasks run `cargo fmt --all`, `cargo clippy -p mkrew-ui --all-targets -j 4 -- -D warnings` and their focused tests.
 - Numbers: `PROTOCOL_VERSION` 60 -> 61; ADR `0110-browser-pane.md` (0107 is on `feat/omp-tsp`, 0109 is uncommitted "Seamless panes" work). Re-check both before Task 7 and at merge time.
 - `wry = { version = "0.57", features = ["devtools"] }` only under `[target.'cfg(any(windows, target_os = "macos"))'.dependencies]` of `crates/mkrew-ui/Cargo.toml`. Linux builds no web view.
-- `unsafe_code = "deny"` holds: no `unsafe`. macOS moves a page to another window by rebuilding its view (URL kept, history lost); Windows uses `WebViewExtWindows::reparent`.
+- `unsafe_code = "deny"` holds: no `unsafe`. Every OS moves a page to another window by rebuilding its view (URL kept, history lost): wry 0.57 `reparent` leaves the focus parent of a child view in the old window.
 - Keys: `SplitBrowser` PC `alt-shift-b`, mac `cmd-alt-b`, global. `BrowserAddress` PC `ctrl-l`, mac `cmd-l`, `BROWSER_CONTEXT`. `BrowserBack`, `BrowserForward`, `BrowserReload`, `BrowserOpenExternal` unbound, `BROWSER_CONTEXT`. `BROWSER_CONTEXT = "Browser"`.
 - Address rule (spec 6.2): empty -> nothing; `http`, `https`, `file`, `about` scheme kept; `localhost` / IPv4 / `[IPv6]` (optional port, path) -> `http://`; no space and a dot in the host -> `https://`; else `https://www.google.com/search?q=<percent-encoded>`.
 - Web leaf JSON: `{"web": "<url>", "id": "<ulid>"}`; `""` = not loaded yet.

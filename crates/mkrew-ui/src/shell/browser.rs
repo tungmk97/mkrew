@@ -198,10 +198,10 @@ impl Shell {
         for (id, browser) in &mut self.browsers {
             let here = shown.contains(id);
             if here && browser.host != Some(host) {
-                let moved = (browser.native.as_ref()).is_some_and(|native| native.move_to(window));
-                if !moved {
-                    browser.native = None;
-                }
+                // A page built in another window is rebuilt here on its URL (history is lost):
+                // wry 0.57 keeps the first parent of a child view, so `reparent` would leave
+                // its focus target in the old window.
+                browser.native = None;
                 browser.host = Some(host);
             }
             if here
