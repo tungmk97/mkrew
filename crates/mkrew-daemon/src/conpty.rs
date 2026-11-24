@@ -30,7 +30,7 @@ pub fn log_once() {
         } else {
             tracing::info!(
                 conpty = "system",
-                "conpty.dll and OpenConsole.exe are not both next to the daemon, so omp's native surface cannot start; run scripts/fetch-conpty.sh (scripts/fetch-conpty.ps1 on PowerShell)"
+                "conpty.dll and OpenConsole.exe are not both next to the daemon, so omp's native surface may not start; run scripts/fetch-conpty.sh (scripts/fetch-conpty.ps1 on PowerShell)"
             );
         }
     }

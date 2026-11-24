@@ -108,9 +108,8 @@ pub struct Hub {
     /// the daemon stops, so exited sessions keep their name in `session.list`.
     // ponytail: one ≤ 60-char string per titled agent session; prune on exit if it grows.
     pub terminal_titles: Mutex<HashMap<Ulid, String>>,
-    /// The TSP state of every TSP session (`waiting`, `live`, `fallback`); memory only, kept
-    /// until the daemon stops so exited sessions list their last state.
-    // ponytail: one enum per TSP session; prune on exit if it grows.
+    /// The TSP state of every TSP session (`waiting`, `live`, `fallback`); memory only. An exited
+    /// session keeps its last state for the UI until it is removed (`session.remove`).
     pub tsp_states: Mutex<HashMap<Ulid, TspState>>,
     /// Linked plans of live sessions, each with its file watcher (ADR 0039).
     pub plans: crate::plan::Plans,
@@ -387,6 +386,11 @@ impl Hub {
     /// The TSP state of session `id`; `off` for a session without TSP.
     pub fn tsp_state(&self, id: Ulid) -> TspState {
         lock(&self.tsp_states).get(&id).copied().unwrap_or_default()
+    }
+
+    /// Drops the TSP state of a removed session (see `tsp_states`).
+    pub fn forget_tsp(&self, id: Ulid) {
+        lock(&self.tsp_states).remove(&id);
     }
 
     /// The newest limits each agent reported, for `limits.get`.
@@ -2056,6 +2060,18 @@ mod tests {
             },
         );
         id
+    }
+
+    /// An exited session keeps its last TSP state; removing it drops the entry.
+    #[tokio::test]
+    async fn removing_a_session_drops_its_tsp_state() {
+        let (_dir, hub, _project) = hub();
+        let id = Ulid::new();
+        lock(&hub.tsp_states).insert(id, TspState::Fallback);
+        assert_eq!(hub.tsp_state(id), TspState::Fallback);
+        hub.forget_tsp(id);
+        assert_eq!(hub.tsp_state(id), TspState::Off);
+        assert!(lock(&hub.tsp_states).is_empty());
     }
 
     /// The view that kept a project watched closes: the watch stops at once, except while a

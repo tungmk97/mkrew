@@ -351,6 +351,19 @@ mod tests {
     }
 
     #[test]
+    fn hello_delay_takes_milliseconds_and_needs_tsp() {
+        let parsed = parse_args(args(&["--tsp", "f.jsonl", "--hello-delay-ms", "1500"])).unwrap();
+        assert_eq!(parsed.hello_delay, Some(Duration::from_millis(1500)));
+        assert_eq!(
+            parse_args(args(&["--tsp", "f.jsonl"])).unwrap().hello_delay,
+            None
+        );
+        assert!(parse_args(args(&["--tsp", "f.jsonl", "--hello-delay-ms"])).is_err());
+        assert!(parse_args(args(&["--tsp", "f.jsonl", "--hello-delay-ms", "soon"])).is_err());
+        assert!(parse_args(args(&["--hello-delay-ms", "10"])).is_err());
+    }
+
+    #[test]
     fn only_out_lines_are_replayed_in_order_with_their_verbs() {
         let text = [
             r#"{"t":1,"dir":"out","verb":"o","body":{"id":"s:1","mode":"inline"}}"#,

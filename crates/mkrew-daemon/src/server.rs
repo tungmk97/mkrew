@@ -1223,6 +1223,7 @@ impl Daemon {
         let hidden = self.store().hide_session(session_id);
         if hidden.is_ok() {
             self.hub.command(session_id, Command::Kill { force: false });
+            self.hub.forget_tsp(session_id);
         }
         store_outcome(hidden)
     }
