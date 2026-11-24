@@ -383,7 +383,7 @@ pub fn enters_fallback(before: Option<TspState>, after: TspState) -> bool {
 pub fn fallback_toast(reason: Option<&str>) -> String {
     match reason.map(str::trim).filter(|r| !r.is_empty()) {
         Some(mkrew_core::tsp::engine::NO_REPLY_REASON) => {
-            "omp is drawing as text for now. The pane switches to the native view when omp is ready."
+            "omp is drawing as text for now. It may switch to the native view if omp answers within a minute."
                 .to_owned()
         }
         Some(reason) => format!("omp is drawing as text: {reason}"),
@@ -2918,7 +2918,7 @@ mod tests {
     fn the_timer_fallback_is_provisional_and_the_toast_says_so() {
         let toast = fallback_toast(Some(mkrew_core::tsp::engine::NO_REPLY_REASON));
         assert!(toast.contains("for now"), "{toast}");
-        assert!(toast.contains("native view when omp is ready"), "{toast}");
+        assert!(toast.contains("may switch to the native view"), "{toast}");
         assert!(
             !toast.contains("no TSP reply"),
             "the reason is not repeated"
