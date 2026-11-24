@@ -29,6 +29,7 @@ pub mod state;
 pub mod tailscale;
 pub mod task;
 pub mod thread;
+pub mod tsp;
 pub mod turn;
 pub mod usage;
 pub mod viewed;

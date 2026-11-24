@@ -7,6 +7,7 @@ mod attach;
 mod attachment;
 mod awake;
 mod backup;
+pub mod conpty;
 mod docs;
 mod emulator;
 mod file_ops;
@@ -61,6 +62,7 @@ pub fn run(paths: &Paths) -> Result<(), RunError> {
         .map_err(RunError::Other)?;
     let _lock = InstanceLock::acquire(&paths.lock_file())?;
     tracing::info!(pid = std::process::id(), data_dir = %paths.data_dir.display(), "daemon starting");
+    conpty::log_once();
     serve(paths).map_err(RunError::Other)
 }
 

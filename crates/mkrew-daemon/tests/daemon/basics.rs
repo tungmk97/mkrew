@@ -157,6 +157,7 @@ fn startup_marks_stale_sessions_exited() {
                 pinned: false,
                 position: 0.0,
                 plan_path: None,
+                tsp: mkrew_protocol::TspState::Off,
             })
             .unwrap();
     }

@@ -159,6 +159,7 @@ use shell::reorder::*;
 use shell::sidebar::*;
 use shell::tear_off::*;
 use shell::thread_panel::*;
+use shell::tsp_view::*;
 use shell::widgets::*;
 
 /// Longest wait for the frame showing fed output before draining again anyway (e.g. the
@@ -743,6 +744,9 @@ struct Shell {
     thread: Option<ThreadWatch>,
     /// What each pane in Chat mode remembers (open rows, scroll), ADR 0104.
     chats: HashMap<Ulid, ChatUi>,
+    /// What each omp pane with a live native surface keeps: the mirror of the daemon's documents
+    /// and the scroll (ADR 0107).
+    tsps: HashMap<Ulid, TspUi>,
     /// Focused while a pane's chat list has the keyboard (the composer has its own).
     chat_focus: FocusHandle,
     /// Its width in px, from `[ui] inspector_width` and the drag.

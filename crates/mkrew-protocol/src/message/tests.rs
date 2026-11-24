@@ -348,6 +348,12 @@ fn every_m1_request_round_trips() {
         Request::SessionPlan(ProjectRef { project_id: sid() }),
         Request::LimitsGet,
         Request::LimitsReport(limits()),
+        Request::TspSnapshot(TspSnapshotParams { session_id: sid() }),
+        Request::TspEvent(TspEventParams {
+            session_id: sid(),
+            surface: "s:1".into(),
+            event: json!({"ev": "action", "sf": "s:1", "id": "dock.bar.stop", "act": "interrupt"}),
+        }),
         Request::TurnRestorePreview(TurnRef {
             session_id: sid(),
             n: 2,
@@ -920,6 +926,7 @@ fn event_wire_shape_matches_spec() {
         pinned: true,
         position: 2.5,
         plan_path: None,
+        tsp: TspState::Live,
     }))));
     let titled = round_trip(&Message::Event(Event::SessionTerminalTitle(
         SessionTerminalTitleEvent {
@@ -937,6 +944,14 @@ fn event_wire_shape_matches_spec() {
     assert_eq!(updated["data"]["color"], "teal");
     // A plan link is absent on the wire when unset.
     assert!(updated["data"].get("plan_path").is_none());
+    assert_eq!(updated["data"]["tsp"], "live");
+    // Session JSON from before protocol 61 has no `tsp`: it reads as off.
+    let mut older = updated["data"].clone();
+    older.as_object_mut().unwrap().remove("tsp");
+    assert_eq!(
+        serde_json::from_value::<Session>(older).unwrap().tsp,
+        TspState::Off
+    );
     let plan = round_trip(&Message::Event(Event::SessionPlan(SessionPlanEvent {
         session_id: sid(),
         name: "PLAN".into(),
@@ -1396,8 +1411,8 @@ fn a_report_replaces_an_older_different_one_only() {
 }
 
 #[test]
-fn the_tern_panes_protocol_is_version_60() {
-    assert_eq!(crate::PROTOCOL_VERSION, 60);
+fn the_omp_surface_protocol_is_version_61() {
+    assert_eq!(crate::PROTOCOL_VERSION, 61);
 }
 
 /// ADR 0105: the recap travels with the transcript reply; a reply without it (an older
@@ -1439,4 +1454,213 @@ fn fs_new_note_is_on_the_wire_as_fs_new_note() {
         serde_json::to_value(&request).unwrap()["method"],
         "fs.new_note"
     );
+}
+
+fn tsp_surface(seq: u64) -> TspSurface {
+    TspSurface {
+        id: "s:1".into(),
+        mode: "inline".into(),
+        role: None,
+        title: None,
+        read_only: false,
+        seq,
+        root: TspNode {
+            id: "s:1".into(),
+            k: "col".into(),
+            p: serde_json::Map::new(),
+            c: vec![],
+        },
+    }
+}
+
+/// The JSON `data` of a `tsp.update` carrying `change`, after a round trip.
+fn tsp_update_data(change: TspChange) -> serde_json::Value {
+    let value = round_trip(&Message::Event(Event::TspUpdate(Box::new(TspUpdate {
+        session_id: sid(),
+        surface: "s:1".into(),
+        change,
+    }))));
+    assert_eq!(value["type"], "event");
+    assert_eq!(value["event"], "tsp.update");
+    value["data"].clone()
+}
+
+#[test]
+fn tsp_update_wire_shape_per_change_kind() {
+    // frame: `blobs` is left out when empty, `ops` stay raw JSON arrays.
+    assert_eq!(
+        tsp_update_data(TspChange::Frame {
+            seq: 4,
+            ops: vec![json!(["text", "t1", "append", "hi"]), json!(["del", "t0"])],
+            blobs: vec![],
+        }),
+        json!({
+            "session_id": sid(),
+            "surface": "s:1",
+            "change": {
+                "kind": "frame",
+                "seq": 4,
+                "ops": [["text", "t1", "append", "hi"], ["del", "t0"]]
+            }
+        })
+    );
+    // frame with an image the frame needs: bytes travel as base64.
+    let with_blob = tsp_update_data(TspChange::Frame {
+        seq: 5,
+        ops: vec![],
+        blobs: vec![TspBlob {
+            id: "b1".into(),
+            mime: "image/png".into(),
+            data: vec![0x89, 0x50],
+        }],
+    });
+    assert_eq!(
+        with_blob["change"]["blobs"],
+        json!([{"id": "b1", "mime": "image/png", "data": "iVA="}])
+    );
+    // open: absent role and title are left out, `read_only` is always there.
+    assert_eq!(
+        tsp_update_data(TspChange::Open {
+            surface: tsp_surface(0)
+        })["change"],
+        json!({
+            "kind": "open",
+            "surface": {
+                "id": "s:1", "mode": "inline", "read_only": false, "seq": 0,
+                "root": {"id": "s:1", "k": "col"}
+            }
+        })
+    );
+    let titled = TspSurface {
+        role: Some("agents".into()),
+        title: Some("Agent Hub".into()),
+        read_only: true,
+        mode: "screen".into(),
+        ..tsp_surface(3)
+    };
+    let open = tsp_update_data(TspChange::Open { surface: titled });
+    assert_eq!(open["change"]["surface"]["role"], "agents");
+    assert_eq!(open["change"]["surface"]["title"], "Agent Hub");
+    assert_eq!(open["change"]["surface"]["read_only"], true);
+    // closed.
+    assert_eq!(
+        tsp_update_data(TspChange::Closed { keep: true })["change"],
+        json!({"kind": "closed", "keep": true})
+    );
+    assert_eq!(
+        tsp_update_data(TspChange::Closed { keep: false })["change"],
+        json!({"kind": "closed", "keep": false})
+    );
+}
+
+#[test]
+fn a_tsp_node_leaves_out_empty_props_and_children() {
+    let mut props = serde_json::Map::new();
+    props.insert("text".into(), json!("hi"));
+    let tree = TspNode {
+        id: "main".into(),
+        k: "col".into(),
+        p: serde_json::Map::new(),
+        c: vec![TspNode {
+            id: "t1".into(),
+            k: "text".into(),
+            p: props,
+            c: vec![],
+        }],
+    };
+    let value = serde_json::to_value(&tree).unwrap();
+    assert_eq!(
+        value,
+        json!({"id": "main", "k": "col", "c": [{"id": "t1", "k": "text", "p": {"text": "hi"}}]})
+    );
+    assert_eq!(serde_json::from_value::<TspNode>(value).unwrap(), tree);
+    // omp sends bare nodes too.
+    let bare: TspNode = serde_json::from_value(json!({"id": "sp", "k": "spacer"})).unwrap();
+    assert!(bare.p.is_empty() && bare.c.is_empty());
+}
+
+#[test]
+fn tsp_requests_and_snapshot_reply_wire_shapes() {
+    let snapshot = round_trip(&Message::Request {
+        id: 1,
+        request: Request::TspSnapshot(TspSnapshotParams { session_id: sid() }),
+    });
+    assert_eq!(snapshot["method"], "tsp.snapshot");
+    assert_eq!(snapshot["params"], json!({"session_id": sid()}));
+    let event = round_trip(&Message::Request {
+        id: 2,
+        request: Request::TspEvent(TspEventParams {
+            session_id: sid(),
+            surface: "s:1".into(),
+            event: json!({"ev": "theme", "dark": false}),
+        }),
+    });
+    assert_eq!(event["method"], "tsp.event");
+    assert_eq!(event["params"]["surface"], "s:1");
+    assert_eq!(
+        event["params"]["event"],
+        json!({"ev": "theme", "dark": false})
+    );
+
+    // A reply with no `blobs` key decodes (nothing inline to send).
+    let none: TspSnapshot =
+        serde_json::from_value(json!({"state": "waiting", "surfaces": []})).unwrap();
+    assert_eq!(
+        none,
+        TspSnapshot {
+            state: TspState::Waiting,
+            surfaces: vec![],
+            blobs: vec![],
+            reason: None,
+        }
+    );
+    let full = TspSnapshot {
+        state: TspState::Live,
+        surfaces: vec![tsp_surface(9)],
+        blobs: vec![TspBlob {
+            id: "b1".into(),
+            mime: "image/png".into(),
+            data: vec![0x89, 0x50],
+        }],
+        reason: None,
+    };
+    let value = serde_json::to_value(&full).unwrap();
+    assert_eq!(value["state"], "live");
+    assert_eq!(value["surfaces"][0]["seq"], 9);
+    assert_eq!(value["blobs"][0]["data"], "iVA=");
+    assert_eq!(
+        serde_json::from_value::<TspSnapshot>(value.clone()).unwrap(),
+        full
+    );
+    assert!(
+        value.get("reason").is_none(),
+        "no reason key unless the session fell back"
+    );
+
+    // A fallen-back session tells the UI why (spec 7.3 toast).
+    let fell_back: TspSnapshot = serde_json::from_value(json!({
+        "state": "fallback", "surfaces": [], "reason": "no TSP reply from the terminal layer"
+    }))
+    .unwrap();
+    assert_eq!(
+        fell_back.reason.as_deref(),
+        Some("no TSP reply from the terminal layer")
+    );
+}
+
+#[test]
+fn tsp_state_names_are_snake_case_and_off_is_the_default() {
+    for (state, name) in [
+        (TspState::Off, "off"),
+        (TspState::Waiting, "waiting"),
+        (TspState::Live, "live"),
+        (TspState::Fallback, "fallback"),
+    ] {
+        assert_eq!(serde_json::to_value(state).unwrap(), json!(name));
+        assert_eq!(
+            serde_json::from_value::<TspState>(json!(name)).unwrap(),
+            state
+        );
+    }
+    assert_eq!(TspState::default(), TspState::Off);
 }

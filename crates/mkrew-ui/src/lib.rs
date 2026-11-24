@@ -106,6 +106,7 @@ pub mod theme_catalog;
 pub mod theme_file;
 pub mod thread_view;
 pub mod toast;
+pub mod tsp;
 pub mod turn;
 pub mod turns_dialog;
 pub mod undo_dialog;
