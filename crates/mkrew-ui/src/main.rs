@@ -111,9 +111,9 @@ use mkrew_ui::split::{Axis, Direction, Divider, Edge, FileKey, Leaf, PaneKey, Pr
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{
-    AreaItem, FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, area_items, diff_label,
+    AreaItem, FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, WebPlace, area_items, diff_label,
     double_click_renames, file_label, newest_unplaced, on_screen, rename_params, scroll_index,
-    session_label, tab_icons, web_label,
+    session_label, tab_icons, web_label, web_place,
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
@@ -764,6 +764,8 @@ struct Shell {
     documents: HashMap<Ulid, Documents>,
     /// Browser panes' page state, by leaf id (ADR 0110); follows the layouts (`sync_browsers`).
     browsers: HashMap<Ulid, shell::browser::Browser>,
+    /// The "pages open in your browser" toast was shown this run (ADR 0110).
+    browser_fallback_told: bool,
     /// Page events of every browser pane (`wry` callbacks), read by one task (`page_event`).
     page_events: async_channel::Sender<(Ulid, mkrew_ui::browser::PageEvent)>,
     /// The view state of each open file pane, keyed like the store.

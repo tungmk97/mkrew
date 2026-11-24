@@ -459,6 +459,7 @@ impl Shell {
             comment_focus: cx.focus_handle(),
             documents: HashMap::new(),
             browsers: HashMap::new(),
+            browser_fallback_told: false,
             page_events,
             doc_views: HashMap::new(),
             files: HashMap::new(),

@@ -547,7 +547,7 @@ fn is_inline(event: &Event<'_>) -> bool {
 /// Where a clicked link goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkTarget {
-    /// `http`, `https` or `mailto`: the system opens it.
+    /// `http`, `https` (a browser pane, ADR 0110) or `mailto` (the system).
     Web(String),
     /// `#anchor`: a heading of the shown file.
     Anchor(String),

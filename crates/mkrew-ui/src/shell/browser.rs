@@ -181,6 +181,62 @@ impl Shell {
         cx.notify();
     }
 
+    /// A web link clicked in `window` (spec 4.1): `http(s)` loads in the shown tab's browser
+    /// pane, or a new one right of `from` (else the focused pane), or a new tab; anything else,
+    /// and every link where pages cannot show, goes to the system.
+    pub(crate) fn open_web(
+        &mut self,
+        url: String,
+        from: Option<PaneKey>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let web = url.get(..url.find(':').unwrap_or(0)).is_some_and(|scheme| {
+            scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+        });
+        if !web {
+            return cx.open_url(&url);
+        }
+        if let Err(reason) = mkrew_ui::browser::available() {
+            if !self.browser_fallback_told {
+                self.browser_fallback_told = true;
+                self.toast_info(format!("Web pages open in your browser: {reason}"), cx);
+            }
+            return cx.open_url(&url);
+        }
+        let scope = self.tab_scope(window);
+        let Some(project_id) = scope.map(|(project, _)| project).or(self.workspace) else {
+            return cx.open_url(&url);
+        };
+        let tab = scope.and_then(|(project, tab_id)| self.tabs.get(&project)?.tab(tab_id));
+        match web_place(tab, from.as_ref()) {
+            WebPlace::Load(id) => {
+                self.focus_pane_key(project_id, &PaneKey::Web(id));
+                self.navigate(id, url, window, cx);
+                self.sync_panes(window, cx);
+            }
+            WebPlace::Split(target) => {
+                let place = documents::Place::Split(target, Edge::Right);
+                self.place_leaf(project_id, Leaf::web(url), place, window, cx);
+            }
+            WebPlace::NewTab => {
+                // Terminals show the panes: Board and Docs give way (as a file from Docs).
+                self.views.insert(project_id, View::Terminals);
+                if self.workspace != Some(project_id) {
+                    self.activate_workspace(project_id, window, cx);
+                }
+                self.place_leaf(
+                    project_id,
+                    Leaf::web(url),
+                    documents::Place::NewTab,
+                    window,
+                    cx,
+                );
+            }
+        }
+        cx.notify();
+    }
+
     /// An overlay above the panes is open: every page hides so it shows (spec 7.2).
     /// ponytail: one rule for every window; a palette in one window hides pages in all.
     pub(crate) fn browser_overlay(&self, cx: &App) -> bool {

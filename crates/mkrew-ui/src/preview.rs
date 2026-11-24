@@ -277,6 +277,8 @@ pub struct Selecting(pub Option<preview_select::Selection>);
 pub struct OpenLink {
     pub dest: String,
     pub on_page: bool,
+    /// The Chat pane the link is in (ADR 0110: a web link splits beside it).
+    pub session: Option<Ulid>,
 }
 
 /// Asks the window to tick or untick the task item whose first source line (1-based) is `0`
@@ -388,7 +390,14 @@ fn linked(styled: StyledText, links: Option<Links>) -> AnyElement {
                             cx,
                         );
                     }
-                    _ => window.dispatch_action(Box::new(OpenLink { dest, on_page }), cx),
+                    _ => window.dispatch_action(
+                        Box::new(OpenLink {
+                            dest,
+                            on_page,
+                            session: path_of,
+                        }),
+                        cx,
+                    ),
                 }
             },
         ))

@@ -2170,3 +2170,47 @@ fn closing_a_browser_pane_or_its_tab_drops_its_key() {
     );
     assert_eq!(tabs.active().unwrap().keys(), [k(a)]);
 }
+
+#[test]
+fn a_link_loads_in_the_tabs_browser_pane_or_splits_beside_its_pane() {
+    let project = Ulid::new();
+    let (a, b, web) = (Ulid::new(), Ulid::new(), Ulid::new());
+    let two = json!({"split": "vertical", "ratio": 0.5, "children": [pane(a), pane(b)]});
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "Terminal", 1.0, two)]);
+    let tab = tabs.active().unwrap();
+    // No browser pane: beside the pane the link is in, else beside the focused pane.
+    assert_eq!(web_place(Some(tab), Some(&k(b))), WebPlace::Split(k(b)));
+    assert_eq!(
+        web_place(Some(tab), None),
+        WebPlace::Split(tab.focused().unwrap().clone())
+    );
+    // A link from a pane of another tab splits the focused pane of this one.
+    assert_eq!(
+        web_place(Some(tab), Some(&k(Ulid::new()))),
+        WebPlace::Split(tab.focused().unwrap().clone())
+    );
+    // No tab shown (Docs): a new tab.
+    assert_eq!(web_place(None, Some(&k(a))), WebPlace::NewTab);
+    // The tab has a browser pane: it takes the link, even while another pane is zoomed.
+    let with_web = json!({"split": "vertical", "ratio": 0.5, "children": [
+        pane(a), {"web": "https://x.dev", "id": web.to_string()}
+    ]});
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "Terminal", 1.0, with_web)]);
+    assert!(tabs.focus(&k(a)));
+    assert!(tabs.toggle_zoom());
+    assert_eq!(web_place(tabs.active(), Some(&k(a))), WebPlace::Load(web));
+}
+
+#[test]
+fn the_first_browser_pane_in_tree_order_takes_the_link() {
+    let project = Ulid::new();
+    let (first, second) = (Ulid::new(), Ulid::new());
+    let tree = json!({"split": "horizontal", "ratio": 0.5, "children": [
+        {"web": "", "id": first.to_string()}, {"web": "", "id": second.to_string()}
+    ]});
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "Terminal", 1.0, tree)]);
+    assert_eq!(web_place(tabs.active(), None), WebPlace::Load(first));
+}

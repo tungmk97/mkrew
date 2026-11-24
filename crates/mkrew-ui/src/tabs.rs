@@ -1038,6 +1038,35 @@ pub fn web_label(tab: &Tab) -> Option<Ulid> {
     }
 }
 
+/// Where a web link clicked in a tab goes (spec 4.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebPlace {
+    /// The tab's browser pane (the first in tree order) loads it.
+    Load(Ulid),
+    /// A new browser pane right of this pane.
+    Split(PaneKey),
+    /// No tab is shown: a new tab.
+    NewTab,
+}
+
+/// Where a link clicked in `tab` (`None`: no tab shown) goes; `from` is the pane it was in.
+pub fn web_place(tab: Option<&Tab>, from: Option<&PaneKey>) -> WebPlace {
+    let Some(tab) = tab else {
+        return WebPlace::NewTab;
+    };
+    let keys = tab.keys();
+    if let Some(id) = keys.iter().find_map(|key| match key {
+        PaneKey::Web(id) => Some(*id),
+        _ => None,
+    }) {
+        return WebPlace::Load(id);
+    }
+    match from.filter(|key| keys.contains(key)).or(tab.focused()) {
+        Some(key) => WebPlace::Split(key.clone()),
+        None => WebPlace::NewTab,
+    }
+}
+
 /// What a tab chip shows for a focused file pane: its name, a dot while it has unsaved text,
 /// italics while it is the preview tab (SPEC §5).
 #[derive(Debug, Clone, PartialEq, Eq)]
