@@ -11,6 +11,9 @@ impl Shell {
 
     pub(crate) fn open_new_menu(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.begin_menu(window, cx);
+        // Closing the menu gives the keyboard to the pane, not to `▾`, so the `+` row (open
+        // while it holds focus) collapses with it (SPEC §10).
+        self.menu_return = None;
         self.new_menu = true;
         self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
