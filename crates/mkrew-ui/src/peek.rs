@@ -5,7 +5,7 @@
 //! answer, Ctrl+O opens the pane, Esc closes). Pure and tested headlessly; `main.rs` renders it.
 
 use gpui::Keystroke;
-use mkrew_protocol::{SessionReadParams, SessionSendParams, SessionState};
+use mkrew_protocol::{SessionReadParams, SessionSendParams, SessionState, TspState};
 use ulid::Ulid;
 
 use crate::inbox::Entry;
@@ -236,6 +236,13 @@ pub fn cycle(entries: &[Entry], current: Ulid, by: i32) -> Option<Ulid> {
     entries.get(at).map(|e| e.session_id)
 }
 
+/// What the preview says instead of the screen for a session whose pane omp draws natively
+/// (TSP `live` or `waiting`): its terminal grid is hidden and empty, so reading it shows nothing.
+pub fn native_notice(tsp: TspState) -> Option<&'static str> {
+    matches!(tsp, TspState::Live | TspState::Waiting)
+        .then_some("omp draws this session natively. Open it to see it.")
+}
+
 #[cfg(test)]
 mod tests {
     use mkrew_protocol::StateSource;
@@ -266,6 +273,14 @@ mod tests {
             state_source: StateSource::Hook,
             state_changed_at: at,
         }
+    }
+
+    #[test]
+    fn a_natively_drawn_session_has_a_notice_instead_of_a_screen() {
+        assert!(native_notice(TspState::Live).is_some());
+        assert_eq!(native_notice(TspState::Live), native_notice(TspState::Waiting));
+        assert_eq!(native_notice(TspState::Off), None);
+        assert_eq!(native_notice(TspState::Fallback), None, "the grid is back");
     }
 
     #[test]

@@ -485,11 +485,16 @@ impl Shell {
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
-        let screen = match &peek.screen {
-            peek::Screen::Reading => muted("Reading the screen…".into()),
-            peek::Screen::Failed(error) => muted(format!("Cannot read the screen: {error}")),
-            peek::Screen::Read(lines) if lines.is_empty() => muted("The screen is empty.".into()),
-            peek::Screen::Read(lines) => div()
+        let screen = match (peek::native_notice(session.tsp), &peek.screen) {
+            (Some(notice), _) => muted(notice.into()),
+            (None, peek::Screen::Reading) => muted("Reading the screen…".into()),
+            (None, peek::Screen::Failed(error)) => {
+                muted(format!("Cannot read the screen: {error}"))
+            }
+            (None, peek::Screen::Read(lines)) if lines.is_empty() => {
+                muted("The screen is empty.".into())
+            }
+            (None, peek::Screen::Read(lines)) => div()
                 .flex()
                 .flex_col()
                 .font_family(theme.terminal_font_family.clone())
