@@ -25,7 +25,7 @@ use mkrew_ui::tsp::{
 use mkrew_ui::{docs, preview};
 use serde_json::{Value, json};
 
-use super::chat_view::chat_column;
+use super::chat_view::{chat_column, chat_column_in};
 use super::composer::{
     composer_card_frame, composer_room, meter_bar, model_pill, permission_chip, placeholder_row,
     quiet_chip,
@@ -692,11 +692,6 @@ fn array_prop<'a>(node: &'a Node, key: &str) -> &'a [Value] {
         .map_or(&[], Vec::as_slice)
 }
 
-/// `grow` > 0: the node takes the free space of its row or column.
-fn grows(node: &Node) -> bool {
-    num_prop(node, "grow").is_some_and(|grow| grow > 0.0)
-}
-
 /// `runs` as one styled text: weights, slants, strike and mark per run; `mono` runs (and all runs
 /// when `all_mono`) in the terminal font with the glyph fallbacks, the rest in the UI font.
 fn styled_runs(
@@ -865,8 +860,9 @@ impl Shell {
             bounded: true,
             ..paint
         };
-        // A `screen` surface covers the pane: its page is bounded by the pane, not scrolled.
-        let screen = meta.mode == "screen";
+        // A `screen` surface of one card (the Agent Hub) is bounded by the pane, not scrolled; any
+        // other screen keeps the scrolling page.
+        let screen = meta.mode == "screen" && tsp::screen_bounded(doc);
         let screen_paint = Paint {
             bounded: true,
             ..paint
@@ -884,7 +880,7 @@ impl Shell {
         let rows: Vec<AnyElement> = if screen {
             (doc.children("main"))
                 .map(|node| {
-                    Self::tsp_screen_row(self.tsp_node(&screen_paint, node, cx)).into_any_element()
+                    chat_column_in(self.tsp_node(&screen_paint, node, cx), true).into_any_element()
                 })
                 .collect()
         } else {
@@ -1013,6 +1009,7 @@ impl Shell {
 
     /// A child of `layer`: an `overlay` is a modal card placed by its `anchor` and `size`; any other
     /// node (a sheet omp was not asked for) is drawn as is.
+    #[inline(never)]
     fn tsp_layer_child(
         &self,
         p: &Paint<'_>,
@@ -1023,7 +1020,7 @@ impl Shell {
             return self.tsp_node(p, node, cx);
         }
         let kids = match tsp::bounded_split(p.doc, node) {
-            Some(split) => self.tsp_scroll_body(p, node, split, None, cx),
+            Some(split) => self.tsp_scroll_body(p, node, split, cx),
             None => self.tsp_children(p, node, cx),
         };
         Self::tsp_overlay(p, node, kids)
@@ -1060,22 +1057,17 @@ impl Shell {
     }
 
     /// The children of a card bounded to its pane whose body scrolls ([`tsp::bounded_split`]):
-    /// the leading tabs and the hints stay in place, the rest is one scroll box. `skip` is a head
-    /// child that is drawn elsewhere.
+    /// the leading tabs and the hints stay in place, the rest is one scroll box.
+    #[inline(never)]
     fn tsp_scroll_body(
         &self,
         p: &Paint<'_>,
         node: &Node,
         split: tsp::BoundedSplit<'_>,
-        skip: Option<&Node>,
         cx: &mut Context<'_, Self>,
     ) -> Vec<AnyElement> {
         let mut build = |nodes: Vec<&Node>| -> Vec<AnyElement> {
-            nodes
-                .into_iter()
-                .filter(|n| skip.is_none_or(|skip| skip.id != n.id))
-                .map(|n| self.tsp_node(p, n, cx))
-                .collect()
+            nodes.into_iter().map(|n| self.tsp_node(p, n, cx)).collect()
         };
         let top = build(split.top);
         let body = build(split.body);
@@ -1083,6 +1075,9 @@ impl Shell {
         Self::tsp_scroller(p, node, top, body, bottom)
     }
 
+    /// `top` and `bottom` keep their height; the scroll box is the only part of the card that
+    /// grows or shrinks. Its one inner column does not clip and does not shrink its children, so
+    /// a body taller than the box overflows it and scrolls.
     #[inline(never)]
     fn tsp_scroller(
         p: &Paint<'_>,
@@ -1091,36 +1086,21 @@ impl Shell {
         body: Vec<AnyElement>,
         bottom: Vec<AnyElement>,
     ) -> Vec<AnyElement> {
+        let fixed = |el: AnyElement| div().flex_none().child(el).into_any_element();
         let scroller = div()
             .id(SharedString::from(format!(
                 "tsp-body-{}-{}",
                 p.session, node.id
             )))
-            .flex()
-            .flex_col()
-            .gap(px(space::S))
+            .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .children(body)
+            .child(div().flex().flex_col().gap(px(space::S)).children(body))
             .into_any_element();
-        (top.into_iter())
+        (top.into_iter().map(fixed))
             .chain(std::iter::once(scroller))
-            .chain(bottom)
+            .chain(bottom.into_iter().map(fixed))
             .collect()
-    }
-
-    /// A row of a `screen` surface's `main`: the Chat column, as tall as the pane leaves it.
-    fn tsp_screen_row(el: AnyElement) -> Div {
-        div().min_h_0().w_full().flex().justify_center().child(
-            div()
-                .min_h_0()
-                .w_full()
-                .max_w(px(theme::CHAT_COLUMN_WIDTH))
-                .px(px(theme::CHAT_COLUMN_PADDING))
-                .flex()
-                .flex_col()
-                .child(el),
-        )
     }
 }
 
@@ -1221,7 +1201,7 @@ impl Shell {
         } else {
             el
         };
-        if grows(node) { el.flex_1() } else { el }
+        if tsp::grows(node) { el.flex_1() } else { el }
     }
 
     /// col, row, card, section, rule, spacer, overlay, toast.
@@ -1241,7 +1221,7 @@ impl Shell {
     #[inline(never)]
     fn tsp_spacer(node: &Node) -> AnyElement {
         let size = tsp::gap_px(str_prop(node, "size"));
-        let el = if grows(node) {
+        let el = if tsp::grows(node) {
             div().flex_1()
         } else {
             div().h(px(size)).w(px(size))
@@ -1345,7 +1325,7 @@ impl Shell {
         let body: Vec<AnyElement> = if bool_prop(node, "collapsed") {
             Vec::new()
         } else if let Some(split) = split {
-            self.tsp_scroll_body(p, node, split, head_child, cx)
+            self.tsp_scroll_body(p, node, split, cx)
         } else {
             (p.doc.children(&node.id))
                 .filter(|child| head_child.is_none_or(|head| head.id != child.id))
@@ -1559,7 +1539,7 @@ impl Shell {
         if str_prop(node, "truncate").is_some() {
             el = el.truncate();
         }
-        if grows(node) {
+        if tsp::grows(node) {
             el = el.flex_1();
         }
         self.tsp_decorate(el, p, node, Look::Text, false, cx)
@@ -1701,7 +1681,7 @@ impl Shell {
             }));
         // A growing list takes the height left in its card and scrolls inside; its
         // selected item is kept in view.
-        let el = if grows(node) {
+        let el = if tsp::grows(node) {
             let handle = list_handle(&p.ui.lists, &node.id);
             let selected = str_prop(node, "selected");
             if let Some(ix) = tsp::selected_index(p.doc, node)
@@ -1777,12 +1757,13 @@ impl Shell {
                 )
             })
             .when(!value.is_empty(), |el| {
-                el.child(div().min_w_0().truncate().child(styled_runs(
-                    &value,
-                    theme.text_muted,
-                    false,
-                    theme,
-                )))
+                el.child(
+                    div()
+                        .min_w_0()
+                        .max_w(relative(0.5))
+                        .truncate()
+                        .child(styled_runs(&value, theme.text_muted, false, theme)),
+                )
             });
         // The picked row reads on any card: the selection fill and the accent bar (the
         // bar's width is reserved on the other rows, so nothing shifts).
@@ -1932,7 +1913,7 @@ impl Shell {
         if !right.is_empty() {
             el = el.child(div().flex_1()).children(right);
         }
-        if grows(node) {
+        if tsp::grows(node) {
             el = el.flex_1();
         }
         self.tsp_decorate(el, p, node, Look::Text, false, cx)
@@ -2277,7 +2258,7 @@ impl Shell {
                     shell.tsp_click(session, &id, false, cx);
                 }),
             );
-        let el = if grows(node) || matches!(look, EditorLook::Composer { .. }) {
+        let el = if tsp::grows(node) || matches!(look, EditorLook::Composer { .. }) {
             el.flex_1()
         } else {
             el
@@ -3337,6 +3318,7 @@ impl Shell {
 
     /// `omp.hook-editor.line`: the note or custom answer field, framed like the composer's
     /// (placeholder as the Chat placeholder row, caret, text).
+    #[inline(never)]
     fn tsp_hook_line(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
         let kids: Vec<AnyElement> = (p.doc.children(&node.id))
             .map(|child| match child.kind.as_str() {

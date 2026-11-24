@@ -1544,11 +1544,28 @@ pub struct BoundedSplit<'a> {
     pub bottom: Vec<&'a Node>,
 }
 
+/// Whether a `screen` surface is drawn bounded by the pane (no page scroll): only when `main`
+/// holds exactly one card, the Agent Hub, which scrolls its own body. Any other content would be
+/// clipped, so that screen keeps the scrolling page.
+pub fn screen_bounded(doc: &Document) -> bool {
+    let mut main = doc.children("main");
+    matches!((main.next(), main.next()), (Some(only), None) if only.kind == "card")
+}
+
+/// The head child of a card or section is drawn as its head, not among the split nodes.
 pub fn bounded_split<'a>(doc: &'a Document, node: &'a Node) -> Option<BoundedSplit<'a>> {
     if has_grow_list(doc, node) {
         return None;
     }
-    let kids: Vec<&Node> = doc.children(&node.id).collect();
+    // An overlay draws no head of its own: a child named by its `head` stays content.
+    let head = match head_of(doc, node) {
+        Head::Child(child) if node.kind != "overlay" => Some(child.id.as_str()),
+        _ => None,
+    };
+    let kids: Vec<&Node> = doc
+        .children(&node.id)
+        .filter(|n| Some(n.id.as_str()) != head)
+        .collect();
     let top = kids.iter().take_while(|n| n.kind == "tabs").count();
     let bottom = (kids[top..].iter().rev())
         .take_while(|n| role_of(n) == Some("omp.overlay.hints"))
@@ -2362,6 +2379,41 @@ mod tests {
         assert!(
             split(still).is_some(),
             "a list that does not grow is just content"
+        );
+    }
+
+    #[test]
+    fn a_head_child_listed_first_does_not_hide_the_tabs_in_the_body() {
+        let d = with_node(
+            json!({"id": "n", "k": "card", "p": {"head": "n/head"}, "c": [
+                {"id": "n/head", "k": "text"},
+                {"id": "t", "k": "tabs"},
+                {"id": "x", "k": "text"},
+                {"id": "k", "k": "row", "p": {"role": "omp.overlay.hints"}}
+            ]}),
+        );
+        let s = bounded_split(&d, d.get("n").unwrap()).expect("split");
+        let ids = |nodes: Vec<&Node>| nodes.iter().map(|n| n.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(s.top), ["t"], "the head child is drawn as the head");
+        assert_eq!(ids(s.body), ["x"]);
+        assert_eq!(ids(s.bottom), ["k"]);
+    }
+
+    #[test]
+    fn a_screen_is_bounded_only_around_exactly_one_card() {
+        let bounded = |nodes: serde_json::Value| {
+            let mut ops = main_added();
+            for node in nodes.as_array().unwrap() {
+                ops.push(json!(["add", node["id"].clone(), "main", null, node]));
+            }
+            screen_bounded(&doc(ops))
+        };
+        assert!(bounded(json!([{"id": "a", "k": "card"}])), "the hub");
+        assert!(!bounded(json!([])), "nothing in main");
+        assert!(!bounded(json!([{"id": "a", "k": "text"}])), "not a card");
+        assert!(
+            !bounded(json!([{"id": "a", "k": "card"}, {"id": "b", "k": "text"}])),
+            "other content would be clipped"
         );
     }
 

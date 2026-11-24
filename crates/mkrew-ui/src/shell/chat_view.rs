@@ -1081,13 +1081,24 @@ fn keyboard_stop(
 /// `el` in the Chat page's centered column: at most [`theme::CHAT_COLUMN_WIDTH`] wide with
 /// `space::XL` at both sides.
 pub(crate) fn chat_column(el: impl IntoElement) -> gpui::Div {
-    div().w_full().flex().justify_center().child(
-        div()
-            .w_full()
-            .max_w(px(theme::CHAT_COLUMN_WIDTH))
-            .px(px(theme::CHAT_COLUMN_PADDING))
-            .child(el),
-    )
+    chat_column_in(el, false)
+}
+
+/// [`chat_column`]; `bounded`: the column is as tall as its parent leaves it (a flex column
+/// whose content may shrink and scroll inside), not as tall as its content.
+pub(crate) fn chat_column_in(el: impl IntoElement, bounded: bool) -> gpui::Div {
+    let outer = div().w_full().flex().justify_center();
+    let inner = div()
+        .w_full()
+        .max_w(px(theme::CHAT_COLUMN_WIDTH))
+        .px(px(theme::CHAT_COLUMN_PADDING));
+    if bounded {
+        outer
+            .min_h_0()
+            .child(inner.min_h_0().flex().flex_col().child(el))
+    } else {
+        outer.child(inner.child(el))
+    }
 }
 
 /// omp's recap: the history icon and the text in italic muted.

@@ -413,7 +413,7 @@ pub fn status_dock(doc: &Document, theme: &Theme) -> Option<StatusDock> {
             .filter(|id| *id != "dock")
             .and_then(|id| doc.get(id))
         {
-            if !path.contains(&parent.id) {
+            if !path.contains(&parent.id) && !skip.contains(&parent.id) {
                 path.push(parent.id.clone());
             }
             at = Some(parent);
@@ -1072,7 +1072,7 @@ mod tests {
         assert_eq!(working.label, "Reading simple-english skill");
         assert_eq!(working.elapsed.as_deref(), Some("x.elapsed"));
         assert_eq!(d.skip, ["e", "e.status"], "the hud row is hidden");
-        assert_eq!(d.path, ["e"], "the activity row wraps the status col");
+        assert!(d.path.is_empty(), "the wrapper is in `skip` already");
         let calm = dock_with(vec![
             json!({"id": "e", "k": "col"}),
             ask_children().remove(3),
