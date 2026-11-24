@@ -15,6 +15,22 @@ pub use native::{NativeView, WebSurface};
 use std::fmt;
 use std::sync::LazyLock;
 
+/// The env var that makes GPUI draw without DirectComposition (Windows: a DComp visual would
+/// cover the page's child window).
+pub const DISABLE_DCOMP_ENV: &str = "GPUI_DISABLE_DIRECT_COMPOSITION";
+/// Mkrew set [`DISABLE_DCOMP_ENV`] itself (the user had not): children must not inherit it.
+pub static DCOMP_SET_BY_MKREW: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Takes the variable Mkrew set for itself out of a child's environment (the daemon, Zed);
+/// a value the user set is kept.
+pub fn strip_own_env(command: &mut std::process::Command) -> &mut std::process::Command {
+    if DCOMP_SET_BY_MKREW.load(std::sync::atomic::Ordering::Relaxed) {
+        command.env_remove(DISABLE_DCOMP_ENV);
+    }
+    command
+}
+
 /// The page a browser pane shows.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Page {

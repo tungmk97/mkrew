@@ -635,6 +635,8 @@ impl Shell {
         .items_center()
         .py_0()
         .pb(px(theme::TEXT_LIFT * 2.0))
+        .overflow_hidden()
+        .whitespace_nowrap()
         .track_focus(&browser.address_focus)
         .on_key_down(cx.listener(Self::web_address_key_down))
         .relative()

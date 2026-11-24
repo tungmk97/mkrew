@@ -243,6 +243,7 @@ impl Shell {
                     }
                     sidebar::Badge::Text(text) => div()
                         .flex_none()
+                        .pb(px(theme::TEXT_LIFT * 2.0))
                         .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child(text)
@@ -328,6 +329,7 @@ impl Shell {
             .children((icons.more > 0).then(|| {
                 div()
                     .flex_none()
+                    .pb(px(theme::TEXT_LIFT * 2.0))
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .child(format!("+{}", icons.more))
@@ -339,6 +341,7 @@ impl Shell {
             .children(prefix.map(|name| {
                 div()
                     .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
+                    .pb(px(theme::TEXT_LIFT * 2.0))
                     .truncate()
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
@@ -408,6 +411,7 @@ impl Shell {
             .min_w(px(theme::TAB_RENAME_MIN_WIDTH))
             .h(theme::rems_px(theme::CONTROL_HEIGHT))
             .px(px(space::S))
+            .pb(px(theme::TEXT_LIFT * 2.0))
             .rounded(px(radius::MEDIUM))
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.pane_focus_stripe))

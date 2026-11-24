@@ -192,6 +192,7 @@ pub fn command(zed: &Path, path: &Path, line: Option<u32>) -> Command {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     mkrew_daemon::spawn::detach(&mut command);
+    crate::browser::strip_own_env(&mut command);
     command
 }
 

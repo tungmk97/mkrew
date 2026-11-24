@@ -182,13 +182,15 @@ fn main() {
     // browser pane (ADR 0110). Mkrew uses no transparent or blurred window background, so the
     // HWND swap chain path loses nothing it needs. A user's own setting wins.
     #[cfg(windows)]
-    if std::env::var_os("GPUI_DISABLE_DIRECT_COMPOSITION").is_none() {
+    if std::env::var_os(mkrew_ui::browser::DISABLE_DCOMP_ENV).is_none() {
         #[allow(unsafe_code)]
         // SAFETY: first statement of `main`: no other thread exists yet, so nothing reads or
         // writes the environment concurrently.
         unsafe {
-            std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "1");
+            std::env::set_var(mkrew_ui::browser::DISABLE_DCOMP_ENV, "1");
         }
+        // Children (the daemon, Zed) get it removed again: `browser::strip_own_env`.
+        mkrew_ui::browser::DCOMP_SET_BY_MKREW.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     let launched = Instant::now();
     let filter = EnvFilter::try_from_env("MKREW_LOG").unwrap_or_else(|_| EnvFilter::new("info"));

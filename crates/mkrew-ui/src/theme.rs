@@ -2418,7 +2418,7 @@ pub const PANE_BADGE_MAX_WIDTH: f32 = 320.0;
 /// Longest tab title before it truncates.
 pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
 /// Narrowest a terminal tab chip gets: the chips shrink to this before the tab area scrolls.
-/// An inactive chip shows the status icon, one pane icon (14 px each), about five title letters
+/// An inactive chip shows the status icon, one pane icon (`TAB_ICON_SIZE` each), about five title letters
 /// and the ×.
 pub const TAB_MIN_WIDTH: f32 = 120.0;
 /// Reading width of an agent pane: the terminal is at most this wide (≈ 120–140 columns at

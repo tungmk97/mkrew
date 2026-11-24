@@ -119,6 +119,7 @@ impl Launcher for DaemonLauncher {
             command.env(mkrew_daemon::ENV_NOTIFY, "off");
         }
         mkrew_daemon::spawn::detach(&mut command);
+        crate::browser::strip_own_env(&mut command);
         let child = command
             .spawn()
             .with_context(|| format!("start {}", self.exe.display()))?;
