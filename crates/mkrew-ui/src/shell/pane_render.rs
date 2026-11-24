@@ -349,6 +349,8 @@ impl Shell {
                 div()
                     .min_w_0()
                     .max_w(px(theme::TAB_TITLE_MAX_WIDTH))
+                    // See `TEXT_LIFT`: the name reads centered in the chip.
+                    .pb(px(theme::TEXT_LIFT * 2.0))
                     .truncate()
                     .when(file.as_ref().is_some_and(|file| file.preview), |el| {
                         el.italic()

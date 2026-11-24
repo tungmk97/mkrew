@@ -152,6 +152,10 @@ pub const ICON_SIZE: f32 = 16.0;
 /// A Lucide icon among body / meta text: text buttons, row actions, row chevrons, window
 /// controls.
 pub const ICON_SIZE_SMALL: f32 = 14.0;
+/// The font's ascent is taller than its descent, so one-line UI text sits about 1.5 px below
+/// the middle of its box. A control that must read as centered (the tab name, the address
+/// field) lifts its text by this much: bottom padding of twice it under `items_center`.
+pub const TEXT_LIFT: f32 = 1.5;
 /// The pin before the time of a pinned session row.
 pub const PIN_ICON_SIZE: f32 = 13.0;
 /// Inset of a segmented control around its segments.

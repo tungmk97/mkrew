@@ -630,6 +630,11 @@ impl Shell {
         .flex_1()
         .min_w_0()
         .h(theme::rems_px(theme::INPUT_HEIGHT))
+        // The fixed height leaves no room for the frame's padding: center the line instead.
+        .flex()
+        .items_center()
+        .py_0()
+        .pb(px(theme::TEXT_LIFT * 2.0))
         .track_focus(&browser.address_focus)
         .on_key_down(cx.listener(Self::web_address_key_down))
         .relative()
