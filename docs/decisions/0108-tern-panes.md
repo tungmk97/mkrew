@@ -3,6 +3,7 @@
 - Date: 2026-11-23
 - Status: accepted; amended by 0109 (seamless panes) (supersedes ADR 0080 and the Editor and Diff chips, the `+ ▾` button and the "Alternatives" line about Editor and Diff of ADR 0106; amends ADR 0041, ADR 0087 and SPEC sections 5, 7, 10, 11, 12A, 12B, 13, 14, 20.0 and 20B.5)
 - Milestone: none (human request 2026-11-23, spec `docs/superpowers/specs/2026-11-23-tern-panes-design.md`, plan `docs/superpowers/plans/2026-11-23-tern-panes.md`)
+- Protocol 59 was used by the omp native surface branch (ADR 0107), which merged after this one as protocol 61.
 
 ## Context
 

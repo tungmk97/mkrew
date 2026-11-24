@@ -13,11 +13,17 @@ workspace = true
 # 1.x is already in the tree via clap.
 anstyle-query = "1"
 anyhow = "1.0"
+# `--tsp` encodes the fixture's messages with the daemon's own `tsp::wire::encode`.
+mkrew-core = { version = "0.7.0", path = "../mkrew-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 toml = "1.1"
 
+[target.'cfg(windows)'.dependencies]
+# `--tsp` needs raw VT console input (`Get/SetConsoleMode`, as `mk attach` does); already in
+# the tree through mkrew-cli and mkrew-daemon, so no package is added.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+
 [dev-dependencies]
-mkrew-core = { version = "0.7.0", path = "../mkrew-core" }
 tempfile = "3"

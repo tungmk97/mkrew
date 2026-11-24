@@ -37,6 +37,9 @@ pub struct StateMachine {
     state: SessionState,
     last_output: Option<Instant>,
     last_hook: Option<Instant>,
+    /// Set while an omp native surface is live: the screen text stays still then, so state
+    /// comes from hooks only (spec 2026-11-23 section 6.5).
+    hook_only: bool,
 }
 
 impl StateMachine {
@@ -55,6 +58,7 @@ impl StateMachine {
             state: SessionState::Starting,
             last_output: None,
             last_hook: None,
+            hook_only: false,
         })
     }
 
@@ -129,8 +133,27 @@ impl StateMachine {
         self.set(SessionState::Exited)
     }
 
+    /// While `on`, the screen is never read, whatever the mode: state comes from hooks only,
+    /// and [`next_deadline`](Self::next_deadline) is `None`. The daemon turns it on when an omp
+    /// native surface goes live and off when it closes or falls back (spec 2026-11-23
+    /// section 6.5). Turning it on before any hook arrived drops a state the screen guessed
+    /// (`working`, `idle`, `needs_input`) to `unknown`, since no screen change will ever end it;
+    /// returns that change for the daemon to apply.
+    pub fn set_hook_only(&mut self, on: bool) -> Option<SessionState> {
+        self.hook_only = on;
+        let guessed = matches!(
+            self.state,
+            SessionState::Working | SessionState::Idle | SessionState::NeedsInput
+        );
+        if on && self.last_hook.is_none() && guessed {
+            self.set(SessionState::Unknown)
+        } else {
+            None
+        }
+    }
+
     fn uses_screen(&self) -> bool {
-        self.mode != StateMode::Hook
+        self.mode != StateMode::Hook && !self.hook_only
     }
 
     /// Whether the machine reads the screen at `now`: the mode includes `screen`, no hook

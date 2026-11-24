@@ -39,6 +39,14 @@ jobs:
       # gpui's x11/wayland backends (mkrew-ui) link against these.
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig-dev libasound2-dev
+      # verify.sh runs scripts/fetch-conpty.sh on Windows. Keep its download between runs; the
+      # script checks SHA-256, so a stale cache is fetched again. Change the key with the pinned
+      # version in the script.
+      - if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/mkrew/conpty
+          key: conpty-1.24.260710001
       # Runs in Git Bash on Windows. Tests need the daemon + fakeagent bins, which
       # `cargo test --workspace` builds.
       - run: bash scripts/verify.sh

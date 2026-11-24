@@ -47,6 +47,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#BinDir}\mkrew.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "{#BinDir}\mk.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "{#BinDir}\mkrew-daemon.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
+; Sideloaded ConPTY (ADR 0107): portable-pty loads conpty.dll from the daemon's folder, which
+; starts OpenConsole.exe from its own. scripts/package-setup.ps1 fetches both into BinDir.
+Source: "{#BinDir}\conpty.dll"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "{#BinDir}\OpenConsole.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
 ; Reference copies: the daemon seeds the config dir from profiles compiled into it.
 Source: "{#AgentsDir}\*.toml"; DestDir: "{app}\agents"; Flags: ignoreversion
 

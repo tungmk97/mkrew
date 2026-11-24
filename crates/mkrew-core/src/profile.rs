@@ -42,6 +42,10 @@ pub struct AgentProfile {
     pub state: StateConfig,
     /// `[usage]` (SPEC §20E.3); `None` = no usage for this agent.
     pub usage: Option<UsageConfig>,
+    /// `tsp` (spec 2026-11-23 section 5): the daemon speaks the Tern Surface Protocol with this
+    /// agent and the pane draws its native surface. Absent in the file: on when
+    /// `[usage] format` is `omp_jsonl`, off otherwise. Read when a session starts.
+    pub tsp: bool,
     /// `[slash]`: fixes to the `/` command list.
     pub slash: SlashOverrides,
 }
@@ -435,6 +439,13 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
         needs_input_patterns.push(pattern);
     }
 
+    // Compute before `raw.usage` is consumed below.
+    let tsp = raw.tsp.unwrap_or_else(|| {
+        raw.usage
+            .as_ref()
+            .is_some_and(|u| matches!(UsageFormat::parse(&u.format), UsageFormat::OmpJsonl))
+    });
+
     Ok(AgentProfile {
         id: id.to_owned(),
         name: raw.name.unwrap_or_else(|| id.to_owned()),
@@ -458,6 +469,7 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
             format: UsageFormat::parse(&u.format),
             context_window: u.context_window,
         }),
+        tsp,
         slash,
     })
 }
@@ -489,6 +501,7 @@ struct RawProfile {
     #[serde(default)]
     state: RawState,
     usage: Option<RawUsage>,
+    tsp: Option<bool>,
     #[serde(default)]
     slash: RawSlash,
 }
@@ -637,6 +650,42 @@ needs_input_patterns = ['(?i)do you want to', '(?i)\(y/n\)']
         );
         assert!(parse_err("command = \"x\"\n[usage]\nformt = \"x\"").contains("unknown field"));
         assert!(parse_err("command = \"x\"\n[usage]\ncontext_window = 1").contains("format"));
+    }
+
+    #[test]
+    fn tsp_defaults_on_for_omp_jsonl_only() {
+        let tsp = |src: &str| parse(src).unwrap().tsp;
+        assert!(tsp("command = \"omp\"\n[usage]\nformat = \"omp_jsonl\""));
+        assert!(!tsp(
+            "command = \"claude\"\n[usage]\nformat = \"claude_jsonl\""
+        ));
+        assert!(!tsp(
+            "command = \"codex\"\n[usage]\nformat = \"codex_jsonl\""
+        ));
+        assert!(!tsp("command = \"x\"\n[usage]\nformat = \"gemini\""));
+        assert!(!tsp("command = \"x\""), "no usage: no TSP");
+        assert!(!tsp("kind = \"shell\""));
+    }
+
+    #[test]
+    fn the_tsp_key_wins_over_the_default() {
+        let tsp = |src: &str| parse(src).unwrap().tsp;
+        assert!(!tsp(
+            "command = \"omp\"\ntsp = false\n[usage]\nformat = \"omp_jsonl\""
+        ));
+        assert!(tsp(
+            "command = \"x\"\ntsp = true\n[usage]\nformat = \"claude_jsonl\""
+        ));
+        assert!(tsp("command = \"x\"\ntsp = true"));
+        // Accepted on a shell too; the daemon then finds no hello and falls back (spec 5).
+        assert!(tsp("kind = \"shell\"\ntsp = true"));
+    }
+
+    #[test]
+    fn the_shipped_omp_profile_has_tsp_on_by_default() {
+        let src = include_str!("../../../agents/omp.toml");
+        let omp = parse_profile("omp", Path::new("omp.toml"), src).unwrap();
+        assert!(omp.tsp);
     }
 
     #[test]

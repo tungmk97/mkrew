@@ -339,6 +339,15 @@ pub enum Request {
     /// each change as `agent.limits`.
     #[serde(rename = "limits.report")]
     LimitsReport(AgentLimits),
+    /// Returns [`TspSnapshot`]: the native surfaces of an omp pane, each with the last frame
+    /// `seq` the daemon applied, and the images they need (spec 2026-11-23 section 6.4).
+    /// A session without TSP answers state `off` and no surfaces.
+    #[serde(rename = "tsp.snapshot")]
+    TspSnapshot(TspSnapshotParams),
+    /// Returns nothing (`null`): one event from a UI to omp, written to the PTY input after
+    /// the daemon checked its `ev` against the P1 list (spec 2026-11-23 sections 6.4 and 7.4).
+    #[serde(rename = "tsp.event")]
+    TspEvent(TspEventParams),
 }
 
 /// Body of a response: `"result"` on success, `"error"` on failure.
@@ -480,6 +489,10 @@ pub enum Event {
     /// The newest limits of one agent changed (spec 2026-11-22 section 5.1).
     #[serde(rename = "agent.limits")]
     AgentLimits(AgentLimits),
+    /// The native surface of an omp pane changed (spec 2026-11-23 section 6.4): a client
+    /// applies it in order and asks `tsp.snapshot` again when `seq` skips a number.
+    #[serde(rename = "tsp.update")]
+    TspUpdate(Box<TspUpdate>),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -630,6 +643,11 @@ pub struct Session {
     /// when it lies inside, else absolute. `None` = no plan (SPEC §5, ADR 0039).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_path: Option<String>,
+    /// How the pane draws an omp session (spec 2026-11-23 section 6.4); daemon memory only,
+    /// filled in `session.list` / `session.updated`, `off` for every other session and for
+    /// JSON written before protocol 61.
+    #[serde(default)]
+    pub tsp: TspState,
 }
 
 /// A terminal tab of a workspace (SPEC §5 `terminal_tab`).
@@ -1988,6 +2006,121 @@ pub struct DocChangedEvent {
     pub file_path: String,
     /// The new content hash; `None` = the file was deleted.
     pub hash: Option<String>,
+}
+
+// ---- omp native surface, TSP (spec 2026-11-23 section 6.4) ----
+
+/// Where an omp session stands with the Tern Surface Protocol (spec 2026-11-23 sections 5
+/// and 7.3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TspState {
+    /// TSP is not on for this session (profile key `tsp`, a shell, Claude Code): a terminal.
+    #[default]
+    Off,
+    /// TSP is on, no surface yet: the agent has not said hello, or has not opened one.
+    Waiting,
+    /// A surface is open: the pane draws it instead of the terminal grid.
+    Live,
+    /// No hello within 10 s of the first output (a hello that still comes within 60 s makes it `Live`), an unsupported hello, no surface opened within 60 s, a document over the bounds, or the agent went back to drawing rows.
+    Fallback,
+}
+
+/// One node of a surface as omp sends it: `{id, k, p?, c?}` (reference section 3.1).
+/// `p` holds the node's props, `c` its children in order; both are left out when empty.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TspNode {
+    pub id: String,
+    /// The node kind, for example `col`, `text`, `editor`.
+    pub k: String,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub p: serde_json::Map<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub c: Vec<TspNode>,
+}
+
+/// An open surface: its meta and the whole tree under `root`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TspSurface {
+    /// `s:1` for the inline surface.
+    pub id: String,
+    /// `inline` or `screen`.
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Kept after omp closed it with `x {keep:true}`: drawn, not clickable.
+    #[serde(default)]
+    pub read_only: bool,
+    /// The last frame `s` the daemon applied; 0 before any.
+    pub seq: u64,
+    /// The surface root `col`, with the children `main`, `dock` and `layer`.
+    pub root: TspNode,
+}
+
+/// An inline image omp sent (`b` message), keyed by the id a node's props name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TspBlob {
+    pub id: String,
+    pub mime: String,
+    #[serde(with = "base64_bytes")]
+    pub data: Vec<u8>,
+}
+
+/// `tsp.snapshot` request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TspSnapshotParams {
+    pub session_id: Ulid,
+}
+
+/// `tsp.snapshot` result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TspSnapshot {
+    pub state: TspState,
+    /// Empty when no surface is open.
+    pub surfaces: Vec<TspSurface>,
+    #[serde(default)]
+    pub blobs: Vec<TspBlob>,
+    /// Why the session fell back to the terminal grid (spec 7.3 toast); `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// What changed on one surface (`tsp.update`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TspChange {
+    /// A frame the daemon applied: `seq` is omp's frame `s`; `ops` are the frame's ops that
+    /// applied plus the daemon's own eviction ops; `blobs` the images this frame needs.
+    Frame {
+        seq: u64,
+        ops: Vec<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        blobs: Vec<TspBlob>,
+    },
+    /// omp opened a surface.
+    Open { surface: TspSurface },
+    /// omp closed the surface; `keep` leaves its last document, read-only.
+    Closed { keep: bool },
+}
+
+/// `tsp.update` event data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TspUpdate {
+    pub session_id: Ulid,
+    /// The surface id, `s:1` for the inline one.
+    pub surface: String,
+    pub change: TspChange,
+}
+
+/// `tsp.event` request: `event` is the JSON body without `sf` (the daemon adds the surface id),
+/// for example `{"ev": "action", "id": "dock.bar.stop", "act": "interrupt"}`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TspEventParams {
+    pub session_id: Ulid,
+    pub surface: String,
+    pub event: serde_json::Value,
 }
 
 mod base64_bytes {

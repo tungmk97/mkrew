@@ -582,9 +582,15 @@ impl Shell {
     ) -> impl IntoElement {
         let session = key.session();
         let info = session.and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
+        // An omp pane with TSP on shows its surface (or the starting state); in `fallback` and
+        // `off` it is the terminal grid as before. It has no Chat mode (`chat::available`).
+        let tsp_drawn =
+            info.is_some_and(|info| self.tsp_pane_view(info) != mkrew_ui::tsp::PaneView::Terminal);
         let content = match &key {
             PaneKey::Session(id) => {
-                if info.is_some_and(|info| self.chat_on(info)) {
+                if tsp_drawn {
+                    self.render_tsp(*id, is_focused, width, now, theme, cx)
+                } else if info.is_some_and(|info| self.chat_on(info)) {
                     self.render_chat(*id, is_focused, now, theme, cx)
                 } else {
                     match self.panes.get(id) {
@@ -601,7 +607,9 @@ impl Shell {
             PaneKey::File(path) => self.render_file_pane(project_id, path, window, theme, cx),
             PaneKey::Diff => self.render_diff_pane(project_id, theme, window, cx),
         };
-        let reading = info.is_some_and(|info| self.reading_on(info));
+        // Reading width caps the terminal grid (and the Chat list); a surface keeps its own
+        // 760 px column (`chat_column`), so the cap would only narrow its scroll area.
+        let reading = info.is_some_and(|info| self.reading_on(info)) && !tsp_drawn;
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));
         let stripe = status::pane_stripe(theme, info.map(|s| s.state), color, several, is_focused);
@@ -945,30 +953,37 @@ impl Shell {
                 .into_any_element(),
             );
         }
-        let reading = self.reading_on(info);
-        toggles.push(
-            icon_button_in(
-                SharedString::from(format!("pane-reading-{session}")),
-                Icon::AlignCenter,
-                if reading {
-                    theme.accent
-                } else {
-                    theme.text_muted
-                },
-                theme,
-            )
-            .tooltip(tooltip(
-                theme,
-                if reading {
-                    "Reading width: on (the agent wraps at about 130 columns). Click for full width"
-                } else {
-                    "Reading width: off (full width). Click to wrap at about 130 columns"
-                },
-                "",
-            ))
-            .on_click(cx.listener(move |shell, _, _, cx| shell.toggle_reading_width(session, cx)))
-            .into_any_element(),
-        );
+        // A surface (or its starting state) has no terminal to cap; in `fallback` and `off` the
+        // grid is back and so is the toggle. Terminal | Chat is already gone through
+        // `chat_available`; Share stays.
+        if self.tsp_pane_view(info) == mkrew_ui::tsp::PaneView::Terminal {
+            let reading = self.reading_on(info);
+            toggles.push(
+                icon_button_in(
+                    SharedString::from(format!("pane-reading-{session}")),
+                    Icon::AlignCenter,
+                    if reading {
+                        theme.accent
+                    } else {
+                        theme.text_muted
+                    },
+                    theme,
+                )
+                .tooltip(tooltip(
+                    theme,
+                    if reading {
+                        "Reading width: on (the agent wraps at about 130 columns). Click for full width"
+                    } else {
+                        "Reading width: off (full width). Click to wrap at about 130 columns"
+                    },
+                    "",
+                ))
+                .on_click(
+                    cx.listener(move |shell, _, _, cx| shell.toggle_reading_width(session, cx)),
+                )
+                .into_any_element(),
+            );
+        }
         if self.features.share {
             let following = self.follow.is_on(session);
             toggles.push(

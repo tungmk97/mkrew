@@ -16,6 +16,14 @@ cargo fmt --all -- --check
 step "cargo clippy"
 cargo clippy --workspace --all-targets -- -D warnings
 
+# The daemon e2e tests run on the sideloaded ConPTY (ADR 0107); the pinned download is cached.
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN* | Windows_NT)
+    step "fetch conpty"
+    bash scripts/fetch-conpty.sh
+    ;;
+esac
+
 step "cargo test"
 INSTA_UPDATE=no cargo test --workspace
 

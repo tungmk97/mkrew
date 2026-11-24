@@ -2,8 +2,8 @@
 
 - Date: 2026-11-23
 - Status: design approved in chat by the user (2026-11-23), section by section; this file waits for the user's review.
-- ADR: `docs/decisions/0107-omp-native-surface.md` (0106 is taken by `feat/tern-layout`).
-- Protocol: 57 on `master`, 58 on `feat/tern-layout` (unmerged), so this change takes 59.
+- ADR: `docs/decisions/0107-omp-native-surface.md` (0106 is the Tern layout).
+- Protocol: 58 on `master` (ADR 0106), so this change takes 59.
 - Migration: none.
 - Inputs, committed with this spec:
   - `2026-11-23-omp-tsp/tsp-reference-omp-18.13.2.md`: the Tern Surface Protocol (TSP) as omp 18.13.2 implements it, read from the JavaScript embedded in `omp.exe`, every claim cited by byte offset.
@@ -42,7 +42,7 @@ Said by the user (2026-11-23):
 - Follow Tern's composer and Tern's subagent management view (Agents dialog, Background jobs dialog, pill hover texts).
 - "Giống Tern hoàn toàn": do it through TSP, not by reading files, after the alternatives (files only, omp RPC mode) were shown.
 - Agents: omp and Claude Code. TSP exists only in omp; Claude Code keeps today's Chat view (said in chat, not contradicted).
-- TSP is a setting per agent profile, on by default; no Terminal | Chat switch inside an omp TSP pane.
+- TSP is a setting per agent profile, on by default; an omp pane with TSP on has no Chat mode.
 - The composer is omp's dock, as in Tern.
 - Colors come from Mkrew's theme, not from omp's palette.
 - The split into P1, P2, P3 after a spike.
@@ -172,10 +172,13 @@ Kinds omp sends whatever the hello says (`agent chart diff math prefs`) and any 
 
 ### 7.3 Pane (`shell/tsp_view.rs`)
 
-- An omp pane whose session has `tsp` `live` draws the surface instead of the terminal grid; the header has no `Terminal | Chat` switch.
+- An omp pane whose session has `tsp` `live` draws the surface instead of the terminal grid.
+  A pane whose `tsp` is not `off` has no Chat mode: the title bar's `Terminal | Chat` toggle, its palette entry and its shortcut are hidden or do nothing, and the Reading width toggle is hidden while the surface shows (it only caps the terminal grid).
 - `main` is a scrolling list in the Chat page's centered column (`CHAT_COLUMN_WIDTH`), following the end like Chat, with the scroll-to-end button; `reveal` and `scroll` ops move it.
 - `dock` sits under it in the same column, always visible.
 - `layer` children and `overlay` nodes draw as a modal inside the pane; a `screen` surface covers the whole pane until omp closes it.
+- A `screen` surface's page and an `overlay` card are bounded by the pane: a card shows its tabs and hints row always, a growing `list` (directly or in growing columns) scrolls inside it, and with no such list the rest of the card scrolls as one body.
+  Rows in a card shorten with an ellipsis, they never draw past it.
 - Text of `md` and `code` nodes (omp's answers, prose and code) is selectable inside one node as in Chat; Ctrl+C copies a selection and Esc clears it; with no selection both keys go to omp, as in a terminal pane (ADR 0022).
   Labels and status text (`text`, `ansi`, `rows`) are not selectable in P1.
 - Tooltips: a node's `title` shows as the Mkrew tooltip; `hovercard` is ignored in P1.
@@ -183,10 +186,10 @@ Kinds omp sends whatever the hello says (`agent chart diff math prefs`) and any 
 
 | `Session.tsp` | The pane shows |
 |---|---|
-| `off` | today's terminal pane with `Terminal | Chat` |
+| `off` | today's terminal pane, with the `Terminal | Chat` toggle |
 | `waiting` (TSP on, no surface yet) | the starting state of an agent pane |
 | `live` | the surface |
-| `fallback` (no hello within 2 s of the session's first output, or omp closed the surface with `x {keep:false}`, which it does when it goes back to drawing rows) | today's terminal grid without the Chat switch, and one `toast_info` "omp is drawing as text: <reason>". Once in `fallback` the daemon no longer answers TSP for that session, so a late hello falls back on omp's side too. |
+| `fallback` (no hello within 10 s of the session's first output, because resumed and concurrently started omp sessions need over 2 s to send it; or an explicit end: an unsupported hello version, or omp closing the surface with `x {keep:false}`, which it does when it goes back to drawing rows) | today's terminal grid without the Chat toggle, and one `toast_info` "omp is drawing as text: <reason>". The timer's fallback is provisional for 60 s from the first output: a hello that still arrives is answered and the session goes `live` (the text stays in the grid, the surface replaces the view); after that it is final and a session without TSP is back on the zero-cost path. An explicit fallback is final at once: the daemon no longer answers TSP for that session, so a late hello falls back on omp's side too. |
 | exited | the last document, read-only, with the existing exited notice |
 
 ### 7.4 Events sent in P1
@@ -223,6 +226,7 @@ Mkrew draws it as the composer card, with these role-specific looks (all colors 
 | `row` `role=omp.btn` (Hide, Note, Skip, Next or Submit, Show) | pill buttons in the card's bottom row; `tone=accent` on `accent` with `on_accent` text; the `kbd` child is not drawn, the node's `title` (with its keys) is the tooltip | `action {id, act}` |
 | `meter` `style=ring` (a timeout) | a small ring with its `label` (seconds left) | - |
 | `col` `role=omp.editor.ask.hidden` | one row: "Question …" summary, Skip and Show | `action` |
+| `col` `role=omp.overlay.hook-editor` (omp's Note or Other editor; `col` `omp.hook-editor.head` with `text` `omp.hook-editor.eyebrow` and `md` `omp.ask.question`, `col` `omp.hook-editor.line` with the `editor`, `row` `omp.actions`) | the ask card (same frame as `omp.editor.ask`): the eyebrow in `text_muted` `META`, the question as the card title, the editor line as a framed field (`surface_raised`, the Chat placeholder row, caret, text), the actions row as the `omp.btn` pill buttons above | `action` for the buttons, keys through the PTY |
 
 Keys (arrows, Enter, Space, Tab, `n`, Esc) still go to omp through the PTY; when "Other…" is picked, omp shows its own text field and typing goes to the PTY as usual.
 
@@ -232,7 +236,7 @@ Keys (arrows, Enter, Space, Tab, `n`, Esc) still go to omp through the PTY; when
 
 | Mode | Where | Looks like |
 |---|---|---|
-| `hud` (`role=omp.hud.todo`, inside `omp.hud.status`) | the status row above the dock card, on its right | one line: a loading-dots mark (status tick) and the `active` item's text (else the first `pending` one, else "All done"), ellipsized, then `done/total` in `text_muted` mono; pressable |
+| `hud` (`role=omp.hud.todo`, inside `omp.hud.status`) | the status row above the dock card, on its right | one line: a loading-dots mark (status tick) and the `active` item's text (else the first `pending` one, else "All done"), ellipsized in the room left of the pills (the chip takes at most half the row; the mark and `done/total` never clip), then `done/total` in `text_muted` mono; pressable |
 | `full` | a todo tool result in `main` | a card with the phase list below |
 | `reminder` (`role=omp.notice.todo`) | a notice in `main` | the `note` as a muted line, then the phase list with done phases collapsed |
 
@@ -241,21 +245,62 @@ Phase list (the `full` card, the `reminder` and the `hud` popover):
 - Each phase is a header row: a status mark (loading dots while it has an `active` item, a `status_done` filled circle when every item is `done` or `dropped`, a `text_muted` ring otherwise), its number in Roman numerals and its title (`I. Thu thập context`), and `done/count` on the right in `text_muted`.
 - A phase with `collapsed: true`, or every item done, shows its header only; a click on a header opens or closes it (UI state only).
 - Items: `active` with an `accent` ring around a dot and its text in `accent`; `pending` with a `text_muted` ring; `done` with a `status_done` check and muted text; `dropped` muted and struck through; `blocked` in `status_needs_input` with " (blocked)"; a `note` as a muted second line.
-- The `hud` click opens the list in a floating panel (`floating_panel`, glass) anchored above the status row, at most 60% of the pane height, scrolling; Esc or a click outside closes it.
+- Every mark has the same box (the icon size), centered on the first line of the item's text; the open states are rings drawn like the `active` one (`pending` and `dropped` `text_muted`, `blocked` `status_needs_input`), `done` is the check icon.
+- The `hud` click opens the list in a floating panel (`floating_panel` with an opaque `surface_raised` fill, so its text reads over the page; the glass border and float shadow stay) anchored above the status row, at most 60% of the pane height, scrolling; Esc or a click outside closes it.
   The panel's open state is UI-only: nothing is sent to omp.
+
+### 7.8 The dock as Tern's composer (added 2026-11-24 after the first smoke)
+
+The first smoke on a real omp 18.13.2 showed the dock drawn generically: a flat meter, a plain editor line and a row of loose chips, unlike Tern (`docs/screenshots/` Tern composer).
+The dock reuses the pieces of the Chat composer card (ADR 0105, `shell/composer.rs`), so Chat and an omp pane look the same, with omp as the only source of their content.
+Roles below are omp 18.13.2's (`omp.editor` and its children, `omp.hud*`, `omp.working*`); a dock without them (another omp version) is drawn generically as before.
+While omp shows a question or a note editor where the editor stood there is no composer card, but the status row (the working row, the todo hud, the pills) is still Tern's and the card sits where the composer card sits.
+The working row's label ellipsizes; its dots, elapsed time and Stop, and the pills, never clip.
+
+| Node from omp | Looks like | Sent to omp |
+|---|---|---|
+| `col` `role=omp.editor` | the composer card: `surface_raised`, `radius::LARGE`, glass border, float shadow, `space::M` padding, in the centered column `space::M` above the pane's bottom edge; never collapsed to a pill | - |
+| `meter` `role=omp.composer.context` (`style=bar`) | the Chat context meter above the card: a `CONTEXT_METER_HEIGHT` pill bar (fill `accent`, `status_needs_input` past `thresholds.warn`, `danger_text` past `bad`, both compared with the used fraction), its `label` on the left and `total` on the right in `text_muted` `META`; `marks` as small ticks with their `title` as tooltip; the node `title` as the meter's tooltip | click: `action` (`status.context`) |
+| `row` `role=omp.composer.line` with its `editor` | the card's field: `BODY` text; the placeholder as the Chat placeholder row (sparkle icon, italic, `text_muted`); `ghost` as `text_subtle` text right after the caret on the same line, never on its own line | - (keys go through the PTY) |
+| `row` `role=omp.composer.bar` | the card's chip row: never wraps or overlaps, `min_w_0`, children in omp's order, the send or stop button always shown at the end | - |
+| `row` `role=omp.composer.model` | the Chat model pill (pill border `raised_border`, `accent_text`, chevron); loading dots in it while the session is working | click: `action` |
+| `row` `role=omp.composer.effort` | a quiet chip (its effort glyph and level) | click: `action` |
+| `status` `role=omp.composer.extras` of `seg` `role=omp.composer.fact` | quiet mono chips; a span styled `accent` (omp's `⚡ yolo`) takes the Chat permission chip look; when the row is too narrow, facts drop in order of their `priority` (highest number first), then the effort chip, then the cost (`omp.composer.usage`), and the model pill last truncates its name (never below about six characters, the pill itself never shrinks) | click: `action` |
+| `text` `role=omp.composer.usage`, `rate` `role=omp.composer.rate` | quiet mono chips (`$0.14`, `65 tok/s`) | click: `action` |
+| `kbd` `role=omp.composer.send` | the Chat round send button (`CornerDownLeft`), enabled when the editor has text | click: `action` (`submit`) |
+| `text` `role=omp.composer.stop` | a round button of the same size with a stop square, `danger_text` on hover | click: `action` (`interrupt`) |
+| `row` `role=omp.composer.chips` | attachment chips above the field, wrapping | - |
+| `row` `role=omp.composer.focus` | a strip above the field: eye icon, "Viewing", the crumbs, and the `omp.composer.exit` chip | click: `action` |
+| `col` `role=omp.hud.status` with `row` `role=omp.working` | the status row above the meter, as Tern: a spinner (loading dots on the status tick), the elapsed time in mono `text_muted`, a divider, the `omp.working.label` in `status_needs_input`; `omp.working.stop` as a small ghost button | click: `action` |
+| `row` `role=omp.hud` of `row` `role=omp.hud.seg` | one glass pill, its segments split by a divider, as Tern's, on the right of the status row (each segment: icon, then the count in mono); the segment's `title` as tooltip | click: `action` (`agents.open`, `jobs.open`) |
+| `checklist` `role=omp.hud.todo` | as 7.7, on the right of the status row, left of the pills | - |
+
+Text glyphs: a span styled `icon` (omp sends Nerd Font private-use glyphs in native mode, reference 6.2) is drawn in the terminal font, which carries those glyphs; never a missing-glyph box.
+
+Tern's look is the target: the same order, sizes from `theme.rs` (the Chat composer's tokens), dark and light.
+The smoke compares the composer in Tern and in Mkrew on the same omp session: idle, typing, working (Stop), a narrow pane, a subagent running.
+
+Notes from the smoke record (omp 18.13.2):
+
+- The rate is a `rate` child of the `token_rate` fact, not its own node; both shapes draw the same chip.
+- `omp.hud` (the pills) is a sibling of `omp.hud.status` in the dock, not inside it; Mkrew still draws the pills at the right of the status row.
+- omp puts effort before the model in the bar; Mkrew keeps omp's order.
+- The editor's `sendable` is true even when empty: Send is enabled by text or an attachment chip.
+- Fact spans use omp's `statusLine*` palette names: the stats Chat also shows take Chat's colors (context `syntax_keyword`, branch `syntax_string`, rate `text`, clock and session `text_subtle`), others stay `text_muted`.
+- `thresholds` (`warn`, `bad`) compare with the used fraction (`bad` equals the auto-compact mark).
 
 ## 8. Error handling
 
 | Case | Behavior |
 |---|---|
-| ConPTY files missing (Windows) | No hello reaches the daemon; 2 s after the first output, `fallback` with the reason "no TSP reply from the terminal layer". Logged once at startup. |
+| No hello within 10 s of the first output (ConPTY files missing on Windows, or omp slow to start; resumed and concurrent starts need over 2 s) | The pane shows the terminal grid with a notice, `fallback` with the reason "no TSP reply from the terminal layer" (logged once at startup when the files are missing). A hello that still arrives within 60 s of the first output is answered and the pane switches to the native surface; after 60 s the fallback is final, like the explicit ones. |
 | omp without TSP or too old (hello `v` other than 1) | No surface; `fallback` with the reason. |
 | Malformed message or JSON | Dropped, `warn` logged; the stream continues. |
 | Failing ops | Skipped, one `ev:error` per frame (6.3). |
 | A client misses updates | It sees a sequence gap and asks `tsp.snapshot`. |
 | Document bound exceeded | The oldest `main` rows are evicted and reported `gone`; the pane shows "Earlier messages were trimmed" at the top. |
 | No UI attached | omp never stalls: the daemon acks each frame after applying it. |
-| Daemon restart (startup resume) | The resumed omp starts a new surface; nothing is restored from the old one. |
+| Daemon restart (startup resume) | The resumed omp starts a new surface; Mkrew restores nothing from the old one, and omp's own `--resume` replays its conversation into the new surface. |
 
 ## 9. Testing
 
@@ -288,8 +333,6 @@ Each step is one commit and passes `scripts/verify.sh`.
 4. UI: `mkrew_ui::tsp::style`, `shell/tsp_view.rs`, events, pane states, fallback toast.
 5. Hook-only state for live surfaces, `mk web` notice.
 6. SPEC, HUMAN_CHECKS, screenshots.
-
-If `feat/tern-layout` merges first (it changes pane headers), this work rebases on it and keeps its protocol 59 and ADR 0107.
 
 ## 12. Out of scope
 

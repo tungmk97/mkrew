@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 # Shares `SessionState` with the wire format (no tokio/GPUI/SQLite there either, SPEC §4).
 mkrew-protocol = { version = "0.7.0", path = "../mkrew-protocol" }
+base64 = "0.22"
 # `notes::file_name` takes a local `NaiveDateTime`; the daemon reads the clock (it enables `clock`).
 chrono = { version = "0.4", default-features = false }
 directories = "6"

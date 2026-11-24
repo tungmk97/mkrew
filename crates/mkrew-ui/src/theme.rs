@@ -390,6 +390,35 @@ pub const COMPOSER_MAX_HEIGHT: f32 = 160.0;
 /// card line up in it (ADR 0105).
 pub const CHAT_COLUMN_WIDTH: f32 = 760.0;
 
+/// Width of the todo popover an omp pane opens from its hud (TSP `checklist`, ADR 0107).
+pub const TSP_POPOVER_WIDTH: f32 = 420.0;
+
+/// Tallest share of the pane's list area the todo popover takes; it scrolls past that.
+pub const TSP_POPOVER_MAX_FRACTION: f32 = 0.6;
+
+/// Shortest height the popover is capped at, before the list has been laid out.
+pub const TSP_POPOVER_MIN_HEIGHT: f32 = 120.0;
+
+/// The accent bar on the left of the picked row of an omp `ask` card.
+pub const TSP_ASK_BAR_WIDTH: f32 = 2.0;
+
+/// The ring of an omp `ask` timeout.
+pub const TSP_RING_SIZE: f32 = 24.0;
+
+/// Space at both sides of the Chat page's centered column (`chat_column`, ADR 0105).
+pub const CHAT_COLUMN_PADDING: f32 = space::XL;
+
+/// Width of the key column of a TSP `kv` and of a `progress` or `meter` bar.
+pub const TSP_KEY_WIDTH: f32 = 96.0;
+
+/// Widest an `overlay` of `size` `sm` (and `md`) is in a TSP pane; `lg` and `full` take the
+/// Chat column.
+pub const TSP_OVERLAY_SM_WIDTH: f32 = 384.0;
+pub const TSP_OVERLAY_MD_WIDTH: f32 = 576.0;
+
+/// Widest an inline TSP `image` is.
+pub const TSP_IMAGE_MAX_WIDTH: f32 = 256.0;
+
 /// Widest share of the Chat page a prompt card takes (it sits at the right).
 pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
 
@@ -428,6 +457,28 @@ pub const COMPOSER_FIXED_WIDTH: f32 = 82.0;
 pub const SEND_BUTTON_SIZE: f32 = 28.0;
 /// The thin context meter above the Chat composer card.
 pub const CONTEXT_METER_HEIGHT: f32 = 2.0;
+
+/// The hover area of a tick on the context meter of an omp dock (a mark such as the
+/// auto-compact point; its tooltip is the mark's title). The 1 px line sits in the middle.
+pub const CONTEXT_MARK_HIT_WIDTH: f32 = space::M;
+pub const CONTEXT_MARK_HIT_HEIGHT: f32 = CONTEXT_METER_HEIGHT + space::XS;
+
+/// Room reckoned for the bar of an omp dock (px at 13 px UI size, like the `COMPOSER_*` ones):
+/// the round send or stop button and its gap.
+pub const TSP_BAR_FIXED_WIDTH: f32 = SEND_BUTTON_SIZE + space::S;
+/// The model pill without its name: padding, border, chevron, gaps and the gap after it.
+pub const TSP_MODEL_CHROME_WIDTH: f32 = 48.0;
+/// The model name never truncates below this many characters.
+pub const TSP_MODEL_MIN_CHARS: usize = 6;
+/// The four-step effort glyph of the effort chip.
+pub const TSP_EFFORT_GLYPH_WIDTH: f32 = 28.0;
+/// Characters reckoned for a live elapsed time inside a fact (`12m 03s`).
+// ponytail: `1h 02m 03s` is 10 characters and clips (the facts cell is `overflow_hidden`, so
+// nothing else moves); measure the node's text if long sessions matter.
+pub const TSP_ELAPSED_CHARS: usize = 7;
+/// One average character of the UI font at `META` size (the effort label, the model name); the
+/// facts and the cost are mono and use `COMPOSER_MONO_CHAR_WIDTH`.
+pub const TSP_UI_CHAR_WIDTH: f32 = 6.6;
 
 /// Width of the "Undo task" dialog (wider: it shows a diff).
 pub const UNDO_DIALOG_WIDTH: f32 = 720.0;

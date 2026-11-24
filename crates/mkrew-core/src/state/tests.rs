@@ -114,6 +114,61 @@ fn the_screen_is_read_only_by_screen_modes_and_not_just_after_a_hook() {
 }
 
 #[test]
+fn hook_only_ignores_the_screen_until_turned_off() {
+    let c = clock();
+    let mut m = machine(StateMode::HookScreen);
+    assert_eq!(m.on_output(c.at(0), BUSY), Some(Working));
+    assert_eq!(m.tick(c.at(3000), BUSY), Some(Idle));
+
+    // No hook was ever seen: the screen's `idle` would stay forever, so it becomes `unknown`.
+    assert_eq!(m.set_hook_only(true), Some(Unknown));
+    assert!(!m.screen_active(c.at(4000)));
+    // Output and a prompt on screen no longer move the state.
+    assert_eq!(m.on_output(c.at(4000), BUSY), None);
+    assert_eq!(m.on_output(c.at(4100), PROMPT), None);
+    assert_eq!(m.tick(c.at(60_000), PROMPT), None);
+    assert_eq!(m.state(), Unknown);
+
+    // Off again: the profile's own mode reads the screen at once.
+    assert_eq!(m.set_hook_only(false), None);
+    assert!(m.screen_active(c.at(5000)));
+    assert_eq!(m.on_output(c.at(5000), BUSY), Some(Working));
+    assert_eq!(m.next_deadline(), Some(c.at(8000)));
+    assert_eq!(m.tick(c.at(8000), BUSY), Some(Idle));
+}
+
+#[test]
+fn hook_only_state_follows_hooks_and_schedules_no_screen_check() {
+    let c = clock();
+    let mut m = machine(StateMode::HookScreen);
+    assert_eq!(
+        m.set_hook_only(true),
+        None,
+        "`starting` is not a screen guess"
+    );
+    // The first output leaves `starting` for `unknown`, as a `hook` profile does.
+    assert_eq!(m.on_output(c.at(0), BUSY), Some(Unknown));
+    assert_eq!(m.on_hook(c.at(100), HookEvent::Busy), Some(Working));
+    assert_eq!(m.on_output(c.at(200), BUSY), None);
+    assert_eq!(m.next_deadline(), None);
+    // Long after the hook window and idle_after, a quiet screen does not end `working`.
+    let late = c.at(100) + HOOK_PRIORITY + Duration::from_secs(60);
+    assert_eq!(m.tick(late, BUSY), None);
+    assert_eq!(m.state(), Working);
+    assert_eq!(m.on_hook(late, HookEvent::Done), Some(Done));
+}
+
+#[test]
+fn hook_only_keeps_a_state_a_hook_set() {
+    let c = clock();
+    let mut m = machine(StateMode::HookScreen);
+    assert_eq!(m.on_hook(c.at(0), HookEvent::Busy), Some(Working));
+    // A hook vouches for `working`: turning hook-only on keeps it.
+    assert_eq!(m.set_hook_only(true), None);
+    assert_eq!(m.state(), Working);
+}
+
+#[test]
 fn multiline_patterns_see_joined_tail() {
     let cfg = StateConfig {
         needs_input_patterns: vec![r"Allow\?\n❯ 1\. Yes".into()],
