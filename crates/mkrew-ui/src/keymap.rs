@@ -255,6 +255,9 @@ pub const DOCS_CONTEXT: &str = "Docs";
 /// Key context of a file pane (its editor).
 pub const EDITOR_CONTEXT: &str = "Editor";
 
+/// Key context of a browser pane (ADR 0110).
+pub const BROWSER_CONTEXT: &str = "Browser";
+
 /// Key context of the file tree in the right panel while it has the keyboard.
 pub const FILE_TREE_CONTEXT: &str = "FileTree";
 

@@ -21,6 +21,7 @@ pub mod attention;
 pub mod base_dialog;
 pub mod board;
 pub mod broadcast;
+pub mod browser;
 pub mod chat;
 pub mod client;
 pub mod clone_dialog;

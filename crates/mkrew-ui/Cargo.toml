@@ -92,6 +92,11 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 # already in the tree.
 libc = "0.2"
 
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+# Browser panes (ADR 0110): the OS web view (WebView2, WKWebView) as a child of the window.
+# Linux shows pages in the system browser and builds none of it.
+wry = { version = "0.57", features = ["devtools"] }
+
 [build-dependencies]
 # App icon resource (build.rs); same version gpui already builds with.
 embed-resource = "3"
