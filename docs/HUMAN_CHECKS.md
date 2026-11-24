@@ -21,6 +21,58 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-23 omp native surface (ADR 0107, plan docs/superpowers/plans/2026-11-23-omp-tsp-surface.md)
+
+- [ ] **Restart the daemon first** (protocol 59; a window from before it shows a version mismatch), and on Windows run `scripts/fetch-conpty.sh` for a debug build (the installer has the files).
+  `conpty.dll` and `OpenConsole.exe` sit next to `mkrew-daemon.exe`, and the newest file in `<data>\logs` has one line `conpty = "sideloaded"`.
+- [ ] **omp has the hooks:** `mk integration status omp` says `installed` (while the surface is live the state comes from the hooks only; without them it is `unknown`).
+
+With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow pane, and Tern open side by side with the same omp session:
+- [ ] **Compare with Tern side by side:** the dock shows the same HUD pills, status, context meter, editor and bar (model, effort, rate, cost, Send or Stop), with the same numbers within rounding.
+  Colors, fonts and spacing are Mkrew's, not omp's or Tern's palette.
+- [ ] **Startup dock (dark + light):** a new omp pane starts as "Starting agent", then shows omp's conversation area and the dock at the bottom in the Chat page's 760 px centered column; the title bar shows no `Terminal | Chat` toggle while this pane has the focus, and `Ctrl+Alt+T` does nothing.
+- [ ] **Dock as Tern's composer (dark + light):** idle, typing with the ghost text right after the caret, and working (loading dots in the model pill, the working row with its elapsed time and a small Stop); the card, the meter, the model pill, the quiet fact chips (context, branch, rate, clock in Chat's colors) and the round Send look like Chat's composer and like Tern's.
+- [ ] **Prompt and answer (dark + light):** type a prompt and Enter in the dock editor; the answer arrives as cards, Markdown and code blocks; the list follows the end, the scroll-to-end button shows when you scroll up, and the dock never moves.
+- [ ] **Keys, paste and IME:** typing, omp's shortcuts, a multi-line paste, an image paste and a file drop work as in a terminal pane; Vietnamese Telex typing gives the right text; Mkrew's own shortcuts still win.
+- [ ] **Selection:** drag inside one message to select, Ctrl+C copies it; a node with a `title` shows it as a tooltip.
+- [ ] **Model chip:** a click opens omp's own model selector in the pane; Esc closes it; the chosen model shows in the chip.
+- [ ] **Stop while working:** the bar shows a round Stop while omp works; a click interrupts the turn and the bar goes back to Send.
+- [ ] **Stop hover:** the square of the round Stop (in the bar and in the working row) turns red (`danger_text`) when the pointer is over it; this was not seen on screen yet.
+- [ ] **Agent pill:** start a turn that runs subagents; the agent pill counts them; a click opens omp's Agent Hub as its card variant (the list and the detail, not the Tern table: that comes with P2); Esc or Close returns to the conversation.
+- [ ] **Subagent running (hud pill):** while a subagent runs, the status row shows one glass pill split by a divider (agents, jobs), each cell an icon and a count, as in Tern.
+- [ ] **Jobs pill:** with a background job running, the jobs pill shows its count; a click opens omp's jobs overlay (the Cancel button comes with P2).
+- [ ] **Question card (dark + light):** make omp ask several questions at once (ask tool with 3 questions, one multi-select, one with a Recommended option and a preview).
+  The card replaces the editor: tab chips on top (the active one solid), the question in semibold, options as rows with a radio circle (check box for multi-select), the Recommended option's circle in accent and a "Recommended" badge on its right, the picked row raised with an accent bar; compare with Tern: same order, same labels.
+  Click an option, double-click another (it submits that question), click `Other...` (omp's own text field opens; typing goes to omp), then Note, then Skip on one question; answered tabs get a leading check.
+- [ ] **Question Review and Submit (dark + light):** after the last question the Review tab shows the notice line (a warning color if some are unanswered) and the answers table; Submit sends the answers and the editor comes back; the buttons show their keys as tooltips (no key cap drawn).
+- [ ] **Question Hide, Show and timer:** Hide folds the card to one row with Skip and Show; Show brings it back with the same choices; a question with a timeout shows a ring with the seconds left that counts down on the status tick and omp times the question out at zero.
+- [ ] **Question keys:** arrows, Enter, Space, Tab, `n` and Esc still work from the keyboard while the card shows.
+- [ ] **Todo HUD (dark + light):** ask omp to make a todo list (3 phases); the status row above the dock shows, at its right, loading dots and the active item (ellipsized), then `1/5` in muted mono; with nothing active it shows the first pending item, and "All done" at the end; it is a pressable chip.
+- [ ] **Todo popover:** a click on the HUD opens the list in a glass panel above the status row; it is at most 60% of the pane height and scrolls; Esc and a click outside close it; nothing changes in omp.
+- [ ] **Todo phases and items (dark + light):** phase headers have a mark (loading dots while active, a green filled circle when all done or dropped, a muted ring otherwise), Roman numerals (`I.`, `II.`), the title and `done/count`; a click on a header folds and unfolds it (a phase with `collapsed` or all done starts folded); items show active (accent ring and text), pending (muted ring), done (green check, muted text), dropped (struck through) and blocked (needs-input color and " (blocked)"), with notes as a muted second line; compare with Tern.
+- [ ] **Todo card and reminder:** the todo tool result in the conversation is a card with the same phase list; after a few turns omp's todo reminder shows as a muted note with the done phases folded.
+- [ ] **Narrow pane (dark + light):** drag a divider or shrink the window so the pane is about 400 px: the dock drops its low-priority parts first (facts, then effort, then cost, then the model name truncates) and nothing overlaps; the PTY gets the new column count (omp rewraps).
+- [ ] **Very narrow composer (dock and Chat) at about 220 px:** in an omp pane and in a Chat pane, Send (or Stop) is never clipped; in Chat the Prompts and sparkle tools disappear whole, never as half an icon.
+- [ ] **Theme change:** switch dark and light (`Ctrl+Shift+J`; the title bar has no theme button) while the pane is live; the surface changes color at once and omp is told (`theme` event), with no restart.
+- [ ] **UI restart (snapshot):** quit and open the UI with the daemon running; the omp pane shows the same conversation again at once (from `tsp.snapshot`), and further answers keep arriving.
+- [ ] **Daemon restart:** `mk daemon stop`, then open Mkrew; the omp pane resumes as a new session with a new surface and an empty conversation (nothing of the old one is restored).
+- [ ] **TSP off:** put `tsp = false` in the omp profile (before `[state]`) and start a new omp pane; it is today's terminal pane with the title bar's `Terminal | Chat` toggle, omp draws ANSI rows, and there is no first-paint wait.
+  An omp started by hand in a shell pane also draws rows.
+- [ ] **Fallback:** rename `conpty.dll` next to the daemon, restart the daemon, start an omp pane; about 2 s after its first output the pane shows the terminal grid, with one toast "omp is drawing as text: ..." and a log line `conpty = "system"`; nothing is blank.
+  Put the file back and restart the daemon.
+- [ ] **Exited omp:** quit omp (`/exit`); the pane keeps its last conversation read-only under the exited notice.
+- [ ] **Hook-only state:** with the hooks installed the sidebar and the tab icon (hourglass, bell) follow omp (working, idle, needs input, done) while the surface is live; after a fallback, screen detection works again.
+- [ ] **Text glyphs:** the Nerd Font glyphs omp sends (the placeholder, the status facts) are drawn upright in the terminal font; if a box still shows (for example U+F14F7 with an older MesloLGS NF), install a current Nerd Font (Symbols Nerd Font Mono) and look again.
+- [ ] **`mk send` into the dock:** `mk send` types into the omp editor; once, the first `mk send` of a smoke session opened omp's Context overlay instead of typing (not reproduced): report it if you see it.
+- [ ] **Claude Code and Codex unchanged:** their panes keep the title bar's `Terminal | Chat` toggle and today's Chat look (ADR 0105), except that the Chat composer's Send is never clipped in a narrow pane.
+- [ ] **Machine window:** a window for another computer that runs omp with TSP shows the surface too (its daemon must be protocol 59).
+- [ ] **`mk web` on a phone:** a live omp session shows "This omp session uses Mkrew's native view. Open it on the desktop." in place of the terminal and has no Fit, Zoom or Read button; its state pill, Stop, the reply chips and the quick keys still work; an exited omp session shows its replay instead of the notice; when the session falls back, the terminal shows again; a Claude or shell session is unchanged.
+- [ ] **Regression on the new ConPTY (Windows):** in a PowerShell pane, a Git Bash pane, a Claude pane and a Codex pane check typing, resizing (text reflows), Vietnamese IME, a multi-line paste, `exit` (the pane shows the exited notice), and the startup resume after `mk daemon stop`; after closing every pane no `OpenConsole.exe` stays in Task Manager.
+- [ ] **Installer:** install the new setup over a running Mkrew; it finishes without a "files in use" prompt for `OpenConsole.exe` or `conpty.dll`, and both are in `{app}\bin`.
+- [ ] **macOS (and Linux if you have it):** the pure parts are tested on Windows; none of this ran there.
+  An omp pane shows the surface (the PTY passes APC through), typing works with Option as Meta, Cmd shortcuts win, and the look matches Windows in dark and light; there is no ConPTY step.
+- [ ] **Screenshots for reference:** `docs/screenshots/2026-11-23-omp-tsp-*.png` where the controller has taken them (startup dock, prompt and answer, model chip, Stop, Agent Hub card, question, question review, todo HUD, todo popover, narrow pane, UI restart, TSP off; dark and light) and the Tern pair `tern-startup-dock`, `tern-prompt-answer`.
+
 ### To verify - 2026-11-23 Tern layout (ADR 0106, plan docs/superpowers/plans/2026-11-23-tern-layout.md)
 
 Screenshots: `docs/screenshots/tern-layout-<view>-<dark|light>.png`.

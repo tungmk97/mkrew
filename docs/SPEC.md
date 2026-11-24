@@ -199,8 +199,8 @@ mkrew/
 ├── Cargo.toml                # workspace
 ├── AGENTS.md / CLAUDE.md     # agent instructions
 ├── docs/                     # SPEC, PROGRESS, BUILD_LOOP, HUMAN_CHECKS, decisions/, screenshots/
-├── scripts/                  # verify, autobuild, status, package (setup .exe / tar.gz / macOS app)
-├── packaging/                # mkrew.iss (Inno Setup 6 setup .exe); macos/ (app icon source, entitlements)
+├── scripts/                  # verify, autobuild, status, package (setup .exe / tar.gz / macOS app), fetch-conpty (Windows ConPTY files, §17)
+├── packaging/                # mkrew.iss (Inno Setup 6 setup .exe, installs conpty.dll and OpenConsole.exe); macos/ (app icon source, entitlements)
 ├── agents/                   # sample profiles: claude.toml codex.toml omp.toml shell.toml fake.toml
 └── crates/
     ├── mkrew-core/           # models, config, profile parsing, state machine. NO I/O beyond files, except the `tailscale` CLI runs of `mkrew_core::tailscale` (ADR 0053).
@@ -427,6 +427,7 @@ command = "omp"
 prompt_mode = "type"
 resume = "omp --resume {session_id}"   # {session_id} reported by the Mkrew extension
 oneshot = "omp -p --no-session"  # one-shot text; prompt on stdin
+# tsp = true                      # native surface (ADR 0107): on by default for omp_jsonl profiles; false = omp draws as text
 [state]
 mode = "hook+screen"
 idle_after_ms = 3000
@@ -459,6 +460,12 @@ show their logo instead, ADR 0058 — the one per-agent exception to §2.1, disp
 one is a parse error. Unknown keys and invalid `needs_input_patterns` regexes are parse errors.
 Profiles written before `oneshot` existed are not updated (seeding never overwrites); ✦ then
 answers `invalid_state` naming the key and the file.
+
+Optional key `tsp` (bool, ADR 0107) turns on omp's native surface.
+Absent: on when the profile's `[usage] format` is `omp_jsonl`, off otherwise, so an existing omp profile gets it without an edit.
+`tsp = false` turns it off; `tsp = true` on an agent that does not speak TSP changes nothing visible (no hello ever comes).
+With it on, the daemon starts the agent with `PI_TUI_NATIVE=1`, answers its hello and keeps the surface (§11); every other PTY the daemon opens gets `PI_TUI_NATIVE=0`, so an omp started by hand in a shell pane draws text rows.
+The value is read when a session starts.
 
 Two optional keys serve the `/` picker (§20B.7, ADR 0094):
 
@@ -503,6 +510,7 @@ cursor movement, so stripping ANSI from the raw stream gives garbage.
 
 The daemon scans a session's screen at most 4 times a second (a scan after the last output closes the gap, so the final screen is always classified) and the state machine reads only the last 4 non-blank rows up to the cursor; a state shown by the screen can therefore appear up to 250 ms after the output (ADR 0088).
 A session with a queued `session.send`, and a run session, is scanned on every output, and while the machine ignores the screen (hook-only profile, or a hook event in the last 10 s) no scan work is done.
+A session whose `tsp` is `live` (§11, ADR 0107) is hook-only while its surface is open: the screen text stays still, so the machine ignores the screen and the state comes from the hooks (`unknown` without them); when the surface closes or the session falls back, screen detection resumes.
 
 **Hook integrations — `mk integration install|uninstall|status <agent>`**
 
@@ -579,7 +587,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `task.undo_preview` | `task_id` | `checkpoint`, `fingerprint` (opaque), `changed[]` (tracked files restored), `added[]` (tracked since the checkpoint, deleted), `created[]` (untracked files created since, deleted), `diff` (≤ 1 MiB) + `diff_truncated`; `invalid_state` without a checkpoint (ADR 0005) |
 | `task.undo` | `task_id`, `confirm: true`, `created[]` + `fingerprint` (from the preview) | ok — restores the project folder to the checkpoint and deletes the previewed `created` files that are still new; `invalid_request` without `confirm`, `invalid_state` while a session of the task is live, without a checkpoint, or when the tracked changes no longer match `fingerprint` |
 | `session.spawn` | `project_id`, `agent_profile?`, `kind`, `tab_id?`, `title?`, `cols`, `rows` | `session_id` — no `agent_profile` = project `default_agent` (agent) or `default_shell` (shell), `invalid_request` when that default is not set; a named profile sets the kind; a tab with `null` layout gets the session as its only pane |
-| `session.list` | `project_id?` | Session[] (with `terminal_title?` from daemon memory) |
+| `session.list` | `project_id?` | Session[] (with `terminal_title?` and `tsp` from daemon memory) |
 | `session.attach` | `session_id` | screen snapshot (grid + cursor + modes) + subscribe to output |
 | `session.detach` | `session_id` | ok |
 | `session.input` | `session_id`, `data` (base64) | ok |
@@ -598,6 +606,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.resume` | `session_id`, `tab_id?` | `SessionSpawnResult` — relaunches an exited agent session into its conversation with the profile's `resume` command, as a new session (same title, color, pin, plan, size; a task's session stays the task's, in its worktree); placed where the old pane still is, else into `tab_id` when that tab is empty (the client places it otherwise). `invalid_state` while the session is live, for a shell, without `native_session_id` or `resume`, in an archived workspace, or while a live session has the same `native_session_id` or task (ADR 0055) |
 | `session.link_plan` | `session_id`, `path?` (a `.md` file, absolute or project-relative; `null` unlinks) | the Session (also `session.updated`) — live sessions only (`invalid_state`/`not_found` otherwise); `invalid_request` when the file is not `.md`, missing, a folder, over 2 MiB or not UTF-8; the daemon then watches that one file (ADR 0039) |
 | `session.plan` | `project_id` | `[{session_id, name, done, total, items[], error?}]` of the project's live sessions with a plan (the last announced checklist, for a client that connects later) |
+| `tsp.snapshot` | `session_id` | `{state, surfaces, blobs}` (ADR 0107): `state` is the session's `tsp`; `surfaces` = `[{id, mode, role?, title?, read_only, seq, root}]` (`mode` `inline` or `screen`, `seq` the last applied frame of omp, `root` the node tree `{id, k, p?, c?}`); `blobs` = `[{id, mime, data}]` (`data` base64) of the images an `image` node still names, at most 4 MiB. A session that is not TSP, or has no open surface, answers its `state` with empty lists; a session that is not live is answered as `session.attach` answers it |
+| `tsp.event` | `session_id`, `surface`, `event` | `null`: `event` is an object whose `ev` is one of `action`, `toggle`, `select`, `activate`, `focus`, `theme`; the daemon adds `sf` (the surface) and writes it to the agent's input as a TSP message. Another `ev` is `invalid_request`. A `theme` event (`{ev:"theme", dark}`) also becomes the `dark` of the next hello |
 | `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab and removes every session with a pane in it, like `session.remove`; no `tab` event, ADR 0041) |
 | `tab.pin` | `tab_id`, `pinned` | TerminalTab, also broadcast as `tab.updated`; `position` is left alone, so unpinning puts the tab back |
 | `tab.set_layout` | `tab_id`, `layout` | ok |
@@ -646,8 +656,9 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.usage` | an agent session's token usage changed at a turn end (§20E.3): `session_id`, `input` (fresh, cache excluded), `output`, `cache_read`, `cache_write`, `context`, `context_window?`, `model?`, `transcript?` |
 | `agent.limits` | an agent's newest limits changed (`AgentLimits`, see `limits.get`); Codex's come from its transcript at a turn end (§20E.3), Claude's from `mk statusline` |
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
-| `session.updated` | a session's title, color, pin, position or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.move`, `session.link_plan`): the whole Session |
+| `session.updated` | a session's title, color, pin, position or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.move`, `session.link_plan`), or its `tsp` state changed (ADR 0107): the whole Session |
 | `session.terminal_title` | an agent session's terminal title (OSC 0/2) changed: `session_id`, `title?` — leading glyphs stripped, paths ignored, ≤ 60 chars, once per change; memory only (ADR 0031) |
+| `tsp.update` | omp's surface changed (ADR 0107): `session_id`, `surface`, `change` = `{kind:"frame", seq, ops, blobs?}` after the daemon applied a frame of omp (`ops` are the ops that applied, plus the daemon's own eviction ops; `blobs` the images the frame needs), `{kind:"open", surface}` when omp opens a surface, or `{kind:"closed", keep}`. Updates arrive in order, one `seq` after the other; a client that sees a gap asks `tsp.snapshot` again. The `mk web` relay does not forward it |
 | `session.plan` | the checklist of a linked plan changed (`session_id`, `name` = file name without `.md`, `done`, `total`, `items[]` = first 200 task items `{done, text}` (text cut at 120 chars with `…`), `error?` = why the file cannot be read, counts then 0): sent at once on link and ≤ 1 s after each change of the file (debounced), never twice with the same content; `-`, `*` or `+` items (`[ ]`/`[x]`/`[X]`) outside code fences (ADR 0039) |
 | `task.deleted` | task removed (`task_id`, `project_id`; ADR 0004) |
 | `conflict.detected` | two sessions edited the same file within 60 s (M5): `project_id`, `path`, `session_ids`, `task_ids` |
@@ -706,6 +717,8 @@ Protocol 56 (ADR 0103): `git.discard` takes `hunk`.
 Protocol 57 (ADR 0105): `session.transcript` result gains `recap`.
 
 Protocol 58 (ADR 0106): event `machine.stats` and `MachineStats` removed; `agent.limits`, `limits.get` and `limits.report` stay.
+
+Protocol 59 (ADR 0107): requests `tsp.snapshot` and `tsp.event`, event `tsp.update`, and `Session.tsp` (`off`, `waiting`, `live`, `fallback`; daemon memory only, like `terminal_title`).
 
 Protocol 41: `session.move` and `Session.position`.
 
@@ -1215,7 +1228,30 @@ The tooltip gives the status in words, the time and the turns, so color is never
   ADR 0105 gives the page a centered column of 760 px with `space::XL` side padding: the prompt is a right-aligned bubble, the agent's text has accent headings and bullet dots, inline code and file paths are pills (a path in a Chat message opens the file in the Editor view at its `:line`), code blocks are cards with a language label and a Copy button, and thinking and tool calls between two texts are one activity row ("Thought for 4s · 3 commands, 2 reads", "Working…" while it runs) that opens to the thinking text and the tool rows.
   An omp turn ends with omp's recap line when it is not older than the turn's prompt and the agent is not working.
   The composer is a floating card in the same column (§20B).
+  In a narrow card Send is never clipped: the chip cell shrinks and clips, and the Prompts and sparkle tools drop whole when the row has no room for them (ADR 0107).
   The terminal keeps running underneath and still reports the state.
+- **omp native surface** (ADR 0107): an omp pane whose session has `tsp` `live` draws omp's own interface instead of the terminal grid or Chat, and has no `Terminal | Chat` toggle: the title bar (§10) shows none while that pane has the focus, and `Ctrl+Alt+T` and the palette entry do nothing for it.
+  omp describes its interface as a tree of nodes (the Tern Surface Protocol, sent inside the PTY stream); the daemon applies the tree and the UI draws it in Mkrew's colors, spacing and fonts (§14), dark and light.
+  `main` is a scrolling list in the Chat page's centered column (`CHAT_COLUMN_WIDTH`) that follows its end, with the scroll-to-end button; `dock` (the HUD pills, the status, the context meter, the editor, and the bar with model, effort, rate, cost and Send or Stop) sits under it in the same column and is always shown; `layer` children and `overlay` nodes are a modal inside the pane; a `screen` surface covers the whole pane until omp closes it.
+  Keys, paste, image paste and file drops go to the PTY as in a terminal pane (Mkrew's own shortcuts first).
+  A click on a node with a click action (the model chip, Stop, Send, the agent pill, the jobs pill, the context meter, the cost) goes to omp, which opens its own selector or overlay; the events sent are `action`, `toggle`, `select`, `activate`, `focus` and `theme`.
+  Text selects inside one node and Ctrl+C copies it; a node's `title` is its tooltip; hovercards are ignored.
+  An older document is cut when it passes 50,000 nodes or 6 MiB of text: the oldest rows of `main` go and the list starts with "Earlier messages were trimmed".
+  The pane by `Session.tsp`: `off` is the terminal pane with the title bar's `Terminal | Chat` toggle; `waiting` (TSP on, no surface yet) is the starting state of an agent pane; `live` is the surface; `fallback` (no hello within 2 s of the session's first output, or omp closed the surface with `x {keep:false}`) is the terminal grid without the Chat toggle and one info toast "omp is drawing as text: <reason>"; an exited session keeps its last document, read-only, under the existing exited notice.
+  While `live` the state comes from omp's hooks only (§6); without hooks it is `unknown`.
+  `mk web` shows "This omp session uses Mkrew's native view. Open it on the desktop." in place of the terminal of a live session that has not exited (an exited one shows its replay); its state, Stop, the reply chips and the quick keys keep working.
+  The dock is drawn as Tern's composer from the pieces of the Chat composer card (§20B, ADR 0105), with omp as the only source of the content: the context meter above the card (`accent` fill, `status_needs_input` past `thresholds.warn`, `danger_text` past `bad`, marks as ticks, a click sends `status.context`), the card (`surface_raised`, `radius::LARGE`, glass border, float shadow) holding the editor line (the placeholder with the sparkle icon, omp's `ghost` text right after the caret) and the chip row, the model pill (`accent_text`, chevron, loading dots while omp works), a quiet effort chip, quiet mono fact chips (an `accent` span such as `⚡ yolo` takes the Chat permission chip look; the stats Chat also shows take Chat's colors), the rate and cost chips, and the round Send (`CornerDownLeft`) or Stop (a square, `danger_text` on hover) at the end of the row.
+  Above the meter, the status row has the working row (loading dots, the elapsed time in mono `text_muted`, a divider, the label in `status_needs_input`, a small ghost Stop), the todo HUD, and the hud as one glass pill whose segments (the agent and jobs pills, each an icon and a count in mono) are split by dividers.
+  When the chip row is too narrow it drops, in this order: the facts by omp's `priority` (highest number first), the effort chip, the cost, and last the model name truncates (not below about six characters); the model pill never shrinks and Send or Stop is never clipped.
+  A dock without omp 18.13.2's roles (`omp.editor`, `omp.composer.*`, `omp.hud*`, `omp.working*`) is drawn by the generic fallback.
+  Nerd Font private-use glyphs in text (spans styled `icon`) are drawn upright in the terminal font with `TERMINAL_GLYPH_FALLBACKS`; a glyph that none of the installed Nerd Fonts has still shows a box until a current Nerd Font (Symbols Nerd Font Mono) is installed.
+  A question from omp (`ask`) replaces the dock's editor and is drawn as the composer card: tab chips in its top row (answered tabs start with a check, a last Review tab, the active tab on a solid `card` background), the question in `weight::SEMIBOLD`, then one row per option with a radio circle (a check box for multi-select) filled with `accent` for the recommended one, the label, the detail muted below, a "Recommended" badge on the right and the picked row on `surface_raised` with a 2 px `accent` bar at its left; "Other..." is a row of the same list; an optional Markdown preview sits under the list.
+  The Review tab shows a notice line and the table of answers.
+  The bottom row has pill buttons (Hide, Note, Skip, Next or Submit; the default one in `accent` with `on_accent` text; the key hint is the tooltip) and, when the question has a timeout, a small ring with the seconds left.
+  Hide folds the card to one row ("Question ...", Skip, Show).
+  A click sends `select`, a double-click `activate`, a button `action`; keys still go to omp, and "Other..." opens omp's own text field.
+  omp's todo (`checklist`) shows as a one-line HUD at the right of the status row above the dock (loading dots and the active item, else the first pending one, else "All done", then `done/total` in the terminal font, muted); a click opens the phase list in a glass panel above the row (at most 60% of the pane height, scrolling; Esc or a click outside closes it, nothing is sent to omp).
+  The same phase list is the body of the todo card in the conversation (`full`) and of the todo reminder (a muted note, done phases collapsed): a header per phase with a status mark (loading dots while it has an active item, a `status_done` filled circle when all items are done or dropped, a muted ring otherwise), its Roman numeral, title and `done/count`; a click on a header folds it; items are marked active (`accent` ring and text), pending (muted ring), done (`status_done` check, muted text), dropped (muted, struck through) and blocked (`status_needs_input`, " (blocked)"), with a note as a muted second line.
 - Pane menu (right-click a sidebar session row, or Shift+F10 with a terminal focused; a pane has no header to right-click): **Pin**, **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise), **Rename** (inline
   like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears).
   The tab menu has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane.
@@ -1932,6 +1968,67 @@ An element that is not clickable right now, but is not disabled, has no look at 
 Not buttons, so no hover: resize grips (they tint through `grip_hover`), terminal surfaces, drop zones and drag sources, the modal scrim, text fields (they keep their I-beam), editor and text-selection surfaces, window-drag areas, the pane title (it renames on double-click only and shows no pointer), links drawn by `InteractiveText`, and the context-menu mouse down of an element that is already pressable.
 Focus rings stay with `DialogControl`.
 
+**TSP style mapping, ADR 0107.**
+Every color, space and font in an omp surface (§11) comes from `theme.rs`; omp's `t` palette message and its dark flag are ignored, and the UI tells omp its own theme.
+The mapping is one table in `crates/mkrew-ui/src/tsp.rs` (`color`, `tone_color`, `span_style`, `icon`), unit tested.
+The first style token of a span that has a color decides the color; an unknown token changes nothing.
+
+| omp token (span `s`) | Drawn as |
+| --- | --- |
+| `accent`, `info`, `link`, `user` | `accent` |
+| `muted`, `dim` | `text_muted` |
+| `error` | `danger_text` |
+| `warning`, `pending` | `status_needs_input` |
+| `success` | `status_done` |
+| `text`, `neutral` | `text` |
+| `strong` | `weight::SEMIBOLD` |
+| `em` | italic |
+| `del` | strikethrough |
+| `mark` | a highlighted background |
+| `mono`, `code`, `path`, `icon` | the terminal font, with `TERMINAL_GLYPH_FALLBACKS` for private-use glyphs, upright |
+| anything else (omp's own palette names, `statusLine...`) | `text`, no change |
+
+A node's `tone` maps like this: `neutral` to `text`; `accent`, `info`, `user` to `accent`; `success` to `status_done`; `warning`, `pending` to `status_needs_input`; `error` to `danger_text`; `muted` to `text_muted`; an unknown tone to `text`.
+A `gap` is `none` 0, `xs` `space::XS`, `sm` `space::S`, `md` `space::M`, `lg` `space::L`.
+A `card` is `surface_raised` with `radius::MEDIUM`.
+`spinner`, `elapsed`, `shimmer` and `rate` update on the 500 ms status tick; nothing loops (ADR 0086).
+The `rate` label shows one decimal below 10.0 tok/s (`3.3 tok/s`) and none from 10.0 up (`65 tok/s`).
+A named `icon` node maps to a Lucide icon: `copy` Copy; `x` X; `eye` Eye; `model`, `wand` Sparkles; `chev` ChevronDown; `jobs`, `context.compaction` Layers; `job` Zap; `history` History; `link` Link; `open` ExternalLink; `rewind` Undo2; `check` Check; `lightbulb` Lightbulb; `loop` RotateCw; `back` ChevronLeft; `users`, `agents` Users; `agent` Bot; `bash` Terminal; `session` SquareTerminal; `time` Clock; `folder` Folder; `plus` Plus; `wrench` Settings; `x-circle` SquareX; `send` Send; `cache`, `input`, `output` (the token facts).
+A name with no entry (`eye-off`, `pause`, `gauge`, `corner-down-right`, `list`, `message`, `activity`, ...) draws nothing and is logged once at `debug`.
+A kind the UI does not know is drawn generically: the node's text-like props (`text`, `title`, `head`, `label`, `name`) as a muted line, then its children.
+
+The omp question card (§11) draws by node `role`:
+
+| Role | Drawn as |
+| --- | --- |
+| `omp.ask.questions` (`tabs`) | tab chips; the active one on `card`; an answered tab keeps its leading check |
+| `omp.ask.question` | text in `weight::SEMIBOLD` |
+| `omp.ask.option`, `omp.ask.other` | a radio circle, label in `weight::MEDIUM`, detail in `text_muted`; the circle is filled with `accent` when `tone` is `accent`; the picked row on `surface_raised` with a 2 px `accent` bar at its left |
+| `omp.ask.check`, `omp.ask.other.check` | the same with a check box |
+| the option `value` ("Recommended") | a `badge` at the right |
+| `omp.ask.preview` | Markdown under the list |
+| `omp.ask.notice` | a line; its `warning` span in `status_needs_input` |
+| `omp.ask.answers` | the answers table |
+| `omp.btn` | a pill button; `tone` `accent` is `accent` with `on_accent` text; the `kbd` child is not drawn, the node's `title` is the tooltip |
+| `meter` with `style` `ring` | a small ring with its `label` |
+| `omp.editor.ask.hidden` | one row: summary, Skip, Show |
+
+The todo marks (`checklist`, §11) are: an `active` item an `accent` ring around a dot, its text in `accent`; `pending` a `text_muted` ring; `done` a `status_done` check with muted text; `dropped` muted text struck through; `blocked` text in `status_needs_input` followed by " (blocked)"; a phase with an active item loading dots (moved on the 500 ms status tick), a phase with every item done or dropped a `status_done` filled circle, any other phase a `text_muted` ring; `done/count` in `text_muted`; the HUD popover is a `floating_panel`.
+
+The omp dock (§11) draws by node `role`, from the Chat composer's tokens:
+
+| Role | Drawn as |
+| --- | --- |
+| `omp.editor` | the composer card: `surface_raised`, `radius::LARGE`, glass border, float shadow, `space::M` padding |
+| `omp.composer.context` (`meter`, `style` `bar`) | the context meter: a `CONTEXT_METER_HEIGHT` pill bar, `accent` fill, `status_needs_input` past `thresholds.warn`, `danger_text` past `bad`; `label` and `total` in `text_muted` |
+| `omp.composer.line` | the editor line in `BODY`; placeholder italic `text_muted` with the sparkle icon; `ghost` in `text_subtle` after the caret |
+| `omp.composer.model` | the Chat model pill (`raised_border`, `accent_text`, chevron) |
+| `omp.composer.effort`, `omp.composer.usage`, `omp.composer.rate`, `omp.composer.fact` | quiet mono chips; fact colors: context `syntax_keyword`, git branch `syntax_string`, rate `text`, clock and session `text_subtle`, others `text_muted`; an `accent` span takes the permission chip look |
+| `omp.composer.send`, `omp.composer.stop` | the round Send and Stop buttons; Stop is `danger_text` on hover |
+| `omp.working`, `omp.working.label`, `omp.working.stop` | the working row: dots, elapsed in mono `text_muted`, divider, label in `status_needs_input`, a small ghost Stop |
+| `omp.hud`, `omp.hud.seg` | one glass pill, one padded cell per segment (icon, count in mono, tooltip), a `BORDER_WIDTH` divider in `border` between cells |
+| `omp.hud.todo` | the todo HUD chip (§11) |
+
 ---
 
 ## §15 Non-functional requirements
@@ -1970,6 +2067,9 @@ scenarios in `crates/mkrew-fakeagent/scenarios/`, including a `flood` scenario t
 high-volume colored output as fast as possible (used by the stress test, §15). Almost every acceptance criterion should be
 checkable end-to-end with it.
 
+`--tsp <fixture.jsonl>` with `--record <file>` (ADR 0107) makes it a TSP terminal peer: it sets the console to raw VT input, prints a TSP hello, records every byte it reads, waits up to 10 s for the daemon's reply, then replays the fixture's omp-to-terminal messages and prints `fake tsp done`; with no reply it prints `fake tsp: no reply` and keeps running.
+The committed fixture is omp 18.13.2's own startup record (`docs/superpowers/specs/2026-11-23-omp-tsp/omp-18.13.2-startup.tsp.jsonl`).
+
 **Automation commands** `mk send` and `mk wait` (§9) are used by e2e tests and by users' scripts.
 
 ---
@@ -1988,6 +2088,11 @@ checkable end-to-end with it.
 **Windows**
 
 - PTY via ConPTY (`portable-pty`); support Windows 10 1809+ and Windows 11.
+- ConPTY is sideloaded (ADR 0107): `conpty.dll` and `OpenConsole.exe` from the `Microsoft.Windows.Console.ConPTY` NuGet package 1.24.260710001 (MIT; nupkg SHA-256 `175640566a3b59c4b132070ee96c2c77e5ab7edd2e92732a5eb3610bbf63d90e`) sit next to `mkrew-daemon.exe`, and `portable-pty` loads that `conpty.dll`.
+  The system ConPTY drops the APC sequences TSP needs.
+  `scripts/fetch-conpty.sh` (and `.ps1`) download the pinned package once into a cache, check the SHA-256 of the package and of both files, and copy them into `target/debug` and `target/release`; `scripts/verify.sh` and `scripts/package-setup.ps1` call it, and `packaging/mkrew.iss` installs both files into `{app}\bin`.
+  The files apply to every PTY the daemon opens (shells, Claude, Codex), not only omp's.
+  Without them the daemon runs on the system ConPTY, logs `conpty = "system"` once at start, and an omp pane falls back to the terminal grid 2 s after its first output; with them it logs `conpty = "sideloaded"`.
 - Agent commands are often `.cmd`/`.ps1` shims — honor `PATHEXT`.
 - Named pipe restricted to the current user.
 - Paths: `dunce::canonicalize` (no `\\?\` prefix); case-insensitive comparison on Windows.
@@ -2304,6 +2409,8 @@ continues the same turn. Turns are numbered per session from 1. Pure model in
 format = "claude_jsonl"        # "claude_jsonl" | "codex_jsonl" | "omp_jsonl"; absent = no usage
 context_window = 200000        # tokens, for the % shown
 ```
+
+`tsp` (bool, §6, ADR 0107) is also an optional top-level profile key; absent means on for a profile whose `[usage] format` is `omp_jsonl`.
 
 ### §20A Attention (M9)
 
