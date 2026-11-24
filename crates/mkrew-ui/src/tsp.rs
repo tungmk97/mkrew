@@ -809,6 +809,8 @@ pub fn with_icon_glyphs(
                 rest[..end].to_owned(),
                 SpanStyle {
                     mono: style.mono || glyph,
+                    italic: style.italic && !glyph,
+                    bold: style.bold && !glyph,
                     ..*style
                 },
             ));
@@ -2784,6 +2786,31 @@ mod tests {
             std::borrow::Cow::Borrowed(_)
         ));
         assert!(is_icon_glyph('\u{e70f}') && !is_icon_glyph('A') && is_icon_glyph('\u{f0a9f}'));
+    }
+
+    #[test]
+    fn a_private_use_glyph_in_an_italic_span_is_drawn_upright() {
+        // omp's placeholder: a glyph inside an `em` span. The Nerd Font fallbacks have no
+        // italic or bold face, so the glyph run keeps the weight and slant of the terminal font.
+        let em = SpanStyle {
+            italic: true,
+            bold: true,
+            ..SpanStyle::default()
+        };
+        let runs = [("“\u{f0219} README”".to_owned(), em)];
+        let out = with_icon_glyphs(&runs);
+        let shown: Vec<_> = out
+            .iter()
+            .map(|(t, s)| (t.as_str(), s.mono, s.italic, s.bold))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("“", false, true, true),
+                ("\u{f0219}", true, false, false),
+                (" README”", false, true, true)
+            ]
+        );
     }
 
     #[test]

@@ -2474,7 +2474,6 @@ impl Shell {
                     cells.push(
                         div()
                             .flex()
-                            .flex_1()
                             .min_w_0()
                             .overflow_hidden()
                             .items_center()
@@ -2494,13 +2493,24 @@ impl Shell {
                 }
             }
         }
+        // The chips share what the round button leaves; `fit_bar` decides what drops, and a low
+        // estimate clips a chip (the model name truncates), never the button.
         div()
             .flex()
             .min_w_0()
-            .overflow_hidden()
             .items_center()
             .gap(px(space::S))
-            .children(cells)
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .items_center()
+                    .gap(px(space::S))
+                    .children(cells)
+                    .child(div().flex_1()),
+            )
             .child(self.tsp_dock_primary(p, m, exited, cx))
             .into_any_element()
     }
@@ -2534,6 +2544,9 @@ impl Shell {
             p.now,
             theme,
         )
+        .flex_shrink_1()
+        .min_w_0()
+        .overflow_hidden()
         .when_some(title, |el, title| el.tooltip(tooltip(theme, title, "")))
         .on_press(
             click,

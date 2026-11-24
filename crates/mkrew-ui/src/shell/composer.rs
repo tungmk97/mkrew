@@ -1345,23 +1345,33 @@ impl Shell {
                 div()
                     .flex()
                     .min_w_0()
-                    .overflow_hidden()
                     .items_center()
                     .gap(px(space::S))
-                    .children(model_chip)
-                    .children(permission_chip)
-                    .children(effort_chip)
-                    .children(branch_chip)
-                    .child(div().flex_1().min_w_0().flex().child(middle))
-                    .children(self.composer_tools(
-                        session,
-                        draft,
-                        is_focused,
-                        theme.border,
-                        true,
-                        theme,
-                        cx,
-                    ))
+                    // The chips share what the send button leaves; `fit_chips` decides what
+                    // drops, and a low estimate clips a chip, never the button.
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .items_center()
+                            .gap(px(space::S))
+                            .children(model_chip)
+                            .children(permission_chip)
+                            .children(effort_chip)
+                            .children(branch_chip)
+                            .child(div().flex_1().min_w_0().flex().child(middle))
+                            .children(self.composer_tools(
+                                session,
+                                draft,
+                                is_focused,
+                                theme.border,
+                                true,
+                                theme,
+                                cx,
+                            )),
+                    )
                     .child(send),
             );
         super::chat_view::chat_column(div().flex().flex_col().children(meter).child(card))

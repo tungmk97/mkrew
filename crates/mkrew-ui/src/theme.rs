@@ -452,7 +452,7 @@ pub const CONTEXT_METER_HEIGHT: f32 = 2.0;
 /// The hover area of a tick on the context meter of an omp dock (a mark such as the
 /// auto-compact point; its tooltip is the mark's title). The 1 px line sits in the middle.
 pub const CONTEXT_MARK_HIT_WIDTH: f32 = space::M;
-pub const CONTEXT_MARK_HIT_HEIGHT: f32 = space::M;
+pub const CONTEXT_MARK_HIT_HEIGHT: f32 = CONTEXT_METER_HEIGHT + space::XS;
 
 /// Room reckoned for the bar of an omp dock (px at 13 px UI size, like the `COMPOSER_*` ones):
 /// the round send or stop button and its gap.
@@ -464,7 +464,12 @@ pub const TSP_MODEL_MIN_CHARS: usize = 6;
 /// The four-step effort glyph of the effort chip.
 pub const TSP_EFFORT_GLYPH_WIDTH: f32 = 28.0;
 /// Characters reckoned for a live elapsed time inside a fact (`12m 03s`).
+// ponytail: `1h 02m 03s` is 10 characters and clips (the facts cell is `overflow_hidden`, so
+// nothing else moves); measure the node's text if long sessions matter.
 pub const TSP_ELAPSED_CHARS: usize = 7;
+/// One average character of the UI font at `META` size (the effort label, the model name); the
+/// facts and the cost are mono and use `COMPOSER_MONO_CHAR_WIDTH`.
+pub const TSP_UI_CHAR_WIDTH: f32 = 6.6;
 
 /// Width of the "Undo task" dialog (wider: it shows a diff).
 pub const UNDO_DIALOG_WIDTH: f32 = 720.0;

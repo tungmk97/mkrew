@@ -708,6 +708,11 @@ fn text_room(text: &str) -> f32 {
     text.chars().count() as f32 * theme::COMPOSER_MONO_CHAR_WIDTH
 }
 
+/// The room of UI-font text (the effort label, the model name).
+fn ui_room(text: &str) -> f32 {
+    text.chars().count() as f32 * theme::TSP_UI_CHAR_WIDTH
+}
+
 fn fact_width(fact: &Fact) -> f32 {
     let icon = if fact.icon.is_some() || fact.permission {
         theme::ICON_SIZE_SMALL + space::XS
@@ -725,11 +730,11 @@ fn fact_width(fact: &Fact) -> f32 {
 /// shrinking last, like `chat::chips_width`.
 pub fn bar_width(bar: &BarModel, fit: &BarFit) -> f32 {
     let effort = bar.effort.as_ref().filter(|_| fit.effort).map_or(0.0, |e| {
-        theme::TSP_EFFORT_GLYPH_WIDTH + space::XS + text_room(&e.label) + space::S
+        theme::TSP_EFFORT_GLYPH_WIDTH + space::XS + ui_room(&e.label) + space::S
     });
     let model = bar.model.as_ref().map_or(0.0, |m| {
         theme::TSP_MODEL_CHROME_WIDTH
-            + fit.model_name.unwrap_or_else(|| text_room(&m.name))
+            + fit.model_name.unwrap_or_else(|| ui_room(&m.name))
             + if bar.working {
                 theme::COMPOSER_CHIP_LOADING_WIDTH
             } else {
@@ -778,8 +783,8 @@ pub fn fit_bar(bar: &BarModel, room: f32) -> BarFit {
     }
     if let Some(model) = &bar.model {
         let over = bar_width(bar, &fit) - room;
-        let natural = text_room(&model.name);
-        let floor = theme::TSP_MODEL_MIN_CHARS as f32 * theme::COMPOSER_MONO_CHAR_WIDTH;
+        let natural = ui_room(&model.name);
+        let floor = theme::TSP_MODEL_MIN_CHARS as f32 * theme::TSP_UI_CHAR_WIDTH;
         fit.model_name = Some((natural - over).max(floor).min(natural));
     }
     fit
@@ -1283,7 +1288,7 @@ mod tests {
             (bar_width(bar, &fit) - room).abs() < 0.01,
             "the name gives back exactly the overflow"
         );
-        let floor = theme::TSP_MODEL_MIN_CHARS as f32 * theme::COMPOSER_MONO_CHAR_WIDTH;
+        let floor = theme::TSP_MODEL_MIN_CHARS as f32 * theme::TSP_UI_CHAR_WIDTH;
         assert_eq!(
             fit_bar(bar, 0.0).model_name,
             Some(floor),
@@ -1483,6 +1488,55 @@ mod tests {
                 t.text_subtle,
                 t.text_subtle
             ]
+        );
+    }
+
+    #[test]
+    fn the_model_name_and_effort_label_are_reckoned_in_the_ui_font_the_facts_in_mono() {
+        let m = model_of(real_children(false)).expect("composer");
+        let none = BarFit {
+            facts: vec![false; m.bar.facts.len()],
+            effort: false,
+            model_name: None,
+        };
+        let name = "Opus 5.5".chars().count() as f32;
+        assert!(
+            (bar_width(&m.bar, &none)
+                - (theme::TSP_BAR_FIXED_WIDTH
+                    + theme::TSP_MODEL_CHROME_WIDTH
+                    + name * theme::TSP_UI_CHAR_WIDTH))
+                .abs()
+                < 0.01
+        );
+        let with_effort = BarFit {
+            effort: true,
+            ..none.clone()
+        };
+        let label = "high".chars().count() as f32;
+        assert!(
+            (bar_width(&m.bar, &with_effort)
+                - bar_width(&m.bar, &none)
+                - (theme::TSP_EFFORT_GLYPH_WIDTH
+                    + space::XS
+                    + label * theme::TSP_UI_CHAR_WIDTH
+                    + space::S))
+                .abs()
+                < 0.01
+        );
+        let yolo = Fact {
+            id: String::new(),
+            icon: None,
+            body: FactBody::Text("abcd".into()),
+            priority: 0,
+            permission: false,
+            color: 0,
+        };
+        assert!(
+            (fact_width(&m.bar.facts[0])
+                - fact_width(&yolo)
+                - (theme::ICON_SIZE_SMALL + space::XS))
+                .abs()
+                < 0.01
         );
     }
 }
