@@ -31,17 +31,18 @@ use mkrew_protocol::{
     CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
     DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
     FsContent, FsCreateParams, FsCreated, FsEntry, FsIgnoreParams, FsListParams, FsMatch,
-    FsReadParams, FsWriteParams, FsWritten, GitCheckoutParams, GitCommitResult, GitMarker, GitMode,
-    GitStatus, GitStatusParams, Outcome, Project, ProjectAddParams, ProjectClonedEvent, ProjectRef,
-    ProjectUpdateParams, RemoveWorktreeResult, Request, RunStartParams, RunStarted, RunStopParams,
-    Session, SessionAttachResult, SessionFiles, SessionKillParams, SessionKind,
-    SessionLinkPlanParams, SessionListParams, SessionLogTail, SessionLogTailParams,
-    SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionReadResult,
-    SessionRef, SessionResumeParams, SessionSendParams, SessionSendResult, SessionSpawnResult,
-    SessionState, SessionTranscript, SessionTranscriptParams, SessionUnqueueParams,
-    SessionUsageEvent, SlashListResult, StateSource, TabCreateParams, TabListParams, TabPinParams,
-    TabRef, TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef,
-    TaskStatus, TerminalTab, Turn, UndoPreview, ViewedFile,
+    FsNewNoteParams, FsReadParams, FsWriteParams, FsWritten, GitCheckoutParams, GitCommitResult,
+    GitMarker, GitMode, GitStatus, GitStatusParams, Outcome, Project, ProjectAddParams,
+    ProjectClonedEvent, ProjectRef, ProjectUpdateParams, RemoveWorktreeResult, Request,
+    RunStartParams, RunStarted, RunStopParams, Session, SessionAttachResult, SessionFiles,
+    SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams, SessionLogTail,
+    SessionLogTailParams, SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent,
+    SessionReadResult, SessionRef, SessionResumeParams, SessionSendParams, SessionSendResult,
+    SessionSpawnResult, SessionState, SessionTranscript, SessionTranscriptParams,
+    SessionUnqueueParams, SessionUsageEvent, SlashListResult, StateSource, TabCreateParams,
+    TabListParams, TabPinParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams,
+    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
+    ViewedFile,
 };
 use mkrew_ui::ask::{self, Ask};
 use mkrew_ui::attention::{self, Tracker};
@@ -95,6 +96,7 @@ use mkrew_ui::peek::{self, Peek};
 use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, PushSwitch, SetUp, Switch};
 use mkrew_ui::plan::{self, Plans};
 use mkrew_ui::plan_dialog::PlanDialog;
+use mkrew_ui::plus_row::{NewKind, Reveal, RowItem, default_agent, plus_row_items};
 use mkrew_ui::ports::PortsDialog;
 use mkrew_ui::preview;
 use mkrew_ui::prompt_picker::{self, PromptPicker};
@@ -153,6 +155,7 @@ use shell::menu_render::*;
 use shell::menus::*;
 use shell::pane_drop::*;
 use shell::pane_render::*;
+use shell::plus_row::*;
 use shell::reorder::*;
 use shell::sidebar::*;
 use shell::tear_off::*;
@@ -610,6 +613,11 @@ struct Shell {
     workspace_switcher: bool,
     /// The tab area's `+ ▾` dropdown is open.
     new_menu: bool,
+    /// The pointer holds the tab strip's `+` row open (`plus_row::Reveal`); a focused item
+    /// opens it too (`plus_focus`).
+    plus: Reveal,
+    /// Wraps the `+` row: `contains_focused` keeps it open while `+` or an item has the keyboard.
+    plus_focus: FocusHandle,
     /// The sidebar's "N empty workspaces" line is expanded (in memory only).
     empty_workspaces_open: bool,
     /// Sidebar groups (a workspace's TERMINAL / RUN) folded to their label (in memory only).

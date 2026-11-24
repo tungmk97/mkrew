@@ -56,6 +56,8 @@ pub enum Command {
     PreviousWorkspace,
     NewShellTab,
     NewAgentTab,
+    /// A new note file in a new tab (ADR 0108).
+    NewNote,
     NextTab,
     PreviousTab,
     /// Jump to tab 1–9.
@@ -285,6 +287,7 @@ impl Command {
             Command::PreviousWorkspace,
             Command::NewShellTab,
             Command::NewAgentTab,
+            Command::NewNote,
             Command::NextTab,
             Command::PreviousTab,
         ]);
@@ -402,6 +405,7 @@ impl Command {
             Command::PreviousWorkspace => "previous_workspace".into(),
             Command::NewShellTab => "new_shell_tab".into(),
             Command::NewAgentTab => "new_agent_tab".into(),
+            Command::NewNote => "new_note".into(),
             Command::NextTab => "next_tab".into(),
             Command::PreviousTab => "previous_tab".into(),
             Command::Tab(n) => format!("tab_{n}"),
@@ -532,6 +536,7 @@ impl Command {
             Command::Workspace(n) => return Some(format!("cmd-{n}")),
             Command::NewShellTab => "cmd-t",
             Command::NewAgentTab => "cmd-shift-a",
+            Command::NewNote => "cmd-alt-n",
             Command::RenameTab => "cmd-shift-r",
             Command::CloseTab => "cmd-shift-w",
             Command::SplitRight => "cmd-d",
@@ -620,6 +625,7 @@ impl Command {
             Command::PreviousWorkspace => "ctrl-alt-up".into(),
             Command::NewShellTab => "ctrl-shift-t".into(),
             Command::NewAgentTab => "ctrl-shift-a".into(),
+            Command::NewNote => "ctrl-alt-n".into(),
             Command::NextTab => "ctrl-tab".into(),
             Command::PreviousTab => "ctrl-shift-tab".into(),
             Command::Tab(n) => format!("ctrl-alt-{n}"),
@@ -1349,6 +1355,19 @@ mod tests {
 
     fn keystroke(keys: &str) -> Keystroke {
         Keystroke::parse(keys).unwrap()
+    }
+
+    #[test]
+    fn new_note_has_its_own_global_keys() {
+        let keymap = Keymap::defaults_for(Os::Windows);
+        assert_eq!(
+            keymap.command_for(&keystroke("ctrl-alt-n")),
+            Some(Command::NewNote)
+        );
+        assert_eq!(keymap.label(Command::NewNote), "Ctrl+Alt+N");
+        assert_eq!(Command::NewNote.context(), None);
+        assert_eq!(Command::NewNote.default_keys_for(Os::Mac), "cmd-alt-n");
+        assert_eq!(Command::NewNote.name(), "new_note");
     }
 
     #[test]

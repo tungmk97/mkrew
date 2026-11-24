@@ -13,6 +13,7 @@ pub(crate) mod menu_render;
 pub(crate) mod menus;
 pub(crate) mod pane_drop;
 pub(crate) mod pane_render;
+pub(crate) mod plus_row;
 pub(crate) mod reorder;
 pub(crate) mod sidebar;
 pub(crate) mod sidebar_view;

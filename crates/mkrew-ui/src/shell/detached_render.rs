@@ -140,12 +140,14 @@ impl Shell {
     }
 
     /// The tab area of a detached window's title bar: a chip per tab, its workspace name in
-    /// front. No `+`: new tabs are made in the main window. The strip and chip bounds are kept
-    /// in `HostUi::strip` for drops from other windows (`record_strip`).
+    /// front. The `+` row has no `▾`: its items split this window's tab. The strip and chip
+    /// bounds are kept in `HostUi::strip` for drops from other windows (`record_strip`).
     pub(crate) fn render_detached_tab_area(
         &self,
         key: WindowKey,
+        now: i64,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let host = HostId::Detached(key);
@@ -214,7 +216,8 @@ impl Shell {
                 .position(|dock| Some(*dock) == active)?;
             Some((SharedString::from(format!("tab/{tab_id:?}")), index))
         });
-        self.tab_area_frame(host, chips, active_chip, None, theme, cx)
+        let new_row = self.render_new_tab_button(host, now, theme, window, cx);
+        self.tab_area_frame(host, chips, active_chip, Some(new_row), theme, cx)
             .into_any_element()
     }
 }

@@ -108,9 +108,11 @@ impl Shell {
         {
             return;
         }
+        // Right after the active tab (`None` while the workspace has no tab: the first one).
+        let position = (self.tabs.get(&project_id)).and_then(Tabs::position_after_active);
         self.create_tab_then(
             project_id,
-            None,
+            position,
             move |shell, _tab_id, window, cx| {
                 if let Some((kind, profile)) = start
                     && shell.workspace == Some(project_id)
@@ -342,9 +344,7 @@ impl Shell {
         let detached = tab.filter(|id| self.terminal_host(project_id, *id) != HostId::Main);
         // A new agent pane is born with the default of the moment (ADR 0105), so a later
         // change of `[ui] chat_default` never flips it.
-        let chat = (self.sidebar.sessions().iter())
-            .any(|s| s.id == session && s.kind == SessionKind::Agent)
-            .then_some(self.chat_default);
+        let chat = self.born_chat(session);
         let Some(tabs) = self.tabs.get_mut(&project_id) else {
             return;
         };
@@ -359,6 +359,55 @@ impl Shell {
         };
         if let Some(write) = write {
             self.save_layout(project_id, write, window, cx);
+        }
+    }
+
+    /// The saved mode a new pane of `session` is born with: an agent gets the default of the
+    /// moment (ADR 0105), so a later change of `[ui] chat_default` never flips it.
+    fn born_chat(&self, session: Ulid) -> Option<bool> {
+        (self.sidebar.sessions().iter())
+            .any(|s| s.id == session && s.kind == SessionKind::Agent)
+            .then_some(self.chat_default)
+    }
+
+    /// The workspace and the tab that hold the pane `key` (any window).
+    pub(crate) fn project_holding(&self, key: &PaneKey) -> Option<(Ulid, Ulid)> {
+        self.tabs
+            .iter()
+            .find_map(|(project_id, tabs)| tabs.tab_with(key).map(|tab| (*project_id, tab.id)))
+    }
+
+    /// Shows `session` on `edge` of `target`'s pane in tab `tab_id` of `project_id` (`scope`, as
+    /// [`Shell::project_holding`] answers; a drop from the `+` row).
+    /// A session the daemon or an echo placed already stays; when `target` left the tab while
+    /// the session started, it lands beside the focused pane like any new pane.
+    pub(crate) fn place_session_at(
+        &mut self,
+        (project_id, tab_id): (Ulid, Ulid),
+        session: Ulid,
+        target: &PaneKey,
+        edge: Edge,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let chat = self.born_chat(session);
+        let Some(tabs) = self.tabs.get_mut(&project_id) else {
+            return;
+        };
+        if tabs.tab_of(session).is_some() {
+            return;
+        }
+        let write = tabs.insert_leaf(tab_id, Some(target), edge, Leaf::Session { session, chat });
+        match write {
+            Some(write) => self.save_layout(project_id, write, window, cx),
+            None => self.place_session(
+                project_id,
+                session,
+                Some(tab_id),
+                Axis::Vertical,
+                window,
+                cx,
+            ),
         }
     }
 

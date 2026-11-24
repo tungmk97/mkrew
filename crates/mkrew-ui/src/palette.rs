@@ -614,6 +614,7 @@ pub fn title(command: Command) -> String {
         Command::PreviousWorkspace => "Workspace: Previous workspace".into(),
         Command::NewShellTab => "Tabs: New shell tab".into(),
         Command::NewAgentTab => "Tabs: New agent tab".into(),
+        Command::NewNote => "Tabs: New note".into(),
         Command::NextTab => "Tabs: Next tab".into(),
         Command::PreviousTab => "Tabs: Previous tab".into(),
         Command::Tab(n) => format!("Tabs: Jump to tab {n}"),
@@ -741,6 +742,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::NextWorkspace | Command::PreviousWorkspace => context.workspaces > 1,
         Command::NewShellTab
         | Command::NewAgentTab
+        | Command::NewNote
         | Command::OpenInZed
         | Command::ShowBoard
         | Command::ShowTerminals

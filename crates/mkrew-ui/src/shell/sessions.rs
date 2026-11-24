@@ -25,10 +25,28 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.spawn_pane(kind, profile, SpawnAt::Beside(axis), window, cx);
+    }
+
+    /// Starts a session of `kind` (`profile` as in [`Shell::new_pane_with`]) and shows it where
+    /// `placement` says: beside the focused pane, or on an edge of a given pane in the tab that
+    /// holds it (a drop from the `+` row, which may be a tab in a detached window).
+    pub(crate) fn spawn_pane(
+        &mut self,
+        kind: SessionKind,
+        profile: Option<String>,
+        placement: SpawnAt,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        let Some((project_id, tab_id)) = self.tab_scope(window) else {
+        let scope = match &placement {
+            SpawnAt::Beside(_) => self.tab_scope(window),
+            SpawnAt::At(target, _) => self.project_holding(target),
+        };
+        let Some((project_id, tab_id)) = scope else {
             return;
         };
         if self.still_starting(cx)
@@ -49,14 +67,24 @@ impl Shell {
                         // In the tab the request came from when a detached window shows it,
                         // else next to the focused pane of the tab active now (the user may
                         // have switched tabs meanwhile), unless the daemon placed it already.
-                        shell.place_session(
-                            project_id,
-                            spawned.session_id,
-                            Some(tab_id),
-                            axis,
-                            window,
-                            cx,
-                        );
+                        match placement {
+                            SpawnAt::Beside(axis) => shell.place_session(
+                                project_id,
+                                spawned.session_id,
+                                Some(tab_id),
+                                axis,
+                                window,
+                                cx,
+                            ),
+                            SpawnAt::At(target, edge) => shell.place_session_at(
+                                (project_id, tab_id),
+                                spawned.session_id,
+                                &target,
+                                edge,
+                                window,
+                                cx,
+                            ),
+                        }
                         shell.sync_panes(window, cx);
                     }
                     Err(error) => {
@@ -74,7 +102,13 @@ impl Shell {
     /// The installed agent profiles a new pane can start with in the active workspace, its
     /// default first (the `+` menu and the palette).
     pub(crate) fn pane_agents(&self) -> Vec<lifecycle::PaneAgent> {
-        let default = self.workspace.and_then(|id| {
+        self.pane_agents_of(self.workspace)
+    }
+
+    /// [`Shell::pane_agents`] for `project_id` (the `+` row of a detached window reads the
+    /// workspace of its own tab).
+    pub(crate) fn pane_agents_of(&self, project_id: Option<Ulid>) -> Vec<lifecycle::PaneAgent> {
+        let default = project_id.and_then(|id| {
             let project = self.sidebar.projects().iter().find(|p| p.id == id)?;
             project.default_agent.as_deref()
         });
@@ -297,6 +331,7 @@ impl Shell {
                 // Opening or picking a tab or pane shows the terminals.
                 Command::NewShellTab
                 | Command::NewAgentTab
+                | Command::NewNote
                 | Command::NextTab
                 | Command::PreviousTab
                 | Command::Tab(_)
@@ -332,6 +367,7 @@ impl Shell {
             Command::PreviousWorkspace => self.cycle_workspace(-1, window, cx),
             Command::NewShellTab => self.new_tab(SessionKind::Shell, window, cx),
             Command::NewAgentTab => self.new_tab(SessionKind::Agent, window, cx),
+            Command::NewNote => self.new_note(None, window, cx),
             Command::NextTab => {
                 self.switch_tab(|tabs, hidden| tabs.activate_offset(1, hidden), window, cx);
             }

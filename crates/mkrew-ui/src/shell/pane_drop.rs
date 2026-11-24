@@ -22,7 +22,7 @@ pub(crate) struct PaneDrop {
     pub(crate) edge: Edge,
 }
 
-/// A drag payload that may land on a pane. Task 8 adds `DraggedNew`.
+/// A drag payload that may land on a pane.
 pub(crate) trait PaneDragged: Sized + 'static {
     /// Whether the drag may drop on `target`'s pane of workspace `project_id`.
     fn takes(&self, shell: &Shell, project_id: Ulid, target: &PaneKey) -> bool;
@@ -176,6 +176,7 @@ impl Shell {
         let frame = Self::hover_of::<DraggedPane, _>(frame, project_id, key, cx);
         let frame = Self::hover_of::<DraggedItem, _>(frame, project_id, key, cx);
         let frame = Self::hover_of::<DraggedPath, _>(frame, project_id, key, cx);
+        let frame = Self::hover_of::<DraggedNew, _>(frame, project_id, key, cx);
         let frame = Self::pane_drops(frame, project_id, key, cx);
         let target = DropTarget::Pane(key.clone());
         frame
@@ -199,7 +200,8 @@ impl Shell {
     ) -> E {
         let el = Self::drop_of::<DraggedPane, E>(el, project_id, key, cx);
         let el = Self::drop_of::<DraggedItem, E>(el, project_id, key, cx);
-        Self::drop_of::<DraggedPath, E>(el, project_id, key, cx)
+        let el = Self::drop_of::<DraggedPath, E>(el, project_id, key, cx);
+        Self::drop_of::<DraggedNew, E>(el, project_id, key, cx)
     }
 
     fn hover_of<T: PaneDragged, E: gpui::InteractiveElement>(
@@ -532,10 +534,14 @@ impl Shell {
             })
             .drag_over::<DraggedPane>(move |style, _, _, _| style.bg(tint))
             .drag_over::<DraggedPath>(move |style, _, _, _| style.bg(tint))
+            .drag_over::<DraggedNew>(move |style, _, _, _| style.bg(tint))
             .on_drop(cx.listener(|shell, pane: &DraggedPane, window, cx| {
                 if shell.workspace == Some(pane.project_id) && !shell.modal_open() {
                     shell.pane_to_new_tab(pane.project_id, &pane.key, window, cx);
                 }
+            }))
+            .on_drop(cx.listener(|shell, item: &DraggedNew, window, cx| {
+                shell.drop_new_on_strip(item, window, cx);
             }))
             .on_drop(cx.listener(|shell, path: &DraggedPath, window, cx| {
                 if shell.workspace == Some(path.project_id) && !shell.modal_open() {

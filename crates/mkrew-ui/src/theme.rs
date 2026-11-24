@@ -621,6 +621,10 @@ pub const PEEK_HOVER_DELAY: Duration = Duration::from_millis(300);
 /// How long a hover peek stays after the mouse left its row, so it can reach the popover.
 pub const PEEK_LEAVE_GRACE: Duration = Duration::from_millis(150);
 
+/// How long the tab strip's `+` row stays open after the pointer left `+` and the row, so the
+/// pointer can travel to its items (`plus_row::Reveal`).
+pub const PLUS_ROW_COLLAPSE_DELAY: Duration = Duration::from_millis(150);
+
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;
 

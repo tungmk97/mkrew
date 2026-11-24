@@ -12,6 +12,7 @@ impl Shell {
         tabs: &Tabs,
         now: i64,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let view = self.view();
@@ -93,7 +94,7 @@ impl Shell {
             HostId::Main,
             chips,
             scroll_to,
-            Some(self.render_new_tab_button(now, theme, cx)),
+            Some(self.render_new_tab_button(HostId::Main, now, theme, window, cx)),
             theme,
             cx,
         )
