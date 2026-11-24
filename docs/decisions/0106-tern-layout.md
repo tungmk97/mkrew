@@ -1,7 +1,7 @@
 # 0106 - Tern layout: one top bar with the tabs, no bottom bar
 
 - Date: 2026-11-23
-- Status: accepted (supersedes the bar part of ADR 0102; amends ADR 0034, 0054, 0096 and SPEC sections 7, 10, 11, 13, 14 and 20.0)
+- Status: accepted (supersedes the bar part of ADR 0102; amends ADR 0034, 0054, 0096 and SPEC sections 7, 10, 11, 13, 14 and 20.0); superseded in part by 0108 (the Editor and Diff chips, `+ ▾`, the thin pane border and the Alternatives line about Editor and Diff)
 - Milestone: none (human request 2026-11-23, spec `docs/superpowers/specs/2026-11-23-tern-layout-design.md`, plan `docs/superpowers/plans/2026-11-23-tern-layout.md`)
 
 ## Context
@@ -84,3 +84,9 @@ The view switch `Terminals | Board | Docs | Editor | Diff` and a row of rarely u
 - A `theme::problems()` rule ("active tab") reports a theme whose `tab_active` is within 1.1:1 of `chrome` or whose `text` does not read on it, so the active tab chip always shows.
 - With many tabs the area scrolls and the active tab is scrolled into view; the drop line and window drops use the recorded strip bounds, which now cover the scrolling area only.
 - The Editor view's own file-tab strip and the sidebar are unchanged.
+
+## Amended by 0108
+
+ADR 0108 makes files and the diff leaves of the tab's split tree, so the Editor and Diff chips, the Editor view's file-tab strip and the Diff view are gone, and the Alternatives line "Board, Editor and Diff as real tabs in the tab model" no longer holds (Board and Docs stay icons).
+`+ ▾` becomes the `+` row, panes lose their border for a frame gap and a top stripe, and the detached window's tab area has the `+` row.
+The rest of this ADR (one top bar, no bottom bar, tab chip look, tab icons, no pane header, floating badges, limits chip, protocol 58) stands.
