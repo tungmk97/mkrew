@@ -1512,6 +1512,55 @@ pub fn item_look(status: TodoStatus, theme: &Theme) -> ItemLook {
     }
 }
 
+/// `grow` > 0: the node takes the free space of its row or column.
+pub fn grows(node: &Node) -> bool {
+    node.props
+        .get("grow")
+        .and_then(Value::as_f64)
+        .is_some_and(|grow| grow > 0.0)
+}
+
+/// Whether a growing `list` sits under `node` where it can have a bounded height: a child, or
+/// in a growing `col` (a row gives its children no bounded height).
+fn has_grow_list(doc: &Document, node: &Node) -> bool {
+    doc.children(&node.id)
+        .any(|child| grows(child) && has_grow_list_in(doc, child))
+}
+
+fn has_grow_list_in(doc: &Document, node: &Node) -> bool {
+    match node.kind.as_str() {
+        "list" => true,
+        "col" => has_grow_list(doc, node),
+        _ => false,
+    }
+}
+
+/// The children of a card bounded to its pane (an overlay, or the card of a `screen` surface)
+/// by where they sit when the body scrolls: leading `tabs` and the trailing hints row stay put,
+/// the rest scrolls. `None` when a growing list scrolls inside the card instead.
+pub struct BoundedSplit<'a> {
+    pub top: Vec<&'a Node>,
+    pub body: Vec<&'a Node>,
+    pub bottom: Vec<&'a Node>,
+}
+
+pub fn bounded_split<'a>(doc: &'a Document, node: &'a Node) -> Option<BoundedSplit<'a>> {
+    if has_grow_list(doc, node) {
+        return None;
+    }
+    let kids: Vec<&Node> = doc.children(&node.id).collect();
+    let top = kids.iter().take_while(|n| n.kind == "tabs").count();
+    let bottom = (kids[top..].iter().rev())
+        .take_while(|n| role_of(n) == Some("omp.overlay.hints"))
+        .count();
+    let end = kids.len() - bottom;
+    Some(BoundedSplit {
+        top: kids[..top].to_vec(),
+        body: kids[top..end].to_vec(),
+        bottom: kids[end..].to_vec(),
+    })
+}
+
 /// A node's `role` prop.
 pub fn role_of(node: &Node) -> Option<&str> {
     node.props.get("role").and_then(Value::as_str)
@@ -2259,6 +2308,50 @@ mod tests {
         m.apply(&with_blob(4, "b"));
         assert!(m.blob("b").is_some());
         assert!(m.blob("a").is_some(), "still named by an image");
+    }
+
+    #[test]
+    fn a_bounded_card_scrolls_its_body_unless_a_growing_list_scrolls() {
+        let ids = |nodes: Vec<&Node>| nodes.iter().map(|n| n.id.clone()).collect::<Vec<_>>();
+        let split = |node| {
+            let d = with_node(node);
+            bounded_split(&d, d.get("n").unwrap()).map(|s| (ids(s.top), ids(s.body), ids(s.bottom)))
+        };
+        // The Agent Hub: its growing list is in a row, which bounds nothing.
+        let hub = json!({"id": "n", "k": "card", "c": [
+            {"id": "t", "k": "tabs"},
+            {"id": "h", "k": "row"},
+            {"id": "b", "k": "row", "p": {"grow": 1}, "c": [
+                {"id": "l", "k": "list", "p": {"grow": 3}}
+            ]},
+            {"id": "k", "k": "row", "p": {"role": "omp.overlay.hints"}}
+        ]});
+        let owned = |v: [&str; 1]| v.map(str::to_owned).to_vec();
+        assert_eq!(
+            split(hub),
+            Some((
+                owned(["t"]),
+                vec!["h".to_owned(), "b".to_owned()],
+                owned(["k"])
+            ))
+        );
+        let plain = json!({"id": "n", "k": "card", "c": [{"id": "x", "k": "text"}]});
+        assert_eq!(split(plain), Some((vec![], owned(["x"]), vec![])));
+        let list = json!({"id": "n", "k": "card", "c": [
+            {"id": "x", "k": "text"}, {"id": "l", "k": "list", "p": {"grow": 1}}
+        ]});
+        assert_eq!(split(list), None, "the list scrolls itself");
+        let col = json!({"id": "n", "k": "card", "c": [
+            {"id": "c", "k": "col", "p": {"grow": 1}, "c": [
+                {"id": "l", "k": "list", "p": {"grow": 1}}
+            ]}
+        ]});
+        assert_eq!(split(col), None, "a growing column bounds its list");
+        let still = json!({"id": "n", "k": "card", "c": [{"id": "l", "k": "list"}]});
+        assert!(
+            split(still).is_some(),
+            "a list that does not grow is just content"
+        );
     }
 
     #[test]

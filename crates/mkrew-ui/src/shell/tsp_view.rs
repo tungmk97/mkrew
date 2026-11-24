@@ -640,6 +640,9 @@ struct Paint<'a> {
     modal: bool,
     /// The node is drawn inside the overlay layer.
     in_layer: bool,
+    /// The node's height is bounded by the pane (the overlay layer, a `screen` surface): columns
+    /// and rows clip, so a growing list scrolls inside instead of the page growing.
+    bounded: bool,
 }
 
 impl Paint<'_> {
@@ -855,9 +858,17 @@ impl Shell {
             focused: is_focused,
             modal: doc.children("layer").any(|n| !bool_prop(n, "hidden")),
             in_layer: false,
+            bounded: false,
         };
         let layer_paint = Paint {
             in_layer: true,
+            bounded: true,
+            ..paint
+        };
+        // A `screen` surface covers the pane: its page is bounded by the pane, not scrolled.
+        let screen = meta.mode == "screen";
+        let screen_paint = Paint {
+            bounded: true,
             ..paint
         };
         // Follow the end while the user is at it, except in the frame after a `reveal` moved the
@@ -870,12 +881,21 @@ impl Shell {
         // can scroll to it. The spacer keeps the first row clear of the pane's 8 px drag strip
         // (`PANE_GRIP_HEIGHT`), the 2 px color line and the badges, like the Chat list's
         // `py(space::L)`.
-        let rows: Vec<AnyElement> = std::iter::once(div().h(px(space::L)).into_any_element())
-            .chain(
-                (doc.children("main"))
-                    .map(|node| chat_column(self.tsp_node(&paint, node, cx)).into_any_element()),
-            )
-            .collect();
+        let rows: Vec<AnyElement> = if screen {
+            (doc.children("main"))
+                .map(|node| {
+                    Self::tsp_screen_row(self.tsp_node(&screen_paint, node, cx)).into_any_element()
+                })
+                .collect()
+        } else {
+            std::iter::once(div().h(px(space::L)).into_any_element())
+                .chain(
+                    (doc.children("main")).map(|node| {
+                        chat_column(self.tsp_node(&paint, node, cx)).into_any_element()
+                    }),
+                )
+                .collect()
+        };
         // The dock as the Chat composer when omp sent its composer roles; any other dock (another
         // omp version, the ask card) is drawn generically, as before.
         let dock_model = tsp::dock_model(doc, theme);
@@ -898,7 +918,14 @@ impl Shell {
                     div()
                         .id(SharedString::from(format!("tsp-main-{session}")))
                         .size_full()
-                        .overflow_y_scroll()
+                        .when(screen, |el| {
+                            el.flex()
+                                .flex_col()
+                                .pt(px(space::L))
+                                .pb(px(space::M))
+                                .overflow_hidden()
+                        })
+                        .when(!screen, |el| el.overflow_y_scroll())
                         .track_scroll(&ui.scroll)
                         // A drag extends the selection; a press off any text clears it.
                         .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
@@ -914,7 +941,7 @@ impl Shell {
                         )
                         .children(rows),
                 )
-                .when(!at_end, |el| {
+                .when(!at_end && !screen, |el| {
                     el.child(
                         div()
                             .absolute()
@@ -988,7 +1015,10 @@ impl Shell {
         if node.kind != "overlay" {
             return self.tsp_node(p, node, cx);
         }
-        let kids = self.tsp_children(p, node, cx);
+        let kids = match tsp::bounded_split(p.doc, node) {
+            Some(split) => self.tsp_scroll_body(p, node, split, None, cx),
+            None => self.tsp_children(p, node, cx),
+        };
         Self::tsp_overlay(p, node, kids)
     }
 
@@ -1020,6 +1050,70 @@ impl Shell {
                     .children(kids),
             )
             .into_any_element()
+    }
+
+    /// The children of a card bounded to its pane whose body scrolls ([`tsp::bounded_split`]):
+    /// the leading tabs and the hints stay in place, the rest is one scroll box. `skip` is a head
+    /// child that is drawn elsewhere.
+    fn tsp_scroll_body(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        split: tsp::BoundedSplit<'_>,
+        skip: Option<&Node>,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<AnyElement> {
+        let mut build = |nodes: Vec<&Node>| -> Vec<AnyElement> {
+            nodes
+                .into_iter()
+                .filter(|n| skip.is_none_or(|skip| skip.id != n.id))
+                .map(|n| self.tsp_node(p, n, cx))
+                .collect()
+        };
+        let top = build(split.top);
+        let body = build(split.body);
+        let bottom = build(split.bottom);
+        Self::tsp_scroller(p, node, top, body, bottom)
+    }
+
+    #[inline(never)]
+    fn tsp_scroller(
+        p: &Paint<'_>,
+        node: &Node,
+        top: Vec<AnyElement>,
+        body: Vec<AnyElement>,
+        bottom: Vec<AnyElement>,
+    ) -> Vec<AnyElement> {
+        let scroller = div()
+            .id(SharedString::from(format!(
+                "tsp-body-{}-{}",
+                p.session, node.id
+            )))
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .min_h_0()
+            .overflow_y_scroll()
+            .children(body)
+            .into_any_element();
+        (top.into_iter())
+            .chain(std::iter::once(scroller))
+            .chain(bottom)
+            .collect()
+    }
+
+    /// A row of a `screen` surface's `main`: the Chat column, as tall as the pane leaves it.
+    fn tsp_screen_row(el: AnyElement) -> Div {
+        div().min_h_0().w_full().flex().justify_center().child(
+            div()
+                .min_h_0()
+                .w_full()
+                .max_w(px(theme::CHAT_COLUMN_WIDTH))
+                .px(px(theme::CHAT_COLUMN_PADDING))
+                .flex()
+                .flex_col()
+                .child(el),
+        )
     }
 }
 
@@ -1194,6 +1288,7 @@ impl Shell {
         let gap = px(tsp::gap_px(str_prop(node, "gap")));
         let el = div().flex().flex_row().items_center().gap(gap).min_w_0();
         let el = Self::tsp_flow(el, node).children(kids);
+        let el = if p.bounded { el.overflow_hidden() } else { el };
         self.tsp_decorate(el, p, node, Look::Text, false, cx)
     }
     #[inline(never)]
@@ -1226,7 +1321,7 @@ impl Shell {
             }
         }
         // In the overlay a column is bounded by its card: its growing list scrolls.
-        let el = if p.in_layer { el.overflow_hidden() } else { el };
+        let el = if p.bounded { el.overflow_hidden() } else { el };
         let el = Self::tsp_flow(el, node).children(kids);
         self.tsp_decorate(el, p, node, Look::Text, false, cx)
     }
@@ -1238,8 +1333,12 @@ impl Shell {
             _ => None,
         };
         let head_el = self.tsp_card_head(p, node, cx);
+        let bounded = p.bounded && !p.in_layer && node.parent.as_deref() == Some("main");
+        let split = bounded.then(|| tsp::bounded_split(p.doc, node)).flatten();
         let body: Vec<AnyElement> = if bool_prop(node, "collapsed") {
             Vec::new()
+        } else if let Some(split) = split {
+            self.tsp_scroll_body(p, node, split, head_child, cx)
         } else {
             (p.doc.children(&node.id))
                 .filter(|child| head_child.is_none_or(|head| head.id != child.id))
@@ -1261,10 +1360,11 @@ impl Shell {
         let theme = p.theme;
         let card = node.kind == "card";
         let mut el = div().flex().flex_col().gap(px(space::S)).min_w_0();
-        if p.in_layer {
-            // The overlay container is the card; it bounds this one.
+        if p.bounded {
+            // The pane (or the overlay container) bounds this card: its list or body scrolls.
             el = el.overflow_hidden();
-        } else if card {
+        }
+        if !p.in_layer && card {
             el = el
                 .p(px(space::M))
                 .rounded(px(theme::radius::MEDIUM))
@@ -1444,6 +1544,10 @@ impl Shell {
             .child(styled_runs(&runs, base, false, theme));
         if node.props.get("wrap").and_then(Value::as_str) == Some("none") {
             el = el.whitespace_nowrap();
+            if p.bounded {
+                // A line in a card shortens with an ellipsis, it never draws past the card.
+                el = el.overflow_hidden().text_ellipsis();
+            }
         }
         if str_prop(node, "truncate").is_some() {
             el = el.truncate();
@@ -1579,6 +1683,7 @@ impl Shell {
             .flatten();
         let items = div()
             .flex()
+            .min_w_0()
             .flex_col()
             .gap(px(space::XS))
             .children(kids)
@@ -1608,7 +1713,13 @@ impl Shell {
                 .min_h_0()
                 .overflow_y_scroll()
                 .track_scroll(&handle);
-            div().flex().flex_col().flex_1().min_h_0().child(scroller)
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .child(scroller)
         } else {
             items
         };
@@ -1635,6 +1746,7 @@ impl Shell {
         // The label shortens, never wraps; the value keeps its width at the right.
         let mut el = div()
             .flex()
+            .min_w_0()
             .items_center()
             .gap(px(space::S))
             .px(px(space::S))
@@ -1658,7 +1770,7 @@ impl Shell {
                 )
             })
             .when(!value.is_empty(), |el| {
-                el.child(div().flex_none().whitespace_nowrap().child(styled_runs(
+                el.child(div().min_w_0().truncate().child(styled_runs(
                     &value,
                     theme.text_muted,
                     false,
@@ -2212,8 +2324,10 @@ impl Shell {
 
 /// The mark of a todo item or phase.
 fn todo_mark(mark: tsp::ItemMark, color: u32) -> AnyElement {
-    match mark {
-        tsp::ItemMark::Active => div()
+    // Every mark has the icon box: a ring for the open states (a dot inside for the active one),
+    // a check for a done one.
+    let ring = || {
+        div()
             .size(theme::rems_px(theme::ICON_SIZE_SMALL))
             .flex_none()
             .flex()
@@ -2222,9 +2336,10 @@ fn todo_mark(mark: tsp::ItemMark, color: u32) -> AnyElement {
             .rounded_full()
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(color))
-            .child(status_dot(color, false))
-            .into_any_element(),
-        tsp::ItemMark::Ring => status_dot(color, true).flex_none().into_any_element(),
+    };
+    match mark {
+        tsp::ItemMark::Active => ring().child(status_dot(color, false)).into_any_element(),
+        tsp::ItemMark::Ring => ring().into_any_element(),
         tsp::ItemMark::Check => icon_svg(Icon::Check, theme::ICON_SIZE_SMALL, color)
             .flex_none()
             .into_any_element(),
@@ -2377,6 +2492,8 @@ impl Shell {
                 ..SpanStyle::default()
             },
         )];
+        // The mark is centered on the first line of the text.
+        let line = theme::rems_px(space::L + space::XS);
         div()
             .flex()
             .items_start()
@@ -2384,7 +2501,9 @@ impl Shell {
             .px(px(space::S))
             .child(
                 div()
-                    .pt(px(space::XS))
+                    .h(line)
+                    .flex()
+                    .items_center()
                     .child(todo_mark(look.mark, look.mark_color)),
             )
             .child(
@@ -2392,7 +2511,12 @@ impl Shell {
                     .flex()
                     .flex_col()
                     .min_w_0()
-                    .child(styled_runs(&runs, look.text_color, false, theme))
+                    .child(div().line_height(line).child(styled_runs(
+                        &runs,
+                        look.text_color,
+                        false,
+                        theme,
+                    )))
                     .children(item.note.as_ref().map(|note| {
                         div()
                             .text_size(font_size::META)
@@ -2430,12 +2554,13 @@ impl Shell {
             )))
             .flex()
             .items_center()
+            .min_w_0()
             .gap(px(space::S))
             .px(px(space::S))
             .h(theme::rems_px(theme::PILL_HEIGHT))
             .rounded(px(theme::radius::PILL))
             .text_size(font_size::META)
-            .child(mark)
+            .child(div().flex_none().child(mark))
             .child(div().min_w_0().truncate().child(line.text.clone()))
             .child(
                 div()
@@ -2467,7 +2592,9 @@ impl Shell {
         .size_full();
         div()
             .relative()
-            .flex_none()
+            .flex()
+            .min_w_0()
+            .max_w(relative(0.5))
             .child(chip)
             .child(chip_bounds)
             .when(open, |el| {
@@ -2477,6 +2604,8 @@ impl Shell {
                     SharedString::from(format!("tsp-todo-panel-{}", p.session)),
                     theme,
                 )
+                // An opaque fill: a popover with text must be readable over the page.
+                .bg(rgb(theme.surface_raised))
                 .w(px(theme::TSP_POPOVER_WIDTH))
                 .max_h(px(height.max(theme::TSP_POPOVER_MIN_HEIGHT)))
                 .p(px(space::M))
@@ -2925,6 +3054,7 @@ impl Shell {
             .and_then(|id| p.doc.get(id))
             .map(|node| {
                 div()
+                    .flex_none()
                     .font_family(theme.terminal_font_family.clone())
                     .text_color(rgb(theme.text_muted))
                     .child(self.tsp_node(p, node, cx))
@@ -2941,6 +3071,7 @@ impl Shell {
                 theme.hover,
             )
             .h(theme::rems_px(theme::PILL_HEIGHT))
+            .flex_none()
             .when_some(tip, |el, tip| el.tooltip(tooltip(theme, &tip, "")))
             .on_press(
                 !exited,
@@ -2954,7 +3085,11 @@ impl Shell {
             .gap(px(space::S))
             .min_w_0()
             .text_size(font_size::META)
-            .child(loading_dots(p.now, rgb(theme.status_working)))
+            .child(
+                div()
+                    .flex_none()
+                    .child(loading_dots(p.now, rgb(theme.status_working))),
+            )
             .children(elapsed)
             .child(
                 div()
