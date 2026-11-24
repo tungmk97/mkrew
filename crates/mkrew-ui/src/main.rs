@@ -177,6 +177,19 @@ pub(crate) const CUSTOM_TITLE_BAR: bool = cfg!(any(target_os = "windows", target
 pub(crate) const DRAWN_CONTROLS: bool = cfg!(target_os = "windows");
 
 fn main() {
+    // gpui-pre-windows 0.3.7 draws through a topmost DirectComposition visual
+    // (directx_renderer.rs:1017), which covers child HWNDs such as the WebView2 page of a
+    // browser pane (ADR 0110). Mkrew uses no transparent or blurred window background, so the
+    // HWND swap chain path loses nothing it needs. A user's own setting wins.
+    #[cfg(windows)]
+    if std::env::var_os("GPUI_DISABLE_DIRECT_COMPOSITION").is_none() {
+        #[allow(unsafe_code)]
+        // SAFETY: first statement of `main`: no other thread exists yet, so nothing reads or
+        // writes the environment concurrently.
+        unsafe {
+            std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "1");
+        }
+    }
     let launched = Instant::now();
     let filter = EnvFilter::try_from_env("MKREW_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
