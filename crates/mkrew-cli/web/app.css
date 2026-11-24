@@ -113,6 +113,8 @@ button:disabled{cursor:not-allowed;opacity:.5}
 .send{width:44px;height:44px;flex:none;display:grid;place-items:center;border:0;border-radius:8px;background:var(--accent);color:var(--on-accent)}
 .ended{display:flex;align-items:center;justify-content:center;gap:8px;min-height:56px;padding:8px 16px calc(env(safe-area-inset-bottom) + 8px);border-top:1px solid var(--divider);background:var(--surface);color:var(--text-dim);font-size:14px}
 .x{color:var(--s-exited);font-weight:700}
+/* A live omp surface (ADR 0107) has no terminal to show: the notice takes the terminal's place with the ended bar's look. */
+.native{flex:1;min-height:0;padding:16px;border-top:0;text-align:center}
 
 /* New agent */
 .scrim{position:absolute;inset:0;z-index:10;display:flex;align-items:flex-end;background:var(--scrim)}

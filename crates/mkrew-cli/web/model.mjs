@@ -129,6 +129,11 @@ export function pillText(session, now) {
   return timed(session) ? `${label} · ${ago(since(session), now)}` : label;
 }
 
+/** A session whose omp surface is live (ADR 0107): the desktop draws it, so the phone has no terminal rows to show. */
+export function nativeView(session) {
+  return session?.tsp === 'live';
+}
+
 const KEYS = { enter: '\r', esc: '\x1b', tab: '\t', y: 'y', n: 'n', ctrl_c: '\x03' };
 
 /** Bytes of a quick key; arrows follow the terminal's application cursor mode. */

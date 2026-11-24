@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_REPLIES, ago, backoff, buildList, chipFor, displayName, endedAt, esc, fitFontSize,
-  fromBase64Url, keyBytes, loadReplies, machineName, metaText, newAgentPlan, pillText, pushOffer,
+  fromBase64Url, keyBytes, loadReplies, machineName, metaText, nativeView, newAgentPlan, pillText, pushOffer,
   readerText, rememberReply, sameBytes, sessionFromHash, statusLabel, taskTitle, toBase64,
   tokenFromHash, tokenFromText, wsClass,
 } from './model.mjs';
@@ -113,6 +113,17 @@ test('row meta and pill: time for working/idle, the label otherwise', () => {
   assert.equal(metaText(session('s', 'p', { state: 'starting' }), now), 'Starting');
   assert.equal(pillText(session('s', 'p', { state: 'idle' }), now), 'Idle · 12m');
   assert.equal(pillText(session('s', 'p', { state: 'needs_input' }), now), 'Needs input');
+});
+
+test('only a live omp surface hides the terminal; every other state and an old daemon keep it', () => {
+  assert.equal(nativeView(session('s', 'p', { tsp: 'live' })), true);
+  // `waiting` and `fallback` still have rows to show; `off` is any non-TSP session.
+  for (const tsp of ['off', 'waiting', 'fallback']) {
+    assert.equal(nativeView(session('s', 'p', { tsp })), false, tsp);
+  }
+  // A daemon from before protocol 59 sends no `tsp`.
+  assert.equal(nativeView(session('s', 'p')), false);
+  assert.equal(nativeView(undefined), false);
 });
 
 test('quick keys send the bytes a terminal would, arrows follow application cursor mode', () => {
