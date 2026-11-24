@@ -1601,6 +1601,13 @@ pub enum AskLook {
     Actions,
     /// `omp.btn`: a pill button.
     Button,
+    /// `omp.hook-editor.head`: the eyebrow and the question of a note or custom answer.
+    HookHead,
+    /// `omp.hook-editor.eyebrow`: a muted line above the question ("Note for red").
+    HookEyebrow,
+    /// `omp.hook-editor.line`: the framed field. The card itself is `omp.overlay.hook-editor`,
+    /// drawn as [`AskLook::Card`].
+    HookLine,
 }
 
 pub fn ask_look(role: &str) -> Option<AskLook> {
@@ -1621,6 +1628,10 @@ pub fn ask_look(role: &str) -> Option<AskLook> {
         "omp.ask.summary" => AskLook::Summary,
         "omp.actions" => AskLook::Actions,
         "omp.btn" => AskLook::Button,
+        "omp.overlay.hook-editor" => AskLook::Card,
+        "omp.hook-editor.head" => AskLook::HookHead,
+        "omp.hook-editor.eyebrow" => AskLook::HookEyebrow,
+        "omp.hook-editor.line" => AskLook::HookLine,
         _ => return None,
     })
 }
@@ -3444,6 +3455,17 @@ mod tests {
     fn the_roles_are_matched_whole_so_neighbours_do_not_collide() {
         assert_eq!(ask_look("omp.editor.ask.hidden"), Some(AskLook::Hidden));
         assert_eq!(ask_look("omp.editor.ask"), Some(AskLook::Card));
+        assert_eq!(
+            ask_look("omp.overlay.hook-editor"),
+            Some(AskLook::Card),
+            "a note or custom answer is the ask card"
+        );
+        assert_eq!(
+            ask_look("omp.hook-editor.eyebrow"),
+            Some(AskLook::HookEyebrow)
+        );
+        assert_eq!(ask_look("omp.hook-editor.line"), Some(AskLook::HookLine));
+        assert_eq!(ask_look("omp.hook-editor.head"), Some(AskLook::HookHead));
         assert_eq!(ask_look("omp.ask.summary"), Some(AskLook::Summary));
         assert_eq!(
             ask_look("omp.editor"),

@@ -1,6 +1,7 @@
 //! Build steps of `mkrew.exe`, Windows only (no-ops on other targets):
 //! - Embeds the app icon (`resources/windows/mkrew.ico`, from `icon/mkrew-1-lanes/tile-dark.svg`).
 //! - Links the bin with an 8 MiB main-thread stack (MSVC only).
+//!
 //! Regenerate the .ico after the SVG changes (16, 20, 24, 32, 40, 48, 64, 256 px), e.g. with ImageMagick:
 //! `magick -background none -density 384 icon/mkrew-1-lanes/tile-dark.svg -define icon:auto-resize=256,64,48,40,32,24,20,16 crates/mkrew-ui/resources/windows/mkrew.ico`
 

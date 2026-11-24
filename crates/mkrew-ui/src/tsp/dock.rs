@@ -376,6 +376,52 @@ pub fn dock_model(doc: &Document, theme: &Theme) -> Option<DockModel> {
     })
 }
 
+/// The dock while omp shows its ask card or a note editor where the composer stood (spec 7.6):
+/// no `omp.editor`, so no composer card, but the status row (working row, todo hud, pills) still
+/// reads. The other dock nodes are drawn one by one, the card among them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatusDock {
+    /// Ancestors of the nodes in `skip`, below the dock: wrappers to walk through.
+    pub path: Vec<String>,
+    /// Nodes drawn in the status row instead of where they stand.
+    pub skip: Vec<String>,
+    pub status: StatusModel,
+}
+
+/// `None` when the dock holds no status at all (the generic dock draws it).
+pub fn status_dock(doc: &Document, theme: &Theme) -> Option<StatusDock> {
+    let activity = find(doc, "dock", DockRole::Activity);
+    let status_node = find(doc, "dock", DockRole::HudStatus);
+    let hud = find(doc, "dock", DockRole::Hud);
+    let status = status_model(doc, activity, status_node, hud, theme);
+    if status.working.is_none()
+        && status.todo.is_none()
+        && status.pills.is_empty()
+        && status.others.is_empty()
+    {
+        return None;
+    }
+    let skip: Vec<String> = [activity, status_node, hud]
+        .into_iter()
+        .flatten()
+        .map(|node| node.id.clone())
+        .collect();
+    let mut path: Vec<String> = Vec::new();
+    for id in &skip {
+        let mut at = doc.get(id);
+        while let Some(parent) = (at.and_then(|node| node.parent.as_deref()))
+            .filter(|id| *id != "dock")
+            .and_then(|id| doc.get(id))
+        {
+            if !path.contains(&parent.id) {
+                path.push(parent.id.clone());
+            }
+            at = Some(parent);
+        }
+    }
+    Some(StatusDock { path, skip, status })
+}
+
 fn context_model(node: &Node) -> ContextMeter {
     let value = node.props.get("value").and_then(Value::as_f64);
     let marks = node
@@ -1001,6 +1047,40 @@ mod tests {
         assert_eq!(dock_role("omp.working.sep"), None);
         assert_eq!(dock_role("omp.composer"), None);
         assert_eq!(dock_role(""), None);
+    }
+
+    /// The dock of `real_children(true)` with the ask card where the editor col stood.
+    fn ask_children() -> Vec<Value> {
+        let mut kids = real_children(true);
+        kids[3] = json!({"id": "h", "k": "col", "c": [
+            {"id": "1l", "k": "col", "p": {"role": "omp.editor.ask", "gap": "md"}, "c": [
+                {"id": "1l.question", "k": "md", "p": {"text": "Pick a color", "role": "omp.ask.question"}}
+            ]}
+        ]});
+        kids
+    }
+
+    #[test]
+    fn an_ask_card_in_place_of_the_editor_keeps_the_status_row() {
+        let doc = dock_with(ask_children());
+        assert!(
+            dock_model(&doc, &Theme::dark()).is_none(),
+            "no editor, no composer card"
+        );
+        let d = status_dock(&doc, &Theme::dark()).expect("the working row is still there");
+        let working = d.status.working.as_ref().expect("working row");
+        assert_eq!(working.label, "Reading simple-english skill");
+        assert_eq!(working.elapsed.as_deref(), Some("x.elapsed"));
+        assert_eq!(d.skip, ["e", "e.status"], "the hud row is hidden");
+        assert_eq!(d.path, ["e"], "the activity row wraps the status col");
+        let calm = dock_with(vec![
+            json!({"id": "e", "k": "col"}),
+            ask_children().remove(3),
+        ]);
+        assert!(
+            status_dock(&calm, &Theme::dark()).is_none(),
+            "nothing to show"
+        );
     }
 
     #[test]

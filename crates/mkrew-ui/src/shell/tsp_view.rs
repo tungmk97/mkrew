@@ -896,12 +896,19 @@ impl Shell {
                 )
                 .collect()
         };
-        // The dock as the Chat composer when omp sent its composer roles; any other dock (another
-        // omp version, the ask card) is drawn generically, as before.
+        // The dock as the Chat composer when omp sent its composer roles. With the ask card or a
+        // note editor where the editor stood, the status row stays Tern's and the card sits where
+        // the composer would. Any other dock (another omp version) is drawn generically.
         let dock_model = tsp::dock_model(doc, theme);
-        let dock: Vec<AnyElement> = match dock_model.as_ref() {
-            Some(m) => self.tsp_dock(&paint, m, width, cx),
-            None => (doc.children("dock"))
+        let status_dock = dock_model
+            .is_none()
+            .then(|| tsp::status_dock(doc, theme))
+            .flatten();
+        let card_dock = dock_model.is_some() || status_dock.is_some();
+        let dock: Vec<AnyElement> = match (dock_model.as_ref(), status_dock.as_ref()) {
+            (Some(m), _) => self.tsp_dock(&paint, m, width, cx),
+            (None, Some(d)) => self.tsp_dock_card(&paint, d, cx),
+            (None, None) => (doc.children("dock"))
                 .map(|node| self.tsp_node(&paint, node, cx))
                 .collect(),
         };
@@ -975,11 +982,11 @@ impl Shell {
                 div()
                     .flex()
                     .flex_col()
-                    .when(dock_model.is_none(), |el| el.pb(px(space::S)))
+                    .when(!card_dock, |el| el.pb(px(space::S)))
                     .children(dock),
             )
             // Chat: the card sits `space::M` above the pane's bottom edge.
-            .when(dock_model.is_some(), |el| el.pb(px(space::M))),
+            .when(card_dock, |el| el.pb(px(space::M))),
         )
         // The session ended: the last document stays, read-only, under the usual notice.
         .children(exited.map(|code| exited_notice(code, theme)))
@@ -2698,6 +2705,43 @@ impl Shell {
         }
     }
 
+    /// The dock of an omp pane whose ask card or note editor stands where the composer would
+    /// (spec 7.6, 7.8): the status row first, then the dock's other nodes, the card among them.
+    fn tsp_dock_card(
+        &self,
+        p: &Paint<'_>,
+        d: &tsp::StatusDock,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<AnyElement> {
+        let mut out: Vec<AnyElement> = (self.tsp_dock_status(p, &d.status, cx))
+            .into_iter()
+            .collect();
+        for node in p.doc.children("dock") {
+            self.tsp_dock_rest(p, d, node, &mut out, cx);
+        }
+        out
+    }
+
+    fn tsp_dock_rest(
+        &self,
+        p: &Paint<'_>,
+        d: &tsp::StatusDock,
+        node: &Node,
+        out: &mut Vec<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if d.skip.contains(&node.id) {
+            return;
+        }
+        if d.path.contains(&node.id) {
+            for child in p.doc.children(&node.id) {
+                self.tsp_dock_rest(p, d, child, out, cx);
+            }
+        } else {
+            out.push(self.tsp_node(p, node, cx));
+        }
+    }
+
     /// `node` as a chip: its `title` tooltip and, when it has an action, the press that sends the
     /// same `action` event as before (`tsp_decorate`). A node the document no longer has is drawn
     /// as it is.
@@ -2726,7 +2770,7 @@ impl Shell {
     ) -> AnyElement {
         let theme = p.theme;
         let doc = p.doc;
-        let status = self.tsp_dock_status(p, m, cx);
+        let status = self.tsp_dock_status(p, &m.status, cx);
         let meter = m.context.as_ref().map(|c| {
             let marks = c.marks.iter().map(|k| (k.at, k.title.clone())).collect();
             let bar = meter_bar(
@@ -2999,10 +3043,9 @@ impl Shell {
     fn tsp_dock_status(
         &self,
         p: &Paint<'_>,
-        m: &tsp::DockModel,
+        s: &tsp::StatusModel,
         cx: &mut Context<'_, Self>,
     ) -> Option<AnyElement> {
-        let s = &m.status;
         if s.working.is_none() && s.todo.is_none() && s.pills.is_empty() && s.others.is_empty() {
             return None;
         }
@@ -3252,7 +3295,10 @@ impl Shell {
             AskLook::Preview => self.tsp_text(p, node, cx),
             AskLook::Answers => self.tsp_data(p, node, cx),
             AskLook::Actions => self.tsp_layout(p, node, cx),
-            AskLook::Notice => Self::tsp_ask_notice(p, node),
+            AskLook::Notice => Self::tsp_ask_notice(p, node, false),
+            AskLook::HookEyebrow => Self::tsp_ask_notice(p, node, true),
+            AskLook::HookHead => Self::tsp_ask_options(self.tsp_children(p, node, cx)),
+            AskLook::HookLine => self.tsp_hook_line(p, node, cx),
             AskLook::Summary => Self::tsp_ask_summary(p, node),
             AskLook::Button => self.tsp_ask_button(p, node, cx),
         }
@@ -3278,12 +3324,52 @@ impl Shell {
     }
 
     #[inline(never)]
-    fn tsp_ask_notice(p: &Paint<'_>, node: &Node) -> AnyElement {
+    fn tsp_ask_notice(p: &Paint<'_>, node: &Node, truncate: bool) -> AnyElement {
         let theme = p.theme;
         let runs = tsp::node_spans(&node.props, theme);
         div()
+            .min_w_0()
+            .when(truncate, |el| el.truncate())
             .text_size(font_size::META)
             .child(styled_runs(&runs, theme.text_muted, false, theme))
+            .into_any_element()
+    }
+
+    /// `omp.hook-editor.line`: the note or custom answer field, framed like the composer's
+    /// (placeholder as the Chat placeholder row, caret, text).
+    fn tsp_hook_line(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let kids: Vec<AnyElement> = (p.doc.children(&node.id))
+            .map(|child| match child.kind.as_str() {
+                "editor" => {
+                    let look = EditorLook::Composer { ghost: None };
+                    self.tsp_editor(p, child, look, cx)
+                }
+                _ => self.tsp_node(p, child, cx),
+            })
+            .collect();
+        Self::tsp_hook_field(p, kids)
+    }
+
+    #[inline(never)]
+    fn tsp_hook_field(p: &Paint<'_>, kids: Vec<AnyElement>) -> AnyElement {
+        let theme = p.theme;
+        div()
+            .id(SharedString::from(format!("tsp-hook-field-{}", p.session)))
+            .flex()
+            .items_start()
+            .gap(px(space::S))
+            .px(px(space::M))
+            .py(px(space::S))
+            .rounded(px(theme::radius::MEDIUM))
+            .bg(rgb(theme.surface_raised))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .cursor(CursorStyle::IBeam)
+            .max_h(px(theme::COMPOSER_MAX_HEIGHT))
+            .overflow_y_scroll()
+            .text_size(font_size::BODY)
+            .text_color(rgb(theme.text))
+            .children(kids)
             .into_any_element()
     }
 

@@ -278,7 +278,10 @@ mod tests {
     #[test]
     fn a_natively_drawn_session_has_a_notice_instead_of_a_screen() {
         assert!(native_notice(TspState::Live).is_some());
-        assert_eq!(native_notice(TspState::Live), native_notice(TspState::Waiting));
+        assert_eq!(
+            native_notice(TspState::Live),
+            native_notice(TspState::Waiting)
+        );
         assert_eq!(native_notice(TspState::Off), None);
         assert_eq!(native_notice(TspState::Fallback), None, "the grid is back");
     }

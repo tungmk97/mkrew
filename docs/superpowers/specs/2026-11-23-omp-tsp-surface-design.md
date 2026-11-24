@@ -177,6 +177,8 @@ Kinds omp sends whatever the hello says (`agent chart diff math prefs`) and any 
 - `main` is a scrolling list in the Chat page's centered column (`CHAT_COLUMN_WIDTH`), following the end like Chat, with the scroll-to-end button; `reveal` and `scroll` ops move it.
 - `dock` sits under it in the same column, always visible.
 - `layer` children and `overlay` nodes draw as a modal inside the pane; a `screen` surface covers the whole pane until omp closes it.
+- A `screen` surface's page and an `overlay` card are bounded by the pane: a card shows its tabs and hints row always, a growing `list` (directly or in growing columns) scrolls inside it, and with no such list the rest of the card scrolls as one body.
+  Rows in a card shorten with an ellipsis, they never draw past it.
 - Text of `md` and `code` nodes (omp's answers, prose and code) is selectable inside one node as in Chat; Ctrl+C copies a selection and Esc clears it; with no selection both keys go to omp, as in a terminal pane (ADR 0022).
   Labels and status text (`text`, `ansi`, `rows`) are not selectable in P1.
 - Tooltips: a node's `title` shows as the Mkrew tooltip; `hovercard` is ignored in P1.
@@ -224,6 +226,7 @@ Mkrew draws it as the composer card, with these role-specific looks (all colors 
 | `row` `role=omp.btn` (Hide, Note, Skip, Next or Submit, Show) | pill buttons in the card's bottom row; `tone=accent` on `accent` with `on_accent` text; the `kbd` child is not drawn, the node's `title` (with its keys) is the tooltip | `action {id, act}` |
 | `meter` `style=ring` (a timeout) | a small ring with its `label` (seconds left) | - |
 | `col` `role=omp.editor.ask.hidden` | one row: "Question …" summary, Skip and Show | `action` |
+| `col` `role=omp.overlay.hook-editor` (omp's Note or Other editor; `col` `omp.hook-editor.head` with `text` `omp.hook-editor.eyebrow` and `md` `omp.ask.question`, `col` `omp.hook-editor.line` with the `editor`, `row` `omp.actions`) | the ask card (same frame as `omp.editor.ask`): the eyebrow in `text_muted` `META`, the question as the card title, the editor line as a framed field (`surface_raised`, the Chat placeholder row, caret, text), the actions row as the `omp.btn` pill buttons above | `action` for the buttons, keys through the PTY |
 
 Keys (arrows, Enter, Space, Tab, `n`, Esc) still go to omp through the PTY; when "Other…" is picked, omp shows its own text field and typing goes to the PTY as usual.
 
@@ -233,7 +236,7 @@ Keys (arrows, Enter, Space, Tab, `n`, Esc) still go to omp through the PTY; when
 
 | Mode | Where | Looks like |
 |---|---|---|
-| `hud` (`role=omp.hud.todo`, inside `omp.hud.status`) | the status row above the dock card, on its right | one line: a loading-dots mark (status tick) and the `active` item's text (else the first `pending` one, else "All done"), ellipsized, then `done/total` in `text_muted` mono; pressable |
+| `hud` (`role=omp.hud.todo`, inside `omp.hud.status`) | the status row above the dock card, on its right | one line: a loading-dots mark (status tick) and the `active` item's text (else the first `pending` one, else "All done"), ellipsized in the room left of the pills (the chip takes at most half the row; the mark and `done/total` never clip), then `done/total` in `text_muted` mono; pressable |
 | `full` | a todo tool result in `main` | a card with the phase list below |
 | `reminder` (`role=omp.notice.todo`) | a notice in `main` | the `note` as a muted line, then the phase list with done phases collapsed |
 
@@ -242,7 +245,8 @@ Phase list (the `full` card, the `reminder` and the `hud` popover):
 - Each phase is a header row: a status mark (loading dots while it has an `active` item, a `status_done` filled circle when every item is `done` or `dropped`, a `text_muted` ring otherwise), its number in Roman numerals and its title (`I. Thu thập context`), and `done/count` on the right in `text_muted`.
 - A phase with `collapsed: true`, or every item done, shows its header only; a click on a header opens or closes it (UI state only).
 - Items: `active` with an `accent` ring around a dot and its text in `accent`; `pending` with a `text_muted` ring; `done` with a `status_done` check and muted text; `dropped` muted and struck through; `blocked` in `status_needs_input` with " (blocked)"; a `note` as a muted second line.
-- The `hud` click opens the list in a floating panel (`floating_panel`, glass) anchored above the status row, at most 60% of the pane height, scrolling; Esc or a click outside closes it.
+- Every mark has the same box (the icon size), centered on the first line of the item's text; the open states are rings drawn like the `active` one (`pending` and `dropped` `text_muted`, `blocked` `status_needs_input`), `done` is the check icon.
+- The `hud` click opens the list in a floating panel (`floating_panel` with an opaque `surface_raised` fill, so its text reads over the page; the glass border and float shadow stay) anchored above the status row, at most 60% of the pane height, scrolling; Esc or a click outside closes it.
   The panel's open state is UI-only: nothing is sent to omp.
 
 ### 7.8 The dock as Tern's composer (added 2026-11-24 after the first smoke)
@@ -250,6 +254,8 @@ Phase list (the `full` card, the `reminder` and the `hud` popover):
 The first smoke on a real omp 18.13.2 showed the dock drawn generically: a flat meter, a plain editor line and a row of loose chips, unlike Tern (`docs/screenshots/` Tern composer).
 The dock reuses the pieces of the Chat composer card (ADR 0105, `shell/composer.rs`), so Chat and an omp pane look the same, with omp as the only source of their content.
 Roles below are omp 18.13.2's (`omp.editor` and its children, `omp.hud*`, `omp.working*`); a dock without them (another omp version) is drawn generically as before.
+While omp shows a question or a note editor where the editor stood there is no composer card, but the status row (the working row, the todo hud, the pills) is still Tern's and the card sits where the composer card sits.
+The working row's label ellipsizes; its dots, elapsed time and Stop, and the pills, never clip.
 
 | Node from omp | Looks like | Sent to omp |
 |---|---|---|
