@@ -180,12 +180,13 @@ impl Shell {
             return;
         };
         let sessions = self.sidebar.sessions();
-        let file = self.focused_file(window);
+        // The pane's own workspace (a detached window may show another one).
+        let file = self.focused_doc(window);
         let diff = self.focused_diff(window).is_some();
         let (file_path, prefill, task) = match self.view() {
             View::Terminals if file.is_some() => {
-                let picked = (file.as_deref())
-                    .and_then(|path| self.picked_file_lines(project_id, path))
+                let picked = (file.as_ref())
+                    .and_then(|(project, file)| self.picked_file_lines(*project, file))
                     .filter(|(_, _, _, text)| !text.trim().is_empty());
                 let Some((path, start, end, text)) = picked else {
                     return;

@@ -14,8 +14,26 @@ pub enum NotesFolder {
     Absolute(PathBuf),
 }
 
-/// One ordinary name: alone it parses as a single normal component (`C:` does not).
-fn is_plain(name: &std::ffi::OsStr) -> bool {
+/// Why `[notes] folder` names no place. The text is for the user.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum FolderError {
+    #[error("[notes] folder {setting:?}: ~ is not expanded; write the full path instead")]
+    Tilde { setting: String },
+    #[error(
+        "[notes] folder {setting:?}: use a full path with its drive, or a path below the workspace root"
+    )]
+    HalfPath { setting: String },
+    #[error("[notes] folder {setting:?} must not contain \"..\"; write the full path instead")]
+    ParentDir { setting: String },
+    #[error(
+        "[notes] folder {setting:?} has a drive part {name:?} inside the path; write the full path instead"
+    )]
+    DrivePart { setting: String, name: String },
+}
+
+/// One ordinary name: alone it parses as a single normal component (`C:` does not). On Windows
+/// a `C:` or `C:x` in the middle of a path reads as a name, but joining it replaces the base.
+pub fn is_plain(name: &std::ffi::OsStr) -> bool {
     let mut parts = Path::new(name).components();
     matches!(parts.next(), Some(Component::Normal(_))) && parts.next().is_none()
 }
@@ -23,13 +41,13 @@ fn is_plain(name: &std::ffi::OsStr) -> bool {
 /// `[notes] folder` as the user typed it. Spaces around it are trimmed; `/` and `\` both
 /// separate; `.` parts and a trailing separator are dropped. `..` and a leading `~` (nothing
 /// expands it) are refused, and so is a path that is neither relative nor full (`/x` or `C:x`
-/// on Windows). The `Err` text is for the user.
-pub fn folder(setting: &str) -> Result<NotesFolder, String> {
+/// on Windows). The error's text is for the user.
+pub fn folder(setting: &str) -> Result<NotesFolder, FolderError> {
     let setting = setting.trim();
     if setting.starts_with('~') {
-        return Err(format!(
-            "[notes] folder {setting:?}: ~ is not expanded; write the full path instead"
-        ));
+        return Err(FolderError::Tilde {
+            setting: setting.to_owned(),
+        });
     }
     let path = PathBuf::from(setting.replace('\\', "/"));
     let absolute = path.is_absolute();
@@ -39,23 +57,24 @@ pub fn folder(setting: &str) -> Result<NotesFolder, String> {
                 .components()
                 .any(|part| matches!(part, Component::Prefix(_))));
     if half {
-        return Err(format!(
-            "[notes] folder {setting:?}: use a full path with its drive, or a path below the workspace root"
-        ));
+        return Err(FolderError::HalfPath {
+            setting: setting.to_owned(),
+        });
     }
     let mut clean = PathBuf::new();
     for part in path.components() {
         match part {
             Component::CurDir => {}
             Component::ParentDir => {
-                return Err(format!(
-                    "[notes] folder {setting:?} must not contain \"..\"; write the full path instead"
-                ));
+                return Err(FolderError::ParentDir {
+                    setting: setting.to_owned(),
+                });
             }
             Component::Normal(name) if !is_plain(name) => {
-                return Err(format!(
-                    "[notes] folder {setting:?} has a drive part {name:?} inside the path; write the full path instead"
-                ));
+                return Err(FolderError::DrivePart {
+                    setting: setting.to_owned(),
+                    name: name.to_string_lossy().into_owned(),
+                });
             }
             part => clean.push(part),
         }
@@ -145,7 +164,7 @@ mod tests {
             "..\\x",
             &format!("{FULL}/../x"),
         ] {
-            let message = folder(text).unwrap_err();
+            let message = folder(text).unwrap_err().to_string();
             assert!(message.contains(".."), "{text:?}: {message}");
         }
     }
@@ -161,7 +180,7 @@ mod tests {
             "C:/notes/sub/D:/x",
             "a\\C:x",
         ] {
-            let message = folder(text).unwrap_err();
+            let message = folder(text).unwrap_err().to_string();
             assert!(message.contains("drive"), "{text:?}: {message}");
         }
     }
@@ -169,7 +188,7 @@ mod tests {
     #[test]
     fn a_tilde_is_not_expanded_and_the_message_asks_for_the_full_path() {
         for text in ["~", "~/notes", "~\\notes", " ~/notes "] {
-            let message = folder(text).unwrap_err();
+            let message = folder(text).unwrap_err().to_string();
             assert!(
                 message.contains('~') && message.contains("full path"),
                 "{text:?}: {message}"
@@ -207,8 +226,17 @@ mod tests {
         );
         // A root without a drive and a drive without a root name no fixed place.
         for text in ["/notes", "\\notes", "C:notes"] {
-            let message = folder(text).unwrap_err();
+            let message = folder(text).unwrap_err().to_string();
             assert!(message.contains("full path"), "{text:?}: {message}");
         }
+    }
+
+    #[test]
+    fn a_refused_folder_names_its_reason_as_a_variant() {
+        assert!(matches!(folder("~/n"), Err(FolderError::Tilde { .. })));
+        assert!(matches!(
+            folder("a/../b"),
+            Err(FolderError::ParentDir { .. })
+        ));
     }
 }

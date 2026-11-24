@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::{ErrorKind, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use chrono::NaiveDateTime;
 use mkrew_core::notes::{self, NotesFolder};
@@ -31,10 +31,7 @@ pub(crate) fn create(
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .collect();
-    let plain = |part: &&str| {
-        let mut components = Path::new(part).components();
-        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
-    };
+    let plain = |part: &&str| notes::is_plain(std::ffi::OsStr::new(part));
     if parts.is_empty() || !parts.iter().all(plain) {
         return Err((
             ErrorKind::InvalidInput,

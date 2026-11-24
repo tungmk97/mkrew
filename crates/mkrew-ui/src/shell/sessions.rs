@@ -431,9 +431,9 @@ impl Shell {
             }
             Command::ClosePane => self.close_focused_pane(window, cx),
             Command::OpenInZed => {
-                if let (Some(project_id), Some(path)) = (self.workspace, self.focused_file(window))
-                {
-                    return self.open_file_in_zed(project_id, &path, cx);
+                // The pane's own workspace (a detached window may show another one).
+                if let Some((project_id, file)) = self.focused_doc(window) {
+                    return self.open_file_in_zed(project_id, &file, cx);
                 }
                 match self.workspace {
                     // Docs open the shown file (SPEC §13 "workspace or current file").

@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hasher};
 use std::path::{Component, Path, PathBuf};
 
+use mkrew_core::notes::is_plain;
 use mkrew_core::review::{self, Anchor, ReviewGlobs};
 use mkrew_protocol::{CommentContext, CommentId, CommentStatus, DocComment, DocFile};
 use mkrew_store::SessionEvent;
@@ -54,13 +55,6 @@ pub fn relative_path(file_path: &str) -> Option<(String, PathBuf)> {
     components
         .all(|c| matches!(c, Component::Normal(name) if is_plain(name)))
         .then_some((normalized, path))
-}
-
-/// One ordinary name: alone it parses as a single normal component. On Windows a `C:` or `C:x`
-/// in the middle of a path reads as a name, but joining it replaces the base.
-fn is_plain(name: &std::ffi::OsStr) -> bool {
-    let mut parts = Path::new(name).components();
-    matches!(parts.next(), Some(Component::Normal(_))) && parts.next().is_none()
 }
 
 /// A client-supplied absolute path inside `folder` (the notes folder, as

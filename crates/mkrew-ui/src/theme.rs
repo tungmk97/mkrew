@@ -317,6 +317,9 @@ pub const PALETTE_SEARCH_DELAY: Duration = Duration::from_millis(150);
 /// Minimum width of a tab title while it is renamed inline.
 pub const TAB_RENAME_MIN_WIDTH: f32 = 120.0;
 
+/// Narrowest the file name of a file pane's header gets: in a narrow pane its buttons give way.
+pub const FILE_NAME_MIN_WIDTH: f32 = 96.0;
+
 /// Narrowest a board column gets; below that the board scrolls sideways.
 pub const BOARD_COLUMN_MIN_WIDTH: f32 = 200.0;
 
@@ -2574,6 +2577,9 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
     // text must read on it.
     check("active tab", t.tab_active, t.pane_gap, 1.1);
     check("active tab", t.text, t.tab_active, 4.5);
+    // The frame the panes sit on is a step off the terminal ground, so a pane looks raised
+    // (Tern panes, ADR 0108).
+    check("pane gap", t.pane_gap, t.terminal_bg, PANE_GAP_MIN_CONTRAST);
     // An agent's brand logo in a tab chip is an icon on the bar and, in the shown tab, on
     // `tab_active` (WCAG 1.4.11, 3:1).
     for logo in crate::icons::AgentLogo::ALL {

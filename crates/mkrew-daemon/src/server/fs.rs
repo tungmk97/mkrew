@@ -217,7 +217,7 @@ impl Daemon {
                 return outside("[notes] folder", &dir.to_string_lossy());
             }
             Ok(folder) => folder,
-            Err(message) => return Outcome::error(ErrorCode::InvalidRequest, message),
+            Err(error) => return Outcome::error(ErrorCode::InvalidRequest, error.to_string()),
         };
         let target = match self
             .watched_target(params.project_id, params.worktree_task_id, None)

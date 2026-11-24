@@ -114,7 +114,7 @@ impl Shell {
             .child(
                 div()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(theme::FILE_NAME_MIN_WIDTH))
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
@@ -215,51 +215,21 @@ impl Shell {
                             shell.open_file_find(false, window, cx)
                         })),
                     )
-                    .flex_none()
-                    .tooltip(tooltip(
-                        theme,
-                        "Save this file",
-                        self.keymap.label(Command::SaveFile),
-                    ))
-                    .on_click({
-                        let path = path.clone();
-                        cx.listener(move |shell, _, window, cx| {
-                            shell.save_file(project_id, path.clone(), None, window, cx);
-                        })
-                    }),
-                )
-            })
-            .child(
-                button(
-                    "file-find",
-                    icon_text(Icon::Search, "Find", button_fg(theme, false)),
-                    theme,
-                    false,
-                )
-                .flex_none()
-                .tooltip(tooltip(
-                    theme,
-                    "Find in this file",
-                    self.keymap.label(Command::Find),
-                ))
-                .on_click(
-                    cx.listener(|shell, _, window, cx| shell.open_file_find(false, window, cx)),
-                ),
-            )
-            .child(zed_button("file-zed", false))
-            .child(
-                icon_button("file-close", Icon::X, theme)
-                    .tooltip(tooltip(
-                        theme,
-                        "Close file",
-                        self.keymap.label(Command::CloseFileTab),
-                    ))
-                    .on_click({
-                        let path = path.clone();
-                        cx.listener(move |shell, _, window, cx| {
-                            shell.close_file_pane(project_id, path.clone(), window, cx);
-                        })
-                    }),
+                    .child(zed_button("file-zed", false))
+                    .child(
+                        icon_button("file-close", Icon::X, theme)
+                            .tooltip(tooltip(
+                                theme,
+                                "Close file",
+                                self.keymap.label(Command::CloseFileTab),
+                            ))
+                            .on_click({
+                                let path = path.clone();
+                                cx.listener(move |shell, _, window, cx| {
+                                    shell.close_file_pane(project_id, path.clone(), window, cx);
+                                })
+                            }),
+                    ),
             );
         let find_bar = doc.find.as_ref().filter(|_| !doc.previewing()).map(|find| {
             let focused = view.find_focus.is_focused(window);

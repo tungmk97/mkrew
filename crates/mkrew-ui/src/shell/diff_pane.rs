@@ -115,6 +115,15 @@ impl Shell {
                 Some("Switch to that workspace to review its changes.".into()),
             )
             .size_full()
+            .child(
+                button("diff-switch-workspace", "Switch to workspace", theme, true).on_click(
+                    cx.listener(move |shell, _, window, cx| {
+                        shell.in_main_window(window, cx, move |shell, window, cx| {
+                            shell.activate_workspace(project_id, window, cx);
+                        });
+                    }),
+                ),
+            )
             .into_any_element();
         }
         let Some(view) = self.git.get(&project_id) else {
