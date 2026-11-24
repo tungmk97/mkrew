@@ -100,12 +100,18 @@ The sidebar and the right panel keep their colors.
 | Leaf | JSON | Key (`PaneKey`) |
 |---|---|---|
 | `Leaf::Session { session, chat }` | `{"session": "<ulid>", "chat": true}` (`chat` optional, unchanged) | `PaneKey::Session(Ulid)` |
-| `Leaf::File { file, md, preview }` | `{"file": "src/a.rs", "md": "split", "preview": true}` (`md`, `preview` optional) | `PaneKey::File(String)` |
+| `Leaf::File { file, task, md, preview }` | `{"file": "src/a.rs", "task": "<ulid>", "md": "split", "preview": true}` (`task`, `md`, `preview` optional) | `PaneKey::File(FileKey)`, `FileKey { path, task }` |
 | `Leaf::Diff` | `{"diff": true}` | `PaneKey::Diff` |
 
 - `file` is relative to the workspace root with `/` separators; a note in an absolute notes folder outside the root (section 7.2) stores its absolute path.
   No other path outside the root can be a leaf: the daemon reads only inside the root and the notes folder (section 4.5).
-  `PaneKey::File` holds the stored string, so one file has one key.
+  `PaneKey::File` holds the stored string and the task, so one file has one key.
+- `task` is the task worktree the file is of; absent means the project folder, which is what every layout written before this field (protocol 58, 60) means.
+  It is part of the key: the same relative path in the project and in a worktree are two files with two documents.
+  The folder lives with the open file, never in `FilesView`: every `fs.read` (first draw, Retry, Reload, `git.changed`) and `fs.write` uses the leaf's task, also after a restart and after a lost connection (unsaved documents keep it).
+  A tree click or drag takes the folder the tree shows at that moment, a terminal link or a chat path pill the worktree of its agent, a new note and an OS drop the project's.
+  A restored leaf whose worktree no longer exists shows the pane's load-error state; it never falls back to the project's file.
+  Choosing another worktree in the tree (`set_files_target`) changes only the tree.
 - `md` is the pane's own Markdown mode (`source`, `preview`, `split`); absent means `[ui] md_mode`.
 - `preview` marks the workspace's preview tab (section 6.1); absent means kept.
 - `Tab.focused` becomes `Option<PaneKey>`; `Tab.zoomed` likewise.
@@ -116,7 +122,7 @@ The sidebar and the right panel keep their colors.
 
 ### 4.2 One pane per file per workspace
 
-- A file key and the Diff key appear at most once per workspace, across all its tabs (main window and detached windows).
+- A file key (path and folder) and the Diff key appear at most once per workspace, across all its tabs (main window and detached windows).
 - `Tabs::find(key) -> Option<(tab_id, PaneKey)>` finds it.
 - Opening something already open activates its tab and focuses its pane; dragging it somewhere moves that pane.
 - So each path has one buffer and nothing counts references.
@@ -124,9 +130,9 @@ The sidebar and the right panel keep their colors.
 ### 4.3 Documents store (`crates/mkrew-ui/src/documents.rs`, new; pure, no gpui)
 
 - `FilesView.tabs` and the file tab strip (ADR 0080) go.
-  What each `FileTab` held today (editor state, preview page and selection, block edit, dirty flag, disk stamp, load error, scroll, cursor) moves into `Doc`, keyed by the stored path, in one `Documents` per workspace (`Shell.documents: HashMap<Ulid, Documents>`).
+  What each `FileTab` held today (editor state, preview page and selection, block edit, dirty flag, disk stamp, load error, scroll, cursor) moves into `Doc`, keyed by the `FileKey` (path and task), in one `Documents` per workspace (`Shell.documents: HashMap<Ulid, Documents>`).
 - `FilesView` keeps the tree, its filter, its selection and the right panel; it no longer knows about open files.
-- View state that is one per workspace on `Shell` today (the editor focus handle, scroll handles, the find bar, the preview list state) holds gpui types, so it does not go into the pure store: it moves into `shell::doc_view::DocView`, one per open file, in `Shell.doc_views: HashMap<(Ulid, String), DocView>` keyed like the store, so two file panes shown at once never share it.
+- View state that is one per workspace on `Shell` today (the editor focus handle, scroll handles, the find bar, the preview list state) holds gpui types, so it does not go into the pure store: it moves into `shell::doc_view::DocView`, one per open file, in `Shell.doc_views: HashMap<(Ulid, FileKey), DocView>` keyed like the store, so two file panes shown at once never share it.
 - A leaf whose `Doc` is missing (after a restart, or in a window that never drew it) loads it with `fs.read` the first time it is drawn, through the same path as today's Retry.
 - A `Doc` is dropped when its leaf leaves every layout and it is not dirty.
 - Detached windows draw file leaves from the same store, so file tabs tear off like terminal tabs; "Plan 2 (Editor file tabs)" of the detached windows work is no longer needed.
@@ -134,6 +140,8 @@ The sidebar and the right panel keep their colors.
 ### 4.4 Diff leaf
 
 - One `Leaf::Diff` per workspace shows the diff of the Git panel's selected file, as the Diff view does today; ↑ / ↓ in the Git list still move it.
+  It has no folder of its own: it draws the workspace's Git view, whose target (project or worktree) every stage, discard and commit uses, so it cannot act on another folder than the one shown.
+  A foreign workspace's Diff pane offers "Switch to workspace".
 - `GitView.open` goes: the diff is open when a Diff leaf is in a layout of the workspace.
   `open_diff` places a leaf (section 6.1), `close_diff` removes it.
 - When everything is committed, the diff leaf shows the Diff empty state instead of closing itself (a leaf the user placed does not vanish).

@@ -40,7 +40,7 @@ Screenshots: `docs/screenshots/tern-panes-<view>-<dark|light>.png`.
 - [ ] **Drops on four edges (dark + light):** drag a file row of the tree over a terminal pane, a file pane and the diff pane: the half under the pointer lights up for the nearest edge (left, right, top, bottom; near a corner the nearest wins), and a drop splits there 50 / 50.
   Drag a tab onto a pane edge: its panes merge there.
   Drag a pane by its top-edge grip onto another pane's edge: it moves, whatever its kind (terminal, file, diff).
-  Drag a pane or a tab onto the empty part of the tab area: it becomes its own tab; drag a file row there: a new tab after the last one.
+  Drag a pane or a tab onto the empty part of the tab area: it becomes its own tab; drag a file row there: a new tab right after the active one.
   A pane dropped on itself, or a tab on the tab that holds only that pane, does nothing; with a dialog open nothing drops.
   Dropping a tree row on a terminal does not type its path; dropped on an agent's open composer it inserts the path as before; a folder row is accepted only by a composer.
 - [ ] **OS files:** drop a file from Explorer on a terminal pane: the path is typed as before.
@@ -69,6 +69,13 @@ Screenshots: `docs/screenshots/tern-panes-<view>-<dark|light>.png`.
   A file tab does not stay in the main window any more.
 - [ ] **Deleted file:** delete an open file on disk: its pane shows "This file was removed." with Close.
 - [ ] **Contrast:** the gap color is visible against the terminal in every theme (the Settings page of a theme with a low-contrast `bg` shows no "pane gap" warning), dark and light.
+- [ ] **Files of a worktree (final review, ADR 0108):** in an agent that runs in a task worktree, Ctrl+click a path in its terminal: the file opens (the tree follows that worktree), edit it, quit and restart the app: the pane comes back and reads the worktree's copy; Save writes the worktree's file, not the project's (compare the two files on disk).
+  Then choose another worktree (or the project) in the tree: no file pane closes and no question is asked.
+  Delete the worktree and restart: the file's pane says it cannot read the file; it does not show the project's copy.
+- [ ] **Two file panes side by side:** drag a file next to another file pane; in the right one click Save, Find, the mode toggle and ✕: each works there (not only in the left one).
+- [ ] **Dragging keeps the preview tab:** single-click a file (italic tab), drag its tab or its pane next to a terminal, then single-click another file in the tree: the dragged file stays and the other opens in its own tab.
+- [ ] **Narrow file pane:** make a file pane about 250 px wide: the file name keeps room (cut with …) and the buttons on the right give way.
+- [ ] **Watch: "Loading files…" stuck after a UI restart** (seen once in the Task 9 smoke, not reproduced; candidate: the daemon serializes one connection behind slow Git loads): after a UI restart the Files tree stayed on "Loading files…" until the next refresh. If it shows again, note the repository size, whether the Git panel was open and whether `mk daemon status` answered at once.
 
 ### To verify - 2026-11-23 Tern layout (ADR 0106, plan docs/superpowers/plans/2026-11-23-tern-layout.md)
 
@@ -145,7 +152,7 @@ With a real omp, a real Claude Code and a real Codex session, dark and light the
 - [ ] **Page (dark + light):** Chat is a centered column (at most 760 px) with calm spacing; the prompt is a right-aligned bubble; headings are accent colored without a rule; bullets are accent dots; the tray and the question card line up with the column.
 - [ ] **Activity rows:** thinking and tool calls between two answers are one row ("Thought for 4s · 3 commands, 2 reads"); while the agent works the last one says "Working…"; it opens to thinking rows (UI font, italic, muted) and the tool rows; a Claude redacted thinking shows only its time and does not open; Tab reaches the row, then its children only while it is open.
 - [ ] **Markdown cards and pills:** a code block is a card with its language (or "text") and a Copy button that says "Copied" for about 1.5 s; inline code has the raised background (square corners, no padding: a text highlight); a file path shows the folder muted and the name bold; the same cards show in the Docs view, the Files preview, the Thread section and Ask AI (their headings keep their own color).
-- [ ] **Path pills:** in Chat a path (`src/main.rs:12`) opens the file at that line in the Editor view (also from a task worktree session); `v1.2` and `cargo test` are not clickable; a path outside the workspace shows "That file is outside this workspace".
+- [ ] **Path pills:** in Chat a path (`src/main.rs:12`) opens the file at that line in the Editor view (also from a task worktree session); `v1.2` and `cargo test` are not clickable; a path outside the workspace shows "That file is outside this workspace". (superseded by ADR 0108: there is no Editor view; the file opens as a file pane, tab or split, see the Tern panes section); a file from a worktree session stays of that worktree.
 - [ ] **A new session fills without a reconnect:** start a new omp, Claude Code or Codex agent pane in Chat, send its first prompt; the conversation shows within about 2 s, with no UI restart (the daemon announces the agent's session id, ADR 0105).
 - [ ] **Screenshots for reference:** `docs/screenshots/2026-11-23-chat-look-tern-dark.png` and `-tern-light.png` (Tern-style tables, chip row with a long branch, split panes; sandbox with real transcripts); the older `-omp-dark.png`, `-omp-light.png` and `-codex-light.png` show the first pass.
 - [ ] **omp recap:** after an omp turn ends and omp is idle, its recap line (history icon, italic) shows after the last turn; sending a new prompt hides it; a Claude or Codex session never shows one.
@@ -478,7 +485,7 @@ Look changes the audit makes on purpose (spec 5.2); they are not bugs:
 - [ ] **Scopes (dark + light):** `Ctrl+Shift+P` shows the search field on top (search icon, `esc` key cap) and seven scope pills below it, the current one with an accent outline and no fill; Tab / Shift+Tab walk them and wrap; a click on a pill switches; the placeholder changes with the scope; the footer reads "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right; the panel is the glass panel of Plan P1.
 - [ ] **Palette stays put:** switch scopes All -> Commands -> Branches and check the top of the palette does not move when the list gets shorter or taller.
 - [ ] **All:** an empty query lists sessions (a session that needs input first) and the commands run lately; a query lists sections with at most five rows and "+N more ›", which switches to that scope; Search never has a section; Files, Branches and Commits appear only once they have rows, All never shows "Loading" or an error line (those are in the scope's own tab).
-- [ ] **Files:** `Ctrl+Shift+O` opens on Files, empty query lists files at once, typing fast shows only the last answer, matched letters are accent colored, Enter opens the file in the Editor view; in a task worktree it searches the worktree.
+- [ ] **Files:** `Ctrl+Shift+O` opens on Files, empty query lists files at once, typing fast shows only the last answer, matched letters are accent colored, Enter opens the file in the Editor view; in a task worktree it searches the worktree. (superseded by ADR 0108: there is no Editor view; the file opens as a file pane, tab or split, see the Tern panes section).
 - [ ] **Search:** `Ctrl+Alt+Shift+F` opens on Search; one character shows "Type 2 characters to search the files."; `(` or `a.c` is searched as text; each hit shows the line with the match colored and `path:line` muted; Enter opens the file with the caret on that line; a repository with many hits stops at 200.
 - [ ] **Branches:** newest first, `current` marked, a remote branch without a local one listed as `origin/x`; Enter on a clean repository switches at once with a toast "Switched to ..."; with changed files, or a live agent in that folder, a question comes first and says which; a refusal by git shows git's own message in a toast.
 - [ ] **Commits:** 500 commits found by message or hash; Enter opens the Git panel on History with that commit expanded, also a commit older than the 50 the History lists by default; leaving History puts the default back.
@@ -892,10 +899,10 @@ Say so if one is wrong.
 - [ ] **Tree keys in the right panel (merge with ADR 0081):** open the tree with Ctrl+Shift+3 from Terminals, then check these.
   Shift+F10 on a tree row opens the file menu.
   Alt+Enter opens the cursor file in a kept tab, and Ctrl+Shift+H toggles ignored files.
-  Ctrl+Shift+Y hides the panel and the keyboard goes to the pane (or the editor in the Editor view).
+  Ctrl+Shift+Y hides the panel and the keyboard goes to the pane (or the editor in the Editor view) (superseded by ADR 0108: there is no Editor view; the file opens as a file pane, tab or split, see the Tern panes section).
   Not run: needs a person at the keyboard.
-- [ ] **Git list menus and palette (merge with ADR 0084):** Shift+F10 with the Git list focused, also in the Editor view, opens the workspace menu.
-  In the Diff view with the panel closed, the palette entry "Git: Switch repository…" opens the panel on the Git tab and the menu is visible with the keyboard in it.
+- [ ] **Git list menus and palette (merge with ADR 0084):** Shift+F10 with the Git list focused, also in the Editor view, opens the workspace menu. (superseded by ADR 0108: there is no Editor view; the file opens as a file pane, tab or split, see the Tern panes section)
+  In the Diff view with the panel closed, the palette entry "Git: Switch repository…" opens the panel on the Git tab and the menu is visible with the keyboard in it. (superseded by ADR 0108: there is no Diff view; the diff is a Diff pane, see the Tern panes section)
   Not run: needs a person at the keyboard.
 
 ### To verify - 2026-10-27 Keyboard context menus (ADR 0085, wave 1)
@@ -936,11 +943,11 @@ Say so if one is wrong.
 ### To verify - 2026-10-27 Git in the right panel (ADR 0084)
 
 - [ ] **Git tab (dark + light):** `Files │ Session │ Git 3` fits the tab row; at 240 px the header, branch card, segments, filter (with "By:" wrapped) and commit box fit without clipping; the repo strip falls back to one tab when crowded.
-- [ ] **Diff view:** a click shows the `Diff` chip in the title bar's tab area and the diff with its × at the toolbar's end; `Esc` / × hide it and Terminals shows; the diff card has the same frame as before.
-- [ ] **Keys with the panel hidden:** in the Diff view with the panel closed, `n` / `p` / `d` / `s` still act.
+- [ ] **Diff view:** a click shows the `Diff` chip in the title bar's tab area and the diff with its × at the toolbar's end; `Esc` / × hide it and Terminals shows; the diff card has the same frame as before. (superseded by ADR 0108: there is no Diff view; the diff is a Diff pane, see the Tern panes section)
+- [ ] **Keys with the panel hidden:** in the Diff view with the panel closed, `n` / `p` / `d` / `s` still act. (superseded by ADR 0108: there is no Diff view; the diff is a Diff pane, see the Tern panes section)
 - [ ] **Restart:** the panel comes back on the Git tab when left there.
 - [ ] **Filter with no match:** the diff closes on the next status refresh when the filter matches no file (Terminals shows); the keyboard stays in the filter / list.
-- [ ] **Repo chip / worktree with the diff open:** switching either keeps the Diff view open on the other repository's first file.
+- [ ] **Repo chip / worktree with the diff open:** switching either keeps the Diff view open on the other repository's first file. (superseded by ADR 0108: there is no Diff view; the diff is a Diff pane, see the Tern panes section)
 - [ ] **Commit everything or discard the last file with the diff open:** the diff closes, Terminals shows live panes, the keyboard stays in the Git list so Shift+P pushes.
 - [ ] **`git.changed` with only the Git tab on screen (Terminals view):** the list updates.
 - [ ] **Entry points:** the Session Changes card "Review diff", the Review card "View changes", "Diff since", the worktree dialog "Open in Git" and the title-bar branch chip each open the Git tab and the diff.

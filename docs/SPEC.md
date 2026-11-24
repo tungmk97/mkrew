@@ -346,8 +346,8 @@ v2 migrations 0008 (M11) and 0009 (M13) are listed in §20; `0010_session_interr
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
 is the first child's share; every split has exactly two children; `null` = a tab without panes.
-Leaves are sessions, files or the diff (ADR 0108): `{"session": "<ulid>", "chat": true}` (`chat` optional), `{"file": "src/a.rs", "md": "split", "preview": true}` (`md` and `preview` optional; the path is relative to the workspace root with `/`, or absolute for a note in an absolute notes folder) and `{"diff": true}`.
-A key (a session, a file path, the diff) appears at most once in a tab, and a file or the diff at most once per workspace.
+Leaves are sessions, files or the diff (ADR 0108): `{"session": "<ulid>", "chat": true}` (`chat` optional), `{"file": "src/a.rs", "task": "<ulid>", "md": "split", "preview": true}` (`task`, `md` and `preview` optional; the path is relative to the folder the file is of, with `/`, or absolute for a note in an absolute notes folder; `task` = the task worktree the file is of, absent = the project folder, which is what a layout of protocol 58 or 60 means) and `{"diff": true}`.
+A key (a session, a file's path with its `task`, the diff) appears at most once in a tab, and a file or the diff at most once per workspace; the same path in the project folder and in a worktree are two files.
 The daemon reads only the leaves with a `session` key (`cut`, `layout_sessions`) and keeps the others as they are; a leaf the UI cannot parse is dropped with a warning and the rest of the tab loads.
 
 ```json
@@ -615,7 +615,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `fs.read` | `project_id`, `path`, `index_text?` (bool) | content (≤ 2 MB), binary flag, language, `hash?` (opaque, set with `content`), `index_text?` (asked for: the file's text in the git index, ADR 0047); `path` is relative to the root, or an absolute path inside the daemon's absolute notes folder (`[notes] folder`, normalized, no `..`; ADR 0108); any other absolute path is refused as before |
 | `fs.write` | `project_id`, `path`, `content`, `expected_hash` | `saved`, `hash` — writes an existing file (≤ 2 MB text, in place) only if it still hashes to `expected_hash`; else `saved: false`, nothing written, `hash` = the disk's (ADR 0028); `path` follows the same rule as `fs.read`: root-relative, or absolute inside the notes folder (ADR 0108) |
 | `fs.create` | `project_id`, `worktree_task_id?`, `dir?` (`/`-separated, `""` = the root), `name` (may hold `/` or `\`: missing folders are made), `folder` | `path` of the new empty file or folder, relative to the root. `already_exists` for an existing entry; `invalid_request` for an empty name, `.`/`..`/drive parts, or a `dir`/`name` outside the root or inside `.git` (checked before anything is created) |
-| `fs.new_note` | `project_id`, `worktree_task_id?` | `FsCreated { path }` - creates an empty `note-YYYYMMDD-HHMMSS.md` (local time; `-2`, `-3`, ... while the name exists, so `already_exists` is never answered) in the daemon's `[notes] folder` (§20.0: empty = the root of the project or task worktree, relative = under it, absolute = as is), making missing folders; `path` is relative to the root when the note is inside it, else absolute. `invalid_request` (the message names the reason) for a bad folder setting (`..`, `~`, an unusable drive, not a folder) and for a create failure (the OS message: no write access, disk full); `internal` when the blocking task fails to join; nothing is created on an error (ADR 0108) |
+| `fs.new_note` | `project_id`, `worktree_task_id?` | `FsCreated { path }` - creates an empty `note-YYYYMMDD-HHMMSS.md` (local time; `-2`, `-3`, ... while the name exists, up to `-1000`; when all 1000 names are taken the answer is `already_exists`) in the daemon's `[notes] folder` (§20.0: empty = the root of the project or task worktree, relative = under it, absolute = as is), making missing folders; `path` is relative to the root when the note is inside it, else absolute. `invalid_request` (the message names the reason) for a bad folder setting (`..`, `~`, an unusable drive, not a folder) and for a create failure (the OS message: no write access, disk full); `internal` when the blocking task fails to join; nothing is created on an error (ADR 0108) |
 | `fs.ignore` | `project_id`, `worktree_task_id?`, `path`, `is_dir` | `null` — appends `/path` (`/path/` for a folder) to the root `.gitignore`, creating it, keeping its line endings, not twice. `invalid_request` for a path outside the root or inside `.git` |
 | `fs.find` | `project_id`, `query`, `limit` | fuzzy file matches |
 | `fs.search` | `project_id`, `worktree_task_id?`, `query`, `regex?` (default false), `limit?` (default 200) | `{hits: SearchHit[], truncated}`; a `SearchHit` is `{path, line, preview, ranges: [[start, end]]}` (byte ranges in `preview`, at most 200 chars of the line, trimmed); text files up to 2 MiB under the root, smart case (case-insensitive unless the query has an upper-case letter), `invalid_request` for an invalid regex; runs beside the read loop, and a newer `fs.search` on the same connection stops an older one, which answers `invalid_state` |
@@ -1021,7 +1021,7 @@ Its tab row is `[Files│Session│Git]`; files and the diff open as tabs and pa
   **Drops** (ADR 0108): a pane has four drop zones, one per edge, and no zone in the middle: the edge nearest the pointer wins (ties: right, then bottom).
   The half of the pane that the new leaf will take lights up (the accent tint), and the drop splits the pane 50 / 50 there.
   Every draggable uses them: a file row of the Files tree (opens the file), a `+` row item (starts that agent, shell or note), a tab (merges its panes, keeping its layout) and a pane by the grip on its top edge (an 8 px strip that shows a grip on hover; only in a split tab), which moves the whole leaf, of any kind.
-  A pane or tab dropped on the empty part of the tab area becomes a tab of its own; a file row or a `+` row item dropped there becomes a new tab after the last one.
+  A pane or tab dropped on the empty part of the tab area becomes a tab of its own; a file row or a `+` row item dropped there becomes a new tab right after the active one.
   A pane dropped on itself, or a tab on the tab that holds only that pane, does nothing; nothing drops while a dialog is open.
   A file row dropped on an agent pane's composer inserts the path (§20B.5) and is not accepted by any terminal.
   A pane moves within its tab or out of another one; an emptied tab closes after both layouts are saved (`tab.set_layout`, then `tab.close`).
@@ -1319,11 +1319,12 @@ Only edit this file. When done, for EACH comment run:
   It is a tab in the title bar's tab area (file-type icon, file name, `●` while unsaved, × to close) or a pane inside the tab in front, inside the same frame, stripe and dim as a terminal pane (§14).
   There is no Editor view, no Editor chip and no file tab strip.
   A workspace has at most one pane per file across all its tabs and windows: opening a file that is open focuses its pane (its tab and window come to the front) and jumps to the line.
-  A single click on a file in the tree opens the workspace's **preview tab** (italic title), which the next single click replaces while it is clean; a double click, Enter in the tree, Alt+Enter, an edit, Pin or a drag keeps it.
+  A single click on a file in the tree, or Enter on it, opens the workspace's **preview tab** (italic title), which the next single click replaces while it is clean; a double click, Alt+Enter, an edit, Pin or a drag (a move of the pane) keeps it.
   A tree click keeps the keyboard in the tree.
   Every other open (palette, a terminal link, a Markdown link, a chat path pill, "New file…", Search hits) opens a kept tab right after the active tab.
   Dragging a tree row onto a pane opens the file as a split at that edge (§10 "Drops").
-  The open files are saved in the tab layout (`{"file": "src/a.rs"}`, plus `md` and `preview`) and come back after a restart in the same place; their text is read when the pane is first drawn.
+  The open files are saved in the tab layout (`{"file": "src/a.rs"}`, plus `task`, `md` and `preview`) and come back after a restart in the same place; their text is read when the pane is first drawn.
+  A file is of one folder for good: the project's, or a task worktree's (`task`). Its read, its Reload and its Save use that folder, whatever the Files tree shows; a tree click, a drag and a note take the folder the tree shows at that moment (a new note: the project's), and a terminal link or a chat path pill takes the worktree of its agent. After a restart or a lost connection the file still reads and saves there; when that worktree is gone the pane says it cannot read the file. Choosing another worktree in the tree changes only the tree.
   A file deleted on disk shows "This file was removed." with a Close button.
 - **Editor** (the text editor of a file pane; ADR 0028): the opened file with line numbers and syntax highlighting via
   `syntect` (lazy-loaded syntax set; re-highlighted 150 ms after typing stops). A plain editor:
@@ -1349,8 +1350,7 @@ Only edit this file. When done, for EACH comment run:
   have no bars; the bar column is always there so the text never moves.
 - Unsaved text is never replaced (§2.5). If the file changes on disk meanwhile (an agent), or
   Save finds another version on disk, a banner "Changed on disk — Reload · Keep mine" offers
-  "Reload" (drop your changes) or "Keep mine" (Save overwrites it). Closing a pane, a tab, a window or a workspace, switching
-  to another worktree or quitting with unsaved changes asks "Save / Don't save /
+  "Reload" (drop your changes) or "Keep mine" (Save overwrites it). Closing a pane, a tab, a window or a workspace, or quitting with unsaved changes asks "Save / Don't save /
   Cancel" (once per unsaved file). Switching workspace or tab keeps them; a preview tab with unsaved edits is kept, not replaced.
 - **Markdown preview:** a `.md` file opens as a rendered preview, by the Docs renderer (§12,
   §14: the same typography tokens for light and dark, highlighted code blocks, ```` ```mermaid ````

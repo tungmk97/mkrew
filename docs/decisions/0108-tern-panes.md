@@ -16,24 +16,33 @@ A new text note should be one click.
 ## Decision
 
 - **Typed leaves.**
-  A leaf of the split tree is a session, a file or the diff: `Leaf::Session`, `Leaf::File { file, md, preview }`, `Leaf::Diff`.
-  A leaf is identified by a `PaneKey` (`Session(Ulid)`, `File(String)`, `Diff`), and every tree and tab operation takes a key.
-  The layout stays untagged JSON in the `terminal_tab.layout` column: `{"session": ...}` as before, `{"file": "src/a.rs"}`, `{"diff": true}`.
+  A leaf of the split tree is a session, a file or the diff: `Leaf::Session`, `Leaf::File { file, task, md, preview }`, `Leaf::Diff`.
+  A leaf is identified by a `PaneKey` (`Session(Ulid)`, `File(FileKey)`, `Diff`), and every tree and tab operation takes a key.
+  A `FileKey` is a path and the folder it is of: `task` is a task worktree, absent = the project folder.
+  The layout stays untagged JSON in the `terminal_tab.layout` column: `{"session": ...}` as before, `{"file": "src/a.rs"}` or `{"file": "src/a.rs", "task": "<ulid>"}`, `{"diff": true}`.
+  A file leaf without `task` (every layout of protocol 58 and 60) is a project file, so no migration and no protocol bump are needed for the field.
   A leaf that does not parse is dropped with a warning and the rest of the tab loads.
   There is no migration.
 - **Documents store and `DocView`.**
-  What `FilesView.tabs` held (text, caret, undo, dirty flag, disk stamp, preview page) moves into a pure `Documents` store, one per workspace, keyed by the stored path (`documents.rs`, no gpui).
+  What `FilesView.tabs` held (text, caret, undo, dirty flag, disk stamp, preview page) moves into a pure `Documents` store, one per workspace, keyed by the `FileKey` (`documents.rs`, no gpui).
   The gpui state of a shown file (focus, scroll handles, find bar, preview list) is a `DocView` per open file.
   A leaf whose document is missing (after a restart) loads it with `fs.read` the first time it is drawn.
   A document is dropped when its leaf leaves every layout and it is not dirty.
   The file tab strip, the Editor view and the Diff view are deleted.
+- **A file knows its folder.**
+  The folder a file is of (the project, or a task worktree) lives with the open file: in its leaf and its `Doc`, never in the Files tree's state.
+  Its `fs.read`, Reload and `fs.write` use that folder, so a restart or a lost connection cannot send an edit to the other copy of the same relative path.
+  A tree click or drag takes the folder the tree shows at that moment, a terminal link or chat path pill the worktree of its agent, a new note and an OS drop the project's.
+  Choosing another worktree in the tree changes only the tree and closes nothing.
+  A restored file whose worktree is gone shows the load-error state of the pane, not the project's file.
+  The Diff leaf needs no such field: it draws the workspace's Git view, and every stage, discard or commit acts on the target that view shows.
 - **One pane per file per workspace.**
-  A file key and the Diff key appear at most once across all tabs and windows of a workspace.
+  A file key (path and folder) and the Diff key appear at most once across all tabs and windows of a workspace; the same path in the project and in a worktree are two files.
   Opening what is open focuses its pane (its tab and window come to the front) and jumps to the line.
   So each path has one buffer and nothing counts references.
 - **One way to open.**
   `Shell::open_document(path, place)` and `Shell::open_diff(place)` with `Place::{Preview, NewTab, Split(key, edge)}`.
-  A single click in the Files tree opens the workspace's preview tab (italic title), which the next single click replaces; an edit, a double click or a drag keeps it.
+  A single click in the Files tree (or Enter on a row) opens the workspace's preview tab (italic title), which the next single click replaces; an edit, a double click, a pin or a drag (any move of the pane) keeps it.
   Every other open is a new tab right after the active one.
 - **Four-edge drops.**
   `Edge::{Left, Right, Top, Bottom}` replaces `drop_axis`; the middle of a pane has no zone, the nearest edge wins (ties: right, then bottom).
@@ -43,7 +52,7 @@ A new text note should be one click.
   No pane border; panes sit on a frame of the new color `pane_gap` with 8 px between them and from the edge (`PANE_HALF_GAP = space::XS`), and the title bar uses the same color.
   One 2 px stripe at the pane's top edge: needs input first, then the session color, then the focus color when the tab has two or more panes.
   `pane_focus_border` is renamed `pane_focus_stripe`.
-  A rule in `theme::problems()` needs `pane_gap` and `terminal_bg` to differ by at least 1.06:1.
+  A rule ("pane gap") in `theme::problems()` needs `pane_gap` and `terminal_bg` to differ by at least 1.06:1; a theme file that breaks it gets the "Low contrast" badge.
 - **The `+` row.**
   `+ ▾` becomes `+`, which grows on hover or keyboard focus into `[+] [default agent] [default terminal] [new note] [▾]`.
   Each item is a click (new tab) or a drag (leaf at the drop edge); `▾` opens today's menu.
@@ -103,6 +112,5 @@ A new text note should be one click.
 - Typed leaves make the key the only identity: a file renamed on disk is a new key (its old pane shows "This file was removed.").
 - Tabs inside a pane, Board and Docs as tabs, and restoring unsaved edits after a restart stay out of scope.
 - Follow-ups known and left open:
-  - `mkrew_core::notes::folder` returns `Result<_, String>` because the plan said so; it should become a `thiserror` enum (the library rule of AGENTS.md).
   - The daemon's `.git` guard can be bypassed on Windows with a trailing dot (`.git.`) or the 8.3 short name (`GIT~1`).
     This is older than this branch and is listed in `docs/INBOX.md`.
