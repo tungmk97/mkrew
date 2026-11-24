@@ -813,6 +813,20 @@ fn wait_file(path: &Path) {
     }
 }
 
+/// Waits until `path` holds `expected`. `fs::write` creates the file before it writes it, so a
+/// file that exists can still be empty for a moment.
+fn wait_content(path: &Path, expected: &str) {
+    let deadline = Instant::now() + TIMEOUT;
+    while std::fs::read_to_string(path).ok().as_deref() != Some(expected) {
+        assert!(
+            Instant::now() < deadline,
+            "{} never held {expected:?}",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn run_task(task_id: Ulid) -> Request {
     Request::TaskRun(TaskRunParams {
         task_id,
