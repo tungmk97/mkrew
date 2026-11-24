@@ -228,9 +228,9 @@ impl Shell {
                 TabStatus::Working => (Icon::Hourglass, theme.status_working),
                 TabStatus::NeedsInput => (Icon::Bell, theme.status_needs_input),
             };
-            icon_svg(glyph, theme::ICON_SIZE_SMALL, color)
+            icon_svg(glyph, theme::TAB_ICON_SIZE, color)
         });
-        // Every icon is `ICON_SIZE_SMALL`: a brand logo in its brand color, an agent without
+        // Every icon is `TAB_ICON_SIZE`: a brand logo in its brand color, an agent without
         // a logo as its glyph, shell and run panes in `text_muted`.
         let pane_icons: Vec<gpui::AnyElement> = icons
             .panes
@@ -238,7 +238,7 @@ impl Shell {
             .map(|pane| match pane {
                 PaneIcon::Agent(profile) => match self.agent_badge(profile) {
                     sidebar::Badge::Logo(logo) => {
-                        icons::logo_svg(logo, theme::ICON_SIZE_SMALL, theme.brand_color(logo))
+                        icons::logo_svg(logo, theme::TAB_ICON_SIZE, theme.brand_color(logo))
                             .into_any_element()
                     }
                     sidebar::Badge::Text(text) => div()
@@ -248,22 +248,21 @@ impl Shell {
                         .child(text)
                         .into_any_element(),
                 },
-                PaneIcon::Shell => icon_svg(
-                    Icon::SquareTerminal,
-                    theme::ICON_SIZE_SMALL,
-                    theme.text_muted,
-                )
-                .into_any_element(),
-                PaneIcon::Run => icon_svg(Icon::Play, theme::ICON_SIZE_SMALL, theme.text_muted)
-                    .into_any_element(),
-                PaneIcon::File(_) => icon_svg(Icon::File, theme::ICON_SIZE_SMALL, theme.text_muted)
-                    .into_any_element(),
-                PaneIcon::Diff => {
-                    icon_svg(Icon::FileDiff, theme::ICON_SIZE_SMALL, theme.text_muted)
+                PaneIcon::Shell => {
+                    icon_svg(Icon::SquareTerminal, theme::TAB_ICON_SIZE, theme.text_muted)
                         .into_any_element()
                 }
-                PaneIcon::Web => icon_svg(Icon::Globe, theme::ICON_SIZE_SMALL, theme.text_muted)
+                PaneIcon::Run => {
+                    icon_svg(Icon::Play, theme::TAB_ICON_SIZE, theme.text_muted).into_any_element()
+                }
+                PaneIcon::File(_) => {
+                    icon_svg(Icon::File, theme::TAB_ICON_SIZE, theme.text_muted).into_any_element()
+                }
+                PaneIcon::Diff => icon_svg(Icon::FileDiff, theme::TAB_ICON_SIZE, theme.text_muted)
                     .into_any_element(),
+                PaneIcon::Web => {
+                    icon_svg(Icon::Globe, theme::TAB_ICON_SIZE, theme.text_muted).into_any_element()
+                }
             })
             .collect();
         // A file of a task worktree names it: a project file and a worktree file look alike.
