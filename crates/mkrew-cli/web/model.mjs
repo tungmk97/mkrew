@@ -129,9 +129,9 @@ export function pillText(session, now) {
   return timed(session) ? `${label} · ${ago(since(session), now)}` : label;
 }
 
-/** A session whose omp surface is live (ADR 0107): the desktop draws it, so the phone has no terminal rows to show. */
+/** A running session whose omp surface is live (ADR 0107): the desktop draws it, so the phone has no terminal rows to show. An exited one keeps its last `tsp` but shows its exit replay. */
 export function nativeView(session) {
-  return session?.tsp === 'live';
+  return session?.tsp === 'live' && session.state !== 'exited';
 }
 
 const KEYS = { enter: '\r', esc: '\x1b', tab: '\t', y: 'y', n: 'n', ctrl_c: '\x03' };

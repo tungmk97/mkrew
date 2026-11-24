@@ -124,6 +124,8 @@ test('only a live omp surface hides the terminal; every other state and an old d
   // A daemon from before protocol 59 sends no `tsp`.
   assert.equal(nativeView(session('s', 'p')), false);
   assert.equal(nativeView(undefined), false);
+  // The daemon keeps the last `tsp` after exit; an ended session shows its exit replay, not the notice.
+  assert.equal(nativeView(session('s', 'p', { tsp: 'live', state: 'exited' })), false);
 });
 
 test('quick keys send the bytes a terminal would, arrows follow application cursor mode', () => {
