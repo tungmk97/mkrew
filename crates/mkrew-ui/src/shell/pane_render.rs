@@ -346,6 +346,7 @@ impl Shell {
             }))
             .child(
                 div()
+                    .flex_1()
                     .min_w_0()
                     .max_w(px(theme::TAB_TITLE_MAX_WIDTH))
                     // See `TEXT_LIFT`: the name reads centered in the chip.
@@ -359,7 +360,7 @@ impl Shell {
             .child(
                 row_action(
                     SharedString::from(format!("tab-close-{tab_id}")),
-                    icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
+                    icon_svg(Icon::X, theme::TAB_ICON_SIZE, theme.text_muted),
                     theme,
                 )
                 // Always on the active tab, on hover for the others.
