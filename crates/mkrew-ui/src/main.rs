@@ -182,11 +182,15 @@ fn main() {
     // (directx_renderer.rs:1017), which covers child HWNDs such as the WebView2 page of a
     // browser pane (ADR 0111). Mkrew uses no transparent or blurred window background, so the
     // HWND swap chain path loses nothing it needs. A user's own setting wins.
+    // Without the WebView2 Runtime no page shows, so DirectComposition stays on.
     #[cfg(windows)]
-    if std::env::var_os(mkrew_ui::browser::DISABLE_DCOMP_ENV).is_none() {
+    if std::env::var_os(mkrew_ui::browser::DISABLE_DCOMP_ENV).is_none()
+        && mkrew_ui::browser::available().is_ok()
+    {
         #[allow(unsafe_code)]
-        // SAFETY: first statement of `main`: no other thread exists yet, so nothing reads or
-        // writes the environment concurrently.
+        // SAFETY: no thread of Mkrew exists yet (`available` only reads the registry and the
+        // WebView2 install, and caches the answer), so nothing reads or writes the environment
+        // concurrently.
         unsafe {
             std::env::set_var(mkrew_ui::browser::DISABLE_DCOMP_ENV, "1");
         }

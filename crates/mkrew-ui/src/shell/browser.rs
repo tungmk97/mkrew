@@ -21,6 +21,8 @@ pub(crate) struct Browser {
     pub(crate) address_focus: FocusHandle,
     /// The page has the keyboard (its last IPC was a focus).
     pub(crate) page_keys: bool,
+    /// The key list the page's script holds (`forwarded` at its build or last patch).
+    pub(crate) keys: Vec<String>,
     /// The address field is being edited.
     pub(crate) editing: bool,
 }
@@ -70,6 +72,7 @@ impl Shell {
                     address,
                     address_focus: cx.focus_handle(),
                     page_keys: false,
+                    keys: Vec::new(),
                     editing: false,
                 }
             });
@@ -91,8 +94,17 @@ impl Shell {
             PageEvent::Started => browser.page.loading = true,
             PageEvent::Title(title) => browser.page.title = title,
             PageEvent::Open(url) => {
-                if let Some(native) = &browser.native {
-                    native.load(&url);
+                let scheme = scheme_of(&url);
+                if is_web(&url) {
+                    if let Some(native) = &browser.native {
+                        native.load(&url);
+                    }
+                } else if !scheme.is_empty()
+                    && !["file", "javascript", "data"]
+                        .iter()
+                        .any(|blocked| scheme.eq_ignore_ascii_case(blocked))
+                {
+                    cx.open_url(&url);
                 }
             }
             PageEvent::Finished(url) => {
@@ -102,8 +114,19 @@ impl Shell {
                     browser.address.insert(&url);
                 }
                 browser.page.url = url.clone();
+                // The page's init script carries the key list of its build: bring it up to
+                // date after a keymap change.
+                let keys = mkrew_ui::browser::keys::forwarded(&self.keymap);
+                if browser.keys != keys {
+                    if let Some(native) = &browser.native {
+                        native.script(&mkrew_ui::browser::keys::set_keys_script(&keys));
+                    }
+                    browser.keys = keys;
+                }
                 self.store_url(id, url, window, cx);
             }
+            // A page that is not on screen has no say over the window's focus.
+            PageEvent::Focus if !browser.native.as_ref().is_some_and(NativeView::is_shown) => {}
             PageEvent::Focus => {
                 browser.page_keys = true;
                 if browser.editing {
@@ -126,12 +149,21 @@ impl Shell {
                 }
             }
             PageEvent::Key(name) => {
-                let command = gpui::Keystroke::parse(&name)
-                    .ok()
-                    .and_then(|keystroke| self.keymap.command_for(&keystroke));
-                if let (Some(command), Some(host)) = (command, browser.host) {
+                // Only a page that has the keyboard in its focused pane, and only a forwarded
+                // global or browser binding (ADR 0111): the page is not trusted.
+                if let (true, Some(host)) = (browser.page_keys, browser.host) {
                     self.in_window(host, cx, move |shell, window, cx| {
-                        shell.run(&Run(command), window, cx);
+                        if shell.focused_key(window) != Some(PaneKey::Web(id))
+                            || !mkrew_ui::browser::keys::forwarded(&shell.keymap).contains(&name)
+                        {
+                            return;
+                        }
+                        let command = gpui::Keystroke::parse(&name)
+                            .ok()
+                            .and_then(|keystroke| shell.keymap.forwarded_command(&keystroke));
+                        if let Some(command) = command {
+                            shell.run(&Run(command), window, cx);
+                        }
                     });
                 }
             }
@@ -248,10 +280,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let web = url.get(..url.find(':').unwrap_or(0)).is_some_and(|scheme| {
-            scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
-        });
-        if !web {
+        if !is_web(&url) {
             return cx.open_url(&url);
         }
         if let Err(reason) = mkrew_ui::browser::available() {
@@ -325,8 +354,6 @@ impl Shell {
         }
         let focused = self.focused_key(window);
         let dark = theme::slot_is_dark(cx.theme().mode, theme::os_dark(window));
-        let keys = mkrew_ui::browser::keys::forwarded(&self.keymap);
-        let data_dir = self.paths.data_dir.join("WebView2");
         let usable = mkrew_ui::browser::available().is_ok();
         let overlay = self.browser_overlay(cx);
         for (id, browser) in &mut self.browsers {
@@ -344,6 +371,8 @@ impl Shell {
                 && browser.error.is_none()
                 && !browser.page.url.is_empty()
             {
+                let keys = mkrew_ui::browser::keys::forwarded(&self.keymap);
+                let data_dir = self.paths.data_dir.join("WebView2");
                 match NativeView::build(
                     window,
                     *id,
@@ -356,6 +385,7 @@ impl Shell {
                     Ok(native) => {
                         browser.native = Some(native);
                         browser.page_keys = false;
+                        browser.keys = keys;
                     }
                     Err(error) => {
                         tracing::warn!(%id, "browser: cannot build the page: {error}");
@@ -782,4 +812,15 @@ impl Shell {
             _ => {}
         }
     }
+}
+
+/// The scheme of `url` (empty if it has none).
+fn scheme_of(url: &str) -> &str {
+    url.split_once(':').map_or("", |(scheme, _)| scheme)
+}
+
+/// `http` and `https` links load in a browser pane.
+fn is_web(url: &str) -> bool {
+    let scheme = scheme_of(url);
+    scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
 }

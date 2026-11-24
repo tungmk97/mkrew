@@ -6,7 +6,6 @@ use std::path::Path;
 use ulid::Ulid;
 
 pub enum NativeView {}
-pub enum WebSurface {}
 
 impl NativeView {
     pub fn build(
@@ -38,14 +37,12 @@ impl NativeView {
     pub fn focus_parent(&self) {
         match *self {}
     }
+    pub fn is_shown(&self) -> bool {
+        match *self {}
+    }
     pub fn surface(&self, _show: bool) -> WebSurface {
         match *self {}
     }
 }
 
-impl gpui::IntoElement for WebSurface {
-    type Element = gpui::Empty;
-    fn into_element(self) -> gpui::Empty {
-        match self {}
-    }
-}
+pub use gpui::Empty as WebSurface;

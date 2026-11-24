@@ -100,14 +100,18 @@ impl NativeView {
 
     /// Follows Mkrew's theme (`prefers-color-scheme`); macOS follows the app appearance itself.
     pub fn set_dark(&self, dark: bool) {
-        if self.dark.replace(dark) == dark {
-            return;
+        if self.dark.replace(dark) != dark {
+            #[cfg(windows)]
+            {
+                use wry::WebViewExtWindows as _;
+                let _ = self.view.set_theme(theme(dark));
+            }
         }
-        #[cfg(windows)]
-        {
-            use wry::WebViewExtWindows as _;
-            let _ = self.view.set_theme(theme(dark));
-        }
+    }
+
+    /// Whether the page is on screen (the Shell shows pages it draws and hides the rest).
+    pub fn is_shown(&self) -> bool {
+        self.shown.get()
     }
 
     pub fn focus(&self) {

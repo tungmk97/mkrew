@@ -1176,6 +1176,18 @@ impl Keymap {
             .map(|(command, _)| *command)
     }
 
+    /// The command a focused page may run by posting `keystroke` (ADR 0111): only global and
+    /// browser pane bindings, never the context-bound ones (Git, Board, editor, terminal).
+    pub fn forwarded_command(&self, keystroke: &Keystroke) -> Option<Command> {
+        self.bindings
+            .iter()
+            .find(|(command, bound)| {
+                matches!(command.context(), None | Some(BROWSER_CONTEXT))
+                    && same_keys(bound, keystroke)
+            })
+            .map(|(command, _)| *command)
+    }
+
     /// Keys an open menu keeps for itself: every context-limited binding on a plain or Shift-only
     /// key (the Board's arrows, Enter and `e`, the Git single keys, later waves' single keys).
     /// Ctrl / Alt / Cmd keys stay bound, so a shortcut still closes the menu and acts.
@@ -1248,7 +1260,7 @@ impl Keymap {
 
     /// Whether `command`'s binding differs from its SPEC §13 default.
     pub fn changed(&self, command: Command) -> bool {
-        let default = Keystroke::parse(&command.default_keys()).ok();
+        let default = parse_keys(&command.default_keys());
         match (self.keystroke(command), default) {
             (Some(bound), Some(default)) => !same_keys(bound, &default),
             (bound, default) => bound.is_some() != default.is_some(),
@@ -2056,6 +2068,25 @@ mod tests {
             std::fs::write(&path, text).unwrap();
         }
         (dir, path)
+    }
+
+    #[test]
+    fn no_command_is_changed_at_defaults() {
+        let keymap = Keymap::defaults_for(Os::Windows);
+        for command in Command::all() {
+            assert!(!keymap.changed(command), "{command:?}");
+        }
+    }
+
+    #[test]
+    fn a_page_reaches_global_and_browser_commands_only() {
+        let keymap = Keymap::defaults_for(Os::Windows);
+        let run = |keys| keymap.forwarded_command(&Keystroke::parse(keys).unwrap());
+        for keys in ["shift-p", "x", "ctrl-enter", "shift-s", "a"] {
+            assert_eq!(run(keys), None, "{keys}");
+        }
+        assert_eq!(run("alt-shift-b"), Some(Command::SplitBrowser));
+        assert_eq!(run("ctrl-l"), Some(Command::BrowserAddress));
     }
 
     #[test]

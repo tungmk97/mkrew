@@ -330,6 +330,8 @@ impl Shell {
         }
         if self.view() != View::Terminals {
             match *command {
+                // No page can show here: nothing happens, the view stays.
+                Command::SplitBrowser if mkrew_ui::browser::available().is_err() => return,
                 // Opening or picking a tab or pane shows the terminals.
                 Command::NewShellTab
                 | Command::NewAgentTab
