@@ -278,8 +278,8 @@ impl Shell {
                 true,
                 cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
                     select(shell);
-                    // A tab of the main window shows its terminals, also from Board, Docs,
-                    // the Editor or the Diff.
+                    // A tab of the main window shows its terminals, also from Board or
+                    // Docs.
                     if shell.host_of(window) == HostId::Main {
                         shell.show_view(View::Terminals, window, cx);
                     }

@@ -3,7 +3,7 @@
 use crate::*;
 
 /// The diff list of one workspace's Diff leaf: the `git_diff_*` fields `Shell` held while the
-/// Diff view was a view of its own. One per workspace, so a diff pane in a detached window
+/// diff was a view of its own. One per workspace, so a diff pane in a detached window
 /// and one in the main window (two workspaces) never share it.
 pub(crate) struct DiffViewState {
     /// The diff rows (a variable-height list: wrapped lines are taller).

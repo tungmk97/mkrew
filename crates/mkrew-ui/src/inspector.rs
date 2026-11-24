@@ -1,4 +1,4 @@
-//! The right panel next to Terminals / Editor / Diff (SPEC §10, ADR 0038, ADR 0081, ADR 0084):
+//! The right panel next to Terminals (SPEC §10, ADR 0038, ADR 0081, ADR 0084):
 //! its tabs, width, the Stop rule and the text of the Session card. Pure; `main.rs` draws it.
 
 use mkrew_core::settings::RightPanelMode;
@@ -33,7 +33,7 @@ pub enum PanelTab {
     Git,
 }
 
-/// The right panel next to Terminals / Editor / Diff: open or not, and its tab (kept while hidden).
+/// The right panel next to Terminals: open or not, and its tab (kept while hidden).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RightPanel {
     pub open: bool,

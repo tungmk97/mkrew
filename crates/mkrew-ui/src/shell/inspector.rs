@@ -238,7 +238,7 @@ impl Shell {
     }
 
     /// The right panel (SPEC §10, §12A, §12B): `Files | Session | Git` tabs, right of
-    /// Terminals, the Editor and the diff. Rendered only while open; it is a sibling of the
+    /// Terminals. Rendered only while open; it is a sibling of the
     /// panes, never inside the terminal element.
     pub(crate) fn render_right_panel(
         &self,
@@ -280,7 +280,7 @@ impl Shell {
             );
         let tab = self.panel_tab();
         let changed = self.git_summary().map_or(0, GitSummary::changed);
-        // The tab row has the height of the Editor's file tab strip and the sidebar's filter
+        // The tab row has the height of the title bar's tab chips and the sidebar's filter
         // row on its left: same height, same bottom divider.
         let tabs = div()
             .flex_none()

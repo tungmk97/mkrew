@@ -359,7 +359,7 @@ impl SidebarMode {
     }
 }
 
-/// `[ui] right_panel`: the right panel next to Terminals / Editor / Diff at start, and its tab
+/// `[ui] right_panel`: the right panel next to Terminals at start, and its tab
 /// (SPEC §10). The panel toggle and its tab row write it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -658,7 +658,7 @@ pub fn template() -> &'static str {
      # Light / dark theme: a built-in name (Settings or \"Theme: Select theme…\" lists them).\n\
      # Session panel width in px (dragging its edge writes it; Mkrew keeps it 240–560).\n\
      # Sidebar: full, compact (icon rail) or hidden at start; the sidebar toggles write it.\n\
-     # Diff view: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
+     # Diff pane: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
      # Diff wrap: long lines wrap (true) or are cut at the pane edge (false); the Wrap toggle writes it.\n\
      # Reading width: agent panes start narrow (about 120-140 columns, centered) or full width.\n\
      # Close to tray (Windows): the window's ✕ hides it to the tray icon; false quits the UI.\n\

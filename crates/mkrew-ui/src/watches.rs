@@ -67,7 +67,7 @@ mod tests {
         );
     }
 
-    /// Hiding the panel (or leaving the Diff view) gives back only the worktree: the shown
+    /// Hiding the panel (or closing the Diff pane) gives back only the worktree: the shown
     /// project keeps its watcher for the title bar. Picking another worktree gives back the
     /// old one, and a view on the project folder releases nothing.
     #[test]

@@ -322,7 +322,7 @@ impl Shell {
             }
         }
         // A Diff leaf that came on screen (opened, restored, its tab shown) loads Git, as the
-        // Diff view did when it was shown; the Git panel's tab keeps its own Git fresh, so a
+        // old Diff view did when it was shown; the Git panel's tab keeps its own Git fresh, so a
         // diff beside it must not re-request (the new diff would reset the list's scroll).
         let drawn = self.diff_on_screen();
         let came = drawn && !self.diff_drawn;

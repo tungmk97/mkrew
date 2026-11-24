@@ -1735,7 +1735,7 @@ mod tests {
                 "{keys}"
             );
         }
-        // No default is a plain Ctrl+<letter>, except in the Editor view (ADR 0028): no
+        // No default is a plain Ctrl+<letter>, except in a file pane (ADR 0028): no
         // terminal has focus there (SPEC §13).
         for (command, keys) in keymap.bindings() {
             let m = keys.modifiers;

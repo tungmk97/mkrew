@@ -1132,7 +1132,7 @@ impl Shell {
         });
     }
 
-    /// Files and Search picks: the file in the Editor view (its folders open, the cursor lands
+    /// Files and Search picks: the file in a file pane (its folders open, the cursor lands
     /// on it), the caret on `line` for a search hit. A detached window's pick opens in the
     /// main one.
     fn open_palette_file(

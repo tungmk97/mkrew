@@ -49,7 +49,7 @@ impl Shell {
         }
     }
 
-    /// "Review diff" on the Changes card: the Git tab and Diff view of `repo` (`""` = the
+    /// "Review diff" on the Changes card: the Git tab and Diff pane of `repo` (`""` = the
     /// workspace folder), in its working changes. `retarget_git` first, so the refresh
     /// already asks for that repository (it stays: `pick_repo` keeps a listed repo). A view
     /// that already showed the repository may sit on History / Against base:

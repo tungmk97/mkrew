@@ -577,7 +577,7 @@ pub(crate) fn segment_in(
         })
 }
 
-/// A tab of the top bar (a terminal tab, the Editor / Diff chip), Tern style: the shown one is
+/// A tab of the top bar (a terminal, file or Diff tab), Tern style: the shown one is
 /// a solid `tab_active` chip (it always differs from `pane_gap`, see `theme::problems`) with full
 /// text and no border; the others are transparent and muted and get the `pressable` hover fill.
 /// `id` is also the hover group of a ✕ inside.

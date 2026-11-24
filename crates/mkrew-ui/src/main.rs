@@ -734,7 +734,7 @@ struct Shell {
     composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
-    /// The right panel (Files / Session / Git tabs) next to Terminals, the Editor and the Diff;
+    /// The right panel (Files / Session / Git tabs) next to Terminals;
     /// from `[ui] right_panel`, written by its toggle and tab row (SPEC §10, ADR 0081, ADR 0084).
     right_panel: inspector::RightPanel,
     /// The transcripts being read, one per session (ADR 0104): the session panel's Thread
