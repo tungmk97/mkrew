@@ -51,16 +51,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.web_project(id) else {
-            return;
-        };
-        let write =
-            (self.tabs.get_mut(&project_id)).and_then(|tabs| tabs.close_leaf(&PaneKey::Web(id)));
-        if let Some(write) = write {
-            self.save_layout(project_id, write, window, cx);
+        if let Some(project_id) = self.web_project(id) {
+            self.remove_leaf(project_id, PaneKey::Web(id), window, cx);
         }
-        self.sync_panes(window, cx);
-        cx.notify();
     }
 
     /// The body of browser pane `id`: the empty state until a page is drawn.
