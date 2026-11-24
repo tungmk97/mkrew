@@ -19,8 +19,9 @@ pub const MAX_MESSAGE: usize = 4 * 1024 * 1024;
 
 const ESC: u8 = 0x1b;
 const BEL: u8 = 0x07;
-/// Chunked messages open at once; a stream that opens more is garbage.
-const MAX_OPEN_CHUNKS: usize = 16;
+/// Chunked messages open at once (each up to `MAX_MESSAGE`, so 16 MiB held at most); a stream
+/// that opens more is garbage.
+const MAX_OPEN_CHUNKS: usize = 4;
 /// Dropped chunk ids remembered at once; a stream that drops more is garbage.
 const MAX_POISONED: usize = 256;
 
@@ -769,6 +770,15 @@ mod tests {
             s.feed(&chunk("3", false, "d")),
             vec![Piece::Message(raw(b'f', &[], "cd"))]
         );
+    }
+
+    #[test]
+    fn only_a_few_chunked_messages_stay_open_at_once() {
+        let mut s = Splitter::new();
+        for id in 0..5 {
+            s.feed(format!("\x1b_tsp;f;c={id};m=1;a\x1b\\").as_bytes());
+        }
+        assert!(s.chunks.len() <= 4, "{} open", s.chunks.len());
     }
 
     #[test]

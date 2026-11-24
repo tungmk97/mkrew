@@ -22,6 +22,17 @@ pub const HELLO_WAIT: Duration = Duration::from_secs(10);
 /// After a hello-wait fallback the engine keeps listening for a late hello this long (from the first output), then the fallback is final.
 pub const PROVISIONAL_WAIT: Duration = Duration::from_secs(60);
 
+/// Why the hello timer made the engine fall back; the UI words its toast differently for this (provisional) reason.
+pub const NO_REPLY_REASON: &str = "no TSP reply from the terminal layer";
+
+/// Why an answered hello that never opened a surface falls back, final.
+const NO_SURFACE_REASON: &str = "omp opened no surface";
+const LAST_CLOSED_REASON: &str = "omp closed its last surface";
+
+/// Open surfaces kept. With the document bounds this keeps a `tsp.snapshot` under the 16 MiB frame
+/// (see `MAX_TEXT`); the oldest read-only one is dropped first. omp opens one surface, plus a screen or two.
+const MAX_SURFACES: usize = 3;
+
 /// The kinds advertised in the hello (spec 7.1).
 pub const P1_KINDS: &[&str] = &[
     "col",
@@ -107,6 +118,8 @@ struct Surface {
     /// `root` is stale here; [`Engine::snapshot`] and the `open` update fill it from the document.
     meta: TspSurface,
     doc: Document,
+    /// Order of opening, to find the oldest.
+    opened: u64,
 }
 
 pub struct Engine {
@@ -131,6 +144,8 @@ pub struct Engine {
     /// The fallback came from the hello timer only: a hello that still arrives is answered and the
     /// engine goes Live. Every other fallback is final.
     provisional: bool,
+    /// Surfaces opened so far, for [`Surface::opened`].
+    next_open: u64,
 }
 
 impl Engine {
@@ -150,6 +165,7 @@ impl Engine {
             max_blob_bytes: MAX_BLOB_BYTES,
             fallback_reason: None,
             provisional: false,
+            next_open: 0,
         }
     }
 
@@ -219,25 +235,33 @@ impl Engine {
     }
 
     /// When to call [`Engine::on_deadline`]: the hello wait while no hello was answered, then the end of the provisional window; both count from the first output.
+    /// An answered hello without a surface yet has the same end: omp must open one by then.
     pub fn deadline(&self) -> Option<Instant> {
+        let first = self.first_output?;
         match (self.state, self.provisional) {
-            (TspState::Waiting, _) if !self.hello_ok => self.first_output.map(|t| t + HELLO_WAIT),
-            (TspState::Fallback, true) => self.first_output.map(|t| t + PROVISIONAL_WAIT),
+            (TspState::Waiting, _) if !self.hello_ok => Some(first + HELLO_WAIT),
+            (TspState::Fallback, true) => Some(first + PROVISIONAL_WAIT),
+            (TspState::Waiting | TspState::Live, _) if self.surfaces.is_empty() => {
+                Some(first + PROVISIONAL_WAIT)
+            }
             _ => None,
         }
     }
 
     /// Waiting -> provisional Fallback once the hello wait passed (a late hello still wins; held bytes stay held
     /// so a hello split across the deadline still parses). Past `PROVISIONAL_WAIT` the fallback turns final and
-    /// the held bytes come out as plain.
+    /// the held bytes come out as plain; so does an answered hello that never got a surface.
     pub fn on_deadline(&mut self, now: Instant) -> Vec<Step> {
         let mut steps = Vec::new();
         if self.deadline().is_some_and(|d| now >= d) {
             if self.provisional {
                 self.provisional = false;
                 self.pass_pending(&mut steps);
+            } else if self.hello_ok {
+                self.fall_back(NO_SURFACE_REASON.into(), &mut steps);
+                self.pass_pending(&mut steps);
             } else {
-                self.fall_back("no TSP reply from the terminal layer".into(), &mut steps);
+                self.fall_back(NO_REPLY_REASON.into(), &mut steps);
                 self.provisional = true;
             }
         }
@@ -379,12 +403,32 @@ impl Engine {
             root: doc.to_tree(),
             ..meta.clone()
         };
+        // An existing id is replaced: omp re-opens `s:1` after an adopt, and clients replace too.
+        self.surfaces.remove(&meta.id);
+        // Past the cap the oldest read-only surface goes, else the oldest: the snapshot stays under the frame limit.
+        while self.surfaces.len() >= MAX_SURFACES {
+            let Some(victim) = self
+                .surfaces
+                .iter()
+                .min_by_key(|(_, s)| (!s.meta.read_only, s.opened))
+                .map(|(id, _)| id.clone())
+            else {
+                break;
+            };
+            self.surfaces.remove(&victim);
+            steps.push(Step::Update(TspChangeFor {
+                surface: victim,
+                change: TspChange::Closed { keep: false },
+            }));
+        }
         steps.push(Step::Update(TspChangeFor {
             surface: meta.id.clone(),
             change: TspChange::Open { surface: shown },
         }));
-        // An existing id is replaced: omp re-opens `s:1` after an adopt, and clients replace too.
-        self.surfaces.insert(meta.id.clone(), Surface { meta, doc });
+        self.next_open += 1;
+        let opened = self.next_open;
+        self.surfaces
+            .insert(meta.id.clone(), Surface { meta, doc, opened });
         if self.state == TspState::Waiting {
             self.state = TspState::Live;
             steps.push(Step::State(TspState::Live));
@@ -408,6 +452,8 @@ impl Engine {
         self.surfaces.remove(id);
         if inline {
             self.fall_back("omp closed its surface and draws rows again".into(), steps);
+        } else if self.surfaces.is_empty() {
+            self.fall_back(LAST_CLOSED_REASON.into(), steps);
         }
     }
 
@@ -425,6 +471,11 @@ impl Engine {
             errors,
         } = surface.doc.apply(ops);
         let (gone, evicted) = surface.doc.evict();
+        if surface.doc.over_bounds() {
+            // `dock` and `layer` are never evicted; what they hold cannot be shown or mirrored.
+            self.fall_back("document over bounds".into(), steps);
+            return;
+        }
         applied.extend(evicted);
         surface.meta.seq = seq;
 

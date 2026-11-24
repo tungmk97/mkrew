@@ -185,8 +185,12 @@ fn the_deadline_runs_from_the_first_output_until_a_hello_is_answered() {
 
     let mut answered = Engine::new(120, true);
     answered.on_output(t, &hello_query(json!([1])));
-    assert_eq!(answered.deadline(), None);
-    assert!(answered.on_deadline(t + Duration::from_secs(60)).is_empty());
+    assert_eq!(
+        answered.deadline(),
+        Some(t + PROVISIONAL_WAIT),
+        "an answered hello still needs an open"
+    );
+    assert!(answered.on_deadline(t + Duration::from_secs(59)).is_empty());
     assert_eq!(answered.state(), TspState::Waiting);
 }
 
@@ -837,4 +841,240 @@ fn falling_back_drops_the_blobs() {
     assert_eq!(e.blob_bytes, 3);
     e.on_output(t, &apc(b'x', json!({"id": SF, "keep": false})));
     assert_eq!((e.blobs.len(), e.blob_order.len(), e.blob_bytes), (0, 0, 0));
+}
+
+fn open_as(id: &str, mode: &str) -> Vec<u8> {
+    apc(
+        b'o',
+        json!({"id": id, "mode": mode, "title": "omp", "role": "omp.session"}),
+    )
+}
+
+fn surface_ids(e: &Engine) -> Vec<String> {
+    e.snapshot().surfaces.into_iter().map(|s| s.id).collect()
+}
+
+#[test]
+fn no_open_after_a_hello_falls_back_for_good_at_the_provisional_end() {
+    let t = Instant::now();
+    let mut e = Engine::new(120, true);
+    e.on_output(t, &hello_query(json!([1])));
+    assert_eq!(e.deadline(), Some(t + PROVISIONAL_WAIT));
+    assert!(
+        e.on_deadline(t + PROVISIONAL_WAIT - Duration::from_millis(1))
+            .is_empty()
+    );
+    let steps = e.on_deadline(t + PROVISIONAL_WAIT);
+    assert!(
+        matches!(
+            steps.as_slice(),
+            [Step::State(TspState::Fallback), Step::Warn(_)]
+        ),
+        "{steps:?}"
+    );
+    assert!(e.is_passthrough());
+    assert_eq!(e.deadline(), None);
+    assert_eq!(
+        e.snapshot().reason.as_deref(),
+        Some("omp opened no surface")
+    );
+
+    // An open before the end cancels the deadline.
+    let mut e = Engine::new(120, true);
+    e.on_output(t, &hello_query(json!([1])));
+    e.on_output(t + Duration::from_secs(5), &open_bytes());
+    assert_eq!(e.deadline(), None);
+}
+
+#[test]
+fn a_late_hello_without_an_open_falls_back_for_good_too() {
+    let t = Instant::now();
+    let mut e = Engine::new(120, true);
+    e.on_output(t, b"rows");
+    e.on_deadline(t + HELLO_WAIT);
+    e.on_output(t + HELLO_WAIT, &hello_query(json!([1])));
+    assert_eq!(e.state(), TspState::Live);
+    assert_eq!(
+        e.deadline(),
+        Some(t + PROVISIONAL_WAIT),
+        "from the first output"
+    );
+    e.on_deadline(t + PROVISIONAL_WAIT);
+    assert_eq!(e.state(), TspState::Fallback);
+    assert!(e.is_passthrough());
+    assert_eq!(
+        e.snapshot().reason.as_deref(),
+        Some("omp opened no surface")
+    );
+}
+
+#[test]
+fn closing_the_last_surface_while_live_falls_back_but_a_kept_one_does_not() {
+    let t = Instant::now();
+    let mut e = Engine::new(120, true);
+    e.on_output(t, &hello_query(json!([1])));
+    e.on_output(t, &open_as("s:2", "screen"));
+    e.on_output(t, &apc(b'x', json!({"id": "s:2", "keep": true})));
+    assert_eq!(e.state(), TspState::Live, "the read-only surface stays");
+    e.on_output(t, &apc(b'x', json!({"id": "s:2", "keep": false})));
+    assert_eq!(e.state(), TspState::Fallback);
+    assert!(e.is_passthrough());
+    assert_eq!(
+        e.snapshot().reason.as_deref(),
+        Some("omp closed its last surface")
+    );
+}
+
+#[test]
+fn a_provisional_fallback_then_a_hello_for_another_version_goes_final() {
+    let t = Instant::now();
+    let mut e = Engine::new(120, true);
+    e.on_output(t, b"rows");
+    e.on_deadline(t + HELLO_WAIT);
+    assert!(!e.is_passthrough());
+    let hello = hello_query(json!([2]));
+    let steps = e.on_output(t + HELLO_WAIT, &hello);
+    assert!(
+        matches!(steps.first(), Some(Step::State(TspState::Fallback))),
+        "{steps:?}"
+    );
+    assert!(e.is_passthrough());
+    assert_eq!(e.deadline(), None);
+    assert_eq!(
+        e.snapshot().reason.as_deref(),
+        Some("omp offered TSP versions [2], Mkrew speaks 1")
+    );
+    assert_eq!(
+        e.on_output(t + HELLO_WAIT, &hello),
+        vec![Step::Plain(hello)]
+    );
+}
+
+#[test]
+fn a_fourth_surface_replaces_the_oldest_read_only_one_else_the_oldest() {
+    let (mut e, t) = live();
+    for id in ["s:2", "s:3"] {
+        e.on_output(t, &open_as(id, "screen"));
+    }
+    e.on_output(t, &apc(b'x', json!({"id": "s:2", "keep": true})));
+    let steps = e.on_output(t, &open_as("s:4", "screen"));
+    assert_eq!(surface_ids(&e), ["s:1", "s:3", "s:4"]);
+    assert_eq!(
+        steps[0],
+        Step::Update(TspChangeFor {
+            surface: "s:2".into(),
+            change: TspChange::Closed { keep: false },
+        }),
+        "clients drop the replaced surface: {steps:?}"
+    );
+    e.on_output(t, &open_as("s:5", "screen"));
+    assert_eq!(
+        surface_ids(&e),
+        ["s:3", "s:4", "s:5"],
+        "none read-only: the oldest goes"
+    );
+    assert_eq!(e.state(), TspState::Live);
+}
+
+#[test]
+fn content_the_eviction_cannot_remove_makes_the_document_over_bounds_and_falls_back() {
+    let t = Instant::now();
+    let mut e = Engine::with_limits(80, true, 12, MAX_TEXT);
+    e.on_output(t, &hello_query(json!([1])));
+    e.on_output(t, &open_bytes());
+    let mut ops = vec![
+        main_op(),
+        json!(["add", "dock", SF, null, {"id": "dock", "k": "col"}]),
+        json!(["add", "layer", SF, null, {"id": "layer", "k": "col"}]),
+    ];
+    // `main` is empty, so nothing can be evicted: 15 dock rows stay over the 12 node bound.
+    ops.extend((0..15).map(|i| {
+        let id = format!("d{i}");
+        json!(["add", id, "dock", null, {"id": id, "k": "text", "p": {"text": "x"}}])
+    }));
+    let steps = e.on_output(t, &frame_bytes(SF, 1, json!(ops)));
+    assert!(
+        steps.contains(&Step::State(TspState::Fallback)),
+        "{steps:?}"
+    );
+    assert!(e.is_passthrough());
+    assert!(e.snapshot().surfaces.is_empty());
+    assert_eq!(e.snapshot().reason.as_deref(), Some("document over bounds"));
+}
+
+/// `n` small `ansi` rows under `main` of `sf`; each text is `esc` ESC characters, 6 JSON bytes each.
+fn fill(e: &mut Engine, t: Instant, sf: &str, rows: &[(String, Value)], esc: usize) {
+    let text = "\x1b".repeat(esc);
+    let mut seq = 1;
+    e.on_output(
+        t,
+        &frame_bytes(
+            sf,
+            seq,
+            json!([
+                ["add", "main", sf, null, {"id": "main", "k": "col"}],
+                ["add", "dock", sf, null, {"id": "dock", "k": "col"}],
+                ["add", "layer", sf, null, {"id": "layer", "k": "col"}]
+            ]),
+        ),
+    );
+    for batch in rows.chunks(1000) {
+        seq += 1;
+        let ops: Vec<Value> = batch
+            .iter()
+            .map(|(id, props)| {
+                let mut p = props.clone();
+                let k = if p.get("blob").is_some() {
+                    "image"
+                } else {
+                    "ansi"
+                };
+                p["text"] = json!(text);
+                json!(["add", id, "main", null, {"id": id, "k": k, "p": p}])
+            })
+            .collect();
+        e.on_output(t, &frame_bytes(sf, seq, json!(ops)));
+    }
+}
+
+#[test]
+fn three_full_surfaces_and_full_blobs_fit_the_protocol_frame() {
+    let t = Instant::now();
+    let mut e = Engine::new(120, true);
+    e.on_output(t, &hello_query(json!([1])));
+    // Four 1 MiB blobs: the byte cap exactly.
+    let blob_len = MAX_BLOB_BYTES / 4;
+    for i in 0..4 {
+        let body = base64::engine::general_purpose::STANDARD.encode(vec![7u8; blob_len]);
+        let msg = format!("\x1b_tsp;b;id=b{i};mime=image/png;{body}\x1b\\");
+        e.on_output(t, msg.as_bytes());
+    }
+    assert_eq!(e.blob_bytes, MAX_BLOB_BYTES);
+    // Rows as heavy as the node and text bounds allow: ESC is the worst JSON escape (6 bytes).
+    let esc = MAX_TEXT / MAX_NODES / 6;
+    for n in 1..=3 {
+        let sf = format!("s:{n}");
+        e.on_output(t, &open_as(&sf, if n == 1 { "inline" } else { "screen" }));
+        let mut rows: Vec<(String, Value)> = (0..MAX_NODES - 8)
+            .map(|i| (format!("{sf}.r{i:05}"), json!({"w": 1, "dim": true})))
+            .collect();
+        if n == 1 {
+            rows.extend((0..4).map(|i| (format!("img{i}"), json!({"blob": format!("b{i}")}))));
+        }
+        fill(&mut e, t, &sf, &rows, esc);
+        let doc = &e.surfaces[&sf].doc;
+        assert!(
+            doc.len() >= MAX_NODES - 8,
+            "{sf} was evicted: {}",
+            doc.len()
+        );
+    }
+    let snapshot = e.snapshot();
+    assert_eq!((snapshot.surfaces.len(), snapshot.blobs.len()), (3, 4));
+    let len = serde_json::to_vec(&snapshot).unwrap().len();
+    assert!(
+        len <= mkrew_protocol::MAX_FRAME_LEN,
+        "{len} bytes over the {} byte frame",
+        mkrew_protocol::MAX_FRAME_LEN
+    );
 }

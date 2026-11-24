@@ -9,9 +9,14 @@ use mkrew_protocol::TspNode;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-pub const MAX_NODES: usize = 50_000;
-/// Bytes of text per document; a `tsp.snapshot` reply must fit the 16 MiB protocol frame.
-pub const MAX_TEXT: usize = 6 * 1024 * 1024;
+/// Nodes per document. With [`MAX_TEXT`] this is what one surface may weigh in a `tsp.snapshot` reply.
+pub const MAX_NODES: usize = 20_000;
+/// JSON bytes of string props per document (a string counts as its escaped length, see `weight`).
+/// The reply must fit the 16 MiB protocol frame with 3 surfaces (`MAX_SURFACES`) and the blobs
+/// (4 MiB, 5.3 MiB as base64): 3 x (1 MiB text + 20,000 nodes x ~100 B of ids, kinds and keys,
+/// about 2 MiB) + 5.3 MiB = ~14 MiB, ~2 MiB margin. Nodes heavier than that are caught by the
+/// daemon, which drops the blobs and then refuses the reply instead of breaking the connection.
+pub const MAX_TEXT: usize = 1024 * 1024;
 /// Id of the synthetic first row of `main` once old rows were evicted.
 pub const TRIM_ID: &str = "mkrew.trimmed";
 const TRIM_TEXT: &str = "Earlier messages were trimmed";
@@ -538,6 +543,11 @@ impl Document {
         self.evict_with(self.max_nodes, self.max_text)
     }
 
+    /// Still over a bound after [`Document::evict`]: only `dock` and `layer` hold the excess.
+    pub fn over_bounds(&self) -> bool {
+        self.nodes.len() > self.max_nodes || self.text_bytes > self.max_text
+    }
+
     fn evict_with(&mut self, max_nodes: usize, max_text: usize) -> (Vec<String>, Vec<Value>) {
         if self.nodes.len() <= max_nodes && self.text_bytes <= max_text {
             return (Vec::new(), Vec::new());
@@ -585,17 +595,23 @@ impl Document {
     }
 }
 
-/// Bytes the document counts for a node: the length of every string value in its props, at any
-/// depth (text, spans, table cells, `kv` items, labels, diff hunks).
-// ponytail: JSON escaping is not counted (an ESC-dense `ansi` text grows 6x as `\u001b`); the
-// 6 MiB bound leaves ~2.6x headroom to the 16 MiB frame. Count escaped length if that proves thin.
+/// Bytes the document counts for a node: the JSON length of every string value in its props, at
+/// any depth (text, spans, table cells, `kv` items, labels, diff hunks), escapes included: an
+/// ESC-dense `ansi` text is 6 bytes per character in the snapshot.
 fn weight(props: &Map<String, Value>) -> usize {
     props.values().map(value_weight).sum()
 }
 
 fn value_weight(value: &Value) -> usize {
     match value {
-        Value::String(s) => s.len(),
+        Value::String(s) => s
+            .chars()
+            .map(|c| match c {
+                '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+                c if c < ' ' => 6,
+                c => c.len_utf8(),
+            })
+            .sum(),
         Value::Array(items) => items.iter().map(value_weight).sum(),
         Value::Object(map) => map.values().map(value_weight).sum(),
         _ => 0,
@@ -862,6 +878,20 @@ mod tests {
         assert_eq!(doc.text_bytes(), 4);
         doc.apply(&[json!(["del", "k"])]);
         assert_eq!(doc.text_bytes(), 0);
+    }
+
+    /// The bound is on what the snapshot will carry, so a string counts as its JSON escaped length.
+    #[test]
+    fn text_bytes_counts_the_json_escaped_length() {
+        let mut doc = seeded();
+        doc.apply(&[json!(["add", "t", "main", null, {"id": "t", "k": "text",
+            "p": {"text": "a\u{1b}\n\"\\é"}}])]);
+        // a 1, ESC 6, newline 2, quote 2, backslash 2, é 2 bytes
+        assert_eq!(doc.text_bytes(), 15);
+        assert_eq!(
+            serde_json::to_string("a\u{1b}\n\"\\é").unwrap().len() - 2,
+            15
+        );
     }
 
     #[test]
