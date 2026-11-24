@@ -591,14 +591,15 @@ impl Mirror {
 }
 
 /// Whether anything in `doc` changes with time: a spinner, a running `elapsed` (no `stopped`), a
-/// rate or a checklist with an active item. A shimmer draws as plain text (spec 7.1). The status
-/// tick redraws only while this is true (ADR 0086).
+/// bar without an amount or a checklist with an active item. A `rate` is a static value omp
+/// updates itself, and a shimmer draws as plain text (spec 7.1). The status tick redraws only
+/// while this is true (ADR 0086).
 pub fn animating(doc: &Document) -> bool {
     let mut stack = vec![doc.root()];
     while let Some(id) = stack.pop() {
         for node in doc.children(id) {
             let live = match node.kind.as_str() {
-                "spinner" | "rate" => true,
+                "spinner" => true,
                 // A bar without an amount draws the loading dots; a ring (the ask timeout) is
                 // a label.
                 "progress" => !has_value(&node.props),
@@ -2261,7 +2262,7 @@ mod tests {
     }
 
     #[test]
-    fn only_spinner_running_elapsed_and_rate_animate() {
+    fn only_spinner_running_elapsed_and_bars_without_an_amount_animate() {
         let anim = |node| animating(&with_node(node));
         assert!(anim(json!({"id": "n", "k": "spinner"})));
         assert!(anim(json!({"id": "n", "k": "elapsed", "p": {"age": 1000}})));
@@ -2272,9 +2273,20 @@ mod tests {
             !anim(json!({"id": "n", "k": "shimmer", "p": {"text": "x"}})),
             "a shimmer draws as plain text"
         );
-        assert!(anim(
-            json!({"id": "n", "k": "rate", "p": {"value": 3.0, "unit": "tok/s"}})
-        ));
+        assert!(
+            !anim(json!({"id": "n", "k": "rate", "p": {"value": 3.0, "unit": "tok/s"}})),
+            "a rate is a static value omp updates itself"
+        );
+        assert!(
+            !animating(&with_node(json!({
+                "id": "n", "k": "row",
+                "c": [
+                    {"id": "r", "k": "rate", "p": {"value": 3.0, "unit": "tok/s"}},
+                    {"id": "e", "k": "elapsed", "p": {"age": 1000, "stopped": 5000}}
+                ]
+            }))),
+            "only a rate and a stopped elapsed: nothing moves"
+        );
         assert!(!anim(json!({"id": "n", "k": "text", "p": {"text": "x"}})));
         assert!(!anim(json!({"id": "n", "k": "meter", "p": {"value": 0.5}})));
         assert!(

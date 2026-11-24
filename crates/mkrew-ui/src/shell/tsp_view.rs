@@ -386,7 +386,7 @@ impl Shell {
     }
 
     /// Something on screen changes with time (the starting dots, a spinner, a running elapsed,
-    /// a rate, a bar without an amount): the status tick redraws (ADR 0086). Only panes on screen
+    /// a bar without an amount): the status tick redraws (ADR 0086). Only panes on screen
     /// count.
     pub(crate) fn tsp_animating(&self) -> bool {
         let visible = self.visible_sessions();
@@ -1860,7 +1860,8 @@ impl Shell {
             .into_any_element()
     }
 
-    /// spinner, elapsed, progress, rate, meter, effort: redrawn on the status tick (ADR 0086).
+    /// spinner, elapsed, progress, rate, meter, effort. What moves (a spinner, a running elapsed,
+    /// a bar without an amount) is redrawn on the status tick (ADR 0086); a `rate` is static.
     fn tsp_live(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
         let el = match node.kind.as_str() {
             "spinner" => Self::tsp_spinner(p, node),
