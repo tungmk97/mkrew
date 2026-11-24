@@ -344,14 +344,23 @@ fn a_drive_part_inside_a_path_is_refused_and_creates_nothing() {
     let repo = env.repo();
     let (_daemon, mut client) = env.start();
     let id = client.add_project(&repo).id;
-    let escaped = Path::new("C:evil");
-    assert!(!escaped.exists());
+    // `<drive>:<name>` is relative to the daemon's working directory (this test's) on its drive:
+    // the old code created it there.
+    let cwd = std::env::current_dir().unwrap();
+    let drive: String = cwd
+        .to_string_lossy()
+        .trim_start_matches(r"\\?\")
+        .chars()
+        .take(2)
+        .collect();
+    assert!(drive.ends_with(':'), "{drive}");
+    let name = format!("mkrew-escape-{}", Ulid::new());
 
     let create = Request::FsCreate(FsCreateParams {
         project_id: id,
         worktree_task_id: None,
-        dir: "x/C:".into(),
-        name: "evil".into(),
+        dir: format!("x/{drive}"),
+        name: name.clone(),
         folder: false,
     });
     assert_eq!(error_code(client.call(create)), ErrorCode::InvalidRequest);
@@ -367,7 +376,11 @@ fn a_drive_part_inside_a_path_is_refused_and_creates_nothing() {
             "write {path}"
         );
     }
-    assert!(!escaped.exists());
+    let leaked = cwd.join(&name).exists();
+    if leaked {
+        let _ = std::fs::remove_file(cwd.join(&name));
+    }
+    assert!(!leaked, "{name} was created outside the root");
     assert!(
         std::fs::read_dir(&repo)
             .unwrap()
