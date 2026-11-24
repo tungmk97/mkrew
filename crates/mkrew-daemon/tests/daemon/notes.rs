@@ -318,3 +318,60 @@ fn a_folder_on_a_drive_that_does_not_exist_is_an_error_answer() {
     assert!(std::fs::read_dir(&repo).unwrap().next().is_none());
     client.stop();
 }
+
+#[test]
+fn an_absolute_folder_inside_dot_git_is_refused_and_nothing_is_made() {
+    let env = Env::new();
+    let repo = env.repo();
+    let folder = repo.join(".git").join("notes");
+    env.set_notes_folder(&slash(&folder));
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+
+    let body = daemon_error(client.call(new_note(id)));
+    assert_eq!(body.code, ErrorCode::InvalidRequest);
+    assert!(body.message.contains(".git"), "{}", body.message);
+    assert!(!folder.exists());
+    client.stop();
+}
+
+/// `C:` or `C:x` inside a path reads as a name on Windows, but joining it replaces the base
+/// (a path escape that `fs.create` once allowed).
+#[cfg(windows)]
+#[test]
+fn a_drive_part_inside_a_path_is_refused_and_creates_nothing() {
+    let env = Env::new();
+    let repo = env.repo();
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+    let escaped = Path::new("C:evil");
+    assert!(!escaped.exists());
+
+    let create = Request::FsCreate(FsCreateParams {
+        project_id: id,
+        worktree_task_id: None,
+        dir: "x/C:".into(),
+        name: "evil".into(),
+        folder: false,
+    });
+    assert_eq!(error_code(client.call(create)), ErrorCode::InvalidRequest);
+    for path in ["x/C:", "x/C:evil", "a/D:/x"] {
+        assert_eq!(
+            error_code(client.call(read(id, path))),
+            ErrorCode::InvalidRequest,
+            "read {path}"
+        );
+        assert_eq!(
+            error_code(client.call(write(id, path, "x", "0"))),
+            ErrorCode::InvalidRequest,
+            "write {path}"
+        );
+    }
+    assert!(!escaped.exists());
+    assert!(
+        std::fs::read_dir(&repo)
+            .unwrap()
+            .all(|e| e.unwrap().file_name() == ".git")
+    );
+    client.stop();
+}

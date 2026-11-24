@@ -52,8 +52,15 @@ pub fn relative_path(file_path: &str) -> Option<(String, PathBuf)> {
     let mut components = path.components().peekable();
     components.peek()?;
     components
-        .all(|c| matches!(c, Component::Normal(_)))
+        .all(|c| matches!(c, Component::Normal(name) if is_plain(name)))
         .then_some((normalized, path))
+}
+
+/// One ordinary name: alone it parses as a single normal component. On Windows a `C:` or `C:x`
+/// in the middle of a path reads as a name, but joining it replaces the base.
+fn is_plain(name: &std::ffi::OsStr) -> bool {
+    let mut parts = Path::new(name).components();
+    matches!(parts.next(), Some(Component::Normal(_))) && parts.next().is_none()
 }
 
 /// A client-supplied absolute path inside `folder` (the notes folder, as
@@ -61,14 +68,31 @@ pub fn relative_path(file_path: &str) -> Option<(String, PathBuf)> {
 /// joining; `None` for a relative path, `folder` itself, a path outside it and one that steps
 /// out of it with `..`. The exception to [`relative_path`] for `fs.read` / `fs.write` of notes
 /// (Tern panes spec 2026-11-23 section 7.2).
-// ponytail: compared component by component, so `c:/notes` and `C:/notes` differ; the daemon
-// answers the folder in the spelling of the setting, which is what the client sends back.
+// ponytail: drive letters compare equal in any case (`Path` does), names compare ignoring ASCII
+// case on Windows only, like the UI's drop check; the daemon answers the path as the client
+// spelled it.
 pub fn notes_file(file_path: &str, folder: &Path) -> Option<(String, PathBuf)> {
     let normalized = file_path.trim().replace('\\', "/");
     let path = PathBuf::from(&normalized);
-    let mut inside = path.strip_prefix(folder).ok()?.components().peekable();
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut parts = path.components();
+    for want in folder.components() {
+        let have = parts.next()?;
+        let equal = if cfg!(windows) {
+            have.as_os_str().eq_ignore_ascii_case(want.as_os_str())
+        } else {
+            have == want
+        };
+        if !equal {
+            return None;
+        }
+    }
+    let mut inside = parts.peekable();
     inside.peek()?;
-    (path.is_absolute() && inside.all(|c| matches!(c, Component::Normal(_))))
+    inside
+        .all(|c| matches!(c, Component::Normal(name) if is_plain(name)))
         .then_some((normalized, path))
 }
 
@@ -301,6 +325,19 @@ mod tests {
             assert!(inside("C:\\notes\\a.md").is_some());
             assert_eq!(inside("D:/notes/a.md"), None);
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_part_inside_a_path_is_refused_and_notes_compare_ignoring_case() {
+        for bad in ["x/C:", "x/C:evil", "a/D:/x", "C:x", "x\\C:\\y"] {
+            assert_eq!(relative_path(bad), None, "{bad}");
+        }
+        let folder = Path::new("c:/users/me/notes");
+        assert!(notes_file("C:\\Users\\Me\\Notes\\a.md", folder).is_some());
+        assert_eq!(notes_file("C:/users/me/notes/D:/a.md", folder), None);
+        assert_eq!(notes_file("C:/users/me/notes/D:a.md", folder), None);
+        assert_eq!(notes_file("C:/users/me/other/a.md", folder), None);
     }
 
     #[test]

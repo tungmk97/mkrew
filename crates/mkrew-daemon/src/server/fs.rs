@@ -211,6 +211,11 @@ impl Daemon {
             Ok(NotesFolder::Relative(dir)) if in_git_dir(&dir) => {
                 return outside("[notes] folder", &dir);
             }
+            Ok(NotesFolder::Absolute(dir))
+                if in_git_dir(&dir.to_string_lossy().replace('\\', "/")) =>
+            {
+                return outside("[notes] folder", &dir.to_string_lossy());
+            }
             Ok(folder) => folder,
             Err(message) => return Outcome::error(ErrorCode::InvalidRequest, message),
         };

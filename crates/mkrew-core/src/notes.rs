@@ -1,7 +1,7 @@
 //! New note helpers (Tern panes spec 2026-11-23 section 7.2), pure: the file name of a note and
 //! what `[notes] folder` means. The daemon creates the file (`fs.new_note`).
 
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use chrono::{Datelike, NaiveDateTime, Timelike};
 
@@ -12,6 +12,12 @@ pub enum NotesFolder {
     Relative(String),
     /// A full path, used as is for every workspace: no `..`, no `.`, no trailing separator.
     Absolute(PathBuf),
+}
+
+/// One ordinary name: alone it parses as a single normal component (`C:` does not).
+fn is_plain(name: &std::ffi::OsStr) -> bool {
+    let mut parts = Path::new(name).components();
+    matches!(parts.next(), Some(Component::Normal(_))) && parts.next().is_none()
 }
 
 /// `[notes] folder` as the user typed it. Spaces around it are trimmed; `/` and `\` both
@@ -44,6 +50,11 @@ pub fn folder(setting: &str) -> Result<NotesFolder, String> {
             Component::ParentDir => {
                 return Err(format!(
                     "[notes] folder {setting:?} must not contain \"..\"; write the full path instead"
+                ));
+            }
+            Component::Normal(name) if !is_plain(name) => {
+                return Err(format!(
+                    "[notes] folder {setting:?} has a drive part {name:?} inside the path; write the full path instead"
                 ));
             }
             part => clean.push(part),
@@ -136,6 +147,22 @@ mod tests {
         ] {
             let message = folder(text).unwrap_err();
             assert!(message.contains(".."), "{text:?}: {message}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_part_inside_the_path_is_refused() {
+        // `C:` after the first part reads as a name, and joining it would replace the base.
+        for text in [
+            "notes/C:",
+            "a/D:/x",
+            "C:/notes/D:/x",
+            "C:/notes/sub/D:/x",
+            "a\\C:x",
+        ] {
+            let message = folder(text).unwrap_err();
+            assert!(message.contains("drive"), "{text:?}: {message}");
         }
     }
 
