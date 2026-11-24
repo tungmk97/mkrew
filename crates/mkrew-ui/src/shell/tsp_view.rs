@@ -59,6 +59,24 @@ pub(crate) struct TspUi {
     todo_toggled: HashSet<(String, String)>,
     /// A `reveal` just moved the list: the next frame must not follow the end over it.
     reveal_pending: Cell<bool>,
+    /// The scroll of each growing `list` (a picker's items scroll inside their card).
+    lists: RefCell<HashMap<String, ListState>>,
+}
+
+/// One growing list's scroll and the item it last scrolled to.
+struct ListState {
+    handle: ScrollHandle,
+    selected: Option<String>,
+}
+
+/// The scroll handle of list `id`, made on first use.
+fn list_handle(lists: &RefCell<HashMap<String, ListState>>, id: &str) -> ScrollHandle {
+    let mut lists = lists.borrow_mut();
+    let state = lists.entry(id.to_owned()).or_insert_with(|| ListState {
+        handle: ScrollHandle::new(),
+        selected: None,
+    });
+    state.handle.clone()
 }
 
 impl TspUi {
@@ -82,6 +100,7 @@ impl TspUi {
             todo_chip: Rc::new(Cell::new(Bounds::default())),
             todo_toggled: HashSet::new(),
             reveal_pending: Cell::new(false),
+            lists: RefCell::new(HashMap::new()),
         }
     }
 
@@ -196,7 +215,17 @@ impl Shell {
             }
             tsp::reveal_index(doc, op.get(1)?.as_str()?)
         });
-        if let Some(ix) = reveal {
+        // A reveal inside a list moves that list; elsewhere the page list.
+        let in_list = ops.iter().rev().find_map(|op| {
+            let op = op.as_array()?;
+            if op.first()?.as_str()? != "reveal" {
+                return None;
+            }
+            tsp::list_reveal(doc, op.get(1)?.as_str()?)
+        });
+        if let Some((list, ix)) = in_list {
+            list_handle(&ui.lists, &list).scroll_to_item(ix);
+        } else if let Some(ix) = reveal {
             // Index 0 of the list is the spacer under the pane's drag strip.
             ui.scroll.scroll_to_item(ix + 1);
             // The list may be at its end: the next frame must not follow it back down.
@@ -603,6 +632,17 @@ struct Paint<'a> {
     now: i64,
     theme: &'a Theme,
     focused: bool,
+    /// A modal overlay is open over the page.
+    modal: bool,
+    /// The node is drawn inside the overlay layer.
+    in_layer: bool,
+}
+
+impl Paint<'_> {
+    /// Tooltips of the page under a modal overlay would float over it.
+    fn tips(&self) -> bool {
+        self.in_layer || !self.modal
+    }
 }
 
 /// The width of one terminal cell, measured once per font and size.
@@ -681,6 +721,8 @@ fn styled_runs_wavy(
     typo: bool,
     theme: &Theme,
 ) -> StyledText {
+    // Private-use glyphs (omp's icons) are drawn in the terminal font, which carries them.
+    let runs = tsp::with_icon_glyphs(runs);
     let ui_font = gpui::font(theme.ui_font_family.clone());
     let mono_font = terminal_font(theme);
     let mut text = String::new();
@@ -807,6 +849,12 @@ impl Shell {
             now,
             theme,
             focused: is_focused,
+            modal: doc.children("layer").any(|n| !bool_prop(n, "hidden")),
+            in_layer: false,
+        };
+        let layer_paint = Paint {
+            in_layer: true,
+            ..paint
         };
         // Follow the end while the user is at it, except in the frame after a `reveal` moved the
         // list: that scroll is applied while this frame paints.
@@ -829,7 +877,7 @@ impl Shell {
             .collect();
         let layer: Vec<AnyElement> = (doc.children("layer"))
             .filter(|node| !bool_prop(node, "hidden"))
-            .map(|node| self.tsp_layer_child(&paint, node, cx))
+            .map(|node| self.tsp_layer_child(&layer_paint, node, cx))
             .collect();
         root.child(
             div()
@@ -922,19 +970,28 @@ impl Shell {
         if node.kind != "overlay" {
             return self.tsp_node(p, node, cx);
         }
-        let mut holder = div().w_full().flex().flex_col();
-        holder = match str_prop(node, "anchor") {
+        // Bounded to the pane: the card keeps its head and hints, a growing list scrolls inside.
+        let holder = div().w_full().h_full().flex().flex_col().items_center();
+        let holder = match str_prop(node, "anchor") {
             Some("top") => holder.justify_start(),
             Some("bottom") => holder.justify_end(),
             _ => holder.justify_center(),
         };
         holder
-            .items_center()
             .child(
                 div()
                     .w_full()
                     .max_w(px(tsp::overlay_width(str_prop(node, "size"))))
-                    .child(self.tsp_node(p, node, cx)),
+                    .max_h_full()
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .p(px(space::M))
+                    .rounded(px(theme::radius::MEDIUM))
+                    .bg(rgb(p.theme.surface_raised))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(p.theme.border))
+                    .children(self.tsp_children(p, node, cx)),
             )
             .into_any_element()
     }
@@ -999,6 +1056,7 @@ impl Shell {
     ) -> AnyElement {
         let title = str_prop(node, "title");
         let clickable = tsp::has_click(p.doc, node);
+        let title = title.filter(|_| p.tips());
         if title.is_none() && !clickable {
             return el.into_any_element();
         }
@@ -1012,7 +1070,7 @@ impl Shell {
                 }),
             );
         }
-        if let Some(title) = title {
+        if let Some(title) = title.filter(|_| p.tips()) {
             el = el.tooltip(tooltip(p.theme, title, ""));
         }
         el.into_any_element()
@@ -1104,6 +1162,8 @@ impl Shell {
                         el = el.child(styled_runs(&head, theme.text, false, theme));
                     }
                 }
+                // In the overlay a column is bounded by its card: its growing list scrolls.
+                let el = if p.in_layer { el.overflow_hidden() } else { el };
                 let el = Self::tsp_flow(el, node).children(self.tsp_children(p, node, cx));
                 self.tsp_decorate(el, p, node, Look::Text, false, cx)
             }
@@ -1116,12 +1176,18 @@ impl Shell {
         let card = node.kind == "card";
         let collapsible = bool_prop(node, "collapsible");
         let collapsed = bool_prop(node, "collapsed");
-        let head = (node.props.get("head"))
-            .map(|head| tsp::spans_of(head, theme))
-            .unwrap_or_default();
+        let head_source = tsp::head_of(p.doc, node);
+        let head_child = match head_source {
+            tsp::Head::Child(child) => Some(child),
+            _ => None,
+        };
+        let head = match head_source {
+            tsp::Head::Spans(head) => tsp::spans_of(head, theme),
+            _ => Vec::new(),
+        };
         let head_color =
             str_prop(node, "tone").map_or(theme.text, |tone| tsp::tone_color(tone, theme));
-        let head_el = (!head.is_empty()).then(|| {
+        let head_el = (!head.is_empty() || head_child.is_some()).then(|| {
             let mut row = div().flex().items_center().gap(px(space::S));
             if collapsible {
                 let chevron = if collapsed {
@@ -1131,11 +1197,14 @@ impl Shell {
                 };
                 row = row.child(icon_svg(chevron, theme::ICON_SIZE_SMALL, theme.text_muted));
             }
-            let row = row.child(
-                div()
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .child(styled_runs(&head, head_color, false, theme)),
-            );
+            let row = match head_child {
+                Some(child) => row.child(self.tsp_node(p, child, cx)),
+                None => row.child(
+                    div()
+                        .font_weight(FontWeight(weight::SEMIBOLD))
+                        .child(styled_runs(&head, head_color, false, theme)),
+                ),
+            };
             if !collapsible {
                 return row.into_any_element();
             }
@@ -1158,10 +1227,16 @@ impl Shell {
         let body = if collapsed {
             Vec::new()
         } else {
-            self.tsp_children(p, node, cx)
+            (p.doc.children(&node.id))
+                .filter(|child| head_child.is_none_or(|head| head.id != child.id))
+                .map(|child| self.tsp_node(p, child, cx))
+                .collect()
         };
         let mut el = div().flex().flex_col().gap(px(space::S)).min_w_0();
-        if card {
+        if p.in_layer {
+            // The overlay container is the card; it bounds this one.
+            el = el.overflow_hidden();
+        } else if card {
             el = el
                 .p(px(space::M))
                 .rounded(px(theme::radius::MEDIUM))
@@ -1362,7 +1437,7 @@ impl Shell {
                 let empty = (kids.is_empty())
                     .then(|| node.props.get("empty").map(|e| tsp::spans_of(e, theme)))
                     .flatten();
-                let el = div()
+                let items = div()
                     .flex()
                     .flex_col()
                     .gap(px(space::XS))
@@ -1375,6 +1450,31 @@ impl Shell {
                             theme,
                         ))
                     }));
+                // A growing list takes the height left in its card and scrolls inside; its
+                // selected item is kept in view.
+                let el = if grows(node) {
+                    let handle = list_handle(&p.ui.lists, &node.id);
+                    let selected = str_prop(node, "selected");
+                    if let Some(ix) = tsp::selected_index(p.doc, node)
+                        && let Some(state) = p.ui.lists.borrow_mut().get_mut(&node.id)
+                        && state.selected.as_deref() != selected
+                    {
+                        state.selected = selected.map(str::to_owned);
+                        handle.scroll_to_item(ix);
+                    }
+                    let scroller = items
+                        .id(SharedString::from(format!(
+                            "tsp-list-{}-{}",
+                            p.session, node.id
+                        )))
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .track_scroll(&handle);
+                    div().flex().flex_col().flex_1().min_h_0().child(scroller)
+                } else {
+                    items
+                };
                 self.tsp_decorate(el, p, node, Look::Text, false, cx)
             }
             "item" => {
@@ -1390,6 +1490,9 @@ impl Shell {
                 };
                 let icon = str_prop(node, "icon")
                     .and_then(|name| self.tsp_icon(p, name, tone.unwrap_or(theme.text_muted)));
+                let detail = spans("detail");
+                let value = spans("value");
+                // The label shortens, never wraps; the value keeps its width at the right.
                 let mut el = div()
                     .flex()
                     .items_center()
@@ -1398,25 +1501,30 @@ impl Shell {
                     .py(px(space::XS))
                     .rounded(px(theme::radius::SMALL))
                     .children(icon)
-                    .child(div().min_w_0().child(styled_runs(
+                    .child(div().flex_1().min_w_0().truncate().child(styled_runs(
                         &spans("label"),
                         theme.text,
                         false,
                         theme,
                     )))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex_1()
-                            .text_color(rgb(theme.text_muted))
-                            .child(styled_runs(
-                                &spans("detail"),
-                                theme.text_muted,
-                                false,
-                                theme,
-                            )),
-                    )
-                    .child(styled_runs(&spans("value"), theme.text_muted, false, theme));
+                    .when(!detail.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(rgb(theme.text_muted))
+                                .child(styled_runs(&detail, theme.text_muted, false, theme)),
+                        )
+                    })
+                    .when(!value.is_empty(), |el| {
+                        el.child(div().flex_none().whitespace_nowrap().child(styled_runs(
+                            &value,
+                            theme.text_muted,
+                            false,
+                            theme,
+                        )))
+                    });
                 if bool_prop(node, "disabled") {
                     el = el.opacity(theme::opacity::SECONDARY);
                 }
@@ -2038,7 +2146,7 @@ impl Shell {
                     .child(format!("{}/{}", line.done, line.total)),
             )
             .pressable_unless(open, Look::Chip, theme)
-            .tooltip(tooltip(theme, "Todo list", ""))
+            .when(p.tips(), |el| el.tooltip(tooltip(theme, "Todo list", "")))
             // The press outside the panel skips this chip (below), so the open state read here is
             // live: a press on the chip of an open panel closes it.
             .on_press(
@@ -2254,7 +2362,7 @@ impl Shell {
             )
         });
         let strip = div().flex().flex_wrap().gap(px(space::XS)).children(tabs);
-        match str_prop(node, "title") {
+        match str_prop(node, "title").filter(|_| p.tips()) {
             Some(title) => strip
                 .id(SharedString::from(format!(
                     "tsp-tabs-{}-{}",
@@ -2403,7 +2511,7 @@ impl Shell {
                 shell.tsp_click(session, &id, false, cx);
             }),
         );
-        if let Some(title) = str_prop(node, "title") {
+        if let Some(title) = str_prop(node, "title").filter(|_| p.tips()) {
             el = el.tooltip(tooltip(theme, title, ""));
         }
         el.into_any_element()

@@ -728,6 +728,93 @@ pub fn reveal_index(doc: &Document, id: &str) -> Option<usize> {
     }
 }
 
+/// Where a `card` or `section` gets its header (reference 4, row 3): a string or spans, or the
+/// child whose id the `head` prop names (omp sends `head: "<id>/head"` and a `text` child with
+/// that id; a spinner or elapsed child can sit there too).
+#[derive(Debug, Clone, Copy)]
+pub enum Head<'a> {
+    None,
+    Spans(&'a Value),
+    Child(&'a Node),
+}
+
+pub fn head_of<'a>(doc: &'a Document, node: &'a Node) -> Head<'a> {
+    let Some(head) = node.props.get("head") else {
+        return Head::None;
+    };
+    if let Some(name) = head.as_str() {
+        let child = doc.children(&node.id).find(|child| {
+            child.id == name || (name.ends_with("/head") && child.id.ends_with("/head"))
+        });
+        if let Some(child) = child {
+            return Head::Child(child);
+        }
+    }
+    Head::Spans(head)
+}
+
+/// The list holding node `id` (an item or something inside one) and the index of that item among
+/// the list's children: what a `reveal` op scrolls inside a list (`virtual` lists keep their own
+/// scroll). `None` when no ancestor is a list.
+pub fn list_reveal(doc: &Document, id: &str) -> Option<(String, usize)> {
+    let mut at = doc.get(id)?;
+    loop {
+        let parent = doc.get(at.parent.as_deref()?)?;
+        if parent.kind == "list" {
+            let ix = doc.children(&parent.id).position(|row| row.id == at.id)?;
+            return Some((parent.id.clone(), ix));
+        }
+        at = parent;
+    }
+}
+
+/// The index among `list`'s children of its `selected` item.
+pub fn selected_index(doc: &Document, list: &Node) -> Option<usize> {
+    let selected = list.props.get("selected")?.as_str()?;
+    doc.children(&list.id).position(|row| row.id == selected)
+}
+
+/// A Nerd Font / private-use glyph (omp's icons): drawn in the terminal font, which carries them.
+pub fn is_icon_glyph(c: char) -> bool {
+    matches!(c, '\u{E000}'..='\u{F8FF}' | '\u{F0000}'..='\u{FFFFD}' | '\u{100000}'..='\u{10FFFD}')
+}
+
+/// `runs` with every private-use glyph cut out into its own `mono` run (the rest unchanged).
+pub fn with_icon_glyphs(
+    runs: &[(String, SpanStyle)],
+) -> std::borrow::Cow<'_, [(String, SpanStyle)]> {
+    if !runs
+        .iter()
+        .any(|(text, style)| !style.mono && text.chars().any(is_icon_glyph))
+    {
+        return std::borrow::Cow::Borrowed(runs);
+    }
+    let mut out = Vec::new();
+    for (text, style) in runs {
+        if style.mono {
+            out.push((text.clone(), *style));
+            continue;
+        }
+        let mut rest = text.as_str();
+        while !rest.is_empty() {
+            let glyph = is_icon_glyph(rest.chars().next().unwrap_or(' '));
+            let end = rest
+                .char_indices()
+                .find(|(_, c)| is_icon_glyph(*c) != glyph)
+                .map_or(rest.len(), |(at, _)| at);
+            out.push((
+                rest[..end].to_owned(),
+                SpanStyle {
+                    mono: style.mono || glyph,
+                    ..*style
+                },
+            ));
+            rest = &rest[end..];
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// The texts of the toasts a frame's ops add or change (`toast` goes to Mkrew's toast layer, spec
 /// 7.1). `doc` is the document after the ops, used to tell a toast from another node.
 pub fn toast_texts(doc: &Document, ops: &[Value]) -> Vec<String> {
@@ -2615,6 +2702,82 @@ mod tests {
         let cols = fit_width(500.0, 8.0).unwrap();
         assert_eq!(cols, cols_for(column_px(500.0), 8.0));
         assert!(cols >= 20);
+    }
+
+    #[test]
+    fn a_section_head_names_a_child_or_is_its_own_text() {
+        let d = with_node(
+            json!({"id": "y", "k": "section", "p": {"head": "y/head"}, "c": [
+                {"id": "y/head", "k": "text", "p": {"text": "Thought"}},
+                {"id": "y/body", "k": "md", "p": {"text": "b"}}
+            ]}),
+        );
+        let y = d.get("y").unwrap();
+        assert!(matches!(head_of(&d, y), Head::Child(c) if c.id == "y/head"));
+        let d = with_node(
+            json!({"id": "z", "k": "card", "p": {"head": "Title"}, "c": [
+                {"id": "z/0", "k": "text", "p": {"text": "b"}}
+            ]}),
+        );
+        assert!(matches!(head_of(&d, d.get("z").unwrap()), Head::Spans(v) if v == "Title"));
+        let d = with_node(json!({"id": "w", "k": "card", "c": []}));
+        assert!(matches!(head_of(&d, d.get("w").unwrap()), Head::None));
+        let d = with_node(
+            json!({"id": "v", "k": "card", "p": {"head": "q/head"}, "c": [
+                {"id": "v/head", "k": "spinner"}
+            ]}),
+        );
+        assert!(matches!(head_of(&d, d.get("v").unwrap()), Head::Child(c) if c.kind == "spinner"));
+    }
+
+    fn picker() -> Document {
+        with_node(
+            json!({"id": "13", "k": "card", "p": {"head": "Switch Model"}, "c": [
+                {"id": "14", "k": "col", "c": [
+                    {"id": "14.list", "k": "list", "p": {"selected": "b", "virtual": true, "grow": 1}, "c": [
+                        {"id": "a", "k": "item"},
+                        {"id": "14.list/separator", "k": "rule"},
+                        {"id": "b", "k": "item", "c": [{"id": "b0", "k": "text"}]}
+                    ]}
+                ]}
+            ]}),
+        )
+    }
+
+    #[test]
+    fn a_reveal_inside_a_list_scrolls_that_list_to_the_item() {
+        let d = picker();
+        assert_eq!(list_reveal(&d, "b"), Some(("14.list".to_owned(), 2)));
+        assert_eq!(list_reveal(&d, "b0"), Some(("14.list".to_owned(), 2)));
+        assert_eq!(list_reveal(&d, "14"), None, "not in a list");
+        assert_eq!(selected_index(&d, d.get("14.list").unwrap()), Some(2));
+        assert_eq!(selected_index(&d, d.get("14").unwrap()), None);
+    }
+
+    #[test]
+    fn private_use_glyphs_are_cut_out_as_mono_runs() {
+        let plain = SpanStyle::default();
+        let runs = vec![
+            ("272k\u{f111}ok".to_owned(), plain),
+            ("x".to_owned(), plain),
+        ];
+        let out = with_icon_glyphs(&runs);
+        let texts: Vec<_> = out.iter().map(|(t, s)| (t.as_str(), s.mono)).collect();
+        assert_eq!(
+            texts,
+            [
+                ("272k", false),
+                ("\u{f111}", true),
+                ("ok", false),
+                ("x", false)
+            ]
+        );
+        let none = vec![("abc é".to_owned(), plain)];
+        assert!(matches!(
+            with_icon_glyphs(&none),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        assert!(is_icon_glyph('\u{e70f}') && !is_icon_glyph('A') && is_icon_glyph('\u{f0a9f}'));
     }
 
     #[test]
