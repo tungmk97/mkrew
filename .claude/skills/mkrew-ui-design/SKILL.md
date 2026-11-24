@@ -29,6 +29,7 @@ Feel: simple, calm, soft, never rigid — Linear / Zed / Raycast. The terminal i
 ## Before committing UI work
 
 - Capture screenshots of the changed view in dark and light into `docs/screenshots/<milestone>-<view>-<theme>.png`
+  (on Windows with `scripts/smoke.ps1`: `start -Theme dark`, drive the view, `shot -Out <file>`, `stop`)
   if you can do it automatically; otherwise add "check <view> visually (dark/light)" to
   `docs/HUMAN_CHECKS.md` → "To verify".
 - Ask the `ui-reviewer` subagent (if available) to check the diff against this list.

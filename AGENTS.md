@@ -24,6 +24,11 @@ This repository is built **autonomously** by agents, one task per session.
 - Look up crate APIs (gpui, portable-pty, alacritty_terminal, interprocess…) — never guess from memory.
 - Deviating from the spec requires an ADR in `docs/decisions/` and a SPEC update in the same commit.
 - UI: every color/spacing/radius/font size comes from `crates/mkrew-ui/src/theme.rs` (SPEC §14).
+- Worktrees: omp's `read`/`edit`/`write`/`grep`/`glob` resolve a relative path against the session's
+  folder (the main checkout), not the worktree. In `.worktrees/<name>`, give every tool path as an
+  absolute path or one starting with `.worktrees/<name>/`, and set `cwd` for `bash`. Before you report,
+  run `git -C <main checkout> status --short`: if it lists a file you touched, say so in your report
+  and do not restore it yourself.
 
 ## Commands
 
@@ -35,6 +40,7 @@ This repository is built **autonomously** by agents, one task per session.
 | Snapshot review | `cargo insta review` (or accept: `cargo insta accept`) |
 | Loop status | `bash scripts/status.sh` |
 | Superpowers skill scripts (sdd-workspace, task-start, task-done, task-brief, review-package) | `sh scripts/sp.sh <name> PLAN_FILE [ARGS]` |
+| UI smoke sandbox (private exe copies, test workspace, screenshots, drags; Windows) | `powershell -File scripts/smoke.ps1 start\|mk\|shot\|drag\|stop` (usage in its header) |
 
 ## Map
 
