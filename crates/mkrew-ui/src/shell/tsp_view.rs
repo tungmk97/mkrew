@@ -988,7 +988,8 @@ impl Shell {
                     .overflow_hidden()
                     .p(px(space::M))
                     .rounded(px(theme::radius::MEDIUM))
-                    .bg(rgb(p.theme.surface_raised))
+                    // `surface`, so the picked row (`selected` = `surface_raised`) shows on it.
+                    .bg(rgb(p.theme.surface))
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(rgb(p.theme.border))
                     .children(self.tsp_children(p, node, cx)),
@@ -1525,6 +1526,16 @@ impl Shell {
                             theme,
                         )))
                     });
+                // The picked row reads on any card: the selection fill and the accent bar (the
+                // bar's width is reserved on the other rows, so nothing shifts).
+                el = el
+                    .border_l(px(theme::TSP_ASK_BAR_WIDTH))
+                    .border_color(if selected {
+                        rgb(theme.accent).into()
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .when(selected, |el| el.bg(rgb(theme.selected)));
                 if bool_prop(node, "disabled") {
                     el = el.opacity(theme::opacity::SECONDARY);
                 }
@@ -1832,12 +1843,24 @@ impl Shell {
             ))
         };
         let line_height = theme::rems_px(space::L + space::XS);
+        // The prompt starts the first line, before the caret and the text.
+        let mut lead = (node.props.get("prompt"))
+            .map(|v| tsp::spans_of(v, theme))
+            .filter(|runs| !runs.is_empty())
+            .map(|runs| {
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .child(styled_runs(&runs, theme.text_muted, false, theme))
+                    .into_any_element()
+            });
         let mut lines: Vec<AnyElement> = Vec::new();
         if text.is_empty() {
             let placeholder = (node.props.get("placeholder"))
                 .map(|v| tsp::spans_of(v, theme))
                 .unwrap_or_default();
-            let mut row = div().flex().min_h(line_height);
+            let mut row = div().flex().items_center().min_h(line_height);
+            row = row.children(lead.take());
             if has_focus {
                 row = row.child(caret());
             }
@@ -1852,7 +1875,8 @@ impl Shell {
             let mut start = 0;
             for line in text.split('\n') {
                 let end = start + line.len();
-                let mut row = div().flex().min_h(line_height);
+                let mut row = div().flex().items_center().min_h(line_height);
+                row = row.children(lead.take());
                 for atom in tsp::line_atoms(&pieces, start..end, caret_at) {
                     row = match atom {
                         tsp::Atom::Caret => row.child(caret()),
@@ -1865,9 +1889,6 @@ impl Shell {
         }
         // Inline suggestion after the text.
         let ghost = str_prop(node, "ghost").filter(|g| !g.is_empty() && !text.is_empty());
-        let prompt = (node.props.get("prompt"))
-            .map(|v| tsp::spans_of(v, theme))
-            .unwrap_or_default();
         let session = p.session;
         let id = node.id.clone();
         // A text field: exempt from the press look, so a plain mouse-down sends the focus.
@@ -1875,9 +1896,6 @@ impl Shell {
             .flex()
             .flex_col()
             .min_w_0()
-            .when(!prompt.is_empty(), |el| {
-                el.child(styled_runs(&prompt, theme.text_muted, false, theme))
-            })
             .children(lines)
             .children(ghost.map(|g| part(g, theme.text_dim)))
             .on_mouse_down(
