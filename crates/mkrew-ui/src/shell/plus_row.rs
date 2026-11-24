@@ -17,8 +17,9 @@ pub(crate) struct DraggedNew {
 pub(crate) enum SpawnAt {
     /// Beside the focused pane of the tab in front, split along the axis (Split right / down).
     Beside(Axis),
-    /// On an edge of a given pane, in the tab that holds it (a drop from the `+` row).
-    At(PaneKey, Edge),
+    /// On an edge of a given pane of a workspace, in the tab that holds it (a drop from the
+    /// `+` row).
+    At(Ulid, PaneKey, Edge),
 }
 
 impl Shell {
@@ -65,8 +66,9 @@ impl Shell {
         let stops = items.len() + 1;
         // The menu opens below the row, outside it: the pointer is then off the row, which
         // stays open while the menu does.
-        let open =
-            self.plus.shown() || self.new_menu || self.plus_focus.contains_focused(window, cx);
+        let open = self.plus.shown(host)
+            || (main && self.new_menu)
+            || self.plus_focus.contains_focused(window, cx);
         let plus = div()
             .id("new-tab")
             .flex_none()
@@ -134,13 +136,13 @@ impl Shell {
             .flex()
             .items_center()
             .track_focus(&self.plus_focus)
-            .on_hover(cx.listener(|shell, hovered: &bool, window, cx| {
-                shell.hover_new_row(*hovered, window, cx);
+            .on_hover(cx.listener(move |shell, hovered: &bool, window, cx| {
+                shell.hover_new_row(host, *hovered, window, cx);
             }))
-            .on_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
+            .on_key_down(cx.listener(move |shell, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
                     cx.stop_propagation();
-                    shell.plus.dismiss();
+                    shell.plus.dismiss(host);
                     shell.focus_pane(window, cx);
                     cx.notify();
                 }
@@ -240,26 +242,27 @@ impl Shell {
             .map(|profile| profile.name.clone())
     }
 
-    /// The pointer entered or left the row: it opens at once; leaving closes it after
+    /// The pointer entered or left the row of `host`: it opens at once; leaving closes it after
     /// `PLUS_ROW_COLLAPSE_DELAY` unless the pointer came back (serial and timer, as `peek`).
     pub(crate) fn hover_new_row(
         &mut self,
+        host: HostId,
         hovered: bool,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         if hovered {
-            self.plus.enter();
+            self.plus.enter(host);
             cx.notify();
             return;
         }
-        let serial = self.plus.leave();
+        let serial = self.plus.leave(host);
         cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(theme::PLUS_ROW_COLLAPSE_DELAY)
                 .await;
             let _ = this.update_in(cx, |shell, _, cx| {
-                if shell.plus.collapse(serial) {
+                if shell.plus.collapse(host, serial) {
                     cx.notify();
                 }
             });
@@ -276,10 +279,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let at = self
-            .detached_key(window)
-            .and_then(|_| self.focused_key(window))
-            .map(|key| (key, Edge::Right));
+        let at = self.detached_key(window).and_then(|_| {
+            let (project, _) = self.tab_scope(window)?;
+            Some((project, self.focused_key(window)?, Edge::Right))
+        });
         self.start_new(kind, at, window, cx);
     }
 
@@ -289,10 +292,14 @@ impl Shell {
     pub(crate) fn start_new(
         &mut self,
         kind: NewKind,
-        at: Option<(PaneKey, Edge)>,
+        at: Option<(Ulid, PaneKey, Edge)>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        // The row closes: a started pane shows loading dots in its place, which drops the
+        // hover without a leave event.
+        let host = self.host_of(window);
+        self.plus.dismiss(host);
         match (kind, at) {
             (NewKind::Agent(profile), None) => {
                 self.open_new_tab(Some((SessionKind::Agent, profile)), window, cx);
@@ -300,17 +307,13 @@ impl Shell {
             (NewKind::Shell, None) => {
                 self.open_new_tab(Some((SessionKind::Shell, None)), window, cx);
             }
-            (NewKind::Agent(profile), Some((key, edge))) => {
-                self.spawn_pane(
-                    SessionKind::Agent,
-                    profile,
-                    SpawnAt::At(key, edge),
-                    window,
-                    cx,
-                );
+            (NewKind::Agent(profile), Some((project, key, edge))) => {
+                let at = SpawnAt::At(project, key, edge);
+                self.spawn_pane(SessionKind::Agent, profile, at, window, cx);
             }
-            (NewKind::Shell, Some((key, edge))) => {
-                self.spawn_pane(SessionKind::Shell, None, SpawnAt::At(key, edge), window, cx);
+            (NewKind::Shell, Some((project, key, edge))) => {
+                let at = SpawnAt::At(project, key, edge);
+                self.spawn_pane(SessionKind::Shell, None, at, window, cx);
             }
             (NewKind::Note, at) => self.new_note(at, window, cx),
         }
@@ -333,10 +336,10 @@ impl Shell {
     /// New note (SPEC §20.0 `[notes] folder`): `fs.new_note` makes the file, then it opens
     /// kept, in source mode, with the cursor in the editor; in a new tab after the active one
     /// (`at` `None`) or in a leaf on an edge of a pane. A failure shows `toast_error` with the
-    /// reason and nothing opens.
+    /// reason and nothing opens. From a detached window the note stays in that window.
     pub(crate) fn new_note(
         &mut self,
-        at: Option<(PaneKey, Edge)>,
+        at: Option<(Ulid, PaneKey, Edge)>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -344,10 +347,7 @@ impl Shell {
             return;
         };
         // The workspace of the pane dropped on, else of this window's tab, else the shown one.
-        let holder = (at.as_ref())
-            .and_then(|(key, _)| self.project_holding(key))
-            .map(|(project, _)| project);
-        let Some(project_id) = holder
+        let Some(project_id) = (at.as_ref().map(|(project, ..)| *project))
             .or_else(|| self.tab_scope(window).map(|(project, _)| project))
             .or(self.workspace)
         else {
@@ -363,15 +363,7 @@ impl Shell {
             let made = made.await;
             let _ = this.update_in(cx, |shell, window, cx| match made {
                 Ok(FsCreated { path }) => {
-                    // The pane dropped on may have closed while the daemon wrote the file.
-                    let place = match at {
-                        Some((key, edge)) if shell.project_holding(&key).is_some() => {
-                            documents::Place::Split(key, edge)
-                        }
-                        _ => documents::Place::NewTab,
-                    };
-                    shell.open_document(project_id, path.clone(), None, place, window, cx);
-                    shell.set_file_mode(project_id, &path, MdMode::Source, window, cx);
+                    shell.open_note(project_id, path, at, window, cx);
                     shell.refresh_files(project_id, window, cx);
                 }
                 Err(error) => {
@@ -382,24 +374,69 @@ impl Shell {
         })
         .detach();
     }
+
+    /// Shows the new note `path`: kept, its leaf and doc in source mode (the global
+    /// `[ui] md_mode` is left alone), the keyboard in its editor. The pane dropped on may have
+    /// closed while the daemon wrote the file: then a new tab.
+    fn open_note(
+        &mut self,
+        project_id: Ulid,
+        path: String,
+        at: Option<(Ulid, PaneKey, Edge)>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let place = match at {
+            Some((project, key, edge))
+                if project == project_id && self.tab_holding(project, &key).is_some() =>
+            {
+                documents::Place::Split(key, edge)
+            }
+            _ => documents::Place::NewTab,
+        };
+        self.ensure_doc(project_id, &path, Some(MdMode::Source), cx);
+        let main = self.host_of(window) == HostId::Main;
+        if !main && matches!(place, documents::Place::NewTab) {
+            // New tabs belong to the main window: it takes this one.
+            return self.open_document(project_id, path, None, place, window, cx);
+        }
+        let leaf = Leaf::File {
+            file: path.clone(),
+            md: Some(MdMode::Source),
+            preview: false,
+        };
+        if main {
+            // Terminals show the panes: Board, Docs and the Diff give way.
+            self.views.insert(project_id, View::Terminals);
+            if self.workspace != Some(project_id) {
+                self.activate_workspace(project_id, window, cx);
+            }
+        }
+        self.place_leaf(project_id, leaf, place, window, cx);
+        self.focus_file_pane(project_id, &path, window, cx);
+    }
 }
 
 impl PaneDragged for DraggedNew {
-    /// Any pane that belongs to a workspace takes it: the session or note starts in the
-    /// workspace that holds the pane (`project_holding`).
-    fn takes(&self, shell: &Shell, _project_id: Ulid, target: &PaneKey) -> bool {
-        shell.project_holding(target).is_some()
+    /// Any pane of the workspace takes it: the session or note starts in that workspace.
+    fn takes(&self, shell: &Shell, project_id: Ulid, target: &PaneKey) -> bool {
+        shell.tab_holding(project_id, target).is_some()
     }
 
     fn land(
         &self,
         shell: &mut Shell,
-        _project_id: Ulid,
+        project_id: Ulid,
         target: PaneKey,
         edge: Edge,
         window: &mut Window,
         cx: &mut Context<'_, Shell>,
     ) {
-        shell.start_new(self.kind.clone(), Some((target, edge)), window, cx);
+        shell.start_new(
+            self.kind.clone(),
+            Some((project_id, target, edge)),
+            window,
+            cx,
+        );
     }
 }

@@ -44,7 +44,9 @@ impl Shell {
         };
         let scope = match &placement {
             SpawnAt::Beside(_) => self.tab_scope(window),
-            SpawnAt::At(target, _) => self.project_holding(target),
+            SpawnAt::At(project, target, _) => self
+                .tab_holding(*project, target)
+                .map(|tab| (*project, tab)),
         };
         let Some((project_id, tab_id)) = scope else {
             return;
@@ -76,7 +78,7 @@ impl Shell {
                                 window,
                                 cx,
                             ),
-                            SpawnAt::At(target, edge) => shell.place_session_at(
+                            SpawnAt::At(_, target, edge) => shell.place_session_at(
                                 (project_id, tab_id),
                                 spawned.session_id,
                                 &target,

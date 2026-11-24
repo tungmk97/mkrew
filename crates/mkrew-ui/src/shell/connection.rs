@@ -375,7 +375,7 @@ impl Shell {
             run_menu: None,
             workspace_switcher: false,
             new_menu: false,
-            plus: Reveal::default(),
+            plus: Reveals::default(),
             plus_focus: cx.focus_handle(),
             empty_workspaces_open: false,
             collapsed_groups: HashSet::new(),

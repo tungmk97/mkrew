@@ -147,6 +147,45 @@ impl Reveal {
     }
 }
 
+/// One [`Reveal`] per window (`H` is the host id): hovering `+` in one window never opens the
+/// row of another.
+#[derive(Debug)]
+pub struct Reveals<H> {
+    by_host: std::collections::HashMap<H, Reveal>,
+}
+
+impl<H> Default for Reveals<H> {
+    fn default() -> Self {
+        Self {
+            by_host: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl<H: std::hash::Hash + Eq> Reveals<H> {
+    pub fn enter(&mut self, host: H) {
+        self.by_host.entry(host).or_default().enter();
+    }
+
+    pub fn leave(&mut self, host: H) -> u64 {
+        self.by_host.entry(host).or_default().leave()
+    }
+
+    pub fn collapse(&mut self, host: H, serial: u64) -> bool {
+        self.by_host
+            .get_mut(&host)
+            .is_some_and(|reveal| reveal.collapse(serial))
+    }
+
+    pub fn dismiss(&mut self, host: H) {
+        self.by_host.entry(host).or_default().dismiss();
+    }
+
+    pub fn shown(&self, host: H) -> bool {
+        self.by_host.get(&host).is_some_and(Reveal::shown)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,5 +324,29 @@ mod tests {
         assert!(!row.shown());
         row.enter();
         assert!(row.shown());
+    }
+}
+
+#[cfg(test)]
+mod reveals_tests {
+    use super::*;
+
+    #[test]
+    fn each_window_has_its_own_row_state() {
+        let mut rows = Reveals::<u8>::default();
+        rows.enter(1);
+        assert!(rows.shown(1));
+        assert!(!rows.shown(2), "the other window's row stays closed");
+        rows.enter(2);
+        let serial = rows.leave(1);
+        assert!(rows.collapse(1, serial));
+        assert!(!rows.shown(1));
+        assert!(rows.shown(2), "closing one leaves the other open");
+        rows.dismiss(2);
+        assert!(!rows.shown(2));
+        assert!(
+            !rows.collapse(3, 0),
+            "a window never hovered has nothing to close"
+        );
     }
 }

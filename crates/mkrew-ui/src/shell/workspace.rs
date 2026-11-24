@@ -370,15 +370,13 @@ impl Shell {
             .then_some(self.chat_default)
     }
 
-    /// The workspace and the tab that hold the pane `key` (any window).
-    pub(crate) fn project_holding(&self, key: &PaneKey) -> Option<(Ulid, Ulid)> {
-        self.tabs
-            .iter()
-            .find_map(|(project_id, tabs)| tabs.tab_with(key).map(|tab| (*project_id, tab.id)))
+    /// The tab of workspace `project_id` that holds the pane `key` (any window).
+    pub(crate) fn tab_holding(&self, project_id: Ulid, key: &PaneKey) -> Option<Ulid> {
+        (self.tabs.get(&project_id)?.tab_with(key)).map(|tab| tab.id)
     }
 
-    /// Shows `session` on `edge` of `target`'s pane in tab `tab_id` of `project_id` (`scope`, as
-    /// [`Shell::project_holding`] answers; a drop from the `+` row).
+    /// Shows `session` on `edge` of `target`'s pane in tab `tab_id` of `project_id` (a drop
+    /// from the `+` row).
     /// A session the daemon or an echo placed already stays; when `target` left the tab while
     /// the session started, it lands beside the focused pane like any new pane.
     pub(crate) fn place_session_at(

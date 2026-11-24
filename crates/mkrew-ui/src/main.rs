@@ -96,7 +96,7 @@ use mkrew_ui::peek::{self, Peek};
 use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, PushSwitch, SetUp, Switch};
 use mkrew_ui::plan::{self, Plans};
 use mkrew_ui::plan_dialog::PlanDialog;
-use mkrew_ui::plus_row::{NewKind, Reveal, RowItem, default_agent, plus_row_items};
+use mkrew_ui::plus_row::{NewKind, Reveals, RowItem, default_agent, plus_row_items};
 use mkrew_ui::ports::PortsDialog;
 use mkrew_ui::preview;
 use mkrew_ui::prompt_picker::{self, PromptPicker};
@@ -615,7 +615,7 @@ struct Shell {
     new_menu: bool,
     /// The pointer holds the tab strip's `+` row open (`plus_row::Reveal`); a focused item
     /// opens it too (`plus_focus`).
-    plus: Reveal,
+    plus: Reveals<HostId>,
     /// Wraps the `+` row: `contains_focused` keeps it open while `+` or an item has the keyboard.
     plus_focus: FocusHandle,
     /// The sidebar's "N empty workspaces" line is expanded (in memory only).
