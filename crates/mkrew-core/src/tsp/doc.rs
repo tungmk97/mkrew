@@ -9,13 +9,14 @@ use mkrew_protocol::TspNode;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-/// Nodes per document. With [`MAX_TEXT`] this is what one surface may weigh in a `tsp.snapshot` reply.
+/// Nodes per document.
 pub const MAX_NODES: usize = 20_000;
 /// JSON bytes of string props per document (a string counts as its escaped length, see `weight`).
-/// The reply must fit the 16 MiB protocol frame with 3 surfaces (`MAX_SURFACES`) and the blobs
-/// (4 MiB, 5.3 MiB as base64): 3 x (1 MiB text + 20,000 nodes x ~100 B of ids, kinds and keys,
-/// about 2 MiB) + 5.3 MiB = ~14 MiB, ~2 MiB margin. Nodes heavier than that are caught by the
-/// daemon, which drops the blobs and then refuses the reply instead of breaking the connection.
+/// The `tsp.snapshot` reply must fit the 16 MiB protocol frame. Measured on real omp: a node is
+/// ~110 B of JSON besides its text on average (p95 ~170 B), so one full inline surface plus 5.3 MiB
+/// of base64 blobs is ~10 MB, and three full surfaces at the average are ~15 MiB. Beyond that
+/// (denser nodes) the daemon drops the blobs, then refuses the snapshot ("snapshot too large")
+/// instead of breaking the connection; 170 B nodes are such a case.
 pub const MAX_TEXT: usize = 1024 * 1024;
 /// Id of the synthetic first row of `main` once old rows were evicted.
 pub const TRIM_ID: &str = "mkrew.trimmed";
@@ -411,6 +412,17 @@ impl Document {
     }
 
     fn text_op(&mut self, id: &str, mode: &str, text: &str) -> Result<(), String> {
+        // Streaming appends are the common case: count only the appended piece, not the whole text.
+        if mode == "append"
+            && let Some(node) = self.nodes.get_mut(id)
+            && TEXT_KINDS.contains(&node.kind.as_str())
+            && let Some(Value::String(current)) = node.props.get_mut("text")
+        {
+            current.push_str(text);
+            self.text_bytes += str_weight(text);
+            self.unsettle(id);
+            return Ok(());
+        }
         self.edit(id, |node| {
             text_kind(node)?;
             let append = match mode {
@@ -561,14 +573,16 @@ impl Document {
         let Some(main) = self.nodes.get("main") else {
             return (Vec::new(), Vec::new());
         };
+        // The newest child is the streaming tail omp still appends to: it is never evicted.
         let oldest: Vec<String> = main
             .children
             .iter()
             .filter(|c| c.as_str() != TRIM_ID)
             .cloned()
             .collect();
+        let oldest = &oldest[..oldest.len().saturating_sub(1)];
         let mut removed = Vec::new();
-        for id in oldest {
+        for id in oldest.iter().cloned() {
             if self.nodes.len() + extra_nodes <= goal_nodes
                 && self.text_bytes + extra_text <= goal_text
             {
@@ -604,18 +618,22 @@ fn weight(props: &Map<String, Value>) -> usize {
 
 fn value_weight(value: &Value) -> usize {
     match value {
-        Value::String(s) => s
-            .chars()
-            .map(|c| match c {
-                '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
-                c if c < ' ' => 6,
-                c => c.len_utf8(),
-            })
-            .sum(),
+        Value::String(s) => str_weight(s),
         Value::Array(items) => items.iter().map(value_weight).sum(),
         Value::Object(map) => map.values().map(value_weight).sum(),
         _ => 0,
     }
+}
+
+/// The JSON length of a string's content (without the quotes).
+fn str_weight(s: &str) -> usize {
+    s.chars()
+        .map(|c| match c {
+            '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+            c if c < ' ' => 6,
+            c => c.len_utf8(),
+        })
+        .sum()
 }
 
 fn text_kind(node: &Node) -> Result<(), String> {
@@ -909,6 +927,47 @@ mod tests {
         let (removed, _) = doc.evict_with(usize::MAX, 100);
         assert_eq!(removed.len(), 9);
         assert_eq!(doc.text_bytes(), 60); // 31 + the 29 byte trim row
+    }
+
+    /// A tail of one row that stays over the goal is not evicted: omp still appends to it.
+    #[test]
+    fn eviction_never_deletes_the_newest_main_child() {
+        let mut doc = seeded();
+        let ops = vec![
+            json!(["add", "old", "main", null, {"id": "old", "k": "text", "p": {"text": "x"}}]),
+            json!(["add", "tail", "main", null, {"id": "tail", "k": "text", "p": {"text": "y".repeat(500)}}]),
+        ];
+        assert!(doc.apply(&ops).errors.is_empty());
+        let (removed, _) = doc.evict_with(usize::MAX, 100);
+        assert_eq!(removed, ["old"]);
+        assert_eq!(ids(&doc, "main"), ["mkrew.trimmed", "tail"]);
+        assert!(
+            doc.text_bytes() > 100,
+            "still over: the engine's bounds check falls back"
+        );
+    }
+
+    /// Appends add only the piece's weight; the counter always equals a full recount.
+    #[test]
+    fn text_bytes_after_appends_equals_a_full_recount() {
+        let recount =
+            |doc: &Document| -> usize { doc.nodes.values().map(|n| weight(&n.props)).sum() };
+        let mut doc = seeded();
+        doc.apply(&[
+            json!(["add", "t", "main", null, {"id": "t", "k": "text", "p": {"text": "a\u{1b}"}}]),
+            json!(["add", "b", "main", null, {"id": "b", "k": "md"}]),
+            json!(["text", "t", "append", "\"q\"\n\u{1b}é"]),
+            json!(["text", "b", "append", "new"]),
+            json!(["text", "t", "replace", "r\t"]),
+            json!(["text", "t", "append", "\\"]),
+            json!(["splice", "t", 0, 1, "\u{1b}"]),
+            json!(["set", "b", {"label": "l\"x"}]),
+            json!(["text", "b", "append", "!"]),
+        ]);
+        assert_eq!(doc.text("t"), Some("\u{1b}\t\\"));
+        assert_eq!(doc.text_bytes(), recount(&doc));
+        doc.apply(&[json!(["del", "t"])]);
+        assert_eq!(doc.text_bytes(), recount(&doc));
     }
 
     /// `n1..n63` nested under `main`: `n63` sits at depth 64 (root 0, `main` 1).

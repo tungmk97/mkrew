@@ -12,10 +12,27 @@ use crate::session::Command;
 /// Room kept in the frame for the reply's own fields around the result.
 const ENVELOPE: usize = 4096;
 
+/// Counts the bytes written and keeps none: the size of a JSON value without allocating it.
+struct Count(usize);
+
+impl std::io::Write for Count {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// The snapshot if it fits `limit` bytes of JSON; else without its blobs (an `image` node whose blob
 /// is missing draws its alt text); `None` when even that is too big.
 fn fit_snapshot(mut snapshot: TspSnapshot, limit: usize) -> Option<TspSnapshot> {
-    let fits = |s: &TspSnapshot| serde_json::to_vec(s).is_ok_and(|json| json.len() <= limit);
+    let fits = |s: &TspSnapshot| {
+        let mut count = Count(0);
+        serde_json::to_writer(&mut count, s).is_ok() && count.0 <= limit
+    };
     if fits(&snapshot) {
         return Some(snapshot);
     }

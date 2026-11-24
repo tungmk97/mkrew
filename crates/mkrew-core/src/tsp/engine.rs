@@ -25,6 +25,9 @@ pub const PROVISIONAL_WAIT: Duration = Duration::from_secs(60);
 /// Why the hello timer made the engine fall back; the UI words its toast differently for this (provisional) reason.
 pub const NO_REPLY_REASON: &str = "no TSP reply from the terminal layer";
 
+/// Least time an answered hello gets to be followed by an `open`.
+pub const OPEN_WAIT: Duration = Duration::from_secs(5);
+
 /// Why an answered hello that never opened a surface falls back, final.
 const NO_SURFACE_REASON: &str = "omp opened no surface";
 const LAST_CLOSED_REASON: &str = "omp closed its last surface";
@@ -144,6 +147,8 @@ pub struct Engine {
     /// The fallback came from the hello timer only: a hello that still arrives is answered and the
     /// engine goes Live. Every other fallback is final.
     provisional: bool,
+    /// When the hello was answered.
+    hello_at: Option<Instant>,
     /// Surfaces opened so far, for [`Surface::opened`].
     next_open: u64,
 }
@@ -165,6 +170,7 @@ impl Engine {
             max_blob_bytes: MAX_BLOB_BYTES,
             fallback_reason: None,
             provisional: false,
+            hello_at: None,
             next_open: 0,
         }
     }
@@ -214,6 +220,9 @@ impl Engine {
                 },
             }
         }
+        if self.hello_ok && self.hello_at.is_none() {
+            self.hello_at = Some(now);
+        }
         let dropped = self.splitter.take_dropped();
         if dropped > 0 {
             steps.push(Step::Warn(format!(
@@ -235,14 +244,16 @@ impl Engine {
     }
 
     /// When to call [`Engine::on_deadline`]: the hello wait while no hello was answered, then the end of the provisional window; both count from the first output.
-    /// An answered hello without a surface yet has the same end: omp must open one by then.
+    /// An answered hello without a surface yet gets until the provisional end too, and at least
+    /// [`OPEN_WAIT`] after the hello (a late hello must not be cut off at once).
     pub fn deadline(&self) -> Option<Instant> {
         let first = self.first_output?;
         match (self.state, self.provisional) {
             (TspState::Waiting, _) if !self.hello_ok => Some(first + HELLO_WAIT),
             (TspState::Fallback, true) => Some(first + PROVISIONAL_WAIT),
             (TspState::Waiting | TspState::Live, _) if self.surfaces.is_empty() => {
-                Some(first + PROVISIONAL_WAIT)
+                let end = first + PROVISIONAL_WAIT;
+                Some(self.hello_at.map_or(end, |h| end.max(h + OPEN_WAIT)))
             }
             _ => None,
         }
@@ -405,12 +416,13 @@ impl Engine {
         };
         // An existing id is replaced: omp re-opens `s:1` after an adopt, and clients replace too.
         self.surfaces.remove(&meta.id);
-        // Past the cap the oldest read-only surface goes, else the oldest: the snapshot stays under the frame limit.
+        // Past the cap the oldest read-only screen goes, else the oldest screen; the inline surface
+        // (omp's conversation) goes last: the snapshot stays under the frame limit.
         while self.surfaces.len() >= MAX_SURFACES {
             let Some(victim) = self
                 .surfaces
                 .iter()
-                .min_by_key(|(_, s)| (!s.meta.read_only, s.opened))
+                .min_by_key(|(_, s)| (s.meta.mode == "inline", !s.meta.read_only, s.opened))
                 .map(|(id, _)| id.clone())
             else {
                 break;

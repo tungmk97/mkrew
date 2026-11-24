@@ -970,8 +970,8 @@ fn a_fourth_surface_replaces_the_oldest_read_only_one_else_the_oldest() {
     e.on_output(t, &open_as("s:5", "screen"));
     assert_eq!(
         surface_ids(&e),
-        ["s:3", "s:4", "s:5"],
-        "none read-only: the oldest goes"
+        ["s:1", "s:4", "s:5"],
+        "none read-only: the oldest screen goes, never the inline surface"
     );
     assert_eq!(e.state(), TspState::Live);
 }
@@ -1037,8 +1037,8 @@ fn fill(e: &mut Engine, t: Instant, sf: &str, rows: &[(String, Value)], esc: usi
     }
 }
 
-#[test]
-fn three_full_surfaces_and_full_blobs_fit_the_protocol_frame() {
+/// Three surfaces at the node and text bounds (`pad` extra bytes of key per node) and the blob cap.
+fn full_snapshot(pad: usize) -> TspSnapshot {
     let t = Instant::now();
     let mut e = Engine::new(120, true);
     e.on_output(t, &hello_query(json!([1])));
@@ -1052,11 +1052,15 @@ fn three_full_surfaces_and_full_blobs_fit_the_protocol_frame() {
     assert_eq!(e.blob_bytes, MAX_BLOB_BYTES);
     // Rows as heavy as the node and text bounds allow: ESC is the worst JSON escape (6 bytes).
     let esc = MAX_TEXT / MAX_NODES / 6;
+    let mut props = json!({"w": 1, "dim": true});
+    if pad > 0 {
+        props[&"k".repeat(pad)] = json!(1);
+    }
     for n in 1..=3 {
         let sf = format!("s:{n}");
         e.on_output(t, &open_as(&sf, if n == 1 { "inline" } else { "screen" }));
         let mut rows: Vec<(String, Value)> = (0..MAX_NODES - 8)
-            .map(|i| (format!("{sf}.r{i:05}"), json!({"w": 1, "dim": true})))
+            .map(|i| (format!("{sf}.r{i:05}"), props.clone()))
             .collect();
         if n == 1 {
             rows.extend((0..4).map(|i| (format!("img{i}"), json!({"blob": format!("b{i}")}))));
@@ -1071,10 +1075,61 @@ fn three_full_surfaces_and_full_blobs_fit_the_protocol_frame() {
     }
     let snapshot = e.snapshot();
     assert_eq!((snapshot.surfaces.len(), snapshot.blobs.len()), (3, 4));
-    let len = serde_json::to_vec(&snapshot).unwrap().len();
+    snapshot
+}
+
+#[test]
+fn three_full_surfaces_and_full_blobs_fit_the_protocol_frame() {
+    let len = serde_json::to_vec(&full_snapshot(0)).unwrap().len();
     assert!(
         len <= mkrew_protocol::MAX_FRAME_LEN,
         "{len} bytes over the {} byte frame",
         mkrew_protocol::MAX_FRAME_LEN
+    );
+}
+
+/// The ceiling: with p95 nodes (~170 B besides text) three full surfaces and the blobs pass the
+/// frame; the daemon then drops the blobs (`fit_snapshot`), and what is left still fits.
+#[test]
+fn three_full_surfaces_of_dense_nodes_pass_the_frame_only_with_the_blobs() {
+    let mut snapshot = full_snapshot(110);
+    let frame = mkrew_protocol::MAX_FRAME_LEN;
+    assert!(serde_json::to_vec(&snapshot).unwrap().len() > frame);
+    snapshot.blobs.clear();
+    let len = serde_json::to_vec(&snapshot).unwrap().len();
+    assert!(len <= frame, "{len} bytes without blobs");
+}
+
+#[test]
+fn an_answered_hello_gets_at_least_five_seconds_to_open_a_surface() {
+    let t = Instant::now();
+    let mut e = Engine::new(120, true);
+    e.on_output(t, b"rows");
+    let late = t + Duration::from_secs(58);
+    e.on_output(late, &hello_query(json!([1])));
+    assert_eq!(e.deadline(), Some(late + OPEN_WAIT));
+    assert!(
+        e.on_deadline(late + OPEN_WAIT - Duration::from_millis(1))
+            .is_empty()
+    );
+    e.on_deadline(late + OPEN_WAIT);
+    assert_eq!(e.state(), TspState::Fallback);
+    assert!(e.is_passthrough());
+}
+
+#[test]
+fn the_surface_cap_never_drops_the_inline_surface_while_a_screen_can_go() {
+    let (mut e, t) = live(); // s:1 inline, the oldest
+    for id in ["s:2", "s:3"] {
+        e.on_output(t, &open_as(id, "screen"));
+    }
+    e.on_output(t, &open_as("s:4", "screen"));
+    assert_eq!(surface_ids(&e), ["s:1", "s:3", "s:4"], "oldest screen goes");
+    e.on_output(t, &apc(b'x', json!({"id": "s:4", "keep": true})));
+    e.on_output(t, &open_as("s:5", "screen"));
+    assert_eq!(
+        surface_ids(&e),
+        ["s:1", "s:3", "s:5"],
+        "read-only screen first"
     );
 }
