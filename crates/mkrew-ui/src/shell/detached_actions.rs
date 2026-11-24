@@ -397,6 +397,7 @@ impl Shell {
             Command::SplitDown => self.split(Axis::Horizontal, window, cx),
             Command::SplitAgent => self.new_pane(SessionKind::Agent, Axis::Vertical, window, cx),
             Command::SplitShell => self.new_pane(SessionKind::Shell, Axis::Vertical, window, cx),
+            Command::SplitBrowser => self.split_browser(window, cx),
             Command::BrowserAddress
             | Command::BrowserBack
             | Command::BrowserForward

@@ -71,6 +71,8 @@ pub enum Command {
     SplitAgent,
     /// Split the focused pane to the right with the workspace's default shell (+ Shell).
     SplitShell,
+    /// Split the focused pane to the right with a new browser pane (ADR 0110).
+    SplitBrowser,
     /// Focus the browser pane's address field (ADR 0110).
     BrowserAddress,
     BrowserBack,
@@ -309,6 +311,7 @@ impl Command {
             Command::SplitDown,
             Command::SplitAgent,
             Command::SplitShell,
+            Command::SplitBrowser,
             Command::BrowserAddress,
             Command::BrowserBack,
             Command::BrowserForward,
@@ -430,6 +433,7 @@ impl Command {
             Command::SplitDown => "split_down".into(),
             Command::SplitAgent => "split_agent".into(),
             Command::SplitShell => "split_shell".into(),
+            Command::SplitBrowser => "split_browser".into(),
             Command::BrowserAddress => "browser_address".into(),
             Command::BrowserBack => "browser_back".into(),
             Command::BrowserForward => "browser_forward".into(),
@@ -563,6 +567,7 @@ impl Command {
             Command::SplitDown => "cmd-shift-d",
             Command::SplitAgent => "cmd-alt-a",
             Command::SplitShell => "cmd-alt-s",
+            Command::SplitBrowser => "cmd-alt-b",
             Command::BrowserAddress => "cmd-l",
             Command::Layout(preset) => match preset {
                 Preset::Columns2 => "cmd-alt-1",
@@ -656,6 +661,7 @@ impl Command {
             Command::SplitDown => "alt-shift--".into(),
             Command::SplitAgent => "alt-shift-a".into(),
             Command::SplitShell => "alt-shift-s".into(),
+            Command::SplitBrowser => "alt-shift-b".into(),
             Command::BrowserAddress => "ctrl-l".into(),
             // Palette only: an empty default binds nothing.
             Command::BrowserBack
@@ -1405,6 +1411,19 @@ mod tests {
 
     fn keystroke(keys: &str) -> Keystroke {
         Keystroke::parse(keys).unwrap()
+    }
+
+    #[test]
+    fn split_browser_has_its_own_global_keys() {
+        let keymap = Keymap::defaults_for(Os::Windows);
+        assert_eq!(
+            keymap.command_for(&keystroke("alt-shift-b")),
+            Some(Command::SplitBrowser)
+        );
+        assert_eq!(keymap.label(Command::SplitBrowser), "Alt+Shift+B");
+        assert_eq!(Command::SplitBrowser.context(), None);
+        assert_eq!(Command::SplitBrowser.default_keys_for(Os::Mac), "cmd-alt-b");
+        assert_eq!(Command::SplitBrowser.name(), "split_browser");
     }
 
     #[test]

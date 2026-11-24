@@ -13,6 +13,8 @@ pub enum NewKind {
     Shell,
     /// A new note file (`fs.new_note`).
     Note,
+    /// A browser pane (ADR 0110).
+    Browser,
 }
 
 /// One item after `+` in the row.
@@ -29,6 +31,7 @@ pub enum RowItem {
         name: Option<String>,
     },
     Note,
+    Browser,
     /// `▾`: today's full menu.
     More,
 }
@@ -40,6 +43,7 @@ impl RowItem {
             RowItem::Agent { id, .. } => Some(NewKind::Agent(Some(id.clone()))),
             RowItem::Shell { .. } => Some(NewKind::Shell),
             RowItem::Note => Some(NewKind::Note),
+            RowItem::Browser => Some(NewKind::Browser),
             RowItem::More => None,
         }
     }
@@ -52,6 +56,7 @@ impl RowItem {
             RowItem::Shell { name: Some(name) } => format!("New {name} {what}"),
             RowItem::Shell { name: None } => format!("New shell {what}"),
             RowItem::Note => "New note".to_owned(),
+            RowItem::Browser => "New browser".to_owned(),
             RowItem::More => "More…".to_owned(),
         }
     }
@@ -64,7 +69,8 @@ impl RowItem {
             (RowItem::Shell { .. }, true) => Some(Command::NewShellTab),
             (RowItem::Shell { .. }, false) => Some(Command::SplitShell),
             (RowItem::Note, true) => Some(Command::NewNote),
-            (RowItem::Note, false) | (RowItem::More, _) => None,
+            (RowItem::Browser, false) => Some(Command::SplitBrowser),
+            (RowItem::Note, false) | (RowItem::Browser, true) | (RowItem::More, _) => None,
         }
     }
 }
@@ -76,13 +82,14 @@ pub fn default_agent(agents: &[PaneAgent]) -> Option<&PaneAgent> {
 }
 
 /// The items after `+`, in order. `main`: the main window, which also has `▾` (a detached
-/// window has Split ▾ in its title bar and no new-tab menu).
+/// window has Split ▾ in its title bar and no new-tab menu). `browser`: pages can show here.
 pub fn plus_row_items(
     default_agent: Option<&PaneAgent>,
     shell_name: Option<&str>,
     main: bool,
+    browser: bool,
 ) -> Vec<RowItem> {
-    let mut items = Vec::with_capacity(4);
+    let mut items = Vec::with_capacity(5);
     if let Some(agent) = default_agent {
         items.push(RowItem::Agent {
             id: agent.id.clone(),
@@ -94,6 +101,9 @@ pub fn plus_row_items(
         name: shell_name.map(str::to_owned),
     });
     items.push(RowItem::Note);
+    if browser {
+        items.push(RowItem::Browser);
+    }
     if main {
         items.push(RowItem::More);
     }
@@ -203,7 +213,7 @@ mod tests {
     #[test]
     fn the_row_lists_agent_shell_note_and_more() {
         let claude = agent("claude", true);
-        let items = plus_row_items(Some(&claude), Some("PowerShell"), true);
+        let items = plus_row_items(Some(&claude), Some("PowerShell"), true, false);
         assert_eq!(
             items,
             [
@@ -223,11 +233,32 @@ mod tests {
 
     #[test]
     fn without_a_default_agent_the_row_starts_at_the_shell() {
-        let items = plus_row_items(None, None, true);
+        let items = plus_row_items(None, None, true, false);
         assert_eq!(
             items,
             [RowItem::Shell { name: None }, RowItem::Note, RowItem::More]
         );
+    }
+
+    #[test]
+    fn the_browser_item_comes_after_note_when_pages_can_show() {
+        let items = plus_row_items(None, None, true, true);
+        assert_eq!(
+            items,
+            [
+                RowItem::Shell { name: None },
+                RowItem::Note,
+                RowItem::Browser,
+                RowItem::More
+            ]
+        );
+        assert!(!plus_row_items(None, None, true, false).contains(&RowItem::Browser));
+        assert_eq!(RowItem::Browser.kind(), Some(NewKind::Browser));
+        assert_eq!(RowItem::Browser.label(true), "New browser");
+        assert_eq!(RowItem::Browser.command(true), None, "a tab has no key");
+        assert_eq!(RowItem::Browser.command(false), Some(Command::SplitBrowser));
+        // A detached window splits.
+        assert!(plus_row_items(None, None, false, true).contains(&RowItem::Browser));
     }
 
     #[test]
@@ -245,7 +276,7 @@ mod tests {
     #[test]
     fn a_detached_window_has_no_menu_item_and_splits_instead() {
         let claude = agent("claude", true);
-        let items = plus_row_items(Some(&claude), None, false);
+        let items = plus_row_items(Some(&claude), None, false, false);
         assert!(!items.contains(&RowItem::More));
         assert_eq!(items[0].label(false), "New CLAUDE pane");
         assert_eq!(items[0].command(false), Some(Command::SplitAgent));

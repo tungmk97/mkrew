@@ -222,6 +222,7 @@ fn detached_commands_are_an_explicit_list() {
         Command::SplitDown,
         Command::SplitAgent,
         Command::SplitShell,
+        Command::SplitBrowser,
         Command::BrowserAddress,
         Command::BrowserBack,
         Command::BrowserForward,

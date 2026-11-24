@@ -766,6 +766,9 @@ struct Shell {
     browsers: HashMap<Ulid, shell::browser::Browser>,
     /// The "pages open in your browser" toast was shown this run (ADR 0110).
     browser_fallback_told: bool,
+    /// A new browser pane whose address field takes the keyboard once its page state exists
+    /// and it is shown (`prepare_browsers`).
+    browser_to_focus: Option<Ulid>,
     /// Page events of every browser pane (`wry` callbacks), read by one task (`page_event`).
     page_events: async_channel::Sender<(Ulid, mkrew_ui::browser::PageEvent)>,
     /// The view state of each open file pane, keyed like the store.

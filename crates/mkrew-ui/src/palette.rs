@@ -46,6 +46,8 @@ pub struct Context {
     pub file_tree: bool,
     /// A browser pane is focused: its commands act on it.
     pub web_pane: bool,
+    /// Pages can show in Mkrew (`browser::available`).
+    pub browser: bool,
     /// A terminal pane had the keyboard (copy, paste, find… act on it).
     pub terminal: bool,
     /// The Git list's selected file can be discarded (unstaged or untracked).
@@ -626,6 +628,7 @@ pub fn title(command: Command) -> String {
         Command::SplitDown => "Panes: Split down".into(),
         Command::SplitAgent => "Panes: New agent pane".into(),
         Command::SplitShell => "Panes: New shell pane".into(),
+        Command::SplitBrowser => "Panes: New browser pane".into(),
         Command::BrowserAddress => "Browser: Focus address".into(),
         Command::BrowserBack => "Browser: Back".into(),
         Command::BrowserForward => "Browser: Forward".into(),
@@ -770,6 +773,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::SplitAgent
         | Command::SplitShell
         | Command::Layout(_) => context.workspace && context.tabs > 0,
+        Command::SplitBrowser => context.browser && context.workspace && context.tabs > 0,
         Command::BrowserAddress
         | Command::BrowserBack
         | Command::BrowserForward

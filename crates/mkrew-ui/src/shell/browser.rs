@@ -5,6 +5,8 @@ use mkrew_ui::browser::{NativeView, Page, PageEvent};
 
 /// One browser pane's live state, keyed by its leaf id in `Shell.browsers`.
 pub(crate) struct Browser {
+    /// The workspace whose tabs hold the pane.
+    pub(crate) project: Ulid,
     pub(crate) page: Page,
     /// The page's view (Windows and macOS), built the first time the pane is drawn with a URL.
     pub(crate) native: Option<NativeView>,
@@ -34,11 +36,11 @@ impl Shell {
 
     /// Every web leaf of every layout has its state, and only those: a closed pane's page goes.
     pub(crate) fn sync_browsers(&mut self, cx: &mut Context<'_, Self>) {
-        let mut leaves: HashMap<Ulid, String> = HashMap::new();
+        let mut leaves: HashMap<Ulid, (Ulid, String)> = HashMap::new();
         for (project, tabs) in &self.tabs {
-            // Tabs still loading list no leaves yet: nothing may be dropped.
+            // Tabs still loading list no leaves yet: their panes keep their state.
             if self.loading_tabs.contains(project) {
-                return;
+                continue;
             }
             for tab in tabs.tabs() {
                 let Some(layout) = tab.layout() else { continue };
@@ -46,17 +48,20 @@ impl Shell {
                     if let (PaneKey::Web(id), Some(Leaf::Web { web, .. })) =
                         (&key, layout.leaf_of(&key))
                     {
-                        leaves.insert(*id, web.clone());
+                        leaves.insert(*id, (*project, web.clone()));
                     }
                 }
             }
         }
-        self.browsers.retain(|id, _| leaves.contains_key(id));
-        for (id, url) in leaves {
+        let loading = &self.loading_tabs;
+        self.browsers
+            .retain(|id, browser| leaves.contains_key(id) || loading.contains(&browser.project));
+        for (id, (project, url)) in leaves {
             self.browsers.entry(id).or_insert_with(|| {
                 let mut address = Input::default();
                 address.insert(&url);
                 Browser {
+                    project,
                     page: Page::new(url),
                     native: None,
                     host: None,
@@ -167,7 +172,8 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let Some(browser) = self.browsers.get_mut(&id) else {
-            return;
+            // A link during startup: the leaf's URL builds the page once the tabs are in.
+            return self.store_url(id, url, window, cx);
         };
         browser.editing = false;
         browser.error = None;
@@ -179,6 +185,54 @@ impl Shell {
             None => self.store_url(id, url, window, cx),
         }
         cx.notify();
+    }
+
+    /// A new empty browser pane with its address field focused: on an edge of a pane
+    /// (`at`), or in a new tab (`None`). New tabs belong to the main window.
+    pub(crate) fn new_browser(
+        &mut self,
+        at: Option<(Ulid, PaneKey, Edge)>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(project_id) = (at.as_ref().map(|(project, ..)| *project))
+            .or_else(|| self.tab_scope(window).map(|(project, _)| project))
+            .or(self.workspace)
+        else {
+            return;
+        };
+        let leaf = Leaf::web("");
+        let Leaf::Web { id, .. } = leaf else { return };
+        let place = match at {
+            Some((_, key, edge)) => documents::Place::Split(key, edge),
+            None => {
+                if self.host_of(window) != HostId::Main {
+                    return self.in_window(HostId::Main, cx, move |shell, window, cx| {
+                        window.activate_window();
+                        shell.new_browser(None, window, cx);
+                    });
+                }
+                self.views.insert(project_id, View::Terminals);
+                if self.workspace != Some(project_id) {
+                    self.activate_workspace(project_id, window, cx);
+                }
+                documents::Place::NewTab
+            }
+        };
+        self.place_leaf(project_id, leaf, place, window, cx);
+        // A new tab's leaf exists once the daemon answered `tab.create`: the next draw that
+        // shows the pane focuses its field (`prepare_browsers`).
+        self.browser_to_focus = Some(id);
+        cx.notify();
+    }
+
+    /// `SplitBrowser`: a browser pane right of the focused pane.
+    pub(crate) fn split_browser(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let at = (self.tab_scope(window).zip(self.focused_key(window)))
+            .map(|((project, _), key)| (project, key, Edge::Right));
+        if at.is_some() {
+            self.new_browser(at, window, cx);
+        }
     }
 
     /// A web link clicked in `window` (spec 4.1): `http(s)` loads in the shown tab's browser
@@ -259,6 +313,13 @@ impl Shell {
             return;
         }
         let shown: Vec<Ulid> = self.shown_browsers(host, window);
+        if let Some(id) = self.browser_to_focus
+            && shown.contains(&id)
+            && self.browsers.contains_key(&id)
+        {
+            self.browser_to_focus = None;
+            self.focus_address(id, window, cx);
+        }
         let focused = self.focused_key(window);
         let dark = theme::slot_is_dark(cx.theme().mode, theme::os_dark(window));
         let keys = mkrew_ui::browser::keys::forwarded(&self.keymap);

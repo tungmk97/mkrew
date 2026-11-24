@@ -349,6 +349,7 @@ impl Shell {
             file_pane: self.focused_file(window).is_some(),
             file_tree: self.file_tree_shown(),
             web_pane: self.focused_web(window).is_some(),
+            browser: mkrew_ui::browser::available().is_ok(),
             terminal: terminal.is_some(),
             discard,
             git: self.git_shown(),

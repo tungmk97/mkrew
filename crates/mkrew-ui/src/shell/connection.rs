@@ -460,6 +460,7 @@ impl Shell {
             documents: HashMap::new(),
             browsers: HashMap::new(),
             browser_fallback_told: false,
+            browser_to_focus: None,
             page_events,
             doc_views: HashMap::new(),
             files: HashMap::new(),

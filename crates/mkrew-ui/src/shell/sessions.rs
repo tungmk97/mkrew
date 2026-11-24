@@ -341,6 +341,7 @@ impl Shell {
                 | Command::SplitDown
                 | Command::SplitAgent
                 | Command::SplitShell
+                | Command::SplitBrowser
                 | Command::Layout(_) => self.show_view(View::Terminals, window, cx),
                 // The rest act on panes that are not on screen.
                 Command::RenameTab
@@ -404,6 +405,7 @@ impl Shell {
             // Exactly the + Agent / + Shell buttons.
             Command::SplitAgent => self.new_pane(SessionKind::Agent, Axis::Vertical, window, cx),
             Command::SplitShell => self.new_pane(SessionKind::Shell, Axis::Vertical, window, cx),
+            Command::SplitBrowser => self.split_browser(window, cx),
             Command::BrowserAddress
             | Command::BrowserBack
             | Command::BrowserForward
