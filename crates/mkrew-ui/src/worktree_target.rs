@@ -61,9 +61,15 @@ pub fn branch_line(task: &Task) -> Option<String> {
 }
 
 /// What names a file's worktree beside its path: the task's title (the chooser's chip), or
-/// "Removed worktree" when the task or its worktree is gone. `None` = the project folder.
-pub fn label(target: Option<Ulid>, project_id: Ulid, tasks: &[Task]) -> Option<String> {
-    let task_id = target?;
+/// "Removed worktree" when the task or its worktree is gone. `None` = the project folder, or
+/// no answer yet: while the task list is not `loaded` (or failed) a gone worktree cannot be told.
+pub fn label(
+    target: Option<Ulid>,
+    project_id: Ulid,
+    tasks: &[Task],
+    loaded: bool,
+) -> Option<String> {
+    let task_id = target.filter(|_| loaded)?;
     Some(if exists(project_id, target, tasks) {
         let task = tasks.iter().find(|task| task.id == task_id);
         task.map_or_else(String::new, |task| task.title.clone())
@@ -85,7 +91,7 @@ pub fn with_worktree(title: &str, worktree: Option<&str>) -> String {
 pub fn leave_detail(path: &str, worktree: Option<&str>, workspace: Option<&str>) -> String {
     let worktree = worktree.map_or_else(String::new, |worktree| format!(" ({worktree})"));
     let workspace = workspace.map_or_else(String::new, |name| format!(" in {name}"));
-    format!("{path}{worktree}{workspace} — your changes are lost if you don't save them.")
+    format!("{path}{worktree}{workspace}. Your changes are lost if you don't save them.")
 }
 
 /// The worktree folder matching the project folder `project_path` (for "Open in Zed"): the
@@ -243,19 +249,21 @@ mod tests {
             task(project, 3, "Fix login", true),
             task(project, 4, "No", false),
         ];
-        assert_eq!(label(None, project, &tasks), None);
+        assert_eq!(label(None, project, &tasks, true), None);
         assert_eq!(
-            label(Some(Ulid(3)), project, &tasks).as_deref(),
+            label(Some(Ulid(3)), project, &tasks, true).as_deref(),
             Some("Fix login")
         );
         assert_eq!(
-            label(Some(Ulid(4)), project, &tasks).as_deref(),
+            label(Some(Ulid(4)), project, &tasks, true).as_deref(),
             Some("Removed worktree")
         );
         assert_eq!(
-            label(Some(Ulid(9)), project, &tasks).as_deref(),
+            label(Some(Ulid(9)), project, &tasks, true).as_deref(),
             Some("Removed worktree")
         );
+        // No task list yet, or it failed: a gone worktree cannot be told, so nothing is claimed.
+        assert_eq!(label(Some(Ulid(3)), project, &[], false), None);
 
         assert_eq!(with_worktree("a.rs", None), "a.rs");
         assert_eq!(
@@ -264,15 +272,15 @@ mod tests {
         );
         assert_eq!(
             leave_detail("src/a.rs", None, Some("api")),
-            "src/a.rs in api — your changes are lost if you don't save them."
+            "src/a.rs in api. Your changes are lost if you don't save them."
         );
         assert_eq!(
             leave_detail("src/a.rs", Some("Fix login"), Some("api")),
-            "src/a.rs (Fix login) in api — your changes are lost if you don't save them."
+            "src/a.rs (Fix login) in api. Your changes are lost if you don't save them."
         );
         assert_eq!(
             leave_detail("a.rs", None, None),
-            "a.rs — your changes are lost if you don't save them."
+            "a.rs. Your changes are lost if you don't save them."
         );
     }
 

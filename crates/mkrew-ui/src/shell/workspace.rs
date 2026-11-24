@@ -523,10 +523,8 @@ impl Shell {
             .then(|| self.workspace.and_then(|id| self.git.get(&id)))
             .flatten()
             .and_then(|view| view.worktree_task_id);
-        // Every file leaf of the workspace, in any tab or window, shown or not.
-        let open = (self.workspace.and_then(|id| self.tabs.get(&id)))
-            .map(|tabs| documents::worktrees(documents::open_files(tabs)))
-            .unwrap_or_default();
+        // Every file leaf of every workspace, in any tab or window, shown or not.
+        let open = documents::open_worktrees(&self.tabs);
         let needs = watches::Needs::of(self.workspace, files, git, open);
         let released = self.watch_needs.released(&needs);
         self.watch_needs = needs;

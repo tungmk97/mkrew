@@ -1257,7 +1257,8 @@ fn closing_tabs_and_panes_are_told_from_moves_by_the_remaining_open_set() {
 #[test]
 fn a_hidden_worktree_file_keeps_its_worktree_in_the_watch_set() {
     let (t1, t2) = (Ulid::new(), Ulid::new());
-    let tabs = tabs_of(vec![
+    let (a, b) = (Ulid(1), Ulid(2));
+    let tabs_a = tabs_of(vec![
         file("a.rs"),
         json!({"file": "b.rs", "task": t1.to_string()}),
         json!({"split": "vertical", "ratio": 0.5, "children": [
@@ -1265,17 +1266,25 @@ fn a_hidden_worktree_file_keeps_its_worktree_in_the_watch_set() {
             json!({"file": "d.rs", "task": t2.to_string()}),
         ]}),
     ]);
-    // The first tab is the shown one: t1 and t2 are of hidden tabs and still count.
-    assert_eq!(worktrees(open_files(&tabs)), HashSet::from([t1, t2]));
-    // Closing the last file of t1 drops it; t2 still has two files.
+    let tabs_b = tabs_of(vec![json!({"file": "e.rs", "task": t1.to_string()})]);
+    let all = std::collections::HashMap::from([(a, tabs_a), (b, tabs_b)]);
+    // Every workspace counts, shown or not, and so does every tab of it.
+    assert_eq!(
+        open_worktrees(&all),
+        HashSet::from([(a, t1), (a, t2), (b, t1)])
+    );
+    // Closing the last file of t1 in A drops (a, t1) only: B's own file keeps (b, t1).
     let closed = PaneKey::File(FileKey::new("b.rs", Some(t1)));
-    let rest = worktrees(open_files_without(&tabs, &[], &[closed]));
+    let rest: HashSet<_> = open_files_without(&all[&a], &[], &[closed])
+        .into_iter()
+        .filter_map(|file| file.task)
+        .collect();
     assert_eq!(rest, HashSet::from([t2]));
     // The Files tree on t1 keeps it regardless.
-    let needs = crate::watches::Needs::of(Some(Ulid(1)), Some(t1), None, rest);
+    let needs = crate::watches::Needs::of(Some(a), Some(t1), None, [(a, t2)]);
     assert_eq!(
         needs,
-        crate::watches::Needs::of(Some(Ulid(1)), None, None, [t1, t2])
+        crate::watches::Needs::of(Some(a), None, None, [(a, t1), (a, t2)])
     );
 }
 

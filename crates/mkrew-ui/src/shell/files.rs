@@ -690,7 +690,12 @@ impl Shell {
         let workspace = (self.sidebar.projects().iter())
             .find(|project| project.id == project_id)
             .map(|project| project.name.as_str());
-        let worktree = worktree_target::label(path.task, project_id, self.board.tasks());
+        let worktree = worktree_target::label(
+            path.task,
+            project_id,
+            self.board.tasks(),
+            self.board.is_loaded(),
+        );
         let detail = worktree_target::leave_detail(&path.path, worktree.as_deref(), workspace);
         let answer = window.prompt(
             PromptLevel::Warning,

@@ -2170,7 +2170,7 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
 - [ ] **Save (Files):** restart the daemon first (protocol bumped, now 32; stop it as in the
   2026-10-07 section below). Then open a CRLF file, edit, Ctrl+S → only the edit changed in
   Zed/`git diff` (line endings and final newline kept). Edit the same file in Zed while Mkrew has
-  unsaved text and save → "Changed on disk — Reload · Keep mine"; Keep mine writes your text,
+  unsaved text and save → "Changed on disk: Reload · Keep mine"; Keep mine writes your text,
   Reload takes the disk's.
 - [ ] **Files editor:** restart the daemon (protocol v32). Open a `.rs` file:
   - A click puts the caret there (I-beam pointer).
@@ -2191,7 +2191,7 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   - A long line scrolls sideways.
   - In light and dark: the caret, the selection and the raised caret row are readable.
 - [ ] **Unsaved edits are kept:**
-  - Edit a file, then let an agent (or Zed) change it. Your text stays and "⚠ Changed on disk —
+  - Edit a file, then let an agent (or Zed) change it. Your text stays and "⚠ Changed on disk:
     Reload · Keep mine" shows. Reload shows the agent's text. Keep mine, then Ctrl+S, writes yours.
   - Edit, then click another file, use quick open (Ctrl+Shift+O), or pick a task worktree.
     "Save changes to <name>?" appears:

@@ -103,7 +103,12 @@ impl Shell {
             })
         };
         let markdown = doc.is_markdown();
-        let worktree = worktree_target::label(path.task, project_id, self.board.tasks());
+        let worktree = worktree_target::label(
+            path.task,
+            project_id,
+            self.board.tasks(),
+            self.board.is_loaded(),
+        );
         let review_path = path.path.clone();
         let header = div()
             .flex_none()
@@ -130,8 +135,10 @@ impl Shell {
                             .child(format!("{}{}", if dirty { "● " } else { "" }, path.path)),
                     )
                     // A worktree's file says which worktree: it looks like the project's otherwise.
+                    // `flex_1` (basis 0): a long title is cut first, the path only when it alone does not fit.
                     .children(worktree.map(|worktree| {
                         div()
+                            .flex_1()
                             .min_w_0()
                             .truncate()
                             .text_size(font_size::META)
@@ -493,7 +500,7 @@ impl Shell {
                     None,
                     sentence.into(),
                     Some(
-                        format!("{} — open it in Zed instead.", size_label(shown.code.size)).into(),
+                        format!("{}. Open it in Zed instead.", size_label(shown.code.size)).into(),
                     ),
                 )
                 .flex_1()
@@ -527,7 +534,7 @@ impl Shell {
                             .min_w_0()
                             .text_size(font_size::META)
                             .text_color(rgb(theme.text))
-                            .child("⚠ Changed on disk — Reload · Keep mine"),
+                            .child("⚠ Changed on disk: Reload · Keep mine"),
                     )
                     .child(
                         button("file-reload", "Reload", theme, false)

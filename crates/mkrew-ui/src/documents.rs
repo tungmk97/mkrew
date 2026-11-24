@@ -46,7 +46,7 @@ pub struct Shown {
     /// The file's text in the git index from the last read (`fs.read` `index_text`); the text
     /// highlighted again after typing is diffed with it (SPEC §12A gutter).
     pub index_text: Option<String>,
-    /// The file on disk changed under unsaved text: its hash ("Changed on disk — Reload ·
+    /// The file on disk changed under unsaved text: its hash ("Changed on disk: Reload ·
     /// Keep mine").
     pub disk_changed: Option<String>,
     /// Why the last save failed.
@@ -993,11 +993,19 @@ pub fn open_files(tabs: &Tabs) -> HashSet<FileKey> {
     open_files_without(tabs, &[], &[])
 }
 
-/// The worktrees (task ids) of `files`, e.g. of [`open_files`]: the file leaves of every tab,
-/// shown or not, so a workspace keeps the watchers its hidden panes need and an agent's edit
-/// is there when the tab comes back.
-pub fn worktrees(files: impl IntoIterator<Item = FileKey>) -> HashSet<Ulid> {
-    files.into_iter().filter_map(|file| file.task).collect()
+/// `(workspace, worktree task)` of every file leaf of every workspace's `tabs` (all tabs, all
+/// windows, shown or not): what the watch set keeps so that a hidden workspace's worktree
+/// files stay current until their last file closes.
+pub fn open_worktrees<'a>(
+    all: impl IntoIterator<Item = (&'a Ulid, &'a Tabs)>,
+) -> HashSet<(Ulid, Ulid)> {
+    all.into_iter()
+        .flat_map(|(&workspace, tabs)| {
+            open_files(tabs)
+                .into_iter()
+                .filter_map(move |file| Some((workspace, file.task?)))
+        })
+        .collect()
 }
 
 /// [`open_files`] as it would be once the tabs `skip_tabs` and the leaves `skip_keys` are

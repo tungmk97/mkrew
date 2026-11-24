@@ -256,9 +256,12 @@ impl Shell {
             .collect();
         // A file of a task worktree names it: a project file and a worktree file look alike.
         let worktree = match tab.focused() {
-            Some(PaneKey::File(file)) => {
-                worktree_target::label(file.task, project_id, self.board.tasks())
-            }
+            Some(PaneKey::File(file)) => worktree_target::label(
+                file.task,
+                project_id,
+                self.board.tasks(),
+                self.board.is_loaded(),
+            ),
             _ => None,
         };
         let title = label.unwrap_or(&tab.title);
