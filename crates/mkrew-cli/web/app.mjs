@@ -3,7 +3,7 @@
 import { Terminal } from './vendor/xterm.mjs';
 import {
   backoff, buildList, chipFor, displayName, esc, fitFontSize, fromBase64Url, keyBytes, loadReplies,
-  machineName, metaText, newAgentPlan, pillText, pushOffer, readerText, rememberReply, sameBytes,
+  machineName, metaText, nativeView, newAgentPlan, pillText, pushOffer, readerText, rememberReply, sameBytes,
   sessionFromHash, statusLabel, toBase64, tokenFromHash, tokenFromText, wsClass,
 } from './model.mjs';
 
@@ -494,6 +494,8 @@ function renderSession() {
   $('ended').hidden = !ended;
   $('stop').hidden = ended;
   $('ended-text').textContent = s.exit_code == null ? 'Session ended' : `Session ended (exit ${s.exit_code})`;
+  // applyView refits and scrolls the terminal, so run it only when the surface goes live or leaves (the notice's hidden flag is the last state).
+  if (nativeView(s) === $('native').hidden) applyView();
 }
 
 // ---- session screen ----
@@ -524,13 +526,18 @@ function nextView() {
   return names[(names.indexOf(currentView()) + 1) % names.length];
 }
 
-/** Fit / Zoom show the terminal; Read shows its text wrapped to the phone width. */
+/** Fit / Zoom show the terminal; Read shows its text wrapped to the phone width.
+ *  A live omp surface (ADR 0107) shows a notice instead of either, without the view button; the composer, Stop and the replies stay. */
 function applyView() {
   const view = currentView();
+  const native = nativeView(state.sessions.get(state.open));
+  $('native').hidden = !native;
+  $('view').hidden = native;
   $('view-label').textContent = VIEWS[view];
   $('view').setAttribute('aria-label', `View: ${VIEWS[view]}. Switch to ${VIEWS[nextView()]}`);
-  $('term').hidden = view === 'read';
-  $('reader').hidden = view !== 'read';
+  $('term').hidden = native || view === 'read';
+  $('reader').hidden = native || view !== 'read';
+  if (native) return;
   if (view === 'read') {
     reader.stick = true;
     renderReader();

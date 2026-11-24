@@ -16,7 +16,7 @@ Test fixture (omp's own record of a real startup): `docs/superpowers/specs/2026-
 
 ## Global Constraints
 
-- Protocol version 59 (`PROTOCOL_VERSION`); `feat/tern-layout` (unmerged) holds 58 and ADR 0106, so this plan uses ADR 0107; no store migration.
+- Protocol version 59 (`PROTOCOL_VERSION`); `master` holds 58 and ADR 0106 (Tern layout, merged in 0a8d404), so this plan uses ADR 0107; no store migration.
 - ConPTY package: NuGet `Microsoft.Windows.Console.ConPTY` 1.24.260710001, nupkg SHA-256 `175640566a3b59c4b132070ee96c2c77e5ab7edd2e92732a5eb3610bbf63d90e`.
 - `runtimes/win-x64/native/conpty.dll` SHA-256 `39fba2713e2495117b1591ae8c32a3b904bea7aa66069cf7815e2844c76d75d8`; `build/native/runtimes/x64/OpenConsole.exe` SHA-256 `b7fd936c2668b87b9ecf7b3366dc6568afc1c6f981874cba3e955a1c35cf8160` (byte-identical to Tern's copies and to the spike's passing configuration).
 - Profile key `tsp` (bool, optional): absent means on when `[usage] format = "omp_jsonl"`, off otherwise; every session gets `PI_TUI_NATIVE=1` when `tsp` is on, `PI_TUI_NATIVE=0` otherwise.
@@ -30,7 +30,7 @@ Test fixture (omp's own record of a real startup): `docs/superpowers/specs/2026-
 - Commits: Conventional Commits with `git -c user.email=tungnv975@gmail.com commit`; stage only the task's files (other agents edit this tree); never push; no em dash in any text.
 - Per task: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, then the task's tests; after protocol or CLI changes run `cargo build -p mkrew-cli -p mkrew-fakeagent --bins -j 4` before `cargo test -p mkrew-daemon --test daemon -j 2`.
 - Windows shell: Git Bash (`"C:/Program Files/Git/bin/bash.exe"`); plain `bash` in the omp shell is WSL.
-- Branch: work on `feat/omp-tsp` from `master`; if `feat/tern-layout` merged first, rebase and keep 59 / 0107.
+- Branch: `feat/omp-tsp` from `master` 0a8d404 (after the Tern layout merge), worktree `.worktrees/omp-tsp`.
 
 ## Review Focus
 
@@ -793,36 +793,36 @@ If any item differs, report it to Main with the pane, the item, what was seen an
 ### Task 2: Protocol 59 TSP types
 
 **Files:**
-- Modify: `crates/mkrew-protocol/src/message.rs:337` (new `Request` variants after `LimitsReport`), `:481` (new `Event` variant after `MachineStats`), `:631` (`Session.tsp` after `plan_path`), `:1812` (new type block after `struct MachineStats`)
+- Modify: `crates/mkrew-protocol/src/message.rs:337` (new `Request` variants after `LimitsReport`), `:478` (new `Event` variant after `AgentLimits`), `:628` (`Session.tsp` after `plan_path`), `:1988` (new type block after `struct DocChangedEvent`, before `mod base64_bytes`)
 - Modify: `crates/mkrew-protocol/src/lib.rs:16` (`PROTOCOL_VERSION`)
-- Modify: `crates/mkrew-protocol/src/message/tests.rs:346` (request list), `:905-919` (Session literal), `:935` (session.updated assertions), `:1405-1408` (version test), end of file (new tests)
+- Modify: `crates/mkrew-protocol/src/message/tests.rs:346` (request list), `:898-919` (Session literal), `:935` (session.updated assertions), `:1394-1397` (version test), end of file (new tests)
 - Modify (add `tsp: mkrew_protocol::TspState::Off,` to every `Session { .. }` literal, current lines from `grep -rn "terminal_title: None," crates --include=*.rs`):
   - `crates/mkrew-core/src/run.rs:367`
   - `crates/mkrew-daemon/src/awake.rs:389`
   - `crates/mkrew-daemon/src/notify.rs:392`
   - `crates/mkrew-daemon/src/retention.rs:145`
   - `crates/mkrew-daemon/src/server/resume.rs:304`
-  - `crates/mkrew-daemon/src/server.rs:911`
+  - `crates/mkrew-daemon/src/server.rs:905`
   - `crates/mkrew-daemon/src/turns.rs:300`
   - `crates/mkrew-daemon/tests/daemon/basics.rs:146`
   - `crates/mkrew-daemon/tests/daemon/turns.rs:158`
   - `crates/mkrew-store/src/lib.rs:1673`
   - `crates/mkrew-store/src/tests.rs:17`
   - `crates/mkrew-ui/src/attention.rs:229`
-  - `crates/mkrew-ui/src/board/tests.rs:72`
+  - `crates/mkrew-ui/src/board/tests.rs:49`
   - `crates/mkrew-ui/src/broadcast.rs:265`
   - `crates/mkrew-ui/src/conflicts.rs:178`
   - `crates/mkrew-ui/src/doc_dialog.rs:332`
   - `crates/mkrew-ui/src/fanout.rs:408`
-  - `crates/mkrew-ui/src/git_view/tests.rs:1423`
+  - `crates/mkrew-ui/src/git_view/tests.rs:1403`
   - `crates/mkrew-ui/src/history.rs:198`
   - `crates/mkrew-ui/src/inbox.rs:351`
   - `crates/mkrew-ui/src/inspector.rs:245`
-  - `crates/mkrew-ui/src/lifecycle.rs:239`
+  - `crates/mkrew-ui/src/lifecycle.rs:253`
   - `crates/mkrew-ui/src/machine_notify.rs:133`
-  - `crates/mkrew-ui/src/palette/tests.rs:150`
+  - `crates/mkrew-ui/src/palette/tests.rs:192`
   - `crates/mkrew-ui/src/plan.rs:181`
-  - `crates/mkrew-ui/src/redraw.rs:171`
+  - `crates/mkrew-ui/src/redraw.rs:169`
   - `crates/mkrew-ui/src/run.rs:336`
   - `crates/mkrew-ui/src/sidebar/tests.rs:47`
   - `crates/mkrew-ui/src/status.rs:191`
@@ -831,7 +831,7 @@ If any item differs, report it to Main with the pane, the item, what was seen an
   - `crates/mkrew-ui/src/undo_dialog.rs:334`
   - `crates/mkrew-ui/src/usage.rs:218`
   - `crates/mkrew-ui/src/worktree_dialog.rs:488`
-- Modify: `crates/mkrew-ui/src/redraw.rs:74` (new event arm), `:558` (new test); `crates/mkrew-ui/src/sidebar.rs:672` (new event arm)
+- Modify: `crates/mkrew-ui/src/redraw.rs:72` (new event arm), `:546` (new test goes after the test ending there); `crates/mkrew-ui/src/sidebar.rs:671` (new event arm)
 - Test: `crates/mkrew-protocol/src/message/tests.rs`, `crates/mkrew-ui/src/redraw.rs`
 
 The list above is the output of the grep today.
@@ -839,7 +839,7 @@ The compiler is the authority: Step 5 tells the engineer to let `cargo check` na
 Literals written with `..other` (for example `Session { kind: SessionKind::Shell, ..session(..) }` in `attention.rs`, `inbox.rs`, `palette/tests.rs`, `sidebar/tests.rs`, `run.rs`) need no change.
 
 **Interfaces:**
-- Consumes: the private `base64_bytes` module (`message.rs:2002`), `Ulid`, `serde_json`, all already imported in `message.rs`.
+- Consumes: the private `base64_bytes` module (`message.rs:1989`), `Ulid`, `serde_json`, all already imported in `message.rs`.
 - Produces (exact, from the contract; all reachable as `mkrew_protocol::*` because `lib.rs:13` has `pub use message::*;`, so no re-export edit is needed): `TspState`, `TspNode`, `TspSurface`, `TspBlob`, `TspSnapshotParams`, `TspSnapshot`, `TspChange`, `TspUpdate`, `TspEventParams`, `Request::TspSnapshot`, `Request::TspEvent`, `Event::TspUpdate(Box<TspUpdate>)` (boxed: `TspChange::Open` holds a whole surface; daemon and UI construct `Event::TspUpdate(Box::new(TspUpdate { .. }))`), `Session.tsp: TspState`, `PROTOCOL_VERSION == 59`.
 - `serde_json::Map<String, Value>` implements `PartialEq` (not `Eq`), so `TspNode`, `TspSurface`, `TspSnapshot`, `TspChange`, `TspUpdate` and `TspEventParams` derive `PartialEq` only; `Request` and `Event` already derive only `PartialEq` (`message.rs:45`, `:405`), so nothing else changes.
   `TspBlob`, `TspSnapshotParams` and `TspState` hold no JSON value and derive `Eq`.
@@ -878,7 +878,7 @@ Then add these assertions after `assert!(updated["data"].get("plan_path").is_non
     );
 ```
 
-(c) Rename and renumber the version test (lines 1405-1408):
+(c) Rename and renumber the version test (lines 1394-1397; today `the_tern_layout_protocol_is_version_58` asserting 58):
 ```rust
 #[test]
 fn the_omp_surface_protocol_is_version_59() {
@@ -886,7 +886,7 @@ fn the_omp_surface_protocol_is_version_59() {
 }
 ```
 
-(d) Append at the end of the file (after the last test, line 1437):
+(d) Append at the end of the file (after the last test, `the_transcript_reply_carries_an_optional_recap`, line 1426):
 ```rust
 fn tsp_surface(seq: u64) -> TspSurface {
     TspSurface {
@@ -1083,7 +1083,7 @@ fn tsp_state_names_are_snake_case_and_off_is_the_default() {
 }
 ```
 
-(e) In `crates/mkrew-ui/src/redraw.rs`, add this test before the closing `}` of `mod tests` (after the test ending at line 558):
+(e) In `crates/mkrew-ui/src/redraw.rs`, add this test before the closing `}` of `mod tests` (after `limits_always_redraw_the_main_window`, which ends at line 546):
 ```rust
     /// A surface change repaints only a pane that is on screen (spec 2026-11-23 section 6.4).
     #[test]
@@ -1113,7 +1113,7 @@ Expected: FAIL to compile with "cannot find type `TspState` in this scope" (and 
 (a) `crates/mkrew-protocol/src/lib.rs:15-16`, replace
 ```rust
 /// Bumped on any incompatible change; `hello` with another value gets `version_mismatch`.
-pub const PROTOCOL_VERSION: u32 = 57;
+pub const PROTOCOL_VERSION: u32 = 58;
 ```
 with
 ```rust
@@ -1137,10 +1137,10 @@ pub const PROTOCOL_VERSION: u32 = 59;
 }
 ```
 
-(c) After `MachineStats(MachineStats),` (line 481) and before the closing `}` of `Event` (line 482):
+(c) After `AgentLimits(AgentLimits),` (line 478) and before the closing `}` of `Event` (line 479):
 ```rust
-    #[serde(rename = "machine.stats")]
-    MachineStats(MachineStats),
+    #[serde(rename = "agent.limits")]
+    AgentLimits(AgentLimits),
     /// The native surface of an omp pane changed (spec 2026-11-23 section 6.4): a client
     /// applies it in order and asks `tsp.snapshot` again when `seq` skips a number.
     #[serde(rename = "tsp.update")]
@@ -1148,7 +1148,7 @@ pub const PROTOCOL_VERSION: u32 = 59;
 }
 ```
 
-(d) `Session` (after `plan_path`, line 631):
+(d) `Session` (after `plan_path`, line 628):
 ```rust
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_path: Option<String>,
@@ -1160,7 +1160,7 @@ pub const PROTOCOL_VERSION: u32 = 59;
 }
 ```
 
-(e) After `struct MachineStats { .. }` (ends line 1812), insert this block (a blank line before and after):
+(e) After `struct DocChangedEvent { .. }` (ends line 1987) and before `mod base64_bytes` (line 1989), insert this block (a blank line before and after; `MachineStats` no longer exists):
 ```rust
 // ---- omp native surface, TSP (spec 2026-11-23 section 6.4) ----
 
@@ -1290,7 +1290,7 @@ Run: `cargo check --workspace --all-targets -j 4`
 Expected: errors "missing field `tsp` in initializer of `Session`" and "non-exhaustive patterns: `&Event::TspUpdate(_)` not covered".
 Let the compiler list every literal; add `tsp: mkrew_protocol::TspState::Off,` as the last field of each (the full path needs no new `use`).
 The grep list in **Files** is what the compiler should name today; trust the compiler over the list.
-Example, `crates/mkrew-ui/src/redraw.rs:183-185`:
+Example, `crates/mkrew-ui/src/redraw.rs:181-183`:
 ```rust
             position: 0.0,
             plan_path: None,
@@ -1298,18 +1298,18 @@ Example, `crates/mkrew-ui/src/redraw.rs:183-185`:
         }
 ```
 In `crates/mkrew-protocol/src/message/tests.rs` no other literal exists (the one at `:898` was done in Step 1).
-In `crates/mkrew-daemon/src/server.rs:924` (the live session built in `start_session`) the line after `plan_path: start.plan_path,` also gets `tsp: mkrew_protocol::TspState::Off,`; the daemon task replaces it with the real value later.
+In `crates/mkrew-daemon/src/server.rs:918` (the live session built in `start_session`) the line after `plan_path: start.plan_path,` also gets `tsp: mkrew_protocol::TspState::Off,`; the daemon task replaces it with the real value later.
 
 Exhaustive matches.
-`crates/mkrew-ui/src/redraw.rs`, after `Event::SessionQueue(e) => on_pane(e.session_id),` (line 74):
+`crates/mkrew-ui/src/redraw.rs`, after `Event::SessionQueue(e) => on_pane(e.session_id),` (line 72):
 ```rust
         Event::SessionQueue(e) => on_pane(e.session_id),
         // The native surface of an omp pane (spec 2026-11-23 section 6.4).
         Event::TspUpdate(e) => on_pane(e.session_id),
 ```
-`crates/mkrew-ui/src/sidebar.rs`, in the `Change::None` arm (lines 672-673):
+`crates/mkrew-ui/src/sidebar.rs`, in the `Change::None` arm (lines 671-672; `MachineStats` is gone, the arm now ends `| Event::AgentLimits(_) | Event::ProjectCloned(_) => Change::None`):
 ```rust
-            | Event::MachineStats(_)
+            | Event::AgentLimits(_)
             | Event::TspUpdate(_)
             | Event::ProjectCloned(_) => Change::None,
 ```
@@ -5436,19 +5436,19 @@ On the system ConPTY the APC hello never reaches the daemon, and the live-path t
 **Files:**
 - Create: `crates/mkrew-daemon/src/server/tsp.rs`
 - Create: `crates/mkrew-daemon/tests/daemon/tsp.rs`
-- Modify: `crates/mkrew-daemon/tests/daemon/main.rs:59-60` (`mod tsp;`)
+- Modify: `crates/mkrew-daemon/tests/daemon/main.rs:60-61` (`mod tsp;`)
 - Modify: `crates/mkrew-daemon/src/session.rs:14-22` (imports)
 - Modify: `crates/mkrew-daemon/src/session.rs:108` (`Hub.tsp_states`)
-- Modify: `crates/mkrew-daemon/src/session.rs:290-291` (`Command::TspSnapshot`, `Command::TspEvent`)
-- Modify: `crates/mkrew-daemon/src/session.rs:318` (`SpawnSpec.dark`)
-- Modify: `crates/mkrew-daemon/src/session.rs:349,367-369` (`Hub::new`, `Hub::tsp_state`)
-- Modify: `crates/mkrew-daemon/src/session.rs:421-444` (`spawn_watched`: destructure, env, engine)
-- Modify: `crates/mkrew-daemon/src/session.rs:596-617` (`Actor` literal)
-- Modify: `crates/mkrew-daemon/src/session.rs:1123` (`Actor.tsp`)
-- Modify: `crates/mkrew-daemon/src/session.rs:1143,1273-1301` (`run`: deadline branch, command arms)
-- Modify: `crates/mkrew-daemon/src/session.rs:1317-1350` (`on_output` split into `on_output`, `apply_steps`, `on_plain`)
-- Modify: `crates/mkrew-daemon/src/session.rs:1453-1458` (`resize`)
-- Modify: `crates/mkrew-daemon/src/server.rs:53-55,376-378,516-517,939,1412` (`mod tsp;`, list fill, dispatch arms, `dark`, `edit_session` fill)
+- Modify: `crates/mkrew-daemon/src/session.rs:287-288` (`Command::TspSnapshot`, `Command::TspEvent`)
+- Modify: `crates/mkrew-daemon/src/session.rs:315` (`SpawnSpec.dark`)
+- Modify: `crates/mkrew-daemon/src/session.rs:346,362-365` (`Hub::new`, `Hub::tsp_state`)
+- Modify: `crates/mkrew-daemon/src/session.rs:417-440` (`spawn_watched`: destructure, env, engine)
+- Modify: `crates/mkrew-daemon/src/session.rs:592-613` (`Actor` literal)
+- Modify: `crates/mkrew-daemon/src/session.rs:1119` (`Actor.tsp`)
+- Modify: `crates/mkrew-daemon/src/session.rs:1139,1270,1293` (`run`: deadline branch, command arms)
+- Modify: `crates/mkrew-daemon/src/session.rs:1313-1346` (`on_output` split into `on_output`, `apply_steps`, `on_plain`)
+- Modify: `crates/mkrew-daemon/src/session.rs:1452-1454` (`resize`)
+- Modify: `crates/mkrew-daemon/src/server.rs:52-54,370-372,510-511,933,1406` (`mod tsp;`, list fill, dispatch arms, `dark`, `edit_session` fill)
 - Test: `crates/mkrew-daemon/tests/daemon/tsp.rs`
 
 **Interfaces:**
@@ -5465,7 +5465,7 @@ On the system ConPTY the APC hello never reaches the daemon, and the live-path t
 
 - [ ] **Step 1: Write the failing e2e tests**
 
-Add `mod tsp;` to `crates/mkrew-daemon/tests/daemon/main.rs` in the module list, between `task_runs` and `turns` (lines 59-60):
+Add `mod tsp;` to `crates/mkrew-daemon/tests/daemon/main.rs` in the module list, between `task_runs` and `turns` (lines 60-61; `limits` replaced `widgets` earlier in the same list):
 
 ```rust
 mod task_runs;
@@ -5836,14 +5836,14 @@ to
     pub tsp_states: Mutex<HashMap<Ulid, TspState>>,
 ```
 
-(c) `Hub::new`, after `terminal_titles: Mutex::default(),` (line 349):
+(c) `Hub::new`, after `terminal_titles: Mutex::default(),` (line 346):
 
 ```rust
             terminal_titles: Mutex::default(),
             tsp_states: Mutex::default(),
 ```
 
-(d) Accessor, after `terminal_title` (lines 366-369):
+(d) Accessor, after `terminal_title` (lines 362-365):
 
 ```rust
     /// The TSP state of session `id`; `off` for a session without TSP.
@@ -5852,7 +5852,7 @@ to
     }
 ```
 
-(e) `SpawnSpec`, after `turn_snapshots` (line 318):
+(e) `SpawnSpec`, after `turn_snapshots` (line 315):
 
 ```rust
     pub turn_snapshots: bool,
@@ -5861,7 +5861,7 @@ to
 }
 ```
 
-(f) `Command`, after the `LinkPlan` variant (lines 283-290, before the closing `}` at 291):
+(f) `Command`, after the `LinkPlan` variant (lines 280-287, before the closing `}` at 288):
 
 ```rust
     /// `tsp.snapshot`: the engine's surfaces; `off` and empty when the session has no TSP.
@@ -5879,7 +5879,7 @@ to
 
 - [ ] **Step 4: Start the agent with `PI_TUI_NATIVE`, build the engine (`spawn_watched`)**
 
-(a) Destructure, lines 421-432: change `session,` to `mut session,` and add `dark,` last:
+(a) Destructure, lines 417-428: change `session,` to `mut session,` and add `dark,` last:
 
 ```rust
         let SpawnSpec {
@@ -5897,7 +5897,7 @@ to
         } = spec;
 ```
 
-(b) Env, after the `for (key, value) in &env { cmd.env(key, value); }` loop (line 437), before `cmd.env("MKREW_SESSION_ID", ...)`:
+(b) Env, after the `for (key, value) in &env { cmd.env(key, value); }` loop (line 433), before `cmd.env("MKREW_SESSION_ID", ...)`:
 
 ```rust
         // omp draws through TSP only when told to; `0` also keeps it from probing the
@@ -5905,7 +5905,7 @@ to
         cmd.env("PI_TUI_NATIVE", if profile.tsp { "1" } else { "0" });
 ```
 
-(c) Engine and initial state, right after `let machine = StateMachine::new(&profile.state).context("compile state patterns")?;` (line 444):
+(c) Engine and initial state, right after `let machine = StateMachine::new(&profile.state).context("compile state patterns")?;` (line 440):
 
 ```rust
         let tsp = profile.tsp.then(|| Engine::new(session.cols, dark));
@@ -5915,7 +5915,7 @@ to
         }
 ```
 
-(d) `Actor` literal (lines 596-617): add `tsp,` after `ports: run_ports,`:
+(d) `Actor` literal (lines 592-613): add `tsp,` after `ports: run_ports,`:
 
 ```rust
             usage,
@@ -5924,7 +5924,7 @@ to
         };
 ```
 
-(e) `Actor` struct, after the `ports` field (line 1123):
+(e) `Actor` struct, after the `ports` field (line 1119):
 
 ```rust
     /// `Some(..)` for a session whose profile has `tsp`: splits the output into plain bytes and
@@ -5933,9 +5933,9 @@ to
 }
 ```
 
-- [ ] **Step 5: Split `on_output` (`session.rs:1317-1350`)**
+- [ ] **Step 5: Split `on_output` (`session.rs:1313-1346`)**
 
-Replace the whole `fn on_output` (lines 1317-1350) with these six methods.
+Replace the whole `fn on_output` (lines 1313-1346) with these six methods.
 The body of `on_plain` is the old `on_output` body unchanged.
 
 ```rust
@@ -6057,7 +6057,7 @@ The body of `on_plain` is the old `on_output` body unchanged.
 
 - [ ] **Step 6: The deadline branch and the command arms (`Actor::run`)**
 
-(a) Next to `scan_at` (line 1143):
+(a) Next to `scan_at` (line 1139):
 
 ```rust
             let scan_at = self.scan.deadline().map(tokio::time::Instant::from_std);
@@ -6068,7 +6068,7 @@ The body of `on_plain` is the old `on_output` body unchanged.
                 .map(tokio::time::Instant::from_std);
 ```
 
-(b) Command arms, after the `Command::LinkPlan { .. }` arm and before `None => commands_open = false,` (line 1274):
+(b) Command arms, after the `Command::LinkPlan { .. }` arm and before `None => commands_open = false,` (line 1270):
 
 ```rust
                     Some(Command::TspSnapshot { reply }) => {
@@ -6089,7 +6089,7 @@ The body of `on_plain` is the old `on_output` body unchanged.
                     }
 ```
 
-(c) The select branch, before the `kill_at` branch (line 1297):
+(c) The select branch, before the `kill_at` branch (line 1293):
 
 ```rust
                 () = sleep_until(tsp_at), if tsp_at.is_some() => {
@@ -6108,7 +6108,7 @@ The body of `on_plain` is the old `on_output` body unchanged.
 
 - [ ] **Step 7: Tell a live surface about resizes (`Actor::resize`)**
 
-In `Actor::resize` replace (lines 1456-1458):
+In `Actor::resize` replace (lines 1452-1454):
 
 ```rust
         self.session.cols = cols;
@@ -6130,7 +6130,7 @@ with:
 
 - [ ] **Step 8: Server side: `dark`, list fills, handlers, dispatch**
 
-(a) `crates/mkrew-daemon/src/server.rs`, module list (lines 53-55): insert `mod tsp;` between `task_worktree` and `turn`:
+(a) `crates/mkrew-daemon/src/server.rs`, module list (lines 52-54): insert `mod tsp;` between `task_worktree` and `turn`:
 
 ```rust
 mod task_worktree;
@@ -6138,7 +6138,7 @@ mod tsp;
 mod turn;
 ```
 
-(b) `start_session`, in the `SpawnSpec` literal (line 939):
+(b) `start_session`, in the `SpawnSpec` literal (line 933):
 
 ```rust
             turn_snapshots: self.settings.current().features.turns,
@@ -6150,7 +6150,7 @@ mod turn;
         };
 ```
 
-(c) `session.list` (lines 376-378):
+(c) `session.list` (lines 370-372):
 
 ```rust
                     for session in &mut sessions {
@@ -6159,14 +6159,14 @@ mod turn;
                     }
 ```
 
-(d) `edit_session`, after line 1412:
+(d) `edit_session`, after line 1406:
 
 ```rust
         session.terminal_title = self.hub.terminal_title(session.id);
         session.tsp = self.hub.tsp_state(session.id);
 ```
 
-(e) Dispatch arms in `Server::handle`, after the `Request::LimitsReport(params) => match ... { ... },` arm (ends line 516) and before `other => {` (line 517):
+(e) Dispatch arms in `Daemon::handle`, after the `Request::LimitsReport(params) => match ... { ... },` arm (ends line 510) and before `other => {` (line 511):
 
 ```rust
             Request::TspSnapshot(params) => (self.tsp_snapshot(params).await, After::Continue),
@@ -6257,7 +6257,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(daemon): TSP output path, 
 
 **Files:**
 - Create: `crates/mkrew-ui/src/tsp.rs`
-- Modify: `crates/mkrew-ui/src/lib.rs:104` (add `pub mod tsp;` after `pub mod toast;`, before `pub mod turn;`)
+- Modify: `crates/mkrew-ui/src/lib.rs:105` (add `pub mod tsp;` after `pub mod toast;`, before `pub mod turn;`)
 - Test: `crates/mkrew-ui/src/tsp.rs` (inline `#[cfg(test)] mod tests`)
 
 **Interfaces:**
@@ -8561,16 +8561,16 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): pure TSP module (them
 - Create: `crates/mkrew-ui/src/shell/tsp_view.rs`
 - Modify: `crates/mkrew-ui/src/terminal/view.rs:271-280` (add `focus_handle`), `:325-337` (add `fit_cols`), `:361` (`pub fn key_down`), `:1406` (`pub fn terminal_font`)
 - Modify: `crates/mkrew-ui/src/chat.rs:19-27` and test `:1726-1741`
-- Modify: `crates/mkrew-ui/src/shell/chat_view.rs:108-111` (`chat_available`), `:99` (`visible_sessions` visibility)
+- Modify: `crates/mkrew-ui/src/shell/chat_view.rs:108-111` (`chat_available`), `:101` (`visible_sessions` visibility)
 - Modify: `crates/mkrew-ui/src/redraw.rs` (test; arm only if Task 2 did not add it)
-- Modify: `crates/mkrew-ui/src/shell.rs:70` (`pub(crate) mod tsp_view;`), `crates/mkrew-ui/src/main.rs:155` (`use shell::tsp_view::*;`), `main.rs:764` (field `tsps`)
-- Modify: `crates/mkrew-ui/src/shell/connection.rs:407` (init), `:168` (`sync_tsps`), `:189-197` (`tsp_animating`), `:1295` (fallback toast), `:1351-1364` (TspUpdate arm), `:1406-1409` (`fed` rule)
-- Modify: `crates/mkrew-ui/src/shell/pane_render.rs:447-457` (width into `pane_frame` is already passed), `:519-531` (`pane_frame` branch)
-- Modify: `crates/mkrew-ui/src/theme.rs:385` (five `TSP_*` tokens after `CHAT_COLUMN_WIDTH`)
+- Modify: `crates/mkrew-ui/src/shell.rs:71` (`pub(crate) mod tsp_view;`), `crates/mkrew-ui/src/main.rs:155` (`use shell::tsp_view::*;`), `main.rs:744` (field `tsps`)
+- Modify: `crates/mkrew-ui/src/shell/connection.rs:404` (init), `:168` (`sync_tsps`), `:191-195` (`tsp_animating`), `:1284` (fallback toast), `:1340-1353` (TspUpdate arm goes after it), `:1370-1374` (`fed` rule)
+- Modify: `crates/mkrew-ui/src/shell/pane_render.rs:526-542` (width into `pane_frame` is already passed), `:609-612` (`pane_frame` content branch), `:624` (`reading` in `pane_frame`), `:986-1009` (`pane_toggles`: Reading width toggle)
+- Modify: `crates/mkrew-ui/src/theme.rs:382` (five `TSP_*` tokens after `CHAT_COLUMN_WIDTH`)
 - Test: `chat.rs` (`chat::available` gate), `redraw.rs` (arm). The view itself is verified by Task 12's smoke and the manual check in Step 24.
 
 **Interfaces:**
-- Consumes: everything Task 9 produces, in particular `mkrew_ui::tsp::{Checklist, ChecklistMode, HudMark, PhaseMark, ItemMark, TodoPhase, AskLook, ask_look, role_of, choice_filled, collapsed_now, item_look, roman}` (Task 9), `widgets::{floating_panel, status_dot}`; `Session.tsp: TspState`, `Request::{TspSnapshot, TspEvent}`, `TspSnapshotParams { session_id }`, `TspEventParams { session_id, surface, event }`, `Event::TspUpdate(Box<TspUpdate>)` (Task 2); existing `Shell` items: `chat_column` (`chat_view.rs:1138`), `thread_panel::at_bottom`, `loading_dots` (`widgets.rs:1226`), `tooltip` (`widgets.rs:1338`), `message` (`widgets.rs:25`), `toast_info` (`toasts.rs:14`), `typing` (`focus.rs:256`), `focused_session` (`hosts.rs:112`), `is_exited` (`workspace.rs:224`), `preview::blocks`, `docs::Shown::from_text`, `Pressable`/`Look`, `icon_svg`.
+- Consumes: everything Task 9 produces, in particular `mkrew_ui::tsp::{Checklist, ChecklistMode, HudMark, PhaseMark, ItemMark, TodoPhase, AskLook, ask_look, role_of, choice_filled, collapsed_now, item_look, roman}` (Task 9), `widgets::{floating_panel, status_dot}`; `Session.tsp: TspState`, `Request::{TspSnapshot, TspEvent}`, `TspSnapshotParams { session_id }`, `TspEventParams { session_id, surface, event }`, `Event::TspUpdate(Box<TspUpdate>)` (Task 2); existing `Shell` items: `chat_column` (`chat_view.rs:1083`), `thread_panel::at_bottom`, `loading_dots` (`widgets.rs:1288`), `tooltip` (`widgets.rs:1384`), `message` (`widgets.rs:25`), `float_button` (`widgets.rs:194`), `toast_info` (`toasts.rs:14`), `typing` (`focus.rs:254`), `focused_session` (`hosts.rs:117`), `is_exited` (`workspace.rs:223`), `preview::blocks`, `docs::Shown::from_text`, `Pressable`/`Look`, `icon_svg`.
 - Produces: `Shell.tsps: HashMap<Ulid, TspUi>`; `TspUi`; `Shell::{render_tsp, tsp_send, sync_tsps, tsp_animating, tsp_pane_view, tsp_covers, tsp_update, tsp_checklist, tsp_ask, tsp_status_hud}`; `TspUi.todo_open: Option<String>` (the node id of the hud whose popover is open) and `TspUi.todo_toggled: HashSet<(String, String)>` (node id, phase id: headers the user clicked); the `omp.hud.status` row, the todo popover and the ask card (`omp.editor.ask`, spec 7.6 and 7.7); `chat::available(kind, profile, has_transcript, tsp)`; `TerminalPane::{focus_handle, fit_cols}` and `pub key_down`, `pub terminal_font`.
 
 Hard rules in force (mkrew-ui-design): every color, size, spacing, radius comes from `theme.rs` tokens; every clickable element is `.pressable(..)` + `.on_press(..)` (text fields are exempt and use `on_mouse_down`); selected rows use `pressable_unless`; no looping animation (the status tick redraws, `loading_dots` steps on it); dark and light work because only `Theme` fields are read; the empty state of a list is its `empty` prop, the empty state of the pane is the Starting message.
@@ -8621,7 +8621,7 @@ pub fn terminal_font(theme: &Theme) -> Font {
 
 - [ ] **Step 2: Add the theme tokens for the todo popover and the ask card**
 
-In `crates/mkrew-ui/src/theme.rs`, after `pub const CHAT_COLUMN_WIDTH: f32 = 760.0;` (current line 385) add:
+In `crates/mkrew-ui/src/theme.rs`, after `pub const CHAT_COLUMN_WIDTH: f32 = 760.0;` (current line 382) add:
 
 ```rust
 
@@ -8714,14 +8714,14 @@ In `crates/mkrew-ui/src/shell/chat_view.rs` replace lines 107-111:
     }
 ```
 
-and change `fn visible_sessions(&self)` (line 99) to `pub(crate) fn visible_sessions(&self)`.
+and change `fn visible_sessions(&self)` (line 101) to `pub(crate) fn visible_sessions(&self)`.
 
 Run: `cargo test -p mkrew-ui --lib chat::`
-Expected: PASS. This one gate also removes the Terminal | Chat switch (`pane_mode_switch` returns `None`), its header room, its palette entry and `toggle_chat`, and makes `chat_session` false so `focus_pane` never routes a TSP pane to the composer: no edit to `focus.rs`.
+Expected: PASS. This one gate also removes the Terminal | Chat toggle (it lives in the title bar's right group: `pane_toggles` adds it only when `chat_available`, `pane_render.rs:962`), its palette entry (`navigation.rs:364` fills `context.chat` from `chat_available`; `palette.rs:784` lists `ToggleChat` only with it) and the Ctrl+Alt+T action (`toggle_chat` looks the session up with `chat_available`, so it does nothing), and makes `chat_session` false so `focus_pane` (`focus.rs:286-292`) never routes a TSP pane to the composer: no edit to `focus.rs`. The gate is `tsp != Off` (waiting, live and fallback), so the toggle is also gone while the pane waits or has fallen back to the terminal grid.
 
 - [ ] **Step 5: Write the failing redraw test**
 
-In `crates/mkrew-ui/src/redraw.rs`, add to the `use mkrew_protocol::{...}` list of `mod tests` (current lines 134-139) `TspChange, TspUpdate`, add this helper after `queue` (current line 249-254):
+In `crates/mkrew-ui/src/redraw.rs`, add to the `use mkrew_protocol::{...}` list of `mod tests` (current lines 132-137) `TspChange, TspUpdate`, add this helper after `queue` (current line 249-254):
 
 ```rust
     fn tsp_update(id: Ulid) -> Event {
@@ -8733,7 +8733,7 @@ In `crates/mkrew-ui/src/redraw.rs`, add to the `use mkrew_protocol::{...}` list 
     }
 ```
 
-and this test after `turns_and_queues_need_a_visible_pane` (current line 351-360):
+and this test after `turns_and_queues_need_a_visible_pane` (current lines 346-356):
 
 ```rust
     /// A surface update is drawn in its own pane only.
@@ -8754,7 +8754,7 @@ Expected: if Task 2 already added the arm, PASS (nothing more to do in this step
 - [ ] **Step 6: Add the redraw arm if Task 2 did not**
 
 Run: `grep -n "TspUpdate" crates/mkrew-ui/src/redraw.rs`
-If the only hits are in the test module, add in `event_needs_redraw` after the `Event::SessionQueue(e) => on_pane(e.session_id),` line (current line 74):
+If the only hits are in the test module, add in `event_needs_redraw` after the `Event::SessionQueue(e) => on_pane(e.session_id),` line (current line 72):
 
 ```rust
         // The surface of an omp pane (ADR 0107).
@@ -9350,6 +9350,9 @@ impl Shell {
                             .size_full()
                             .overflow_y_scroll()
                             .track_scroll(&ui.scroll)
+                            // Clear of the pane's 8 px drag strip (`PANE_GRIP_HEIGHT`) and the
+                            // 2 px color line, like the Chat list's `py(space::L)`.
+                            .pt(px(space::L))
                             // A drag extends the selection; a press off any text clears it.
                             .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
                                 if event.dragging() {
@@ -10675,14 +10678,14 @@ In `crates/mkrew-ui/src/shell.rs`, replace
 mod toasts;
 ```
 
-(line 70) with
+(line 71) with
 
 ```rust
 mod toasts;
 pub(crate) mod tsp_view;
 ```
 
-In `crates/mkrew-ui/src/main.rs`, after `use shell::thread_panel::*;` (line 155) add `use shell::tsp_view::*;`. After the `chats` field (lines 763-764):
+In `crates/mkrew-ui/src/main.rs`, after `use shell::thread_panel::*;` (line 155) add `use shell::tsp_view::*;`. After the `chats` field (lines 744-745):
 
 ```rust
     /// What each pane in Chat mode remembers (open rows, scroll), ADR 0104.
@@ -10697,11 +10700,11 @@ add:
     tsps: HashMap<Ulid, TspUi>,
 ```
 
-In `crates/mkrew-ui/src/shell/connection.rs`, in the `Shell { .. }` initializer after `chats: HashMap::new(),` (line 407) add `tsps: HashMap::new(),`.
+In `crates/mkrew-ui/src/shell/connection.rs`, in the `Shell { .. }` initializer after `chats: HashMap::new(),` (line 404) add `tsps: HashMap::new(),`.
 
-- [ ] **Step 18: Draw the pane: the `pane_frame` branch and the `fed` rule**
+- [ ] **Step 18: Draw the pane: the `pane_frame` branch, Reading width, and the `fed` rule**
 
-In `crates/mkrew-ui/src/shell/pane_render.rs`, replace lines 519-531:
+In `crates/mkrew-ui/src/shell/pane_render.rs`, in `pane_frame`, replace lines 609-612:
 
 ```rust
         let info = self.sidebar.sessions().iter().find(|s| s.id == session);
@@ -10716,7 +10719,10 @@ with:
         let info = self.sidebar.sessions().iter().find(|s| s.id == session);
         // An omp pane with TSP on shows its surface (or the starting state); in `fallback` and
         // `off` it is the terminal grid as before. It has no Chat mode (`chat::available`).
-        let content = if info.is_some_and(|info| self.tsp_pane_view(info) != mkrew_ui::tsp::PaneView::Terminal) {
+        let tsp_drawn = info.is_some_and(|info| {
+            self.tsp_pane_view(info) != mkrew_ui::tsp::PaneView::Terminal
+        });
+        let content = if tsp_drawn {
             self.render_tsp(session, is_focused, width, now, theme, cx)
         } else if info.is_some_and(|info| self.chat_on(info)) {
             self.render_chat(session, is_focused, now, theme, cx)
@@ -10725,7 +10731,90 @@ with:
 
 (the rest of the `else` branch, the `match self.panes.get(&session)` block, is unchanged.)
 
-In `crates/mkrew-ui/src/shell/connection.rs` replace lines 1405-1409:
+Still in `pane_frame`, make Reading width a terminal-only cap. Replace line 624:
+
+```rust
+        let reading = info.is_some_and(|info| self.reading_on(info));
+```
+
+with:
+
+```rust
+        // Reading width caps the terminal grid (and the Chat list); a surface keeps its own
+        // 760 px column (`chat_column`), so the cap would only narrow its scroll area.
+        let reading = info.is_some_and(|info| self.reading_on(info)) && !tsp_drawn;
+```
+
+(`tsp_drawn` is defined by the first hunk, a few lines above.)
+
+In `pane_toggles` (`pane_render.rs`, the title bar's right group for the focused agent pane), hide the Reading width toggle while the pane shows the surface or its starting state. Replace lines 986-1009:
+
+```rust
+        let reading = self.reading_on(info);
+        toggles.push(
+            icon_button_in(
+                SharedString::from(format!("pane-reading-{session}")),
+                Icon::AlignCenter,
+                if reading {
+                    theme.accent
+                } else {
+                    theme.text_muted
+                },
+                theme,
+            )
+            .tooltip(tooltip(
+                theme,
+                if reading {
+                    "Reading width: on (the agent wraps at about 130 columns). Click for full width"
+                } else {
+                    "Reading width: off (full width). Click to wrap at about 130 columns"
+                },
+                "",
+            ))
+            .on_click(cx.listener(move |shell, _, _, cx| shell.toggle_reading_width(session, cx)))
+            .into_any_element(),
+        );
+```
+
+with:
+
+```rust
+        // A surface (or its starting state) has no terminal to cap; in `fallback` and `off` the
+        // grid is back and so is the toggle. Terminal | Chat is already gone through
+        // `chat_available`; Share stays.
+        if self.tsp_pane_view(info) == mkrew_ui::tsp::PaneView::Terminal {
+            let reading = self.reading_on(info);
+            toggles.push(
+                icon_button_in(
+                    SharedString::from(format!("pane-reading-{session}")),
+                    Icon::AlignCenter,
+                    if reading {
+                        theme.accent
+                    } else {
+                        theme.text_muted
+                    },
+                    theme,
+                )
+                .tooltip(tooltip(
+                    theme,
+                    if reading {
+                        "Reading width: on (the agent wraps at about 130 columns). Click for full width"
+                    } else {
+                        "Reading width: off (full width). Click to wrap at about 130 columns"
+                    },
+                    "",
+                ))
+                .on_click(
+                    cx.listener(move |shell, _, _, cx| shell.toggle_reading_width(session, cx)),
+                )
+                .into_any_element(),
+            );
+        }
+```
+
+The palette entry "Pane: Reading width (on / off)" stays (a no-op while a surface shows). `tsp_pane_view` is `pub(crate)` (Step 7). `pane_toggles` is not pure, so the gate is covered by manual check items 1, 8 and 10 of Step 24.
+
+In `crates/mkrew-ui/src/shell/connection.rs` replace lines 1370-1374:
 
 ```rust
             // A pane in Chat mode is not painted: it is no content to wait a frame for.
@@ -10750,7 +10839,7 @@ with:
 
 - [ ] **Step 19: Wire the events: the `tsp.update` arm and the fallback toast**
 
-In `crates/mkrew-ui/src/shell/connection.rs`, in `dispatch`, replace the start of the sidebar match (current line 1295, `match self.sidebar.apply(event) {`) with:
+In `crates/mkrew-ui/src/shell/connection.rs`, in `dispatch`, replace the start of the sidebar match (current line 1284, `match self.sidebar.apply(event) {`) with:
 
 ```rust
                 // The session's TSP state before the sidebar applies the new one (fallback toast).
@@ -10763,7 +10852,7 @@ In `crates/mkrew-ui/src/shell/connection.rs`, in `dispatch`, replace the start o
                 match self.sidebar.apply(event) {
 ```
 
-and directly after that `match`'s closing brace (current line 1305, before the `// After the board and sidebar` comment) add:
+and directly after that `match`'s closing brace (current line 1292, before the `// After the board and sidebar` comment) add:
 
 ```rust
                 if let Event::SessionUpdated(updated) = event
@@ -10774,7 +10863,7 @@ and directly after that `match`'s closing brace (current line 1305, before the `
                 }
 ```
 
-After the `if let Event::AiGenerated(done) = event { ... }` block (current lines 1351-1364, ending just before `if let Event::ProjectCloned(done) = event {`) add:
+After the `if let Event::AiGenerated(done) = event { ... }` block (current lines 1340-1353, ending just before `if let Event::ProjectCloned(done) = event {` at line 1354) add:
 
 ```rust
                 if let Event::TspUpdate(update) = event {
@@ -10788,7 +10877,7 @@ After the `if let Event::AiGenerated(done) = event { ... }` block (current lines
 
 - [ ] **Step 20: Wire the status tick**
 
-In `crates/mkrew-ui/src/shell/connection.rs`, in the status tick, after `shell.sync_thread(cx);` (current line 168) add `shell.sync_tsps(window, cx);` and in `due` (current lines 189-193) replace
+In `crates/mkrew-ui/src/shell/connection.rs`, in the status tick, after `shell.sync_thread(cx);` (current line 168) add `shell.sync_tsps(window, cx);` and in `due` (current lines 191-195) replace
 
 ```rust
                         || jira_busy
@@ -10837,22 +10926,23 @@ Prerequisites: Tasks 1 to 8 are merged (the daemon speaks TSP, protocol 59) and 
 Run: `cargo build -p mkrew-daemon -p mkrew-cli -p mkrew-fakeagent --bins -j 4`
 Run: `cargo run -p mkrew-ui`
 Check, in this order (a 20 minute pass; the screenshots are Task 12):
-1. Open an omp pane. Expected: "Starting omp…" with the dots for about a second, then omp's conversation and dock (HUD pills, editor with its placeholder, the bar with model, effort, context meter). No `Terminal | Chat` switch in the header or the palette.
+1. Open an omp pane. Expected: "Starting omp…" with the dots for about a second, then omp's conversation and dock (HUD pills, editor with its placeholder, the bar with model, effort, context meter). No `Terminal | Chat` toggle and no Reading width toggle in the title bar's right group while this pane has the focus (Share shows only with `[features] share`), and no "Agent: Toggle chat view" in the palette.
 2. Click anywhere in the pane (the transcript, the dock, empty space), then type. Expected: the characters appear in omp's editor; Enter sends; Esc, Ctrl+C and Vietnamese IME input behave as in a terminal pane.
 3. Click the model chip. Expected: omp opens its model selector as an overlay card inside the pane, keys still work, Esc closes it.
 4. Stream a long answer (ask for 300 lines of code). Expected: the pane follows the end, the window stays responsive (scrolling, typing, switching tabs, no stutter), the "scroll to latest" button appears when you scroll up, the spinner and elapsed time step about every 500 ms and stop when the answer ends.
 5. Resize the window and the split. Expected: omp re-lays out within a second (the PTY columns follow the pane width, never below 20).
-6. Switch to Light and back (Settings or the title bar toggle). Expected: both themes readable, text contrast intact, and within a second omp's own colors stay Mkrew's (omp tells nothing about colors); no leftover dark background.
+6. Switch to Light and back (Settings or the palette "Theme" entry; the title bar no longer has a theme toggle). Expected: both themes readable, text contrast intact, and within a second omp's own colors stay Mkrew's (omp tells nothing about colors); no leftover dark background.
 7. Quit omp (`/exit`). Expected: the last document stays, read-only, with the existing "Session exited" notice.
-8. Set `tsp = false` in `omp.toml`, start a new omp pane. Expected: today's terminal pane with `Terminal | Chat`.
+8. Set `tsp = false` in `omp.toml`, start a new omp pane. Expected: today's terminal pane with the Terminal | Chat and Reading width toggles back in the title bar's right group.
 9. Close the app and open it again with the omp session running. Expected: the surface comes back from the daemon's snapshot (no blank pane).
-10. Look at a shell pane and a Claude pane. Expected: unchanged.
+10. Look at a shell pane and a Claude pane. Expected: unchanged (a Claude pane keeps Terminal | Chat and Reading width in the title bar).
 11. Drag over a paragraph of omp's answer, then Ctrl+C and paste elsewhere. Expected: the text selected inside that one answer is copied; Esc with a selection clears it without reaching omp; Ctrl+C and Esc with no selection reach omp (Esc closes an omp overlay, Ctrl+C interrupts).
 12. Start a pane on a machine where the ConPTY files are missing (rename `conpty.dll` in `target/debug`). Expected: after about 2 s the pane becomes the terminal grid and one toast reads "omp is drawing as text: <reason>".
 13. Ask omp: "Use the todo tool: make 3 phases (Context, Build, Verify) with 2 items each, then start working on the first item." Expected: a todo card in the transcript (phase headers with Roman numerals, rings, the active item in the accent color); above the dock card a one line hud on the right: loading dots, the active item, `0/6` in mono. Finish an item: the count steps up on the next status tick. Click the hud: a glass panel opens above it with the phases; a finished phase shows its header only, clicking a header opens or closes it; Esc closes the panel (and omp's own Esc is not triggered); click outside closes it; clicking the hud while open closes it. Switch Light and Dark with the panel open: both readable.
 14. Let every item finish. Expected: the hud reads "All done" with a filled green circle and `6/6`; a blocked item keeps the hud on that item, never "All done".
 15. Ask omp: "Use the ask tool with two questions; the first has 3 options with one recommended, the second allows several answers." Expected: the dock card shows the question tabs on top (answered tabs start with a green check; active tab on a raised fill), the question in semibold, radio rows (check boxes for the multi-answer question) with the label in medium weight, the "Recommended" badge on the right, the picked row with an accent circle, the highlighted row on a raised fill with a 2 px accent bar. Click an option: omp highlights it; double click: omp answers. Click another tab: it switches. Click Next or Submit (accent pill) and Skip, Note, Hide (neutral pills): each does what the keys do; hover shows the title with its keys. Arrow keys, Enter, Space, Tab, `n` and Esc still work from the keyboard. Pick "Other…": omp shows its text field and typing reaches it.
 16. Click Hide on the ask card. Expected: one row with "Question …  +N more", Skip and an accent Show; Show restores the card. With an ask timeout set, a small ring with the seconds left sits in the bottom row. Both themes, and a narrow pane (the tabs wrap, the buttons stay in the row).
+17. Floating badges. Split the tab so the omp pane is one of two, then: queue a prompt in the composer (`N queued`), zoom the pane (`Pane zoomed` with Show all panes), and (with a second agent editing the same file) trigger a conflict. Expected: the badges stack in the pane's top-right corner over the surface and stay above it (also above an open overlay or the todo popover's scrim), text badges let clicks through to omp's rows, the Dismiss and Show all panes buttons take their own clicks, and the first row of the list starts 16 px below the pane top, clear of the 8 px drag strip (drag the pane by it onto another pane; a press just below it reaches omp).
 
 Record anything that looks wrong in `docs/HUMAN_CHECKS.md` under "2026-11-23 omp native surface" (Task 12 owns that entry).
 
@@ -10861,6 +10951,2332 @@ Record anything that looks wrong in `docs/HUMAN_CHECKS.md` under "2026-11-23 omp
 ```bash
 git add crates/mkrew-ui/src/shell/tsp_view.rs crates/mkrew-ui/src/shell.rs crates/mkrew-ui/src/main.rs crates/mkrew-ui/src/shell/connection.rs crates/mkrew-ui/src/shell/pane_render.rs crates/mkrew-ui/src/shell/chat_view.rs crates/mkrew-ui/src/chat.rs crates/mkrew-ui/src/redraw.rs crates/mkrew-ui/src/terminal/view.rs crates/mkrew-ui/src/theme.rs
 git -c user.email=tungnv975@gmail.com commit -m "feat(ui): draw an omp pane from its native surface (TSP view)"
+```
+
+### Task 10b: omp dock as Tern's composer
+
+**Controller amendment (fact colors):** fact spans carry omp palette names (`statusLine*`). Map the ones whose stat Chat's composer also shows to Chat's colors, in the same pure style table, with a test: the context fact to `syntax_keyword`, a branch fact to `syntax_string`, the rate to `text`, the clock and session facts to `text_subtle`; any other `statusLine*` token stays `text_muted`. This keeps an omp pane and a Chat pane the same, as spec 7.8 asks.
+
+
+Spec 7.8. Task 10 drew the dock generically (flat meter, plain editor line, loose chips). This task draws it as the Chat composer card (ADR 0105) with omp as the only source of content. Order: after Task 10 is committed, before Task 11. Task 10's ask card (7.6) and todo hud (7.7) stay as they are and must keep working next to it.
+
+What the real session (`.superpowers/sdd/2026-11-23-omp-tsp-surface/smoke-omp-18.13.2-session.tsp.jsonl`, 843 frames, replayed op by op) says; the code below is built on these facts, not on the spec table alone:
+
+| Fact in the recording | Consequence in this task |
+|---|---|
+| The dock is `dock > [e, 6, d, h]`; the editor `col role=omp.editor` (`3`) sits inside the wrapper col `h`; `e` is the empty col `{id:e,k:col}` when idle and becomes `row role=omp.hud.activity > col role=omp.hud.status > row role=omp.working` while working (frame 15); `6` (`omp.hud`) is a dock sibling of `e`, hidden, with no children, never shown in this session | `DockModel.path` lists the wrapper ids; the view walks the dock and draws the card where the editor is; the status row is built from `e`/`6` and those two nodes are skipped where they stand |
+| `3.bar` children in omp's order: `effort`, `model`, `extras`, `usage`, then `send` (idle) or `stop` (working; the send node is deleted in the same frame) | The bar follows omp's order (effort before model, unlike Chat); send and stop never exist together |
+| There is no `rate role=omp.composer.rate`. The rate is a `rate{value:45.6,unit:"tok/s"}` child of the fact `seg 3.bar/extras/token_rate` (priority 6, icon `throughput`). The fact `time_spent` has `spans: []` and an `elapsed` child. The facts are NOT in priority order (`token_rate 6, cache_write 5, cache_read 4, token_out 3, token_in 2, time_spent 10, status 6, session 2, time 11`), priorities tie | A fact body is text, rate or elapsed; the drop order is priority descending, ties: the later fact goes first (pure test) |
+| Fact span styles are omp palette names (`statusLineOutput`, `statusLineSpend`, `statusLineModel`); only `accent` (`⚡ yolo`) maps to a Mkrew token | Facts are quiet muted chips; only an `accent` span gets the Chat permission look (the leading symbol is stripped, Chat draws its own `Zap`) |
+| Fact icon names `cache`, `input`, `output`, `throughput` have no entry in `tsp::icon` | Add `cache` (Database), `input` (ArrowDown), `output` (ArrowUp); `throughput` stays unmapped (the rate text carries its unit) |
+| `editor.sendable` is `true` while the editor is empty (frame 4 onwards) | Send is enabled by the text (or an attachment chip) AND `sendable`, never by `sendable` alone |
+| Ghost: `{text:"abc",cursor:3,ghost:"d"}`, then `{text:"q",cursor:1,ghost:"uestion"}`; cleared when the text changes or empties | The ghost is drawn only with the caret at the end of the text; it follows the caret on the same line |
+| The placeholder is `[{"t":"“\u{f14f7} README: List files and explain README”","s":"em"}]`: a private-use glyph inside an `em` span, not an `icon` span | The placeholder runs go through `styled_runs` (it cuts private-use glyphs into terminal-font runs), so the Chat placeholder row must accept an element, not only a `String` |
+| `3.context`: `thresholds {warn:0.15, bad:0.5}` against `value` (the used share; `bad` equals the auto-compact mark `at: 0.5`), `label:"3%"`, `total:"1M"`, `marks:[{at:0.5,title:"Auto-compact at 50%"}]`; the first frame has no `value` at all ("Context usage unknown") | Tone from the existing `meter_tone(value, thresholds)`; no `value` draws an empty track with the labels |
+| `3.bar/usage` is `""` in the first idle frames and while working starts; `3.bar/model/name` spans are styled `accent` idle and `statusLineModel` while working | An empty usage is not drawn; the model name ignores span styles (always `accent_text`) |
+| `omp.composer.chips` (`m`) is a hidden empty row; there is no `omp.composer.focus`, no `omp.hud.seg`, no `omp.editor.ask` in the recording | Those looks are built from the reference (section 8.2, 8.3) shapes, tested on those shapes, and compared with Tern in the manual smoke only |
+
+**Files:**
+- Modify: `crates/mkrew-ui/src/theme.rs:450` (seven tokens after `CONTEXT_METER_HEIGHT`)
+- Modify: `crates/mkrew-ui/src/tsp.rs:65-95` (`icon`: three names), insert the dock model above `#[cfg(test)]` (current line 1593), tests at the end of `mod tests` (before the final `}`, current line 3543)
+- Modify: `crates/mkrew-ui/src/shell/composer.rs:1141-1145`, `:1173-1216`, `:1228-1279`, `:1376-1386`, `:1439-1458` (extract the shared pieces; Chat output unchanged)
+- Modify: `crates/mkrew-ui/src/shell/widgets.rs:222` (`round_stop_button` after `round_button`)
+- Modify: `crates/mkrew-ui/src/shell/tsp_view.rs:20-29` (imports), `:773-960` (`render_tsp` dock), `:1813-1909` (`tsp_input` becomes `tsp_input` + `tsp_editor`), new `impl Shell` block after `tsp_status_hud` (current line 2243)
+- Test: `crates/mkrew-ui/src/tsp.rs` (inline). The drawing is checked by the manual smoke in Step 16; the Chat refactor by `cargo test -p mkrew-ui` plus the before/after capture in Steps 5 and 9.
+
+**Interfaces:**
+- Consumes: Task 9 (`mkrew_ui::tsp::{role_of, node_spans, spans_of, SpanStyle, icon, rate_label, meter_tone, tone_color, byte_at_utf16, has_click}`, `Document::{children, get, focus}`, `Node { id, kind, props, parent }`), Task 10 (`Paint`, `tsp_node`, `tsp_decorate`, `tsp_click`, the old `tsp_input` body (becomes `tsp_editor`), `styled_runs`, the todo hud and its popover through `tsp_node` on the `checklist` node, the `exited` notice), Chat: the `composer_card` pieces extracted in Step 9, `chat::{fit_chips, context_meter}` as the model for `fit_bar`, `widgets::{round_button, quiet_button, icon_text, loading_dots, tooltip}`, theme tokens `COMPOSER_*`, `CONTEXT_METER_HEIGHT`, `SEND_BUTTON_SIZE`, `PILL_HEIGHT`, `CHAT_COLUMN_WIDTH`.
+- Produces (pure, `mkrew_ui::tsp`): `DockRole`, `dock_role(&str) -> Option<DockRole>`, `dock_model(&Document, &Theme) -> Option<DockModel>`, `DockModel { editor, line, path, skip, context, field, focus, chips, bar, status }` with `can_send()`, `ContextMeter`, `Mark`, `EditorModel`, `BarModel { parts, effort, model, facts, usage, primary, working }`, `BarPart`, `Effort`, `ModelPill`, `Fact`, `FactBody`, `Usage`, `Primary`, `StatusModel`, `Working`, `HudPill`, `FocusStrip`, `permission_text`, `BarFit`, `bar_width`, `fit_bar`.
+- Produces (shared with Chat, `shell/composer.rs`, `pub(super)`): `composer_room`, `composer_card_frame`, `meter_bar`, `quiet_chip`, `permission_chip`, `model_pill`, `placeholder_row` (now generic over its content); `widgets::round_stop_button`.
+- Produces (view): `Shell::{tsp_dock, tsp_composer, tsp_dock_status, ...}`, `EditorLook`. No new `Shell` field, no new event: every click still goes through `tsp_click` / `tsp_decorate`, so omp receives the same `action {id, act}` events as before (`status.model`, `status.context`, `status.cost`, `thinking.cycle`, `submit`, `interrupt`, `agents.open`, `jobs.open`) and `focus {id}` for the editor.
+- Fallback: a dock without `omp.editor` + `omp.composer.line` (with an `editor`) + `omp.composer.bar`, or whose editor role is the ask card (`omp.editor.ask`), gives `dock_model(..) == None`; `render_tsp` then draws the dock exactly as Task 10 does (generic nodes, `tsp_ask`, `tsp_status_hud`). Covered by tests.
+
+Hard rules in force (mkrew-ui-design): every color, size, spacing, radius from `theme.rs` tokens; every clickable thing is a widget or `.pressable(..)` + `.on_press(..)`; no `.hover(`, `.active(`, `.cursor_pointer()` outside `widgets.rs` and `pressable.rs`; no looping animation; dark and light only through `Theme` fields.
+
+- [ ] **Step 1: Write the failing tests for the dock model**
+
+Append inside `mod tests` of `crates/mkrew-ui/src/tsp.rs`, before its final `}` (after `a_huge_age_does_not_overflow`). The helpers rebuild the real dock of the recording (same ids, props and order; frame 4 for idle, frame 25 for working, trimmed of the empty wrapper cols `7`, `8`, `9`, `a`, `b`, `c`, `f`, `g`, `i`):
+
+```rust
+
+    // ---- The dock as Tern's composer (Task 10b, spec 7.8) ----
+
+    use serde_json::Value;
+
+    fn fact(id: &str, priority: u32, icon: Option<&str>, spans: Value, children: Value) -> Value {
+        let mut props = json!({"role": "omp.composer.fact", "priority": priority, "spans": spans});
+        if let Some(icon) = icon {
+            props["icon"] = json!(icon);
+        }
+        json!({"id": format!("3.bar/extras/{id}"), "k": "seg", "p": props, "c": children})
+    }
+
+    /// The dock children of the recorded omp 18.13.2 session: `[e, 6, d, h]`. Idle is frame 4
+    /// (3 facts, Send, empty usage), working is frame 25 (9 facts with the rate and the elapsed
+    /// time, Stop, `$0.10`, the `omp.working` row). Paths used by the tests below:
+    /// `kids[3]` is `h`, `/c/0` the editor col, `/c/0/c/0` the hidden chips row, `/c/0/c/1` the
+    /// context meter, `/c/0/c/2` the line, `/c/0/c/2/c/0` the editor, `/c/0/c/3` the bar.
+    fn real_children(working: bool) -> Vec<Value> {
+        let facts = if working {
+            vec![
+                fact("token_rate", 6, Some("throughput"), json!([]), json!([{"id": "3.bar/extras/token_rate/rate", "k": "rate", "p": {"value": 45.6, "unit": "tok/s"}}])),
+                fact("cache_write", 5, Some("cache"), json!([{"t": "12K", "s": "statusLineOutput"}]), json!([])),
+                fact("cache_read", 4, Some("cache"), json!([{"t": "8.9K", "s": "statusLineSpend"}]), json!([])),
+                fact("token_out", 3, Some("output"), json!([{"t": "325", "s": "statusLineOutput"}]), json!([])),
+                fact("token_in", 2, Some("input"), json!([{"t": "1", "s": "statusLineSpend"}]), json!([])),
+                fact("time_spent", 10, Some("time"), json!([]), json!([{"id": "3.bar/extras/time_spent/timer", "k": "elapsed", "p": {"age": 12164, "format": "short"}}])),
+                fact("status", 6, None, json!([{"t": "⚡ yolo", "s": "accent"}]), json!([])),
+                fact("session", 2, Some("session"), json!([{"t": "01a20b2a"}]), json!([])),
+                fact("time", 11, Some("time"), json!([{"t": "8:28:43"}]), json!([])),
+            ]
+        } else {
+            vec![
+                fact("status", 6, None, json!([{"t": "⚡ yolo", "s": "accent"}]), json!([])),
+                fact("session", 2, Some("session"), json!([{"t": "01a20b2a"}]), json!([])),
+                fact("time", 11, Some("time"), json!([{"t": "8:27:18"}]), json!([])),
+            ]
+        };
+        let (cost, primary) = if working {
+            (
+                "$0.10",
+                json!({"id": "3.bar/stop", "k": "text", "p": {"role": "omp.composer.stop", "text": "Stop", "tone": "error", "title": "Stop  esc", "actions": {"click": "interrupt"}}}),
+            )
+        } else {
+            (
+                "",
+                json!({"id": "3.bar/send", "k": "kbd", "p": {"role": "omp.composer.send", "keys": ["enter"], "title": "Send  ⏎", "actions": {"click": "submit"}}}),
+            )
+        };
+        let effort = json!({"id": "3.bar/effort", "k": "row", "p": {"role": "omp.composer.effort", "gap": "xs", "align": "center", "title": "Thinking effort  ⇧⇥", "actions": {"click": "thinking.cycle"}}, "c": [
+            {"id": "3.bar/effort/glyph", "k": "effort", "p": {"level": "high"}},
+            {"id": "3.bar/effort/level", "k": "text", "p": {"text": "high", "wrap": "none"}}]});
+        // omp restyles the name while working (`statusLineModel` is one of its palette names).
+        let name_style = if working { "statusLineModel" } else { "accent" };
+        let model = json!({"id": "3.bar/model", "k": "row", "p": {"role": "omp.composer.model", "gap": "xs", "align": "center", "title": "Switch model  Alt+P", "actions": {"click": "status.model"}}, "c": [
+            {"id": "3.bar/model/icon", "k": "icon", "p": {"name": "model"}},
+            {"id": "3.bar/model/name", "k": "text", "p": {"spans": [{"t": "Opus 5.5", "s": name_style}], "wrap": "none"}},
+            {"id": "3.bar/model/chev", "k": "icon", "p": {"name": "chev"}}]});
+        let extras = json!({"id": "3.bar/extras", "k": "status", "p": {"role": "omp.composer.extras", "transparent": true, "grow": 1}, "c": facts});
+        let usage = json!({"id": "3.bar/usage", "k": "text", "p": {"role": "omp.composer.usage", "text": cost, "wrap": "none", "actions": {"click": "status.cost"}}});
+        let editor = json!({"id": "3", "k": "col", "p": {"role": "omp.editor"}, "c": [
+            {"id": "m", "k": "row", "p": {"gap": "sm", "wrap": true, "role": "omp.composer.chips", "hidden": true}},
+            {"id": "3.context", "k": "meter", "p": {"role": "omp.composer.context", "style": "bar", "thresholds": {"warn": 0.15, "bad": 0.5}, "marks": [{"at": 0.5, "icon": "context.compaction", "title": "Auto-compact at 50%"}], "total": "1M", "title": "Context 3% used\n27K of 1M tokens\nAuto-compact at 50%", "actions": {"click": "status.context"}, "value": 0.027201, "label": "3%"}},
+            {"id": "3.line", "k": "row", "p": {"role": "omp.composer.line", "align": "start", "gap": "sm"}, "c": [
+                {"id": "3.line/input", "k": "editor", "p": {"text": "", "cursor": 0, "sendable": true, "maxLines": 18, "placeholder": [{"t": "“\u{f14f7} README: List files and explain README”", "s": "em"}]}}]},
+            {"id": "3.bar", "k": "row", "p": {"role": "omp.composer.bar", "gap": "sm", "align": "center"}, "c": [effort, model, extras, usage, primary]}]});
+        let activity = if working {
+            json!({"id": "e", "k": "row", "p": {"role": "omp.hud.activity", "align": "center", "gap": "sm"}, "c": [
+                {"id": "e.status", "k": "col", "p": {"role": "omp.hud.status"}, "c": [
+                    {"id": "x", "k": "row", "p": {"role": "omp.working", "align": "center", "gap": "sm"}, "c": [
+                        {"id": "x.spinner", "k": "spinner", "p": {"style": "starburst", "tone": "accent"}},
+                        {"id": "x.elapsed", "k": "elapsed", "p": {"age": 12261, "format": "short"}},
+                        {"id": "x.sep", "k": "text", "p": {"text": "·", "role": "omp.working.sep"}},
+                        {"id": "x.label", "k": "shimmer", "p": {"spans": [{"t": "Reading simple-english skill", "s": "accent"}], "mode": "classic", "role": "omp.working.label"}},
+                        {"id": "x.fill", "k": "row", "p": {"grow": 1}},
+                        {"id": "x.stop", "k": "row", "p": {"role": "omp.working.stop", "gap": "xs", "align": "center", "title": "Stop  esc", "actions": {"click": "interrupt"}}, "c": [
+                            {"id": "x.stop/0", "k": "kbd", "p": {"keys": ["escape"]}},
+                            {"id": "x.stop/1", "k": "text", "p": {"text": "Stop"}}]}]}]}]})
+        } else {
+            json!({"id": "e", "k": "col"})
+        };
+        vec![
+            activity,
+            json!({"id": "6", "k": "row", "p": {"role": "omp.hud", "justify": "end", "hidden": true}}),
+            json!({"id": "d", "k": "col", "c": [{"id": "j", "k": "col", "p": {"role": "omp.hud.judge"}}]}),
+            json!({"id": "h", "k": "col", "c": [editor]}),
+        ]
+    }
+
+    fn dock_doc(kids: Vec<Value>) -> Document {
+        let mut ops = vec![json!(["add", "dock", "s:1", null, {"id": "dock", "k": "col"}])];
+        ops.extend(kids.into_iter().map(|kid| json!(["add", kid["id"].clone(), "dock", null, kid])));
+        doc(ops)
+    }
+
+    fn model_of(kids: Vec<Value>) -> Option<DockModel> {
+        dock_model(&dock_doc(kids), &Theme::dark())
+    }
+
+    #[test]
+    fn dock_roles_are_matched_whole_and_the_ask_card_is_not_the_composer() {
+        assert_eq!(dock_role("omp.editor"), Some(DockRole::Editor));
+        assert_eq!(dock_role("omp.editor.bash"), Some(DockRole::Editor));
+        assert_eq!(dock_role("omp.editor.python"), Some(DockRole::Editor));
+        assert_eq!(dock_role("omp.editor.ask"), None);
+        assert_eq!(dock_role("omp.editor.ask.hidden"), None);
+        assert_eq!(dock_role("omp.composer.model"), Some(DockRole::Model));
+        assert_eq!(dock_role("omp.composer.model.effort"), None);
+        assert_eq!(dock_role("omp.composer.effort"), Some(DockRole::Effort));
+        assert_eq!(dock_role("omp.composer.fact"), Some(DockRole::Fact));
+        assert_eq!(dock_role("omp.hud"), Some(DockRole::Hud));
+        assert_eq!(dock_role("omp.hud.seg"), Some(DockRole::HudSeg));
+        assert_eq!(dock_role("omp.hud.todo"), Some(DockRole::HudTodo));
+        assert_eq!(dock_role("omp.hud.pill"), None);
+        assert_eq!(dock_role("omp.working.sep"), None);
+        assert_eq!(dock_role("omp.composer"), None);
+        assert_eq!(dock_role(""), None);
+    }
+
+    #[test]
+    fn the_recorded_idle_dock_gives_the_composer_model() {
+        let m = model_of(real_children(false)).expect("composer");
+        assert_eq!((m.editor.as_str(), m.line.as_str()), ("3", "3.line"));
+        assert_eq!(m.path, ["h", "3"], "the wrapper col the editor sits in");
+        assert!(m.skip.is_empty(), "idle: no activity row, the hud row is hidden");
+
+        let c = m.context.as_ref().expect("context meter");
+        assert_eq!(c.id, "3.context");
+        assert!((c.fraction.expect("value") - 0.027201).abs() < 1e-6);
+        assert_eq!((c.tone, c.label.as_str(), c.total.as_str()), ("accent", "3%", "1M"));
+        assert_eq!(c.marks, [Mark { at: 0.5, title: "Auto-compact at 50%".into() }]);
+        assert!(c.title.as_deref().is_some_and(|t| t.contains("27K of 1M")));
+
+        assert_eq!(m.field.id, "3.line/input");
+        assert_eq!(m.field.text, "");
+        let placeholder: String = m.field.placeholder.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(placeholder.contains('\u{f14f7}') && placeholder.ends_with("README”"), "{placeholder}");
+        assert!(m.field.placeholder[0].1.italic, "the em span");
+        assert!(m.field.ghost.is_none());
+        assert!(m.field.sendable && !m.can_send(), "sendable is true when empty; the text decides");
+
+        let bar = &m.bar;
+        assert_eq!(bar.parts, [BarPart::Effort, BarPart::Model, BarPart::Facts, BarPart::Usage]);
+        let effort = bar.effort.as_ref().expect("effort");
+        assert_eq!((effort.id.as_str(), effort.label.as_str()), ("3.bar/effort", "high"));
+        assert_eq!(effort.glyph.as_deref(), Some("3.bar/effort/glyph"));
+        let model = bar.model.as_ref().expect("model");
+        assert_eq!((model.id.as_str(), model.name.as_str()), ("3.bar/model", "Opus 5.5"));
+        let texts: Vec<_> = bar.facts.iter().map(|f| &f.body).collect();
+        assert_eq!(
+            texts,
+            [
+                &FactBody::Text("yolo".into()),
+                &FactBody::Text("01a20b2a".into()),
+                &FactBody::Text("8:27:18".into())
+            ]
+        );
+        assert_eq!(bar.facts.iter().map(|f| f.priority).collect::<Vec<_>>(), [6, 2, 11]);
+        assert_eq!(bar.facts.iter().map(|f| f.permission).collect::<Vec<_>>(), [true, false, false]);
+        assert_eq!(bar.facts[1].icon, Some(Icon::SquareTerminal));
+        assert_eq!(bar.facts[2].icon, Some(Icon::Clock));
+        assert!(bar.usage.is_none(), "an empty usage text is not a chip");
+        assert_eq!(bar.primary, Primary::Send(Some("3.bar/send".into())));
+        assert!(!bar.working);
+
+        assert!(m.status.working.is_none() && m.status.todo.is_none());
+        assert!(m.status.pills.is_empty() && m.status.others.is_empty());
+        assert!(m.chips.is_empty() && m.focus.is_none());
+    }
+
+    #[test]
+    fn the_recorded_working_dock_swaps_send_for_stop_and_reads_rate_elapsed_and_the_working_row() {
+        let m = model_of(real_children(true)).expect("composer");
+        assert_eq!(m.skip, ["e", "e.status"], "drawn in the status row instead");
+        let bar = &m.bar;
+        assert_eq!(bar.primary, Primary::Stop("3.bar/stop".into()));
+        assert!(bar.working, "the model pill shows the loading dots");
+        assert_eq!(
+            bar.facts.iter().map(|f| f.priority).collect::<Vec<_>>(),
+            [6, 5, 4, 3, 2, 10, 6, 2, 11],
+            "omp's order, not sorted"
+        );
+        assert_eq!(bar.facts[0].body, FactBody::Rate("46 tok/s".into()));
+        assert_eq!(bar.facts[0].icon, None, "`throughput` has no Mkrew icon");
+        assert_eq!(bar.facts[1].icon, Some(Icon::Database), "cache");
+        assert_eq!(bar.facts[3].icon, Some(Icon::ArrowUp), "output");
+        assert_eq!(bar.facts[4].icon, Some(Icon::ArrowDown), "input");
+        assert_eq!(bar.facts[5].body, FactBody::Elapsed("3.bar/extras/time_spent/timer".into()));
+        assert_eq!(bar.usage.as_ref().map(|u| u.text.as_str()), Some("$0.10"));
+        assert!(!m.can_send(), "Stop shows, there is nothing to send");
+
+        let w = m.status.working.as_ref().expect("working row");
+        assert_eq!(w.id, "x");
+        assert_eq!(w.elapsed.as_deref(), Some("x.elapsed"));
+        assert_eq!(w.label, "Reading simple-english skill");
+        assert_eq!(w.stop.as_deref(), Some("x.stop"));
+        assert!(m.status.others.is_empty(), "the working row is not drawn twice");
+        assert!(m.status.todo.is_none() && m.status.pills.is_empty());
+    }
+
+    fn with_editor(text: &str, cursor: u64, ghost: Option<&str>) -> Option<DockModel> {
+        let mut kids = real_children(false);
+        let props = kids[3].pointer_mut("/c/0/c/2/c/0/p").expect("editor props");
+        props["text"] = json!(text);
+        props["cursor"] = json!(cursor);
+        if let Some(ghost) = ghost {
+            props["ghost"] = json!(ghost);
+        }
+        model_of(kids)
+    }
+
+    #[test]
+    fn typing_gives_text_caret_ghost_and_enables_send() {
+        let m = with_editor("abc", 3, Some("d")).expect("composer");
+        assert_eq!((m.field.text.as_str(), m.field.cursor), ("abc", 3));
+        assert_eq!(m.field.ghost.as_deref(), Some("d"), "recorded at frame 12");
+        assert!(m.can_send());
+        // The cursor counts UTF-16 units; the model holds a byte index: `a😀b`, caret after 😀.
+        let m = with_editor("a😀b", 3, None).expect("composer");
+        assert_eq!(m.field.cursor, 5);
+        // A ghost belongs after the caret at the end of the text only.
+        assert!(with_editor("abc", 1, Some("d")).expect("m").field.ghost.is_none());
+        assert!(with_editor("", 0, Some("d")).expect("m").field.ghost.is_none());
+        assert!(with_editor("abc", 3, Some("")).expect("m").field.ghost.is_none());
+        // Blank text sends nothing.
+        assert!(!with_editor("  \n ", 4, None).expect("m").can_send());
+    }
+
+    #[test]
+    fn send_needs_omp_to_say_sendable_and_text_or_an_attachment() {
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/c/0/p").expect("chips")["hidden"] = json!(false);
+        kids[3].pointer_mut("/c/0/c/0").expect("chips")["c"] =
+            json!([{"id": "m/1", "k": "card", "p": {"role": "omp.composer.chip", "tone": "accent", "head": "#1"}}]);
+        let m = model_of(kids).expect("composer");
+        assert_eq!(m.chips, ["m/1"], "reference 8.2: attachment chips above the field");
+        assert!(m.can_send(), "an attachment alone can be sent");
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/c/2/c/0/p").expect("editor")["sendable"] = json!(false);
+        kids[3].pointer_mut("/c/0/c/2/c/0/p").expect("editor")["text"] = json!("abc");
+        assert!(!model_of(kids).expect("composer").can_send());
+        // A bar with neither Send nor Stop still gets a (disabled) Send.
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/c/3/c").expect("bar").as_array_mut().expect("array").pop();
+        assert_eq!(model_of(kids).expect("composer").bar.primary, Primary::Send(None));
+    }
+
+    #[test]
+    fn the_context_meter_reads_value_thresholds_marks_and_labels() {
+        let at = |value: Option<f64>| {
+            let mut kids = real_children(false);
+            let props = kids[3].pointer_mut("/c/0/c/1/p").expect("meter props");
+            match value {
+                Some(v) => props["value"] = json!(v),
+                None => {
+                    props.as_object_mut().expect("object").remove("value");
+                }
+            }
+            model_of(kids).expect("composer").context.expect("meter")
+        };
+        assert_eq!(at(Some(0.014)).tone, "accent");
+        assert_eq!(at(Some(0.15)).tone, "warning", "warn = status_needs_input");
+        assert_eq!(at(Some(0.49)).tone, "warning");
+        assert_eq!(at(Some(0.5)).tone, "error", "bad = danger_text");
+        let full = at(Some(1.7));
+        assert_eq!((full.fraction, full.tone), (Some(1.0), "error"), "clamped to the track");
+        let unknown = at(None);
+        assert_eq!(unknown.fraction, None, "the first frame has no value: an empty track");
+        assert_eq!((unknown.tone, unknown.label.as_str(), unknown.total.as_str()), ("accent", "3%", "1M"));
+        let t = Theme::dark();
+        assert_eq!(tone_color(at(Some(0.15)).tone, &t), t.status_needs_input);
+        assert_eq!(tone_color(at(Some(0.6)).tone, &t), t.danger_text);
+        assert_eq!(tone_color(at(Some(0.01)).tone, &t), t.accent);
+    }
+
+    #[test]
+    fn a_narrow_bar_drops_facts_by_priority_then_effort_then_truncates_the_model() {
+        let m = model_of(real_children(true)).expect("composer");
+        let bar = &m.bar;
+        let all = BarFit::all(bar);
+        let natural = bar_width(bar, &all);
+        assert_eq!(fit_bar(bar, natural), all, "fits as it is");
+        assert_eq!(fit_bar(bar, 10_000.0), all);
+        // Shrink the room 1 px at a time: facts leave highest priority number first; of two
+        // equal priorities the later one leaves first; then the effort chip; then the model.
+        let mut dropped: Vec<usize> = Vec::new();
+        let mut effort_gone_after = None;
+        let mut room = natural;
+        while room > 0.0 {
+            room -= 1.0;
+            let fit = fit_bar(bar, room);
+            for (i, shown) in fit.facts.iter().enumerate() {
+                if !shown && !dropped.contains(&i) {
+                    dropped.push(i);
+                }
+            }
+            if !fit.effort && effort_gone_after.is_none() {
+                effort_gone_after = Some(dropped.len());
+            }
+            if fit.model_name.is_some() {
+                assert!(!fit.effort && fit.facts.iter().all(|shown| !shown), "the model truncates last");
+            }
+        }
+        // time 11, time_spent 10, status 6 (later), token_rate 6, cache_write 5, cache_read 4,
+        // token_out 3, session 2 (later), token_in 2.
+        assert_eq!(dropped, [8, 5, 6, 0, 1, 2, 3, 7, 4]);
+        assert_eq!(effort_gone_after, Some(9), "the effort chip goes after the last fact");
+
+        let bare = BarFit { facts: vec![false; bar.facts.len()], effort: false, model_name: None };
+        let room = bar_width(bar, &bare) - 5.0;
+        let fit = fit_bar(bar, room);
+        assert!(fit.model_name.is_some());
+        assert!((bar_width(bar, &fit) - room).abs() < 0.01, "the name gives back exactly the overflow");
+        let floor = theme::TSP_MODEL_MIN_CHARS as f32 * theme::COMPOSER_MONO_CHAR_WIDTH;
+        assert_eq!(fit_bar(bar, 0.0).model_name, Some(floor), "never below the floor");
+    }
+
+    #[test]
+    fn working_costs_the_model_pill_the_loading_dots() {
+        let idle = model_of(real_children(false)).expect("composer");
+        let mut working = idle.bar.clone();
+        working.working = true;
+        let fit = BarFit::all(&idle.bar);
+        assert!(
+            (bar_width(&working, &fit) - bar_width(&idle.bar, &fit) - theme::COMPOSER_CHIP_LOADING_WIDTH).abs() < 0.01
+        );
+    }
+
+    #[test]
+    fn a_dock_without_the_composer_roles_is_not_a_composer() {
+        // Another omp version: an editor with no roles at all.
+        let plain = json!({"id": "a", "k": "col", "c": [{"id": "b", "k": "editor", "p": {"text": "x"}}]});
+        assert!(model_of(vec![plain]).is_none());
+        // The ask card replaces the editor: Task 10's `tsp_ask` draws it.
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/p").expect("editor col")["role"] = json!("omp.editor.ask");
+        assert!(model_of(kids).is_none());
+        // A hidden editor, no line, no bar, no editor node in the line.
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/p").expect("editor col")["hidden"] = json!(true);
+        assert!(model_of(kids).is_none());
+        for (index, what) in [(2, "line"), (3, "bar")] {
+            let mut kids = real_children(false);
+            kids[3].pointer_mut("/c/0/c").expect("children").as_array_mut().expect("array").remove(index);
+            assert!(model_of(kids).is_none(), "no {what}");
+        }
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/c/2/c").expect("line children").as_array_mut().expect("array").clear();
+        assert!(model_of(kids).is_none(), "no editor in the line");
+        // No dock children at all.
+        assert!(model_of(Vec::new()).is_none());
+    }
+
+    #[test]
+    fn hud_pills_come_from_the_visible_hud_row_per_the_reference() {
+        // Reference 8.3 (the recording never shows the pills): row omp.hud > row omp.hud.pill >
+        // row omp.hud.seg [icon, text N].
+        let mut kids = real_children(false);
+        kids[1] = json!({"id": "6", "k": "row", "p": {"role": "omp.hud", "justify": "end"}, "c": [
+            {"id": "6.pill", "k": "row", "p": {"role": "omp.hud.pill"}, "c": [
+                {"id": "6.agents", "k": "row", "p": {"role": "omp.hud.seg", "gap": "xs", "align": "center", "title": "2 agents running  Ctrl+B", "actions": {"click": "agents.open"}}, "c": [
+                    {"id": "6.agents/i", "k": "icon", "p": {"name": "users", "tone": "accent"}},
+                    {"id": "6.agents/n", "k": "text", "p": {"spans": [{"t": "2", "s": "num"}], "wrap": "none"}}]},
+                {"id": "6.jobs", "k": "row", "p": {"role": "omp.hud.seg", "title": "1 job running  /jobs", "actions": {"click": "jobs.open"}}, "c": [
+                    {"id": "6.jobs/i", "k": "icon", "p": {"name": "job", "tone": "warning"}},
+                    {"id": "6.jobs/n", "k": "text", "p": {"text": "1"}},
+                    {"id": "6.jobs/g", "k": "text", "p": {"role": "omp.hud.glance", "text": "build"}}]}]}]});
+        let m = model_of(kids).expect("composer");
+        assert_eq!(m.skip, ["6"]);
+        let pills: Vec<_> = m.status.pills.iter().map(|p| (p.id.as_str(), p.icon, p.tone.as_deref(), p.count.as_str())).collect();
+        assert_eq!(
+            pills,
+            [
+                ("6.agents", Some(Icon::Users), Some("accent"), "2"),
+                ("6.jobs", Some(Icon::Zap), Some("warning"), "1"),
+            ],
+            "the glance text is not the count"
+        );
+    }
+
+    #[test]
+    fn a_status_node_with_a_todo_and_other_rows_keeps_them_for_the_status_row() {
+        let mut kids = real_children(true);
+        kids[0].pointer_mut("/c/0/c").expect("status children").as_array_mut().expect("array").extend([
+            json!({"id": "1k", "k": "row", "p": {"role": "omp.hint.retry"}}),
+            json!({"id": "tt", "k": "checklist", "p": {"mode": "hud", "role": "omp.hud.todo", "phases": []}}),
+        ]);
+        let m = model_of(kids).expect("composer");
+        assert_eq!(m.status.todo.as_deref(), Some("tt"));
+        assert_eq!(m.status.others, ["1k"]);
+        assert!(m.status.working.is_some());
+    }
+
+    #[test]
+    fn the_focus_strip_follows_the_reference() {
+        // Reference 8.2: row omp.composer.focus [icon eye, "Viewing", crumbs, row omp.composer.exit [kbd, "main"]].
+        let mut kids = real_children(false);
+        kids[3].pointer_mut("/c/0/c").expect("children").as_array_mut().expect("array").insert(
+            1,
+            json!({"id": "f", "k": "row", "p": {"role": "omp.composer.focus", "title": "Viewing subagent 0-Foo: what you send goes to it"}, "c": [
+                {"id": "f/eye", "k": "icon", "p": {"name": "eye"}},
+                {"id": "f/t", "k": "text", "p": {"text": "Viewing"}},
+                {"id": "f/crumb", "k": "text", "p": {"text": "0-Foo", "actions": {"click": "focus:0-Foo"}}},
+                {"id": "f/exit", "k": "row", "p": {"role": "omp.composer.exit", "title": "Back to the main session  Ctrl+X", "actions": {"click": "focus:main"}}, "c": [
+                    {"id": "f/exit/k", "k": "kbd", "p": {"keys": ["ctrl+x"]}},
+                    {"id": "f/exit/t", "k": "text", "p": {"text": "main"}}]}]}),
+        );
+        let f = model_of(kids).expect("composer").focus.expect("focus strip");
+        assert_eq!(f.id, "f");
+        assert_eq!(f.rest, ["f/t", "f/crumb"], "the eye icon and the exit chip are drawn by the view");
+        assert_eq!(f.exit, Some(("f/exit".to_owned(), "main".to_owned())));
+    }
+
+    #[test]
+    fn a_leading_symbol_is_not_part_of_the_permission_text() {
+        assert_eq!(permission_text("⚡ yolo"), "yolo");
+        assert_eq!(permission_text("\u{f0e7} on-request"), "on-request");
+        assert_eq!(permission_text("yolo"), "yolo");
+        assert_eq!(permission_text("⚡"), "⚡", "nothing left: keep what omp sent");
+    }
+
+    #[test]
+    fn dock_fact_icons_resolve() {
+        assert_eq!(icon("cache"), Some(Icon::Database));
+        assert_eq!(icon("input"), Some(Icon::ArrowDown));
+        assert_eq!(icon("output"), Some(Icon::ArrowUp));
+        assert_eq!(icon("throughput"), None);
+    }
+```
+
+`Icon` is already in scope in `mod tests` through `use super::*` (the module imports it); no new import.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cargo test -p mkrew-ui --lib tsp::tests::dock tsp::tests::the_ tsp::tests::typing tsp::tests::send_needs tsp::tests::a_ tsp::tests::hud_pills tsp::tests::working_costs`
+Expected: FAIL to compile, "cannot find function `dock_model` in this scope" and the other new names (`DockRole`, `BarFit`, `Primary`, `permission_text`...).
+
+- [ ] **Step 3: Add the three icon names**
+
+In `crates/mkrew-ui/src/tsp.rs`, in `pub fn icon`, after `"time" => Icon::Clock,` add:
+
+```rust
+        "cache" => Icon::Database,
+        "input" => Icon::ArrowDown,
+        "output" => Icon::ArrowUp,
+```
+
+(`throughput` stays unmapped on purpose: the rate fact prints its own `tok/s`; the existing negative list of `every_icon_name_of_the_fixture_and_the_reference_resolves_and_others_do_not` does not name it.)
+
+- [ ] **Step 4: Add the theme tokens**
+
+In `crates/mkrew-ui/src/theme.rs`, after `pub const CONTEXT_METER_HEIGHT: f32 = 2.0;` (current line 450) add:
+
+```rust
+
+/// The hover area of a tick on the context meter of an omp dock (a mark such as the
+/// auto-compact point; its tooltip is the mark's title). The 1 px line sits in the middle.
+pub const CONTEXT_MARK_HIT_WIDTH: f32 = space::M;
+pub const CONTEXT_MARK_HIT_HEIGHT: f32 = space::M;
+
+/// Room reckoned for the bar of an omp dock (px at 13 px UI size, like the `COMPOSER_*` ones):
+/// the round send or stop button and its gap.
+pub const TSP_BAR_FIXED_WIDTH: f32 = SEND_BUTTON_SIZE + space::S;
+/// The model pill without its name: padding, border, chevron, gaps and the gap after it.
+pub const TSP_MODEL_CHROME_WIDTH: f32 = 48.0;
+/// The model name never truncates below this many characters.
+pub const TSP_MODEL_MIN_CHARS: usize = 6;
+/// The four-step effort glyph of the effort chip.
+pub const TSP_EFFORT_GLYPH_WIDTH: f32 = 28.0;
+/// Characters reckoned for a live elapsed time inside a fact (`12m 03s`).
+pub const TSP_ELAPSED_CHARS: usize = 7;
+```
+
+No test (constants); `cargo check` in Step 14 covers it.
+
+- [ ] **Step 5: Capture the Chat composer before the refactor**
+
+Run: `cargo run -p mkrew-ui`, open a Claude or omp pane in Chat mode and capture four screenshots of its composer card into `.superpowers/sdd/2026-11-23-omp-tsp-surface/10b-chat-before-*.png`: idle with the model, effort, permission and branch chips; with a draft typed; working (loading dots in the model pill); a narrow pane (chips dropped), each in dark and light. These are the reference for Step 9 ("Chat byte-identical").
+
+- [ ] **Step 6: Implement the dock model**
+
+In `crates/mkrew-ui/src/tsp.rs`, insert this above `#[cfg(test)]` (current line 1593; the `Icon`, `Theme`, `theme`, `Document`, `Node`, `Value` imports already exist at the top of the file):
+
+```rust
+// ---------------------------------------------------------------------------------------------
+// The dock as Tern's composer (ADR 0107, spec 7.8)
+
+/// The roles of omp 18.13.2's dock that the composer look reads. Whole-string matches: the ask
+/// card (`omp.editor.ask`, spec 7.6) is not the composer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockRole {
+    Editor,
+    Context,
+    Line,
+    Bar,
+    Model,
+    Effort,
+    Extras,
+    Fact,
+    Usage,
+    Rate,
+    Send,
+    Stop,
+    Chips,
+    Focus,
+    Exit,
+    HudStatus,
+    Activity,
+    Working,
+    WorkingLabel,
+    WorkingStop,
+    Hud,
+    HudSeg,
+    HudTodo,
+}
+
+pub fn dock_role(role: &str) -> Option<DockRole> {
+    Some(match role {
+        "omp.editor" | "omp.editor.bash" | "omp.editor.python" => DockRole::Editor,
+        "omp.composer.context" => DockRole::Context,
+        "omp.composer.line" => DockRole::Line,
+        "omp.composer.bar" => DockRole::Bar,
+        "omp.composer.model" => DockRole::Model,
+        "omp.composer.effort" => DockRole::Effort,
+        "omp.composer.extras" => DockRole::Extras,
+        "omp.composer.fact" => DockRole::Fact,
+        "omp.composer.usage" => DockRole::Usage,
+        "omp.composer.rate" => DockRole::Rate,
+        "omp.composer.send" => DockRole::Send,
+        "omp.composer.stop" => DockRole::Stop,
+        "omp.composer.chips" => DockRole::Chips,
+        "omp.composer.focus" => DockRole::Focus,
+        "omp.composer.exit" => DockRole::Exit,
+        "omp.hud.status" => DockRole::HudStatus,
+        "omp.hud.activity" => DockRole::Activity,
+        "omp.working" => DockRole::Working,
+        "omp.working.label" => DockRole::WorkingLabel,
+        "omp.working.stop" => DockRole::WorkingStop,
+        "omp.hud" => DockRole::Hud,
+        "omp.hud.seg" => DockRole::HudSeg,
+        "omp.hud.todo" => DockRole::HudTodo,
+        _ => return None,
+    })
+}
+
+fn dock_role_of(node: &Node) -> Option<DockRole> {
+    role_of(node).and_then(dock_role)
+}
+
+fn hidden(node: &Node) -> bool {
+    node.props.get("hidden").and_then(Value::as_bool) == Some(true)
+}
+
+/// The first visible node of `want` under `from`, in document order; a hidden node hides its
+/// subtree.
+fn find<'a>(doc: &'a Document, from: &str, want: DockRole) -> Option<&'a Node> {
+    doc.children(from)
+        .filter(|node| !hidden(node))
+        .find_map(|node| {
+            if dock_role_of(node) == Some(want) {
+                Some(node)
+            } else {
+                find(doc, &node.id, want)
+            }
+        })
+}
+
+/// The visible direct child of `parent` with the role `want`.
+fn child<'a>(doc: &'a Document, parent: &str, want: DockRole) -> Option<&'a Node> {
+    doc.children(parent)
+        .find(|node| !hidden(node) && dock_role_of(node) == Some(want))
+}
+
+/// The text of a text-like node, trimmed.
+fn text_of(node: &Node, theme: &Theme) -> String {
+    node_spans(&node.props, theme)
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+fn str_of(node: &Node, key: &str) -> Option<String> {
+    node.props.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
+/// A tick on the context meter (omp's auto-compact point).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Mark {
+    /// 0 to 1 along the track.
+    pub at: f32,
+    pub title: String,
+}
+
+/// `meter role=omp.composer.context`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextMeter {
+    pub id: String,
+    /// The used share, clamped to 0..=1; `None` before omp knows it (an empty track).
+    pub fraction: Option<f32>,
+    /// `accent`, `warning` (past `thresholds.warn`) or `error` (past `bad`), for `tone_color`.
+    pub tone: &'static str,
+    pub label: String,
+    pub total: String,
+    pub marks: Vec<Mark>,
+    pub title: Option<String>,
+}
+
+/// The `editor` of the line: text, caret (a byte index), placeholder and ghost.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EditorModel {
+    pub id: String,
+    pub text: String,
+    pub cursor: usize,
+    pub placeholder: Vec<(String, SpanStyle)>,
+    /// omp's inline suggestion; only with a non-empty text and the caret at its end.
+    pub ghost: Option<String>,
+    pub sendable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Effort {
+    pub id: String,
+    /// The `effort` glyph child (the view draws it through `tsp_node`).
+    pub glyph: Option<String>,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelPill {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FactBody {
+    Text(String),
+    /// `rate_label` of a `rate` child.
+    Rate(String),
+    /// The id of an `elapsed` child (it ticks on the status tick).
+    Elapsed(String),
+}
+
+/// One `seg role=omp.composer.fact` of the extras.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fact {
+    pub id: String,
+    pub icon: Option<Icon>,
+    pub body: FactBody,
+    /// omp's drop priority: the highest number goes first. A loose `rate` has 0.
+    pub priority: u32,
+    /// A span styled `accent` (omp's `⚡ yolo`): the Chat permission chip look.
+    pub permission: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Usage {
+    pub id: String,
+    pub text: String,
+}
+
+/// The button at the end of the bar.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Primary {
+    /// `None`: omp sent neither Send nor Stop (disabled Send).
+    Send(Option<String>),
+    Stop(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BarPart {
+    Effort,
+    Model,
+    Facts,
+    Usage,
+}
+
+/// `row role=omp.composer.bar`, children in omp's order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarModel {
+    pub parts: Vec<BarPart>,
+    pub effort: Option<Effort>,
+    pub model: Option<ModelPill>,
+    pub facts: Vec<Fact>,
+    pub usage: Option<Usage>,
+    pub primary: Primary,
+    /// The session works (Stop shows or the working row exists): loading dots in the model pill.
+    pub working: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Working {
+    pub id: String,
+    pub elapsed: Option<String>,
+    pub label: String,
+    pub stop: Option<String>,
+}
+
+/// A `row role=omp.hud.seg` of the hud pills.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HudPill {
+    pub id: String,
+    pub icon: Option<Icon>,
+    pub tone: Option<String>,
+    pub count: String,
+}
+
+/// What the status row above the meter shows.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct StatusModel {
+    pub working: Option<Working>,
+    /// The id of the `checklist` hud (drawn by `tsp_node`).
+    pub todo: Option<String>,
+    pub pills: Vec<HudPill>,
+    /// Any other visible child of the activity row or of `omp.hud.status` (omp's retry hint):
+    /// drawn generically on the left.
+    pub others: Vec<String>,
+}
+
+/// `row role=omp.composer.focus`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FocusStrip {
+    pub id: String,
+    /// Children drawn generically after the eye icon (the "Viewing" text, the crumbs).
+    pub rest: Vec<String>,
+    /// `(id, label)` of the `omp.composer.exit` chip.
+    pub exit: Option<(String, String)>,
+}
+
+/// The dock of omp 18.13.2 read as a composer (spec 7.8). `None` for a dock without the roles
+/// (another omp version, or the ask card): the dock is then drawn generically.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockModel {
+    /// The id of `col role=omp.editor`: the card is drawn where this node stands.
+    pub editor: String,
+    pub line: String,
+    /// Ids from the dock's child down to the editor, inclusive: wrappers to walk through.
+    pub path: Vec<String>,
+    /// Nodes drawn in the status row instead of where they stand (activity row, status col, hud).
+    pub skip: Vec<String>,
+    pub context: Option<ContextMeter>,
+    pub field: EditorModel,
+    pub focus: Option<FocusStrip>,
+    /// Ids of the attachment chips (the row is hidden while there are none).
+    pub chips: Vec<String>,
+    pub bar: BarModel,
+    pub status: StatusModel,
+}
+
+impl DockModel {
+    /// Send is enabled when omp says `sendable` and there is text or an attachment, and the
+    /// button is not Stop. (omp says `sendable: true` for an empty editor.)
+    pub fn can_send(&self) -> bool {
+        self.field.sendable
+            && (!self.field.text.trim().is_empty() || !self.chips.is_empty())
+            && !matches!(self.bar.primary, Primary::Stop(_))
+    }
+}
+
+/// `⚡ yolo` is `yolo`: the Chat permission chip draws its own icon, so the leading symbol (or
+/// private-use glyph) and the space after it go. Nothing left: what omp sent.
+pub fn permission_text(text: &str) -> String {
+    let rest = text
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .trim();
+    if rest.is_empty() {
+        text.trim().to_owned()
+    } else {
+        rest.to_owned()
+    }
+}
+
+pub fn dock_model(doc: &Document, theme: &Theme) -> Option<DockModel> {
+    let editor = find(doc, "dock", DockRole::Editor)?;
+    let line = child(doc, &editor.id, DockRole::Line)?;
+    let bar = child(doc, &editor.id, DockRole::Bar)?;
+    let field = doc
+        .children(&line.id)
+        .find(|node| node.kind == "editor" && !hidden(node))?;
+
+    let mut path = vec![editor.id.clone()];
+    let mut at = editor;
+    while let Some(parent) = at
+        .parent
+        .as_deref()
+        .filter(|id| *id != "dock")
+        .and_then(|id| doc.get(id))
+    {
+        path.push(parent.id.clone());
+        at = parent;
+    }
+    path.reverse();
+
+    let activity = find(doc, "dock", DockRole::Activity);
+    let status_node = find(doc, "dock", DockRole::HudStatus);
+    let hud = find(doc, "dock", DockRole::Hud);
+    let status = status_model(doc, activity, status_node, hud, theme);
+    let skip = [activity, status_node, hud]
+        .into_iter()
+        .flatten()
+        .map(|node| node.id.clone())
+        .collect();
+    let mut bar = bar_model(doc, bar, theme);
+    bar.working = matches!(bar.primary, Primary::Stop(_)) || status.working.is_some();
+
+    Some(DockModel {
+        editor: editor.id.clone(),
+        line: line.id.clone(),
+        path,
+        skip,
+        context: child(doc, &editor.id, DockRole::Context).map(context_model),
+        field: editor_model(field, theme),
+        focus: child(doc, &editor.id, DockRole::Focus).map(|row| focus_model(doc, row, theme)),
+        chips: child(doc, &editor.id, DockRole::Chips)
+            .map(|row| {
+                doc.children(&row.id)
+                    .filter(|node| !hidden(node))
+                    .map(|node| node.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        bar,
+        status,
+    })
+}
+
+fn context_model(node: &Node) -> ContextMeter {
+    let value = node.props.get("value").and_then(Value::as_f64);
+    let marks = node
+        .props
+        .get("marks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|mark| {
+            Some(Mark {
+                at: mark.get("at")?.as_f64()?.clamp(0.0, 1.0) as f32,
+                title: mark
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+            })
+        })
+        .collect();
+    ContextMeter {
+        id: node.id.clone(),
+        fraction: value.map(|v| v.clamp(0.0, 1.0) as f32),
+        tone: value.map_or("accent", |v| meter_tone(v, node.props.get("thresholds"))),
+        label: str_of(node, "label").unwrap_or_default(),
+        total: str_of(node, "total").unwrap_or_default(),
+        marks,
+        title: str_of(node, "title"),
+    }
+}
+
+fn editor_model(node: &Node, theme: &Theme) -> EditorModel {
+    let text = str_of(node, "text").unwrap_or_default();
+    let cursor = node
+        .props
+        .get("cursor")
+        .and_then(Value::as_u64)
+        .map_or(text.len(), |units| byte_at_utf16(&text, units as usize));
+    let ghost = str_of(node, "ghost").filter(|g| !g.is_empty() && !text.is_empty() && cursor == text.len());
+    EditorModel {
+        id: node.id.clone(),
+        cursor,
+        placeholder: node
+            .props
+            .get("placeholder")
+            .map(|value| spans_of(value, theme))
+            .unwrap_or_default(),
+        ghost,
+        sendable: node.props.get("sendable").and_then(Value::as_bool) == Some(true),
+        text,
+    }
+}
+
+fn focus_model(doc: &Document, row: &Node, theme: &Theme) -> FocusStrip {
+    let exit = child(doc, &row.id, DockRole::Exit);
+    FocusStrip {
+        id: row.id.clone(),
+        rest: doc
+            .children(&row.id)
+            .filter(|node| {
+                !hidden(node)
+                    && Some(node.id.as_str()) != exit.map(|e| e.id.as_str())
+                    && !(node.kind == "icon"
+                        && node.props.get("name").and_then(Value::as_str) == Some("eye"))
+            })
+            .map(|node| node.id.clone())
+            .collect(),
+        exit: exit.map(|node| {
+            let label = doc
+                .children(&node.id)
+                .filter(|n| n.kind == "text")
+                .map(|n| text_of(n, theme))
+                .collect::<Vec<_>>()
+                .join(" ");
+            (node.id.clone(), label)
+        }),
+    }
+}
+
+fn rate_of(node: &Node) -> String {
+    rate_label(
+        node.props.get("value").and_then(Value::as_f64).unwrap_or(0.0),
+        node.props.get("unit").and_then(Value::as_str).unwrap_or(""),
+    )
+}
+
+fn fact_of(doc: &Document, node: &Node, theme: &Theme) -> Option<Fact> {
+    if dock_role_of(node) != Some(DockRole::Fact) {
+        return None;
+    }
+    let runs = node_spans(&node.props, theme);
+    let accent = runs
+        .iter()
+        .any(|(text, style)| style.color == Some(theme.accent) && !text.trim().is_empty());
+    let text: String = runs.iter().map(|(text, _)| text.as_str()).collect();
+    let body = if let Some(rate) = doc.children(&node.id).find(|n| n.kind == "rate") {
+        FactBody::Rate(rate_of(rate))
+    } else if let Some(timer) = doc.children(&node.id).find(|n| n.kind == "elapsed") {
+        FactBody::Elapsed(timer.id.clone())
+    } else if text.trim().is_empty() {
+        return None;
+    } else if accent {
+        FactBody::Text(permission_text(&text))
+    } else {
+        FactBody::Text(text.trim().to_owned())
+    };
+    Some(Fact {
+        id: node.id.clone(),
+        icon: node
+            .props
+            .get("icon")
+            .and_then(Value::as_str)
+            .and_then(icon),
+        permission: accent && matches!(body, FactBody::Text(_)),
+        body,
+        priority: node
+            .props
+            .get("priority")
+            .and_then(Value::as_u64)
+            .map_or(0, |p| u32::try_from(p).unwrap_or(u32::MAX)),
+    })
+}
+
+fn bar_model(doc: &Document, bar: &Node, theme: &Theme) -> BarModel {
+    let mut m = BarModel {
+        parts: Vec::new(),
+        effort: None,
+        model: None,
+        facts: Vec::new(),
+        usage: None,
+        primary: Primary::Send(None),
+        working: false,
+    };
+    let facts_part = |m: &mut BarModel| {
+        if !m.parts.contains(&BarPart::Facts) {
+            m.parts.push(BarPart::Facts);
+        }
+    };
+    for node in doc.children(&bar.id).filter(|node| !hidden(node)) {
+        match (dock_role_of(node), node.kind.as_str()) {
+            (Some(DockRole::Effort), _) => {
+                let glyph = doc.children(&node.id).find(|n| n.kind == "effort");
+                let label = doc
+                    .children(&node.id)
+                    .find(|n| n.kind == "text")
+                    .map(|n| text_of(n, theme))
+                    .filter(|text| !text.is_empty())
+                    .or_else(|| glyph.and_then(|g| str_of(g, "level")))
+                    .unwrap_or_default();
+                m.effort = Some(Effort {
+                    id: node.id.clone(),
+                    glyph: glyph.map(|g| g.id.clone()),
+                    label,
+                });
+                m.parts.push(BarPart::Effort);
+            }
+            (Some(DockRole::Model), _) => {
+                let name = doc
+                    .children(&node.id)
+                    .find(|n| n.kind == "text")
+                    .map(|n| text_of(n, theme))
+                    .unwrap_or_default();
+                if !name.is_empty() {
+                    m.model = Some(ModelPill { id: node.id.clone(), name });
+                    m.parts.push(BarPart::Model);
+                }
+            }
+            (Some(DockRole::Extras), _) => {
+                m.facts.extend(
+                    doc.children(&node.id)
+                        .filter(|n| !hidden(n))
+                        .filter_map(|n| fact_of(doc, n, theme)),
+                );
+                facts_part(&mut m);
+            }
+            // Reference 8.2 sends the rate as a bar child; the recording sends it inside a fact.
+            (Some(DockRole::Rate), _) | (None, "rate") => {
+                m.facts.push(Fact {
+                    id: node.id.clone(),
+                    icon: None,
+                    body: FactBody::Rate(rate_of(node)),
+                    priority: 0,
+                    permission: false,
+                });
+                facts_part(&mut m);
+            }
+            (Some(DockRole::Usage), _) => {
+                let text = text_of(node, theme);
+                if !text.is_empty() {
+                    m.usage = Some(Usage { id: node.id.clone(), text });
+                    m.parts.push(BarPart::Usage);
+                }
+            }
+            (Some(DockRole::Stop), _) => m.primary = Primary::Stop(node.id.clone()),
+            (Some(DockRole::Send), _) => {
+                if !matches!(m.primary, Primary::Stop(_)) {
+                    m.primary = Primary::Send(Some(node.id.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+    m
+}
+
+fn collect_pills(doc: &Document, from: &str, theme: &Theme, out: &mut Vec<HudPill>) {
+    for node in doc.children(from).filter(|node| !hidden(node)) {
+        if dock_role_of(node) != Some(DockRole::HudSeg) {
+            collect_pills(doc, &node.id, theme, out);
+            continue;
+        }
+        let glyph = doc.children(&node.id).find(|n| n.kind == "icon");
+        out.push(HudPill {
+            id: node.id.clone(),
+            icon: glyph
+                .and_then(|g| g.props.get("name"))
+                .and_then(Value::as_str)
+                .and_then(icon),
+            tone: glyph.and_then(|g| str_of(g, "tone")),
+            // The count is the text without a role: `omp.hud.glance` is a second text.
+            count: doc
+                .children(&node.id)
+                .filter(|n| n.kind == "text" && role_of(n).is_none())
+                .map(|n| text_of(n, theme))
+                .collect::<Vec<_>>()
+                .join(" "),
+        });
+    }
+}
+
+fn status_model(
+    doc: &Document,
+    activity: Option<&Node>,
+    status: Option<&Node>,
+    hud: Option<&Node>,
+    theme: &Theme,
+) -> StatusModel {
+    let row = status.and_then(|s| find(doc, &s.id, DockRole::Working));
+    let working = row.map(|row| Working {
+        id: row.id.clone(),
+        elapsed: doc
+            .children(&row.id)
+            .find(|n| n.kind == "elapsed")
+            .map(|n| n.id.clone()),
+        label: child(doc, &row.id, DockRole::WorkingLabel)
+            .map(|n| text_of(n, theme))
+            .unwrap_or_default(),
+        stop: child(doc, &row.id, DockRole::WorkingStop).map(|n| n.id.clone()),
+    });
+    let mut others: Vec<String> = Vec::new();
+    if let Some(status) = status {
+        others.extend(
+            doc.children(&status.id)
+                .filter(|n| {
+                    !hidden(n)
+                        && n.kind != "checklist"
+                        && Some(n.id.as_str()) != row.map(|r| r.id.as_str())
+                })
+                .map(|n| n.id.clone()),
+        );
+    }
+    if let Some(activity) = activity {
+        others.extend(
+            doc.children(&activity.id)
+                .filter(|n| !hidden(n) && Some(n.id.as_str()) != status.map(|s| s.id.as_str()))
+                .map(|n| n.id.clone()),
+        );
+    }
+    let mut pills = Vec::new();
+    if let Some(hud) = hud {
+        collect_pills(doc, &hud.id, theme, &mut pills);
+    }
+    StatusModel {
+        working,
+        todo: status
+            .and_then(|s| {
+                doc.children(&s.id)
+                    .find(|n| n.kind == "checklist" && !hidden(n))
+            })
+            .map(|n| n.id.clone()),
+        pills,
+        others,
+    }
+}
+
+/// What of the bar fits: which facts show (indexes of `BarModel.facts`), whether the effort chip
+/// shows, and, when even that is too wide, the room (px at 13 px UI size) the model name gets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarFit {
+    pub facts: Vec<bool>,
+    pub effort: bool,
+    pub model_name: Option<f32>,
+}
+
+impl BarFit {
+    pub fn all(bar: &BarModel) -> Self {
+        Self {
+            facts: vec![true; bar.facts.len()],
+            effort: bar.effort.is_some(),
+            model_name: None,
+        }
+    }
+}
+
+fn text_room(text: &str) -> f32 {
+    text.chars().count() as f32 * theme::COMPOSER_MONO_CHAR_WIDTH
+}
+
+fn fact_width(fact: &Fact) -> f32 {
+    let icon = if fact.icon.is_some() || fact.permission {
+        theme::ICON_SIZE_SMALL + space::XS
+    } else {
+        0.0
+    };
+    let body = match &fact.body {
+        FactBody::Text(text) | FactBody::Rate(text) => text_room(text),
+        FactBody::Elapsed(_) => theme::TSP_ELAPSED_CHARS as f32 * theme::COMPOSER_MONO_CHAR_WIDTH,
+    };
+    icon + body + space::S
+}
+
+/// The room the bar takes (px at 13 px UI size), every chip `flex_none` and the stats cell
+/// shrinking last, like `chat::chips_width`.
+pub fn bar_width(bar: &BarModel, fit: &BarFit) -> f32 {
+    let effort = bar
+        .effort
+        .as_ref()
+        .filter(|_| fit.effort)
+        .map_or(0.0, |e| {
+            theme::TSP_EFFORT_GLYPH_WIDTH + space::XS + text_room(&e.label) + space::S
+        });
+    let model = bar.model.as_ref().map_or(0.0, |m| {
+        theme::TSP_MODEL_CHROME_WIDTH
+            + fit.model_name.unwrap_or_else(|| text_room(&m.name))
+            + if bar.working { theme::COMPOSER_CHIP_LOADING_WIDTH } else { 0.0 }
+    });
+    let facts: f32 = bar
+        .facts
+        .iter()
+        .zip(&fit.facts)
+        .filter(|(_, shown)| **shown)
+        .map(|(fact, _)| fact_width(fact))
+        .sum();
+    let usage = bar
+        .usage
+        .as_ref()
+        .map_or(0.0, |u| text_room(&u.text) + space::S);
+    theme::TSP_BAR_FIXED_WIDTH + effort + model + facts + usage
+}
+
+/// What of `bar` fits in `room` px (13 px UI size): facts drop highest priority number first
+/// (of equal priorities the later one first), then the effort chip, then the model name
+/// truncates down to `TSP_MODEL_MIN_CHARS`. The send or stop button always stays. Mirrors
+/// `chat::fit_chips`.
+pub fn fit_bar(bar: &BarModel, room: f32) -> BarFit {
+    let mut fit = BarFit::all(bar);
+    let mut order: Vec<usize> = (0..bar.facts.len()).collect();
+    order.sort_by_key(|&i| (std::cmp::Reverse(bar.facts[i].priority), std::cmp::Reverse(i)));
+    for i in order {
+        if bar_width(bar, &fit) <= room {
+            return fit;
+        }
+        fit.facts[i] = false;
+    }
+    if bar_width(bar, &fit) <= room {
+        return fit;
+    }
+    fit.effort = false;
+    if bar_width(bar, &fit) <= room {
+        return fit;
+    }
+    if let Some(model) = &bar.model {
+        let over = bar_width(bar, &fit) - room;
+        let natural = text_room(&model.name);
+        let floor = theme::TSP_MODEL_MIN_CHARS as f32 * theme::COMPOSER_MONO_CHAR_WIDTH;
+        fit.model_name = Some((natural - over).max(floor).min(natural));
+    }
+    fit
+}
+
+```
+
+`SpanStyle` derives `PartialEq, Eq`, so the models derive `PartialEq` without trouble.
+
+- [ ] **Step 7: Run the dock tests to verify they pass**
+
+Run: `cargo test -p mkrew-ui --lib tsp::`
+Expected: PASS (the new dock tests and every existing `tsp::` test).
+
+- [ ] **Step 8: Run fmt and clippy on the pure part**
+
+Run: `cargo fmt --all && cargo clippy -p mkrew-ui --lib --tests -- -D warnings`
+Expected: no warnings.
+
+- [ ] **Step 9: Extract the shared pieces out of the Chat composer (no change to Chat)**
+
+Pure refactor of `crates/mkrew-ui/src/shell/composer.rs`: move code into free functions and call them from `composer_card`, change nothing else. Do it in this order, `cargo check -p mkrew-ui` after each edit.
+
+(a) Replace the room computation (current lines 1212-1216):
+
+```rust
+        // Room for the chips: the pane's width, capped by the column, less the page padding
+        // and the card's own padding. The chip widths are in rems (`theme::rems_px`, designed
+        // at 13 px), so the room is measured in the same unit.
+        let room = (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M)
+            / (cx.global::<theme::Fonts>().ui_size / 13.0);
+```
+
+with
+
+```rust
+        let room = composer_room(width, cx);
+```
+
+(b) Replace the meter (current lines 1173-1211, the whole `let meter = stats.context...;`) with:
+
+```rust
+        let meter = stats
+            .context
+            .and_then(|(used, window)| chat::context_meter(used, window?))
+            .map(|meter| {
+                let fill = if meter.warning {
+                    theme.status_needs_input
+                } else {
+                    theme.accent
+                };
+                meter_bar(
+                    meter.fraction,
+                    fill,
+                    format!("{}%", meter.percent),
+                    meter.window_label,
+                    Vec::new(),
+                    theme,
+                )
+            });
+```
+
+(c) Replace the `quiet` closure (current lines 1228-1235) with:
+
+```rust
+        let quiet = |el: gpui::Div| quiet_chip(el, theme);
+```
+
+(d) Replace the model chip (current lines 1237-1268) with:
+
+```rust
+        let model_chip = stats.model.clone().filter(|_| shown.model).map(|model| {
+            model_pill("composer-model", model, working, !exited, now, theme)
+                .tooltip(tooltip(
+                    theme,
+                    "Change the model (types /model in the terminal)",
+                    "",
+                ))
+                .on_press(
+                    !exited,
+                    cx.listener(move |shell, _, window, cx| {
+                        shell.open_model_picker(session, window, cx);
+                    }),
+                )
+        });
+```
+
+(e) Replace the permission chip (current lines 1269-1279) with:
+
+```rust
+        let permission_chip = stats
+            .permission
+            .clone()
+            .filter(|_| shown.permission)
+            .map(|permission| permission_chip(permission, theme));
+```
+
+(f) Replace the card frame (current lines 1376-1386, from `let card = div()` through `.font_family(theme.ui_font_family.clone())`) with:
+
+```rust
+        let card = composer_card_frame(theme)
+```
+
+keeping the following `.on_mouse_down(` chain as it is.
+
+(g) Replace `placeholder_row` at the end of the file (current lines 1439-1458) with the shared functions below. The Chat call `placeholder_row(placeholder, theme)` (line 1144) stays as it is: a `String` is an element.
+
+```rust
+/// The Chat field's placeholder: a small sparkle icon, then `content` in italic muted (Tern
+/// look). `caret_text` draws the caret before it. An omp dock passes styled runs (its placeholder
+/// holds a private-use glyph that needs the terminal font).
+pub(super) fn placeholder_row(content: impl IntoElement, theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .child(icon_svg(
+            Icon::Sparkles,
+            theme::ICON_SIZE_SMALL,
+            theme.text_subtle,
+        ))
+        .child(
+            div()
+                .min_w_0()
+                .italic()
+                .text_color(rgb(theme.text_muted))
+                .child(content),
+        )
+}
+
+/// Room for the chips of a composer card: the pane's width, capped by the column, less the page
+/// padding and the card's own padding. The chip widths are in rems (`theme::rems_px`, designed
+/// at 13 px), so the room is measured in the same unit.
+pub(super) fn composer_room(width: f32, cx: &gpui::App) -> f32 {
+    (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M)
+        / (cx.global::<theme::Fonts>().ui_size / 13.0)
+}
+
+/// The floating card of a composer: Chat's, and an omp pane's dock (spec 7.8). Callers add the
+/// children and the press handler.
+pub(super) fn composer_card_frame(theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(space::S))
+        .p(px(space::M))
+        .rounded(px(radius::LARGE))
+        .bg(rgb(theme.surface_raised))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::rgba(theme.glass_border))
+        .shadow(theme::shadow_float(theme))
+        .font_family(theme.ui_font_family.clone())
+}
+
+/// The thin context meter over the card: a `CONTEXT_METER_HEIGHT` track filled to `fraction` in
+/// `fill`, `left` and `right` under it in `META` muted. `marks` (position 0..1, tooltip) are
+/// small ticks on the track (omp's auto-compact point); Chat has none.
+pub(super) fn meter_bar(
+    fraction: f32,
+    fill: u32,
+    left: String,
+    right: String,
+    marks: Vec<(f32, String)>,
+    theme: &Theme,
+) -> gpui::Div {
+    let ticks = marks.into_iter().enumerate().map(|(i, (at, title))| {
+        div()
+            .id(("context-mark", i))
+            .absolute()
+            .left(relative(at.clamp(0.0, 1.0)))
+            .ml(px(-theme::CONTEXT_MARK_HIT_WIDTH / 2.0))
+            .top(px(
+                -(theme::CONTEXT_MARK_HIT_HEIGHT - theme::CONTEXT_METER_HEIGHT) / 2.0
+            ))
+            .w(px(theme::CONTEXT_MARK_HIT_WIDTH))
+            .h(px(theme::CONTEXT_MARK_HIT_HEIGHT))
+            .flex()
+            .justify_center()
+            .tooltip(tooltip(theme, &title, ""))
+            .child(
+                div()
+                    .w(px(theme::BORDER_WIDTH))
+                    .h_full()
+                    .bg(rgb(theme.text_muted)),
+            )
+    });
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(space::XS))
+        .px(px(space::S))
+        .pb(px(space::XS))
+        .child(
+            div()
+                .relative()
+                .h(px(theme::CONTEXT_METER_HEIGHT))
+                .w_full()
+                .rounded(px(radius::PILL))
+                .bg(rgb(theme.divider))
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(fraction))
+                        .rounded(px(radius::PILL))
+                        .bg(rgb(fill)),
+                )
+                .children(ticks),
+        )
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .child(left)
+                .child(right),
+        )
+}
+
+/// A quiet chip: `META` muted text, icon and text with `space::XS` between, never shrinking.
+pub(super) fn quiet_chip(el: gpui::Div, theme: &Theme) -> gpui::Div {
+    el.flex()
+        .flex_none()
+        .items_center()
+        .gap(px(space::XS))
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text_muted))
+}
+
+/// The permission chip: a lightning icon and `text` in `status_needs_input`.
+pub(super) fn permission_chip(text: String, theme: &Theme) -> gpui::Div {
+    quiet_chip(div(), theme)
+        .text_color(rgb(theme.status_needs_input))
+        .child(icon_svg(Icon::Zap, theme::ICON_SIZE_SMALL, theme.status_needs_input))
+        .child(text)
+}
+
+/// The model pill: a raised border, `accent_text`, loading dots while `loading`, the name and a
+/// chevron. Callers add the tooltip and `.on_press(..)`.
+pub(super) fn model_pill(
+    id: impl Into<gpui::ElementId>,
+    name: impl IntoElement,
+    loading: bool,
+    enabled: bool,
+    now: i64,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(space::XS))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::PILL))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme::raised_border(theme)))
+        .text_size(font_size::META)
+        .text_color(rgb(theme.accent_text))
+        .pressable(Look::Chip, enabled, theme)
+        .when(loading, |el| el.child(loading_dots(now, rgb(theme.accent_text))))
+        .child(name)
+        .child(icon_svg(
+            Icon::ChevronDown,
+            theme::ICON_SIZE_SMALL,
+            theme.text_muted,
+        ))
+}
+```
+
+Notes on the move: the meter track gained `.relative()` and `.children(ticks)` (an empty iterator for Chat: no node is added); the meter outer wrapper, the fill and the label row are the old code verbatim; `quiet_chip` and `permission_chip` are the old closure bodies; `model_pill` is the old `model_chip` with the tooltip and the press handler left to the caller and the loading dots after the pill's own style calls (children order stays dots, name, chevron). If `cx.global` is not callable on `&gpui::App` in the pinned gpui, take `&gpui::Context<'_, Shell>` instead; the call site passes `cx` either way.
+
+Run: `cargo check -p mkrew-ui`
+Expected: compiles. A `Look` or `relative` name missing from `crate::*` is fixed with the same import the file already uses for the call it was cut from.
+
+Run: `cargo test -p mkrew-ui`
+Expected: PASS (nothing in the pure tests changed).
+
+Re-capture the four Chat screenshots of Step 5 as `10b-chat-after-*.png` and compare each pair (same size, same pixels; a flicker of one pixel row at the meter is a bug in `meter_bar`, not noise).
+
+- [ ] **Step 10: Add the stop button widget**
+
+In `crates/mkrew-ui/src/shell/widgets.rs`, after `round_button` (current line 222) add:
+
+```rust
+
+/// The round stop button of an omp pane's dock (spec 7.8): the size and neutral look of
+/// [`round_button`], a stop square instead of the send glyph; the square turns `danger_text` on
+/// hover (through the id group: an svg does not inherit its parent's hover color). Attach the
+/// handler with `.on_press(true, ..)`.
+pub(crate) fn round_stop_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    let danger = theme.danger_text;
+    div()
+        .id(id)
+        .group(id)
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(theme::SEND_BUTTON_SIZE))
+        .rounded(px(radius::PILL))
+        .bg(rgb(theme.surface_raised))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme::raised_border(theme)))
+        .pressable(Look::Raised, true, theme)
+        .child(
+            icon_svg(Icon::Square, theme::ICON_SIZE_SMALL, theme.text_muted)
+                .group_hover(id, move |style| style.text_color(rgb(danger))),
+        )
+}
+```
+
+- [ ] **Step 11: Let `tsp_editor` draw the composer field**
+
+In `crates/mkrew-ui/src/shell/tsp_view.rs`:
+
+Imports: after `use super::chat_view::chat_column;` add
+
+```rust
+use super::composer::{
+    composer_card_frame, composer_room, meter_bar, model_pill, permission_chip, placeholder_row,
+    quiet_chip,
+};
+```
+
+Replace `tsp_input` (current `impl Shell` block, lines 1813-1909, from `/// editor, input, image.` through the end of the function) with the version below. It is the old body with three changes marked `// 10b`: the rows are `Div`s so the composer's ghost can follow the caret on the last line, the placeholder takes the Chat placeholder row, and a `look` argument chooses between the two.
+
+```rust
+/// How [`Shell::tsp_editor`] draws an `editor`.
+#[derive(Clone, Copy)]
+enum EditorLook<'a> {
+    /// Anywhere in the surface: the placeholder in `text_dim`, the ghost under the text.
+    Plain,
+    /// The dock's field (spec 7.8): the Chat placeholder row, the ghost (already checked by
+    /// `DockModel`: caret at the end) right after the caret on the same line in `text_subtle`.
+    Composer { ghost: Option<&'a str> },
+}
+
+impl Shell {
+    /// editor, input, image.
+    fn tsp_input(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        if node.kind == "image" {
+            return self.tsp_image(p, node, cx);
+        }
+        self.tsp_editor(p, node, EditorLook::Plain, cx)
+    }
+
+    /// An `editor` or `input`: omp's text with the caret, its decorations and its placeholder.
+    fn tsp_editor(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        look: EditorLook<'_>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let text = str_prop(node, "text").unwrap_or("");
+        let caret_at = (node.props.get("cursor").and_then(Value::as_u64))
+            .map(|units| tsp::byte_at_utf16(text, units as usize));
+        // omp says which editable node has the focus (`focus` op); until it does, the pane's
+        // only editor is the one.
+        let has_focus = p.focused && p.doc.focus().is_none_or(|id| id == node.id);
+        let caret = || div().w(px(theme::BORDER_WIDTH)).bg(rgb(theme.text));
+        let part = |s: &str, color: u32| {
+            div().min_w_0().child(styled_runs(
+                &[(s.to_owned(), SpanStyle::default())],
+                color,
+                false,
+                theme,
+            ))
+        };
+        let piece = |s: &str, decor: tsp::Decor| {
+            div().min_w_0().child(styled_runs_wavy(
+                &[(s.to_owned(), decor.style)],
+                theme.text,
+                false,
+                weight::REGULAR,
+                decor.typo,
+                theme,
+            ))
+        };
+        let line_height = theme::rems_px(space::L + space::XS);
+        // The prompt starts the first line, before the caret and the text.
+        let mut lead = (node.props.get("prompt"))
+            .map(|v| tsp::spans_of(v, theme))
+            .filter(|runs| !runs.is_empty())
+            .map(|runs| {
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .child(styled_runs(&runs, theme.text_muted, false, theme))
+                    .into_any_element()
+            });
+        // 10b: rows stay `Div`s until the end.
+        let mut lines: Vec<Div> = Vec::new();
+        if text.is_empty() {
+            let placeholder = (node.props.get("placeholder"))
+                .map(|v| tsp::spans_of(v, theme))
+                .unwrap_or_default();
+            let mut row = div().flex().items_center().min_h(line_height);
+            row = row.children(lead.take());
+            if has_focus {
+                row = row.child(caret());
+            }
+            lines.push(match look {
+                EditorLook::Plain => {
+                    row.child(styled_runs(&placeholder, theme.text_dim, false, theme))
+                }
+                EditorLook::Composer { .. } => row.child(placeholder_row(
+                    styled_runs(&placeholder, theme.text_muted, false, theme),
+                    theme,
+                )),
+            });
+        } else {
+            // Decorations (mention colors, hidden markers, typos) cut the text into pieces.
+            let pieces = tsp::decor_pieces(text, array_prop(node, "decor"), theme);
+            let caret_at = caret_at.filter(|_| has_focus);
+            let mut start = 0;
+            for line in text.split('\n') {
+                let end = start + line.len();
+                let mut row = div().flex().items_center().min_h(line_height);
+                row = row.children(lead.take());
+                for atom in tsp::line_atoms(&pieces, start..end, caret_at) {
+                    row = match atom {
+                        tsp::Atom::Caret => row.child(caret()),
+                        tsp::Atom::Text(range, decor) => row.child(piece(&text[range], decor)),
+                    };
+                }
+                lines.push(row);
+                start = end + 1;
+            }
+        }
+        // Inline suggestion: after the caret on the last line (composer), else under the text.
+        let (under, inline) = match look {
+            EditorLook::Plain => (
+                str_prop(node, "ghost").filter(|g| !g.is_empty() && !text.is_empty()),
+                None,
+            ),
+            EditorLook::Composer { ghost } => (None, ghost),
+        };
+        if let Some(ghost) = inline
+            && let Some(last) = lines.pop()
+        {
+            lines.push(last.child(part(ghost, theme.text_subtle)));
+        }
+        let session = p.session;
+        let id = node.id.clone();
+        // A text field: exempt from the press look, so a plain mouse-down sends the focus.
+        let el = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .children(lines)
+            .children(under.map(|g| part(g, theme.text_dim)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |shell, _, _, cx| {
+                    shell.tsp_click(session, &id, false, cx);
+                }),
+            );
+        let el = if grows(node) || matches!(look, EditorLook::Composer { .. }) {
+            el.flex_1()
+        } else {
+            el
+        };
+        el.into_any_element()
+    }
+```
+
+(the following `/// An inline image from the blob bytes...` function `tsp_image` stays right after.)
+
+- [ ] **Step 12: Draw the dock as the composer card**
+
+In `crates/mkrew-ui/src/shell/tsp_view.rs`, add a new block after `tsp_status_hud` (current line 2243, the closing `}` of its `impl Shell` block):
+
+```rust
+
+impl Shell {
+    /// The dock of an omp pane that has the composer roles (spec 7.8): the dock's own children in
+    /// order, except that the node where the editor stands becomes the status row, the meter and
+    /// the card, and the nodes the status row took over are skipped.
+    fn tsp_dock(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        width: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<AnyElement> {
+        let mut out = Vec::new();
+        for node in p.doc.children("dock") {
+            self.tsp_dock_node(p, m, node, width, &mut out, cx);
+        }
+        out
+    }
+
+    fn tsp_dock_node(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        node: &Node,
+        width: f32,
+        out: &mut Vec<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if m.skip.contains(&node.id) {
+            return;
+        }
+        if node.id == m.editor {
+            out.push(self.tsp_composer(p, m, width, cx));
+        } else if m.path.contains(&node.id) {
+            for child in p.doc.children(&node.id) {
+                self.tsp_dock_node(p, m, child, width, out, cx);
+            }
+        } else {
+            out.push(self.tsp_node(p, node, cx));
+        }
+    }
+
+    /// `node` as a chip: its `title` tooltip and, when it has an action, the press that sends the
+    /// same `action` event as before (`tsp_decorate`). A node the document no longer has is drawn
+    /// as it is.
+    fn tsp_chip(
+        &self,
+        p: &Paint<'_>,
+        id: &str,
+        look: Look,
+        el: Div,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        match p.doc.get(id) {
+            Some(node) => self.tsp_decorate(el, p, node, look, false, cx),
+            None => el.into_any_element(),
+        }
+    }
+
+    /// The status row (when it has anything), the context meter and the card: the Chat composer
+    /// with omp's content.
+    fn tsp_composer(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        width: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let doc = p.doc;
+        let status = self.tsp_dock_status(p, m, cx);
+        let meter = m.context.as_ref().map(|c| {
+            let marks = c.marks.iter().map(|k| (k.at, k.title.clone())).collect();
+            let bar = meter_bar(
+                c.fraction.unwrap_or(0.0),
+                tsp::tone_color(c.tone, theme),
+                c.label.clone(),
+                c.total.clone(),
+                marks,
+                theme,
+            );
+            self.tsp_chip(p, &c.id, Look::Text, bar, cx)
+        });
+        let focus = m.focus.as_ref().map(|f| self.tsp_dock_focus(p, f, cx));
+        let chips: Vec<AnyElement> = (m.chips.iter())
+            .filter_map(|id| doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx))
+            .collect();
+        let line: Vec<AnyElement> = doc
+            .children(&m.line)
+            .map(|node| {
+                if node.id == m.field.id {
+                    let look = EditorLook::Composer {
+                        ghost: m.field.ghost.as_deref(),
+                    };
+                    self.tsp_editor(p, node, look, cx)
+                } else {
+                    self.tsp_node(p, node, cx)
+                }
+            })
+            .collect();
+        let field = div()
+            .id(SharedString::from(format!("tsp-field-{}", p.session)))
+            .flex()
+            .items_start()
+            .gap(px(space::S))
+            .cursor(CursorStyle::IBeam)
+            .max_h(px(theme::COMPOSER_MAX_HEIGHT))
+            .overflow_y_scroll()
+            .text_size(font_size::BODY)
+            .text_color(rgb(theme.text))
+            .children(line);
+        let card = composer_card_frame(theme)
+            .children(focus)
+            .when(!chips.is_empty(), |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(space::S))
+                        .children(chips),
+                )
+            })
+            .child(field)
+            .child(self.tsp_dock_bar(p, m, width, cx));
+        div()
+            .flex()
+            .flex_col()
+            .children(status)
+            .children(meter)
+            .child(card)
+            .into_any_element()
+    }
+
+    /// The chip row: omp's order, never wrapping, `min_w_0`; what does not fit is dropped by
+    /// `fit_bar`; the send or stop button always ends it.
+    fn tsp_dock_bar(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        width: f32,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let exited = self.is_exited(p.session);
+        let fit = tsp::fit_bar(&m.bar, composer_room(width, cx));
+        let mut cells: Vec<AnyElement> = Vec::new();
+        for part in &m.bar.parts {
+            match part {
+                tsp::BarPart::Effort => {
+                    if let (true, Some(effort)) = (fit.effort, &m.bar.effort) {
+                        let mut chip = quiet_chip(div(), theme);
+                        if let Some(glyph) = effort.glyph.as_deref().and_then(|id| p.doc.get(id)) {
+                            chip = chip.child(self.tsp_node(p, glyph, cx));
+                        }
+                        let chip = chip.child(effort.label.clone());
+                        cells.push(self.tsp_chip(p, &effort.id, Look::Chip, chip, cx));
+                    }
+                }
+                tsp::BarPart::Model => {
+                    if let Some(model) = &m.bar.model {
+                        cells.push(self.tsp_dock_model(
+                            p,
+                            model,
+                            m.bar.working,
+                            fit.model_name,
+                            exited,
+                            cx,
+                        ));
+                    }
+                }
+                tsp::BarPart::Facts => {
+                    let facts: Vec<AnyElement> = (m.bar.facts.iter().zip(&fit.facts))
+                        .filter(|(_, shown)| **shown)
+                        .map(|(fact, _)| self.tsp_dock_fact(p, fact, cx))
+                        .collect();
+                    cells.push(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .items_center()
+                            .gap(px(space::S))
+                            .font_family(theme.terminal_font_family.clone())
+                            .children(facts)
+                            .into_any_element(),
+                    );
+                }
+                tsp::BarPart::Usage => {
+                    if let Some(usage) = &m.bar.usage {
+                        let chip = quiet_chip(div(), theme)
+                            .font_family(theme.terminal_font_family.clone())
+                            .child(usage.text.clone());
+                        cells.push(self.tsp_chip(p, &usage.id, Look::Chip, chip, cx));
+                    }
+                }
+            }
+        }
+        div()
+            .flex()
+            .min_w_0()
+            .overflow_hidden()
+            .items_center()
+            .gap(px(space::S))
+            .children(cells)
+            .child(self.tsp_dock_primary(p, m, exited, cx))
+            .into_any_element()
+    }
+
+    /// The Chat model pill (loading dots while the session works, the name truncated to what
+    /// `fit_bar` left it), a click is omp's `status.model`.
+    fn tsp_dock_model(
+        &self,
+        p: &Paint<'_>,
+        model: &tsp::ModelPill,
+        working: bool,
+        name_room: Option<f32>,
+        exited: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let node = p.doc.get(&model.id);
+        let click = !exited && node.is_some_and(|n| tsp::has_click(p.doc, n));
+        let title = node.and_then(|n| str_prop(n, "title")).filter(|_| p.tips());
+        let name = div()
+            .min_w_0()
+            .truncate()
+            .when_some(name_room, |el, room| el.max_w(theme::rems_px(room)))
+            .child(model.name.clone());
+        let (session, id) = (p.session, model.id.clone());
+        model_pill(
+            SharedString::from(format!("tsp-model-{session}")),
+            name,
+            working,
+            click,
+            p.now,
+            theme,
+        )
+        .when_some(title, |el, title| el.tooltip(tooltip(theme, title, "")))
+        .on_press(
+            click,
+            cx.listener(move |shell, event: &ClickEvent, _, cx| {
+                shell.tsp_click(session, &id, event.click_count() > 1, cx);
+            }),
+        )
+        .into_any_element()
+    }
+
+    /// One fact: a quiet mono chip with its icon; the `accent` one is the Chat permission chip;
+    /// a rate in `text`, an elapsed time drawn by its own node (it ticks on the status tick).
+    fn tsp_dock_fact(
+        &self,
+        p: &Paint<'_>,
+        fact: &tsp::Fact,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let el = match &fact.body {
+            tsp::FactBody::Text(text) if fact.permission => permission_chip(text.clone(), theme),
+            body => {
+                let mut el = quiet_chip(div(), theme);
+                if let Some(icon) = fact.icon {
+                    el = el.child(icon_svg(icon, theme::ICON_SIZE_SMALL, theme.text_muted));
+                }
+                match body {
+                    tsp::FactBody::Text(text) => el.child(text.clone()),
+                    tsp::FactBody::Rate(text) => el.text_color(rgb(theme.text)).child(text.clone()),
+                    tsp::FactBody::Elapsed(id) => {
+                        el.children(p.doc.get(id).map(|node| self.tsp_node(p, node, cx)))
+                    }
+                }
+            }
+        };
+        self.tsp_chip(p, &fact.id, Look::Chip, el, cx)
+    }
+
+    /// The round Send (enabled with text, `submit`) or Stop (`interrupt`) button, the same size,
+    /// at the end of the bar.
+    fn tsp_dock_primary(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        exited: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let session = p.session;
+        let title = |id: &str, fallback: &'static str| {
+            p.doc
+                .get(id)
+                .and_then(|node| str_prop(node, "title"))
+                .unwrap_or(fallback)
+                .to_owned()
+        };
+        match &m.bar.primary {
+            tsp::Primary::Stop(id) => {
+                let (tip, id) = (title(id, "Stop"), id.clone());
+                round_stop_button("tsp-stop", theme)
+                    .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "")))
+                    .on_press(
+                        !exited,
+                        cx.listener(move |shell, _, _, cx| shell.tsp_click(session, &id, false, cx)),
+                    )
+                    .into_any_element()
+            }
+            tsp::Primary::Send(id) => {
+                let can = m.can_send() && !exited && id.is_some();
+                let tip = id.as_deref().map_or_else(|| "Send".to_owned(), |id| title(id, "Send"));
+                let id = id.clone().unwrap_or_default();
+                round_button("tsp-send", Icon::CornerDownLeft, can, theme)
+                    .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "")))
+                    .on_press(
+                        can,
+                        cx.listener(move |shell, _, _, cx| shell.tsp_click(session, &id, false, cx)),
+                    )
+                    .into_any_element()
+            }
+        }
+    }
+
+    /// The row above the meter, as Tern: on the left the working row (loading dots, elapsed time,
+    /// a divider, the label in `status_needs_input`, a small ghost Stop) and any other status
+    /// node; on the right the todo hud and the glass hud pills. `None` when there is nothing.
+    fn tsp_dock_status(
+        &self,
+        p: &Paint<'_>,
+        m: &tsp::DockModel,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<AnyElement> {
+        let s = &m.status;
+        if s.working.is_none() && s.todo.is_none() && s.pills.is_empty() && s.others.is_empty() {
+            return None;
+        }
+        let doc = p.doc;
+        let working = s.working.as_ref().map(|w| self.tsp_dock_working(p, w, cx));
+        let others: Vec<AnyElement> = (s.others.iter())
+            .filter_map(|id| doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx))
+            .collect();
+        // The checklist builder draws the hud chip and its popover (Task 10).
+        let todo = (s.todo.as_deref())
+            .and_then(|id| doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx));
+        let pills: Vec<AnyElement> = (s.pills.iter())
+            .map(|pill| self.tsp_dock_pill(p, pill, cx))
+            .collect();
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::M))
+                .min_w_0()
+                .px(px(space::S))
+                .pb(px(space::XS))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::S))
+                        .children(working)
+                        .children(others),
+                )
+                .children(todo)
+                .children(pills)
+                .into_any_element(),
+        )
+    }
+
+    fn tsp_dock_working(
+        &self,
+        p: &Paint<'_>,
+        w: &tsp::Working,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let session = p.session;
+        let exited = self.is_exited(session);
+        let elapsed = (w.elapsed.as_deref())
+            .and_then(|id| p.doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx));
+        let stop = w.stop.clone().map(|id| {
+            let tip = (p.doc.get(&id))
+                .and_then(|node| str_prop(node, "title"))
+                .filter(|_| p.tips())
+                .map(str::to_owned);
+            quiet_button(
+                "tsp-working-stop",
+                icon_text(Icon::Square, "Stop", theme.text_muted),
+                theme,
+                theme.hover,
+            )
+            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .when_some(tip, |el, tip| el.tooltip(tooltip(theme, &tip, "")))
+            .on_press(
+                !exited,
+                cx.listener(move |shell, _, _, cx| shell.tsp_click(session, &id, false, cx)),
+            )
+        });
+        div()
+            .flex()
+            .flex_1()
+            .items_center()
+            .gap(px(space::S))
+            .min_w_0()
+            .text_size(font_size::META)
+            .child(loading_dots(p.now, rgb(theme.status_working)))
+            .children(elapsed)
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(theme::BORDER_WIDTH))
+                    .h(theme::rems_px(space::M))
+                    .bg(rgb(theme.divider)),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(rgb(theme.status_needs_input))
+                    .child(w.label.clone()),
+            )
+            .child(div().flex_1())
+            .children(stop)
+            .into_any_element()
+    }
+
+    /// A glass pill (subagents, jobs): the icon in its tone, then the count in mono; the node's
+    /// `title` is the tooltip and a click is its action (`agents.open`, `jobs.open`).
+    fn tsp_dock_pill(
+        &self,
+        p: &Paint<'_>,
+        pill: &tsp::HudPill,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let tone = pill
+            .tone
+            .as_deref()
+            .map_or(theme.text_muted, |tone| tsp::tone_color(tone, theme));
+        let el = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(space::XS))
+            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .px(px(space::S))
+            .rounded(px(theme::radius::PILL))
+            .bg(gpui::rgba(theme.glass))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(gpui::rgba(theme.glass_border))
+            .font_family(theme.terminal_font_family.clone())
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .children(pill.icon.map(|icon| icon_svg(icon, theme::ICON_SIZE_SMALL, tone)))
+            .child(pill.count.clone());
+        self.tsp_chip(p, &pill.id, Look::Chip, el, cx)
+    }
+
+    /// The strip above the field while omp's input goes to a subagent: an eye, omp's own
+    /// children ("Viewing", the crumbs) and the exit chip.
+    fn tsp_dock_focus(
+        &self,
+        p: &Paint<'_>,
+        f: &tsp::FocusStrip,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let theme = p.theme;
+        let exit = f.exit.as_ref().map(|(id, label)| {
+            let chip = div()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .h(theme::rems_px(theme::PILL_HEIGHT))
+                .px(px(space::S))
+                .rounded(px(theme::radius::PILL))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme::raised_border(theme)))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text))
+                .child(label.clone());
+            self.tsp_chip(p, id, Look::Chip, chip, cx)
+        });
+        let rest: Vec<AnyElement> = (f.rest.iter())
+            .filter_map(|id| p.doc.get(id))
+            .map(|node| self.tsp_node(p, node, cx))
+            .collect();
+        let strip = div()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .child(icon_svg(Icon::Eye, theme::ICON_SIZE_SMALL, theme.text_muted))
+            .children(rest)
+            .child(div().flex_1())
+            .children(exit);
+        self.tsp_chip(p, &f.id, Look::Text, strip, cx)
+    }
+}
+```
+
+Behavior notes the code relies on: `tsp_decorate` adds the id, the tooltip and the press for a node with `actions`, so Send/Stop/model/effort/usage/facts/pills/meter keep their `action {id, act}` events; the editor keeps its `focus {id}` press; the model pill and the Send/Stop buttons call `tsp_click` directly (their ids come from the model). `tsp_click` ignores an exited session already (`tsp_emit`), the `exited` arguments only fade the controls.
+
+- [ ] **Step 13: Wire the dock into `render_tsp`**
+
+In `crates/mkrew-ui/src/shell/tsp_view.rs`, in `render_tsp`, replace
+
+```rust
+        let dock: Vec<AnyElement> = (doc.children("dock"))
+            .map(|node| self.tsp_node(&paint, node, cx))
+            .collect();
+```
+
+with
+
+```rust
+        // The dock as the Chat composer when omp sent its composer roles; any other dock (another
+        // omp version, the ask card) is drawn generically, as before.
+        let dock_model = tsp::dock_model(doc, theme);
+        let dock: Vec<AnyElement> = match dock_model.as_ref() {
+            Some(m) => self.tsp_dock(&paint, m, width, cx),
+            None => (doc.children("dock"))
+                .map(|node| self.tsp_node(&paint, node, cx))
+                .collect(),
+        };
+```
+
+and replace
+
+```rust
+        .child(chat_column(
+            div().flex().flex_col().pb(px(space::S)).children(dock),
+        ))
+```
+
+with
+
+```rust
+        .child(
+            chat_column(
+                div()
+                    .flex()
+                    .flex_col()
+                    .when(dock_model.is_none(), |el| el.pb(px(space::S)))
+                    .children(dock),
+            )
+            // Chat: the card sits `space::M` above the pane's bottom edge.
+            .when(dock_model.is_some(), |el| el.pb(px(space::M))),
+        )
+```
+
+- [ ] **Step 14: Build, fix API mismatches, check the rules**
+
+Run: `cargo check -p mkrew-ui --all-targets`
+Expected: compiles. This view was written against the pinned gpui without a compiler; the places to look first:
+- `when_some` (gpui `FluentBuilder`), `.cursor(CursorStyle::IBeam)` on a `Stateful<Div>`, `Div::children(Option<AnyElement>)`, `.id(("context-mark", i))` (`ElementId` from `(&'static str, usize)`), `Svg::group_hover`: if one is missing use the closest `FluentBuilder` / `InteractiveElement` equivalent already used in `composer.rs` or `widgets.rs` (`window_control` uses `group_hover` on an `icon_svg`).
+- `Look`, `Pressable`, `round_button`, `quiet_button`, `icon_text`, `loading_dots`, `tooltip`, `CursorStyle`, `SharedString` come from `use crate::*;` like the rest of the file; `round_stop_button` lives in `widgets.rs`, so it comes the same way (if the glob does not carry it, add it to the `use` of `shell/widgets` names in `main.rs` where `round_button` is imported).
+- `quiet_button(..).h(..)`: the later `h` wins over the button's own height; if the pinned gpui keeps the first, build the button from `quiet_button` and wrap it in a `div().h(rems_px(PILL_HEIGHT))`.
+- A `composer_room(width, cx)` argument that is `&mut Context` coerces to `&App` by deref; if not, write `&*cx`.
+- Unused-parameter warnings are fixed by dropping the parameter, not by `_`-prefixing.
+
+Run: `cargo fmt --all && cargo clippy -p mkrew-ui --all-targets -- -D warnings`
+Expected: no warnings.
+
+Run: `grep -nE "0x[0-9A-Fa-f]{6}|\.hover\(|\.active\(|\.cursor_pointer\(" crates/mkrew-ui/src/shell/tsp_view.rs crates/mkrew-ui/src/shell/composer.rs`
+Expected: no output.
+
+Run: `grep -nE "px\([0-9]" crates/mkrew-ui/src/shell/tsp_view.rs`
+Expected: no output (every size is a token or an expression of tokens; `composer.rs` keeps the `2.0 *` of the old room formula and the half-width of the mark's hit area, pure arithmetic on tokens).
+
+Run: `grep -nE "px\(-?[0-9]|0x[0-9A-Fa-f]{6}" crates/mkrew-ui/src/shell/widgets.rs`
+Expected: no new hit from `round_stop_button`.
+
+- [ ] **Step 15: Run the UI crate's tests**
+
+Run: `cargo test -p mkrew-ui`
+Expected: PASS (the new `tsp::` dock tests and every existing test; no test of `chat::` changed).
+
+- [ ] **Step 16: Manual smoke: Tern and Mkrew on the same omp session**
+
+Prerequisites as Task 10 Step 24 (daemon, CLI and fake agent built, ConPTY files next to the binaries, omp 18.13.2, `tsp` on). Open the same omp session in Tern (`omp --resume <session id>`) and in a Mkrew pane, side by side, same width (about 900 px), and compare in this order. Record any difference in `docs/HUMAN_CHECKS.md` under "2026-11-23 omp native surface" (Task 12 owns the entry; add its one line for this task: "omp dock vs Tern composer: idle, typing with ghost, working with Stop, narrow pane, subagent pill, dark and light").
+
+1. Idle. Expected, top to bottom, in Mkrew and in Tern: a thin context meter (accent fill, `3%` left and `1M` right in small muted text, a small tick at 50% with the tooltip "Auto-compact at 50%", hovering the bar shows "Context 3% used ..."), a raised rounded card (glass border, soft shadow) with the placeholder row (sparkle icon, italic muted `“<glyph> README: ...”`, the Nerd Font glyph is an icon and never a missing-glyph box), then one chip row: the effort chip (4-step glyph and `high`), the model pill with border and chevron (`Opus 5.5`, accent text), quiet mono facts (a `yolo` chip in the amber permission look with a lightning icon, session id, clock time), and at the right a round Send button (neutral and inert while the editor is empty). No Stop, no status row, no hud pills. The card never collapses to a pill when the pane loses focus.
+2. Typing with ghost. Click into the card (the caret appears; a click reaches omp as `focus`). Type `abc`: the characters show in `BODY` text with the caret; Send turns accent. In a session that has a prompt history starting with it, omp's suggestion appears in a quiet color right after the caret on the same line (never on its own line); Tab/Right keys behave as in Tern (they go to omp). Type text that wraps past 8 lines: the field scrolls inside the card at `COMPOSER_MAX_HEIGHT`, the card stops growing. Paste an image: an attachment chip row appears above the field and Send is enabled with no text.
+3. Working with Stop. Send a prompt that makes omp run tools for 20 s. Expected: above the meter a status row with loading dots, the elapsed time in mono muted, a thin divider and the label ("Reading ...") in the amber `status_needs_input` color, and a small ghost Stop button at the right end; the model pill shows loading dots before the name; the Send button is replaced by a round Stop button of the same size whose square turns red on hover; the facts row shows the rate (`46 tok/s`) and an elapsed fact stepping every status tick. Click the round Stop and the small Stop: each interrupts (omp ends the turn), the row disappears and Send comes back. The dots and the elapsed time stop moving when the turn ends (no redraw loop at idle).
+4. Narrow pane. Drag the split until the pane is about 420 px, 360 px and 300 px wide. Expected: facts leave one at a time, the clock time first, then the elapsed time, then the others by omp's priority numbers; then the effort chip; last the model name truncates with an ellipsis (never shorter than about six characters); the round Send or Stop button never leaves the card and nothing wraps or overlaps. Widen the pane again: everything comes back.
+5. Subagent running pill. Ask omp: "Use two parallel subagents to read README.md and Cargo.toml and summarize each". While they run: a glass pill with the users icon and `2` appears at the right of the status row (left of it the todo hud when a todo exists), hover shows "2 agents running ..." with its shortcut, a click opens omp's Agent Hub (`agents.open`); start a background command (`/jobs`, a long `sleep` through bash in the background): a second pill with the job icon and the count opens the Jobs panel (`jobs.open`). When the subagents end the pill goes away or shows only its muted icon, as in Tern. If a pill looks different from Tern (icon, count, spacing), note it: these two shapes come from the reference, not from the recording.
+6. Subagent focus. Focus a subagent (Agent Hub, Enter): a strip appears at the top of the card with an eye icon, "Viewing", the crumbs and an exit chip; clicking the chip returns to the main session (`focus:<id>` action).
+7. Ask card and todo HUD still fine. Ask omp: "Use the ask tool with two questions ..." (Task 10 Step 24 item 15) and check the card exactly as there; answer it and check the composer comes back with its draft and chips. Ask for a todo (item 13 there): the hud chip sits on the right of the status row (also while the session works, with the working row on the left), its popover opens above it and closes with Esc and on an outside click, and the count steps up. Both with the new card present and absent (idle, no working row).
+8. Dark and light. Switch the theme (palette "Theme") on each of the states above: meter track visible in light, the facts and the ghost legible, the permission chip amber in both, Stop red on hover in both, the glass pills visible on both backgrounds.
+9. Other panes. A Claude Chat pane and a shell pane look and behave as before (compare with the `10b-chat-after-*` captures). An omp pane with `tsp = false` is the terminal grid, unchanged.
+10. A dock without the composer roles (an older omp, or the fake agent's `--tsp` fixture with the roles stripped) is drawn generically as after Task 10, not blank: run `cargo run -p mkrew-fakeagent -- --tsp <fixture>` in a pane for that.
+
+- [ ] **Step 17: Commit**
+
+```bash
+git add crates/mkrew-ui/src/tsp.rs crates/mkrew-ui/src/theme.rs crates/mkrew-ui/src/shell/composer.rs crates/mkrew-ui/src/shell/widgets.rs crates/mkrew-ui/src/shell/tsp_view.rs
+git -c user.email=tungnv975@gmail.com commit -m "feat(ui): draw the omp dock as the Tern composer card"
 ```
 
 ### Task 11: mk web notice
@@ -11150,7 +13566,7 @@ Create `docs/decisions/0107-omp-native-surface.md` with exactly this content:
 # 0107 - omp native surface: Tern Surface Protocol in the daemon, drawn by Mkrew
 
 - Date: 2026-11-23
-- Status: accepted (amends SPEC sections 6, 7, 11, 14, 16 and 17; for an omp pane with TSP it replaces the Terminal and Chat views of ADR 0104 and 0105)
+- Status: accepted (follows ADR 0106, protocol 58 -> 59; amends SPEC sections 6, 7, 11, 14, 16 and 17; for an omp pane with TSP it replaces the Terminal and Chat views of ADR 0104 and 0105)
 - Milestone: none (human request 2026-11-23, spec `docs/superpowers/specs/2026-11-23-omp-tsp-surface-design.md`, plan `docs/superpowers/plans/2026-11-23-omp-tsp-surface.md`)
 
 ## Context
@@ -11181,7 +13597,7 @@ The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already
   TSP bytes never reach the emulator, the session log, the state scanner or the clients as terminal output.
 - The daemon owns the document, not the UI.
   There can be several clients (windows, a machine window, `mk web`) or none, and omp must never stall for want of an ack.
-- Protocol 59: requests `tsp.snapshot` and `tsp.event`, event `tsp.update`, and `Session.tsp` (`off`, `waiting`, `live`, `fallback`; daemon memory only, like `terminal_title`).
+- Protocol 59 (ADR 0106 made it 58, this ADR follows it): requests `tsp.snapshot` and `tsp.event`, event `tsp.update`, and `Session.tsp` (`off`, `waiting`, `live`, `fallback`; daemon memory only, like `terminal_title`).
   A client asks `tsp.snapshot` when it attaches (each surface carries its last `seq`), then applies `tsp.update` events in order, and asks again when it sees a gap in `seq`.
   A UI sends the theme with `tsp.event` `{ev:"theme", dark}` when it attaches and when the theme changes.
 - Bounds: a document holds at most 50,000 nodes and 6 MiB of text, and the engine keeps at most 4 MiB of image blobs.
@@ -11195,7 +13611,8 @@ The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already
   This applies to every PTY the daemon opens, not only omp's.
   The daemon logs once at start which ConPTY it loaded (`conpty = "sideloaded"` or `"system"`).
   Without the files the daemon runs as before on the system ConPTY, no hello arrives, and the pane falls back to the terminal grid 2 s after the session's first output.
-- The pane (`shell/tsp_view.rs`): while `Session.tsp` is `live` the pane draws the surface in the Chat page's centered column instead of the terminal grid, with no `Terminal | Chat` switch.
+- The pane (`shell/tsp_view.rs`): while `Session.tsp` is `live` the pane draws the surface in the Chat page's centered column instead of the terminal grid.
+  Since ADR 0106 a pane is only its content, so the surface fills the pane; the title bar shows no `Terminal | Chat` toggle while that pane has the focus, and `Ctrl+Alt+T` and the palette entry do nothing for it.
   `main` scrolls and follows its end, `dock` stays under it, `layer` and `overlay` are a modal inside the pane, a `screen` surface covers the pane.
   Keys, paste and drops go to the PTY as in a terminal pane; clicks on nodes with actions go to omp as `tsp.event`.
   `fallback` shows the terminal grid and one info toast.
@@ -11228,13 +13645,12 @@ The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already
 - Parse TSP in the UI: rejected, see Decision (several clients, remote windows, no UI attached).
 - Use omp's palette (`t`): rejected, SPEC section 14 gives Mkrew one look in both themes.
 - `TERM_PROGRAM=tern` and OSC 1337: rejected in ADR 0105 and still rejected; `TERM_PROGRAM=tern` would also switch on omp's Tern browser backend.
-- A `Terminal | Chat` switch inside a TSP pane: rejected, the composer is omp's dock, as in Tern; the terminal grid returns only through `fallback`.
+- A `Terminal | Chat` toggle for a TSP pane (the title bar toggle of ADR 0106): rejected, the composer is omp's dock, as in Tern; the terminal grid returns only through `fallback`.
 - Switching one running pane between TSP and the grid: out of scope.
 
 ## Consequences
 
-- Protocol 59: a UI from before it shows a version mismatch with an old daemon; the user restarts the daemon.
-  Protocol 58 belongs to `feat/tern-layout`; if that branch merges first this work rebases on it and keeps 59 and this ADR number (0106 is that branch's).
+- Protocol 59 follows ADR 0106 (protocol 58 -> 59, no store migration in either): a UI from before it shows a version mismatch with an old daemon; the user restarts the daemon.
 - Two more binaries in the install folder, and a newer OpenConsole behind every pane on Windows: shells, Claude and Codex change too.
   A regression pass (typing, resize, Vietnamese IME, paste, exit, startup resume, no orphan `OpenConsole.exe`) is in `docs/HUMAN_CHECKS.md`.
   The installer must replace both files while panes run (it already stops its own daemon first).
@@ -11318,7 +13734,7 @@ Replace with:
 | `tsp.event` | `session_id`, `surface`, `event` | `null`: `event` is an object whose `ev` is one of `action`, `toggle`, `select`, `activate`, `focus`, `theme`; the daemon adds `sf` (the surface) and writes it to the agent's input as a TSP message. Another `ev` is `invalid_request`. A `theme` event (`{ev:"theme", dark}`) also becomes the `dark` of the next hello |
 ```
 
-3c. `session.updated` event row. Anchor (about line 650):
+3c. `session.updated` event row. Anchor (about line 649):
 
 ```
 | `session.updated` | a session's title, color, pin, position or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.move`, `session.link_plan`): the whole Session |
@@ -11330,13 +13746,13 @@ Replace with:
 | `session.updated` | a session's title, color, pin, position or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.move`, `session.link_plan`), or its `tsp` state changed (ADR 0107): the whole Session |
 ```
 
-3d. New event row. Anchor: the `session.terminal_title` event row (about line 651). Insert after it:
+3d. New event row. Anchor: the `session.terminal_title` event row (about line 650). Insert after it:
 
 ```
 | `tsp.update` | omp's surface changed (ADR 0107): `session_id`, `surface`, `change` = `{kind:"frame", seq, ops, blobs?}` after the daemon applied a frame of omp (`ops` are the ops that applied, plus the daemon's own eviction ops; `blobs` the images the frame needs), `{kind:"open", surface}` when omp opens a surface, or `{kind:"closed", keep}`. Updates arrive in order, one `seq` after the other; a client that sees a gap asks `tsp.snapshot` again |
 ```
 
-3e. Protocol history. Anchor: the line `Protocol 57 (ADR 0105): `session.transcript` result gains `recap`.` (about 707), followed by a blank line and `Protocol 41: ...`. Insert after the blank line that follows it:
+3e. Protocol history. Anchor: the line `Protocol 58 (ADR 0106): event `machine.stats` and `MachineStats` removed; `agent.limits`, `limits.get` and `limits.report` stay.` (about 708), followed by a blank line and `Protocol 41: ...` (the list is not in numeric order; 59 goes right after 58). Insert after the blank line that follows it:
 
 ```
 Protocol 59 (ADR 0107): requests `tsp.snapshot` and `tsp.event`, event `tsp.update`, and `Session.tsp` (`off`, `waiting`, `live`, `fallback`; daemon memory only, like `terminal_title`).
@@ -11345,7 +13761,7 @@ Protocol 59 (ADR 0107): requests `tsp.snapshot` and `tsp.event`, event `tsp.upda
 
 - [ ] **Step 4: SPEC section 11**
 
-Anchor: the last line of the Chat mode bullet (about line 1221), directly before the `- Pane menu (right-click a split pane's header ...` bullet:
+Anchor: the last line of the Chat mode bullet (about line 1218), directly before the `- Pane menu (right-click a sidebar session row, or Shift+F10 ...` bullet:
 
 ```
   The terminal keeps running underneath and still reports the state.
@@ -11354,14 +13770,14 @@ Anchor: the last line of the Chat mode bullet (about line 1221), directly before
 Insert after it:
 
 ```markdown
-- **omp native surface** (ADR 0107): an omp pane whose session has `tsp` `live` draws omp's own interface instead of the terminal grid or Chat, and has no `Terminal | Chat` switch.
+- **omp native surface** (ADR 0107): an omp pane whose session has `tsp` `live` draws omp's own interface instead of the terminal grid or Chat, and has no `Terminal | Chat` toggle: the title bar (§10) shows none while that pane has the focus, and `Ctrl+Alt+T` and the palette entry do nothing for it.
   omp describes its interface as a tree of nodes (the Tern Surface Protocol, sent inside the PTY stream); the daemon applies the tree and the UI draws it in Mkrew's colors, spacing and fonts (§14), dark and light.
   `main` is a scrolling list in the Chat page's centered column (`CHAT_COLUMN_WIDTH`) that follows its end, with the scroll-to-end button; `dock` (the HUD pills, the status, the context meter, the editor, and the bar with model, effort, rate, cost and Send or Stop) sits under it in the same column and is always shown; `layer` children and `overlay` nodes are a modal inside the pane; a `screen` surface covers the whole pane until omp closes it.
   Keys, paste, image paste and file drops go to the PTY as in a terminal pane (Mkrew's own shortcuts first).
   A click on a node with a click action (the model chip, Stop, Send, the agent pill, the jobs pill, the context meter, the cost) goes to omp, which opens its own selector or overlay; the events sent are `action`, `toggle`, `select`, `activate`, `focus` and `theme`.
   Text selects inside one node and Ctrl+C copies it; a node's `title` is its tooltip; hovercards are ignored.
   An older document is cut when it passes 50,000 nodes or 6 MiB of text: the oldest rows of `main` go and the list starts with "Earlier messages were trimmed".
-  The pane by `Session.tsp`: `off` is the terminal pane with `Terminal | Chat`; `waiting` (TSP on, no surface yet) is the starting state of an agent pane; `live` is the surface; `fallback` (no hello within 2 s of the session's first output, or omp closed the surface with `x {keep:false}`) is the terminal grid without the Chat switch and one info toast "omp is drawing as text: <reason>"; an exited session keeps its last document, read-only, under the existing exited notice.
+  The pane by `Session.tsp`: `off` is the terminal pane with the title bar's `Terminal | Chat` toggle; `waiting` (TSP on, no surface yet) is the starting state of an agent pane; `live` is the surface; `fallback` (no hello within 2 s of the session's first output, or omp closed the surface with `x {keep:false}`) is the terminal grid without the Chat toggle and one info toast "omp is drawing as text: <reason>"; an exited session keeps its last document, read-only, under the existing exited notice.
   While `live` the state comes from omp's hooks only (§6); without hooks it is `unknown`.
   `mk web` shows "This omp session uses Mkrew's native view. Open it on the desktop." in place of the terminal; its state, Stop, the reply chips and the quick keys keep working.
   A question from omp (`ask`) replaces the dock's editor and is drawn as the composer card: tab chips in its top row (answered tabs start with a check, a last Review tab, the active tab on a solid `card` background), the question in `weight::SEMIBOLD`, then one row per option with a radio circle (a check box for multi-select) filled with `accent` for the recommended one, the label, the detail muted below, a "Recommended" badge on the right and the picked row on `surface_raised` with a 2 px `accent` bar at its left; "Other..." is a row of the same list; an optional Markdown preview sits under the list.
@@ -11375,7 +13791,7 @@ Insert after it:
 
 - [ ] **Step 5: SPEC section 14 (TSP style mapping)**
 
-Anchor: the last line of the Pressable states paragraph (about line 1932), directly before the blank line and `---` that precede `## §15 Non-functional requirements`:
+Anchor: the last line of the Pressable states paragraph (about line 1933), directly before the blank line and `---` that precede `## §15 Non-functional requirements`:
 
 ```
 Focus rings stay with `DialogControl`.
@@ -11434,7 +13850,7 @@ The todo marks (`checklist`, §11) are: an `active` item an `accent` ring around
 
 - [ ] **Step 6: SPEC sections 16, 17 and 20.0**
 
-6a. Section 16. Anchor: the paragraph ending `checkable end-to-end with it.` (about line 1970), followed by a blank line and `**Automation commands** ...`. Insert after the blank line that follows it:
+6a. Section 16. Anchor: the paragraph ending `checkable end-to-end with it.` (about line 1971), followed by a blank line and `**Automation commands** ...`. Insert after the blank line that follows it:
 
 ```markdown
 `--tsp <fixture.jsonl>` with `--record <file>` (ADR 0107) makes it a TSP terminal peer: it sets the console to raw VT input, prints a TSP hello, records every byte it reads, waits up to 10 s for the daemon's reply, then replays the fixture's omp-to-terminal messages and prints `fake tsp done`; with no reply it prints `fake tsp: no reply` and keeps running.
@@ -11442,7 +13858,7 @@ The committed fixture is omp 18.13.2's own startup record (`docs/superpowers/spe
 
 ```
 
-6b. Section 17 Windows list. Anchor (about line 1989):
+6b. Section 17 Windows list. Anchor (about line 1990):
 
 ```
 - PTY via ConPTY (`portable-pty`); support Windows 10 1809+ and Windows 11.
@@ -11458,7 +13874,7 @@ Insert after it:
   Without them the daemon runs on the system ConPTY, logs `conpty = "system"` once at start, and an omp pane falls back to the terminal grid 2 s after its first output; with them it logs `conpty = "sideloaded"`.
 ```
 
-6c. Section 20.0. Anchor: the closing fence of the `[usage]` block under `**Profile keys added in v2**` (about line 2305):
+6c. Section 20.0. Anchor: the closing fence of the `[usage]` block under `**Profile keys added in v2**` (the `context_window` line is about 2305, the fence about 2306):
 
 ```
 context_window = 200000        # tokens, for the % shown
@@ -11486,7 +13902,7 @@ Insert after line 9 (`oneshot = "omp -p --no-session"  # one-shot text; prompt o
 
 - [ ] **Step 8: HUMAN_CHECKS section**
 
-In `docs/HUMAN_CHECKS.md`, insert before line 24 (`### To verify - 2026-11-23 Chat look (ADR 0105, plan docs/superpowers/plans/2026-11-23-chat-look.md)`), after the blank line 23, so it is the first entry of "To verify":
+In `docs/HUMAN_CHECKS.md`, insert before line 24 (`### To verify - 2026-11-23 Tern layout (ADR 0106, plan docs/superpowers/plans/2026-11-23-tern-layout.md)`), after the blank line 23, so this section is the first entry of "To verify" and sits above the Tern layout section (that section keeps its own `Screenshots: docs/screenshots/tern-layout-<view>-<dark|light>.png` line directly under its heading; the names here start with `2026-11-23-omp-tsp-`, so the two sets do not clash):
 
 ```markdown
 ### To verify - 2026-11-23 omp native surface (ADR 0107, plan docs/superpowers/plans/2026-11-23-omp-tsp-surface.md)
@@ -11498,7 +13914,7 @@ In `docs/HUMAN_CHECKS.md`, insert before line 24 (`### To verify - 2026-11-23 Ch
 With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow pane, and Tern open side by side with the same omp session:
 - [ ] **Compare with Tern side by side:** the dock shows the same HUD pills, status, context meter, editor and bar (model, effort, rate, cost, Send or Stop), with the same numbers within rounding.
   Colors, fonts and spacing are Mkrew's, not omp's or Tern's palette.
-- [ ] **Startup dock (dark + light):** a new omp pane starts as "Starting agent", then shows omp's conversation area and the dock at the bottom in the Chat page's 760 px centered column; the header has no `Terminal | Chat` switch.
+- [ ] **Startup dock (dark + light):** a new omp pane starts as "Starting agent", then shows omp's conversation area and the dock at the bottom in the Chat page's 760 px centered column; the title bar shows no `Terminal | Chat` toggle while this pane has the focus, and `Ctrl+Alt+T` does nothing.
 - [ ] **Prompt and answer (dark + light):** type a prompt and Enter in the dock editor; the answer arrives as cards, Markdown and code blocks; the list follows the end, the scroll-to-end button shows when you scroll up, and the dock never moves.
 - [ ] **Keys, paste and IME:** typing, omp's shortcuts, a multi-line paste, an image paste and a file drop work as in a terminal pane; Vietnamese Telex typing gives the right text; Mkrew's own shortcuts still win.
 - [ ] **Selection:** drag inside one message to select, Ctrl+C copies it; a node with a `title` shows it as a tooltip.
@@ -11517,16 +13933,16 @@ With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow p
 - [ ] **Todo phases and items (dark + light):** phase headers have a mark (loading dots while active, a green filled circle when all done or dropped, a muted ring otherwise), Roman numerals (`I.`, `II.`), the title and `done/count`; a click on a header folds and unfolds it (a phase with `collapsed` or all done starts folded); items show active (accent ring and text), pending (muted ring), done (green check, muted text), dropped (struck through) and blocked (needs-input color and " (blocked)"), with notes as a muted second line; compare with Tern.
 - [ ] **Todo card and reminder:** the todo tool result in the conversation is a card with the same phase list; after a few turns omp's todo reminder shows as a muted note with the done phases folded.
 - [ ] **Narrow pane (dark + light):** drag a divider or shrink the window so the pane is about 400 px: the dock drops its low-priority parts first and nothing overlaps; the PTY gets the new column count (omp rewraps).
-- [ ] **Theme change:** switch dark and light while the pane is live; the surface changes color at once and omp is told (`theme` event), with no restart.
+- [ ] **Theme change:** switch dark and light (`Ctrl+Shift+J`; the title bar has no theme button) while the pane is live; the surface changes color at once and omp is told (`theme` event), with no restart.
 - [ ] **UI restart (snapshot):** quit and open the UI with the daemon running; the omp pane shows the same conversation again at once (from `tsp.snapshot`), and further answers keep arriving.
 - [ ] **Daemon restart:** `mk daemon stop`, then open Mkrew; the omp pane resumes as a new session with a new surface and an empty conversation (nothing of the old one is restored).
-- [ ] **TSP off:** put `tsp = false` in the omp profile (before `[state]`) and start a new omp pane; it is today's terminal pane with `Terminal | Chat`, omp draws ANSI rows, and there is no first-paint wait.
+- [ ] **TSP off:** put `tsp = false` in the omp profile (before `[state]`) and start a new omp pane; it is today's terminal pane with the title bar's `Terminal | Chat` toggle, omp draws ANSI rows, and there is no first-paint wait.
   An omp started by hand in a shell pane also draws rows.
 - [ ] **Fallback:** rename `conpty.dll` next to the daemon, restart the daemon, start an omp pane; about 2 s after its first output the pane shows the terminal grid, with one toast "omp is drawing as text: ..." and a log line `conpty = "system"`; nothing is blank.
   Put the file back and restart the daemon.
 - [ ] **Exited omp:** quit omp (`/exit`); the pane keeps its last conversation read-only under the exited notice.
-- [ ] **Hook-only state:** with the hooks installed the sidebar and the pane pill follow omp (working, idle, needs input, done) while the surface is live; after a fallback, screen detection works again.
-- [ ] **Claude Code and Codex unchanged:** their panes keep the `Terminal | Chat` switch and today's Chat look (ADR 0105).
+- [ ] **Hook-only state:** with the hooks installed the sidebar and the tab icon (hourglass, bell) follow omp (working, idle, needs input, done) while the surface is live; after a fallback, screen detection works again.
+- [ ] **Claude Code and Codex unchanged:** their panes keep the title bar's `Terminal | Chat` toggle and today's Chat look (ADR 0105).
 - [ ] **Machine window:** a window for another computer that runs omp with TSP shows the surface too (its daemon must be protocol 59).
 - [ ] **`mk web`:** on the phone page, an omp session with a live surface shows "This omp session uses Mkrew's native view. Open it on the desktop." in place of the terminal and has no Fit, Zoom or Read button; its state pill, Stop, the reply chips and the quick keys still work; when the session falls back, the terminal shows again; a Claude or shell session is unchanged.
 - [ ] **Regression on the new ConPTY (Windows):** in a PowerShell pane, a Git Bash pane, a Claude pane and a Codex pane check typing, resizing (text reflows), Vietnamese IME, a multi-line paste, `exit` (the pane shows the exited notice), and the startup resume after `mk daemon stop`; after closing every pane no `OpenConsole.exe` stays in Task Manager.
@@ -11539,10 +13955,10 @@ With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow p
 
 - [ ] **Step 9: PROGRESS note**
 
-In `docs/PROGRESS.md`, insert as a new first line of "Notes for the next session" (before the line that starts `- 2026-11-23 Chat look (branch `feat/chat-look`` at line 33; if the `feat/tern-layout` note is already above it, insert before that one):
+In `docs/PROGRESS.md`, insert as a new first line of "Notes for the next session" (before the line that starts `- 2026-11-23 Tern layout (branch `feat/tern-layout``, now line 33; the Chat look note is line 34 and stays below it):
 
 ```markdown
-- 2026-11-23 omp native surface (branch `feat/omp-tsp`, spec docs/superpowers/specs/2026-11-23-omp-tsp-surface-design.md, plan docs/superpowers/plans/2026-11-23-omp-tsp-surface.md, ADR 0107, protocol 59, no migration): ConPTY sideload (`scripts/fetch-conpty.sh` and `.ps1`, `packaging/mkrew.iss`, `mkrew_daemon::conpty` logs which one loaded); `mkrew_core::tsp` (`wire` splitter and codec, `doc` node document with eviction, `engine` hello, acks, resize, events); profile key `tsp` (default on for `omp_jsonl`) and `PI_TUI_NATIVE` 1 or 0 in every PTY; daemon `Session.tsp`, `tsp.snapshot`, `tsp.event`, `tsp.update`, hook-only state while live (`StateMachine::set_hook_only`); `mkrew-fakeagent --tsp`; UI `mkrew_ui::tsp` (style table, icons, ansi runs, `Mirror`) and `shell/tsp_view.rs` (the omp ask card and the `checklist` todo HUD and popover included); `mk web` notice (`nativeView` in `model.mjs`). Checks in HUMAN_CHECKS "2026-11-23 omp native surface"; screenshots `docs/screenshots/2026-11-23-omp-tsp-*.png`. P2 (picker, tree, tool, prefs, hovercards: the Agent Hub table, the Jobs panel with Cancel) and P3 (blobs cache, media, chart, diff, math, local text editing) are separate specs.
+- 2026-11-23 omp native surface (branch `feat/omp-tsp`, spec docs/superpowers/specs/2026-11-23-omp-tsp-surface-design.md, plan docs/superpowers/plans/2026-11-23-omp-tsp-surface.md, ADR 0107, protocol 59 after ADR 0106's 58, no migration): ConPTY sideload (`scripts/fetch-conpty.sh` and `.ps1`, `packaging/mkrew.iss`, `mkrew_daemon::conpty` logs which one loaded); `mkrew_core::tsp` (`wire` splitter and codec, `doc` node document with eviction, `engine` hello, acks, resize, events); profile key `tsp` (default on for `omp_jsonl`) and `PI_TUI_NATIVE` 1 or 0 in every PTY; daemon `Session.tsp`, `tsp.snapshot`, `tsp.event`, `tsp.update`, hook-only state while live (`StateMachine::set_hook_only`); `mkrew-fakeagent --tsp`; UI `mkrew_ui::tsp` (style table, icons, ansi runs, `Mirror`) and `shell/tsp_view.rs` (the omp ask card and the `checklist` todo HUD and popover included); `mk web` notice (`nativeView` in `model.mjs`). Checks in HUMAN_CHECKS "2026-11-23 omp native surface"; screenshots `docs/screenshots/2026-11-23-omp-tsp-*.png`. P2 (picker, tree, tool, prefs, hovercards: the Agent Hub table, the Jobs panel with Cancel) and P3 (blobs cache, media, chart, diff, math, local text editing) are separate specs.
 ```
 
 - [ ] **Step 10: Check the docs**
@@ -11556,9 +13972,12 @@ grep -c "omp native surface" docs/SPEC.md docs/HUMAN_CHECKS.md docs/PROGRESS.md 
 git diff -U0 docs/SPEC.md docs/HUMAN_CHECKS.md docs/PROGRESS.md agents/omp.toml | grep '^+' | grep -c $'\xe2\x80\x94\|\xe2\x80\x93' || true
 grep -c $'\xe2\x80\x94\|\xe2\x80\x93' docs/decisions/0107-omp-native-surface.md || true
 grep -c "omp.ask\|checklist" docs/SPEC.md docs/decisions/0107-omp-native-surface.md
+grep -c "ADR 0106" docs/decisions/0107-omp-native-surface.md
+grep -ci "pane header\|pane's header" docs/decisions/0107-omp-native-surface.md || true
+git diff -U0 docs/SPEC.md docs/HUMAN_CHECKS.md | grep '^+' | grep -ci "pane header\|pane's header\|header has no" || true
 ```
 
-Expected: `1`; a number of at least `4` (three SPEC rows plus the history line and the section 11 text); at least `1` per file (`SPEC.md:1` or more, `HUMAN_CHECKS.md:1`, `PROGRESS.md:1`, ADR `1`); `0`; `0`; at least `3` in `SPEC.md` and at least `2` in the ADR.
+Expected: `1`; a number of at least `4` (three SPEC rows plus the history line and the section 11 text); at least `1` per file (`SPEC.md:1` or more, `HUMAN_CHECKS.md:1`, `PROGRESS.md:1`, ADR `1`); `0`; `0`; at least `3` in `SPEC.md` and at least `2` in the ADR; at least `2` (the ADR names ADR 0106 in its status, protocol bullet, alternatives and consequences); `0`; `0`.
 
 - [ ] **Step 11: Build the smoke binaries and the ConPTY files**
 
@@ -11586,12 +14005,12 @@ $ui = Start-Process "$PWD\target\debug\mkrew.exe" -PassThru
 ```
 
 `mk daemon stop` makes sure the sandbox daemon that starts next is the freshly built protocol 59 one (the UI starts the daemon with the same variables).
-Add the workspace `$root\repo` (title bar `+`, or `.\target\debug\mk.exe project add "$root\repo"`; run `mk project add --help` if the arguments differ), then check `Get-ChildItem "$root\data\logs"`: the newest log has one line `conpty = "sideloaded"`.
+Add the workspace `$root\repo` (the workspace switcher's "Add workspace…" in the title bar, or `.\target\debug\mk.exe project add "$root\repo"`; run `mk project add --help` if the arguments differ), then check `Get-ChildItem "$root\data\logs"`: the newest log has one line `conpty = "sideloaded"`.
 Never stop other `mkrew` processes by name: use `Stop-Process -Id $ui.Id` for the one you started, and report any other leftover process instead of killing it.
 
 - [ ] **Step 12: Walk the smoke on the real app**
 
-Open an Oh My Pi pane in the sandbox workspace (`+ New`, Oh My Pi) and, in Tern, open the same omp session (`omp --resume <id>`; omp prints the id when it exits, and the Tern tab shows the session). Walk the HUMAN_CHECKS section of Step 8 and tick (`- [x]`, then append `(smoke: dark + light, 2026-11-23)`) every line the run covered. Leave a line unticked, with one sentence saying why, when the run could not do it (macOS, the installer, an omp with subagents, IME).
+Open an Oh My Pi pane in the sandbox workspace (the title bar's `+ ▾`, Oh My Pi) and, in Tern, open the same omp session (`omp --resume <id>`; omp prints the id when it exits, and the Tern tab shows the session). Walk the HUMAN_CHECKS section of Step 8 and tick (`- [x]`, then append `(smoke: dark + light, 2026-11-23)`) every line the run covered. Leave a line unticked, with one sentence saying why, when the run could not do it (macOS, the installer, an omp with subagents, IME).
 At minimum this run must cover: the startup dock, one prompt and answer, the model chip click, Stop while working, the agent pill, a question with several tabs answered by mouse (Recommended, Other..., Note, Skip, Hide and Show, Review and Submit), the todo HUD and its popover with an active, a done, a blocked and a dropped item, a narrow pane, a UI restart (`Stop-Process -Id $ui.Id`, then start `mkrew.exe` again with the same variables), TSP off, the fallback with `conpty.dll` renamed, and one regression pass of a PowerShell pane (typing, resize, exit).
 Fix anything that looks wrong in the task that owns it (the UI drawing task or the daemon task), not here.
 
@@ -11673,7 +14092,7 @@ powershell -NoProfile -File $env:TEMP\shot.ps1 -Name narrow -Theme dark -Width 7
 | `todo-popover` | the HUD popover open with an active, a done, a blocked and a dropped item | default |
 | `narrow` | the pane at about 400 px of pane width (window `-Width 700 -Height 900` with a split) | `-Width 700 -Height 900` |
 | `ui-restart` | the same pane right after the UI was restarted (the snapshot), conversation back | default |
-| `tsp-off` | an omp pane started with `tsp = false`: terminal grid and `Terminal | Chat` switch | default |
+| `tsp-off` | an omp pane started with `tsp = false`: terminal grid, with the title bar's `Terminal | Chat` toggle | default |
 | `tern-startup-dock` | Tern with the same session at the startup dock (`-Process <Tern's name>`) | default |
 | `tern-prompt-answer` | Tern with the same prompt and answer | default |
 
@@ -11704,3 +14123,4 @@ git -c user.email=tungnv975@gmail.com commit -m "docs: ADR 0107 omp native surfa
 ```
 
 (If `docs/SPEC.md`, `docs/HUMAN_CHECKS.md` or `docs/PROGRESS.md` carried someone else's uncommitted hunks at the start, use `git add -p` for those three and stage only the hunks of Steps 2 to 9. If a screenshot could not be taken, leave its file out and say which in the HUMAN_CHECKS "Screenshots for reference" line.)
+

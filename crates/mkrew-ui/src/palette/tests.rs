@@ -35,6 +35,7 @@ fn context(view: View) -> Context {
         live_session: false,
         transcript: false,
         chat: false,
+        surface: false,
         plan_linked: false,
         composer_open: false,
         approve_card: false,
@@ -223,6 +224,7 @@ fn session(project_id: Ulid, title: Option<&str>, state: SessionState) -> Sessio
         pinned: false,
         position: 0.0,
         plan_path: None,
+        tsp: mkrew_protocol::TspState::Off,
     }
 }
 
@@ -2330,4 +2332,46 @@ fn toggle_chat_is_listed_only_for_a_chat_capable_agent_pane() {
         ..context(View::Terminals)
     };
     assert!(commands(&chat).contains(&Command::ToggleChat));
+}
+
+/// Reading width only caps the terminal grid: it is not listed while a TSP surface shows.
+#[test]
+fn reading_width_is_not_listed_while_a_tsp_surface_shows() {
+    let terminal = Context {
+        agent_pane: true,
+        ..context(View::Terminals)
+    };
+    assert!(Extra::PaneReading.available(&terminal));
+    let surface = Context {
+        surface: true,
+        ..terminal
+    };
+    assert!(!Extra::PaneReading.available(&surface));
+    assert!(
+        Extra::AgentLinkPlan.available(&surface),
+        "the rest of the agent pane's entries stay"
+    );
+}
+
+/// Copy mode, link hints and Find work on the terminal grid, which a surface pane does not have.
+#[test]
+fn grid_commands_are_not_listed_while_a_tsp_surface_shows() {
+    let terminal = Context {
+        agent_pane: true,
+        terminal: true,
+        ..context(View::Terminals)
+    };
+    let listed = commands(&terminal);
+    for command in [Command::CopyMode, Command::LinkHints, Command::Find] {
+        assert!(listed.contains(&command), "{command:?} on a grid");
+    }
+    let surface = Context {
+        surface: true,
+        ..terminal
+    };
+    let listed = commands(&surface);
+    for command in [Command::CopyMode, Command::LinkHints, Command::Find] {
+        assert!(!listed.contains(&command), "{command:?} on a surface");
+    }
+    assert!(listed.contains(&Command::Copy), "Copy reaches the surface");
 }

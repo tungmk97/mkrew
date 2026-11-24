@@ -277,7 +277,7 @@ pub struct Selecting(pub Option<preview_select::Selection>);
 pub struct OpenLink {
     pub dest: String,
     pub on_page: bool,
-    /// The Chat pane the link is in (ADR 0110: a web link splits beside it).
+    /// The Chat pane the link is in (ADR 0111: a web link splits beside it).
     pub session: Option<Ulid>,
 }
 

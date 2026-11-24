@@ -18,7 +18,7 @@ Pure logic (address rule, key forwarding, IPC parsing, where a link goes) lives 
 - Disk: C: had 3.1 GB free on 2026-11-24. Before the first build, ask the user to run the `mkrew-cleanup` skill; build only with `CARGO_TARGET_DIR=C:/Users/NguyenTung/Workspace/PersonalProject/mkrew-build-kit/mkrew/target` (shared target, no new 13 GB folder) and `-j 4`.
 - Commit with `git -c user.email=tungnv975@gmail.com commit -m "<Conventional Commit>"`, only the files of the task, never `git add -A`, never push, never rewrite history.
 - Verify at the end with `"C:/Program Files/Git/bin/bash.exe" scripts/verify.sh` (plain `bash` is WSL). Intermediate tasks run `cargo fmt --all`, `cargo clippy -p mkrew-ui --all-targets -j 4 -- -D warnings` and their focused tests.
-- Numbers: `PROTOCOL_VERSION` 60 -> 61; ADR `0110-browser-pane.md` (0107 is on `feat/omp-tsp`, 0109 is uncommitted "Seamless panes" work). Re-check both before Task 7 and at merge time.
+- Numbers: `PROTOCOL_VERSION` 61 -> 62; ADR `0111-browser-pane.md` (master holds 0107 to 0110 and protocol 61). Re-check both before Task 7 and at merge time.
 - `wry = { version = "0.57", features = ["devtools"] }` only under `[target.'cfg(any(windows, target_os = "macos"))'.dependencies]` of `crates/mkrew-ui/Cargo.toml`. Linux builds no web view.
 - `unsafe_code = "deny"` holds: no `unsafe`. Every OS moves a page to another window by rebuilding its view (URL kept, history lost): wry 0.57 `reparent` leaves the focus parent of a child view in the old window.
 - Keys: `SplitBrowser` PC `alt-shift-b`, mac `cmd-alt-b`, global. `BrowserAddress` PC `ctrl-l`, mac `cmd-l`, `BROWSER_CONTEXT`. `BrowserBack`, `BrowserForward`, `BrowserReload`, `BrowserOpenExternal` unbound, `BROWSER_CONTEXT`. `BROWSER_CONTEXT = "Browser"`.
@@ -45,19 +45,19 @@ Input classes the spec implies but its tests do not name, most likely first. Eac
 
 | # | Task | Depends on |
 |---|---|---|
-| 1 | Web leaf, `PaneKey::Web`, protocol 61, every match arm, daemon tests | - |
+| 1 | Web leaf, `PaneKey::Web`, protocol 62, every match arm, daemon tests | - |
 | 2 | Pure browser library: address rule, forwarded keys, init script, IPC, availability | - |
 | 3 | Native view: `wry`, `WebSurface` element, `Browser` state, events, visibility, overlays, window moves, focus | 1, 2 |
 | 4 | Toolbar, address field, empty and unavailable states, browser commands, palette | 3 |
 | 5 | Links open in the browser pane | 1, 4 |
 | 6 | `+` row Browser, `SplitBrowser`, `▾` row | 4 |
-| 7 | ADR 0110, SPEC, HUMAN_CHECKS, PROGRESS, smoke, screenshots, final verify | 1-6 |
+| 7 | ADR 0111, SPEC, HUMAN_CHECKS, PROGRESS, smoke, screenshots, final verify | 1-6 |
 
 Each task ends with fmt, clippy `-D warnings`, its tests green and a commit.
 
 ---
 
-### Task 1: Web leaf, `PaneKey::Web`, protocol 61, match arms, daemon tests
+### Task 1: Web leaf, `PaneKey::Web`, protocol 62, match arms, daemon tests
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/split.rs` (`PaneKey`, `Leaf`, `chat_of`, tests)
@@ -130,7 +130,7 @@ pub enum PaneKey {
     Session(Ulid),
     File(FileKey),
     Diff,
-    /// A browser pane (ADR 0110), by its leaf's own id: two panes may show one URL.
+    /// A browser pane (ADR 0111), by its leaf's own id: two panes may show one URL.
     Web(Ulid),
 }
 
@@ -148,7 +148,7 @@ impl PaneKey {
 In `enum Leaf`, after `Diff { diff: bool },`:
 
 ```rust
-    /// A browser pane (ADR 0110): `web` is the page it shows (`""` before the first load),
+    /// A browser pane (ADR 0111): `web` is the page it shows (`""` before the first load),
     /// `id` names the pane.
     Web { web: String, id: Ulid },
 ```
@@ -231,7 +231,7 @@ Run: `cargo test -p mkrew-ui --lib tabs:: -j 4` - Expected: PASS.
 - [ ] **Step 6: Shell side, part 1** - create `crates/mkrew-ui/src/shell/browser.rs`
 
 ```rust
-//! Browser panes (ADR 0110): the Shell's page state per web leaf, and the pane's body.
+//! Browser panes (ADR 0111): the Shell's page state per web leaf, and the pane's body.
 
 use crate::*;
 use mkrew_ui::browser::Page;
@@ -313,7 +313,7 @@ impl Shell {
 Register `pub(crate) mod browser;` in the module list of `crates/mkrew-ui/src/shell.rs` (alphabetical, it lists one file per area). In `main.rs` next to `documents: HashMap<Ulid, Documents>,` add:
 
 ```rust
-    /// Browser panes' page state, by leaf id (ADR 0110); follows the layouts (`sync_browsers`).
+    /// Browser panes' page state, by leaf id (ADR 0111); follows the layouts (`sync_browsers`).
     browsers: HashMap<Ulid, shell::browser::Browser>,
 ```
 
@@ -368,15 +368,15 @@ and `web_label` joins the `use` of `diff_label` in `main.rs` (about lines 113-11
 
 `Icon::Globe` comes from Task 4 Step 1; do that step now if it is not in yet (add `Globe => "globe",` between `GitBranch` and `History` in `icons.rs` and create `icon/lucide/globe.svg`, content in Task 4 Step 1).
 
-- [ ] **Step 8: Protocol 61**
+- [ ] **Step 8: Protocol 62**
 
-`crates/mkrew-protocol/src/lib.rs:16`: `pub const PROTOCOL_VERSION: u32 = 61;`
+`crates/mkrew-protocol/src/lib.rs:16`: `pub const PROTOCOL_VERSION: u32 = 62;`
 `crates/mkrew-protocol/src/message/tests.rs`: rename and update the pin:
 
 ```rust
 #[test]
-fn the_browser_pane_protocol_is_version_61() {
-    assert_eq!(crate::PROTOCOL_VERSION, 61);
+fn the_browser_pane_protocol_is_version_62() {
+    assert_eq!(crate::PROTOCOL_VERSION, 62);
 }
 ```
 
@@ -408,7 +408,7 @@ Expected: all PASS.
 
 ```bash
 git add crates/mkrew-ui/src/split.rs crates/mkrew-ui/src/tabs.rs crates/mkrew-ui/src/tabs/tests.rs crates/mkrew-ui/src/shell/browser.rs crates/mkrew-ui/src/shell.rs crates/mkrew-ui/src/main.rs crates/mkrew-ui/src/shell/connection.rs crates/mkrew-ui/src/shell/pane_render.rs crates/mkrew-ui/src/shell/tabs.rs crates/mkrew-ui/src/shell/pane_drop.rs crates/mkrew-ui/src/shell/hosts.rs crates/mkrew-ui/src/shell/detached_render.rs crates/mkrew-ui/src/shell/focus.rs crates/mkrew-protocol/src/lib.rs crates/mkrew-protocol/src/message/tests.rs crates/mkrew-daemon/src/tabs.rs
-git -c user.email=tungnv975@gmail.com commit -m "feat(ui): web leaf in the split tree, protocol 61"
+git -c user.email=tungnv975@gmail.com commit -m "feat(ui): web leaf in the split tree, protocol 62"
 ```
 
 ---
@@ -532,7 +532,7 @@ Run: `cargo test -p mkrew-ui --lib browser::address -j 4` - Expected: PASS.
 - [ ] **Step 3: Page, events, IPC, availability** (`browser/mod.rs`)
 
 ```rust
-//! Browser panes (spec 2026-11-24, ADR 0110): what the Shell keeps per page, what a page
+//! Browser panes (spec 2026-11-24, ADR 0111): what the Shell keeps per page, what a page
 //! reports, and whether this machine can show pages at all. Pure, no gpui, except
 //! `native` (Windows and macOS), which wraps the `wry` view.
 
@@ -723,7 +723,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 6: Implement** (`browser/keys.rs`; add `pub const BROWSER_CONTEXT: &str = "Browser";` with a doc comment "Key context of a browser pane (ADR 0110)." in `keymap.rs` after `EDITOR_CONTEXT`)
+- [ ] **Step 6: Implement** (`browser/keys.rs`; add `pub const BROWSER_CONTEXT: &str = "Browser";` with a doc comment "Key context of a browser pane (ADR 0111)." in `keymap.rs` after `EDITOR_CONTEXT`)
 
 ```rust
 //! The keys a page gives back to Mkrew (spec 7.4): while a web view has the keyboard GPUI
@@ -854,7 +854,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): browser pane library 
 - [ ] **Step 1: Dependency** (`crates/mkrew-ui/Cargo.toml`, new section after the macOS one)
 
 ```toml
-# Browser panes (ADR 0110): the OS web view (WebView2, WKWebView) as a child of the window.
+# Browser panes (ADR 0111): the OS web view (WebView2, WKWebView) as a child of the window.
 # Linux shows pages in the system browser and builds none of it.
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 wry = { version = "0.57", features = ["devtools"] }
@@ -1619,7 +1619,7 @@ Run: `cargo test -p mkrew-ui --lib icons:: -j 4` - Expected: PASS (`every_icon_i
 Enum, after `SplitShell`:
 
 ```rust
-    /// Focus the browser pane's address field (ADR 0110).
+    /// Focus the browser pane's address field (ADR 0111).
     BrowserAddress,
     BrowserBack,
     BrowserForward,
@@ -2004,14 +2004,14 @@ Run: `cargo test -p mkrew-ui --lib tabs:: -j 4` - Expected: PASS.
 pub struct OpenLink {
     pub dest: String,
     pub on_page: bool,
-    /// The Chat pane the link is in (ADR 0110: a web link splits beside it).
+    /// The Chat pane the link is in (ADR 0111: a web link splits beside it).
     pub session: Option<Ulid>,
 }
 ```
 
 In `links()`'s dispatch (about line 391): `_ => window.dispatch_action(Box::new(OpenLink { dest, on_page, session: path_of }), cx),`. Fix every other `OpenLink { .. }` literal the compiler names with `session: None`.
 
-`markdown.rs` `LinkTarget::Web` doc: `/// \`http\`, \`https\` (a browser pane, ADR 0110) or \`mailto\` (the system).`
+`markdown.rs` `LinkTarget::Web` doc: `/// \`http\`, \`https\` (a browser pane, ADR 0111) or \`mailto\` (the system).`
 
 - [ ] **Step 4: `open_web`** (`shell/browser.rs`)
 
@@ -2061,13 +2061,13 @@ In `links()`'s dispatch (about line 391): `_ => window.dispatch_action(Box::new(
     }
 ```
 
-Add `browser_fallback_told: bool` to `Shell` (`main.rs`, doc "The 'pages open in your browser' toast was shown this run (ADR 0110).") and `browser_fallback_told: false,` in `Shell::new`.
+Add `browser_fallback_told: bool` to `Shell` (`main.rs`, doc "The 'pages open in your browser' toast was shown this run (ADR 0111).") and `browser_fallback_told: false,` in `Shell::new`.
 `focus_pane_key` ends a zoom on another pane (`Tab::fix_focus`).
 
 - [ ] **Step 5: The two entry points**
 
 `shell/files_split.rs` `open_preview_link`: `Some(LinkTarget::Web(url)) => self.open_web(url, action.session.map(PaneKey::Session), window, cx),`
-`shell/navigation.rs` `open_terminal_link`: `OpenLink::Url(url) => self.open_web(url.clone(), Some(PaneKey::Session(session)), window, cx),` and its doc: "a URL opens in a browser pane (ADR 0110), a file as a file tab."
+`shell/navigation.rs` `open_terminal_link`: `OpenLink::Url(url) => self.open_web(url.clone(), Some(PaneKey::Session(session)), window, cx),` and its doc: "a URL opens in a browser pane (ADR 0111), a file as a file tab."
 
 - [ ] **Step 6: Lint, test, smoke**
 
@@ -2115,7 +2115,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): web links open in a b
 
 - [ ] **Step 2: Implement** (`plus_row.rs`)
 
-`NewKind`: `/// A browser pane (ADR 0110).` `Browser,`. `RowItem`: `Browser,` before `More`. `kind()`: `RowItem::Browser => Some(NewKind::Browser),`. `label()`: `RowItem::Browser => "New browser".to_owned(),`. `command()`:
+`NewKind`: `/// A browser pane (ADR 0111).` `Browser,`. `RowItem`: `Browser,` before `More`. `kind()`: `RowItem::Browser => Some(NewKind::Browser),`. `label()`: `RowItem::Browser => "New browser".to_owned(),`. `command()`:
 
 ```rust
             (RowItem::Browser, false) => Some(Command::SplitBrowser),
@@ -2159,7 +2159,7 @@ pub fn plus_row_items(
     }
 ```
 
-Enum after `SplitShell`: `/// Split the focused pane to the right with a new browser pane (ADR 0110).` `SplitBrowser,`. `all()` after `Command::SplitShell,`. `name()`: `"split_browser"`. `mac_keys`: `Command::SplitBrowser => "cmd-alt-b",`. `pc_keys`: `Command::SplitBrowser => "alt-shift-b".into(),`. Context: global (falls in `_ => None`).
+Enum after `SplitShell`: `/// Split the focused pane to the right with a new browser pane (ADR 0111).` `SplitBrowser,`. `all()` after `Command::SplitShell,`. `name()`: `"split_browser"`. `mac_keys`: `Command::SplitBrowser => "cmd-alt-b",`. `pc_keys`: `Command::SplitBrowser => "alt-shift-b".into(),`. Context: global (falls in `_ => None`).
 
 `palette.rs`: `title()` -> `Command::SplitBrowser => "Panes: New browser pane".into(),`; `Context` gets `/// Pages can show in Mkrew (\`browser::available\`).` `pub browser: bool,`; `available()`: `Command::SplitBrowser => context.browser && context.workspace && context.tabs > 0,`; `shell/navigation.rs` context literal: `browser: mkrew_ui::browser::available().is_ok(),`; palette test helpers get `browser: true`. Test:
 
@@ -2275,25 +2275,25 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): New browser in the + 
 ### Task 7: ADR, SPEC, docs, final verify
 
 **Files:**
-- Create: `docs/decisions/0110-browser-pane.md`
-- Modify: `docs/SPEC.md` (§5 leaves, §7 `tab.set_layout` row and a "Protocol 61" line after "Protocol 60", §10 links, §13 shortcut table, new `### §20M Browser pane (outside the milestones, ADR 0110)` after §20L, its line in the table of contents if §20 subsections are listed there)
+- Create: `docs/decisions/0111-browser-pane.md`
+- Modify: `docs/SPEC.md` (§5 leaves, §7 `tab.set_layout` row and a "Protocol 62" line after "Protocol 61", §10 links, §13 shortcut table, new `### §20M Browser pane (outside the milestones, ADR 0111)` after §20L, its line in the table of contents if §20 subsections are listed there)
 - Modify: `docs/HUMAN_CHECKS.md`, `docs/PROGRESS.md`
 - Create: `docs/screenshots/browser-pane-toolbar-dark.png`, `-light.png`, `browser-pane-empty-dark.png`, `-light.png`, `browser-pane-card-dark.png`, `-light.png` (from the smoke runs)
 
 - [ ] **Step 1: Re-check numbers**
 
 Run: `git -C C:/Users/NguyenTung/Workspace/PersonalProject/mkrew-build-kit/mkrew ls-tree --name-only master docs/decisions/ | tail -3`, the same for `feat/omp-tsp`, and `git show master:crates/mkrew-protocol/src/lib.rs | grep PROTOCOL_VERSION`.
-Expected: master ADRs end at 0108 or 0109 (Seamless panes) and protocol 60. If 0110 or protocol 61 is taken, take the next free ones and update the spec, Task 1's test and every doc line of this task.
+Expected: master ADRs end at 0110 and protocol 61. If 0111 or protocol 62 is taken, take the next free ones and update the spec, Task 1's test and every doc line of this task.
 
-- [ ] **Step 2: ADR 0110** (follow the shape of `docs/decisions/0108-tern-panes.md`: title, Date, Status, Milestone, Context, Decision, Alternatives, Consequences; one sentence per line)
+- [ ] **Step 2: ADR 0111** (follow the shape of `docs/decisions/0108-tern-panes.md`: title, Date, Status, Milestone, Context, Decision, Alternatives, Consequences; one sentence per line)
 
-Decision points to state: a fourth leaf `{"web", "id"}`; the OS web view through `wry` as a native child, hidden under overlays and off screen; one link-taking browser pane per tab; Linux and machines without WebView2 use the system browser; macOS rebuilds a page moved to another window; keys given back by an init script; protocol 61. Alternatives: CEF offscreen (`wef`, about 1 GB more), an external browser window glued to the pane, `gpui-webview` (pins gpui 0.3.9), a new pane per link (Tern). Amends ADR 0108 (leaf kinds) and the link handling of SPEC §10 / §12.
+Decision points to state: a fourth leaf `{"web", "id"}`; the OS web view through `wry` as a native child, hidden under overlays and off screen; one link-taking browser pane per tab; Linux and machines without WebView2 use the system browser; macOS rebuilds a page moved to another window; keys given back by an init script; protocol 62. Alternatives: CEF offscreen (`wef`, about 1 GB more), an external browser window glued to the pane, `gpui-webview` (pins gpui 0.3.9), a new pane per link (Tern). Amends ADR 0108 (leaf kinds) and the link handling of SPEC §10 / §12.
 
 - [ ] **Step 3: SPEC**
 
-- §5 leaf sentence: add `and {"web": "https://example.com/", "id": "<ulid>"} (a browser pane, ADR 0110; "" before its first page)`.
+- §5 leaf sentence: add `and {"web": "https://example.com/", "id": "<ulid>"} (a browser pane, ADR 0111; "" before its first page)`.
 - §7 `tab.set_layout` row: "leaves are sessions, files, the diff or web pages".
-- §7 history: `Protocol 61 (ADR 0110): a tab layout's leaves can be browser panes (\`{"web": "<url>", "id": "<ulid>"}\`).`
+- §7 history: `Protocol 62 (ADR 0111): a tab layout's leaves can be browser panes (\`{"web": "<url>", "id": "<ulid>"}\`).`
 - §10: web links in Chat and terminals open in a browser pane (point to §20M).
 - §13 table rows: `Alt+Shift+B` / `⌥⌘B` New browser pane (global); `Ctrl+L` / `⌘L` Focus address (browser pane).
 - §20M: spec sections 4 to 8 in short (opening, look, pages, native view, availability), each rule one line.
@@ -2301,7 +2301,7 @@ Decision points to state: a fourth leaf `{"web", "id"}`; the OS web view through
 - [ ] **Step 4: HUMAN_CHECKS and PROGRESS**
 
 `docs/HUMAN_CHECKS.md` "To verify": "Browser pane on macOS (open from a link and from +, Cmd+L, Cmd+Alt+B, moving a tab to a detached window rebuilds the page, dark / light)", "Browser pane on Windows without the WebView2 Runtime (one toast, links open in the system browser, a restored browser pane shows the reason and Open in system browser)", "check the browser pane visually (dark / light): toolbar, empty state, title card under the palette".
-`docs/PROGRESS.md` "Notes for the next session": one line on the browser pane (ADR 0110, protocol 61, non-goals in the spec section 12).
+`docs/PROGRESS.md` "Notes for the next session": one line on the browser pane (ADR 0111, protocol 62, non-goals in the spec section 12).
 
 - [ ] **Step 5: Final verify**
 
@@ -2312,8 +2312,8 @@ Expected: green. Grep the branch diff for raw hex colors and raw px numbers outs
 - [ ] **Step 6: Commit**
 
 ```bash
-git add docs/decisions/0110-browser-pane.md docs/SPEC.md docs/HUMAN_CHECKS.md docs/PROGRESS.md docs/screenshots/browser-pane-*.png
-git -c user.email=tungnv975@gmail.com commit -m "docs: browser pane ADR 0110, SPEC §20M, human checks, screenshots"
+git add docs/decisions/0111-browser-pane.md docs/SPEC.md docs/HUMAN_CHECKS.md docs/PROGRESS.md docs/screenshots/browser-pane-*.png
+git -c user.email=tungnv975@gmail.com commit -m "docs: browser pane ADR 0111, SPEC §20M, human checks, screenshots"
 ```
 
 - [ ] **Step 7: Main checkout untouched**

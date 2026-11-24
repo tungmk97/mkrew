@@ -3,10 +3,10 @@
 - Date: 2026-11-24
 - Status: design approved in chat by the user (2026-11-24), section by section; this file waits for the user's review.
 - Branch and worktree: `feat/browser-pane` in `.worktrees/browser-pane`, from `master` at `20a2202` (after the Tern panes merge).
-- ADR: `docs/decisions/0110-browser-pane.md`.
-  `master` has 0108; `feat/omp-tsp` (unmerged) holds 0107; uncommitted work in the main checkout ("Seamless panes", 2026-11-24) holds 0109.
-- Protocol: 60 -> 61.
-  `master` is at 60; `feat/omp-tsp` is at 59 and not rebased, so it needs a number above 60 when it merges.
+- ADR: `docs/decisions/0111-browser-pane.md`.
+  `master` has 0107 to 0110 (0109 Seamless panes, 0110 Tern panel and pane grip), so this one takes 0111.
+- Protocol: 61 -> 62.
+  `master` is at 61 (omp native surface, ADR 0107), so this branch takes 62.
   Re-check both numbers when this branch merges; take the next free ones if they moved.
 - Migration: none (the tab layout is a JSON column).
 - Amends ADR 0108 (a fourth leaf kind) and the link handling of SPEC §10 and §12 (web links open in Mkrew).
@@ -86,7 +86,7 @@ Seen in Tern, and not taken (non-goals, section 12): picture in picture cards, a
 
 - `crates/mkrew-daemon/src/tabs.rs` needs no code change: `cut()` and `layout_sessions()` read only leaves with a `session` key, and a tab that holds no session leaf stays (ADR 0108).
 - New daemon tests prove it for a web leaf: a web leaf survives `cut()` of its sibling session, and a tab whose layout is one web leaf survives `drop_panes` at startup.
-- `PROTOCOL_VERSION` 60 -> 61: an older UI would drop the unknown leaf and write the layout back without it.
+- `PROTOCOL_VERSION` 61 -> 62: an older UI would drop the unknown leaf and write the layout back without it.
 - SPEC §5: leaves are "sessions, files, the diff or web pages".
 
 ## 4. Opening a browser pane
@@ -152,8 +152,8 @@ pub fn web_place(tab: Option<&Tab>, from: Option<&PaneKey>) -> WebPlace;
 
 ### 5.1 Frame
 
-- A browser pane uses the same `pane_frame` as every pane: stripe, unfocused dim, badges, drag strip, drop overlay.
-- Whatever `pane_frame` paints above the content (the unfocused dim, corner masks if any are left after "Seamless panes" ADR 0109) covers the toolbar only: GPUI cannot paint above the native page.
+- A browser pane uses the same `pane_frame` as every pane: the full-width top stripe, the unfocused dim (0.2), badges, the drag handle at the top centre (ADR 0110), the 1 px divider and the drop overlay.
+- Whatever `pane_frame` paints above the content (the unfocused dim; "Seamless panes" ADR 0109 deleted the corner masks, so the corners are square and nothing else is left) covers the toolbar only: GPUI cannot paint above the native page.
   The focused stripe sits on the toolbar's top edge, so it stays visible.
 - Tab chip: `PaneIcon::Web` (the globe) and the page title, or the URL while there is no title, or "New browser" for an empty leaf.
 
@@ -302,7 +302,7 @@ A `localhost` page is the UI machine's localhost, not the remote machine's; forw
 | `crates/mkrew-ui/src/keymap.rs` | the commands of section 4.3, `BROWSER_CONTEXT` |
 | `crates/mkrew-ui/src/icons.rs`, `icon/lucide/globe.svg`, `arrow-left.svg`, `arrow-right.svg` | `Icon::Globe`, `ArrowLeft`, `ArrowRight` |
 | `crates/mkrew-ui/Cargo.toml` | `wry` for Windows and macOS |
-| `crates/mkrew-protocol/src/lib.rs` | `PROTOCOL_VERSION = 61` |
+| `crates/mkrew-protocol/src/lib.rs` | `PROTOCOL_VERSION = 62` |
 | `crates/mkrew-daemon/src/tabs.rs` | tests only |
 
 Also every `match` that today lists `Session | File | Diff` (`shell/tabs.rs` close pane, `shell/pane_drop.rs` drag title and `drop_leaf`), and the wildcard matches that decide Preview, focus and hosts (`documents.rs`, `shell/hosts.rs`, `shell/focus.rs`), get a deliberate `Web` behavior: a web leaf is never a preview tab, has no host, and focuses like a file pane.
@@ -335,8 +335,8 @@ Smoke run (`scripts/smoke.ps1`, Windows), with screenshots in `docs/screenshots/
 
 ## 11. Docs
 
-- ADR 0110 "Browser pane": wry child view over CEF and an external window; one link-taking browser pane per tab; Linux falls back to the system browser; protocol 61.
-- SPEC §5 (web leaf JSON), §7 (`tab.set_layout` leaves, protocol 61 line), §10 (links open in a browser pane), §13 (the commands of section 4.3), and a new §20M "Browser pane" with sections 4 to 8 in short.
+- ADR 0111 "Browser pane": wry child view over CEF and an external window; one link-taking browser pane per tab; Linux falls back to the system browser; protocol 62.
+- SPEC §5 (web leaf JSON), §7 (`tab.set_layout` leaves, protocol 62 line), §10 (links open in a browser pane), §13 (the commands of section 4.3), and a new §20M "Browser pane" with sections 4 to 8 in short.
 - `docs/PROGRESS.md` note for the next session.
 
 ## 12. Non-goals

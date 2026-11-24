@@ -123,7 +123,7 @@ Theme {
     terminal_underline_thickness: 1.0,
     terminal_cursor_width: 2.0,
     dim_blend: 0.6,
-    unfocused_pane_dim: 0.05,
+    unfocused_pane_dim: 0.2,
     classic: Some(
         Theme {
             bg: 1316121,
@@ -246,7 +246,7 @@ Theme {
             terminal_underline_thickness: 1.0,
             terminal_cursor_width: 2.0,
             dim_blend: 0.6,
-            unfocused_pane_dim: 0.05,
+            unfocused_pane_dim: 0.2,
             classic: None,
         },
     ),

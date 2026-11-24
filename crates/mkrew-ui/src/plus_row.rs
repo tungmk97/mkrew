@@ -13,7 +13,7 @@ pub enum NewKind {
     Shell,
     /// A new note file (`fs.new_note`).
     Note,
-    /// A browser pane (ADR 0110).
+    /// A browser pane (ADR 0111).
     Browser,
 }
 

@@ -75,34 +75,18 @@ impl Shell {
                     Some(repo) => format!("The git repository in {repo}/"),
                     None => "The workspace folder's git repository".to_owned(),
                 };
-                div()
-                    .id(SharedString::from(format!("git-repo-{at}")))
-                    .min_w_0()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::XS))
-                    .px(px(space::M))
-                    .border_b(px(theme::PANE_ACCENT_WIDTH))
-                    .border_color(if active {
-                        rgb(theme.accent).into()
-                    } else {
-                        gpui::transparent_black()
-                    })
+                underline_tab(SharedString::from(format!("git-repo-{at}")), active, theme)
                     .text_size(theme::GIT_REPO_TAB_TEXT)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .tooltip(tooltip(theme, &tip, ""))
-                    .when(active, |el| el.text_color(rgb(theme.text)))
                     .when(!active, |el| {
-                        el.text_color(rgb(theme.text_muted))
-                            .pressable(Look::Text, true, theme)
-                            .on_press(
-                                true,
-                                cx.listener(move |shell, _, window, cx| {
-                                    window.focus(&shell.git_focus, cx);
-                                    shell.set_git_repo(project_id, repo.clone(), window, cx);
-                                }),
-                            )
+                        el.on_press(
+                            true,
+                            cx.listener(move |shell, _, window, cx| {
+                                window.focus(&shell.git_focus, cx);
+                                shell.set_git_repo(project_id, repo.clone(), window, cx);
+                            }),
+                        )
                     })
                     .child(div().min_w_0().truncate().child(label.to_owned()))
                     .when(dirty, |el| el.child(changes_dot(theme)))
@@ -294,8 +278,9 @@ impl Shell {
         cx.notify();
     }
 
-    /// The "Filter files" field and, while sessions changed files, the ghost "All ▾"; the
-    /// button wraps under the field when both do not fit.
+    /// The "Filter files" field (a filter mark before the text, the faint divider border until
+    /// focused), `Viewed a/b` on its right and, while sessions changed files, the ghost "All ▾";
+    /// they wrap under the field when they do not fit (ADR 0110).
     pub(crate) fn git_filter_row(
         &self,
         project_id: Ulid,
@@ -334,8 +319,25 @@ impl Shell {
                 .min_w(px(theme::GIT_FILTER_MIN_WIDTH))
                 .h(theme::rems_px(theme::CONTROL_HEIGHT))
                 .py_0()
+                // The text starts past the filter mark: its inset, the mark, a gap.
+                .pl(px(space::S * 2.0 + theme::ICON_SIZE_SMALL))
+                .when(!focused, |el| el.border_color(rgb(theme.divider)))
                 .flex()
                 .items_center()
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left(px(space::S))
+                        .flex()
+                        .items_center()
+                        .child(icon_svg(
+                            Icon::ListFilter,
+                            theme::ICON_SIZE_SMALL,
+                            theme.text_subtle,
+                        )),
+                )
                 .track_focus(&self.git_filter_focus)
                 .on_key_down(cx.listener(Self::git_filter_key_down))
                 .relative()
@@ -350,6 +352,7 @@ impl Shell {
                     cx.notify();
                 })),
             )
+            .children(git_viewed_line(view, theme))
             .children(self.git_changed_by(project_id, view, theme, cx))
     }
 

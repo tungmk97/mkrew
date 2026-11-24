@@ -552,8 +552,7 @@ fn fanout_runs_each_agent_in_its_own_worktree() {
         assert_eq!(child.agent_profile.as_deref(), Some(id));
         assert!(child.worktree && child.branch.is_some());
         let root = PathBuf::from(child.worktree_path.clone().unwrap());
-        wait_file(&root.join("made.txt"));
-        assert_eq!(std::fs::read_to_string(root.join("made.txt")).unwrap(), id);
+        wait_content(&root.join("made.txt"), id);
     }
     assert_ne!(children[0].worktree_path, children[1].worktree_path);
     let deadline = Instant::now() + TIMEOUT;

@@ -156,6 +156,7 @@ mod tests {
             started_at: 1,
             ended_at: None,
             plan_path: None,
+            tsp: mkrew_protocol::TspState::Off,
         }
     }
 }

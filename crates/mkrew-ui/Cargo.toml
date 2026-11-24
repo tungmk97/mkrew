@@ -36,9 +36,9 @@ image = { version = "0.25", default-features = false, features = ["png", "bmp"] 
 interprocess = { version = "2.4.4", features = ["tokio"] }
 # Mermaid diagrams of the Docs preview (ADR 0021): pure Rust, SVG only (no CLI, no PNG).
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }
-mkrew-core = { version = "0.7.0", path = "../mkrew-core" }
-mkrew-daemon = { version = "0.7.0", path = "../mkrew-daemon" }
-mkrew-protocol = { version = "0.7.0", path = "../mkrew-protocol" }
+mkrew-core = { version = "0.8.0", path = "../mkrew-core" }
+mkrew-daemon = { version = "0.8.0", path = "../mkrew-daemon" }
+mkrew-protocol = { version = "0.8.0", path = "../mkrew-protocol" }
 # Docs preview render model (SPEC §12); no html renderer / CLI needed.
 pulldown-cmark = { version = "0.13.4", default-features = false }
 # QR code of the phone link (spec 2026-10-12-phone-access-ui-design.md): pure Rust, no
@@ -93,7 +93,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 libc = "0.2"
 
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-# Browser panes (ADR 0110): the OS web view (WebView2, WKWebView) as a child of the window.
+# Browser panes (ADR 0111): the OS web view (WebView2, WKWebView) as a child of the window.
 # Linux shows pages in the system browser and builds none of it.
 wry = { version = "0.57", features = ["devtools"] }
 

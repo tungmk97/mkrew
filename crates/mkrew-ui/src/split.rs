@@ -57,7 +57,7 @@ pub enum PaneKey {
     Session(Ulid),
     File(FileKey),
     Diff,
-    /// A browser pane (ADR 0110), by its leaf's own id: two panes may show one URL.
+    /// A browser pane (ADR 0111), by its leaf's own id: two panes may show one URL.
     Web(Ulid),
 }
 
@@ -99,7 +99,7 @@ pub enum Leaf {
     },
     /// The workspace's diff. `diff` is always `true` on the wire.
     Diff { diff: bool },
-    /// A browser pane (ADR 0110): `web` is the page it shows (`""` before the first load),
+    /// A browser pane (ADR 0111): `web` is the page it shows (`""` before the first load),
     /// `id` names the pane.
     Web { web: String, id: Ulid },
 }

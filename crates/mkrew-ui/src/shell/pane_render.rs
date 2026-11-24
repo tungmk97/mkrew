@@ -501,14 +501,13 @@ impl Shell {
         // Every pane drawn counts (a session, a file, the diff).
         let several = rects.len() > 1;
         let zoomed = tab.is_some_and(|tab| tab.zoomed().is_some());
-        let half_gap = px(theme::PANE_HALF_GAP);
         // The panes' 0..1 space in px, as laid out in the last frame (`content_canvas`).
-        let area = f32::from(content.get().width) - 2.0 * theme::PANE_HALF_GAP;
+        let area = f32::from(content.get().width);
         let panes: Vec<_> = rects
             .into_iter()
             .map(|(key, rect)| {
                 let is_focused = focused == Some(&key);
-                let width = rect.w as f32 * area - 2.0 * theme::PANE_HALF_GAP;
+                let width = rect.w as f32 * area;
                 div()
                     .id(pane_id(&key))
                     .absolute()
@@ -516,7 +515,6 @@ impl Shell {
                     .top(relative(rect.y as f32))
                     .w(relative(rect.w as f32))
                     .h(relative(rect.h as f32))
-                    .p(half_gap)
                     .child(self.pane_frame(
                         project_id,
                         key,
@@ -540,9 +538,8 @@ impl Shell {
         div()
             .flex_1()
             .min_h_0()
-            // The frame: behind and between the panes, the same color as the title bar.
+            // Behind the panes, the same color as the title bar: shows only while they load.
             .bg(rgb(theme.pane_gap))
-            .p(half_gap)
             .relative()
             .child(content_canvas(content))
             .child(
@@ -578,11 +575,11 @@ impl Shell {
 
     /// One pane: the terminal, the chat, the file or the diff (or why it is not shown; at
     /// reading width, centered, for an agent pane with it on), a session's composer, a stripe
-    /// along the top edge (`status::pane_stripe`: needs input, the session color or the focus
-    /// among several; ADR 0108). No border: the pane sits on the frame color (`pane_gap`) with
-    /// rounded corners. Among several the unfocused ones get a dim and a session pane a slim
-    /// handle on the top edge that drags it. Transient signals float in the top-right corner
-    /// (`pane_badges`). A file pane is the editor (`render_file_pane`).
+    /// along the full top edge (`status::pane_stripe`: needs input, the session color or the
+    /// focus among several; ADR 0108). No border, no gap, square corners: panes meet at a 1 px
+    /// divider line (`pane_divider`, ADR 0109). Among several the unfocused ones get a dim and a
+    /// session pane a slim handle on the top edge that drags it. Transient signals float in the
+    /// top-right corner (`pane_badges`). A file pane is the editor (`render_file_pane`).
     /// `zoomed`: the pane fills the tab. `voice_ring`: the listening ring over the pane;
     /// `width`: the pane's width in px in the last frame (the composer's room).
     #[allow(clippy::too_many_arguments)]
@@ -603,9 +600,15 @@ impl Shell {
     ) -> impl IntoElement {
         let session = key.session();
         let info = session.and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
+        // An omp pane with TSP on shows its surface (or the starting state); in `fallback` and
+        // `off` it is the terminal grid as before. It has no Chat mode (`chat::available`).
+        let tsp_drawn =
+            info.is_some_and(|info| self.tsp_pane_view(info) != mkrew_ui::tsp::PaneView::Terminal);
         let content = match &key {
             PaneKey::Session(id) => {
-                if info.is_some_and(|info| self.chat_on(info)) {
+                if tsp_drawn {
+                    self.render_tsp(*id, is_focused, width, now, theme, cx)
+                } else if info.is_some_and(|info| self.chat_on(info)) {
                     self.render_chat(*id, is_focused, now, theme, cx)
                 } else {
                     match self.panes.get(id) {
@@ -625,7 +628,9 @@ impl Shell {
                 self.render_web_pane(project_id, *id, is_focused, theme, window, cx)
             }
         };
-        let reading = info.is_some_and(|info| self.reading_on(info));
+        // Reading width caps the terminal grid (and the Chat list); a surface keeps its own
+        // 760 px column (`chat_column`), so the cap would only narrow its scroll area.
+        let reading = info.is_some_and(|info| self.reading_on(info)) && !tsp_drawn;
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));
         let stripe = status::pane_stripe(theme, info.map(|s| s.state), color, several, is_focused);
@@ -639,6 +644,8 @@ impl Shell {
             .flex()
             .flex_col()
             .bg(rgb(theme.terminal_bg))
+            // The drag handle's bar shows while the pointer is anywhere over the pane.
+            .group(pane_hover_group(&key))
             // The file pane's own keys (Ctrl+S, Ctrl+F, ...), not the root's.
             .when(matches!(key, PaneKey::File(_)), |el| {
                 el.key_context(EDITOR_CONTEXT)
@@ -691,17 +698,14 @@ impl Shell {
                         .opacity(theme.unfocused_pane_dim),
                 )
             })
-            // The terminal paints a square quad and gpui clips to rectangles: the frame color
-            // over the four corners gives the pane its rounded look.
-            .child(corner_masks(theme.pane_gap))
             .children(self.pane_drop_overlay(&key, theme, cx))
             .when_some(stripe, |el, stripe| {
                 el.child(
                     div()
                         .absolute()
                         .top_0()
-                        .left(px(radius::MEDIUM))
-                        .right(px(radius::MEDIUM))
+                        .left_0()
+                        .right_0()
                         .h(px(theme::PANE_ACCENT_WIDTH))
                         .bg(rgb(stripe)),
                 )
@@ -713,7 +717,6 @@ impl Shell {
                     div()
                         .absolute()
                         .inset_0()
-                        .rounded(px(radius::MEDIUM))
                         .border(px(theme::VOICE_RING_WIDTH))
                         .border_color(color),
                 )
@@ -856,15 +859,17 @@ impl Shell {
     }
 
     /// The top edge of a pane: for a session it records the anchor of the pane's keyboard menu
-    /// and, among `several` panes, it is a slim handle (`PANE_GRIP_HEIGHT` tall, a grip shows on
-    /// hover) that drags the pane onto another; a file or diff pane has the handle but no
-    /// anchor.
-    /// The handle blocks the mouse (not the wheel): gpui hit-tests every hitbox until one blocks,
-    /// so without it the terminal under it would also get the mouse down and start a selection.
-    /// Drops are delivered to the hovered hitbox only, so the strip carries the pane frame's drop
-    /// set (`pane_drops`); the frame's drag-move still sets the half that lights up.
-    /// A lone pane has nothing to rearrange: its edge is an empty div, only the Shift+F10 menu
-    /// anchor of a session, with no hitbox and no mouse handling.
+    /// and, among `several` panes, it holds the drag handle at its centre (ADR 0110): a slim bar
+    /// while the pointer is over the pane (hover group `pane_hover_group`), a chip with a six-dot
+    /// grip while it is over the handle, and dragging the handle moves the pane onto another. A
+    /// file or diff pane has the handle but no anchor.
+    /// Only the handle has a hitbox; the rest of the edge passes the mouse to the pane. The
+    /// handle blocks the mouse (not the wheel): gpui hit-tests every hitbox until one blocks, so
+    /// without it the terminal under it would also get the mouse down and start a selection.
+    /// Drops are delivered to the hovered hitbox only, so the handle carries the pane frame's
+    /// drop set (`pane_drops`); the frame's drag-move still sets the half that lights up.
+    /// A lone pane has nothing to rearrange: its edge is only the Shift+F10 menu anchor of a
+    /// session, with no hitbox and no mouse handling.
     fn pane_edge(
         &self,
         project_id: Ulid,
@@ -875,12 +880,12 @@ impl Shell {
     ) -> gpui::AnyElement {
         let edge = div()
             .absolute()
-            .top_0()
+            // Under the top stripe, so the handle's chip never hides it.
+            .top(px(theme::PANE_ACCENT_WIDTH))
             .left_0()
             .right_0()
             .h(px(theme::PANE_GRIP_HEIGHT))
             .flex()
-            .items_center()
             .justify_center()
             .children(
                 key.session()
@@ -889,22 +894,50 @@ impl Shell {
         if !several {
             return edge.into_any_element();
         }
-        let edge = Self::pane_drops(edge, project_id, key, cx);
         let group = grip_id(key);
-        let handle = self.draggable_pane(edge.group(group.clone()), project_id, key, theme);
-        grip_hover(handle, theme)
+        let handle = div()
+            .relative()
+            .w(px(theme::PANE_GRIP_WIDTH))
+            .h_full()
+            .flex()
+            .justify_center()
+            .group(group.clone());
+        let handle = Self::pane_drops(handle, project_id, key, cx);
+        let bar = div()
+            .mt(px(space::XS))
+            .w(px(theme::PANE_GRIP_BAR_WIDTH))
+            .h(px(theme::PANE_GRIP_BAR_HEIGHT))
+            .rounded_full()
+            .bg(rgb(theme.text_muted))
+            .opacity(opacity::HIDDEN)
+            .group_hover(pane_hover_group(key), |style| {
+                style.opacity(opacity::DIMMED)
+            });
+        // Over the bar once the pointer reaches the handle (opaque, so the bar does not show).
+        let chip = div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(radius::SMALL))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface_raised))
+            .opacity(opacity::HIDDEN)
+            .group_hover(group, |style| style.opacity(opacity::FULL))
+            .child(icon_svg(
+                Icon::GripHorizontal,
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ));
+        let handle = self
+            .draggable_pane(handle, project_id, key, theme)
             .block_mouse_except_scroll()
             .cursor(CursorStyle::OpenHand)
-            .child(
-                div()
-                    .w(px(space::XXL))
-                    .h(px(theme::PANE_ACCENT_WIDTH))
-                    .rounded_full()
-                    .bg(rgb(theme.text_muted))
-                    .opacity(opacity::HIDDEN)
-                    .group_hover(group, |style| style.opacity(opacity::FULL)),
-            )
-            .into_any_element()
+            .child(bar)
+            .child(chip);
+        edge.child(handle).into_any_element()
     }
 
     /// The title bar toggles of the focused agent pane, shown only while one has the focus:
@@ -949,30 +982,37 @@ impl Shell {
                 .into_any_element(),
             );
         }
-        let reading = self.reading_on(info);
-        toggles.push(
-            icon_button_in(
-                SharedString::from(format!("pane-reading-{session}")),
-                Icon::AlignCenter,
-                if reading {
-                    theme.accent
-                } else {
-                    theme.text_muted
-                },
-                theme,
-            )
-            .tooltip(tooltip(
-                theme,
-                if reading {
-                    "Reading width: on (the agent wraps at about 130 columns). Click for full width"
-                } else {
-                    "Reading width: off (full width). Click to wrap at about 130 columns"
-                },
-                "",
-            ))
-            .on_click(cx.listener(move |shell, _, _, cx| shell.toggle_reading_width(session, cx)))
-            .into_any_element(),
-        );
+        // A surface (or its starting state) has no terminal to cap; in `fallback` and `off` the
+        // grid is back and so is the toggle. Terminal | Chat is already gone through
+        // `chat_available`; Share stays.
+        if self.tsp_pane_view(info) == mkrew_ui::tsp::PaneView::Terminal {
+            let reading = self.reading_on(info);
+            toggles.push(
+                icon_button_in(
+                    SharedString::from(format!("pane-reading-{session}")),
+                    Icon::AlignCenter,
+                    if reading {
+                        theme.accent
+                    } else {
+                        theme.text_muted
+                    },
+                    theme,
+                )
+                .tooltip(tooltip(
+                    theme,
+                    if reading {
+                        "Reading width: on (the agent wraps at about 130 columns). Click for full width"
+                    } else {
+                        "Reading width: off (full width). Click to wrap at about 130 columns"
+                    },
+                    "",
+                ))
+                .on_click(
+                    cx.listener(move |shell, _, _, cx| shell.toggle_reading_width(session, cx)),
+                )
+                .into_any_element(),
+            );
+        }
         if self.features.share {
             let following = self.follow.is_on(session);
             toggles.push(
@@ -1139,20 +1179,24 @@ fn divider_cursor(axis: Axis) -> CursorStyle {
     }
 }
 
-/// The grab strip over a split's divider: centred on the gap between its two children, as long
-/// as the split. Dragging it is handled by the panes area (`render_tab`), which knows the size.
+/// A split's divider: a 1 px `divider` line where its two children meet (the panes touch, no
+/// gap; ADR 0109) and the grab strip centred on it, as long as the split. Dragging it is handled
+/// by the panes area (`render_tab`), which knows the size.
 fn pane_divider(divider: Divider, theme: &Theme, cx: &mut Context<'_, Shell>) -> gpui::AnyElement {
     let area = divider.area;
     let at = |start: f64, len: f64| relative((start + len * divider.ratio) as f32);
     let grip = px(theme::GRIP_WIDTH);
     let centre = px(-theme::GRIP_WIDTH / 2.0);
-    // A zero-thick line along the divider; the strip hangs half on each side of it.
-    let (line, strip) = match divider.axis {
+    let thin = px(theme::BORDER_WIDTH);
+    let half_thin = px(-theme::BORDER_WIDTH / 2.0);
+    // A zero-thick line along the divider; the rule and the strip hang half on each side of it.
+    let (line, rule, strip) = match divider.axis {
         Axis::Vertical => (
             div()
                 .left(at(area.x, area.w))
                 .top(relative(area.y as f32))
                 .h(relative(area.h as f32)),
+            div().top_0().bottom_0().left(half_thin).w(thin),
             div().top_0().bottom_0().left(centre).w(grip),
         ),
         Axis::Horizontal => (
@@ -1160,10 +1204,12 @@ fn pane_divider(divider: Divider, theme: &Theme, cx: &mut Context<'_, Shell>) ->
                 .top(at(area.y, area.h))
                 .left(relative(area.x as f32))
                 .w(relative(area.w as f32)),
+            div().left_0().right_0().top(half_thin).h(thin),
             div().left_0().right_0().top(centre).h(grip),
         ),
     };
     line.absolute()
+        .child(rule.absolute().bg(rgb(theme.divider)))
         .child(
             grip_hover(strip.id(("pane-divider", divider.index)), theme)
                 .absolute()
@@ -1193,54 +1239,6 @@ fn content_canvas(content: Rc<Cell<gpui::Size<Pixels>>>) -> impl IntoElement {
             }
         },
         |_, _, _, _| {},
-    )
-    .absolute()
-    .size_full()
-}
-
-/// Paints the four slivers between the corners of its parent and a rounded rectangle of
-/// radius `radius::MEDIUM`, in `color` (the frame behind the pane). It paints nothing else and
-/// has no hitbox, so the pane keeps every click and drop.
-fn corner_masks(color: u32) -> impl IntoElement {
-    canvas(
-        |_, _, _| {},
-        move |bounds, (), window, _| {
-            let r = px(radius::MEDIUM);
-            let (left, top) = (bounds.origin.x, bounds.origin.y);
-            let right = bounds.origin.x + bounds.size.width;
-            let bottom = bounds.origin.y + bounds.size.height;
-            // (the corner, the point where the arc starts, the point where it ends): the arc
-            // is a quarter circle around the point `r` inside the corner, drawn from the first
-            // point to the second one counterclockwise on screen.
-            let corners = [
-                (point(left, top), point(left + r, top), point(left, top + r)),
-                (
-                    point(right, top),
-                    point(right, top + r),
-                    point(right - r, top),
-                ),
-                (
-                    point(right, bottom),
-                    point(right - r, bottom),
-                    point(right, bottom - r),
-                ),
-                (
-                    point(left, bottom),
-                    point(left, bottom - r),
-                    point(left + r, bottom),
-                ),
-            ];
-            for (corner, from, to) in corners {
-                let mut path = PathBuilder::fill();
-                path.move_to(corner);
-                path.line_to(from);
-                path.arc_to(point(r, r), px(0.0), false, false, to);
-                path.close();
-                if let Ok(path) = path.build() {
-                    window.paint_path(path, gpui::Hsla::from(rgb(color)));
-                }
-            }
-        },
     )
     .absolute()
     .size_full()

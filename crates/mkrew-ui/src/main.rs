@@ -159,6 +159,7 @@ use shell::reorder::*;
 use shell::sidebar::*;
 use shell::tear_off::*;
 use shell::thread_panel::*;
+use shell::tsp_view::*;
 use shell::widgets::*;
 
 /// Longest wait for the frame showing fed output before draining again anyway (e.g. the
@@ -179,7 +180,7 @@ pub(crate) const DRAWN_CONTROLS: bool = cfg!(target_os = "windows");
 fn main() {
     // gpui-pre-windows 0.3.7 draws through a topmost DirectComposition visual
     // (directx_renderer.rs:1017), which covers child HWNDs such as the WebView2 page of a
-    // browser pane (ADR 0110). Mkrew uses no transparent or blurred window background, so the
+    // browser pane (ADR 0111). Mkrew uses no transparent or blurred window background, so the
     // HWND swap chain path loses nothing it needs. A user's own setting wins.
     #[cfg(windows)]
     if std::env::var_os(mkrew_ui::browser::DISABLE_DCOMP_ENV).is_none() {
@@ -758,6 +759,9 @@ struct Shell {
     thread: Option<ThreadWatch>,
     /// What each pane in Chat mode remembers (open rows, scroll), ADR 0104.
     chats: HashMap<Ulid, ChatUi>,
+    /// What each omp pane with a live native surface keeps: the mirror of the daemon's documents
+    /// and the scroll (ADR 0107).
+    tsps: HashMap<Ulid, TspUi>,
     /// Focused while a pane's chat list has the keyboard (the composer has its own).
     chat_focus: FocusHandle,
     /// Its width in px, from `[ui] inspector_width` and the drag.
@@ -777,9 +781,9 @@ struct Shell {
     comment_focus: FocusHandle,
     /// The open files of every workspace (SPEC §12A, ADR 0108); one store per workspace.
     documents: HashMap<Ulid, Documents>,
-    /// Browser panes' page state, by leaf id (ADR 0110); follows the layouts (`sync_browsers`).
+    /// Browser panes' page state, by leaf id (ADR 0111); follows the layouts (`sync_browsers`).
     browsers: HashMap<Ulid, shell::browser::Browser>,
-    /// The "pages open in your browser" toast was shown this run (ADR 0110).
+    /// The "pages open in your browser" toast was shown this run (ADR 0111).
     browser_fallback_told: bool,
     /// A new browser pane whose address field takes the keyboard once its page state exists
     /// and it is shown (`prepare_browsers`).

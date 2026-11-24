@@ -59,6 +59,7 @@ mod slash;
 mod states;
 mod tabs_tasks;
 mod task_runs;
+mod tsp;
 mod turns;
 mod web;
 mod workspaces;
@@ -806,6 +807,20 @@ fn wait_file(path: &Path) {
         assert!(
             Instant::now() < deadline,
             "{} never appeared",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Waits until `path` holds `expected`. `fs::write` creates the file before it writes it, so a
+/// file that exists can still be empty for a moment.
+fn wait_content(path: &Path, expected: &str) {
+    let deadline = Instant::now() + TIMEOUT;
+    while std::fs::read_to_string(path).ok().as_deref() != Some(expected) {
+        assert!(
+            Instant::now() < deadline,
+            "{} never held {expected:?}",
             path.display()
         );
         std::thread::sleep(Duration::from_millis(50));

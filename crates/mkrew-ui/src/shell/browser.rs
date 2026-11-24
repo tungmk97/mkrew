@@ -1,4 +1,4 @@
-//! Browser panes (ADR 0110): the Shell's page state per web leaf, and the pane's body.
+//! Browser panes (ADR 0111): the Shell's page state per web leaf, and the pane's body.
 
 use crate::*;
 use mkrew_ui::browser::{NativeView, Page, PageEvent};

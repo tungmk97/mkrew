@@ -190,7 +190,7 @@ impl Shell {
         })
     }
 
-    /// Ctrl+Click on a terminal link: a URL opens in a browser pane (ADR 0110), a file as a file tab.
+    /// Ctrl+Click on a terminal link: a URL opens in a browser pane (ADR 0111), a file as a file tab.
     pub(crate) fn open_terminal_link(
         &mut self,
         session: Ulid,
@@ -380,6 +380,9 @@ impl Shell {
             chat: focused_info
                 .as_ref()
                 .is_some_and(|info| self.chat_available(info)),
+            surface: focused_info
+                .as_ref()
+                .is_some_and(|info| self.tsp_pane_view(info) != mkrew_ui::tsp::PaneView::Terminal),
             plan_linked: self.focused_agent(window).is_some_and(|id| {
                 (self.sidebar.sessions().iter()).any(|s| s.id == id && s.plan_path.is_some())
             }),

@@ -32,8 +32,8 @@ impl Shell {
             "Show git-ignored files"
         };
         let search_keys = self.keymap.label(Command::QuickOpen);
-        // A button that opens the palette on its Files scope, framed like a text input. The
-        // shortcut is in the tooltip: the narrow panel has no room to show it beside "Ignored".
+        // A button that opens the palette on its Files scope, framed like the panel's flat
+        // fields (ADR 0110). The shortcut is in the tooltip: the narrow panel has no room for it.
         let search = search_box(
             div()
                 .id("files-search-label")
@@ -48,6 +48,8 @@ impl Shell {
         .id("files-search")
         .flex_1()
         .min_w_0()
+        .h(theme::rems_px(theme::CONTROL_HEIGHT))
+        .border_color(rgb(theme.divider))
         .pressable(Look::Chip, true, theme)
         .tooltip(tooltip(theme, "Find a file of this workspace", search_keys))
         .on_press(
@@ -56,25 +58,27 @@ impl Shell {
                 shell.open_palette_on(palette::Scope::Files, window, cx);
             }),
         );
-        let ignored = button_frame("files-ignored", "Ignored")
-            .flex_none()
-            .h(theme::rems_px(theme::INPUT_HEIGHT))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .text_size(font_size::META)
-            .when(showing_ignored, |el| {
-                el.bg(rgb(theme.selected)).text_color(rgb(theme.text))
-            })
-            .when(!showing_ignored, |el| el.text_color(rgb(theme.text_muted)))
-            .pressable_unless(showing_ignored, Look::Chip, theme)
-            .tooltip(tooltip(theme, ignored_tip, ignored_keys.clone()))
-            .on_press(
-                true,
-                cx.listener(move |shell, _, window, cx| {
-                    let requests = shell.files_view(project_id).toggle_ignored();
-                    shell.files_requests(project_id, requests, window, cx);
-                }),
-            );
+        // An eye toggle (accent while ignored files show), not a text button: Tern's header
+        // holds only the field and icons.
+        let ignored = icon_button_in(
+            "files-ignored",
+            if showing_ignored {
+                Icon::Eye
+            } else {
+                Icon::EyeOff
+            },
+            if showing_ignored {
+                theme.accent
+            } else {
+                theme.text_muted
+            },
+            theme,
+        )
+        .tooltip(tooltip(theme, ignored_tip, ignored_keys.clone()))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            let requests = shell.files_view(project_id).toggle_ignored();
+            shell.files_requests(project_id, requests, window, cx);
+        }));
         let header = div()
             .flex_none()
             .flex()

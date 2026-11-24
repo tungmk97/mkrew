@@ -120,9 +120,9 @@ fn row_frame(id: SharedString) -> gpui::Stateful<gpui::Div> {
         .border_color(gpui::transparent_black())
 }
 
-/// One row of the Git changed-file list: a group header (overline title, count, folds on
-/// click; "Stage all" / "Unstage all" on hover), the empty Staged hint (a dashed box), a file
-/// (change-letter badge, name, folder muted, +/− counts; indented under its History commit),
+/// One row of the Git changed-file list: a group header (title, count, folds on click; "Stage
+/// all" / "Unstage all" on hover), the empty Staged hint (a muted line), a file (colored
+/// change letter, name, folder muted, +/− counts; indented under its History commit),
 /// a History commit ([`git_commit_row`], ages at `now`) or a note under it. The selected file
 /// has the `hover` fill and an accent ring while the list has the keyboard; in the History,
 /// `graph` is the row's column of the lane graph.
@@ -156,23 +156,13 @@ pub(crate) fn git_file_row(
             return group_header(project_id, *group, *count, folded, keys, theme, cx);
         }
         git_view::ListRow::Hint(hint) => {
-            // A dashed box filling the row, the message centered in it.
+            // A muted line under the empty group's header, no frame (ADR 0110).
             return row_frame(SharedString::from("git-staged-hint"))
-                .child(
-                    div()
-                        .size_full()
-                        .min_w_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(radius::MEDIUM))
-                        .border(px(theme::BORDER_WIDTH))
-                        .border_dashed()
-                        .border_color(rgb(theme.selected))
-                        .text_size(font_size::META)
-                        .text_color(rgb(theme.text_subtle))
-                        .child(div().min_w_0().truncate().child(*hint)),
-                )
+                // Under the header's title: past its padding, chevron and gap.
+                .pl(px(space::S * 2.0 + theme::ICON_SIZE_SMALL))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_subtle))
+                .child(div().min_w_0().truncate().child(*hint))
                 .into_any_element();
         }
         git_view::ListRow::Note(note) => {
@@ -233,7 +223,6 @@ pub(crate) fn git_file_row(
                 .items_center()
                 .justify_center()
                 .rounded(px(radius::TAG))
-                .bg(theme.tint(color))
                 .text_size(font_size::OVERLINE)
                 .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(color))
@@ -347,9 +336,9 @@ pub(crate) fn git_file_row(
         .into_any_element()
 }
 
-/// A Working group header: chevron, overline title and count (11/600 upper case); a click
-/// folds or unfolds the group. "Stage all" / "Unstage all" shows on hover while the group
-/// lists files.
+/// A Working group header, Tern style (ADR 0110): chevron, the title in sentence case and its
+/// count muted; a click folds or unfolds the group. "Stage all" / "Unstage all" shows on hover
+/// while the group lists files.
 fn group_header(
     project_id: Ulid,
     group: git_view::Group,
@@ -388,8 +377,19 @@ fn group_header(
             theme::ICON_SIZE_SMALL,
             theme.chevron_color(),
         ))
-        .child(overline(group.title(), theme))
-        .child(overline(&count.to_string(), theme))
+        .child(
+            div()
+                .text_size(font_size::META)
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text_muted))
+                .child(group.title()),
+        )
+        .child(
+            div()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_subtle))
+                .child(count.to_string()),
+        )
         .child(div().flex_1())
         .children(
             git_view::Stage::of(group)
@@ -582,14 +582,14 @@ pub(crate) fn viewed_box(on: bool, theme: &Theme) -> gpui::Div {
         .when(!on, |el| el.border_color(rgb(theme.text_subtle)))
 }
 
-/// `Viewed 3/10` in the side panel header (✓ once every file is viewed); none in the History
-/// or while nothing is listed.
+/// `Viewed 3/10` on the filter row (✓ once every file is viewed); none in the History or while
+/// nothing is listed.
 pub(crate) fn git_viewed_line(view: &GitView, theme: &Theme) -> Option<gpui::Stateful<gpui::Div>> {
     let (viewed, listed) = view.viewed_counter()?;
     Some(
         div()
             .id("git-viewed-count")
-            .px(px(space::M))
+            .flex_none()
             .flex()
             .items_center()
             .gap(px(space::XS))

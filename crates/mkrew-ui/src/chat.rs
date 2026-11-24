@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use mkrew_core::thread::{PlanStatus, PlanStep, Subagent, ToolCall, short_model};
-use mkrew_protocol::{Recap, SessionKind, SessionUsageEvent};
+use mkrew_protocol::{Recap, SessionKind, SessionUsageEvent, TspState};
 use ulid::Ulid;
 
 use crate::docs::Shown;
@@ -15,9 +15,12 @@ use crate::thread_view::{Page, PageItem, PageTurn};
 use crate::{theme, usage};
 
 /// Whether a pane can show Chat: an agent whose profile is a shipped one with a readable
-/// transcript format (Claude, Codex, omp), or any agent whose transcript the daemon found.
-pub fn available(kind: SessionKind, profile: &str, has_transcript: bool) -> bool {
-    kind == SessionKind::Agent
+/// transcript format (Claude, Codex, omp), or any agent whose transcript the daemon found. Never
+/// while the session has TSP on (`tsp` is not `Off`): omp draws its own surface or, in fallback,
+/// the terminal grid (ADR 0107).
+pub fn available(kind: SessionKind, profile: &str, has_transcript: bool, tsp: TspState) -> bool {
+    tsp == TspState::Off
+        && kind == SessionKind::Agent
         && (has_transcript
             || matches!(
                 AgentLogo::of(profile),
@@ -747,6 +750,12 @@ pub fn chips_width(chips: Chips, ctx: FitCtx) -> f32 {
         .filter(|(shown, _)| *shown)
         .map(|(_, width)| width)
         .sum::<f32>()
+}
+
+/// Whether the Prompts and sparkle buttons show: they stay only while the row, after
+/// [`fit_chips`] dropped what it could, still fits whole, so a half icon never shows.
+pub fn tools_fit(shown: Chips, room: f32, ctx: FitCtx) -> bool {
+    chips_width(shown, ctx) <= room
 }
 
 /// What of `want` fits in `room` px: chips drop from the right, in the order clock, stats,
@@ -1526,6 +1535,28 @@ mod tests {
     }
 
     #[test]
+    fn the_tools_drop_whole_when_even_the_model_chip_leaves_no_room_for_them() {
+        let ctx = FitCtx::default();
+        let only_model = Chips {
+            effort: false,
+            permission: false,
+            branch: false,
+            stats: false,
+            clock: false,
+            ..all_chips()
+        };
+        let tight = chips_width(only_model, ctx) - 1.0;
+        let shown = fit_chips(all_chips(), tight, ctx);
+        assert_eq!(shown, only_model, "every optional chip is gone first");
+        assert!(
+            !tools_fit(shown, tight, ctx),
+            "then the Prompts and sparkle buttons go"
+        );
+        let roomy = chips_width(only_model, ctx);
+        assert!(tools_fit(fit_chips(all_chips(), roomy, ctx), roomy, ctx));
+    }
+
+    #[test]
     fn a_long_branch_never_pushes_the_send_button_out_of_the_card() {
         let long = branch_chip("feat/terraform-phase0");
         let width = branch_width(&long);
@@ -1725,19 +1756,40 @@ mod tests {
     #[test]
     fn only_agents_with_a_readable_transcript_can_chat() {
         use SessionKind::{Agent, Shell};
-        assert!(available(Agent, "claude", false));
-        assert!(available(Agent, "codex", false));
-        assert!(available(Agent, "omp", false));
-        assert!(!available(Agent, "copilot", false), "no readable format");
+        use mkrew_protocol::TspState::Off;
+        assert!(available(Agent, "claude", false, Off));
+        assert!(available(Agent, "codex", false, Off));
+        assert!(available(Agent, "omp", false, Off));
         assert!(
-            !available(Agent, "my-agent", false),
+            !available(Agent, "copilot", false, Off),
+            "no readable format"
+        );
+        assert!(
+            !available(Agent, "my-agent", false, Off),
             "unknown until its transcript is found"
         );
         assert!(
-            available(Agent, "my-agent", true),
+            available(Agent, "my-agent", true, Off),
             "a copied profile whose transcript is found"
         );
-        assert!(!available(Shell, "claude", true), "a shell pane");
+        assert!(!available(Shell, "claude", true, Off), "a shell pane");
+    }
+
+    /// An omp pane with TSP on is the surface (or, in fallback, the terminal grid): no Chat
+    /// switch, whatever the transcript says.
+    #[test]
+    fn a_pane_with_tsp_on_has_no_chat() {
+        use SessionKind::Agent;
+        use mkrew_protocol::TspState::{Fallback, Live, Off, Waiting};
+        for tsp in [Waiting, Live, Fallback] {
+            assert!(!available(Agent, "omp", true, tsp), "{tsp:?}");
+        }
+        assert!(available(Agent, "omp", true, Off));
+        assert!(!effective(
+            available(Agent, "omp", true, Live),
+            Some(true),
+            true
+        ));
     }
 
     #[test]

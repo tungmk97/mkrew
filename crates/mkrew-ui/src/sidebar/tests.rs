@@ -58,6 +58,7 @@ fn session(project: &Project, started_at: i64, state: SessionState) -> Session {
         pinned: false,
         position: 0.0,
         plan_path: None,
+        tsp: mkrew_protocol::TspState::Off,
     }
 }
 

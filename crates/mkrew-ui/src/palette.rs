@@ -85,6 +85,8 @@ pub struct Context {
     pub transcript: bool,
     /// The focused agent pane can show Chat (a readable transcript format).
     pub chat: bool,
+    /// The focused agent pane shows a TSP surface (or its starting state): no terminal grid.
+    pub surface: bool,
     /// The focused agent pane's session has a linked plan.
     pub plan_linked: bool,
     /// The focused pane's prompt composer is open.
@@ -340,7 +342,14 @@ impl Extra {
                 context.detached_window
             }
             Self::PanePin => in_view(View::Terminals) && context.tabs > 0 && context.pane,
-            Self::PaneReading | Self::AgentLinkPlan => {
+            // Reading width caps the terminal grid: a TSP surface has none to cap.
+            Self::PaneReading => {
+                in_view(View::Terminals)
+                    && context.tabs > 0
+                    && context.agent_pane
+                    && !context.surface
+            }
+            Self::AgentLinkPlan => {
                 in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
             }
             Self::WorkspaceDefaultShell | Self::WorkspaceMoveUp | Self::WorkspaceMoveDown => {
@@ -787,13 +796,17 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ZoomPane
         | Command::RenamePane
         | Command::ClosePane => on_panes,
-        Command::Copy
-        | Command::Paste
-        | Command::PageUp
-        | Command::PageDown
-        | Command::CopyMode
-        | Command::LinkHints => on_panes && context.terminal,
-        Command::Find => (on_panes && context.terminal) || context.file_pane || in_view(View::Docs),
+        // A surface pane has no grid: Copy, Paste, PageUp and PageDown reach it (`tsp_command`),
+        // copy mode, link hints and find do not.
+        Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
+            on_panes && context.terminal
+        }
+        Command::CopyMode | Command::LinkHints => on_panes && context.terminal && !context.surface,
+        Command::Find => {
+            (on_panes && context.terminal && !context.surface)
+                || context.file_pane
+                || in_view(View::Docs)
+        }
         Command::OpenComposer => on_panes && context.agent_pane,
         Command::ToggleChat => on_panes && context.agent_pane && context.chat,
         Command::SendSelection => {

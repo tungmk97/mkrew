@@ -155,7 +155,9 @@ async fn daemon_to_browser(
                     }
                 }
             }
-            out.send(browser_message(frame)?).await?;
+            if for_browser(&frame) {
+                out.send(browser_message(frame)?).await?;
+            }
         }
         let n = rx.read(&mut buf).await?;
         if n == 0 {
@@ -312,6 +314,11 @@ pub fn browser_message(frame: Frame) -> serde_json::Result<WsMessage> {
         }
         Frame::Message(message) => WsMessage::text(json_with_ansi(&message)?),
     })
+}
+
+/// False for what the page cannot use: `tsp.update` (omp's surface, ADR 0107) is a frame per redraw and the page never draws it.
+fn for_browser(frame: &Frame) -> bool {
+    !matches!(frame, Frame::Message(Message::Event(Event::TspUpdate(_))))
 }
 
 /// The (id, session, log files) of a reply to a browser `session.history` request. Any reply
@@ -537,6 +544,30 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_str(&json_with_ansi(&event).unwrap()).unwrap();
         assert_eq!(value, serde_json::to_value(&event).unwrap());
+    }
+
+    #[test]
+    fn tsp_updates_stay_off_the_phone_and_other_events_go_through() {
+        let tsp = Frame::Message(Message::Event(Event::TspUpdate(Box::new(
+            mkrew_protocol::TspUpdate {
+                session_id: Ulid::new(),
+                surface: "s:1".into(),
+                change: mkrew_protocol::TspChange::Closed { keep: true },
+            },
+        ))));
+        assert!(!for_browser(&tsp));
+        let state = Frame::Message(Message::Event(Event::SessionState(SessionStateEvent {
+            session_id: Ulid::new(),
+            state: SessionState::Working,
+            source: StateSource::Hook,
+            changed_at: 1,
+        })));
+        assert!(for_browser(&state));
+        let output = Frame::Output {
+            session_id: Ulid::new(),
+            data: vec![b'x'],
+        };
+        assert!(for_browser(&output));
     }
 
     #[test]

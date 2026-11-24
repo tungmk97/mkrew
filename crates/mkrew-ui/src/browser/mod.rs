@@ -1,4 +1,4 @@
-//! Browser panes (spec 2026-11-24, ADR 0110): what the Shell keeps per page, what a page
+//! Browser panes (spec 2026-11-24, ADR 0111): what the Shell keeps per page, what a page
 //! reports, and whether this machine can show pages at all. Pure, no gpui, except
 //! `native` (Windows and macOS), which wraps the `wry` view.
 

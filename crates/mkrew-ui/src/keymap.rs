@@ -71,9 +71,9 @@ pub enum Command {
     SplitAgent,
     /// Split the focused pane to the right with the workspace's default shell (+ Shell).
     SplitShell,
-    /// Split the focused pane to the right with a new browser pane (ADR 0110).
+    /// Split the focused pane to the right with a new browser pane (ADR 0111).
     SplitBrowser,
-    /// Focus the browser pane's address field (ADR 0110).
+    /// Focus the browser pane's address field (ADR 0111).
     BrowserAddress,
     BrowserBack,
     BrowserForward,
@@ -264,7 +264,7 @@ pub const DOCS_CONTEXT: &str = "Docs";
 /// Key context of a file pane (its editor).
 pub const EDITOR_CONTEXT: &str = "Editor";
 
-/// Key context of a browser pane (ADR 0110).
+/// Key context of a browser pane (ADR 0111).
 pub const BROWSER_CONTEXT: &str = "Browser";
 
 /// Key context of the file tree in the right panel while it has the keyboard.

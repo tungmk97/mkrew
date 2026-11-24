@@ -73,6 +73,7 @@ mod task_dialog;
 mod theme_gallery;
 pub(crate) mod thread_panel;
 mod toasts;
+pub(crate) mod tsp_view;
 mod update;
 mod voice_input;
 mod workspace;

@@ -233,21 +233,22 @@ pub mod opacity {
     pub const DRAG_SOURCE: f32 = 0.4;
 }
 
-/// Half the gap between split panes: each pane is inset by it, so panes sit `2 * PANE_HALF_GAP`
-/// (8 px) apart and the same from the frame's edges (the Tern look, ADR 0108).
-pub const PANE_HALF_GAP: f32 = space::XS;
-
 /// Least contrast ratio between [`Theme::pane_gap`] and [`Theme::terminal_bg`] (Tern measures
 /// about 1.07:1). A unit test holds every built-in theme to it and [`Theme::from_palette`]
 /// derives the gap to meet it.
 pub const PANE_GAP_MIN_CONTRAST: f32 = 1.06;
 
 /// Thickness of the stripe along the top edge of a pane (needs input, session color or focus
-/// among several, ADR 0108) and of the grip shown on the drag strip.
+/// among several, ADR 0108) and of an underlined tab (the Git panel's repo and section tabs).
 pub const PANE_ACCENT_WIDTH: f32 = 2.0;
-/// Height of the strip along the top edge of a pane in a split tab: hovering it shows a grip,
-/// dragging it moves the pane (ADR 0106).
-pub const PANE_GRIP_HEIGHT: f32 = 8.0;
+/// The drag handle at the top centre of a pane in a split tab (ADR 0110): while the pointer is
+/// over the pane a slim bar shows; over the handle it becomes a chip with a six-dot grip, and
+/// dragging it moves the pane. Only the handle takes the mouse, not the pane's whole top edge.
+pub const PANE_GRIP_WIDTH: f32 = 40.0;
+pub const PANE_GRIP_HEIGHT: f32 = 20.0;
+/// The slim bar of the handle, shown while the pointer is over the pane.
+pub const PANE_GRIP_BAR_WIDTH: f32 = 32.0;
+pub const PANE_GRIP_BAR_HEIGHT: f32 = 4.0;
 
 /// Thickness of the accent line marking where a dragged sidebar row or tab will land.
 pub const DROP_LINE_WIDTH: f32 = 2.0;
@@ -395,6 +396,35 @@ pub const COMPOSER_MAX_HEIGHT: f32 = 160.0;
 /// card line up in it (ADR 0105).
 pub const CHAT_COLUMN_WIDTH: f32 = 760.0;
 
+/// Width of the todo popover an omp pane opens from its hud (TSP `checklist`, ADR 0107).
+pub const TSP_POPOVER_WIDTH: f32 = 420.0;
+
+/// Tallest share of the pane's list area the todo popover takes; it scrolls past that.
+pub const TSP_POPOVER_MAX_FRACTION: f32 = 0.6;
+
+/// Shortest height the popover is capped at, before the list has been laid out.
+pub const TSP_POPOVER_MIN_HEIGHT: f32 = 120.0;
+
+/// The accent bar on the left of the picked row of an omp `ask` card.
+pub const TSP_ASK_BAR_WIDTH: f32 = 2.0;
+
+/// The ring of an omp `ask` timeout.
+pub const TSP_RING_SIZE: f32 = 24.0;
+
+/// Space at both sides of the Chat page's centered column (`chat_column`, ADR 0105).
+pub const CHAT_COLUMN_PADDING: f32 = space::XL;
+
+/// Width of the key column of a TSP `kv` and of a `progress` or `meter` bar.
+pub const TSP_KEY_WIDTH: f32 = 96.0;
+
+/// Widest an `overlay` of `size` `sm` (and `md`) is in a TSP pane; `lg` and `full` take the
+/// Chat column.
+pub const TSP_OVERLAY_SM_WIDTH: f32 = 384.0;
+pub const TSP_OVERLAY_MD_WIDTH: f32 = 576.0;
+
+/// Widest an inline TSP `image` is.
+pub const TSP_IMAGE_MAX_WIDTH: f32 = 256.0;
+
 /// Widest share of the Chat page a prompt card takes (it sits at the right).
 pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
 
@@ -433,6 +463,28 @@ pub const COMPOSER_FIXED_WIDTH: f32 = 82.0;
 pub const SEND_BUTTON_SIZE: f32 = 28.0;
 /// The thin context meter above the Chat composer card.
 pub const CONTEXT_METER_HEIGHT: f32 = 2.0;
+
+/// The hover area of a tick on the context meter of an omp dock (a mark such as the
+/// auto-compact point; its tooltip is the mark's title). The 1 px line sits in the middle.
+pub const CONTEXT_MARK_HIT_WIDTH: f32 = space::M;
+pub const CONTEXT_MARK_HIT_HEIGHT: f32 = CONTEXT_METER_HEIGHT + space::XS;
+
+/// Room reckoned for the bar of an omp dock (px at 13 px UI size, like the `COMPOSER_*` ones):
+/// the round send or stop button and its gap.
+pub const TSP_BAR_FIXED_WIDTH: f32 = SEND_BUTTON_SIZE + space::S;
+/// The model pill without its name: padding, border, chevron, gaps and the gap after it.
+pub const TSP_MODEL_CHROME_WIDTH: f32 = 48.0;
+/// The model name never truncates below this many characters.
+pub const TSP_MODEL_MIN_CHARS: usize = 6;
+/// The four-step effort glyph of the effort chip.
+pub const TSP_EFFORT_GLYPH_WIDTH: f32 = 28.0;
+/// Characters reckoned for a live elapsed time inside a fact (`12m 03s`).
+// ponytail: `1h 02m 03s` is 10 characters and clips (the facts cell is `overflow_hidden`, so
+// nothing else moves); measure the node's text if long sessions matter.
+pub const TSP_ELAPSED_CHARS: usize = 7;
+/// One average character of the UI font at `META` size (the effort label, the model name); the
+/// facts and the cost are mono and use `COMPOSER_MONO_CHAR_WIDTH`.
+pub const TSP_UI_CHAR_WIDTH: f32 = 6.6;
 
 /// Width of the "Undo task" dialog (wider: it shows a diff).
 pub const UNDO_DIALOG_WIDTH: f32 = 720.0;
@@ -496,8 +548,9 @@ pub const FILE_TREE_INDENT: f32 = space::M;
 /// Side of the dot on a Files tree folder holding changes.
 pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 
-/// Height of a Files tree row (the tree is a uniform list: every row is this high).
-pub const TREE_ROW_HEIGHT: f32 = 28.0;
+/// Height of a Files tree row (the tree is a uniform list: every row is this high). Dense like
+/// Tern's trees (ADR 0110).
+pub const TREE_ROW_HEIGHT: f32 = 24.0;
 
 /// Folder / file icon in a Files tree row.
 pub const TREE_ICON_SIZE: f32 = 15.0;
@@ -553,9 +606,10 @@ pub const SLASH_HINT_MAX_FRACTION: f32 = 0.25;
 /// Tallest the Git view's commit message box grows (it scrolls past that, ~8 lines).
 pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
 
-/// One row of the Git changed-file list (uniform list: every row has this box).
-pub const GIT_FILE_ROW_HEIGHT: f32 = 34.0;
-/// The change-letter badge (M, A, D …) of a Git file row.
+/// One row of the Git changed-file list (uniform list: every row has this box; ADR 0110).
+pub const GIT_FILE_ROW_HEIGHT: f32 = 28.0;
+/// The box of the change letter (M, A, D …) of a Git file row: the letter is colored, the box
+/// has no fill (ADR 0110); it keeps the names in one column.
 pub const GIT_BADGE_SIZE: f32 = 18.0;
 
 /// The History's lane graph (SPEC §12B): one lane's width, a commit's dot, a line's width.
@@ -853,9 +907,9 @@ pub struct Theme {
     /// `shared()`, not in `dark()` / `light()`.
     pub qr_dark: u32,
     pub qr_light: u32,
-    /// The frame behind and between the panes, and the title bar fill (ADR 0108): a step off
-    /// `terminal_bg` (darker, or lighter when `terminal_bg` has no room below it), at least
-    /// [`PANE_GAP_MIN_CONTRAST`] away, so a pane looks raised.
+    /// The title bar fill and what shows behind the panes before they paint (ADR 0108, ADR
+    /// 0109): a step off `terminal_bg` (darker, or lighter when `terminal_bg` has no room below
+    /// it), at least [`PANE_GAP_MIN_CONTRAST`] away, so the bar reads apart from the panes.
     pub pane_gap: u32,
     /// Faint accent: the top stripe of the focused split pane, and the border of a picked card,
     /// row or comment (accent halfway to `bg`, SPEC §14).
@@ -960,7 +1014,7 @@ pub struct Theme {
     pub terminal_cursor_width: f32,
     /// Weight of a dim (SGR 2) foreground blended towards the background, 0–1.
     pub dim_blend: f32,
-    /// Opacity of the overlay that dims unfocused panes (~5%).
+    /// Opacity of the overlay that dims unfocused panes among several (20 %, ADR 0109).
     pub unfocused_pane_dim: f32,
     /// The palette from before the restyle, kept for the sidebar's session list (projects,
     /// session rows, RUN), which the restyle leaves as it was. `None` on that palette itself.
@@ -1497,7 +1551,7 @@ impl Theme {
             terminal_underline_thickness: 1.0,
             terminal_cursor_width: 2.0,
             dim_blend: 0.6,
-            unfocused_pane_dim: 0.05,
+            unfocused_pane_dim: 0.2,
             classic: None,
         }
     }
@@ -2392,8 +2446,12 @@ pub fn title_bar_inset(os: Os, fullscreen: bool) -> f32 {
 pub const TITLE_BAR_HEIGHT: f32 = 42.0;
 /// The right panel's tab row (the terminal tabs are in the title bar).
 pub const TAB_STRIP_HEIGHT: f32 = 44.0;
+/// One icon tab of the right panel's tab row (Files, Session, Git; ADR 0110).
+pub const PANEL_TAB_HEIGHT: f32 = 28.0;
 /// The Git view's repository tabs (multi-repo workspaces): a tab strip.
 pub const GIT_REPO_STRIP_HEIGHT: f32 = 42.0;
+/// The Git view's Working / Vs. base / History tabs: underlined text tabs (ADR 0110).
+pub const GIT_SECTION_TAB_HEIGHT: f32 = 36.0;
 pub const WORKSPACE_ROW_HEIGHT: f32 = 30.0;
 pub const SESSION_ROW_HEIGHT: f32 = 30.0;
 /// Height of the Plan card's progress bar, and of the thin one under the selected sidebar row

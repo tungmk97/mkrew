@@ -25,7 +25,6 @@ impl Shell {
             .size_full()
             .flex()
             .flex_col()
-            .rounded(px(radius::MEDIUM))
             .overflow_hidden()
             .font_family(theme.ui_font_family.clone())
             .bg(rgb(theme.surface));

@@ -98,7 +98,7 @@ impl ChatUi {
 
 impl Shell {
     /// Sessions on screen in any window (the main window's tab and the detached ones').
-    fn visible_sessions(&self) -> Vec<Ulid> {
+    pub(crate) fn visible_sessions(&self) -> Vec<Ulid> {
         (self.hosted_sessions(self.main_visible).into_iter())
             .map(|(_, session)| session)
             .collect()
@@ -107,7 +107,7 @@ impl Shell {
     /// `info`'s pane can show Chat.
     pub(crate) fn chat_available(&self, info: &Session) -> bool {
         let has_transcript = (self.usages.get(info.id)).is_some_and(|u| u.transcript.is_some());
-        chat::available(info.kind, &info.agent_profile, has_transcript)
+        chat::available(info.kind, &info.agent_profile, has_transcript, info.tsp)
     }
 
     /// `info`'s pane shows Chat: its saved mode (the layout leaf), else `[ui] chat_default`.
@@ -1081,13 +1081,24 @@ fn keyboard_stop(
 /// `el` in the Chat page's centered column: at most [`theme::CHAT_COLUMN_WIDTH`] wide with
 /// `space::XL` at both sides.
 pub(crate) fn chat_column(el: impl IntoElement) -> gpui::Div {
-    div().w_full().flex().justify_center().child(
-        div()
-            .w_full()
-            .max_w(px(theme::CHAT_COLUMN_WIDTH))
-            .px(px(space::XL))
-            .child(el),
-    )
+    chat_column_in(el, false)
+}
+
+/// [`chat_column`]; `bounded`: the column is as tall as its parent leaves it (a flex column
+/// whose content may shrink and scroll inside), not as tall as its content.
+pub(crate) fn chat_column_in(el: impl IntoElement, bounded: bool) -> gpui::Div {
+    let outer = div().w_full().flex().justify_center();
+    let inner = div()
+        .w_full()
+        .max_w(px(theme::CHAT_COLUMN_WIDTH))
+        .px(px(theme::CHAT_COLUMN_PADDING));
+    if bounded {
+        outer
+            .min_h_0()
+            .child(inner.min_h_0().flex().flex_col().child(el))
+    } else {
+        outer.child(inner.child(el))
+    }
 }
 
 /// omp's recap: the history icon and the text in italic muted.
