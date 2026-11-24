@@ -19,6 +19,9 @@ use super::wire::{self, Incoming, Piece, Splitter};
 /// Starting view meanwhile, and only a terminal layer that drops TSP pays the whole wait.
 pub const HELLO_WAIT: Duration = Duration::from_secs(10);
 
+/// After a hello-wait fallback the engine keeps listening for a late hello this long (from the first output), then the fallback is final.
+pub const PROVISIONAL_WAIT: Duration = Duration::from_secs(60);
+
 /// The kinds advertised in the hello (spec 7.1).
 pub const P1_KINDS: &[&str] = &[
     "col",
@@ -215,22 +218,28 @@ impl Engine {
         }
     }
 
-    /// When to call [`Engine::on_deadline`]: only while no hello was answered, counted from the first output.
+    /// When to call [`Engine::on_deadline`]: the hello wait while no hello was answered, then the end of the provisional window; both count from the first output.
     pub fn deadline(&self) -> Option<Instant> {
-        if self.state == TspState::Waiting && !self.hello_ok {
-            self.first_output.map(|t| t + HELLO_WAIT)
-        } else {
-            None
+        match (self.state, self.provisional) {
+            (TspState::Waiting, _) if !self.hello_ok => self.first_output.map(|t| t + HELLO_WAIT),
+            (TspState::Fallback, true) => self.first_output.map(|t| t + PROVISIONAL_WAIT),
+            _ => None,
         }
     }
 
-    /// Waiting -> provisional Fallback once the deadline passed (a late hello still wins).
+    /// Waiting -> provisional Fallback once the hello wait passed (a late hello still wins; held bytes stay held
+    /// so a hello split across the deadline still parses). Past `PROVISIONAL_WAIT` the fallback turns final and
+    /// the held bytes come out as plain.
     pub fn on_deadline(&mut self, now: Instant) -> Vec<Step> {
         let mut steps = Vec::new();
         if self.deadline().is_some_and(|d| now >= d) {
-            self.pass_pending(&mut steps);
-            self.fall_back("no TSP reply from the terminal layer".into(), &mut steps);
-            self.provisional = true;
+            if self.provisional {
+                self.provisional = false;
+                self.pass_pending(&mut steps);
+            } else {
+                self.fall_back("no TSP reply from the terminal layer".into(), &mut steps);
+                self.provisional = true;
+            }
         }
         steps
     }

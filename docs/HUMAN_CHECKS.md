@@ -60,7 +60,7 @@ With a real omp (18.13.2 or newer), dark and light themes, a wide and a narrow p
   An omp started by hand in a shell pane also draws rows.
 - [ ] **Fallback:** rename `conpty.dll` next to the daemon, restart the daemon, start an omp pane; about 10 s after its first output (resumed and concurrent starts need over 2 s to send the hello) the pane shows the terminal grid, with one toast "omp is drawing as text: ..." and a log line `conpty = "system"`; nothing is blank.
   Put the file back and restart the daemon.
-  On Windows 11 24H2 (build 26100) the system ConPTY also passes TSP through (observed: a fresh omp went Live with `conpty="system"`), so renaming `conpty.dll` does not force the fallback there; use `PI_TUI_NATIVE` / an omp without TSP or an older Windows to see it.
+  On Windows 11 24H2 (build 26100) the system ConPTY was observed passing TSP through (2026-11-24; a fresh omp went Live with `conpty="system"`), but the sideload stays the supported path, so renaming `conpty.dll` does not force the fallback there; use `PI_TUI_NATIVE` / an omp without TSP or an older Windows to see it.
 - [ ] **Restart with three panes:** restart the daemon (`mk daemon stop`, start the UI) with three omp panes open: all three come back as native surfaces, none falls back to text.
 - [ ] **Slow start:** start three omp panes at once right after a reboot or under load: any that showed text switches to the native surface once omp is up.
 - [ ] **Exited omp:** quit omp (`/exit`); the pane keeps its last conversation read-only under the exited notice.

@@ -22,7 +22,7 @@ A throwaway probe on 2026-11-23 ran `omp.exe` 18.13.2 in a pseudo console with `
 | the same | `0xF` (passthrough) | yes | yes |
 | system | `0xF` | no | no |
 
-The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already loads a `conpty.dll` that sits next to the executable, with the flags `0x7`, so the PTY code does not change. macOS and Linux PTYs pass APC through unchanged.
+Older system ConPTYs drop APC; the newer one passes it. On Windows 11 24H2 (build 26100) the system ConPTY was observed passing TSP through (2026-11-24), but the sideload stays the supported path. `portable-pty` 0.9 already loads a `conpty.dll` that sits next to the executable, with the flags `0x7`, so the PTY code does not change. macOS and Linux PTYs pass APC through unchanged.
 
 ## Decision
 
@@ -51,7 +51,7 @@ The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already
   `main` scrolls and follows its end, `dock` stays under it, `layer` and `overlay` are a modal inside the pane, a `screen` surface covers the pane.
   Keys, paste and drops go to the PTY as in a terminal pane; clicks on nodes with actions go to omp as `tsp.event`.
   `fallback` shows the terminal grid and one info toast.
-  The hello timer's fallback is provisional: after 10 s the pane shows the terminal grid with a notice, and a hello that still arrives later is answered and the pane switches to the native surface (omp's startup can exceed any fixed wait under load); explicit fallbacks (unsupported hello version, omp closing the surface with `x {keep:false}`) are final.
+  The hello timer's fallback is provisional: after 10 s the pane shows the terminal grid with a notice, and a hello that still arrives within 60 s of the first output is answered and the pane switches to the native surface (omp's startup can exceed any fixed wait under load); after 60 s, and for the explicit fallbacks (unsupported hello version, omp closing the surface with `x {keep:false}`), the fallback is final.
   An exited session keeps its last document, read-only.
 - The dock is drawn as Tern's composer, from the pieces of the Chat composer card (ADR 0105, `shell/composer.rs`), so Chat and an omp pane look the same with omp as the only source of the content (spec 7.8).
   The pieces are the context meter, the card, the model pill, quiet fact chips (with Chat's fact colors for the stats Chat also shows), the round Send and Stop buttons, the working row with its Stop, the hud as one glass pill split by dividers, and the todo HUD.
@@ -84,7 +84,7 @@ The system ConPTY drops APC; the newer one passes it. `portable-pty` 0.9 already
 - TSP: chosen.
   omp already speaks it, Tern is its reference client, it covers the composer now and the Agent Hub and Jobs later, and with the hello unanswered omp draws plain rows, so the failure mode is today's terminal pane.
   Risks: the protocol is Tern's and was read from one omp build (18.13.2); the hello's version check and the fallback contain a mismatch.
-- Keep the system ConPTY and turn on passthrough (`0xF`): rejected, the spike's last row shows the system ConPTY still drops APC.
+- Keep the system ConPTY and turn on passthrough (`0xF`): rejected, the spike's last row shows the system ConPTY still drops APC (on the spike's Windows; Windows 11 24H2 was later observed passing it, see Context).
 - Parse TSP in the UI: rejected, see Decision (several clients, remote windows, no UI attached).
 - Use omp's palette (`t`): rejected, SPEC section 14 gives Mkrew one look in both themes.
 - `TERM_PROGRAM=tern` and OSC 1337: rejected in ADR 0105 and still rejected; `TERM_PROGRAM=tern` would also switch on omp's Tern browser backend.

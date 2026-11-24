@@ -172,7 +172,11 @@ fn the_deadline_runs_from_the_first_output_until_a_hello_is_answered() {
         "{steps:?}"
     );
     assert_eq!(e.state(), TspState::Fallback);
-    assert_eq!(e.deadline(), None);
+    assert_eq!(
+        e.deadline(),
+        Some(t + PROVISIONAL_WAIT),
+        "the provisional end"
+    );
     assert_eq!(
         e.snapshot().reason.as_deref(),
         Some("no TSP reply from the terminal layer"),
@@ -746,23 +750,67 @@ fn a_late_frame_naming_evicted_ids_fails_per_op_with_one_error_and_one_ack() {
 }
 
 #[test]
-fn a_held_tail_comes_out_as_plain_when_the_deadline_falls_back() {
-    for tail in [&b"\x1b"[..], b"\x1b_ts"] {
-        let t = Instant::now();
-        let mut e = Engine::new(120, true);
-        let mut chunk = b"rows".to_vec();
-        chunk.extend_from_slice(tail);
-        assert_eq!(
-            merged(e.on_output(t, &chunk)),
-            vec![Step::Plain(b"rows".to_vec())]
-        );
-        let steps = e.on_deadline(t + HELLO_WAIT);
-        assert!(
-            matches!(steps.as_slice(), [Step::Plain(p), Step::State(TspState::Fallback), Step::Warn(_)] if p == tail),
-            "{steps:?}"
-        );
-        assert_eq!(e.on_output(t, b"next"), vec![Step::Plain(b"next".to_vec())]);
-    }
+fn a_hello_held_across_the_deadline_is_answered_when_it_completes() {
+    let t = Instant::now();
+    let mut e = Engine::new(120, true);
+    let hello = hello_query(json!([1]));
+    let (head, rest) = hello.split_at(hello.len() / 2);
+    assert!(e.on_output(t, head).is_empty());
+    let steps = e.on_deadline(t + HELLO_WAIT);
+    assert!(
+        matches!(
+            steps.as_slice(),
+            [Step::State(TspState::Fallback), Step::Warn(_)]
+        ),
+        "the held head stays held: {steps:?}"
+    );
+    let steps = e.on_output(t + HELLO_WAIT, rest);
+    assert!(
+        matches!(steps.as_slice(), [Step::Reply(r), Step::State(TspState::Live)] if parse(r).1["r"] == "hello"),
+        "{steps:?}"
+    );
+    assert_eq!(e.state(), TspState::Live);
+}
+
+#[test]
+fn a_held_escape_comes_out_as_plain_after_the_deadline() {
+    let t = Instant::now();
+    let mut e = Engine::new(120, true);
+    assert_eq!(
+        merged(e.on_output(t, b"rows\x1b")),
+        vec![Step::Plain(b"rows".to_vec())]
+    );
+    e.on_deadline(t + HELLO_WAIT);
+    assert_eq!(
+        merged(e.on_output(t + HELLO_WAIT, b"[c")),
+        vec![Step::Plain(b"\x1b[c".to_vec())]
+    );
+}
+
+#[test]
+fn the_fallback_turns_final_after_the_provisional_window_and_flushes_held_bytes() {
+    let t = Instant::now();
+    let mut e = Engine::new(120, true);
+    e.on_output(t, b"rows\x1b_ts");
+    e.on_deadline(t + HELLO_WAIT);
+    assert!(!e.is_passthrough());
+    assert_eq!(e.deadline(), Some(t + PROVISIONAL_WAIT));
+    assert!(
+        e.on_deadline(t + PROVISIONAL_WAIT - Duration::from_millis(1))
+            .is_empty()
+    );
+    assert_eq!(
+        e.on_deadline(t + PROVISIONAL_WAIT),
+        vec![Step::Plain(b"\x1b_ts".to_vec())]
+    );
+    assert!(e.is_passthrough());
+    assert_eq!(e.deadline(), None);
+    let hello = hello_query(json!([1]));
+    assert_eq!(
+        e.on_output(t + PROVISIONAL_WAIT, &hello),
+        vec![Step::Plain(hello)]
+    );
+    assert_eq!(e.state(), TspState::Fallback);
 }
 
 #[test]

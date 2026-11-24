@@ -271,6 +271,10 @@ fn a_hello_after_the_timer_fallback_is_answered_and_the_session_goes_live() {
     );
     let snapshot = wait_frames(&mut client, id);
     assert_eq!(snapshot.state, TspState::Live);
+    // Hook-only again: the screen's guess from the text phase is gone and the resting screen
+    // (idle_after is 200 ms here) does not make it idle.
+    std::thread::sleep(Duration::from_millis(1000));
+    assert_eq!(client.session(id).state, SessionState::Unknown);
     assert_eq!(snapshot.surfaces.len(), 1, "{snapshot:?}");
     assert_eq!(client.session(id).tsp, TspState::Live);
     wait_record(&record, |text| text.contains("\u{1b}_tsp;r;"));
