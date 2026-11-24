@@ -300,7 +300,7 @@ Notes from the smoke record (omp 18.13.2):
 | A client misses updates | It sees a sequence gap and asks `tsp.snapshot`. |
 | Document bound exceeded | The oldest `main` rows are evicted and reported `gone`; the pane shows "Earlier messages were trimmed" at the top. |
 | No UI attached | omp never stalls: the daemon acks each frame after applying it. |
-| Daemon restart (startup resume) | The resumed omp starts a new surface; nothing is restored from the old one. |
+| Daemon restart (startup resume) | The resumed omp starts a new surface; Mkrew restores nothing from the old one, and omp's own `--resume` replays its conversation into the new surface. |
 
 ## 9. Testing
 
