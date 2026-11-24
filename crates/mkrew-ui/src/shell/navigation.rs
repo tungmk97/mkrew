@@ -122,7 +122,7 @@ impl Shell {
         for path in found.open {
             self.open_document(
                 project_id,
-                path,
+                FileKey::project(path),
                 None,
                 mkrew_ui::documents::Place::NewTab,
                 window,
@@ -217,8 +217,8 @@ impl Shell {
     }
 
     /// Shows `path` of the files on `target` (the project, or a task worktree) as a file tab
-    /// with the caret on `line`. Another target starts the view over, so unsaved files are
-    /// asked about first (as the chooser does).
+    /// with the caret on `line`. The file is of that folder for good (`FileKey::task`); the
+    /// Files tree follows it.
     pub(crate) fn open_file_at(
         &mut self,
         project_id: Ulid,
@@ -228,21 +228,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.files_view(project_id).worktree_task_id != target {
-            let unsaved =
-                (self.documents.get(&project_id)).map_or_else(Vec::new, Documents::unsaved_paths);
-            if !unsaved.is_empty() {
-                let again: AfterSave = Box::new(move |shell, window, cx| {
-                    shell.open_file_at(project_id, target, path, line, window, cx);
-                });
-                return self.leave_documents(project_id, unsaved, again, window, cx);
-            }
-            self.set_files_target(project_id, target, window, cx);
-        }
+        self.set_files_target(project_id, target, window, cx);
         self.reveal_file(project_id, target, path.clone(), window, cx);
         self.open_document(
             project_id,
-            path,
+            FileKey::new(path, target),
             line.map(|line| (line, 1)),
             documents::Place::NewTab,
             window,
@@ -1117,7 +1107,7 @@ impl Shell {
     /// activating that window. Files, checkouts and commits all live in the main window (the
     /// Editor and Git views, the title bar summary), also when a detached window's palette
     /// picked them.
-    fn in_main_window(
+    pub(crate) fn in_main_window(
         &mut self,
         window: &mut Window,
         cx: &mut Context<'_, Self>,

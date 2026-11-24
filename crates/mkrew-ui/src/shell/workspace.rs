@@ -523,7 +523,11 @@ impl Shell {
             .then(|| self.workspace.and_then(|id| self.git.get(&id)))
             .flatten()
             .and_then(|view| view.worktree_task_id);
-        let needs = watches::Needs::of(self.workspace, files, git);
+        let open: Vec<Ulid> = (self.visible_files().into_iter())
+            .filter(|(project, ..)| Some(*project) == self.workspace)
+            .filter_map(|(_, file, _)| file.task)
+            .collect();
+        let needs = watches::Needs::of(self.workspace, files, git, open);
         let released = self.watch_needs.released(&needs);
         self.watch_needs = needs;
         let Some(connection) = self.connection.clone() else {

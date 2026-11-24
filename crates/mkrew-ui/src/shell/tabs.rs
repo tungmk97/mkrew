@@ -786,9 +786,9 @@ impl Shell {
     pub(crate) fn close_focused_pane(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         match self.focused_key(window) {
             Some(PaneKey::Session(session)) => self.close_pane(session, window, cx),
-            Some(PaneKey::File(path)) => {
+            Some(PaneKey::File(file)) => {
                 if let Some((project_id, _)) = self.tab_scope(window) {
-                    self.close_file_pane(project_id, path, window, cx);
+                    self.close_file_pane(project_id, file, window, cx);
                 }
             }
             Some(PaneKey::Diff) => {
@@ -892,29 +892,29 @@ impl Shell {
         project_id: Ulid,
         tab_ids: &[Ulid],
         keys: &[PaneKey],
-    ) -> Vec<String> {
+    ) -> Vec<FileKey> {
         let (Some(tabs), Some(docs)) =
             (self.tabs.get(&project_id), self.documents.get(&project_id))
         else {
             return Vec::new();
         };
         documents::needs_save_question(
-            &documents::open_paths(tabs),
-            &documents::open_paths_without(tabs, tab_ids, keys),
+            &documents::open_files(tabs),
+            &documents::open_files_without(tabs, tab_ids, keys),
             docs,
         )
     }
 
-    /// Closes the pane of file `path` (its ✕, Ctrl+W, the "removed" Close): unsaved text asks
+    /// Closes the pane of `file` (its ✕, Ctrl+W, the "removed" Close): unsaved text asks
     /// Save / Don't save / Cancel first.
     pub(crate) fn close_file_pane(
         &mut self,
         project_id: Ulid,
-        path: String,
+        file: FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let key = PaneKey::File(path);
+        let key = PaneKey::File(file);
         let dirty = self.dirty_on_close(project_id, &[], std::slice::from_ref(&key));
         let then: AfterSave =
             Box::new(move |shell, window, cx| shell.remove_leaf(project_id, key, window, cx));

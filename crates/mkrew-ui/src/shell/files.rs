@@ -22,40 +22,44 @@ impl Shell {
             .filter(|view| view.worktree_task_id == target)
     }
 
-    pub(crate) fn doc(&self, project_id: Ulid, path: &str) -> Option<&documents::Doc> {
-        self.documents.get(&project_id)?.get(path)
+    pub(crate) fn doc(&self, project_id: Ulid, file: &FileKey) -> Option<&documents::Doc> {
+        self.documents.get(&project_id)?.get(file)
     }
 
-    pub(crate) fn doc_mut(&mut self, project_id: Ulid, path: &str) -> Option<&mut documents::Doc> {
-        self.documents.get_mut(&project_id)?.get_mut(path)
+    pub(crate) fn doc_mut(
+        &mut self,
+        project_id: Ulid,
+        file: &FileKey,
+    ) -> Option<&mut documents::Doc> {
+        self.documents.get_mut(&project_id)?.get_mut(file)
     }
 
-    pub(crate) fn doc_view(&self, project_id: Ulid, path: &str) -> Option<&DocView> {
-        self.doc_views.get(&(project_id, path.to_owned()))
+    pub(crate) fn doc_view(&self, project_id: Ulid, file: &FileKey) -> Option<&DocView> {
+        self.doc_views.get(&(project_id, file.clone()))
     }
 
     /// The doc and view state of a file pane, made when missing. `mode` is the leaf's `md`.
     pub(crate) fn ensure_doc(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        file: &FileKey,
         mode: Option<MdMode>,
         cx: &App,
     ) {
         let mode = mode.unwrap_or(self.md_mode);
-        (self.documents.entry(project_id).or_default()).ensure(path, mode);
-        (self.doc_views.entry((project_id, path.to_owned()))).or_insert_with(|| DocView::new(cx));
+        (self.documents.entry(project_id).or_default()).ensure(file, mode);
+        (self.doc_views.entry((project_id, file.clone()))).or_insert_with(|| DocView::new(cx));
     }
 
     pub(crate) fn focus_doc(
         &self,
         project_id: Ulid,
-        path: &str,
+        file: &FileKey,
         which: DocFocus,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(view) = self.doc_view(project_id, path) {
+        if let Some(view) = self.doc_view(project_id, file) {
             window.focus(view.handle(which), cx);
         }
     }
@@ -63,16 +67,16 @@ impl Shell {
     pub(crate) fn doc_focused(
         &self,
         project_id: Ulid,
-        path: &str,
+        file: &FileKey,
         which: DocFocus,
         window: &Window,
     ) -> bool {
-        self.doc_view(project_id, path)
+        self.doc_view(project_id, file)
             .is_some_and(|view| view.handle(which).is_focused(window))
     }
 
-    /// The chooser picked `target` (SPEC §20E.1): the Files view starts over on it, and the
-    /// open files of the workspace close (their leaves are paths in the old worktree).
+    /// The chooser picked `target` (SPEC §20E.1): the Files tree starts over on it. Open files
+    /// stay as they are: each one knows its own folder (`FileKey::task`).
     pub(crate) fn set_files_target(
         &mut self,
         project_id: Ulid,
@@ -83,39 +87,10 @@ impl Shell {
         if self.files_view(project_id).worktree_task_id == target {
             return;
         }
-        let unsaved =
-            (self.documents.get(&project_id)).map_or_else(Vec::new, Documents::unsaved_paths);
-        if !unsaved.is_empty() {
-            let again: AfterSave = Box::new(move |shell, window, cx| {
-                shell.set_files_target(project_id, target, window, cx);
-            });
-            return self.leave_documents(project_id, unsaved, again, window, cx);
-        }
         self.files
             .insert(project_id, new_files_view(project_id, target));
-        self.close_file_leaves(project_id, window, cx);
         self.files_scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.refresh_files(project_id, window, cx);
-    }
-
-    /// Every file leaf of the workspace closes and its docs go (the target changed, or its
-    /// worktree is gone). Unsaved text was asked about first.
-    pub(crate) fn close_file_leaves(
-        &mut self,
-        project_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        self.documents.remove(&project_id);
-        self.doc_views
-            .retain(|(project, _), _| *project != project_id);
-        let keys: Vec<PaneKey> = (self.tabs.get(&project_id).into_iter())
-            .flat_map(|tabs| tabs.tabs().iter().flat_map(Tab::keys))
-            .filter(|key| matches!(key, PaneKey::File(_)))
-            .collect();
-        for key in keys {
-            self.remove_leaf(project_id, key, window, cx);
-        }
     }
 
     /// Lists the root and open folders of the Files view of `project_id` again.
@@ -184,30 +159,25 @@ impl Shell {
         .detach();
     }
 
-    /// `fs.read` of a doc's file, highlighted on the background executor; while one is in
-    /// flight, the file is read once more after it answers.
+    /// `fs.read` of a doc's file (of the folder its key names), highlighted on the background
+    /// executor; while one is in flight, the file is read once more after it answers.
     pub(crate) fn read_file(
         &mut self,
         project_id: Ulid,
-        path: String,
+        file: FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        let target = self.files_view(project_id).worktree_task_id;
         let docs = self.documents.entry(project_id).or_default();
-        let opening = docs.get(&path).map(|doc| doc.opening);
-        if !docs.begin_read(&path) {
+        let opening = docs.get(&file).map(|doc| doc.opening);
+        if !docs.begin_read(&file) {
             return;
         }
-        let read = connection.call::<FsContent>(Request::FsRead(FsReadParams {
-            project_id,
-            worktree_task_id: target,
-            path: path.clone(),
-            index_text: true,
-        }));
+        let read = connection
+            .call::<FsContent>(Request::FsRead(documents::read_params(project_id, &file)));
         let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             let read = match read.await {
@@ -221,20 +191,17 @@ impl Shell {
             };
             let _ = this.update_in(cx, |shell, window, cx| {
                 if let Err(error) = &read {
-                    tracing::warn!(%project_id, path, "fs.read failed: {error}");
+                    tracing::warn!(%project_id, path = %file.path, task = ?file.task, "fs.read failed: {error}");
                 }
-                // Dropped when its doc was closed (and maybe opened again), or the files
-                // started over on another worktree, meanwhile.
-                let same_target = (shell.files.get(&project_id))
-                    .is_some_and(|view| view.worktree_task_id == target);
+                // Dropped when its doc was closed (and maybe opened again) meanwhile.
                 let again = (shell.documents.get_mut(&project_id))
-                    .filter(|docs| same_target && docs.get(&path).map(|doc| doc.opening) == opening)
-                    .and_then(|docs| docs.read(&path, read));
-                if let Some(path) = again {
-                    shell.read_file(project_id, path, window, cx);
+                    .filter(|docs| docs.get(&file).map(|doc| doc.opening) == opening)
+                    .and_then(|docs| docs.read(&file, read));
+                if let Some(again) = again {
+                    shell.read_file(project_id, again, window, cx);
                 }
-                shell.show_pending_line(project_id, &path);
-                shell.build_preview(project_id, &path, window, cx);
+                shell.show_pending_line(project_id, &file);
+                shell.build_preview(project_id, &file, window, cx);
                 cx.notify();
             });
         })
@@ -245,35 +212,35 @@ impl Shell {
     pub(crate) fn retry_read(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        file: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         if self
-            .doc_mut(project_id, path)
+            .doc_mut(project_id, file)
             .is_some_and(documents::Doc::retry)
         {
-            self.read_file(project_id, path.to_owned(), window, cx);
+            self.read_file(project_id, file.clone(), window, cx);
         }
         cx.notify();
     }
 
-    /// Parses the `.md` file `path` of `project_id` for its preview when it is shown as one and
+    /// Parses the `.md` file `file` of `project_id` for its preview when it is shown as one and
     /// its text moved on, off the UI thread (highlighting and Mermaid are slow). Asks again
     /// when the text changed while it ran.
     pub(crate) fn build_preview(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        file: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let Some((stamp, text)) =
-            (self.doc_mut(project_id, path)).and_then(documents::Doc::preview_request)
+            (self.doc_mut(project_id, file)).and_then(documents::Doc::preview_request)
         else {
             return;
         };
-        let path = path.to_owned();
+        let file = file.clone();
         let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             let page = background
@@ -286,7 +253,7 @@ impl Shell {
                 if dropped {
                     shell.toast_info("The file changed; your block edit was closed", cx);
                 }
-                shell.build_preview(project_id, &path, window, cx);
+                shell.build_preview(project_id, &file, window, cx);
                 cx.notify();
             });
         })
@@ -295,10 +262,10 @@ impl Shell {
 
     /// Puts the caret on the line a link asked for and scrolls there, once the file is shown
     /// (after a request when it already was, after the read otherwise).
-    pub(crate) fn show_pending_line(&mut self, project_id: Ulid, path: &str) {
+    pub(crate) fn show_pending_line(&mut self, project_id: Ulid, file: &FileKey) {
         if let Some(line) =
-            (self.doc_mut(project_id, path)).and_then(documents::Doc::apply_pending_line)
-            && let Some(view) = self.doc_view(project_id, path)
+            (self.doc_mut(project_id, file)).and_then(documents::Doc::apply_pending_line)
+            && let Some(view) = self.doc_view(project_id, file)
         {
             view.code_scroll
                 .scroll_to_item(line, ScrollStrategy::Center);
@@ -317,20 +284,22 @@ impl Shell {
             return;
         };
         let project_id = changed.project_id;
-        let target = (self.files.get(&project_id)).and_then(|view| view.worktree_task_id);
-        if changed.worktree_task_id != target {
-            return;
-        }
-        let shown: Vec<String> = (self.visible_files().into_iter())
-            .filter(|(project, ..)| *project == project_id)
-            .map(|(_, path, _)| path)
+        // The open files of the changed folder (the project's or that worktree's).
+        let shown: Vec<FileKey> = (self.visible_files().into_iter())
+            .filter(|(project, file, _)| {
+                *project == project_id && file.task == changed.worktree_task_id
+            })
+            .map(|(_, file, _)| file)
             .collect();
-        let reads = (self.documents.get_mut(&project_id))
-            .map_or_else(Vec::new, |docs| docs.refresh(&shown));
-        for path in reads {
-            self.read_file(project_id, path, window, cx);
+        let reads = (self.documents.get_mut(&project_id)).map_or_else(Vec::new, |docs| {
+            docs.refresh(changed.worktree_task_id, &shown)
+        });
+        for file in reads {
+            self.read_file(project_id, file, window, cx);
         }
-        if self.workspace == Some(project_id)
+        let target = (self.files.get(&project_id)).and_then(|view| view.worktree_task_id);
+        if changed.worktree_task_id == target
+            && self.workspace == Some(project_id)
             && self.file_tree_shown()
             && let Some(view) = self.files.get_mut(&project_id)
         {
@@ -350,6 +319,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let view = self.files_view(project_id);
+        let target = view.worktree_task_id;
         let is_file = view.is_file(path);
         let requests = view.click(path);
         self.files_requests(project_id, requests, window, cx);
@@ -359,9 +329,10 @@ impl Shell {
             } else {
                 documents::Place::Preview
             };
-            self.open_document(project_id, path.to_owned(), None, place, window, cx);
+            let file = FileKey::new(path, target);
+            self.open_document(project_id, file.clone(), None, place, window, cx);
             if double {
-                self.keep_leaf(project_id, path, window, cx);
+                self.keep_leaf(project_id, &file, window, cx);
             }
         }
         // The keyboard stays in the tree.
@@ -470,7 +441,7 @@ impl Shell {
     pub(crate) fn edit_file_find(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         edit: impl FnOnce(&mut Input, &mut gpui::App),
         cx: &mut Context<'_, Self>,
     ) {
@@ -488,7 +459,7 @@ impl Shell {
     pub(crate) fn step_file_find(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         forward: bool,
         cx: &mut Context<'_, Self>,
     ) {
@@ -502,7 +473,7 @@ impl Shell {
     pub(crate) fn reveal_file_match(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         cx: &mut Context<'_, Self>,
     ) {
         let found = (self.doc(project_id, path))
@@ -526,7 +497,7 @@ impl Shell {
     pub(crate) fn close_file_find(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -579,7 +550,7 @@ impl Shell {
     pub(crate) fn edit_file_replace(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         edit: impl FnOnce(&mut Input, &mut gpui::App),
         cx: &mut Context<'_, Self>,
     ) {
@@ -593,7 +564,7 @@ impl Shell {
     pub(crate) fn replace_in_file(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -606,7 +577,7 @@ impl Shell {
     pub(crate) fn replace_all_in_file(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -616,12 +587,13 @@ impl Shell {
         cx.notify();
     }
 
-    /// Ctrl+S / "Save" (§12A): `fs.write` of file `path` over the version it was read as.
-    /// `then` runs after a successful save; while one is in flight already, after that one.
+    /// Ctrl+S / "Save" (§12A): `fs.write` of file `path` (in the folder its key names) over the
+    /// version it was read as. `then` runs after a successful save; while one is in flight
+    /// already, after that one.
     pub(crate) fn save_file(
         &mut self,
         project_id: Ulid,
-        path: String,
+        path: FileKey,
         then: Option<AfterSave>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -630,7 +602,6 @@ impl Shell {
         let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
-        let target = self.files_view(project_id).worktree_task_id;
         let Some(docs) = self.documents.get_mut(&project_id) else {
             return;
         };
@@ -643,31 +614,23 @@ impl Shell {
             }
             return;
         };
-        let written = connection.call::<FsWritten>(Request::FsWrite(FsWriteParams {
-            project_id,
-            worktree_task_id: target,
-            path: save.path.clone(),
-            content: save.text,
-            expected_hash: save.expected_hash,
-        }));
+        let saved_file = FileKey::new(save.path.clone(), save.task);
+        let point = save.point;
+        let written = connection
+            .call::<FsWritten>(Request::FsWrite(documents::write_params(project_id, save)));
         cx.spawn_in(window, async move |this, cx| {
             let written = written.await.map_err(|error| format!("{error:#}"));
             let _ = this.update_in(cx, |shell, window, cx| {
                 if let Err(error) = &written {
-                    tracing::warn!(%project_id, path = %save.path, "fs.write failed: {error}");
+                    tracing::warn!(%project_id, path = %saved_file.path, task = ?saved_file.task, "fs.write failed: {error}");
                 }
                 let done = matches!(&written, Ok(written) if written.saved);
-                let same_target = (shell.files.get(&project_id))
-                    .is_some_and(|view| view.worktree_task_id == target);
                 let unshown = match shell.documents.get_mut(&project_id) {
                     // Its doc is still the one that asked (not closed and opened again).
-                    Some(docs)
-                        if same_target
-                            && docs.get(&save.path).map(|doc| doc.opening) == opening =>
-                    {
-                        docs.saved(&save.path, save.point, written)
+                    Some(docs) if docs.get(&saved_file).map(|doc| doc.opening) == opening => {
+                        docs.saved(&saved_file, point, written)
                     }
-                    // The doc or the workspace's Files view is gone.
+                    // The doc is gone.
                     _ => documents::unshown_save(written),
                 };
                 if let Some(message) = unshown {
@@ -676,7 +639,7 @@ impl Shell {
                 let (waiting, others): (Vec<_>, Vec<_>) =
                     std::mem::take(&mut shell.files_after_save)
                         .into_iter()
-                        .partition(|(id, path, _)| *id == project_id && *path == save.path);
+                        .partition(|(id, file, _)| *id == project_id && *file == saved_file);
                 shell.files_after_save = others;
                 if done {
                     for then in then.into_iter().chain(waiting.into_iter().map(|w| w.2)) {
@@ -689,7 +652,7 @@ impl Shell {
         .detach();
     }
 
-    /// Runs `then` once the unsaved changes of `paths` (docs of `project_id`) are dealt with,
+    /// Runs `then` once the unsaved changes of `files` (docs of `project_id`) are dealt with,
     /// asking about one file at a time (its pane is shown while asked):
     /// - at once when none is unsaved;
     /// - after "Save" and a successful save, or "Don't save", for each of them.
@@ -698,13 +661,13 @@ impl Shell {
     pub(crate) fn leave_documents(
         &mut self,
         project_id: Ulid,
-        paths: Vec<String>,
+        files: Vec<FileKey>,
         then: AfterSave,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         // A doc saved meanwhile is skipped; one typed into during its save is asked again.
-        let next = (self.documents.get(&project_id)).and_then(|docs| docs.first_unsaved(&paths));
+        let next = (self.documents.get(&project_id)).and_then(|docs| docs.first_unsaved(&files));
         let Some(path) = next else {
             return then(self, window, cx);
         };
@@ -718,11 +681,19 @@ impl Shell {
             window,
             cx,
         );
-        let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
+        let name = path
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&path.path)
+            .to_owned();
         let workspace = (self.sidebar.projects().iter())
             .find(|project| project.id == project_id)
             .map_or_else(String::new, |project| format!(" in {}", project.name));
-        let detail = format!("{path}{workspace} — your changes are lost if you don't save them.");
+        let detail = format!(
+            "{}{workspace} — your changes are lost if you don't save them.",
+            path.path
+        );
         let answer = window.prompt(
             PromptLevel::Warning,
             &format!("Save changes to {name}?"),
@@ -734,7 +705,7 @@ impl Shell {
             let choice = documents::leave_choice(answer.await.ok());
             let _ = this.update_in(cx, |shell, window, cx| {
                 let rest: AfterSave = Box::new(move |shell, window, cx| {
-                    shell.leave_documents(project_id, paths, then, window, cx);
+                    shell.leave_documents(project_id, files, then, window, cx);
                 });
                 match choice {
                     Some(documents::Leave::Save) => {
@@ -760,7 +731,7 @@ impl Shell {
     pub(crate) fn reload_file(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -836,10 +807,10 @@ impl Shell {
             return true;
         }
         let unsaved = (self.documents.iter()).find_map(|(project_id, docs)| {
-            let paths = docs.unsaved_paths();
-            (!paths.is_empty()).then_some((*project_id, paths))
+            let files = docs.unsaved_files();
+            (!files.is_empty()).then_some((*project_id, files))
         });
-        let Some((project_id, paths)) = unsaved else {
+        let Some((project_id, files)) = unsaved else {
             return false;
         };
         // A confirmation is open (Alt+F4 reaches here): answer it first; asking now would
@@ -851,7 +822,7 @@ impl Shell {
             self.activate_workspace(project_id, window, cx);
         }
         // `leave_documents` shows the file's pane, so a refused save is visible.
-        self.leave_documents(project_id, paths, then, window, cx);
+        self.leave_documents(project_id, files, then, window, cx);
         true
     }
 
@@ -913,7 +884,7 @@ impl Shell {
     pub(crate) fn click_file_text(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         line: usize,
         x: Pixels,
         extend: bool,
@@ -946,7 +917,7 @@ impl Shell {
     pub(crate) fn file_edited(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -960,7 +931,7 @@ impl Shell {
         };
         // Only a page on screen is built; one build runs at a time and the last text wins.
         self.build_preview(project_id, path, window, cx);
-        let path = path.to_owned();
+        let path = path.clone();
         let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             background.timer(theme::REHIGHLIGHT_DELAY).await;
@@ -981,7 +952,7 @@ impl Shell {
     }
 
     /// Lines the editor of `path` shows at once (PageUp / PageDown).
-    pub(crate) fn file_page_lines(&self, project_id: Ulid, path: &str, cx: &App) -> usize {
+    pub(crate) fn file_page_lines(&self, project_id: Ulid, path: &FileKey, cx: &App) -> usize {
         let theme = cx.theme();
         let row = px(theme.terminal_font_size * theme.code_line_height);
         let shown = (self.doc_view(project_id, path))
@@ -1047,29 +1018,29 @@ impl Shell {
     pub(crate) fn open_file_in_zed(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         cx: &mut Context<'_, Self>,
     ) {
         if self.local_only(cx) {
             return;
         }
         let line = self.doc(project_id, path).and_then(documents::Doc::line);
-        let target = (self.files.get(&project_id)).and_then(|view| view.worktree_task_id);
-        let Some(full) = self.target_file(project_id, target, path) else {
+        let Some(full) = self.target_file(project_id, path.task, &path.path) else {
             return;
         };
         let error = zed::open(&full, line).err().map(|error| {
-            tracing::warn!(%project_id, path, "open in Zed failed: {error}");
+            tracing::warn!(%project_id, path = %path.path, "open in Zed failed: {error}");
             error.to_string()
         });
-        if let Some(view) = self.doc_views.get_mut(&(project_id, path.to_owned())) {
+        if let Some(view) = self.doc_views.get_mut(&(project_id, path.clone())) {
             view.zed_error = error;
         }
         cx.notify();
     }
 
     /// Files and Git views on a worktree that was removed (or whose task was deleted) go back
-    /// to the project folder.
+    /// to the project folder. Open files keep their folder: a read of one whose worktree is
+    /// gone fails and the pane says so.
     pub(crate) fn drop_gone_targets(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let tasks = self.board.tasks();
         let gone = |project_id, target| !worktree_target::exists(project_id, target, tasks);
@@ -1086,8 +1057,7 @@ impl Shell {
         for project_id in files {
             self.files
                 .insert(project_id, new_files_view(project_id, None));
-            // Not asked: the worktree is gone (as before); its files start over.
-            self.close_file_leaves(project_id, window, cx);
+            // The worktree is gone (as before); the tree starts over.
             if shown == Some(project_id) && self.files_on_screen() {
                 self.refresh_files(project_id, window, cx);
             }

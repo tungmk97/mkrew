@@ -1,6 +1,7 @@
 use serde_json::json;
 
 use super::*;
+use crate::split::FileKey;
 
 fn wire(project_id: Ulid, title: &str, position: f64, layout: serde_json::Value) -> TerminalTab {
     TerminalTab {
@@ -26,7 +27,7 @@ fn file(path: &str) -> serde_json::Value {
 }
 
 fn file_key(path: &str) -> PaneKey {
-    PaneKey::File(path.to_owned())
+    PaneKey::File(FileKey::project(path))
 }
 
 /// A file leaf with every optional key set.
@@ -1493,7 +1494,8 @@ fn move_pane_carries_the_whole_leaf() {
     let mut tabs = Tabs::new(project);
     tabs.load(vec![one.clone(), two.clone()]);
 
-    // To another tab, on the left of `c`: `md` and `preview` travel with the file.
+    // To another tab, on the left of `c`: `md` travels with the file, and the drag keeps the
+    // preview file (it is no longer the preview tab).
     let writes = tabs
         .move_pane(&file_key("README.md"), &k(c), Edge::Left)
         .unwrap();
@@ -1606,6 +1608,7 @@ fn insert_leaf_places_a_leaf_and_focuses_it() {
     let empty = wire(project, "two", 2.0, serde_json::Value::Null);
     let mut tabs = Tabs::new(project);
     tabs.load(vec![one.clone(), empty.clone()]);
+            task: None,
 
     // An empty tab takes the leaf as its root (`target` None).
     let write = tabs
@@ -1684,6 +1687,7 @@ fn insert_leaf_refuses_a_key_already_in_any_tab_of_the_workspace() {
     );
     assert_eq!(
         tabs.insert_leaf(one.id, Some(&k(Ulid::new())), Edge::Right, Leaf::diff()),
+        task: None,
         None
     );
     assert_eq!(
@@ -1779,6 +1783,7 @@ fn preview_tab_is_the_tab_holding_the_preview_file() {
     let project = Ulid::new();
     let [a, b] = [Ulid::new(), Ulid::new()];
     let one = wire(project, "one", 1.0, pane(a));
+            task: None,
     let two = wire(
         project,
         "two",
@@ -1883,13 +1888,13 @@ fn a_file_leaf_names_and_marks_its_tab_chip() {
         ("a.rs", false, true)
     );
     // Unsaved text shows as a dot; a kept file is not italic.
-    docs.ensure("b.md", crate::documents::MdMode::Source);
+    docs.ensure(&FileKey::project("b.md"), crate::documents::MdMode::Source);
     let kept = file_label(&tabs.tabs()[1], Some(&docs)).expect("a file is focused");
     assert_eq!(
         (kept.name.as_str(), kept.dirty, kept.preview),
         ("b.md", false, false)
     );
-    assert!(docs.begin_read("b.md"));
+    assert!(docs.begin_read(&FileKey::project("b.md")));
     let content = mkrew_protocol::FsContent {
         path: "b.md".into(),
         content: Some("a".into()),
@@ -1900,8 +1905,11 @@ fn a_file_leaf_names_and_marks_its_tab_chip() {
         hash: Some("#a".into()),
         index_text: None,
     };
-    docs.read("b.md", Ok((content, crate::highlight::Code::plain("a"))));
-    docs.get_mut("b.md")
+    docs.read(
+        &FileKey::project("b.md"),
+        Ok((content, crate::highlight::Code::plain("a"))),
+    );
+    docs.get_mut(&FileKey::project("b.md"))
         .unwrap()
         .editor_mut()
         .unwrap()
@@ -1956,7 +1964,7 @@ fn a_pane_moves_to_an_empty_tab_with_its_whole_leaf() {
     let (source_id, empty_id) = (source.id, empty.id);
     let mut tabs = Tabs::new(project);
     tabs.load(vec![source, empty]);
-    let key = PaneKey::File("notes/a.md".to_owned());
+    let key = PaneKey::File(FileKey::project("notes/a.md"));
     let leaf = (tabs.tab(source_id))
         .and_then(Tab::layout)
         .and_then(|node| node.leaf_of(&key))
@@ -2039,7 +2047,7 @@ fn moving_the_only_pane_out_of_a_tab_writes_that_tab_empty_for_the_caller_to_clo
 
     let writes = tabs
         .move_pane(
-            &PaneKey::File("a.md".into()),
+            &PaneKey::File(FileKey::project("a.md")),
             &PaneKey::Session(b),
             Edge::Right,
         )

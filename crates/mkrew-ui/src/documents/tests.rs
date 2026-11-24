@@ -21,6 +21,11 @@ fn file_text(text: &str) -> Result<(FsContent, Code), String> {
 
 const P: &str = "README.md";
 
+/// A file of the project folder.
+fn k(path: &str) -> FileKey {
+    FileKey::project(path)
+}
+
 /// A page for tests: what the background build would return.
 fn page(text: &str) -> docs::Shown {
     docs::Shown::from_text(text)
@@ -29,20 +34,20 @@ fn page(text: &str) -> docs::Shown {
 /// A store showing README.md as read with `text`.
 fn opened(text: &str) -> Documents {
     let mut docs = Documents::new();
-    docs.ensure(P, MdMode::default());
+    docs.ensure(&k(P), MdMode::default());
     // The shell's first draw asks for the read, then sends it.
     assert!(doc_mut(&mut docs).take_read());
-    assert!(docs.begin_read(P));
-    docs.read(P, file_text(text));
+    assert!(docs.begin_read(&k(P)));
+    docs.read(&k(P), file_text(text));
     docs
 }
 
 fn doc(docs: &Documents) -> &Doc {
-    docs.get(P).expect("README.md is open")
+    docs.get(&k(P)).expect("README.md is open")
 }
 
 fn doc_mut(docs: &mut Documents) -> &mut Doc {
-    docs.get_mut(P).expect("README.md is open")
+    docs.get_mut(&k(P)).expect("README.md is open")
 }
 
 fn editor(docs: &mut Documents) -> &mut Editor {
@@ -55,17 +60,27 @@ fn text(docs: &Documents) -> String {
         .unwrap_or_default()
 }
 
+/// The paths of the unsaved docs.
+fn unsaved_paths(docs: &Documents) -> Vec<String> {
+    (docs.unsaved_files().into_iter())
+        .map(|file| file.path)
+        .collect()
+}
+
 /// The first unsaved doc's path.
 fn unsaved(docs: &Documents) -> Option<String> {
-    docs.unsaved_paths().into_iter().next()
+    docs.unsaved_files()
+        .into_iter()
+        .next()
+        .map(|file| file.path)
 }
 
 /// Another file, read.
 fn read_ok(docs: &mut Documents, path: &str, text: &str) {
-    docs.ensure(path, MdMode::default());
-    assert!(docs.get_mut(path).unwrap().take_read());
-    assert!(docs.begin_read(path));
-    docs.read(path, file_text_at(path, text));
+    docs.ensure(&k(path), MdMode::default());
+    assert!(docs.get_mut(&k(path)).unwrap().take_read());
+    assert!(docs.begin_read(&k(path)));
+    docs.read(&k(path), file_text_at(path, text));
 }
 
 #[test]
@@ -74,13 +89,13 @@ fn a_doc_is_dropped_when_unused_and_clean_and_kept_when_open_or_dirty() {
     for path in ["open.rs", "clean.rs", "dirty.rs"] {
         read_ok(&mut docs, path, "a\n");
     }
-    (docs.get_mut("dirty.rs").unwrap().editor_mut().unwrap()).insert("x");
-    let open: HashSet<String> = ["open.rs".to_owned()].into();
+    (docs.get_mut(&k("dirty.rs")).unwrap().editor_mut().unwrap()).insert("x");
+    let open: HashSet<FileKey> = [k("open.rs")].into();
     docs.retain_open(&open);
-    assert!(docs.get("open.rs").is_some(), "its leaf is in a layout");
-    assert!(docs.get("clean.rs").is_none(), "unused and clean");
+    assert!(docs.get(&k("open.rs")).is_some(), "its leaf is in a layout");
+    assert!(docs.get(&k("clean.rs")).is_none(), "unused and clean");
     assert!(
-        docs.get("dirty.rs").is_some(),
+        docs.get(&k("dirty.rs")).is_some(),
         "unsaved text is never dropped"
     );
 }
@@ -88,10 +103,10 @@ fn a_doc_is_dropped_when_unused_and_clean_and_kept_when_open_or_dirty() {
 #[test]
 fn ensure_keeps_the_doc_and_its_opening() {
     let mut docs = Documents::new();
-    let first = docs.ensure("a.rs", MdMode::Source).opening;
-    assert_eq!(docs.ensure("a.rs", MdMode::Preview).opening, first);
+    let first = docs.ensure(&k("a.rs"), MdMode::Source).opening;
+    assert_eq!(docs.ensure(&k("a.rs"), MdMode::Preview).opening, first);
     assert_eq!(
-        docs.get("a.rs").unwrap().mode,
+        docs.get(&k("a.rs")).unwrap().mode,
         MdMode::Source,
         "the first mode stays"
     );
@@ -102,11 +117,11 @@ fn refresh_reads_what_is_shown_and_marks_the_rest_stale() {
     let mut docs = Documents::new();
     read_ok(&mut docs, "shown.rs", "a\n");
     read_ok(&mut docs, "hidden.rs", "b\n");
-    let reads = docs.refresh(&["shown.rs".to_owned()]);
-    assert_eq!(reads, ["shown.rs"]);
-    assert!(!docs.get_mut("shown.rs").unwrap().take_read());
+    let reads = docs.refresh(None, &[k("shown.rs")]);
+    assert_eq!(reads, [k("shown.rs")]);
+    assert!(!docs.get_mut(&k("shown.rs")).unwrap().take_read());
     assert!(
-        docs.get_mut("hidden.rs").unwrap().take_read(),
+        docs.get_mut(&k("hidden.rs")).unwrap().take_read(),
         "read when it is drawn"
     );
 }
@@ -127,14 +142,14 @@ fn a_link_column_lands_on_a_char_boundary_and_is_clamped() {
 #[test]
 fn a_link_line_waits_for_the_read_and_puts_the_caret_there() {
     let mut docs = Documents::new();
-    docs.ensure(P, MdMode::default()).set_line(Some((3, 1)));
+    docs.ensure(&k(P), MdMode::default()).set_line(Some((3, 1)));
     assert_eq!(
         doc_mut(&mut docs).apply_pending_line(),
         None,
         "still loading"
     );
-    assert!(docs.begin_read(P));
-    docs.read(P, file_text("a\nb\nc\nd\n"));
+    assert!(docs.begin_read(&k(P)));
+    docs.read(&k(P), file_text("a\nb\nc\nd\n"));
     assert_eq!(doc_mut(&mut docs).apply_pending_line(), Some(2));
     assert_eq!(doc(&docs).line(), Some(3));
     assert_eq!(
@@ -167,14 +182,14 @@ fn a_line_in_the_shown_file_applies_at_once_and_keeps_unsaved_text() {
 #[test]
 fn a_failed_read_drops_the_line() {
     let mut docs = Documents::new();
-    docs.ensure(P, MdMode::default()).set_line(Some((5, 1)));
-    assert!(docs.begin_read(P));
-    docs.read(P, Err("gone".into()));
+    docs.ensure(&k(P), MdMode::default()).set_line(Some((5, 1)));
+    assert!(docs.begin_read(&k(P)));
+    docs.read(&k(P), Err("gone".into()));
     assert_eq!(doc_mut(&mut docs).apply_pending_line(), None);
     // Retry shows the file from the top.
     assert!(doc_mut(&mut docs).retry());
-    assert!(docs.begin_read(P));
-    docs.read(P, file_text("a\nb\n"));
+    assert!(docs.begin_read(&k(P)));
+    docs.read(&k(P), file_text("a\nb\n"));
     assert_eq!(doc_mut(&mut docs).apply_pending_line(), None);
     assert_eq!(doc(&docs).line(), Some(1));
 }
@@ -232,12 +247,12 @@ fn an_edit_made_while_a_page_builds_is_built_once_it_lands() {
 fn every_new_doc_is_a_new_opening() {
     let mut docs = opened("a\n");
     let first = doc(&docs).opening;
-    assert_eq!(docs.ensure(P, MdMode::default()).opening, first);
-    assert!(docs.begin_read(P));
-    docs.read(P, file_text("b\n"));
+    assert_eq!(docs.ensure(&k(P), MdMode::default()).opening, first);
+    assert!(docs.begin_read(&k(P)));
+    docs.read(&k(P), file_text("b\n"));
     assert_eq!(doc(&docs).opening, first, "the same file re-read");
     docs.retain_open(&HashSet::new());
-    let again = docs.ensure(P, MdMode::default()).opening;
+    let again = docs.ensure(&k(P), MdMode::default()).opening;
     assert_ne!(again, first, "dropped and opened again");
     assert_ne!(
         doc(&opened("a\n")).opening,
@@ -252,7 +267,7 @@ fn a_new_doc_starts_in_preview_and_the_old_doc_keeps_its_page() {
     let (stamp, _) = doc_mut(&mut docs).preview_request().unwrap();
     docs.preview_ready(stamp, page("a\n"));
     doc_mut(&mut docs).set_mode(MdMode::Source);
-    let other = docs.ensure("other.md", MdMode::default());
+    let other = docs.ensure(&k("other.md"), MdMode::default());
     assert_eq!(other.mode, MdMode::Preview);
     assert!(other.preview().is_none());
     let readme = doc(&docs);
@@ -265,8 +280,8 @@ fn a_reread_that_changes_the_text_builds_a_new_page() {
     let mut docs = opened("a\n");
     let (stamp, _) = doc_mut(&mut docs).preview_request().unwrap();
     docs.preview_ready(stamp, page("a\n"));
-    assert!(docs.begin_read(P));
-    docs.read(P, file_text("b\n"));
+    assert!(docs.begin_read(&k(P)));
+    docs.read(&k(P), file_text("b\n"));
     assert!(doc(&docs).preview().is_none(), "no page of the old text");
     assert_eq!(
         (doc_mut(&mut docs).preview_request())
@@ -280,7 +295,7 @@ fn a_reread_that_changes_the_text_builds_a_new_page() {
 fn only_markdown_has_a_preview() {
     let mut docs = Documents::new();
     read_ok(&mut docs, "src/main.rs", "fn a() {}");
-    let doc = docs.get_mut("src/main.rs").unwrap();
+    let doc = docs.get_mut(&k("src/main.rs")).unwrap();
     assert!(!doc.is_markdown());
     assert!(!doc.previewing());
     assert_eq!(doc.preview_request(), None);
@@ -316,13 +331,13 @@ fn a_reread_follows_the_disk_only_while_nothing_is_unsaved() {
     // The same text again (our own save, another file changed): caret and undo stay.
     editor(&mut docs).insert("x");
     editor(&mut docs).undo();
-    docs.begin_read(P);
-    docs.read(P, file_text("a\nbc\n"));
+    docs.begin_read(&k(P));
+    docs.read(&k(P), file_text("a\nbc\n"));
     assert!(editor(&mut docs).redo(), "the undo history survived");
     editor(&mut docs).undo();
     // An agent shortened it: the new text shows, the caret stays where it can.
-    docs.begin_read(P);
-    docs.read(P, file_text("a\n"));
+    docs.begin_read(&k(P));
+    docs.read(&k(P), file_text("a\n"));
     assert_eq!(
         (text(&docs), doc(&docs).line()),
         ("a\n".to_owned(), Some(1))
@@ -330,36 +345,36 @@ fn a_reread_follows_the_disk_only_while_nothing_is_unsaved() {
     // Unsaved text is never replaced: not by a change on disk, not by a failed read.
     editor(&mut docs).insert("mine ");
     for read in [file_text("theirs\n"), Err("gone".into())] {
-        docs.begin_read(P);
-        docs.read(P, read);
+        docs.begin_read(&k(P));
+        docs.read(&k(P), read);
         assert_eq!(text(&docs), "amine \n");
     }
     assert_eq!(unsaved(&docs).as_deref(), Some("README.md"));
     // Another file is its own doc: the unsaved one stays.
     read_ok(&mut docs, "src/main.rs", "m\n");
-    assert_eq!(docs.unsaved_paths(), ["README.md"]);
+    assert_eq!(unsaved_paths(&docs), ["README.md"]);
 }
 
 #[test]
 fn a_save_marks_what_it_sent_and_one_runs_at_a_time() {
     let mut docs = opened("a\n");
-    assert_eq!(docs.begin_save(P), None, "nothing to save");
+    assert_eq!(docs.begin_save(&k(P)), None, "nothing to save");
     editor(&mut docs).insert("b");
-    let save = docs.begin_save(P).unwrap();
+    let save = docs.begin_save(&k(P)).unwrap();
     assert_eq!(
         (save.text.as_str(), save.expected_hash.as_str()),
         ("ba\n", "#a\n")
     );
-    assert_eq!(docs.begin_save(P), None, "one save at a time");
+    assert_eq!(docs.begin_save(&k(P)), None, "one save at a time");
     // Typed while it was saving: still unsaved afterwards.
     editor(&mut docs).key(EditKey::Insert("c".into()), 10);
     let written = FsWritten {
         saved: true,
         hash: "#ba\n".into(),
     };
-    docs.saved(P, save.point, Ok(written));
+    docs.saved(&k(P), save.point, Ok(written));
     assert_eq!(unsaved(&docs).as_deref(), Some("README.md"));
-    let save = docs.begin_save(P).unwrap();
+    let save = docs.begin_save(&k(P)).unwrap();
     assert_eq!(
         save.expected_hash, "#ba\n",
         "the saved text is the new base"
@@ -368,16 +383,16 @@ fn a_save_marks_what_it_sent_and_one_runs_at_a_time() {
         saved: true,
         hash: "#bca\n".into(),
     };
-    docs.saved(P, save.point, Ok(written));
+    docs.saved(&k(P), save.point, Ok(written));
     assert_eq!(unsaved(&docs), None);
     // Our own save comes back through the watcher: nothing changes.
-    docs.begin_read(P);
-    docs.read(P, file_text("bca\n"));
+    docs.begin_read(&k(P));
+    docs.read(&k(P), file_text("bca\n"));
     assert_eq!(text(&docs), "bca\n");
     // A failed save says why and keeps the text.
     editor(&mut docs).insert("d");
-    let save = docs.begin_save(P).unwrap();
-    docs.saved(P, save.point, Err("disk full".into()));
+    let save = docs.begin_save(&k(P)).unwrap();
+    docs.saved(&k(P), save.point, Err("disk full".into()));
     let error = doc(&docs)
         .shown()
         .and_then(|shown| shown.save_error.clone());
@@ -389,19 +404,19 @@ fn a_save_marks_what_it_sent_and_one_runs_at_a_time() {
 fn a_save_that_comes_back_after_its_doc_was_dropped_is_reported() {
     let mut docs = opened("a\n");
     editor(&mut docs).insert("b");
-    let save = docs.begin_save(P).unwrap();
+    let save = docs.begin_save(&k(P)).unwrap();
     // The user closed the file ("Don't save") while the write was in flight.
-    docs.drop_changes(P);
+    docs.drop_changes(&k(P));
     docs.retain_open(&HashSet::new());
-    assert!(docs.get(P).is_none());
-    let failed = docs.saved(P, save.point, Err("disk full".into()));
+    assert!(docs.get(&k(P)).is_none());
+    let failed = docs.saved(&k(P), save.point, Err("disk full".into()));
     assert_eq!(failed.as_deref(), Some("Not saved: disk full"));
     let newer = FsWritten {
         saved: false,
         hash: "#other".into(),
     };
     assert_eq!(
-        docs.saved(P, None, Ok(newer)).as_deref(),
+        docs.saved(&k(P), None, Ok(newer)).as_deref(),
         Some("Not saved: the file changed on disk meanwhile.")
     );
     let fine = FsWritten {
@@ -409,15 +424,15 @@ fn a_save_that_comes_back_after_its_doc_was_dropped_is_reported() {
         hash: "#x".into(),
     };
     assert_eq!(
-        docs.saved(P, None, Ok(fine)),
+        docs.saved(&k(P), None, Ok(fine)),
         None,
         "a good save is no news"
     );
     // Shown: the banner has it, nothing more to say.
     let mut docs = opened("a\n");
     editor(&mut docs).insert("b");
-    let save = docs.begin_save(P).unwrap();
-    assert_eq!(docs.saved(P, save.point, Err("disk full".into())), None);
+    let save = docs.begin_save(&k(P)).unwrap();
+    assert_eq!(docs.saved(&k(P), save.point, Err("disk full".into())), None);
 }
 
 #[test]
@@ -461,20 +476,20 @@ fn marks(docs: &Documents) -> Vec<Option<crate::gutter::Change>> {
 fn a_new_index_text_moves_the_gutter_and_keeps_the_caret() {
     use crate::gutter::Change::Added;
     let mut docs = Documents::new();
-    docs.ensure(P, MdMode::default());
-    docs.begin_read(P);
-    docs.read(P, file_with_base("a\nb\n", "a\n"));
+    docs.ensure(&k(P), MdMode::default());
+    docs.begin_read(&k(P));
+    docs.read(&k(P), file_with_base("a\nb\n", "a\n"));
     assert_eq!(marks(&docs), [None, Some(Added)]);
     editor(&mut docs).set_cursor(Pos::new(1, 0), false);
 
-    docs.begin_read(P);
-    docs.read(P, file_with_base("a\nb\n", "a\nb\n"));
+    docs.begin_read(&k(P));
+    docs.read(&k(P), file_with_base("a\nb\n", "a\nb\n"));
     assert_eq!(marks(&docs), [None, None], "staged: no marks");
     assert_eq!(doc(&docs).line(), Some(2), "the caret stayed");
 
     editor(&mut docs).insert("x");
-    docs.begin_read(P);
-    docs.read(P, file_with_base("a\nb\n", "a\n"));
+    docs.begin_read(&k(P));
+    docs.read(&k(P), file_with_base("a\nb\n", "a\n"));
     assert_eq!(text(&docs), "a\nxb\n", "unsaved text stays");
     let version = doc(&docs).shown().unwrap().editor.version();
     let request = doc(&docs).highlight_request(version).unwrap();
@@ -495,8 +510,8 @@ fn a_change_on_disk_under_unsaved_text_offers_reload_or_keep_mine() {
     let mut docs = opened("one\n");
     editor(&mut docs).insert("x");
     let reread = |docs: &mut Documents, text: &str| {
-        docs.begin_read(P);
-        docs.read(P, file_text(text));
+        docs.begin_read(&k(P));
+        docs.read(&k(P), file_text(text));
     };
     let disk = |docs: &Documents| {
         doc(docs)
@@ -516,14 +531,14 @@ fn a_change_on_disk_under_unsaved_text_offers_reload_or_keep_mine() {
     reread(&mut docs, "two\n");
     doc_mut(&mut docs).keep_mine();
     assert_eq!(disk(&docs), None);
-    let save = docs.begin_save(P).unwrap();
+    let save = docs.begin_save(&k(P)).unwrap();
     assert_eq!(save.expected_hash, "#two\n");
     // The save meets yet another version: the banner again, the text stays.
     let written = FsWritten {
         saved: false,
         hash: "#three\n".into(),
     };
-    docs.saved(P, save.point, Ok(written));
+    docs.saved(&k(P), save.point, Ok(written));
     assert_eq!(
         (text(&docs), disk(&docs)),
         ("xone\n".to_owned(), Some("#three\n".to_owned()))
@@ -549,15 +564,15 @@ fn the_unsaved_question_answers() {
 fn a_successful_save_clears_the_changed_on_disk_banner() {
     let mut docs = opened("one\n");
     editor(&mut docs).insert("x");
-    docs.begin_read(P);
-    docs.read(P, file_text("two\n"));
+    docs.begin_read(&k(P));
+    docs.read(&k(P), file_text("two\n"));
     assert!(doc(&docs).shown().unwrap().disk_changed.is_some());
-    let save = docs.begin_save(P).unwrap();
+    let save = docs.begin_save(&k(P)).unwrap();
     let written = FsWritten {
         saved: true,
         hash: "#xone\n".into(),
     };
-    docs.saved(P, save.point, Ok(written));
+    docs.saved(&k(P), save.point, Ok(written));
     let shown = doc(&docs).shown().unwrap();
     assert_eq!(shown.disk_changed, None);
     assert_eq!(shown.hash.as_deref(), Some("#xone\n"));
@@ -752,7 +767,7 @@ fn esc_cancels_and_leaving_the_preview_drops_edit_and_selection() {
     assert!(readme.open_block_edit(0));
     readme.preview_select_all();
     // Another doc starts clean; README.md's doc keeps its edit.
-    let other = docs.ensure("other.md", MdMode::default());
+    let other = docs.ensure(&k("other.md"), MdMode::default());
     assert!(other.block_edit.is_none() && other.preview_selection.is_none());
     assert!(doc(&docs).block_edit.is_some());
 }
@@ -789,16 +804,16 @@ fn a_new_page_reports_the_block_edit_it_closed() {
 #[test]
 fn a_read_lands_in_its_own_doc() {
     let mut docs = Documents::new();
-    docs.ensure("a.rs", MdMode::default());
-    docs.ensure("b.rs", MdMode::default());
-    assert!(docs.begin_read("a.rs"));
-    docs.read("a.rs", file_text_at("a.rs", "a\n"));
+    docs.ensure(&k("a.rs"), MdMode::default());
+    docs.ensure(&k("b.rs"), MdMode::default());
+    assert!(docs.begin_read(&k("a.rs")));
+    docs.read(&k("a.rs"), file_text_at("a.rs", "a\n"));
     assert!(
-        docs.get("b.rs").unwrap().shown().is_none(),
+        docs.get(&k("b.rs")).unwrap().shown().is_none(),
         "the other doc is still loading"
     );
     assert_eq!(
-        docs.get("a.rs").unwrap().shown().unwrap().editor.text(),
+        docs.get(&k("a.rs")).unwrap().shown().unwrap().editor.text(),
         "a\n"
     );
 }
@@ -806,9 +821,12 @@ fn a_read_lands_in_its_own_doc() {
 #[test]
 fn a_read_for_a_dropped_doc_is_ignored() {
     let mut docs = Documents::new();
-    assert!(!docs.begin_read("gone.rs"), "no doc, no read");
-    assert_eq!(docs.read("gone.rs", file_text_at("gone.rs", "x\n")), None);
-    assert!(docs.get("gone.rs").is_none());
+    assert!(!docs.begin_read(&k("gone.rs")), "no doc, no read");
+    assert_eq!(
+        docs.read(&k("gone.rs"), file_text_at("gone.rs", "x\n")),
+        None
+    );
+    assert!(docs.get(&k("gone.rs")).is_none());
 }
 
 #[test]
@@ -816,12 +834,12 @@ fn a_save_and_a_highlight_land_in_their_own_doc() {
     let mut docs = Documents::new();
     read_ok(&mut docs, "a.rs", "a\n");
     read_ok(&mut docs, "b.rs", "m\n");
-    let a = docs.get_mut("a.rs").unwrap();
+    let a = docs.get_mut(&k("a.rs")).unwrap();
     a.editor_mut().unwrap().insert("x");
     let version = a.shown().unwrap().editor.version();
-    let save = docs.begin_save("a.rs").unwrap();
+    let save = docs.begin_save(&k("a.rs")).unwrap();
     // The highlight of a.rs lands in a.rs and leaves b.rs alone.
-    let a = docs.get_mut("a.rs").unwrap();
+    let a = docs.get_mut(&k("a.rs")).unwrap();
     assert_eq!(
         a.highlight_request(version).unwrap().content.as_deref(),
         Some("xa\n")
@@ -831,10 +849,10 @@ fn a_save_and_a_highlight_land_in_their_own_doc() {
         saved: true,
         hash: "#xa\n".into(),
     };
-    assert_eq!(docs.saved("a.rs", save.point, Ok(written)), None);
-    assert_eq!(docs.unsaved_paths(), Vec::<String>::new());
+    assert_eq!(docs.saved(&k("a.rs"), save.point, Ok(written)), None);
+    assert_eq!(unsaved_paths(&docs), Vec::<String>::new());
     assert_eq!(
-        docs.get("b.rs").unwrap().shown().unwrap().editor.text(),
+        docs.get(&k("b.rs")).unwrap().shown().unwrap().editor.text(),
         "m\n",
         "the other doc is untouched"
     );
@@ -842,7 +860,7 @@ fn a_save_and_a_highlight_land_in_their_own_doc() {
         saved: false,
         hash: "#z".into(),
     };
-    assert!(docs.saved("gone.rs", None, Ok(refused)).is_some());
+    assert!(docs.saved(&k("gone.rs"), None, Ok(refused)).is_some());
 }
 
 #[test]
@@ -852,13 +870,13 @@ fn unsaved_paths_lists_every_dirty_doc() {
         read_ok(&mut docs, path, "a\n");
     }
     for path in ["a.rs", "b.rs"] {
-        docs.get_mut(path)
+        docs.get_mut(&k(path))
             .unwrap()
             .editor_mut()
             .unwrap()
             .insert("x");
     }
-    assert_eq!(docs.unsaved_paths(), ["a.rs", "b.rs"]);
+    assert_eq!(unsaved_paths(&docs), ["a.rs", "b.rs"]);
 }
 
 /// After a lost connection only the docs with unsaved text carry over (their hash stays for
@@ -869,17 +887,20 @@ fn into_unsaved_keeps_only_the_dirty_docs_and_reads_them_again() {
     for path in ["a.rs", "b.rs"] {
         read_ok(&mut docs, path, "a\n");
     }
-    docs.get_mut("b.rs")
+    docs.get_mut(&k("b.rs"))
         .unwrap()
         .editor_mut()
         .unwrap()
         .insert("x");
     let mut kept = docs.into_unsaved().expect("one doc is unsaved");
-    assert_eq!(kept.unsaved_paths(), ["b.rs"]);
-    assert!(kept.get("a.rs").is_none());
-    assert!(kept.get_mut("b.rs").unwrap().take_read(), "read when drawn");
+    assert_eq!(unsaved_paths(&kept), ["b.rs"]);
+    assert!(kept.get(&k("a.rs")).is_none());
+    assert!(
+        kept.get_mut(&k("b.rs")).unwrap().take_read(),
+        "read when drawn"
+    );
     // Nothing is in flight any more.
-    assert!(kept.begin_read("b.rs"));
+    assert!(kept.begin_read(&k("b.rs")));
     let mut clean = Documents::new();
     read_ok(&mut clean, "a.rs", "a\n");
     assert!(clean.into_unsaved().is_none());
@@ -892,16 +913,19 @@ fn the_next_doc_to_ask_about_is_the_first_still_unsaved() {
     let mut docs = Documents::new();
     for path in ["a.rs", "b.rs"] {
         read_ok(&mut docs, path, "a\n");
-        docs.get_mut(path)
+        docs.get_mut(&k(path))
             .unwrap()
             .editor_mut()
             .unwrap()
             .insert("x");
     }
-    let paths = ["a.rs".to_owned(), "b.rs".to_owned()];
-    assert_eq!(docs.first_unsaved(&paths).as_deref(), Some("a.rs"));
-    let save = docs.begin_save("a.rs").unwrap();
-    docs.get_mut("a.rs")
+    let paths = [k("a.rs"), k("b.rs")];
+    assert_eq!(
+        docs.first_unsaved(&paths).map(|file| file.path).as_deref(),
+        Some("a.rs")
+    );
+    let save = docs.begin_save(&k("a.rs")).unwrap();
+    docs.get_mut(&k("a.rs"))
         .unwrap()
         .editor_mut()
         .unwrap()
@@ -910,14 +934,17 @@ fn the_next_doc_to_ask_about_is_the_first_still_unsaved() {
         saved: true,
         hash: "#xa\n".into(),
     };
-    docs.saved("a.rs", save.point, Ok(written));
+    docs.saved(&k("a.rs"), save.point, Ok(written));
     assert_eq!(
-        docs.first_unsaved(&paths).as_deref(),
+        docs.first_unsaved(&paths).map(|file| file.path).as_deref(),
         Some("a.rs"),
         "asked again"
     );
-    docs.drop_changes("a.rs");
-    assert_eq!(docs.first_unsaved(&paths).as_deref(), Some("b.rs"));
+    docs.drop_changes(&k("a.rs"));
+    assert_eq!(
+        docs.first_unsaved(&paths).map(|file| file.path).as_deref(),
+        Some("b.rs")
+    );
 }
 
 /// "Don't save" drops the changes and reads the file again, so the doc shows what is on disk.
@@ -925,12 +952,15 @@ fn the_next_doc_to_ask_about_is_the_first_still_unsaved() {
 fn dropping_changes_rereads_the_file() {
     let mut docs = opened("a\n");
     editor(&mut docs).insert("x");
-    assert_eq!(docs.drop_changes(P).as_deref(), Some("README.md"));
+    assert_eq!(
+        docs.drop_changes(&k(P)).map(|file| file.path).as_deref(),
+        Some("README.md")
+    );
     assert_eq!(unsaved(&docs), None);
-    docs.begin_read(P);
-    docs.read(P, file_text("a\n"));
+    docs.begin_read(&k(P));
+    docs.read(&k(P), file_text("a\n"));
     assert_eq!(text(&docs), "a\n", "the disk's text, not the dropped edit");
-    assert_eq!(docs.drop_changes("gone.rs"), None);
+    assert_eq!(docs.drop_changes(&k("gone.rs")), None);
 }
 
 #[test]
@@ -1020,7 +1050,7 @@ fn preview(path: &str) -> serde_json::Value {
 }
 
 fn key(path: &str) -> PaneKey {
-    PaneKey::File(path.to_owned())
+    PaneKey::File(FileKey::project(path))
 }
 
 #[test]
@@ -1113,7 +1143,7 @@ fn a_preview_with_unsaved_text_is_not_replaced() {
     let tabs = tabs_of(vec![preview("p.rs")]);
     let mut docs = Documents::new();
     read_ok(&mut docs, "p.rs", "a\n");
-    docs.get_mut("p.rs")
+    docs.get_mut(&k("p.rs"))
         .unwrap()
         .editor_mut()
         .unwrap()
@@ -1158,6 +1188,7 @@ fn the_markdown_mode_is_kept_in_the_leaf() {
         layout.leaf_of(&key("a.md")),
         Some(&Leaf::File {
             file: "a.md".into(),
+            task: None,
             md: Some(MdMode::Split),
             preview: false
         })
@@ -1168,7 +1199,7 @@ fn dirty_store(paths: &[&str]) -> Documents {
     let mut docs = Documents::new();
     for path in paths {
         read_ok(&mut docs, path, "a\n");
-        docs.get_mut(path)
+        docs.get_mut(&k(path))
             .unwrap()
             .editor_mut()
             .unwrap()
@@ -1177,8 +1208,8 @@ fn dirty_store(paths: &[&str]) -> Documents {
     docs
 }
 
-fn set(paths: &[&str]) -> HashSet<String> {
-    paths.iter().map(|path| (*path).to_owned()).collect()
+fn set(paths: &[&str]) -> HashSet<FileKey> {
+    paths.iter().map(|path| k(path)).collect()
 }
 
 #[test]
@@ -1187,7 +1218,7 @@ fn closing_a_leaf_with_unsaved_text_asks_and_moving_it_never_does() {
     // Close: b.rs leaves every layout.
     assert_eq!(
         needs_save_question(&set(&["a.rs", "b.rs"]), &set(&["a.rs"]), &docs),
-        ["b.rs"]
+        [k("b.rs")]
     );
     // Move (drag, tear-off, merge): the leaf is somewhere else afterwards, still open.
     assert!(
@@ -1199,7 +1230,7 @@ fn closing_a_leaf_with_unsaved_text_asks_and_moving_it_never_does() {
     // Several leaving at once are asked in path order.
     assert_eq!(
         needs_save_question(&set(&["b.rs", "a.rs"]), &set(&[]), &docs),
-        ["a.rs", "b.rs"]
+        [k("a.rs"), k("b.rs")]
     );
 }
 
@@ -1210,76 +1241,76 @@ fn closing_tabs_and_panes_are_told_from_moves_by_the_remaining_open_set() {
         json!({"split": "vertical", "ratio": 0.5, "children": [file("b.rs"), file("c.rs")]}),
     ]);
     let second = tabs.tabs()[1].id;
-    assert_eq!(open_paths(&tabs), set(&["a.rs", "b.rs", "c.rs"]));
+    assert_eq!(open_files(&tabs), set(&["a.rs", "b.rs", "c.rs"]));
     // "Close others" of the first tab: b.rs and c.rs go.
-    assert_eq!(open_paths_without(&tabs, &[second], &[]), set(&["a.rs"]));
+    assert_eq!(open_files_without(&tabs, &[second], &[]), set(&["a.rs"]));
     // Closing one pane.
     assert_eq!(
-        open_paths_without(&tabs, &[], &[key("c.rs")]),
+        open_files_without(&tabs, &[], &[key("c.rs")]),
         set(&["a.rs", "b.rs"])
     );
     // A pane moved to the first tab is in both sets: the difference is empty.
     let docs = dirty_store(&["b.rs"]);
-    assert!(needs_save_question(&open_paths(&tabs), &open_paths(&tabs), &docs).is_empty());
+    assert!(needs_save_question(&open_files(&tabs), &open_files(&tabs), &docs).is_empty());
 }
 
 #[test]
 fn a_doc_loads_once_on_its_first_draw() {
     let mut docs = Documents::new();
-    docs.ensure("a.rs", MdMode::Source);
+    docs.ensure(&k("a.rs"), MdMode::Source);
     // The shell's first draw asks; a second draw before the answer asks for nothing.
-    assert!(docs.get_mut("a.rs").unwrap().take_read());
-    assert!(!docs.get_mut("a.rs").unwrap().take_read());
-    assert!(docs.begin_read("a.rs"));
+    assert!(docs.get_mut(&k("a.rs")).unwrap().take_read());
+    assert!(!docs.get_mut(&k("a.rs")).unwrap().take_read());
+    assert!(docs.begin_read(&k("a.rs")));
     assert!(
-        !docs.begin_read("a.rs"),
+        !docs.begin_read(&k("a.rs")),
         "one read in flight; the next is queued"
     );
     assert_eq!(
-        docs.read("a.rs", file_text_at("a.rs", "x\n")).as_deref(),
-        Some("a.rs")
+        docs.read(&k("a.rs"), file_text_at("a.rs", "x\n")),
+        Some(k("a.rs"))
     );
 }
 
 #[test]
 fn a_failed_read_is_retried_by_retry_and_not_by_a_draw() {
     let mut docs = Documents::new();
-    docs.ensure("a.rs", MdMode::Source);
-    assert!(docs.get_mut("a.rs").unwrap().take_read());
-    assert!(docs.begin_read("a.rs"));
+    docs.ensure(&k("a.rs"), MdMode::Source);
+    assert!(docs.get_mut(&k("a.rs")).unwrap().take_read());
+    assert!(docs.begin_read(&k("a.rs")));
     docs.read(
-        "a.rs",
+        &k("a.rs"),
         Err("no file a.rs in project 01J0000000000000000000000".into()),
     );
-    assert!(docs.get("a.rs").unwrap().removed());
+    assert!(docs.get(&k("a.rs")).unwrap().removed());
     // Drawing again asks for nothing: no loop on a failing file.
-    assert!(!docs.get_mut("a.rs").unwrap().take_read());
+    assert!(!docs.get_mut(&k("a.rs")).unwrap().take_read());
     // Retry reads again, and a coalesced read is sent once the first answers.
-    assert!(docs.get_mut("a.rs").unwrap().retry());
-    assert!(docs.begin_read("a.rs"));
-    assert!(!docs.begin_read("a.rs"));
+    assert!(docs.get_mut(&k("a.rs")).unwrap().retry());
+    assert!(docs.begin_read(&k("a.rs")));
+    assert!(!docs.begin_read(&k("a.rs")));
     assert_eq!(
-        docs.read("a.rs", file_text_at("a.rs", "ok\n")).as_deref(),
-        Some("a.rs")
+        docs.read(&k("a.rs"), file_text_at("a.rs", "ok\n")),
+        Some(k("a.rs"))
     );
-    assert!(!docs.get("a.rs").unwrap().removed());
+    assert!(!docs.get(&k("a.rs")).unwrap().removed());
 }
 
 #[test]
 fn a_file_that_comes_back_replaces_the_removed_state() {
     let mut docs = Documents::new();
-    docs.ensure("a.rs", MdMode::Source);
-    assert!(docs.begin_read("a.rs"));
+    docs.ensure(&k("a.rs"), MdMode::Source);
+    assert!(docs.begin_read(&k("a.rs")));
     docs.read(
-        "a.rs",
+        &k("a.rs"),
         Err("no file a.rs in project 01J0000000000000000000000".into()),
     );
     // git.changed: the drawn doc is read again and now exists.
-    assert_eq!(docs.refresh(&["a.rs".to_owned()]), ["a.rs"]);
-    assert!(docs.begin_read("a.rs"));
-    docs.read("a.rs", file_text_at("a.rs", "back\n"));
+    assert_eq!(docs.refresh(None, &[k("a.rs")]), [k("a.rs")]);
+    assert!(docs.begin_read(&k("a.rs")));
+    docs.read(&k("a.rs"), file_text_at("a.rs", "back\n"));
     assert_eq!(
-        docs.get("a.rs").unwrap().shown().unwrap().editor.text(),
+        docs.get(&k("a.rs")).unwrap().shown().unwrap().editor.text(),
         "back\n"
     );
 }
@@ -1288,9 +1319,9 @@ fn a_file_that_comes_back_replaces_the_removed_state() {
 fn removed_unsaved_text_is_kept() {
     let mut docs = opened("a\n");
     editor(&mut docs).insert("x");
-    assert!(docs.begin_read(P));
+    assert!(docs.begin_read(&k(P)));
     docs.read(
-        P,
+        &k(P),
         Err("no file README.md in project 01J0000000000000000000000".into()),
     );
     assert!(
@@ -1310,8 +1341,8 @@ fn find_follows_a_reread_file() {
     let label = |docs: &Documents| doc(docs).find.as_ref().map(TextFind::label);
     assert_eq!(label(&docs).as_deref(), Some("1 of 1"));
     // An agent edits the file: the re-read is searched again.
-    docs.begin_read(P);
-    docs.read(P, file_text("todo\ntodo"));
+    docs.begin_read(&k(P));
+    docs.read(&k(P), file_text("todo\ntodo"));
     assert_eq!(label(&docs).as_deref(), Some("1 of 2"));
 }
 
@@ -1333,7 +1364,7 @@ fn find_opens_seeded_with_a_one_line_selection_at_the_caret() {
         ("b", Some(""))
     );
     // Without a file there is nothing to find in.
-    assert!(!Doc::new("a.rs", MdMode::Source).open_find(false));
+    assert!(!Doc::new(&k("a.rs"), MdMode::Source).open_find(false));
 }
 
 #[test]
@@ -1400,9 +1431,9 @@ fn find_and_a_link_line_switch_to_source() {
 #[test]
 fn a_split_doc_keeps_split_for_find_and_links() {
     let mut docs = Documents::new();
-    docs.ensure(P, MdMode::Split);
-    assert!(docs.begin_read(P));
-    docs.read(P, file_text("a\nb\n"));
+    docs.ensure(&k(P), MdMode::Split);
+    assert!(docs.begin_read(&k(P)));
+    docs.read(&k(P), file_text("a\nb\n"));
     assert!(doc(&docs).splitting() && !doc(&docs).previewing());
     // The editor is on screen next to the page: find and a link's line keep the split.
     assert!(doc_mut(&mut docs).open_find(false));
@@ -1425,19 +1456,102 @@ fn ctrl_f_leaves_the_preview_and_drops_edit_and_selection() {
 #[test]
 fn a_doc_with_a_pending_line_survives_until_its_leaf_arrives() {
     let mut docs = Documents::new();
-    docs.ensure("link.rs", MdMode::default());
-    docs.get_mut("link.rs").unwrap().set_line(Some((7, 1)));
+    docs.ensure(&k("link.rs"), MdMode::default());
+    docs.get_mut(&k("link.rs")).unwrap().set_line(Some((7, 1)));
     docs.retain_open(&HashSet::new());
-    assert!(docs.get("link.rs").is_some(), "its line is still wanted");
+    assert!(
+        docs.get(&k("link.rs")).is_some(),
+        "its line is still wanted"
+    );
     assert_eq!(
-        docs.get_mut("link.rs").unwrap().apply_pending_line(),
+        docs.get_mut(&k("link.rs")).unwrap().apply_pending_line(),
         None,
         "not shown yet"
     );
-    docs.get_mut("link.rs").unwrap().set_line(None);
+    docs.get_mut(&k("link.rs")).unwrap().set_line(None);
     docs.retain_open(&HashSet::new());
     assert!(
-        docs.get("link.rs").is_none(),
+        docs.get(&k("link.rs")).is_none(),
         "nothing pending, no leaf, clean"
     );
+}
+
+/// A file of a task worktree is its own doc, apart from the project's file of the same path.
+#[test]
+fn the_same_path_in_a_worktree_is_another_doc() {
+    let task = Ulid::new();
+    let (project, worktree) = (k("a.rs"), FileKey::new("a.rs", Some(task)));
+    let mut docs = Documents::new();
+    docs.ensure(&project, MdMode::Source);
+    docs.ensure(&worktree, MdMode::Source);
+    assert_eq!(docs.get(&worktree).unwrap().file, worktree);
+    assert_eq!(docs.get(&project).unwrap().file, project);
+    // `git.changed` of the worktree touches its docs only.
+    assert!(docs.get_mut(&project).unwrap().take_read());
+    assert!(docs.get_mut(&worktree).unwrap().take_read());
+    assert_eq!(
+        docs.refresh(Some(task), std::slice::from_ref(&worktree)),
+        std::slice::from_ref(&worktree)
+    );
+    assert!(
+        !docs.get_mut(&project).unwrap().take_read(),
+        "the project's doc was not touched"
+    );
+    assert_eq!(docs.refresh(None, &[]), Vec::<FileKey>::new());
+    assert!(
+        docs.get_mut(&project).unwrap().take_read(),
+        "stale: read when drawn"
+    );
+}
+
+/// Reads and saves go to the folder of the file, never to the Files tree's: the requests
+/// are built from the file's own task.
+#[test]
+fn a_worktree_file_is_read_and_saved_in_its_worktree() {
+    let (project_id, task) = (Ulid::new(), Ulid::new());
+    let file = FileKey::new("src/a.rs", Some(task));
+    let read = read_params(project_id, &file);
+    assert_eq!(
+        (read.worktree_task_id, read.path.as_str()),
+        (Some(task), "src/a.rs")
+    );
+    let mut docs = Documents::new();
+    docs.ensure(&file, MdMode::Source);
+    assert!(docs.begin_read(&file));
+    docs.read(&file, file_text_at("src/a.rs", "a\n"));
+    docs.get_mut(&file)
+        .unwrap()
+        .editor_mut()
+        .unwrap()
+        .insert("x");
+    let save = docs.begin_save(&file).expect("unsaved text");
+    assert_eq!(save.task, Some(task));
+    let write = write_params(project_id, save);
+    assert_eq!(
+        (write.worktree_task_id, write.path.as_str()),
+        (Some(task), "src/a.rs")
+    );
+    // A project file has no task.
+    let plain = read_params(project_id, &k("src/a.rs"));
+    assert_eq!(plain.worktree_task_id, None);
+}
+
+/// After a lost connection an unsaved worktree doc still saves into its worktree.
+#[test]
+fn an_unsaved_worktree_doc_keeps_its_folder_over_a_reconnect() {
+    let (project_id, task) = (Ulid::new(), Ulid::new());
+    let file = FileKey::new("a.rs", Some(task));
+    let mut docs = Documents::new();
+    docs.ensure(&file, MdMode::Source);
+    assert!(docs.begin_read(&file));
+    docs.read(&file, file_text_at("a.rs", "a\n"));
+    docs.get_mut(&file)
+        .unwrap()
+        .editor_mut()
+        .unwrap()
+        .insert("x");
+    let mut kept = docs.into_unsaved().expect("unsaved");
+    assert_eq!(kept.unsaved_files(), std::slice::from_ref(&file));
+    let save = kept.begin_save(&file).expect("saves with the old hash");
+    assert_eq!(write_params(project_id, save).worktree_task_id, Some(task));
 }

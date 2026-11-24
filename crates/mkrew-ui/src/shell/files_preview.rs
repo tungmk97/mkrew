@@ -17,10 +17,10 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let Some(view) = self.doc_view(project_id, &doc.path) else {
+        let Some(view) = self.doc_view(project_id, &doc.file) else {
             return div().into_any_element();
         };
-        let path = doc.path.clone();
+        let path = doc.file.clone();
         let shown = match doc.preview() {
             None => {
                 return message(theme, None, "Rendering the preview…".into(), None)
@@ -76,7 +76,7 @@ impl Shell {
     fn preview_press(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         split: bool,
         event: &MouseDownEvent,
         window: &mut Window,
@@ -107,7 +107,7 @@ impl Shell {
     fn preview_drag_to(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         position: Point<Pixels>,
         cx: &mut Context<'_, Self>,
     ) {
@@ -171,13 +171,13 @@ impl Shell {
     ) -> preview::Wrap {
         let this = cx.entity();
         let theme = theme.clone();
-        let path = doc.path.clone();
+        let path = doc.file.clone();
         let edit = doc
             .block_edit
             .as_ref()
             .map(|edit| (edit.block, edit.text.input().clone()));
         let block_focus =
-            (self.doc_view(project_id, &doc.path)).map(|view| view.block_focus.clone());
+            (self.doc_view(project_id, &doc.file)).map(|view| view.block_focus.clone());
         let Some(focus) = block_focus else {
             return Rc::new(|_, _, element| element);
         };
@@ -225,7 +225,7 @@ impl Shell {
     fn open_block_edit(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         block: usize,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -242,7 +242,7 @@ impl Shell {
     fn close_block_edit(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -259,7 +259,7 @@ impl Shell {
     fn apply_block_edit(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -277,7 +277,7 @@ impl Shell {
         cx.notify();
     }
 
-    fn click_block_edit(&mut self, project_id: Ulid, path: &str, caret: Caret) {
+    fn click_block_edit(&mut self, project_id: Ulid, path: &FileKey, caret: Caret) {
         if let Some(edit) = (self.doc_mut(project_id, path)).and_then(|doc| doc.block_edit.as_mut())
         {
             edit.text.click(caret.at, caret.extend, caret.clicks);
@@ -330,7 +330,7 @@ impl Shell {
 #[allow(clippy::too_many_arguments)]
 fn block_edit_field(
     project_id: Ulid,
-    path: &str,
+    path: &FileKey,
     this: &Entity<Shell>,
     focus: &FocusHandle,
     input: &Input,
@@ -340,7 +340,7 @@ fn block_edit_field(
     theme: &Theme,
 ) -> gpui::Div {
     let (keys, out, grab) = (this.clone(), this.clone(), focus.clone());
-    let (click_path, out_path) = (path.to_owned(), path.to_owned());
+    let (click_path, out_path) = (path.clone(), path.clone());
     let field = caret_field_for(
         this,
         "file-block-field",

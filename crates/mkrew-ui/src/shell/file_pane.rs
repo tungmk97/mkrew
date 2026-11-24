@@ -9,7 +9,7 @@ impl Shell {
     pub(crate) fn render_file_pane(
         &self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -21,7 +21,6 @@ impl Shell {
                 .size_full()
                 .into_any_element();
         };
-        let target = (self.files.get(&project_id)).and_then(|files| files.worktree_task_id);
         let panel = div()
             .size_full()
             .flex()
@@ -30,7 +29,7 @@ impl Shell {
             .overflow_hidden()
             .font_family(theme.ui_font_family.clone())
             .bg(rgb(theme.surface));
-        let path = path.to_owned();
+        let path = path.clone();
         let dirty = doc.is_dirty();
         let editable = doc
             .shown()
@@ -104,7 +103,7 @@ impl Shell {
             })
         };
         let markdown = doc.is_markdown();
-        let review_path = path.clone();
+        let review_path = path.path.clone();
         let header = div()
             .flex_none()
             .flex()
@@ -122,45 +121,99 @@ impl Shell {
                     .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
-                    .child(format!("{}{path}", if dirty { "● " } else { "" })),
+                    .child(format!("{}{}", if dirty { "● " } else { "" }, path.path)),
             )
-            .children(doc.shown().filter(|_| editable).and_then(|shown| {
-                let at = shown.editor.cursor();
-                // The caret is always inside the text (the editor clamps it).
-                let line = shown.editor.lines().get(at.line)?;
-                let col = editor::display_col(line, at.col);
-                Some(
-                    div()
-                        .flex_none()
-                        .text_size(font_size::META)
-                        .text_color(rgb(theme.text_muted))
-                        .child(format!("Ln {}, Col {}", at.line + 1, col + 1)),
-                )
-            }))
-            .children(mode_toggle)
-            // The Docs view reviews the project folder's files, not a worktree's.
-            .when(markdown && target.is_none() && self.features.docs, |el| {
-                el.child(
-                    button(
-                        "file-review",
-                        icon_text(Icon::FileText, "Review in Docs", button_fg(theme, false)),
-                        theme,
-                        false,
+            // The buttons give way first: in a narrow pane the left ones are cut, the name stays.
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(space::S))
+                    .min_w_0()
+                    .overflow_hidden()
+                    .children(doc.shown().filter(|_| editable).and_then(|shown| {
+                        let at = shown.editor.cursor();
+                        // The caret is always inside the text (the editor clamps it).
+                        let line = shown.editor.lines().get(at.line)?;
+                        let col = editor::display_col(line, at.col);
+                        Some(
+                            div()
+                                .flex_none()
+                                .text_size(font_size::META)
+                                .text_color(rgb(theme.text_muted))
+                                .child(format!("Ln {}, Col {}", at.line + 1, col + 1)),
+                        )
+                    }))
+                    .children(mode_toggle)
+                    // The Docs view reviews the project folder's files, not a worktree's.
+                    .when(
+                        markdown && path.task.is_none() && self.features.docs,
+                        |el| {
+                            el.child(
+                                button(
+                                    "file-review",
+                                    icon_text(
+                                        Icon::FileText,
+                                        "Review in Docs",
+                                        button_fg(theme, false),
+                                    ),
+                                    theme,
+                                    false,
+                                )
+                                .flex_none()
+                                .tooltip(tooltip(theme, "Review and comment on this file", ""))
+                                .on_click(cx.listener(
+                                    move |shell, _, window, cx| {
+                                        shell.review_in_docs(
+                                            project_id,
+                                            review_path.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                        },
                     )
-                    .flex_none()
-                    .tooltip(tooltip(theme, "Review and comment on this file", ""))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.review_in_docs(project_id, review_path.clone(), window, cx);
-                    })),
-                )
-            })
-            .when(editable, |el| {
-                el.child(
-                    button(
-                        "file-save",
-                        icon_text(Icon::Save, "Save", button_fg(theme, dirty)),
-                        theme,
-                        dirty,
+                    .when(editable, |el| {
+                        el.child(
+                            button(
+                                "file-save",
+                                icon_text(Icon::Save, "Save", button_fg(theme, dirty)),
+                                theme,
+                                dirty,
+                            )
+                            .flex_none()
+                            .tooltip(tooltip(
+                                theme,
+                                "Save this file",
+                                self.keymap.label(Command::SaveFile),
+                            ))
+                            .on_click({
+                                let path = path.clone();
+                                cx.listener(move |shell, _, window, cx| {
+                                    shell.save_file(project_id, path.clone(), None, window, cx);
+                                })
+                            }),
+                        )
+                    })
+                    .child(
+                        button(
+                            "file-find",
+                            icon_text(Icon::Search, "Find", button_fg(theme, false)),
+                            theme,
+                            false,
+                        )
+                        .flex_none()
+                        .tooltip(tooltip(
+                            theme,
+                            "Find in this file",
+                            self.keymap.label(Command::Find),
+                        ))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.open_file_find(false, window, cx)
+                        })),
                     )
                     .flex_none()
                     .tooltip(tooltip(
@@ -555,10 +608,10 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let Some(view) = self.doc_view(project_id, &doc.path) else {
+        let Some(view) = self.doc_view(project_id, &doc.file) else {
             return div().into_any_element();
         };
-        let path = doc.path.clone();
+        let path = doc.file.clone();
         let path_list = path.clone();
         let focused = view.editor_focus.is_focused(window);
         let cell_width = mkrew_ui::terminal::view::cell_size(window, theme).0;

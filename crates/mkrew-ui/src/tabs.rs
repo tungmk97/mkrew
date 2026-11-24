@@ -968,7 +968,7 @@ pub fn tab_icons(tab: &Tab, sessions: &[Session], active: bool) -> TabIcons {
     };
     let pane_icon = |key: &PaneKey| match key {
         PaneKey::Session(id) => known(id).map(icon),
-        PaneKey::File(path) => Some(PaneIcon::File(path.clone())),
+        PaneKey::File(file) => Some(PaneIcon::File(file.path.clone())),
         PaneKey::Diff => Some(PaneIcon::Diff),
     };
     let mut panes: Vec<PaneIcon> = if active {
@@ -1031,7 +1031,7 @@ pub fn file_label(tab: &Tab, docs: Option<&Documents>) -> Option<FileLabel> {
         return None;
     }
     let key = tab.focused()?;
-    let PaneKey::File(path) = key else {
+    let PaneKey::File(file) = key else {
         return None;
     };
     let preview = matches!(
@@ -1039,9 +1039,9 @@ pub fn file_label(tab: &Tab, docs: Option<&Documents>) -> Option<FileLabel> {
         Some(Leaf::File { preview: true, .. })
     );
     Some(FileLabel {
-        name: path.rsplit('/').next().unwrap_or(path).to_owned(),
+        name: (file.path.rsplit('/').next().unwrap_or(&file.path)).to_owned(),
         dirty: docs
-            .and_then(|docs| docs.get(path))
+            .and_then(|docs| docs.get(file))
             .is_some_and(Doc::is_dirty),
         preview,
     })

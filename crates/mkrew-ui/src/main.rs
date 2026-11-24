@@ -31,18 +31,17 @@ use mkrew_protocol::{
     CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
     DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
     FsContent, FsCreateParams, FsCreated, FsEntry, FsIgnoreParams, FsListParams, FsMatch,
-    FsNewNoteParams, FsReadParams, FsWriteParams, FsWritten, GitCheckoutParams, GitCommitResult,
-    GitMarker, GitMode, GitStatus, GitStatusParams, Outcome, Project, ProjectAddParams,
-    ProjectClonedEvent, ProjectRef, ProjectUpdateParams, RemoveWorktreeResult, Request,
-    RunStartParams, RunStarted, RunStopParams, Session, SessionAttachResult, SessionFiles,
-    SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams, SessionLogTail,
-    SessionLogTailParams, SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent,
-    SessionReadResult, SessionRef, SessionResumeParams, SessionSendParams, SessionSendResult,
-    SessionSpawnResult, SessionState, SessionTranscript, SessionTranscriptParams,
-    SessionUnqueueParams, SessionUsageEvent, SlashListResult, StateSource, TabCreateParams,
-    TabListParams, TabPinParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams,
-    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
-    ViewedFile,
+    FsNewNoteParams, FsWritten, GitCheckoutParams, GitCommitResult, GitMarker, GitMode, GitStatus,
+    GitStatusParams, Outcome, Project, ProjectAddParams, ProjectClonedEvent, ProjectRef,
+    ProjectUpdateParams, RemoveWorktreeResult, Request, RunStartParams, RunStarted, RunStopParams,
+    Session, SessionAttachResult, SessionFiles, SessionKillParams, SessionKind,
+    SessionLinkPlanParams, SessionListParams, SessionLogTail, SessionLogTailParams,
+    SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionReadResult,
+    SessionRef, SessionResumeParams, SessionSendParams, SessionSendResult, SessionSpawnResult,
+    SessionState, SessionTranscript, SessionTranscriptParams, SessionUnqueueParams,
+    SessionUsageEvent, SlashListResult, StateSource, TabCreateParams, TabListParams, TabPinParams,
+    TabRef, TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef,
+    TaskStatus, TerminalTab, Turn, UndoPreview, ViewedFile,
 };
 use mkrew_ui::ask::{self, Ask};
 use mkrew_ui::attention::{self, Tracker};
@@ -108,7 +107,7 @@ use mkrew_ui::scrollbar;
 use mkrew_ui::settings_dialog::{self, SettingsDialog};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::slash_picker::{self, SlashKey, SlashPicker};
-use mkrew_ui::split::{Axis, Direction, Divider, Edge, Leaf, PaneKey, Preset};
+use mkrew_ui::split::{Axis, Direction, Divider, Edge, FileKey, Leaf, PaneKey, Preset};
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{
@@ -764,7 +763,7 @@ struct Shell {
     /// The open files of every workspace (SPEC §12A, ADR 0108); one store per workspace.
     documents: HashMap<Ulid, Documents>,
     /// The view state of each open file pane, keyed like the store.
-    doc_views: HashMap<(Ulid, String), DocView>,
+    doc_views: HashMap<(Ulid, FileKey), DocView>,
     /// The Files view of every workspace it was shown for.
     files: HashMap<Ulid, FilesView>,
     /// Focused while the right panel's tree has the keyboard, so arrow keys move its cursor.
@@ -773,7 +772,7 @@ struct Shell {
     files_scroll: UniformListScrollHandle,
     /// What waits for a Files save in flight (a "Save" answered while one was already sent):
     /// `(workspace, path, then)`, run after that save succeeds.
-    files_after_save: Vec<(Ulid, String, AfterSave)>,
+    files_after_save: Vec<(Ulid, FileKey, AfterSave)>,
     /// The mode the next Markdown file opens in (`[ui] md_mode`, the last one switched to).
     md_mode: documents::MdMode,
     /// The source's share of the Markdown Split view (`[ui] md_split`, 0.2–0.8).

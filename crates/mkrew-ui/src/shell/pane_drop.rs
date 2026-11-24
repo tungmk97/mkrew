@@ -91,7 +91,7 @@ impl PaneDragged for DraggedPath {
     fn takes(&self, _shell: &Shell, project_id: Ulid, target: &PaneKey) -> bool {
         !self.is_dir
             && self.project_id == project_id
-            && !matches!(target, PaneKey::File(path) if *path == self.path)
+            && !matches!(target, PaneKey::File(file) if *file == self.file())
     }
 
     fn land(
@@ -106,7 +106,7 @@ impl PaneDragged for DraggedPath {
         shell.drop_leaf(
             project_id,
             Some((target, edge)),
-            Leaf::file(&self.path),
+            Leaf::of_file(self.file()),
             window,
             cx,
         );
@@ -130,7 +130,9 @@ impl Shell {
                 })
                 .unwrap_or_default()
                 .into(),
-            PaneKey::File(path) => path.rsplit('/').next().unwrap_or(path).to_owned().into(),
+            PaneKey::File(file) => (file.path.rsplit('/').next().unwrap_or(&file.path))
+                .to_owned()
+                .into(),
             PaneKey::Diff => "Diff".into(),
         }
     }
@@ -469,7 +471,8 @@ impl Shell {
             None => Place::NewTab,
         };
         match leaf {
-            Leaf::File { file, .. } => {
+            Leaf::File { file, task, .. } => {
+                let file = FileKey::new(file, task);
                 self.open_document(project_id, file, None, place, window, cx);
             }
             Leaf::Diff { .. } => self.open_diff(project_id, place, window, cx),
@@ -545,7 +548,7 @@ impl Shell {
             }))
             .on_drop(cx.listener(|shell, path: &DraggedPath, window, cx| {
                 if shell.workspace == Some(path.project_id) && !shell.modal_open() {
-                    let leaf = Leaf::file(&path.path);
+                    let leaf = Leaf::of_file(path.file());
                     shell.drop_leaf(path.project_id, None, leaf, window, cx);
                 }
             }))

@@ -26,7 +26,7 @@ impl Shell {
     pub(crate) fn set_file_mode(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         mode: MdMode,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -41,11 +41,11 @@ impl Shell {
             return;
         }
         doc.set_mode(mode);
-        if let Some(view) = self.doc_views.get_mut(&(project_id, path.to_owned())) {
+        if let Some(view) = self.doc_views.get_mut(&(project_id, path.clone())) {
             view.split_sync.followed.set(None);
         }
         // The leaf remembers the mode across restarts.
-        let key = PaneKey::File(path.to_owned());
+        let key = PaneKey::File(path.clone());
         let write = (self.tabs.get_mut(&project_id))
             .and_then(|tabs| tabs.update_leaf(&key, |leaf| documents::set_leaf_mode(leaf, mode)));
         if let Some(write) = write {
@@ -79,7 +79,7 @@ impl Shell {
     pub(crate) fn toggle_file_preview(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -97,7 +97,7 @@ impl Shell {
     pub(crate) fn toggle_file_split(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -128,12 +128,12 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let Some(view) = self.doc_view(project_id, &doc.path) else {
+        let Some(view) = self.doc_view(project_id, &doc.file) else {
             return div().into_any_element();
         };
         self.follow_source_scroll(doc, view, cx);
         let bounds = Rc::clone(&view.split_bounds);
-        let path = doc.path.clone();
+        let path = doc.file.clone();
         let source = self.render_shown_file(project_id, doc, shown, window, theme, cx);
         let page = self.render_md_preview(project_id, doc, true, window, theme, cx);
         let divider = theme.divider;
@@ -275,7 +275,7 @@ impl Shell {
     pub(crate) fn split_caret_to_block(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
         block: usize,
         cx: &App,
     ) {
@@ -319,18 +319,18 @@ impl Shell {
         let shown_target = self.files.get(&project_id).and_then(|v| v.worktree_task_id);
         // The file a page's link is in (the focused file pane or the Docs file), the folder it is
         // in, its page and blocks.
-        let file = self.focused_doc(window);
+        let file = self.focused_doc(window).map(|(_, file)| file);
         let (from, target, page) = match (action.on_page, self.view()) {
             (true, View::Terminals) if file.is_some() => {
-                let path = file.map(|(_, path)| path);
-                let doc = path.as_deref().and_then(|path| self.doc(project_id, path));
-                let view = path
-                    .as_deref()
-                    .and_then(|path| self.doc_view(project_id, path));
+                let doc = file.as_ref().and_then(|file| self.doc(project_id, file));
+                let view = file
+                    .as_ref()
+                    .and_then(|file| self.doc_view(project_id, file));
                 let page = doc
                     .zip(view)
                     .and_then(|(doc, view)| Some((&view.page, doc.preview()?.clone())));
-                (path, shown_target, page)
+                let target = file.as_ref().and_then(|file| file.task);
+                (file.map(|file| file.path), target, page)
             }
             (true, View::Docs) => {
                 let docs = self.docs.get(&project_id);
@@ -367,18 +367,7 @@ impl Shell {
                     shell.open_preview_link(&action, window, cx);
                 });
             }
-            Some(LinkTarget::File { path, line }) if shown_target == target => {
-                self.reveal_file(project_id, target, path.clone(), window, cx);
-                self.open_document(
-                    project_id,
-                    path,
-                    line.map(|line| (line, 1)),
-                    documents::Place::NewTab,
-                    window,
-                    cx,
-                );
-            }
-            // A Docs link while the tree shows a task worktree: the project folder's file.
+            // The linked file is of the folder the link is in.
             Some(LinkTarget::File { path, line }) => {
                 self.open_file_at(project_id, target, path, line, window, cx);
             }

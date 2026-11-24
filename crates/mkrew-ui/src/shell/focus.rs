@@ -219,19 +219,19 @@ impl Shell {
 
     /// Every file pane drawn now, with its leaf's Markdown mode: the main window's active
     /// tab (while it shows Terminals) and the visible detached tabs.
-    pub(crate) fn visible_files(&self) -> Vec<(Ulid, String, Option<MdMode>)> {
+    pub(crate) fn visible_files(&self) -> Vec<(Ulid, FileKey, Option<MdMode>)> {
         let mut shown = Vec::new();
         let mut add = |project: Ulid, tab: &Tab| {
             let Some(layout) = tab.layout() else {
                 return;
             };
             for key in tab.shown() {
-                if let PaneKey::File(path) = &key {
+                if let PaneKey::File(file) = &key {
                     let md = match layout.leaf_of(&key) {
                         Some(Leaf::File { md, .. }) => *md,
                         _ => None,
                     };
-                    shown.push((project, path.clone(), md));
+                    shown.push((project, file.clone(), md));
                 }
             }
         };
@@ -262,7 +262,7 @@ impl Shell {
                 continue;
             }
             if let Some(docs) = self.documents.get_mut(project) {
-                docs.retain_open(&documents::open_paths(tabs));
+                docs.retain_open(&documents::open_files(tabs));
             }
         }
         let documents = &self.documents;
@@ -271,12 +271,14 @@ impl Shell {
                 .get(project)
                 .is_some_and(|docs| docs.get(path).is_some())
         });
-        for (project, path, md) in self.visible_files() {
-            self.ensure_doc(project, &path, md, cx);
-            if (self.doc_mut(project, &path)).is_some_and(documents::Doc::take_read) {
-                self.read_file(project, path, window, cx);
+        for (project, file, md) in self.visible_files() {
+            self.ensure_doc(project, &file, md, cx);
+            if (self.doc_mut(project, &file)).is_some_and(documents::Doc::take_read) {
+                self.read_file(project, file, window, cx);
             }
         }
+        // A file pane of a worktree keeps its watcher.
+        self.sync_watches(cx);
     }
 
     /// Attaches the sessions on screen in any window (live ones, or already attached; none

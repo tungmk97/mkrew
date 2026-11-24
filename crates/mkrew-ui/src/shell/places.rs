@@ -4,13 +4,13 @@ use crate::*;
 
 impl Shell {
     /// The only way a file opens (SPEC §6.1): where `place` says, or, when the file is open
-    /// already in any tab or window, only its pane is focused. `line` is a link's
-    /// (line, column), 1-based, shown in either case. Runs in the main window: from a
-    /// detached one it hops there first.
+    /// already in any tab or window, only its pane is focused. `file` says which folder it is
+    /// of (the project's or a task worktree's). `line` is a link's (line, column), 1-based,
+    /// shown in either case. Runs in the main window: from a detached one it hops there first.
     pub(crate) fn open_document(
         &mut self,
         project_id: Ulid,
-        path: String,
+        file: FileKey,
         line: Option<(u32, u32)>,
         place: documents::Place,
         window: &mut Window,
@@ -19,19 +19,18 @@ impl Shell {
         if self.host_of(window) != HostId::Main {
             return self.in_window(HostId::Main, cx, move |shell, window, cx| {
                 window.activate_window();
-                shell.open_document(project_id, path, line, place, window, cx);
+                shell.open_document(project_id, file, line, place, window, cx);
             });
         }
         let preview = place == documents::Place::Preview;
-        self.ensure_doc(project_id, &path, None, cx);
-        if let Some(doc) = self.doc_mut(project_id, &path) {
+        self.ensure_doc(project_id, &file, None, cx);
+        if let Some(doc) = self.doc_mut(project_id, &file) {
             doc.set_line(line);
         }
-        let leaf = Leaf::File {
-            file: path.clone(),
-            md: None,
-            preview,
-        };
+        let mut leaf = Leaf::of_file(file.clone());
+        if let Leaf::File { preview: p, .. } = &mut leaf {
+            *p = preview;
+        }
         // Terminals show the panes: Board, Docs and the Diff give way.
         self.views.insert(project_id, View::Terminals);
         if self.workspace != Some(project_id) {
@@ -39,8 +38,8 @@ impl Shell {
         }
         self.place_leaf(project_id, leaf, place, window, cx);
         // Shown already: the line applies now; otherwise after the read.
-        self.show_pending_line(project_id, &path);
-        self.focus_file_pane(project_id, &path, window, cx);
+        self.show_pending_line(project_id, &file);
+        self.focus_file_pane(project_id, &file, window, cx);
     }
 
     /// Puts `leaf` in the layouts as `place` resolves (`documents::resolve_place`): it is
@@ -156,27 +155,27 @@ impl Shell {
         }
     }
 
-    /// The pane of `path` has the keyboard in its editor (a new file, a link, a note).
+    /// The pane of `file` has the keyboard in its editor (a new file, a link, a note).
     pub(crate) fn focus_file_pane(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        file: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.focus_pane_key(project_id, &PaneKey::File(path.to_owned()));
-        self.focus_doc(project_id, path, DocFocus::Editor, window, cx);
+        self.focus_pane_key(project_id, &PaneKey::File(file.clone()));
+        self.focus_doc(project_id, file, DocFocus::Editor, window, cx);
     }
 
     /// A kept leaf: an edit, a double click or a pin ends the preview tab.
     pub(crate) fn keep_leaf(
         &mut self,
         project_id: Ulid,
-        path: &str,
+        file: &FileKey,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let key = PaneKey::File(path.to_owned());
+        let key = PaneKey::File(file.clone());
         let write = (self.tabs.get_mut(&project_id))
             .and_then(|tabs| tabs.update_leaf(&key, documents::keep_leaf));
         if let Some(write) = write {

@@ -117,7 +117,11 @@ impl Shell {
             files_view::Listing::Loaded(_) => {
                 let rows = view.rows();
                 let cursor = view.cursor.clone();
-                let opened = self.focused_file(window);
+                let task = view.worktree_task_id;
+                // Only a file of the folder the tree shows is the tree's open file.
+                let opened = (self.focused_file(window))
+                    .filter(|file| file.task == task)
+                    .map(|file| file.path);
                 let focused = self.files_focus.is_focused(window);
                 let row_theme = theme.clone();
                 uniform_list(
@@ -130,6 +134,7 @@ impl Shell {
                                 let shown = FileRowState {
                                     cursor: cursor.as_deref(),
                                     opened: opened.as_deref(),
+                                    task,
                                     focused,
                                 };
                                 file_row(project_id, row, &shown, &row_theme, cx)
@@ -243,6 +248,8 @@ pub(crate) struct FileRowState<'a> {
     pub(crate) cursor: Option<&'a str>,
     /// The opened file's path.
     pub(crate) opened: Option<&'a str>,
+    /// The folder the tree shows: the task worktree, `None` = the project's.
+    pub(crate) task: Option<Ulid>,
     /// The tree has the keyboard (the cursor shows a focus ring).
     pub(crate) focused: bool,
 }
@@ -253,8 +260,17 @@ pub(crate) struct FileRowState<'a> {
 pub(crate) struct DraggedPath {
     pub(crate) project_id: Ulid,
     pub(crate) path: String,
+    /// The folder the tree row is of (`FileKey::task`).
+    pub(crate) task: Option<Ulid>,
     pub(crate) is_dir: bool,
     pub(crate) name: SharedString,
+}
+
+impl DraggedPath {
+    /// The file this row opens.
+    pub(crate) fn file(&self) -> FileKey {
+        FileKey::new(self.path.clone(), self.task)
+    }
 }
 
 /// One Files tree row: indented by depth, a chevron on folders, the name (muted when
@@ -384,6 +400,7 @@ pub(crate) fn file_row(
             DraggedPath {
                 project_id,
                 path: entry.path.clone(),
+                task: state.task,
                 is_dir: entry.is_dir,
                 name: entry.name.clone().into(),
             },

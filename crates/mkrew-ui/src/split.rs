@@ -26,13 +26,36 @@ pub enum Direction {
     Down,
 }
 
-/// What a pane of the tab shows, as the key that finds it: one session, one file (the stored
-/// path), or the diff. A tab holds a key at most once, and so does a workspace for files and
+/// One open file: its path (relative to the root with `/` separators, or absolute for a note in
+/// a notes folder outside it) and the folder it is of: `None` = the project folder, `Some` = the
+/// project's folder inside that task's worktree. The same path in two folders is two files.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FileKey {
+    pub path: String,
+    pub task: Option<Ulid>,
+}
+
+impl FileKey {
+    pub fn new(path: impl Into<String>, task: Option<Ulid>) -> FileKey {
+        FileKey {
+            path: path.into(),
+            task,
+        }
+    }
+
+    /// A file of the project folder.
+    pub fn project(path: impl Into<String>) -> FileKey {
+        FileKey::new(path, None)
+    }
+}
+
+/// What a pane of the tab shows, as the key that finds it: one session, one file (its path and
+/// folder), or the diff. A tab holds a key at most once, and so does a workspace for files and
 /// the diff (ADR 0108).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PaneKey {
     Session(Ulid),
-    File(String),
+    File(FileKey),
     Diff,
 }
 
@@ -59,10 +82,14 @@ pub enum Leaf {
         chat: Option<bool>,
     },
     /// A file of the workspace: its path relative to the root with `/` separators (an
-    /// absolute path for a note in a notes folder outside it). `md` is the pane's own Markdown
-    /// mode, absent = `[ui] md_mode`. `preview` marks the workspace's preview tab.
+    /// absolute path for a note in a notes folder outside it). `task` is the task worktree it
+    /// is of, absent = the project folder (layouts of protocol 58/60 have none). `md` is the
+    /// pane's own Markdown mode, absent = `[ui] md_mode`. `preview` marks the workspace's
+    /// preview tab.
     File {
         file: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<Ulid>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         md: Option<mkrew_core::settings::MdMode>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -80,9 +107,15 @@ impl Leaf {
         }
     }
 
+    /// A file of the project folder.
     pub fn file(path: impl Into<String>) -> Leaf {
+        Leaf::of_file(FileKey::project(path))
+    }
+
+    pub fn of_file(file: FileKey) -> Leaf {
         Leaf::File {
-            file: path.into(),
+            file: file.path,
+            task: file.task,
             md: None,
             preview: false,
         }
@@ -95,7 +128,7 @@ impl Leaf {
     pub fn key(&self) -> PaneKey {
         match self {
             Leaf::Session { session, .. } => PaneKey::Session(*session),
-            Leaf::File { file, .. } => PaneKey::File(file.clone()),
+            Leaf::File { file, task, .. } => PaneKey::File(FileKey::new(file.clone(), *task)),
             Leaf::Diff { .. } => PaneKey::Diff,
         }
     }
@@ -104,7 +137,9 @@ impl Leaf {
     pub fn has_key(&self, key: &PaneKey) -> bool {
         match (self, key) {
             (Leaf::Session { session, .. }, PaneKey::Session(id)) => session == id,
-            (Leaf::File { file, .. }, PaneKey::File(path)) => file == path,
+            (Leaf::File { file, task, .. }, PaneKey::File(key)) => {
+                *file == key.path && *task == key.task
+            }
             (Leaf::Diff { .. }, PaneKey::Diff) => true,
             _ => false,
         }
@@ -1373,18 +1408,19 @@ mod tests {
         assert_eq!(Leaf::session(id).key(), PaneKey::Session(id));
         assert_eq!(
             Leaf::file("src/a.rs").key(),
-            PaneKey::File("src/a.rs".to_owned())
+            PaneKey::File(FileKey::project("src/a.rs"))
         );
         assert_eq!(Leaf::diff().key(), PaneKey::Diff);
         // The flags are not part of the key: one file has one key.
         let flagged = Leaf::File {
             file: "src/a.rs".into(),
+            task: None,
             md: Some(mkrew_core::settings::MdMode::Split),
             preview: true,
         };
         assert_eq!(flagged.key(), Leaf::file("src/a.rs").key());
         assert_eq!(PaneKey::Session(id).session(), Some(id));
-        assert_eq!(PaneKey::File("a".into()).session(), None);
+        assert_eq!(PaneKey::File(FileKey::project("a")).session(), None);
         assert_eq!(PaneKey::Diff.session(), None);
     }
 
@@ -1444,7 +1480,11 @@ mod tests {
         let node = Node::from_json(&stored).unwrap().unwrap();
         assert_eq!(
             node.keys(),
-            [k(a), PaneKey::File("src/a.rs".into()), PaneKey::Diff]
+            [
+                k(a),
+                PaneKey::File(FileKey::project("src/a.rs")),
+                PaneKey::Diff
+            ]
         );
         assert_eq!(node.sessions(), [a]);
         assert_eq!(Node::to_json(Some(&node)), stored);
@@ -1594,7 +1634,7 @@ mod tests {
         );
         assert!(matches!(
             Node::from_json(&files),
-            Err(LayoutError::Duplicate(PaneKey::File(path))) if path == "a.md"
+            Err(LayoutError::Duplicate(PaneKey::File(file))) if file == FileKey::project("a.md")
         ));
         let diffs = halves_json("vertical", json!({"diff": true}), json!({"diff": true}));
         assert!(matches!(
@@ -1657,7 +1697,7 @@ mod tests {
         // No such target.
         assert!(!node.insert_at(&k(b), Edge::Right, Node::leaf(Leaf::diff())));
         assert!(!node.insert_at(
-            &PaneKey::File("other".into()),
+            &PaneKey::File(FileKey::project("other")),
             Edge::Left,
             Node::leaf(Leaf::diff())
         ));
@@ -1698,14 +1738,14 @@ mod tests {
     fn file_and_diff_leaves_lay_out_close_move_and_resize_like_sessions() {
         // a | (x / diff)
         let a = Ulid::new();
-        let x = PaneKey::File("x".into());
+        let x = PaneKey::File(FileKey::project("x"));
         let mut node = Node::pane(a);
         assert!(node.split_with(&k(a), Axis::Vertical, Node::leaf(Leaf::file("x"))));
         assert!(node.split_with(&x, Axis::Horizontal, Node::leaf(Leaf::diff())));
         let keys: Vec<PaneKey> = node.rects().into_iter().map(|(key, _)| key).collect();
         assert_eq!(keys, [k(a), x.clone(), PaneKey::Diff]);
         assert!(node.contains(&PaneKey::Diff));
-        assert!(!node.contains(&PaneKey::File("y".into())));
+        assert!(!node.contains(&PaneKey::File(FileKey::project("y"))));
         // Neighbours across kinds: a's right neighbour is the upper one of the column.
         assert_eq!(node.neighbour(&k(a), Direction::Right), Some(x.clone()));
         assert_eq!(node.neighbour(&x, Direction::Down), Some(PaneKey::Diff));
@@ -1723,7 +1763,7 @@ mod tests {
         assert_eq!(closed.focus, Some(x));
         assert_eq!(
             closed.remaining.unwrap().keys(),
-            [PaneKey::File("x".into()), PaneKey::Diff]
+            [PaneKey::File(FileKey::project("x")), PaneKey::Diff]
         );
     }
 
@@ -1738,7 +1778,7 @@ mod tests {
         assert_eq!(node.chat_of(other), None);
         // The file leaf has no chat flag and is not touched.
         assert_eq!(
-            node.leaf_of(&PaneKey::File("x".into())),
+            node.leaf_of(&PaneKey::File(FileKey::project("x"))),
             Some(&Leaf::file("x"))
         );
     }
@@ -1748,7 +1788,7 @@ mod tests {
         let a = Ulid::new();
         let mut node = Node::pane(a);
         assert!(node.split_with(&k(a), Axis::Vertical, Node::leaf(Leaf::file("x"))));
-        let key = PaneKey::File("x".into());
+        let key = PaneKey::File(FileKey::project("x"));
         if let Some(Leaf::File { md, preview, .. }) = node.leaf_mut(&key) {
             *md = Some(mkrew_core::settings::MdMode::Source);
             *preview = true;
@@ -1768,6 +1808,7 @@ mod tests {
         let a = Ulid::new();
         let file = Leaf::File {
             file: "README.md".into(),
+            task: None,
             md: Some(mkrew_core::settings::MdMode::Split),
             preview: true,
         };
@@ -1783,5 +1824,69 @@ mod tests {
             )
         );
         assert_eq!(built.leaves(), [Leaf::session(a), file]);
+    }
+
+    /// A layout of protocol 58 / 60 has no `task` on its file leaves: they are project files.
+    #[test]
+    fn a_file_leaf_without_a_task_is_a_project_file() {
+        let old = json!({"file": "src/a.rs", "md": "source", "preview": true});
+        let node = Node::from_json(&old).unwrap().expect("a layout");
+        let key = PaneKey::File(FileKey::project("src/a.rs"));
+        assert_eq!(
+            node.leaf_of(&key),
+            Some(&Leaf::File {
+                file: "src/a.rs".into(),
+                task: None,
+                md: Some(mkrew_core::settings::MdMode::Source),
+                preview: true,
+            })
+        );
+        // Written back as it was: no `task` for a project file.
+        assert_eq!(Node::to_json(Some(&node)), old);
+    }
+
+    #[test]
+    fn a_worktree_file_leaf_keeps_its_task_through_json() {
+        let task = Ulid::new();
+        let stored = json!({"file": "src/a.rs", "task": task.to_string()});
+        let node = Node::from_json(&stored).unwrap().expect("a layout");
+        let key = PaneKey::File(FileKey::new("src/a.rs", Some(task)));
+        assert_eq!(
+            node.leaf_of(&key),
+            Some(&Leaf::of_file(FileKey::new("src/a.rs", Some(task))))
+        );
+        assert_eq!(Node::to_json(Some(&node)), stored);
+        // It is not the project's file of the same path.
+        assert!(
+            node.leaf_of(&PaneKey::File(FileKey::project("src/a.rs")))
+                .is_none()
+        );
+    }
+
+    /// The same relative path in the project and in a worktree are two files: two keys, and
+    /// one layout may hold both.
+    #[test]
+    fn the_same_path_in_two_folders_is_two_keys() {
+        let task = Ulid::new();
+        let project = FileKey::project("a.md");
+        let worktree = FileKey::new("a.md", Some(task));
+        assert_ne!(
+            PaneKey::File(project.clone()),
+            PaneKey::File(worktree.clone())
+        );
+        assert_ne!(
+            Leaf::of_file(project.clone()).key(),
+            Leaf::of_file(worktree.clone()).key()
+        );
+        assert!(Leaf::of_file(worktree.clone()).has_key(&PaneKey::File(worktree.clone())));
+        assert!(!Leaf::of_file(worktree.clone()).has_key(&PaneKey::File(project)));
+        let both = halves_json(
+            "vertical",
+            json!({"file": "a.md"}),
+            json!({"file": "a.md", "task": task.to_string()}),
+        );
+        let node = Node::from_json(&both).unwrap().expect("two leaves");
+        assert_eq!(node.leaves().len(), 2);
+        assert_eq!(Node::to_json(Some(&node)), both);
     }
 }

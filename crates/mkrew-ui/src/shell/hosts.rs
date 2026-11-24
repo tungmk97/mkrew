@@ -131,10 +131,10 @@ impl Shell {
     }
 
     /// The workspace and file of the focused pane of `window`, when it is a file pane.
-    pub(crate) fn focused_doc(&self, window: &Window) -> Option<(Ulid, String)> {
+    pub(crate) fn focused_doc(&self, window: &Window) -> Option<(Ulid, FileKey)> {
         let (project, tab_id) = self.tab_scope(window)?;
         match self.tabs.get(&project)?.tab(tab_id)?.focused()? {
-            PaneKey::File(path) => Some((project, path.clone())),
+            PaneKey::File(file) => Some((project, file.clone())),
             _ => None,
         }
     }
@@ -149,15 +149,15 @@ impl Shell {
             .then_some(project)
     }
 
-    pub(crate) fn focused_file(&self, window: &Window) -> Option<String> {
+    pub(crate) fn focused_file(&self, window: &Window) -> Option<FileKey> {
         self.focused_doc(window).map(|(_, path)| path)
     }
 
     /// The file the right panel and prompt variables mean: the shown workspace's active tab's
     /// focused pane, when it is a file (also while a detached window has the keyboard).
-    pub(crate) fn panel_file(&self, project_id: Ulid) -> Option<String> {
+    pub(crate) fn panel_file(&self, project_id: Ulid) -> Option<FileKey> {
         match self.tabs.get(&project_id)?.active()?.focused()? {
-            PaneKey::File(path) => Some(path.clone()),
+            PaneKey::File(file) => Some(file.clone()),
             _ => None,
         }
     }

@@ -16,9 +16,15 @@ pub struct Needs(BTreeSet<(Ulid, Option<Ulid>)>);
 impl Needs {
     /// What showing `workspace` uses: always its project watcher (the title bar summary
     /// follows `git.changed`), plus the worktree of the Files view (`files`) and of the Git
-    /// view (`git`) while that view is on screen. Callers pass `None` for a view that is
-    /// hidden or that shows the project folder.
-    pub fn of(workspace: Option<Ulid>, files: Option<Ulid>, git: Option<Ulid>) -> Self {
+    /// view (`git`) while that view is on screen, and the worktrees of the file panes on
+    /// screen (`open`: each file is of its own folder). Callers pass `None` for a view that
+    /// is hidden or that shows the project folder.
+    pub fn of(
+        workspace: Option<Ulid>,
+        files: Option<Ulid>,
+        git: Option<Ulid>,
+        open: impl IntoIterator<Item = Ulid>,
+    ) -> Self {
         let mut needs = BTreeSet::new();
         if let Some(project) = workspace {
             needs.insert((project, None));
@@ -26,6 +32,7 @@ impl Needs {
                 [files, git]
                     .into_iter()
                     .flatten()
+                    .chain(open)
                     .map(|t| (project, Some(t))),
             );
         }
@@ -59,8 +66,8 @@ mod tests {
     #[test]
     fn switching_workspace_releases_the_old_project_and_its_worktree() {
         let (a, b, task) = (Ulid(1), Ulid(2), Ulid(3));
-        let before = Needs::of(Some(a), None, Some(task));
-        let after = Needs::of(Some(b), None, None);
+        let before = Needs::of(Some(a), None, Some(task), []);
+        let after = Needs::of(Some(b), None, None, []);
         assert_eq!(
             before.released(&after),
             [release(a, None), release(a, Some(task))]
@@ -73,21 +80,34 @@ mod tests {
     #[test]
     fn hiding_a_worktree_view_keeps_the_shown_project() {
         let (a, t1, t2) = (Ulid(1), Ulid(3), Ulid(4));
-        let shown = Needs::of(Some(a), Some(t1), None);
-        let hidden = Needs::of(Some(a), None, None);
+        let shown = Needs::of(Some(a), Some(t1), None, []);
+        let hidden = Needs::of(Some(a), None, None, []);
         assert_eq!(shown.released(&hidden), [release(a, Some(t1))]);
         assert!(
             hidden.released(&shown).is_empty(),
             "showing it again takes, not gives"
         );
         assert_eq!(
-            shown.released(&Needs::of(Some(a), Some(t2), None)),
+            shown.released(&Needs::of(Some(a), Some(t2), None, [])),
             [release(a, Some(t1))]
         );
         // Files and Git on the same worktree count once.
         assert_eq!(
-            Needs::of(Some(a), Some(t1), Some(t1)),
-            Needs::of(Some(a), None, Some(t1))
+            Needs::of(Some(a), Some(t1), Some(t1), []),
+            Needs::of(Some(a), None, Some(t1), [])
+        );
+    }
+
+    /// A file pane of a worktree keeps that worktree watched without the Files tree on it
+    /// (its `git.changed` re-reads the file); closing the pane gives the watcher back.
+    #[test]
+    fn an_open_worktree_file_keeps_its_worktree_watched() {
+        let (a, t1) = (Ulid(1), Ulid(3));
+        let open = Needs::of(Some(a), None, None, [t1]);
+        assert_eq!(open, Needs::of(Some(a), Some(t1), None, []));
+        assert_eq!(
+            open.released(&Needs::of(Some(a), None, None, [])),
+            [release(a, Some(t1))]
         );
     }
 }

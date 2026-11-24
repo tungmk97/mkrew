@@ -574,7 +574,8 @@ impl Shell {
             }
         } else {
             self.reveal_file(project_id, target, path.clone(), window, cx);
-            self.open_document(project_id, path, None, documents::Place::NewTab, window, cx);
+            let file = FileKey::new(path, target);
+            self.open_document(project_id, file, None, documents::Place::NewTab, window, cx);
         }
     }
 
@@ -780,7 +781,7 @@ impl Shell {
         // Its unsaved file text is lost with the workspace: ask first; the question runs this
         // again once every file was answered (a Cancel stops it).
         let unsaved =
-            (self.documents.get(&project_id)).map_or_else(Vec::new, Documents::unsaved_paths);
+            (self.documents.get(&project_id)).map_or_else(Vec::new, Documents::unsaved_files);
         if !unsaved.is_empty() {
             let again: AfterSave =
                 Box::new(move |shell, window, cx| shell.archive_workspace(project_id, window, cx));

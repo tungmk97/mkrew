@@ -343,7 +343,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(connection) = self.connection.clone() else {
+        let Some(connection) = self.connected_or_toast(cx) else {
             return;
         };
         // The workspace of the pane dropped on, else of this window's tab, else the shown one.
@@ -353,11 +353,11 @@ impl Shell {
         else {
             return;
         };
-        // The Files view's worktree target, as `create_entry`: the note opens from there.
-        let target = (self.files.get(&project_id)).and_then(|view| view.worktree_task_id);
+        // A note is a file of the project folder (the notes folder is in the settings, not in a
+        // task worktree), whatever the Files tree shows.
         let made = connection.call::<FsCreated>(Request::FsNewNote(FsNewNoteParams {
             project_id,
-            worktree_task_id: target,
+            worktree_task_id: None,
         }));
         cx.spawn_in(window, async move |this, cx| {
             let made = made.await;
@@ -394,17 +394,17 @@ impl Shell {
             }
             _ => documents::Place::NewTab,
         };
-        self.ensure_doc(project_id, &path, Some(MdMode::Source), cx);
+        let file = FileKey::project(path);
+        self.ensure_doc(project_id, &file, Some(MdMode::Source), cx);
         let main = self.host_of(window) == HostId::Main;
         if !main && matches!(place, documents::Place::NewTab) {
             // New tabs belong to the main window: it takes this one.
-            return self.open_document(project_id, path, None, place, window, cx);
+            return self.open_document(project_id, file, None, place, window, cx);
         }
-        let leaf = Leaf::File {
-            file: path.clone(),
-            md: Some(MdMode::Source),
-            preview: false,
-        };
+        let mut leaf = Leaf::of_file(file.clone());
+        if let Leaf::File { md, .. } = &mut leaf {
+            *md = Some(MdMode::Source);
+        }
         if main {
             // Terminals show the panes: Board, Docs and the Diff give way.
             self.views.insert(project_id, View::Terminals);
@@ -413,7 +413,7 @@ impl Shell {
             }
         }
         self.place_leaf(project_id, leaf, place, window, cx);
-        self.focus_file_pane(project_id, &path, window, cx);
+        self.focus_file_pane(project_id, &file, window, cx);
     }
 }
 

@@ -1,7 +1,8 @@
-//! The open files of a workspace (SPEC §12A, ADR 0108): one [`Doc`] per path in a
-//! [`Documents`] store per workspace, shared by every window. A [`Doc`] holds what an open file
-//! is (text, editor, page, find bar, flags); where it is drawn is the layout's `Leaf::File`.
-//! Pure and tested headlessly; `shell/places.rs` and `shell/file_pane.rs` do the rest.
+//! The open files of a workspace (SPEC §12A, ADR 0108): one [`Doc`] per [`FileKey`] (path and
+//! folder) in a [`Documents`] store per workspace, shared by every window. A [`Doc`] holds what
+//! an open file is (text, editor, page, find bar, flags); where it is drawn is the layout's
+//! `Leaf::File`. Pure and tested headlessly; `shell/places.rs` and `shell/file_pane.rs` do the
+//! rest.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -9,7 +10,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use mkrew_core::settings::MdMode;
-use mkrew_protocol::{FsContent, FsWritten};
+use mkrew_protocol::{FsContent, FsReadParams, FsWriteParams, FsWritten};
 use ulid::Ulid;
 
 use crate::docs;
@@ -17,7 +18,7 @@ use crate::editor::{Editor, Pos};
 use crate::highlight::Code;
 use crate::markdown::{self, Lines};
 use crate::preview_select::{self, Point, Selection};
-use crate::split::{Edge, Leaf, PaneKey};
+use crate::split::{Edge, FileKey, Leaf, PaneKey};
 use crate::tabs::{Tab, Tabs};
 use crate::task_dialog::DialogKey;
 use crate::text_box::{Input, TextBox};
@@ -53,13 +54,35 @@ pub struct Shown {
 }
 
 /// An `fs.write` of the opened file (SPEC §7): its text, the hash the file must still have
-/// on disk, and the undo state it saves.
+/// on disk, and the undo state it saves. `task` is the worktree the file is of.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveRequest {
     pub path: String,
+    pub task: Option<Ulid>,
     pub text: String,
     pub expected_hash: String,
     pub point: Option<u64>,
+}
+
+/// The `fs.write` of `save`: in the folder the file is of, never the Files tree's target.
+pub fn write_params(project_id: Ulid, save: SaveRequest) -> FsWriteParams {
+    FsWriteParams {
+        project_id,
+        worktree_task_id: save.task,
+        path: save.path,
+        content: save.text,
+        expected_hash: save.expected_hash,
+    }
+}
+
+/// The `fs.read` of `file`: in the folder it is of, never the Files tree's target.
+pub fn read_params(project_id: Ulid, file: &FileKey) -> FsReadParams {
+    FsReadParams {
+        project_id,
+        worktree_task_id: file.task,
+        path: file.path.clone(),
+        index_text: true,
+    }
 }
 
 /// Numbers every text the view shows (across views), so that a page built for one text is
@@ -104,8 +127,9 @@ pub struct StaleEdit;
 /// One open file (SPEC §12A, ADR 0080 as amended by ADR 0108).
 #[derive(Debug)]
 pub struct Doc {
-    /// Relative to the shown folder, `/` separators; the leaf's key.
-    pub path: String,
+    /// The file: its path (relative to the folder it is of, `/` separators) and that folder
+    /// (`task`: a task worktree, `None` = the project folder). The leaf's key.
+    pub file: FileKey,
     pub content: Content,
     /// `.md` files: the rendered preview, the editor, or both side by side. Starts as the
     /// leaf's `md`, else `[ui] md_mode`.
@@ -145,9 +169,9 @@ pub fn unshown_save(written: Result<FsWritten, String>) -> Option<String> {
 }
 
 impl Doc {
-    pub fn new(path: &str, mode: MdMode) -> Doc {
+    pub fn new(file: &FileKey, mode: MdMode) -> Doc {
         Doc {
-            path: path.to_owned(),
+            file: file.clone(),
             content: Content::Loading,
             mode,
             opening: docs::new_opening(),
@@ -167,7 +191,7 @@ impl Doc {
 
     /// The file name (the tab's title).
     pub fn name(&self) -> &str {
-        self.path.rsplit('/').next().unwrap_or(&self.path)
+        self.file.path.rsplit('/').next().unwrap_or(&self.file.path)
     }
 
     /// The text has unsaved changes.
@@ -327,7 +351,7 @@ impl Doc {
 
     /// Whether the file is Markdown (`.md`).
     pub fn is_markdown(&self) -> bool {
-        (self.path.rsplit_once('.')).is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("md"))
+        (self.file.path.rsplit_once('.')).is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("md"))
     }
 
     /// The `.md` file is shown as its rendered page alone, not as the editor.
@@ -449,7 +473,7 @@ impl Doc {
         let from_page = self.previewing() || (self.splitting() && editor.selection().is_none());
         let page = from_page.then(|| self.preview_lines()).flatten();
         if let Some((first, last, text)) = page {
-            return Some((self.path.clone(), first, last, text));
+            return Some((self.file.path.clone(), first, last, text));
         }
         // The selected lines, else the caret's line.
         let (first, last) = match editor.selection() {
@@ -460,7 +484,7 @@ impl Doc {
         };
         let text = editor.lines().get(first..=last)?.join("\n");
         let line = |index: usize| u32::try_from(index + 1).ok();
-        Some((self.path.clone(), line(first)?, line(last)?, text))
+        Some((self.file.path.clone(), line(first)?, line(last)?, text))
     }
 
     /// The page's selection as source lines and their text; `None` without a selection, outside
@@ -637,7 +661,8 @@ impl Doc {
         let expected_hash = shown.hash.clone()?;
         self.saving = true;
         Some(SaveRequest {
-            path: self.path.clone(),
+            path: self.file.path.clone(),
+            task: self.file.task,
             text: shown.editor.text(),
             expected_hash,
             point: shown.editor.save_point(),
@@ -692,7 +717,7 @@ impl Doc {
     pub fn highlight_request(&self, version: u64) -> Option<FsContent> {
         let shown = self.shown()?;
         (shown.editor.version() == version).then(|| FsContent {
-            path: self.path.clone(),
+            path: self.file.path.clone(),
             content: Some(shown.editor.text()),
             size: shown.code.size,
             binary: false,
@@ -748,10 +773,10 @@ impl Doc {
     }
 }
 
-/// The open files of one workspace, by stored path (`Leaf::File::file`).
+/// The open files of one workspace, by [`FileKey`] (`Leaf::File`'s path and task).
 #[derive(Debug, Default)]
 pub struct Documents {
-    docs: HashMap<String, Doc>,
+    docs: HashMap<FileKey, Doc>,
 }
 
 impl Documents {
@@ -759,27 +784,25 @@ impl Documents {
         Documents::default()
     }
 
-    pub fn get(&self, path: &str) -> Option<&Doc> {
-        self.docs.get(path)
+    pub fn get(&self, file: &FileKey) -> Option<&Doc> {
+        self.docs.get(file)
     }
 
-    pub fn get_mut(&mut self, path: &str) -> Option<&mut Doc> {
-        self.docs.get_mut(path)
+    pub fn get_mut(&mut self, file: &FileKey) -> Option<&mut Doc> {
+        self.docs.get_mut(file)
     }
 
-    /// The doc of `path`, made (and left to be read on its first draw) when missing. An
+    /// The doc of `file`, made (and left to be read on its first draw) when missing. An
     /// existing doc keeps its mode.
-    pub fn ensure(&mut self, path: &str, mode: MdMode) -> &mut Doc {
-        self.docs
-            .entry(path.to_owned())
-            .or_insert_with(|| Doc::new(path, mode))
+    pub fn ensure(&mut self, file: &FileKey, mode: MdMode) -> &mut Doc {
+        (self.docs.entry(file.clone())).or_insert_with(|| Doc::new(file, mode))
     }
 
     /// Drops the docs no layout holds a leaf for, except those with unsaved text (asked about
     /// when the window closes or the app quits).
-    pub fn retain_open(&mut self, open: &HashSet<String>) {
-        self.docs.retain(|path, doc| {
-            open.contains(path) || doc.is_dirty() || doc.pending_line.is_some()
+    pub fn retain_open(&mut self, open: &HashSet<FileKey>) {
+        self.docs.retain(|file, doc| {
+            open.contains(file) || doc.is_dirty() || doc.pending_line.is_some()
         });
     }
 
@@ -787,35 +810,35 @@ impl Documents {
         self.docs.clear();
     }
 
-    /// Every doc with unsaved changes, by path.
-    pub fn unsaved_paths(&self) -> Vec<String> {
-        let mut paths: Vec<String> = (self.docs.values())
+    /// Every doc with unsaved changes.
+    pub fn unsaved_files(&self) -> Vec<FileKey> {
+        let mut files: Vec<FileKey> = (self.docs.values())
             .filter(|doc| doc.is_dirty())
-            .map(|doc| doc.path.clone())
+            .map(|doc| doc.file.clone())
             .collect();
-        paths.sort();
-        paths
+        files.sort();
+        files
     }
 
-    /// The first of `paths` that is still unsaved (asked again after a save that text typed
+    /// The first of `files` that is still unsaved (asked again after a save that text typed
     /// meanwhile made unsaved again).
-    pub fn first_unsaved(&self, paths: &[String]) -> Option<String> {
-        (paths.iter())
-            .find(|path| self.get(path).is_some_and(Doc::is_dirty))
+    pub fn first_unsaved(&self, files: &[FileKey]) -> Option<FileKey> {
+        (files.iter())
+            .find(|file| self.get(file).is_some_and(Doc::is_dirty))
             .cloned()
     }
 
-    /// "Don't save" / "Reload": drops `path`'s unsaved changes; returns the file to read
+    /// "Don't save" / "Reload": drops `file`'s unsaved changes; returns the file to read
     /// again, so the doc shows what is on disk.
-    pub fn drop_changes(&mut self, path: &str) -> Option<String> {
-        let doc = self.get_mut(path)?;
+    pub fn drop_changes(&mut self, file: &FileKey) -> Option<FileKey> {
+        let doc = self.get_mut(file)?;
         doc.discard();
-        Some(doc.path.clone())
+        Some(doc.file.clone())
     }
 
     /// The store as it carries over a lost connection (spec §8): the docs with unsaved text,
-    /// kept with their hash so Save still works, nothing in flight, read again when drawn.
-    /// `None` when nothing is unsaved.
+    /// kept with their hash and folder so Save still lands in the right one, nothing in
+    /// flight, read again when drawn. `None` when nothing is unsaved.
     pub fn into_unsaved(mut self) -> Option<Documents> {
         self.docs.retain(|_, doc| doc.is_dirty());
         if self.docs.is_empty() {
@@ -828,34 +851,38 @@ impl Documents {
         Some(self)
     }
 
-    /// An `fs.read` of `path` is about to be sent; `false` = its doc is gone, or one is in
+    /// An `fs.read` of `file` is about to be sent; `false` = its doc is gone, or one is in
     /// flight already (sent again once that one answers).
-    pub fn begin_read(&mut self, path: &str) -> bool {
-        self.get_mut(path).is_some_and(Doc::begin_read)
+    pub fn begin_read(&mut self, file: &FileKey) -> bool {
+        self.get_mut(file).is_some_and(Doc::begin_read)
     }
 
-    /// The `fs.read` answer (with its highlight) for `path` (dropped when the doc is gone).
+    /// The `fs.read` answer (with its highlight) for `file` (dropped when the doc is gone).
     /// Returns the file to read again (asked for meanwhile).
-    pub fn read(&mut self, path: &str, read: Result<(FsContent, Code), String>) -> Option<String> {
-        let again = self.get_mut(path)?.read(read);
-        again.then(|| path.to_owned())
+    pub fn read(
+        &mut self,
+        file: &FileKey,
+        read: Result<(FsContent, Code), String>,
+    ) -> Option<FileKey> {
+        let again = self.get_mut(file)?.read(read);
+        again.then(|| file.clone())
     }
 
-    /// Save `path` (Ctrl+S, "Save" in the unsaved-changes question). `None` when nothing is
+    /// Save `file` (Ctrl+S, "Save" in the unsaved-changes question). `None` when nothing is
     /// unsaved, the file cannot be saved, or a save is already in flight.
-    pub fn begin_save(&mut self, path: &str) -> Option<SaveRequest> {
-        self.get_mut(path)?.begin_save()
+    pub fn begin_save(&mut self, file: &FileKey) -> Option<SaveRequest> {
+        self.get_mut(file)?.begin_save()
     }
 
-    /// The `fs.write` answer for `path`, which saved the state `point`. `Some(why)` when the
+    /// The `fs.write` answer for `file`, which saved the state `point`. `Some(why)` when the
     /// answer has nowhere to show because its doc is gone: the shell toasts it.
     pub fn saved(
         &mut self,
-        path: &str,
+        file: &FileKey,
         point: Option<u64>,
         written: Result<FsWritten, String>,
     ) -> Option<String> {
-        match self.get_mut(path) {
+        match self.get_mut(file) {
             Some(doc) => doc.saved(point, written),
             None => unshown_save(written),
         }
@@ -869,13 +896,14 @@ impl Documents {
             .is_some_and(|doc| doc.preview_ready(stamp, shown))
     }
 
-    /// `git.changed`: the docs in `shown` (drawn now) are read again, the others are marked
-    /// stale and read when drawn. Returns the paths to read.
-    pub fn refresh(&mut self, shown: &[String]) -> Vec<String> {
+    /// `git.changed` of the folder `task` (`None` = the project's): its docs in `shown` (drawn
+    /// now) are read again, the others are marked stale and read when drawn; docs of other
+    /// folders are left alone. Returns the files to read.
+    pub fn refresh(&mut self, task: Option<Ulid>, shown: &[FileKey]) -> Vec<FileKey> {
         let mut reads = Vec::new();
-        for (path, doc) in &mut self.docs {
-            if shown.contains(path) {
-                reads.push(path.clone());
+        for (file, doc) in self.docs.iter_mut().filter(|(file, _)| file.task == task) {
+            if shown.contains(file) {
+                reads.push(file.clone());
             } else {
                 doc.mark_stale();
             }
@@ -950,50 +978,50 @@ fn replaceable_preview(tabs: &Tabs, docs: Option<&Documents>) -> Option<PaneKey>
     let tab = tabs.preview_tab()?;
     let layout = tab.layout()?;
     tab.keys().into_iter().find(|key| {
-        let PaneKey::File(path) = key else {
+        let PaneKey::File(file) = key else {
             return false;
         };
         matches!(layout.leaf_of(key), Some(Leaf::File { preview: true, .. }))
             && !docs
-                .and_then(|docs| docs.get(path))
+                .and_then(|docs| docs.get(file))
                 .is_some_and(Doc::is_dirty)
     })
 }
 
-/// The stored paths of every file leaf of `tabs` (all tabs, all windows).
-pub fn open_paths(tabs: &Tabs) -> HashSet<String> {
-    open_paths_without(tabs, &[], &[])
+/// The file of every file leaf of `tabs` (all tabs, all windows).
+pub fn open_files(tabs: &Tabs) -> HashSet<FileKey> {
+    open_files_without(tabs, &[], &[])
 }
 
-/// [`open_paths`] as it would be once the tabs `skip_tabs` and the leaves `skip_keys` are
+/// [`open_files`] as it would be once the tabs `skip_tabs` and the leaves `skip_keys` are
 /// gone: what a close leaves open.
-pub fn open_paths_without(
+pub fn open_files_without(
     tabs: &Tabs,
     skip_tabs: &[Ulid],
     skip_keys: &[PaneKey],
-) -> HashSet<String> {
+) -> HashSet<FileKey> {
     (tabs.tabs().iter())
         .filter(|tab| !skip_tabs.contains(&tab.id))
         .flat_map(Tab::keys)
         .filter(|key| !skip_keys.contains(key))
         .filter_map(|key| match key {
-            PaneKey::File(path) => Some(path),
+            PaneKey::File(file) => Some(file),
             _ => None,
         })
         .collect()
 }
 
 /// The files to ask "Save changes?" about when the open set goes from `before` to `after`:
-/// those that left every layout with unsaved text, by path. A move leaves the file in `after`,
-/// so it never asks.
+/// those that left every layout with unsaved text. A move leaves the file in `after`, so it
+/// never asks.
 pub fn needs_save_question(
-    before: &HashSet<String>,
-    after: &HashSet<String>,
+    before: &HashSet<FileKey>,
+    after: &HashSet<FileKey>,
     docs: &Documents,
-) -> Vec<String> {
-    let mut leaving: Vec<String> = before
+) -> Vec<FileKey> {
+    let mut leaving: Vec<FileKey> = before
         .difference(after)
-        .filter(|path| docs.get(path).is_some_and(Doc::is_dirty))
+        .filter(|file| docs.get(file).is_some_and(Doc::is_dirty))
         .cloned()
         .collect();
     leaving.sort();

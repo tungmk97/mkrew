@@ -331,7 +331,7 @@ impl Shell {
             .iter()
             .find(|project| project.id == project_id)
             .map(|project| project.name.clone());
-        let file = self.panel_file(project_id).or_else(|| {
+        let file = (self.panel_file(project_id).map(|file| file.path)).or_else(|| {
             self.git
                 .get(&project_id)
                 .and_then(|view| view.selected.as_ref())
@@ -361,7 +361,7 @@ impl Shell {
     pub(crate) fn picked_file_lines(
         &self,
         project_id: Ulid,
-        path: &str,
+        path: &FileKey,
     ) -> Option<(String, u32, u32, String)> {
         self.doc(project_id, path)?.picked_lines()
     }
