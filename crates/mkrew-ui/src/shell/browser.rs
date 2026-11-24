@@ -93,6 +93,9 @@ impl Shell {
         match event {
             PageEvent::Started => browser.page.loading = true,
             PageEvent::Title(title) => browser.page.title = title,
+            PageEvent::Open(url) if !browser.native.as_ref().is_some_and(NativeView::is_shown) => {
+                tracing::debug!(%id, "browser: dropped a new-window request of a hidden page: {url}");
+            }
             PageEvent::Open(url) => match mkrew_ui::browser::new_window_target(&url) {
                 mkrew_ui::browser::NewWindow::Load => {
                     if let Some(native) = &browser.native {
@@ -122,8 +125,13 @@ impl Shell {
                 }
                 self.store_url(id, url, window, cx);
             }
-            // A page that is not on screen has no say over the window's focus.
-            PageEvent::Focus if !browser.native.as_ref().is_some_and(NativeView::is_shown) => {}
+            // A page that is not on screen, or in a window that is not the active one, has no
+            // say over the window's focus.
+            PageEvent::Focus
+                if !browser.native.as_ref().is_some_and(NativeView::is_shown)
+                    || !browser.host.is_some_and(|h| {
+                        host_active(h, self.main_window, &self.window_handles, cx)
+                    }) => {}
             PageEvent::Focus => {
                 browser.page_keys = true;
                 if browser.editing {
@@ -146,9 +154,12 @@ impl Shell {
                 }
             }
             PageEvent::Key(name) => {
-                // Only a page that has the keyboard in its focused pane, and only a forwarded
-                // global or browser binding (ADR 0111): the page is not trusted.
-                if let (true, Some(host)) = (browser.page_keys, browser.host) {
+                // Only a page that has the keyboard in its focused pane of the active window,
+                // and only a forwarded global or browser binding (ADR 0111): the page is not
+                // trusted.
+                if let (true, Some(host)) = (browser.page_keys, browser.host)
+                    && host_active(host, self.main_window, &self.window_handles, cx)
+                {
                     self.in_window(host, cx, move |shell, window, cx| {
                         if shell.focused_key(window) != Some(PaneKey::Web(id))
                             || !mkrew_ui::browser::keys::forwarded(&shell.keymap).contains(&name)
@@ -820,4 +831,18 @@ fn scheme_of(url: &str) -> &str {
 fn is_web(url: &str) -> bool {
     let scheme = scheme_of(url);
     scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+}
+
+/// Whether `host`'s window is the OS's active one: real clicks and keys reach a page only then.
+fn host_active(
+    host: HostId,
+    main: gpui::AnyWindowHandle,
+    handles: &HashMap<WindowKey, gpui::AnyWindowHandle>,
+    cx: &App,
+) -> bool {
+    let handle = match host {
+        HostId::Main => Some(main),
+        HostId::Detached(key) => handles.get(&key).copied(),
+    };
+    handle.is_some() && cx.active_window() == handle
 }
