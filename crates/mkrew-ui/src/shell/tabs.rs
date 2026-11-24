@@ -409,6 +409,27 @@ impl Shell {
         cx.notify();
     }
 
+    /// The preview file of tab `tab_id` becomes a kept one: a pin or a tear-off is a decision to
+    /// keep it, so the next single click in the tree does not replace it.
+    pub(crate) fn keep_tab_files(
+        &mut self,
+        tab_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let files: Vec<(Ulid, FileKey)> = (self.tabs.iter())
+            .filter_map(|(project, tabs)| Some((*project, tabs.tab(tab_id)?.keys())))
+            .flat_map(|(project, keys)| keys.into_iter().map(move |key| (project, key)))
+            .filter_map(|(project, key)| match key {
+                PaneKey::File(file) => Some((project, file)),
+                _ => None,
+            })
+            .collect();
+        for (project, file) in files {
+            self.keep_leaf(project, &file, window, cx);
+        }
+    }
+
     /// "Pin" / "Unpin" of a tab (tab menu): `tab.pin`. The `tab.updated` event that follows
     /// moves the tab.
     pub(crate) fn pin_tab(
@@ -421,17 +442,7 @@ impl Shell {
         self.tab_menu = None;
         // A pinned tab keeps its preview file (a pin is a decision to keep it).
         if pinned {
-            let files: Vec<(Ulid, String)> = (self.tabs.iter())
-                .filter_map(|(project, tabs)| Some((*project, tabs.tab(tab_id)?.keys())))
-                .flat_map(|(project, keys)| keys.into_iter().map(move |key| (project, key)))
-                .filter_map(|(project, key)| match key {
-                    PaneKey::File(path) => Some((project, path)),
-                    _ => None,
-                })
-                .collect();
-            for (project, path) in files {
-                self.keep_leaf(project, &path, window, cx);
-            }
+            self.keep_tab_files(tab_id, window, cx);
         }
         let params = TabPinParams { tab_id, pinned };
         self.send_edit(

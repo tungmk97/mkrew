@@ -10,7 +10,7 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
-use crate::documents::{Doc, Documents};
+use crate::documents::{self, Doc, Documents};
 use crate::split::{
     Axis, Direction, Divider, Edge, Leaf, Node, PaneKey, Preset, RESIZE_STEP, Rect,
 };
@@ -612,7 +612,8 @@ impl Tabs {
 
     /// Moves the pane of `key` next to the pane of `target` on `edge` (the moved leaf takes that
     /// half of the target), within its tab or from another one. The whole leaf travels: a file
-    /// keeps its Markdown mode and preview flag, a session its chat flag. The moved pane is
+    /// keeps its Markdown mode, a session its chat flag; a dragged preview file is kept (it is
+    /// no longer the preview tab, spec 2026-11-23 section 6.1). The moved pane is
     /// focused and its new tab activated. Returns the writes, the source tab's first when it
     /// differs; `None` if nothing moves (the same pane, or either is in no tab).
     pub fn move_pane(
@@ -626,7 +627,8 @@ impl Tabs {
         }
         let from = self.tab_with(key)?.id;
         let to = self.tab_with(target)?.id;
-        let leaf = self.tab(from)?.layout.as_ref()?.leaf_of(key)?.clone();
+        let mut leaf = self.tab(from)?.layout.as_ref()?.leaf_of(key)?.clone();
+        documents::keep_leaf(&mut leaf);
         let mut writes = Vec::new();
         let source = self.tab_mut(from)?;
         let closed = source.layout.take()?.close(key);
@@ -653,7 +655,8 @@ impl Tabs {
     /// Moves every pane of tab `source` next to the pane of `target` in another tab (as
     /// [`Self::move_pane`]), keeping their layout; `source` is left without panes, for the
     /// caller to close once both writes are saved. The target tab is activated with the first
-    /// moved pane focused. Returns the writes, the target tab's first; `None` if nothing moves
+    /// moved pane focused. A preview file among them is kept, as in [`Self::move_pane`].
+    /// Returns the writes, the target tab's first; `None` if nothing moves
     /// (`target` is in `source` or in no tab, or `source` has no panes).
     pub fn merge_tab(
         &mut self,
@@ -665,8 +668,14 @@ impl Tabs {
         if to == source {
             return None;
         }
-        let moved = self.tab(source)?.layout.clone()?;
-        let first = moved.keys().into_iter().next()?;
+        let mut moved = self.tab(source)?.layout.clone()?;
+        let keys = moved.keys();
+        for key in &keys {
+            if let Some(leaf) = moved.leaf_mut(key) {
+                documents::keep_leaf(leaf);
+            }
+        }
+        let first = keys.into_iter().next()?;
         let tab = self.tab_mut(to)?;
         if !tab.layout.as_mut()?.insert_at(target, edge, moved) {
             return None;
@@ -682,9 +691,9 @@ impl Tabs {
         Some([placed, emptied])
     }
 
-    /// Pane `key` leaves its tab, whole leaf (chat flag, Markdown mode), for the empty tab
-    /// `into`, where it becomes the root and takes the focus: a pane dragged onto the tab
-    /// strip gets a tab of its own. Returns the writes, `into`'s first, then the source's, so
+    /// Pane `key` leaves its tab, whole leaf (chat flag, Markdown mode; a preview file is
+    /// kept), for the empty tab `into`, where it becomes the root and takes the focus: a pane
+    /// dragged onto the tab strip gets a tab of its own. Returns the writes, `into`'s first, then the source's, so
     /// a failure between them duplicates the pane rather than losing it.
     /// `None`, nothing changed, if no tab holds `key`, `into` is missing, is the source or has
     /// panes, or `key` is the only pane of its tab.
@@ -697,7 +706,8 @@ impl Tabs {
         if source.id == into || source.keys().len() < 2 || self.tab(into)?.layout().is_some() {
             return None;
         }
-        let leaf = source.layout()?.leaf_of(key)?.clone();
+        let mut leaf = source.layout()?.leaf_of(key)?.clone();
+        documents::keep_leaf(&mut leaf);
         let out = self.close_leaf(key)?;
         // `into` exists and is empty (checked above), so this cannot refuse.
         let inn = self.insert_leaf(into, None, Edge::Right, leaf)?;

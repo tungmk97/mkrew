@@ -35,6 +35,11 @@ fn full_file() -> serde_json::Value {
     json!({"file": "README.md", "md": "split", "preview": true})
 }
 
+/// [`full_file`] once a drag kept it: its Markdown mode travels, its preview flag does not.
+fn kept_file() -> serde_json::Value {
+    json!({"file": "README.md", "md": "split"})
+}
+
 #[test]
 fn load_orders_by_position_and_activates_the_first_tab() {
     let project = Ulid::new();
@@ -1503,7 +1508,11 @@ fn move_pane_carries_the_whole_leaf() {
     assert_eq!((writes[0].tab_id, &writes[0].layout), (one.id, &pane(a)));
     assert_eq!(
         (writes[1].tab_id, &writes[1].layout),
-        (two.id, &split("vertical", full_file(), pane(c)))
+        (two.id, &split("vertical", kept_file(), pane(c)))
+    );
+    assert!(
+        tabs.preview_tab().is_none(),
+        "a dragged preview file is kept"
     );
     assert_eq!(tabs.active().map(|t| t.id), Some(two.id));
     assert_eq!(
@@ -1553,13 +1562,18 @@ fn merge_tab_carries_whole_leaves_to_any_edge() {
     let a = Ulid::new();
     let one = wire(project, "one", 1.0, pane(a));
     let moved = split("vertical", full_file(), json!({"diff": true}));
+    let kept = split("vertical", kept_file(), json!({"diff": true}));
     let two = wire(project, "two", 2.0, moved.clone());
     let mut tabs = Tabs::new(project);
     tabs.load(vec![one.clone(), two.clone()]);
 
     let [placed, emptied] = tabs.merge_tab(two.id, &k(a), Edge::Top).unwrap();
     assert_eq!(placed.tab_id, one.id);
-    assert_eq!(placed.layout, split("horizontal", moved, pane(a)));
+    assert_eq!(placed.layout, split("horizontal", kept, pane(a)));
+    assert!(
+        tabs.preview_tab().is_none(),
+        "a merged preview file is kept"
+    );
     assert_eq!(
         (emptied.tab_id, emptied.layout),
         (two.id, serde_json::Value::Null)
@@ -1594,6 +1608,7 @@ fn arrange_carries_whole_leaves() {
             .and_then(|node| node.leaf_of(&file_key("README.md"))),
         Some(&Leaf::File {
             file: "README.md".into(),
+            task: None,
             md: Some(mkrew_core::settings::MdMode::Split),
             preview: true,
         })
@@ -1608,7 +1623,6 @@ fn insert_leaf_places_a_leaf_and_focuses_it() {
     let empty = wire(project, "two", 2.0, serde_json::Value::Null);
     let mut tabs = Tabs::new(project);
     tabs.load(vec![one.clone(), empty.clone()]);
-            task: None,
 
     // An empty tab takes the leaf as its root (`target` None).
     let write = tabs
@@ -1673,6 +1687,7 @@ fn insert_leaf_refuses_a_key_already_in_any_tab_of_the_workspace() {
     // The same file with other flags is the same key.
     let flagged = Leaf::File {
         file: "src/a.rs".into(),
+        task: None,
         md: Some(mkrew_core::settings::MdMode::Source),
         preview: true,
     };
@@ -1687,7 +1702,6 @@ fn insert_leaf_refuses_a_key_already_in_any_tab_of_the_workspace() {
     );
     assert_eq!(
         tabs.insert_leaf(one.id, Some(&k(Ulid::new())), Edge::Right, Leaf::diff()),
-        task: None,
         None
     );
     assert_eq!(
@@ -1769,6 +1783,7 @@ fn update_leaf_refuses_a_change_of_the_key_and_keeps_the_leaf() {
     let renamed = tabs.update_leaf(&key, |leaf| {
         *leaf = Leaf::File {
             file: "b.md".into(),
+            task: None,
             md: None,
             preview: false,
         };
@@ -1783,7 +1798,6 @@ fn preview_tab_is_the_tab_holding_the_preview_file() {
     let project = Ulid::new();
     let [a, b] = [Ulid::new(), Ulid::new()];
     let one = wire(project, "one", 1.0, pane(a));
-            task: None,
     let two = wire(
         project,
         "two",
@@ -2058,4 +2072,52 @@ fn moving_the_only_pane_out_of_a_tab_writes_that_tab_empty_for_the_caller_to_clo
     assert_eq!(emptied[0].tab_id, one_id);
     assert!(tabs.tab(one_id).is_some_and(|tab| tab.layout().is_none()));
     assert_eq!(tabs.tab(two_id).map(|t| t.keys().len()), Some(2));
+}
+
+/// A drag keeps the preview file (spec section 6.1): after any move the next single click in
+/// the tree opens a new tab instead of replacing the file in the tab it was dragged into.
+#[test]
+fn every_move_of_a_preview_file_keeps_it() {
+    let project = Ulid::new();
+    let a = Ulid::new();
+    let preview = |path: &str| json!({"file": path, "preview": true});
+    let tab = |title: &str, at: f64, layout| wire(project, title, at, layout);
+
+    // `move_pane`, within a tab.
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![tab(
+        "one",
+        1.0,
+        split("vertical", pane(a), preview("p.md")),
+    )]);
+    assert!(tabs.preview_tab().is_some());
+    tabs.move_pane(&file_key("p.md"), &k(a), Edge::Bottom)
+        .unwrap();
+    assert!(tabs.preview_tab().is_none());
+
+    // `move_to_empty_tab`: dropped on the tab strip.
+    let mut tabs = Tabs::new(project);
+    let empty = tab("two", 2.0, serde_json::Value::Null);
+    let empty_id = empty.id;
+    tabs.load(vec![
+        tab("one", 1.0, split("vertical", pane(a), preview("p.md"))),
+        empty,
+    ]);
+    tabs.move_to_empty_tab(&file_key("p.md"), empty_id).unwrap();
+    assert!(tabs.preview_tab().is_none());
+    let moved = tabs.tab(empty_id).and_then(Tab::layout).unwrap();
+    assert_eq!(
+        moved.leaf_of(&file_key("p.md")),
+        Some(&Leaf::file("p.md")),
+        "a kept leaf"
+    );
+
+    // `merge_tab`: a tab holding the preview file dropped on a pane.
+    let mut tabs = Tabs::new(project);
+    let preview_tab = tab("two", 2.0, preview("p.md"));
+    let preview_id = preview_tab.id;
+    tabs.load(vec![tab("one", 1.0, pane(a)), preview_tab]);
+    assert!(tabs.preview_tab().is_some());
+    tabs.merge_tab(preview_id, &k(a), Edge::Right).unwrap();
+    assert!(tabs.preview_tab().is_none());
 }

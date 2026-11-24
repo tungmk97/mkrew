@@ -138,6 +138,9 @@ impl Shell {
             return false;
         };
         self.end_tab_drag(cx);
+        // A moved tab keeps its preview file.
+        let DockTab::Terminal { tab_id, .. } = tab;
+        self.keep_tab_files(tab_id, window, cx);
         match target {
             Target::Strip { host, index } => self.move_tab_to(tab, host, Some(index), window, cx),
             Target::Window(host) => self.move_tab_to(tab, host, None, window, cx),
