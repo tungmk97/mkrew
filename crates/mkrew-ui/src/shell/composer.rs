@@ -1189,15 +1189,13 @@ impl Shell {
                 )
             });
         let room = composer_room(width, cx);
-        let shown = chat::fit_chips(
-            chat::Chips::wanted(&stats),
-            room,
-            chat::FitCtx {
-                typing: is_focused && !draft.busy && !blank,
-                working,
-                branch: stats.branch.as_ref().map_or(0.0, chat::branch_width),
-            },
-        );
+        let ctx = chat::FitCtx {
+            typing: is_focused && !draft.busy && !blank,
+            working,
+            branch: stats.branch.as_ref().map_or(0.0, chat::branch_width),
+        };
+        let shown = chat::fit_chips(chat::Chips::wanted(&stats), room, ctx);
+        let tools_fit = chat::tools_fit(shown, room, ctx);
         let mono = theme.terminal_font_family.clone();
         let glyph = |icon: Icon, color: u32| icon_svg(icon, theme::ICON_SIZE_SMALL, color);
         let quiet = |el: gpui::Div| quiet_chip(el, theme);
@@ -1362,15 +1360,22 @@ impl Shell {
                             .children(effort_chip)
                             .children(branch_chip)
                             .child(div().flex_1().min_w_0().flex().child(middle))
-                            .children(self.composer_tools(
-                                session,
-                                draft,
-                                is_focused,
-                                theme.border,
-                                true,
-                                theme,
-                                cx,
-                            )),
+                            .children(
+                                tools_fit
+                                    .then(|| {
+                                        self.composer_tools(
+                                            session,
+                                            draft,
+                                            is_focused,
+                                            theme.border,
+                                            true,
+                                            theme,
+                                            cx,
+                                        )
+                                    })
+                                    .into_iter()
+                                    .flatten(),
+                            ),
                     )
                     .child(send),
             );

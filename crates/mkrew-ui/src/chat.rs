@@ -752,6 +752,12 @@ pub fn chips_width(chips: Chips, ctx: FitCtx) -> f32 {
         .sum::<f32>()
 }
 
+/// Whether the Prompts and sparkle buttons show: they stay only while the row, after
+/// [`fit_chips`] dropped what it could, still fits whole, so a half icon never shows.
+pub fn tools_fit(shown: Chips, room: f32, ctx: FitCtx) -> bool {
+    chips_width(shown, ctx) <= room
+}
+
 /// What of `want` fits in `room` px: chips drop from the right, in the order clock, stats,
 /// permission, effort, branch; the model chip and the fixed part (send, Prompts) stay.
 pub fn fit_chips(want: Chips, room: f32, ctx: FitCtx) -> Chips {
@@ -1526,6 +1532,28 @@ mod tests {
             chips_width(only_model, working) - idle,
             COMPOSER_CHIP_LOADING_WIDTH
         );
+    }
+
+    #[test]
+    fn the_tools_drop_whole_when_even_the_model_chip_leaves_no_room_for_them() {
+        let ctx = FitCtx::default();
+        let only_model = Chips {
+            effort: false,
+            permission: false,
+            branch: false,
+            stats: false,
+            clock: false,
+            ..all_chips()
+        };
+        let tight = chips_width(only_model, ctx) - 1.0;
+        let shown = fit_chips(all_chips(), tight, ctx);
+        assert_eq!(shown, only_model, "every optional chip is gone first");
+        assert!(
+            !tools_fit(shown, tight, ctx),
+            "then the Prompts and sparkle buttons go"
+        );
+        let roomy = chips_width(only_model, ctx);
+        assert!(tools_fit(fit_chips(all_chips(), roomy, ctx), roomy, ctx));
     }
 
     #[test]

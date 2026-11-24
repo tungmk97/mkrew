@@ -691,6 +691,7 @@ fn status_model(
 pub struct BarFit {
     pub facts: Vec<bool>,
     pub effort: bool,
+    pub usage: bool,
     pub model_name: Option<f32>,
 }
 
@@ -699,6 +700,7 @@ impl BarFit {
         Self {
             facts: vec![true; bar.facts.len()],
             effort: bar.effort.is_some(),
+            usage: bar.usage.is_some(),
             model_name: None,
         }
     }
@@ -751,12 +753,13 @@ pub fn bar_width(bar: &BarModel, fit: &BarFit) -> f32 {
     let usage = bar
         .usage
         .as_ref()
+        .filter(|_| fit.usage)
         .map_or(0.0, |u| text_room(&u.text) + space::S);
     theme::TSP_BAR_FIXED_WIDTH + effort + model + facts + usage
 }
 
 /// What of `bar` fits in `room` px (13 px UI size): facts drop highest priority number first
-/// (of equal priorities the later one first), then the effort chip, then the model name
+/// (of equal priorities the later one first), then the effort chip, then the cost, then the model name
 /// truncates down to `TSP_MODEL_MIN_CHARS`. The send or stop button always stays. Mirrors
 /// `chat::fit_chips`.
 pub fn fit_bar(bar: &BarModel, room: f32) -> BarFit {
@@ -778,6 +781,10 @@ pub fn fit_bar(bar: &BarModel, room: f32) -> BarFit {
         return fit;
     }
     fit.effort = false;
+    if bar_width(bar, &fit) <= room {
+        return fit;
+    }
+    fit.usage = false;
     if bar_width(bar, &fit) <= room {
         return fit;
     }
@@ -1248,6 +1255,7 @@ mod tests {
         // equal priorities the later one leaves first; then the effort chip; then the model.
         let mut dropped: Vec<usize> = Vec::new();
         let mut effort_gone_after = None;
+        let mut usage_gone_with_effort = None;
         let mut room = natural;
         while room > 0.0 {
             room -= 1.0;
@@ -1262,9 +1270,12 @@ mod tests {
             }
             if fit.model_name.is_some() {
                 assert!(
-                    !fit.effort && fit.facts.iter().all(|shown| !shown),
+                    !fit.effort && !fit.usage && fit.facts.iter().all(|shown| !shown),
                     "the model truncates last"
                 );
+            }
+            if !fit.usage && usage_gone_with_effort.is_none() {
+                usage_gone_with_effort = Some(fit.effort);
             }
         }
         // time 11, time_spent 10, status 6 (later), token_rate 6, cache_write 5, cache_read 4,
@@ -1275,10 +1286,16 @@ mod tests {
             Some(9),
             "the effort chip goes after the last fact"
         );
+        assert_eq!(
+            usage_gone_with_effort,
+            Some(false),
+            "the cost goes after the effort chip, before the model name truncates"
+        );
 
         let bare = BarFit {
             facts: vec![false; bar.facts.len()],
             effort: false,
+            usage: false,
             model_name: None,
         };
         let room = bar_width(bar, &bare) - 5.0;
@@ -1497,6 +1514,7 @@ mod tests {
         let none = BarFit {
             facts: vec![false; m.bar.facts.len()],
             effort: false,
+            usage: false,
             model_name: None,
         };
         let name = "Opus 5.5".chars().count() as f32;

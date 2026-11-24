@@ -259,7 +259,7 @@ Roles below are omp 18.13.2's (`omp.editor` and its children, `omp.hud*`, `omp.w
 | `row` `role=omp.composer.bar` | the card's chip row: never wraps or overlaps, `min_w_0`, children in omp's order, the send or stop button always shown at the end | - |
 | `row` `role=omp.composer.model` | the Chat model pill (pill border `raised_border`, `accent_text`, chevron); loading dots in it while the session is working | click: `action` |
 | `row` `role=omp.composer.effort` | a quiet chip (its effort glyph and level) | click: `action` |
-| `status` `role=omp.composer.extras` of `seg` `role=omp.composer.fact` | quiet mono chips; a span styled `accent` (omp's `⚡ yolo`) takes the Chat permission chip look; when the row is too narrow, facts drop in order of their `priority` (highest number first), then the effort chip, and the model pill last truncates its name | click: `action` |
+| `status` `role=omp.composer.extras` of `seg` `role=omp.composer.fact` | quiet mono chips; a span styled `accent` (omp's `⚡ yolo`) takes the Chat permission chip look; when the row is too narrow, facts drop in order of their `priority` (highest number first), then the effort chip, then the cost (`omp.composer.usage`), and the model pill last truncates its name (never below about six characters, the pill itself never shrinks) | click: `action` |
 | `text` `role=omp.composer.usage`, `rate` `role=omp.composer.rate` | quiet mono chips (`$0.14`, `65 tok/s`) | click: `action` |
 | `kbd` `role=omp.composer.send` | the Chat round send button (`CornerDownLeft`), enabled when the editor has text | click: `action` (`submit`) |
 | `text` `role=omp.composer.stop` | a round button of the same size with a stop square, `danger_text` on hover | click: `action` (`interrupt`) |

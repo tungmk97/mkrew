@@ -2484,7 +2484,7 @@ impl Shell {
                     );
                 }
                 tsp::BarPart::Usage => {
-                    if let Some(usage) = &m.bar.usage {
+                    if let (true, Some(usage)) = (fit.usage, &m.bar.usage) {
                         let chip = quiet_chip(div(), theme)
                             .font_family(theme.terminal_font_family.clone())
                             .child(usage.text.clone());
@@ -2544,9 +2544,6 @@ impl Shell {
             p.now,
             theme,
         )
-        .flex_shrink_1()
-        .min_w_0()
-        .overflow_hidden()
         .when_some(title, |el, title| el.tooltip(tooltip(theme, title, "")))
         .on_press(
             click,
