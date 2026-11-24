@@ -227,10 +227,6 @@ pub mod opacity {
     pub const DRAG_SOURCE: f32 = 0.4;
 }
 
-/// Half the gap between split panes: each pane is inset by it, so panes sit `2 * PANE_HALF_GAP`
-/// (8 px) apart and the same from the frame's edges (the Tern look, ADR 0108).
-pub const PANE_HALF_GAP: f32 = space::XS;
-
 /// Least contrast ratio between [`Theme::pane_gap`] and [`Theme::terminal_bg`] (Tern measures
 /// about 1.07:1). A unit test holds every built-in theme to it and [`Theme::from_palette`]
 /// derives the gap to meet it.
@@ -847,9 +843,9 @@ pub struct Theme {
     /// `shared()`, not in `dark()` / `light()`.
     pub qr_dark: u32,
     pub qr_light: u32,
-    /// The frame behind and between the panes, and the title bar fill (ADR 0108): a step off
-    /// `terminal_bg` (darker, or lighter when `terminal_bg` has no room below it), at least
-    /// [`PANE_GAP_MIN_CONTRAST`] away, so a pane looks raised.
+    /// The title bar fill and what shows behind the panes before they paint (ADR 0108, ADR
+    /// 0109): a step off `terminal_bg` (darker, or lighter when `terminal_bg` has no room below
+    /// it), at least [`PANE_GAP_MIN_CONTRAST`] away, so the bar reads apart from the panes.
     pub pane_gap: u32,
     /// Faint accent: the top stripe of the focused split pane, and the border of a picked card,
     /// row or comment (accent halfway to `bg`, SPEC §14).
@@ -954,7 +950,7 @@ pub struct Theme {
     pub terminal_cursor_width: f32,
     /// Weight of a dim (SGR 2) foreground blended towards the background, 0–1.
     pub dim_blend: f32,
-    /// Opacity of the overlay that dims unfocused panes (~5%).
+    /// Opacity of the overlay that dims unfocused panes among several (20 %, ADR 0109).
     pub unfocused_pane_dim: f32,
     /// The palette from before the restyle, kept for the sidebar's session list (projects,
     /// session rows, RUN), which the restyle leaves as it was. `None` on that palette itself.
@@ -1491,7 +1487,7 @@ impl Theme {
             terminal_underline_thickness: 1.0,
             terminal_cursor_width: 2.0,
             dim_blend: 0.6,
-            unfocused_pane_dim: 0.05,
+            unfocused_pane_dim: 0.2,
             classic: None,
         }
     }

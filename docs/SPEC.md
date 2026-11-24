@@ -1794,17 +1794,18 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the right panel tab row 44, Git repo strip 42 (px at 13 px body).
 - Tab chip (Tern look, ADR 0106): height `CONTROL_HEIGHT`, radius 8 (`radius::MEDIUM`), no border; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
   Chips shrink to `TAB_MIN_WIDTH` (120, room for the status icon, a pane icon, about five title letters and the ×) before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
-- Pane (ADR 0106, ADR 0108): no header and no border.
-  Panes sit on a frame of `pane-gap` with `2 * PANE_HALF_GAP` (8 px) between them and from the edge of the area (`PANE_HALF_GAP = space::XS`); corners are `radius::MEDIUM` (8).
-  One `PANE_ACCENT_WIDTH` (2 px) stripe sits at the pane's top edge, inset by the corner radius.
+- Pane (ADR 0106, ADR 0108, ADR 0109): no header and no border.
+  Panes fill the tab area edge to edge with square corners: no gap between them and none at the area's edge, so they touch the sidebar, the right panel and the title bar.
+  Two panes meet at a 1 px `divider` line, the same line that sets the sidebar and the right panel apart.
+  One `PANE_ACCENT_WIDTH` (2 px) stripe runs along the pane's full top edge.
   Its color, first match wins: `status-needs-input` while a session pane needs input, the pane's own color, `pane-focus-stripe` while the pane is focused and its tab has two or more panes, else no stripe.
   A lone pane has no stripe unless it needs input or has a color.
-  A pane that is not focused is dimmed by about 5 % (`unfocused_pane_dim`).
-  File and diff panes use the same frame, stripe and dim as terminal panes.
-  The gap between two panes drags to resize them and shows a grip only on hover.
+  A pane that is not focused, in a tab with two or more panes, is dimmed by 20 % (`unfocused_pane_dim`).
+  File and diff panes use the same layout, stripe and dim as terminal panes.
+  The divider between two panes drags to resize them and shows a grip only on hover.
   A pane in a split tab has a `PANE_GRIP_HEIGHT` (8 px) strip along its top edge that shows a grip on hover and drags the pane.
   Floating badges (`pane_badges`: `surface_raised` fill, 1 px `border`, radius 8, META text) sit in its top-right corner `space::S` from the edges, at most `PANE_BADGE_MAX_WIDTH` wide.
-  The title bar uses `pane-gap` instead of `chrome`, so the bar and the frame read as one surface; the sidebar and the right panel keep their colors.
+  The title bar uses `pane-gap` instead of `chrome`; the sidebar and the right panel keep their colors.
   The `+` row (§10) is a row of 30 px `Look::Icon` buttons: the `+` button, then the default agent's logo, `square-terminal`, `notebook-pen` and `chevron-down`, `space::XS` apart, growing in 150 ms ease-out (shown at once with reduce motion).
   The title bar's pane toggles are 30 px icon buttons, accent while on.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
