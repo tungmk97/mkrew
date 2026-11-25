@@ -253,7 +253,7 @@ impl Shell {
             let Err(error) = started.await else {
                 return;
             };
-            let _ = this.update_in(cx, |shell, _, cx| {
+            let _ = Shell::answer(&this, cx, |shell, _, cx| {
                 shell.prompt_enhanced(generation_id, Err(format!("{error:#}")));
                 cx.notify();
             });
@@ -430,7 +430,7 @@ impl Shell {
         let Some(picker) = self.prompt_picker.take() else {
             return;
         };
-        self.picker_host = HostId::Main;
+        self.picker_host = self.primary_host();
         match (picker.target, text) {
             (target, Some(text)) => {
                 let before = self.prompt(target).map_or("", |prompt| prompt.text.text());
@@ -1187,7 +1187,7 @@ impl Shell {
         let stats = chat::composer_stats(
             page,
             self.usages.get(session),
-            self.git_summary(),
+            (self.project_of(session)).and_then(|project| self.git_summary(project)),
             at_root,
             working,
             now,

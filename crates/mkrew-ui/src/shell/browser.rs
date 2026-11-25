@@ -133,7 +133,7 @@ impl Shell {
             PageEvent::Focus
                 if !browser.native.as_ref().is_some_and(NativeView::is_shown)
                     || !browser.host.is_some_and(|h| {
-                        host_active(h, self.main_window, &self.window_handles, cx)
+                        host_active(h, &self.space_handles, &self.window_handles, cx)
                     }) => {}
             PageEvent::Focus => {
                 browser.page_keys = true;
@@ -161,7 +161,7 @@ impl Shell {
                 // and only a forwarded global or browser binding (ADR 0111): the page is not
                 // trusted.
                 if let (true, Some(host)) = (browser.page_keys, browser.host)
-                    && host_active(host, self.main_window, &self.window_handles, cx)
+                    && host_active(host, &self.space_handles, &self.window_handles, cx)
                 {
                     self.in_window(host, cx, move |shell, window, cx| {
                         if shell.focused_key(window) != Some(PaneKey::Web(id))
@@ -231,7 +231,7 @@ impl Shell {
     }
 
     /// A new empty browser pane with its address field focused: on an edge of a pane
-    /// (`at`), or in a new tab (`None`). New tabs belong to the main window.
+    /// (`at`), or in a new tab (`None`) of the workspace's Space window.
     pub(crate) fn new_browser(
         &mut self,
         at: Option<(Ulid, PaneKey, Edge)>,
@@ -243,7 +243,7 @@ impl Shell {
         }
         let Some(project_id) = (at.as_ref().map(|(project, ..)| *project))
             .or_else(|| self.tab_scope(window).map(|(project, _)| project))
-            .or(self.workspace)
+            .or(self.workspace_in(window))
         else {
             return;
         };
@@ -252,15 +252,14 @@ impl Shell {
         let place = match at {
             Some((_, key, edge)) => documents::Place::Split(key, edge),
             None => {
-                if self.host_of(window) != HostId::Main {
-                    return self.in_window(HostId::Main, cx, move |shell, window, cx| {
-                        window.activate_window();
+                if !self.acts_here(project_id, window) {
+                    return self.in_workspace(project_id, window, cx, |shell, window, cx| {
                         shell.new_browser(None, window, cx);
                     });
                 }
                 self.views.insert(project_id, View::Terminals);
-                if self.workspace != Some(project_id) {
-                    self.activate_workspace(project_id, window, cx);
+                if self.workspace_in(window) != Some(project_id) {
+                    self.activate_workspace(self.space_host(window), project_id, window, cx);
                 }
                 documents::Place::NewTab
             }
@@ -302,7 +301,10 @@ impl Shell {
             return cx.open_url(&url);
         }
         let scope = self.tab_scope(window);
-        let Some(project_id) = scope.map(|(project, _)| project).or(self.workspace) else {
+        let Some(project_id) = scope
+            .map(|(project, _)| project)
+            .or(self.workspace_in(window))
+        else {
             return cx.open_url(&url);
         };
         let tab = scope.and_then(|(project, tab_id)| self.tabs.get(&project)?.tab(tab_id));
@@ -316,11 +318,16 @@ impl Shell {
                 let place = documents::Place::Split(target, Edge::Right);
                 self.place_leaf(project_id, Leaf::web(url), place, window, cx);
             }
+            WebPlace::NewTab if !self.acts_here(project_id, window) => {
+                self.in_workspace(project_id, window, cx, move |shell, window, cx| {
+                    shell.open_web(url, None, window, cx);
+                });
+            }
             WebPlace::NewTab => {
                 // Terminals show the panes: Board and Docs give way (as a file from Docs).
                 self.views.insert(project_id, View::Terminals);
-                if self.workspace != Some(project_id) {
-                    self.activate_workspace(project_id, window, cx);
+                if self.workspace_in(window) != Some(project_id) {
+                    self.activate_workspace(self.space_host(window), project_id, window, cx);
                 }
                 self.place_leaf(
                     project_id,
@@ -489,7 +496,7 @@ impl Shell {
     }
 
     /// The web leaves `host` shows now: its tab's shown panes (a zoom shows one), none while
-    /// the main window shows another view.
+    /// its Space window shows another view.
     fn shown_browsers(&self, host: HostId, window: &Window) -> Vec<Ulid> {
         let Some((project, tab_id)) = self.tab_scope(window) else {
             return Vec::new();
@@ -897,12 +904,12 @@ fn is_web(url: &str) -> bool {
 /// Whether `host`'s window is the OS's active one: real clicks and keys reach a page only then.
 fn host_active(
     host: HostId,
-    main: gpui::AnyWindowHandle,
+    spaces: &HashMap<SpaceKey, gpui::AnyWindowHandle>,
     handles: &HashMap<WindowKey, gpui::AnyWindowHandle>,
     cx: &App,
 ) -> bool {
     let handle = match host {
-        HostId::Main => Some(main),
+        HostId::Space(key) => spaces.get(&key).copied(),
         HostId::Detached(key) => handles.get(&key).copied(),
     };
     handle.is_some() && cx.active_window() == handle

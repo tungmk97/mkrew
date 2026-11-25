@@ -14,14 +14,36 @@ use crate::keymap::Command;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WindowKey(pub u64);
 
-/// The window a tab, a render or an input belongs to.
+/// A Space window (ADR 0115): a top-level window with a workspace, local to this UI process
+/// (never reused within it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SpaceKey(pub u64);
+
+/// The window a tab, a render or an input belongs to: a Space window (a workspace's window,
+/// ADR 0115) or a detached one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HostId {
-    Main,
+    Space(SpaceKey),
     Detached(WindowKey),
 }
 
-/// A tab that can leave the main window. Plan 2 adds file tabs.
+impl HostId {
+    pub fn space(self) -> Option<SpaceKey> {
+        match self {
+            HostId::Space(key) => Some(key),
+            HostId::Detached(_) => None,
+        }
+    }
+
+    pub fn detached(self) -> Option<WindowKey> {
+        match self {
+            HostId::Detached(key) => Some(key),
+            HostId::Space(_) => None,
+        }
+    }
+}
+
+/// A tab that can leave its Space window. Plan 2 adds file tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DockTab {
@@ -79,15 +101,16 @@ impl Detached {
         self.windows.iter_mut().find(|window| window.key == key)
     }
 
-    pub fn host_of(&self, tab: &DockTab) -> HostId {
+    /// The detached window holding `tab`; `None` while it is in its workspace's Space window.
+    pub fn window_of(&self, tab: &DockTab) -> Option<WindowKey> {
         self.windows
             .iter()
             .find(|window| window.tabs.contains(tab))
-            .map_or(HostId::Main, |window| HostId::Detached(window.key))
+            .map(|window| window.key)
     }
 
     pub fn is_detached(&self, tab: &DockTab) -> bool {
-        self.host_of(tab) != HostId::Main
+        self.window_of(tab).is_some()
     }
 
     pub fn active(&self, key: WindowKey) -> Option<DockTab> {
@@ -115,18 +138,18 @@ impl Detached {
         key
     }
 
-    /// Moves `tab` to `to` (at `index`, else the end) and shows it there. Moving to
-    /// [`HostId::Main`] forgets it. Returns the window the move left without tabs (dropped).
-    /// Moving to its own window reorders it in place; a window that does not exist changes
-    /// nothing.
+    /// Moves `tab` to detached window `to` (at `index`, else the end) and shows it there;
+    /// `None` forgets it (back to its workspace's Space window). Returns the window the move
+    /// left without tabs (dropped). Moving to its own window reorders it in place; a window
+    /// that does not exist changes nothing.
     pub fn move_tab(
         &mut self,
         tab: DockTab,
-        to: HostId,
+        to: Option<WindowKey>,
         index: Option<usize>,
     ) -> Option<WindowKey> {
-        let current = self.host_of(&tab);
-        if let HostId::Detached(key) = to {
+        let current = self.window_of(&tab);
+        if let Some(key) = to {
             let window = self.window_mut(key)?;
             if current == to {
                 if let Some(pos) = window.tabs.iter().position(|t| *t == tab) {
@@ -139,7 +162,7 @@ impl Detached {
             }
         }
         let emptied = self.take(&tab);
-        if let HostId::Detached(key) = to
+        if let Some(key) = to
             && let Some(window) = self.window_mut(key)
         {
             let at = index.unwrap_or(window.tabs.len()).min(window.tabs.len());
@@ -243,11 +266,11 @@ impl Detached {
     }
 
     /// Where a tab that came from `from` goes back (a window that failed to open): `from` if
-    /// that window is still open, else the main window.
-    pub fn still_open(&self, from: HostId) -> HostId {
+    /// that window is still open (Space windows always are), else `None`.
+    pub fn still_open(&self, from: HostId) -> Option<HostId> {
         match from {
-            HostId::Detached(key) if self.window(key).is_none() => HostId::Main,
-            other => other,
+            HostId::Detached(key) if self.window(key).is_none() => None,
+            other => Some(other),
         }
     }
 
@@ -265,7 +288,7 @@ impl Detached {
                 let (&first, rest) = tabs.split_first()?;
                 let key = self.open(first);
                 for &tab in rest {
-                    self.move_tab(tab, HostId::Detached(key), None);
+                    self.move_tab(tab, Some(key), None);
                 }
                 let shown = window.tabs.get(window.active);
                 if let Some(index) =
@@ -280,16 +303,20 @@ impl Detached {
 }
 
 /// The window that draws the toasts: the most recently active of `activation` that is `shown`
-/// (a hidden or minimized window draws nothing), else the main window.
-pub fn toast_host(activation: &[HostId], shown: impl Fn(HostId) -> bool) -> HostId {
+/// (a hidden or minimized window draws nothing), else `fallback`.
+pub fn toast_host(
+    activation: &[HostId],
+    shown: impl Fn(HostId) -> bool,
+    fallback: HostId,
+) -> HostId {
     (activation.iter().copied())
         .find(|&host| shown(host))
-        .unwrap_or(HostId::Main)
+        .unwrap_or(fallback)
 }
 
 /// The commands a detached window acts on (spec 2026-11-10 §4.2); every other key there does
-/// nothing, so none can act on the main window's tabs. The exception is Settings (Ctrl+, or ⌘,),
-/// which opens in the main window on every OS (`run_detached`); it is not in this list.
+/// nothing, so none can act on a Space window's tabs. The exception is Settings (Ctrl+, or ⌘,),
+/// which opens in the primary Space window on every OS (`run_detached`); it is not in this list.
 pub fn handles(command: Command) -> bool {
     matches!(
         command,
@@ -328,7 +355,7 @@ pub fn handles(command: Command) -> bool {
 
 /// This computer's detached windows, in the data dir (UI-only: the daemon never reads it).
 pub const WINDOWS_FILE: &str = "windows.json";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// The windows file of a window: [`WINDOWS_FILE`] for this computer's window (`None`), its own
 /// `windows-<key>.json` for a machine window (same key as [`crate::inbox::viewed_file`]).
@@ -395,9 +422,31 @@ pub fn merge_saved(mut live: Vec<SavedWindow>, pending: &[SavedWindow]) -> Vec<S
     live
 }
 
+/// One saved Space window (ADR 0115).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedSpace {
+    /// `Ulid::nil()` when not known (read from the legacy `main-window.json`).
+    pub workspace: Ulid,
+    pub bounds: SavedBounds,
+    #[serde(default)]
+    pub maximized: bool,
+    #[serde(default)]
+    pub fullscreen: bool,
+}
+
+/// What `windows.json` keeps: the Space windows, the one focused last at the end, and the
+/// detached windows.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Layout {
+    pub spaces: Vec<SavedSpace>,
+    pub windows: Vec<SavedWindow>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct File {
     version: u32,
+    #[serde(default)]
+    spaces: Vec<SavedSpace>,
     windows: Vec<FileWindow>,
 }
 
@@ -414,10 +463,11 @@ struct FileWindow {
     active: usize,
 }
 
-pub fn to_json(windows: &[SavedWindow]) -> String {
+pub fn to_json(layout: &Layout) -> String {
     let file = File {
         version: VERSION,
-        windows: (windows.iter())
+        spaces: layout.spaces.clone(),
+        windows: (layout.windows.iter())
             .map(|window| FileWindow {
                 bounds: window.bounds.clone(),
                 maximized: window.maximized,
@@ -433,12 +483,21 @@ pub fn to_json(windows: &[SavedWindow]) -> String {
     serde_json::to_string(&file).unwrap_or_default()
 }
 
-pub fn from_json(text: &str) -> Result<Vec<SavedWindow>, String> {
+/// Versions 1 (detached windows only) and 2; a newer version is refused.
+pub fn from_json(text: &str) -> Result<Layout, String> {
     let file: File = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    if file.version != VERSION {
+    if !(1..=VERSION).contains(&file.version) {
         return Err(format!("unknown version {}", file.version));
     }
-    Ok((file.windows.into_iter())
+    Ok(Layout {
+        spaces: file.spaces,
+        windows: saved_windows(file.windows),
+    })
+}
+
+/// The saved detached windows: unknown and repeated tabs dropped, empty windows skipped.
+fn saved_windows(windows: Vec<FileWindow>) -> Vec<SavedWindow> {
+    (windows.into_iter())
         .filter_map(|window| {
             let shown = window.tabs.get(window.active).cloned();
             let mut tabs: Vec<DockTab> = Vec::with_capacity(window.tabs.len());
@@ -461,12 +520,39 @@ pub fn from_json(text: &str) -> Result<Vec<SavedWindow>, String> {
                 active,
             })
         })
-        .collect())
+        .collect()
 }
 
 /// Writes through `<file>.tmp` and a rename, so a crash never leaves half a file.
-pub fn save(path: &Path, windows: &[SavedWindow]) -> std::io::Result<()> {
-    write_atomic(path, &to_json(windows))
+pub fn save(path: &Path, layout: &Layout) -> std::io::Result<()> {
+    write_atomic(path, &to_json(layout))
+}
+
+/// The saved layout; without saved Space windows, the legacy main window frame becomes the
+/// one Space window (its workspace unknown). Read errors are logged and give what is left.
+pub fn load_layout(windows_path: &Path, legacy_main: &Path) -> Layout {
+    let mut layout = match std::fs::read_to_string(windows_path) {
+        Ok(text) => from_json(&text).unwrap_or_else(|error| {
+            tracing::warn!("ignoring the windows file: {error}");
+            Layout::default()
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Layout::default(),
+        Err(error) => {
+            tracing::warn!("cannot read the windows file: {error}");
+            Layout::default()
+        }
+    };
+    if layout.spaces.is_empty()
+        && let Some(frame) = load_frame(legacy_main)
+    {
+        layout.spaces.push(SavedSpace {
+            workspace: Ulid::nil(),
+            bounds: frame.bounds,
+            maximized: frame.maximized,
+            fullscreen: frame.fullscreen,
+        });
+    }
+    layout
 }
 
 fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
@@ -515,11 +601,6 @@ pub fn main_file(instance: Option<&str>) -> String {
 /// The saved frame in `path`; missing, unreadable or broken = none.
 pub fn load_frame(path: &Path) -> Option<SavedFrame> {
     SavedFrame::parse(&std::fs::read_to_string(path).ok()?)
-}
-
-pub fn save_frame(path: &Path, frame: &SavedFrame) -> std::io::Result<()> {
-    // A struct of plain fields always serializes.
-    write_atomic(path, &serde_json::to_string(frame).unwrap_or_default())
 }
 
 #[cfg(test)]

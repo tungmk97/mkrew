@@ -12,7 +12,7 @@ fn a_new_window_holds_its_tab_and_shows_it() {
     let mut detached = Detached::new();
     let tab = term();
     let key = detached.open(tab);
-    assert_eq!(detached.host_of(&tab), HostId::Detached(key));
+    assert_eq!(detached.window_of(&tab), Some(key));
     assert_eq!(detached.active(key), Some(tab));
     assert!(detached.is_detached(&tab));
 }
@@ -23,8 +23,8 @@ fn a_tab_lives_in_one_window_only() {
     let (a, b) = (term(), term());
     let first = detached.open(a);
     let second = detached.open(b);
-    detached.move_tab(a, HostId::Detached(second), Some(0));
-    assert_eq!(detached.host_of(&a), HostId::Detached(second));
+    detached.move_tab(a, Some(second), Some(0));
+    assert_eq!(detached.window_of(&a), Some(second));
     assert_eq!(detached.tabs_of(second), vec![a, b]);
     assert!(
         detached.window(first).is_none(),
@@ -37,8 +37,8 @@ fn moving_inserts_at_the_index_and_selects_the_tab() {
     let mut detached = Detached::new();
     let (a, b, c) = (term(), term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
-    detached.move_tab(c, HostId::Detached(key), Some(1));
+    detached.move_tab(b, Some(key), None);
+    detached.move_tab(c, Some(key), Some(1));
     assert_eq!(detached.tabs_of(key), vec![a, c, b]);
     assert_eq!(detached.active(key), Some(c));
 }
@@ -48,8 +48,8 @@ fn moving_to_main_forgets_the_tab_and_reports_the_emptied_window() {
     let mut detached = Detached::new();
     let a = term();
     let key = detached.open(a);
-    assert_eq!(detached.move_tab(a, HostId::Main, None), Some(key));
-    assert_eq!(detached.host_of(&a), HostId::Main);
+    assert_eq!(detached.move_tab(a, None, None), Some(key));
+    assert_eq!(detached.window_of(&a), None);
 }
 
 #[test]
@@ -57,12 +57,12 @@ fn the_active_tab_passes_right_then_left_when_it_leaves() {
     let mut detached = Detached::new();
     let (a, b, c) = (term(), term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
-    detached.move_tab(c, HostId::Detached(key), None);
+    detached.move_tab(b, Some(key), None);
+    detached.move_tab(c, Some(key), None);
     assert!(detached.select(key, 1));
-    detached.move_tab(b, HostId::Main, None);
+    detached.move_tab(b, None, None);
     assert_eq!(detached.active(key), Some(c));
-    detached.move_tab(c, HostId::Main, None);
+    detached.move_tab(c, None, None);
     assert_eq!(detached.active(key), Some(a));
 }
 
@@ -71,8 +71,8 @@ fn reorder_and_cycle_stay_inside_the_window() {
     let mut detached = Detached::new();
     let (a, b, c) = (term(), term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
-    detached.move_tab(c, HostId::Detached(key), None);
+    detached.move_tab(b, Some(key), None);
+    detached.move_tab(c, Some(key), None);
     detached.move_within(key, 2, 0);
     assert_eq!(detached.tabs_of(key), vec![c, a, b]);
     assert!(detached.select(key, 2));
@@ -88,7 +88,7 @@ fn prune_keeps_tabs_of_unloaded_workspaces() {
     let mut detached = Detached::new();
     let (gone, unknown, kept) = (term(), term(), term());
     let key = detached.open(gone);
-    detached.move_tab(unknown, HostId::Detached(key), None);
+    detached.move_tab(unknown, Some(key), None);
     let other = detached.open(kept);
     assert_eq!(detached.tab_count(), 3);
     let emptied = detached.prune(|tab| match *tab {
@@ -122,7 +122,7 @@ fn removing_a_window_returns_its_tabs_in_order() {
     let mut detached = Detached::new();
     let (a, b) = (term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
+    detached.move_tab(b, Some(key), None);
     assert_eq!(detached.remove_window(key), vec![a, b]);
     assert!(detached.window(key).is_none());
 }
@@ -132,7 +132,7 @@ fn window_keys_are_never_reused() {
     let mut detached = Detached::new();
     let a = term();
     let first = detached.open(a);
-    detached.move_tab(a, HostId::Main, None);
+    detached.move_tab(a, None, None);
     let second = detached.open(a);
     assert_ne!(first, second);
 }
@@ -142,7 +142,7 @@ fn moving_onto_its_own_single_tab_window_keeps_it() {
     let mut detached = Detached::new();
     let a = term();
     let key = detached.open(a);
-    assert_eq!(detached.move_tab(a, HostId::Detached(key), None), None);
+    assert_eq!(detached.move_tab(a, Some(key), None), None);
     assert_eq!(detached.tabs_of(key), vec![a]);
     assert_eq!(detached.active(key), Some(a));
 }
@@ -152,9 +152,9 @@ fn moving_onto_its_own_window_reorders_and_selects_it() {
     let mut detached = Detached::new();
     let (a, b, c) = (term(), term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
-    detached.move_tab(c, HostId::Detached(key), None);
-    assert_eq!(detached.move_tab(a, HostId::Detached(key), Some(2)), None);
+    detached.move_tab(b, Some(key), None);
+    detached.move_tab(c, Some(key), None);
+    assert_eq!(detached.move_tab(a, Some(key), Some(2)), None);
     assert_eq!(detached.tabs_of(key), vec![b, c, a]);
     assert_eq!(detached.active(key), Some(a));
 }
@@ -164,16 +164,10 @@ fn moving_to_an_unknown_window_changes_nothing() {
     let mut detached = Detached::new();
     let (a, b) = (term(), term());
     let key = detached.open(a);
-    assert_eq!(
-        detached.move_tab(a, HostId::Detached(WindowKey(99)), None),
-        None
-    );
+    assert_eq!(detached.move_tab(a, Some(WindowKey(99)), None), None);
     assert_eq!(detached.tabs_of(key), vec![a]);
-    assert_eq!(
-        detached.move_tab(b, HostId::Detached(WindowKey(99)), None),
-        None
-    );
-    assert_eq!(detached.host_of(&b), HostId::Main);
+    assert_eq!(detached.move_tab(b, Some(WindowKey(99)), None), None);
+    assert_eq!(detached.window_of(&b), None);
     assert_eq!(detached.windows().len(), 1);
 }
 
@@ -182,16 +176,16 @@ fn open_takes_the_tab_from_its_window() {
     let mut detached = Detached::new();
     let (a, b) = (term(), term());
     let first = detached.open(a);
-    detached.move_tab(b, HostId::Detached(first), None);
+    detached.move_tab(b, Some(first), None);
     let second = detached.open(b);
     assert_eq!(detached.tabs_of(first), vec![a]);
-    assert_eq!(detached.host_of(&b), HostId::Detached(second));
+    assert_eq!(detached.window_of(&b), Some(second));
     let third = detached.open(a);
     assert!(
         detached.window(first).is_none(),
         "the emptied window is dropped"
     );
-    assert_eq!(detached.host_of(&a), HostId::Detached(third));
+    assert_eq!(detached.window_of(&a), Some(third));
 }
 
 #[test]
@@ -199,8 +193,8 @@ fn move_within_keeps_the_shown_tab_selected() {
     let mut detached = Detached::new();
     let (a, b, c) = (term(), term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
-    detached.move_tab(c, HostId::Detached(key), None);
+    detached.move_tab(b, Some(key), None);
+    detached.move_tab(c, Some(key), None);
     assert!(detached.select(key, 1));
     detached.move_within(key, 0, 2);
     assert_eq!(detached.tabs_of(key), vec![b, c, a]);
@@ -275,16 +269,24 @@ fn saved(tabs: Vec<DockTab>) -> SavedWindow {
 
 #[test]
 fn windows_round_trip() {
-    let windows = vec![saved(vec![term(), term()])];
-    let json = to_json(&windows);
-    assert!(json.contains("\"version\":1"), "{json}");
+    let layout = only(vec![saved(vec![term(), term()])]);
+    let json = to_json(&layout);
+    assert!(json.contains("\"version\":2"), "{json}");
     assert!(json.contains("\"terminal\""), "{json}");
-    assert_eq!(from_json(&json), Ok(windows));
+    assert_eq!(from_json(&json), Ok(layout));
+}
+
+/// A layout with detached windows only.
+fn only(windows: Vec<SavedWindow>) -> Layout {
+    Layout {
+        spaces: vec![],
+        windows,
+    }
 }
 
 #[test]
 fn unknown_version_and_broken_files_are_errors() {
-    assert!(from_json(r#"{"version":2,"windows":[]}"#).is_err());
+    assert!(from_json(r#"{"version":3,"windows":[]}"#).is_err());
     assert!(from_json("not json").is_err());
     assert!(from_json("").is_err());
 }
@@ -301,7 +303,7 @@ fn unknown_tab_kinds_are_skipped_and_empty_windows_dropped() {
             {{"bounds":{{"x":0,"y":0,"width":800,"height":600}},"maximized":false,
               "tabs":[{{"file":{{"project":"{project}","path":"b.rs"}}}}],"active":0}}]}}"#
     );
-    let windows = from_json(&json).unwrap();
+    let windows = from_json(&json).unwrap().windows;
     assert_eq!(windows.len(), 1);
     assert_eq!(windows[0].tabs, vec![DockTab::Terminal { project, tab_id }]);
     assert_eq!(windows[0].active, 0, "re-based onto the kept tabs");
@@ -313,10 +315,10 @@ fn unknown_tab_kinds_are_skipped_and_empty_windows_dropped() {
 fn save_writes_through_a_temp_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(WINDOWS_FILE);
-    let windows = vec![saved(vec![term()])];
-    save(&path, &windows).unwrap();
+    let layout = only(vec![saved(vec![term()])]);
+    save(&path, &layout).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(from_json(&text), Ok(windows));
+    assert_eq!(from_json(&text), Ok(layout));
     let names: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
         .map(|e| e.unwrap().file_name())
@@ -358,11 +360,11 @@ fn restore_rebuilds_windows_and_skips_duplicates() {
 #[test]
 fn from_json_drops_repeated_tabs() {
     let (a, b) = (term(), term());
-    let json = to_json(&[SavedWindow {
+    let json = to_json(&only(vec![SavedWindow {
         active: 2,
         ..saved(vec![a, b, a])
-    }]);
-    let windows = from_json(&json).unwrap();
+    }]));
+    let windows = from_json(&json).unwrap().windows;
     assert_eq!(windows[0].tabs, vec![a, b]);
     assert_eq!(windows[0].active, 0, "shown tab a");
 }
@@ -439,49 +441,52 @@ fn merging_keeps_live_and_pending_windows_without_repeating_a_tab() {
 }
 
 #[test]
-fn a_failed_open_sends_the_tab_back_to_its_window_if_open_else_main() {
+fn a_failed_open_sends_the_tab_back_to_its_window_if_open_else_nowhere() {
     let mut detached = Detached::new();
     let key = detached.open(term());
-    assert_eq!(detached.still_open(HostId::Main), HostId::Main);
+    let space = HostId::Space(SpaceKey(0));
+    assert_eq!(detached.still_open(space), Some(space));
     assert_eq!(
         detached.still_open(HostId::Detached(key)),
-        HostId::Detached(key)
+        Some(HostId::Detached(key))
     );
     detached.remove_window(key);
-    assert_eq!(detached.still_open(HostId::Detached(key)), HostId::Main);
+    assert_eq!(detached.still_open(HostId::Detached(key)), None);
 }
 
 #[test]
 fn toasts_go_to_the_first_shown_window_in_activation_order() {
     let (one, two) = (WindowKey(1), WindowKey(2));
-    let order = [HostId::Detached(one), HostId::Main, HostId::Detached(two)];
+    let space = HostId::Space(SpaceKey(0));
+    let order = [HostId::Detached(one), space, HostId::Detached(two)];
     let shown = |hidden: HostId| move |host: HostId| host != hidden;
     assert_eq!(
-        toast_host(&order, shown(HostId::Main)),
+        toast_host(&order, shown(space), space),
         HostId::Detached(one)
     );
     assert_eq!(
-        toast_host(&order, shown(HostId::Detached(one))),
-        HostId::Main,
+        toast_host(&order, shown(HostId::Detached(one)), space),
+        space,
         "a minimized window draws nothing"
     );
+    let other = HostId::Space(SpaceKey(4));
     assert_eq!(
-        toast_host(&order, |_| false),
-        HostId::Main,
-        "nothing shown: the main one"
+        toast_host(&order, |_| false, other),
+        other,
+        "nothing shown: the fallback"
     );
-    assert_eq!(toast_host(&[], |_| true), HostId::Main);
+    assert_eq!(toast_host(&[], |_| true, space), space);
 }
 
 #[test]
 fn a_window_closed_in_full_screen_comes_back_in_full_screen() {
-    let windows = vec![SavedWindow {
+    let layout = only(vec![SavedWindow {
         fullscreen: true,
         ..saved(vec![term()])
-    }];
-    let json = to_json(&windows);
+    }]);
+    let json = to_json(&layout);
     assert!(json.contains("\"fullscreen\":true"), "{json}");
-    assert_eq!(from_json(&json), Ok(windows));
+    assert_eq!(from_json(&json), Ok(layout));
 }
 
 fn frame() -> SavedFrame {
@@ -498,16 +503,11 @@ fn frame() -> SavedFrame {
 }
 
 #[test]
-fn the_main_frame_round_trips_through_its_file() {
+fn the_legacy_main_frame_reads_from_its_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(main_file(None));
-    save_frame(&path, &frame()).unwrap();
+    std::fs::write(&path, serde_json::to_string(&frame()).unwrap()).unwrap();
     assert_eq!(load_frame(&path), Some(frame()));
-    let names: Vec<_> = std::fs::read_dir(dir.path())
-        .unwrap()
-        .map(|e| e.unwrap().file_name())
-        .collect();
-    assert_eq!(names.len(), 1, "no temp file is left: {names:?}");
 }
 
 #[test]
@@ -526,6 +526,97 @@ fn a_missing_broken_or_impossible_frame_is_no_frame() {
         !parsed.maximized && !parsed.fullscreen,
         "flags default to false"
     );
+}
+
+fn space(workspace: Ulid) -> SavedSpace {
+    SavedSpace {
+        workspace,
+        bounds: SavedBounds {
+            x: 10.0,
+            y: 20.0,
+            width: 1400.0,
+            height: 900.0,
+        },
+        maximized: true,
+        fullscreen: false,
+    }
+}
+
+#[test]
+fn a_version_2_layout_round_trips() {
+    let layout = Layout {
+        spaces: vec![space(Ulid::new()), space(Ulid::new())],
+        windows: vec![saved(vec![term()])],
+    };
+    let json = to_json(&layout);
+    assert!(json.contains("\"version\":2"), "{json}");
+    assert_eq!(from_json(&json), Ok(layout));
+}
+
+#[test]
+fn a_version_1_file_reads_as_windows_without_spaces() {
+    let tab = term();
+    let v1 = format!(
+        r#"{{"version":1,"windows":[{{"bounds":{{"x":1,"y":2,"width":300,"height":200}},"tabs":[{}],"active":0}}]}}"#,
+        serde_json::to_string(&tab).unwrap()
+    );
+    let layout = from_json(&v1).unwrap();
+    assert!(layout.spaces.is_empty());
+    assert_eq!(layout.windows[0].tabs, vec![tab]);
+}
+
+#[test]
+fn unknown_fields_of_a_saved_space_are_ignored() {
+    let w = Ulid::new();
+    let text = format!(
+        r#"{{"version":2,"spaces":[{{"workspace":"{w}","bounds":{{"x":0,"y":0,"width":800,"height":600}},"zoom":2}}],"windows":[],"later":true}}"#
+    );
+    assert_eq!(from_json(&text).unwrap().spaces[0].workspace, w);
+}
+
+#[test]
+fn load_layout_takes_the_legacy_main_frame_when_spaces_are_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let windows = dir.path().join(WINDOWS_FILE);
+    let legacy = dir.path().join(main_file(None));
+    assert_eq!(
+        load_layout(&windows, &legacy),
+        Layout::default(),
+        "nothing saved yet"
+    );
+    std::fs::write(&legacy, serde_json::to_string(&frame()).unwrap()).unwrap();
+    let layout = load_layout(&windows, &legacy);
+    assert_eq!(layout.spaces.len(), 1);
+    assert_eq!(layout.spaces[0].workspace, Ulid::nil());
+    assert_eq!(layout.spaces[0].bounds, frame().bounds);
+    assert!(layout.spaces[0].fullscreen);
+    std::fs::write(&windows, "not json").unwrap();
+    assert_eq!(
+        load_layout(&windows, &legacy).spaces.len(),
+        1,
+        "a bad file keeps the frame"
+    );
+    let saved = Layout {
+        spaces: vec![space(Ulid::new())],
+        windows: vec![],
+    };
+    save(&windows, &saved).unwrap();
+    assert_eq!(
+        load_layout(&windows, &legacy),
+        saved,
+        "version 2 wins over the legacy frame"
+    );
+}
+
+#[test]
+fn spaces_keep_their_order() {
+    let [a, b] = [Ulid::new(), Ulid::new()];
+    let layout = Layout {
+        spaces: vec![space(a), space(b)],
+        windows: vec![],
+    };
+    let back = from_json(&to_json(&layout)).unwrap();
+    assert_eq!(back.spaces.last().map(|s| s.workspace), Some(b));
 }
 
 #[test]

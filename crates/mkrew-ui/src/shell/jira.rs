@@ -37,11 +37,11 @@ impl Shell {
             .map_or(&[][..], |p| p.jira_keys.as_slice())
     }
 
-    /// The Jira list replaces the cards of the shown workspace's Board.
-    pub(crate) fn jira_side_shown(&self) -> bool {
+    /// The Jira list replaces the cards of the Board of the workspace `host` shows.
+    pub(crate) fn jira_side_shown(&self, host: HostId) -> bool {
         self.jira_on
             && self
-                .workspace
+                .workspace_of(host)
                 .and_then(|project_id| self.jira.get(&project_id))
                 .is_some_and(|view| view.source == Source::Jira)
     }
@@ -186,10 +186,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self
-            .workspace
-            .filter(|_| self.view() == View::Board && self.jira_side_shown())
-        else {
+        let Some(project_id) = self.workspace_in(window).filter(|_| {
+            self.view(self.space_host(window)) == View::Board
+                && self.jira_side_shown(self.space_host(window))
+        }) else {
             return;
         };
         let layout = self.jira_layout;
@@ -237,7 +237,9 @@ impl Shell {
             view.selected = Some(next);
         }
         if let Some(at) = at {
-            self.jira_scroll.scroll_to_item(at);
+            self.host_view(self.space_host(window))
+                .jira_scroll
+                .scroll_to_item(at);
         }
         cx.notify();
     }
@@ -283,10 +285,10 @@ impl Shell {
                 .background_executor()
                 .spawn(async move { mkrew_ui::jira::issue_draft(&settings, &token, &fetched_key) })
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 // A slow reply never replaces a dialog opened meanwhile, nor opens in another
                 // workspace: the draft is dropped (the human clicks the row again).
-                let free = !shell.modal_open() && shell.workspace == Some(project_id);
+                let free = !shell.modal_open() && shell.workspace_in(window) == Some(project_id);
                 let Some(view) = shell.jira.get_mut(&project_id) else {
                     return;
                 };
@@ -331,7 +333,7 @@ impl Shell {
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let saved = saved.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(view) = shell.jira.get_mut(&project_id) else {
                     return;
                 };
@@ -363,7 +365,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
+        let (Some(project_id), Some(key)) =
+            (self.workspace_in(window), palette::key(&event.keystroke))
+        else {
             return;
         };
         let has_keys = !self.jira_keys_of(project_id).is_empty();
@@ -405,7 +409,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
+        let (Some(project_id), Some(key)) =
+            (self.workspace_in(window), palette::key(&event.keystroke))
+        else {
             return;
         };
         let paste = (key == palette::Key::Paste)
@@ -750,7 +756,7 @@ impl Shell {
                             .collect();
                         div()
                             .id("jira-issues")
-                            .track_scroll(&self.jira_scroll)
+                            .track_scroll(&self.host_view(self.space_host(window)).jira_scroll)
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()

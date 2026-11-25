@@ -157,6 +157,23 @@ impl Shell {
                     Box::new(|shell, window, cx| shell.close_settings_dialog(window, cx));
                 return self.leave_prompt_draft(then, window, cx);
             }
+            // ADR 0115: the window mode changes through its flows, which save it: the split
+            // picker (nothing is saved if it is cancelled) or the combine.
+            Effect::Write { setting, text } if setting.id() == "ui.window_mode" => {
+                let wanted = if text == WindowMode::PerWorkspace.name() {
+                    WindowMode::PerWorkspace
+                } else {
+                    WindowMode::Single
+                };
+                if wanted == self.window_mode {
+                    return;
+                }
+                self.close_settings_dialog(window, cx);
+                match wanted {
+                    WindowMode::PerWorkspace => self.open_split_picker(window, cx),
+                    WindowMode::Single => self.combine_windows(window, cx),
+                }
+            }
             Effect::Write { setting, text } => {
                 let result = setting
                     .write(&self.settings_file, &text)

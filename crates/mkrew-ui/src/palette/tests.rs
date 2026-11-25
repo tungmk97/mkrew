@@ -56,7 +56,59 @@ fn context(view: View) -> Context {
         },
         idle_removable: 0,
         workspaces_open: true,
+        per_workspace: false,
     }
+}
+
+#[test]
+fn split_and_combine_show_in_their_mode() {
+    let single = Context {
+        workspaces: 2,
+        ..context(View::Terminals)
+    };
+    let alone = Context {
+        workspaces: 1,
+        ..context(View::Terminals)
+    };
+    let spaces = Context {
+        workspaces: 2,
+        per_workspace: true,
+        ..context(View::Terminals)
+    };
+    assert!(available(Command::SplitWindows, &single));
+    assert!(!available(Command::SplitWindows, &alone));
+    assert!(!available(Command::SplitWindows, &spaces));
+    assert!(available(Command::CombineWindows, &spaces));
+    assert!(!available(Command::CombineWindows, &single));
+    assert_eq!(
+        title(Command::SplitWindows),
+        "Window: Open each workspace in its own window…"
+    );
+    assert_eq!(
+        title(Command::CombineWindows),
+        "Window: Combine into one window"
+    );
+}
+
+#[test]
+fn sidebar_commands_hide_with_a_window_per_workspace() {
+    let single = context(View::Terminals);
+    let spaces = Context {
+        per_workspace: true,
+        ..context(View::Terminals)
+    };
+    for command in [
+        Command::ToggleSidebar,
+        Command::ToggleCompactSidebar,
+        Command::FocusSidebar,
+    ] {
+        assert!(available(command, &single), "{command:?}");
+        assert!(!available(command, &spaces), "{command:?}");
+    }
+    for extra in [Extra::SidebarToggleAll, Extra::SidebarRemoveIdle] {
+        assert!(!extra.available(&spaces), "{extra:?}");
+    }
+    assert!(available(Command::TogglePanelSide, &spaces));
 }
 
 #[test]
@@ -1337,6 +1389,18 @@ fn the_picker_starts_on_the_current_theme_and_moves_from_there() {
 }
 
 #[test]
+fn the_panel_side_command_shows_with_a_workspace() {
+    assert!(available(
+        Command::TogglePanelSide,
+        &context(View::Terminals)
+    ));
+    assert_eq!(
+        title(Command::TogglePanelSide),
+        "Panel: Move to the other side"
+    );
+}
+
+#[test]
 fn window_extras_show_only_in_a_detached_window() {
     let main = context(View::Terminals);
     let detached = Context {
@@ -1344,11 +1408,11 @@ fn window_extras_show_only_in_a_detached_window() {
         ..context(View::Terminals)
     };
     for extra in [
-        Extra::TabMoveToMainWindow,
+        Extra::TabMoveBack,
         Extra::WindowMoveAllBack,
         Extra::WindowClose,
     ] {
-        assert!(!extra.available(&main), "{extra:?} in the main window");
+        assert!(!extra.available(&main), "{extra:?} in a Space window");
         assert!(extra.available(&detached), "{extra:?} in a detached window");
     }
     assert!(available(Command::MoveTabToNewWindow, &main));
@@ -1394,7 +1458,7 @@ fn a_detached_window_lists_only_what_acts_there() {
         Action::Run(Command::SplitRight),
         Action::Run(Command::MoveTabToNewWindow),
         Action::Run(Command::CommandPalette),
-        Action::Extra(Extra::TabMoveToMainWindow),
+        Action::Extra(Extra::TabMoveBack),
         Action::Extra(Extra::WindowMoveAllBack),
         Action::Extra(Extra::WindowClose),
         Action::Extra(Extra::TabPin),

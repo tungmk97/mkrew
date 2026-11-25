@@ -113,21 +113,25 @@ impl Shell {
         .detach();
     }
 
-    /// "Turns…" is a main-window dialog: from a detached window it opens there, and that
-    /// window comes forward.
+    /// "Turns…" is a Space window dialog: from a detached window it opens in the Space window
+    /// of that window's workspace, which comes forward.
     pub(crate) fn open_turns_in_main(
         &mut self,
         session_id: Ulid,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.host_of(window) == HostId::Main {
+        if self.host_of(window).space().is_some() {
             return self.open_turns(session_id, window, cx);
         }
-        self.in_window(HostId::Main, cx, move |shell, window, cx| {
-            window.activate_window();
-            shell.open_turns(session_id, window, cx);
-        });
+        self.in_host(
+            self.space_host(window),
+            window,
+            cx,
+            move |shell, window, cx| {
+                shell.open_turns(session_id, window, cx);
+            },
+        );
     }
 
     pub(crate) fn close_turns_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -243,7 +247,7 @@ impl Shell {
         // The Git view shows the active workspace's changes.
         let session = sessions
             .iter()
-            .find(|s| s.id == dialog.session_id && Some(s.project_id) == self.workspace);
+            .find(|s| s.id == dialog.session_id && Some(s.project_id) == self.workspace_in(window));
         let since = tree.zip(session).map(|(tree, session)| {
             let since = Since::turn(session, sessions, n, tree);
             (session.project_id, session.task_id, since)
@@ -291,7 +295,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let listed = listed.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(dialog) = shell.open_history(serial) else {
                     return;
                 };
@@ -380,7 +384,7 @@ impl Shell {
                     .await),
                 Err(error) => Err(format!("Cannot read the log: {error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(dialog) = shell.open_history(serial) else {
                     return;
                 };
@@ -453,7 +457,7 @@ impl Shell {
             }));
         cx.spawn_in(window, async move |this, cx| {
             let resumed = resumed.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(dialog) = shell.open_history(serial) else {
                     return;
                 };
@@ -461,17 +465,13 @@ impl Shell {
                 match resumed {
                     Ok(resumed) => {
                         shell.close_history(window, cx);
-                        shell.views.insert(project_id, View::Terminals);
                         // Next to the focused pane of the active tab, unless the daemon put
                         // it in an empty tab or in the old pane's place; `place_session`
                         // focuses it, and the pane takes the keyboard once attached.
-                        if shell.tabs.contains_key(&project_id) {
-                            let id = resumed.session_id;
-                            shell.place_session(project_id, id, None, Axis::Vertical, window, cx);
-                        } else {
-                            shell.reveal = Some(resumed.session_id);
-                        }
-                        shell.activate_workspace(project_id, window, cx);
+                        let id = resumed.session_id;
+                        shell.in_workspace(project_id, window, cx, move |shell, window, cx| {
+                            shell.show_session_here(project_id, id, window, cx);
+                        });
                     }
                     Err(error) => {
                         tracing::warn!(%session_id, "session.resume failed: {error:#}");

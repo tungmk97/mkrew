@@ -262,7 +262,7 @@ impl Tabs {
     }
 
     /// The tab whose layout holds `key`, of any kind. One workspace holds a file or the diff
-    /// in at most one tab (ADR 0108), main window and detached windows alike: they all draw
+    /// in at most one tab (ADR 0108), Space windows and detached windows alike: they all draw
     /// from this one `Tabs`.
     pub fn tab_with(&self, key: &PaneKey) -> Option<&Tab> {
         self.tabs.iter().find(|tab| tab.contains(key))
@@ -441,7 +441,7 @@ impl Tabs {
     }
 
     /// Runs `f` as if `tab_id` were the active tab, then gives the active tab back (a detached
-    /// window acts on its own tab without moving the main window's, spec 2026-11-10 §4.1).
+    /// window acts on its own tab without moving the Space window's, spec 2026-11-10 §4.1).
     pub fn with_active<R>(&mut self, tab_id: Ulid, f: impl FnOnce(&mut Tabs) -> R) -> Option<R> {
         self.tab(tab_id)?;
         let saved = self.active.replace(tab_id);

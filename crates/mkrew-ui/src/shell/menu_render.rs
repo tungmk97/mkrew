@@ -324,6 +324,7 @@ impl Shell {
             || self.file_menu.is_some()
             || self.run_menu.is_some()
             || self.workspace_switcher
+            || self.need_you_menu
             || self.new_menu
             || self.run_with.is_some()
             || self.fan_out.is_some()
@@ -357,11 +358,14 @@ impl Shell {
         }
         if self.workspace_switcher {
             return self
-                .workspace
+                .workspace_in(window)
                 .map(|project_id| self.switcher_rows(project_id));
         }
+        if self.need_you_menu {
+            return Some(self.need_you_rows(self.menu_host));
+        }
         if self.new_menu {
-            return Some(self.new_menu_rows());
+            return Some(self.new_menu_rows(self.space_host(window)));
         }
         if let Some(menu) = &self.card_menu {
             return Some(self.card_menu_rows(menu));
@@ -372,7 +376,7 @@ impl Shell {
         if let Some(menu) = &self.fan_out {
             return Some(fan_out_rows(menu));
         }
-        if let (Some(menu), Some(project_id)) = (self.git_menu, self.workspace) {
+        if let (Some(menu), Some(project_id)) = (self.git_menu, self.workspace_in(window)) {
             let view = self.git.get(&project_id)?;
             return Some(match menu {
                 GitMenu::ChangedBy => self.git_changed_by_rows(project_id, view),
@@ -645,7 +649,7 @@ impl Shell {
         });
         let files = self.files.get(&project_id);
         menu_model::Focus {
-            view: self.view(),
+            view: self.view(self.space_host(window)),
             terminal,
             sidebar_row: self
                 .filter_focus
@@ -657,8 +661,10 @@ impl Shell {
                 .flatten(),
             // GPUI keeps focus on an element that is no longer painted: only a tree painted in
             // the right panel counts.
-            files_tree_focused: self.file_tree_shown() && self.files_focus.is_focused(window),
-            git_focused: self.git_panel_shown() && self.git_focus.is_focused(window),
+            files_tree_focused: self.file_tree_shown(self.space_host(window))
+                && self.files_focus.is_focused(window),
+            git_focused: self.git_panel_shown(self.space_host(window))
+                && self.git_focus.is_focused(window),
             files_cursor: files.and_then(|view| {
                 let cursor = view.cursor.as_deref()?;
                 view.rows().iter().find_map(|row| match row {
@@ -668,17 +674,18 @@ impl Shell {
                     _ => None,
                 })
             }),
-            card: (self.view() == View::Board && !self.jira_side_shown())
-                .then_some(self.selected_card)
-                .flatten()
-                .filter(|&id| self.on_board(id)),
+            card: (self.view(self.space_host(window)) == View::Board
+                && !self.jira_side_shown(self.space_host(window)))
+            .then_some(self.selected_card)
+            .flatten()
+            .filter(|&id| self.on_board(self.space_host(window), id)),
         }
     }
 
     /// `Command::ContextMenu`: the menu a right-click would open on what has the keyboard,
     /// under that owner's bottom-left (the switcher's when the owner was not painted).
     pub(crate) fn context_menu(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         let owner = menu_model::owner(&self.menu_focus_state(project_id, window, cx));

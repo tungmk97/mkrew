@@ -62,7 +62,7 @@ impl Shell {
                     .collect()
             }),
         )
-        .track_scroll(&self.git_files_scroll)
+        .track_scroll(&self.host_view(self.space_host(window)).git_files_scroll)
         .flex_1()
         .min_h_0()
         .px(px(space::S))

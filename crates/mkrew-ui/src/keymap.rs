@@ -246,6 +246,15 @@ pub enum Command {
     MoveTabRight,
     /// Move the active terminal tab into a new window of its own (spec 2026-11-10, ADR 0096).
     MoveTabToNewWindow,
+    /// Move the Files / Session / Git panel to the other side of the panes (ADR 0115), saved
+    /// as `[ui] panel_side`.
+    TogglePanelSide,
+    /// Open each picked workspace in its own window (ADR 0115): `[ui] window_mode` becomes
+    /// `per_workspace`. Palette, Settings and the Split menu; no default key.
+    SplitWindows,
+    /// Combine the workspace windows into the one this runs in (ADR 0115): `[ui] window_mode`
+    /// becomes `single`. No default key.
+    CombineWindows,
     /// Git only: wrap long diff lines or cut them at the edge (the Wrap button).
     GitToggleWrap,
     /// Tree only: open the tree's cursor file in a kept tab (Enter opens a transient one).
@@ -407,6 +416,9 @@ impl Command {
             Command::MoveTabLeft,
             Command::MoveTabRight,
             Command::MoveTabToNewWindow,
+            Command::TogglePanelSide,
+            Command::SplitWindows,
+            Command::CombineWindows,
             Command::GitToggleWrap,
             Command::OpenKept,
         ]);
@@ -526,6 +538,9 @@ impl Command {
             Command::MoveTabLeft => "move_tab_left".into(),
             Command::MoveTabRight => "move_tab_right".into(),
             Command::MoveTabToNewWindow => "move_tab_to_new_window".into(),
+            Command::TogglePanelSide => "toggle_panel_side".into(),
+            Command::SplitWindows => "split_windows".into(),
+            Command::CombineWindows => "combine_windows".into(),
             Command::GitToggleWrap => "git_toggle_wrap".into(),
             Command::OpenKept => "open_kept".into(),
         }
@@ -667,7 +682,10 @@ impl Command {
             Command::BrowserBack
             | Command::BrowserForward
             | Command::BrowserReload
-            | Command::BrowserOpenExternal => String::new(),
+            | Command::BrowserOpenExternal
+            | Command::TogglePanelSide
+            | Command::SplitWindows
+            | Command::CombineWindows => String::new(),
             Command::Layout(preset) => match preset {
                 Preset::Columns2 => "alt-shift-1",
                 Preset::Rows2 => "alt-shift-2",

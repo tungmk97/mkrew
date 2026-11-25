@@ -9,16 +9,18 @@ impl Shell {
             return;
         }
         let machine = self.machine_name().map(str::to_owned);
-        self.add_workspace = Some(CloneDialog::new(self.clone_parent(), machine));
+        self.add_workspace = Some(CloneDialog::new(
+            self.clone_parent(self.workspace_in(window)),
+            machine,
+        ));
         window.focus(&self.dialog_focus, cx);
         cx.notify();
     }
 
-    /// Where a clone goes by default: next to the active workspace, else the home folder.
-    fn clone_parent(&self) -> String {
-        let active = self
-            .workspace
-            .and_then(|id| self.sidebar.projects().iter().find(|p| p.id == id));
+    /// Where a clone goes by default: next to `shown` (the workspace of the asking window),
+    /// else the home folder.
+    fn clone_parent(&self, shown: Option<Ulid>) -> String {
+        let active = shown.and_then(|id| self.sidebar.projects().iter().find(|p| p.id == id));
         let beside =
             active.and_then(|p| Path::new(&p.path).parent().map(|d| d.display().to_string()));
         // This computer's home folder says nothing about the other computer's.
@@ -141,7 +143,7 @@ impl Shell {
             let Some(path) = path else {
                 return;
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let path = path.to_string_lossy().into_owned();
                 if clone_into {
                     if let Some(dialog) = shell.add_workspace.as_mut() {
@@ -173,7 +175,7 @@ impl Shell {
             let added = connection
                 .call::<Project>(Request::ProjectAdd(ProjectAddParams { path, name: None }))
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 match added {
                     Ok(project) => {
                         let project_id = project.id;
@@ -181,7 +183,7 @@ impl Shell {
                             shell.close_add_workspace(window, cx);
                         }
                         shell.sidebar.add_project(project);
-                        shell.activate_workspace(project_id, window, cx);
+                        shell.route_workspace(project_id, Then::Nothing, false, None, window, cx);
                     }
                     Err(error) => match shell.add_workspace.as_mut() {
                         Some(dialog) => dialog.error = Some(format!("{error:#}")),
@@ -253,7 +255,7 @@ impl Shell {
             (Some(project), _) if mine => {
                 self.close_add_workspace(window, cx);
                 self.sidebar.add_project(project.clone());
-                self.activate_workspace(project.id, window, cx);
+                self.route_workspace(project.id, Then::Nothing, false, None, window, cx);
             }
             (Some(_), _) => {}
             (None, error) => {
@@ -303,7 +305,7 @@ impl Shell {
             let Some(path) = path else {
                 return;
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let path = path.to_string_lossy().into_owned();
                 shell.link_plan(session_id, Some(path), window, cx);
             });
@@ -362,7 +364,7 @@ impl Shell {
                 Ok(listed) => Agents::Loaded(listed.profiles),
                 Err(error) => Agents::Failed(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 // Unless the menu closed (or moved to another workspace) meanwhile.
                 let Some(menu) = shell
                     .workspace_menu
@@ -539,7 +541,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let made = made.await;
-            let _ = this.update_in(cx, |shell, window, cx| match made {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match made {
                 Ok(FsCreated { path }) => {
                     shell.show_created_entry(project_id, target, path, folder, window, cx);
                 }
@@ -626,7 +628,7 @@ impl Shell {
         let path = path.to_owned();
         cx.spawn_in(window, async move |this, cx| {
             let ignored = ignored.await;
-            let _ = this.update_in(cx, |shell, window, cx| match ignored {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match ignored {
                 Ok(()) => {
                     if shell.files_at(project_id, target).is_some() {
                         shell.refresh_files(project_id, window, cx);
@@ -714,14 +716,12 @@ impl Shell {
             return false;
         }
         self.diff_mode = mode;
-        let hunk_row = self
-            .workspace
-            .and_then(|project_id| self.git.get(&project_id))
-            .and_then(|view| match (&view.diff, view.hunk) {
-                (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk, mode),
-                _ => None,
-            });
-        if let Some(project_id) = self.workspace {
+        for project_id in self.on_screen_workspaces() {
+            let hunk_row =
+                (self.git.get(&project_id)).and_then(|view| match (&view.diff, view.hunk) {
+                    (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk, mode),
+                    _ => None,
+                });
             self.scroll_diff_to(project_id, hunk_row.unwrap_or(0));
         }
         true
@@ -831,9 +831,9 @@ impl Shell {
             let archived = connection
                 .call::<Project>(Request::ProjectArchive(ProjectRef { project_id }))
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, _, cx| {
                 match archived {
-                    Ok(_) => shell.refresh(window, cx),
+                    Ok(_) => shell.refresh(cx),
                     Err(error) => {
                         tracing::warn!(%project_id, "project.archive failed: {error:#}");
                         shell.toast_error(format!("Cannot remove the workspace: {error:#}"), cx);

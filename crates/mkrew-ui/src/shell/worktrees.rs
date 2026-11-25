@@ -292,7 +292,7 @@ impl Shell {
         let sent = connection.call::<serde_json::Value>(request);
         cx.spawn_in(window, async move |this, cx| {
             let answer = sent.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(dialog) = shell.open_worktree(serial) else {
                     // Closed meanwhile: a merge or removal that failed, or a merge stopped by
                     // conflicts, has no dialog to say so.
@@ -353,12 +353,11 @@ impl Shell {
         let Some(dialog) = self.worktree_dialog.take() else {
             return;
         };
-        let project_id = dialog.project_id;
-        if self.workspace != Some(project_id) {
-            self.activate_workspace(project_id, window, cx);
-        }
-        self.retarget_git(project_id, Some(dialog.task_id), None);
-        self.open_git(project_id, window, cx);
+        let (project_id, task_id) = (dialog.project_id, dialog.task_id);
+        self.in_workspace(project_id, window, cx, move |shell, window, cx| {
+            shell.retarget_git(project_id, Some(task_id), None);
+            shell.open_git(project_id, window, cx);
+        });
     }
 
     /// "Merge back…" / "Remove worktree…" (SPEC §20E.1): the commits to merge or the

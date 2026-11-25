@@ -25,7 +25,7 @@ use gpui::{
 use mkrew_core::Paths;
 use mkrew_core::UsageFormat;
 use mkrew_core::prompt::PromptVars;
-use mkrew_core::settings::{DiffMode, NotifySettings};
+use mkrew_core::settings::{DiffMode, NotifySettings, OpenWorkspace, PanelSide, WindowMode};
 use mkrew_protocol::{
     AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, ChangeKind, CommentContext,
     CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
@@ -55,7 +55,7 @@ use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::context_menu::{LayoutMenu, PaneMenu, TabMenu};
 use mkrew_ui::desktop::{Desktop, TrayEvent};
-use mkrew_ui::detached::{self, Detached, DockTab, HostId, WindowKey};
+use mkrew_ui::detached::{self, Detached, DockTab, HostId, SpaceKey, WindowKey};
 use mkrew_ui::diagram::Diagram;
 use mkrew_ui::dialog_focus::{self, Nav};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
@@ -136,6 +136,7 @@ use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
 use mkrew_ui::worktree_dialog::{self, WorktreeDialog};
 use mkrew_ui::worktree_target;
 use mkrew_ui::zed;
+use shell::window_mode::Then;
 use tracing_subscriber::EnvFilter;
 use ulid::Ulid;
 
@@ -247,7 +248,7 @@ fn main() {
     };
     let opening = Opening { target, id, jump };
     let app = gpui_platform::application().with_assets(icons::Assets);
-    // macOS: a click on the Dock icon while the app is hidden brings the main window back.
+    // macOS: a click on the Dock icon while the app is hidden brings the Space windows back.
     app.on_reopen(shell::app_menu::reopen);
     app.run(move |cx: &mut App| {
         cx.set_global(ActiveKeymap(keymap.clone()));
@@ -278,19 +279,30 @@ fn main() {
         cx.set_global(ThemeCatalog::load(&paths.themes_dir()));
         // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
         cx.set_prompt_builder(shell::confirm_prompt::build);
-        // The place the window was left (a machine window has its own file).
+        // The place the window was left (a machine window has its own files): the Space window
+        // used last (ADR 0115), else the legacy main window frame. Mode 2's first window shows
+        // the workspace of the last saved entry that has one (`Shell::new`), so it takes that
+        // entry's place.
         let instance = opening.target.is_machine().then_some(opening.id.as_str());
-        let frame = detached::load_frame(&paths.data_dir.join(detached::main_file(instance)));
+        let layout = detached::load_layout(
+            &paths.data_dir.join(detached::windows_file(instance)),
+            &paths.data_dir.join(detached::main_file(instance)),
+        );
         let displays: Vec<Bounds<Pixels>> = cx
             .displays()
             .iter()
             .map(|display| display.visible_bounds())
             .collect();
         let primary = cx.primary_display().map(|display| display.visible_bounds());
-        let window_bounds = match frame {
-            Some(frame) => window_place::restored(
-                window_place::saved_rect(&frame.bounds),
-                Placement::from_flags(frame.maximized, frame.fullscreen),
+        let first = if settings.ui.window_mode == WindowMode::PerWorkspace {
+            (layout.spaces.iter().rev()).find(|saved| !saved.workspace.is_nil())
+        } else {
+            layout.spaces.last()
+        };
+        let window_bounds = match first {
+            Some(saved) => window_place::restored(
+                window_place::saved_rect(&saved.bounds),
+                Placement::from_flags(saved.maximized, saved.fullscreen),
                 size(px(theme::WINDOW_MIN_WIDTH), px(theme::WINDOW_MIN_HEIGHT)),
                 &displays,
                 primary,
@@ -301,44 +313,34 @@ fn main() {
                 cx,
             )),
         };
-        let options = WindowOptions {
-            window_bounds: Some(window_bounds),
-            titlebar: Some(TitlebarOptions {
-                title: Some(title.into()),
-                appears_transparent: CUSTOM_TITLE_BAR,
-                traffic_light_position: theme::traffic_light_pos(
-                    Os::CURRENT,
-                    cx.global::<theme::Fonts>().ui_size,
-                )
-                .map(|(x, y)| point(px(x), px(y))),
-            }),
-            window_min_size: Some(size(
-                px(theme::WINDOW_MIN_WIDTH),
-                px(theme::WINDOW_MIN_HEIGHT),
-            )),
-            // macOS: we move the window from our own bar, so AppKit must not delay the click.
-            app_owns_titlebar_drag: cfg!(target_os = "macos"),
-            ..Default::default()
-        };
+        let options = shell::window_mode::space_window_options(
+            window_bounds,
+            title.into(),
+            cx.global::<theme::Fonts>().ui_size,
+        );
         let mode = settings.ui.theme;
         let opened = cx.open_window(options, |window, cx| {
             theme::refresh(mode, window, cx);
-            cx.new(|cx| Shell::new(launched, paths, keymap, &keymap_errors, opening, window, cx))
+            let shell = cx
+                .new(|cx| Shell::new(launched, paths, keymap, &keymap_errors, opening, window, cx));
+            cx.set_global(shell::app_menu::ShellHandle(shell.clone()));
+            cx.new(|cx| shell::space_view::SpaceWindow::new(shell, SpaceKey(0), window, cx))
         });
-        let main = match opened {
-            Ok(main) => main,
-            Err(error) => {
-                eprintln!("mkrew: cannot open window: {error:#}");
-                cx.quit();
-                return;
-            }
-        };
-        cx.set_global(shell::app_menu::MainWindow(main));
-        // Sessions live in the daemon, so closing the main window ends the app, detached
-        // windows included (they come back on the next start, ADR 0096).
-        let main_id = main.window_id();
-        cx.on_window_closed(move |cx, closed| {
-            if closed == main_id || cx.windows().is_empty() {
+        if let Err(error) = opened {
+            eprintln!("mkrew: cannot open window: {error:#}");
+            cx.quit();
+            return;
+        }
+        // Sessions live in the daemon: the app ends with its last Space window
+        // (`Shell::space_should_close` saved first); detached windows never keep it alone.
+        // The last one's ✕ keeps its key in `space_handles`, so this asks which are still open.
+        cx.on_window_closed(|cx, _| {
+            let open = cx.windows();
+            let none_left =
+                (cx.try_global::<shell::app_menu::ShellHandle>()).is_none_or(|handle| {
+                    (handle.0.read(cx).space_handles.values()).all(|space| !open.contains(space))
+                });
+            if none_left || open.is_empty() {
                 cx.quit();
             }
         })
@@ -483,8 +485,6 @@ struct Shell {
     refreshing: bool,
     /// Another refresh was asked for while one was in flight.
     refresh_again: bool,
-    /// The workspace whose tabs are on screen.
-    workspace: Option<Ulid>,
     /// Tabs per workspace, loaded when the workspace is first shown.
     tabs: HashMap<Ulid, Tabs>,
     /// Workspaces whose `tab.list` (or first `tab.create`) is in flight.
@@ -547,7 +547,6 @@ struct Shell {
     renaming: Option<Renaming>,
     /// Focused while renaming; losing it commits the draft.
     rename_focus: FocusHandle,
-    _rename_blur: Subscription,
     /// The bound shortcuts, for tooltips and labels.
     keymap: Keymap,
     /// What was wrong with `keymap.toml` at start (those entries use their defaults).
@@ -589,8 +588,6 @@ struct Shell {
     /// Scrolls the prompt text of Settings → Prompts (not `prompt_scroll`: the task dialog can
     /// be open under Settings).
     prompts_body_scroll: ScrollHandle,
-    /// Keeps the selected comment thread in view in the Docs / Git margin.
-    comments_scroll: ScrollHandle,
     /// The open workspace menu (Open in Zed, default agent).
     workspace_menu: Option<WorkspaceMenu>,
     /// The open right-click menu of the Files tree.
@@ -630,6 +627,8 @@ struct Shell {
     run_menu: Option<Ulid>,
     /// The title bar's workspace dropdown is open.
     workspace_switcher: bool,
+    /// The title bar's "need you" chip menu is open (ADR 0115), in `menu_host`'s window.
+    need_you_menu: bool,
     /// The tab area's `+ ▾` dropdown is open.
     new_menu: bool,
     /// The pointer holds the tab strip's `+` row open (`plus_row::Reveal`); a focused item
@@ -709,8 +708,6 @@ struct Shell {
     jira_keys_focus: FocusHandle,
     /// The Jira list's "Filter issues" field.
     jira_filter_focus: FocusHandle,
-    /// Keeps the selected Jira List row in view.
-    jira_scroll: ScrollHandle,
     /// The Board shows every workspace's tasks (`[ui] board_all_workspaces`, SPEC §10).
     board_all: bool,
     /// The agents' usage limits the title bar's chip shows (events and `limits.get`).
@@ -727,9 +724,6 @@ struct Shell {
     follow_up: Option<FollowUp>,
     /// Focused while the follow-up field takes keys; losing it drops an empty draft.
     follow_up_focus: FocusHandle,
-    _follow_up_blur: Subscription,
-    /// Gives a modal dialog the keyboard back when its focused control vanished.
-    _dialog_focus_lost: Subscription,
     /// Keeps the follow-up field's end (where the caret is) in view.
     follow_up_scroll: ScrollHandle,
     /// The prompt composer draft of every agent session (§20B.1).
@@ -753,14 +747,24 @@ struct Shell {
     composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
-    /// The right panel (Files / Session / Git tabs) next to Terminals;
-    /// from `[ui] right_panel`, written by its toggle and tab row (SPEC §10, ADR 0081, ADR 0084).
-    right_panel: inspector::RightPanel,
+    /// The panel's side of the panes, from `[ui] panel_side` (ADR 0115).
+    panel_side: PanelSide,
+    /// `[ui] window_mode` (ADR 0115): one window, or one per workspace.
+    window_mode: WindowMode,
+    /// `[ui] open_workspace` (ADR 0115): where opening a workspace goes in mode 2.
+    open_pref: OpenWorkspace,
+    /// The open "Open <workspace>" question of mode 2 (ADR 0115).
+    open_ask: Option<shell::window_mode::OpenAsk>,
+    /// The Space window the open dialog draws in (set by its first frame).
+    modal_host: Option<HostId>,
+    /// The open "Open workspaces in windows" picker (ADR 0115); drawn in `palette_host`.
+    split_picker: Option<mkrew_ui::window_mode::WorkspacePicker>,
     /// The transcripts being read, one per session (ADR 0104): the session panel's Thread
     /// section and every pane in Chat mode share them.
     reads: HashMap<Ulid, ThreadRead>,
-    /// The session panel's Thread section UI state.
-    thread: Option<ThreadWatch>,
+    /// The Thread section UI state of each session a Space window's panel shows (mode 2 can
+    /// show several), by session.
+    threads: HashMap<Ulid, ThreadWatch>,
     /// What each pane in Chat mode remembers (open rows, scroll), ADR 0104.
     chats: HashMap<Ulid, ChatUi>,
     /// What each omp pane with a live native surface keeps: the mirror of the daemon's documents
@@ -800,8 +804,6 @@ struct Shell {
     files: HashMap<Ulid, FilesView>,
     /// Focused while the right panel's tree has the keyboard, so arrow keys move its cursor.
     files_focus: FocusHandle,
-    /// Keeps the Files tree cursor in view.
-    files_scroll: UniformListScrollHandle,
     /// What waits for a Files save in flight (a "Save" answered while one was already sent):
     /// `(workspace, path, then)`, run after that save succeeds.
     files_after_save: Vec<(Ulid, FileKey, AfterSave)>,
@@ -813,21 +815,11 @@ struct Shell {
     md_split_dragging: bool,
     /// The Docs list filter field.
     docs_filter_focus: FocusHandle,
-    /// The rendered Markdown page of Docs (a virtual list, kept across frames).
-    doc_page: preview::Page,
-    /// Scroll of the Docs source view: where Shift+↓ starts, and what keeps a pick in view.
-    doc_source_scroll: UniformListScrollHandle,
     /// The Git view of every workspace it was shown for.
     git: HashMap<Ulid, GitView>,
     /// The `git.repos` of each workspace whose Git view was shown (ADR 0029), for the "Repo"
     /// chooser; kept in memory only.
     git_repos: HashMap<Ulid, Vec<String>>,
-    /// The title bar's branch chip and `Git N` badge: the shown workspace only (hidden ones
-    /// are never loaded), in memory only.
-    git_summary: Option<(Ulid, GitSummary)>,
-    /// A summary request is in flight / another change arrived meanwhile.
-    git_summary_busy: bool,
-    git_summary_again: bool,
     /// The daemon watchers this window uses for what it shows (`watches`, ADR 0087).
     watch_needs: watches::Needs,
     /// Focused while a Git view is shown, so its single-key shortcuts work.
@@ -840,12 +832,8 @@ struct Shell {
     git_menu: Option<GitMenu>,
     git_repo_query: Input,
     git_repo_query_focus: FocusHandle,
-    /// Keep the selected changed file in view.
-    git_files_scroll: UniformListScrollHandle,
     /// The diff list of each workspace's Diff leaf (`ensure_diff_views` creates it).
     diff_views: HashMap<Ulid, DiffViewState>,
-    /// A Diff leaf was drawn at the last `sync_panes`: one that comes on screen refreshes Git.
-    diff_drawn: bool,
     /// How the Git diff viewer lays out a file (`[ui] diff_mode`, §12B); global, every repo.
     diff_mode: DiffMode,
     /// Long diff lines wrap (`[ui] diff_wrap`, on by default); global, every repo.
@@ -933,9 +921,6 @@ struct Shell {
     /// (`scripts/measure.*`, SPEC §15 UI startup).
     launched: Option<Instant>,
     first_frame_logged: bool,
-    /// The sidebar as its own view (see [`shell::sidebar_view::SidebarView`]); made on first
-    /// render.
-    sidebar_view: Option<Entity<shell::sidebar_view::SidebarView>>,
     /// One cached view per pane slot (ADR 0114), made by `render_tab`, pruned by `sync_panes`.
     pane_views: RefCell<HashMap<shell::pane_view::PaneSlot, Entity<shell::pane_view::PaneView>>>,
     /// The in-app toasts (SPEC §14): pushed by `toast_error` / `toast_info`, expired on the
@@ -943,13 +928,27 @@ struct Shell {
     toasts: Toasts,
     /// Which terminal tab is in which detached window (ADR 0096).
     detached: Detached,
-    /// The main window, for work that must run there (a file link from a detached pane).
-    main_window: gpui::AnyWindowHandle,
+    /// The Space windows (ADR 0115) and their keys, both ways; mode 1 has one.
+    spaces: HashMap<gpui::AnyWindowHandle, SpaceKey>,
+    space_handles: HashMap<SpaceKey, gpui::AnyWindowHandle>,
+    /// The key of the next Space window (never reused).
+    next_space: u64,
     /// The detached OS windows and their keys, both ways.
     windows: HashMap<gpui::AnyWindowHandle, WindowKey>,
     window_handles: HashMap<WindowKey, gpui::AnyWindowHandle>,
-    /// Per window: screen bounds, maximized, the strip and content size painted last.
+    /// Per window: screen bounds, maximized, the strip and content size painted last, the
+    /// shown workspace, the right panel and the scroll state of what it draws.
     hosts: HashMap<HostId, shell::hosts::HostUi>,
+    /// The right panel a new Space window starts with (`[ui] right_panel`).
+    panel_default: inspector::RightPanel,
+    /// Scroll state for a window whose `HostUi` is not there yet (drawn with fresh state).
+    no_view: shell::hosts::HostView,
+    /// The title bar summaries of the workspaces some window shows (ADR 0074).
+    git_summaries: HashMap<Ulid, GitSummary>,
+    /// Workspaces whose `git.repos` + `git.status` is in flight, and those that changed
+    /// meanwhile (asked once more when the answer arrives).
+    git_summary_busy: HashSet<Ulid>,
+    git_summary_again: HashSet<Ulid>,
     /// The window the open popover menu / the palette belongs to (spec §4.3).
     menu_host: HostId,
     palette_host: HostId,
@@ -964,8 +963,6 @@ struct Shell {
     /// A `DraggedItem` drag moved over a window (the tear-off catcher saw its payload): only
     /// then may a release tear the dragged tab off.
     tab_drag: bool,
-    /// The main window is shown (not minimized or hidden): its panes stay attached.
-    main_visible: bool,
     /// `OpenLink` of each attached pane, kept so a move to another window subscribes again.
     link_subscriptions: HashMap<Ulid, gpui::Subscription>,
     /// A detached window moved, resized or changed tabs: saved on the next status tick.
@@ -978,317 +975,9 @@ struct Shell {
     windows_path: PathBuf,
     /// The last write of `windows.json` failed (its toast shows once).
     windows_save_failed: bool,
-    /// The main window moved or resized: its place is saved on the next status tick.
-    main_dirty: bool,
-    /// Where `main-window.json` lives: this computer's file, or the machine window's own.
-    main_frame_path: PathBuf,
-}
-
-impl Render for Shell {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        self.ensure_diff_views();
-        self.prepare_browsers(HostId::Main, window, cx);
-        let theme = cx.theme().clone();
-        // A menu closed behind the keyboard's back (workspace switched, dialog opened, daemon
-        // event) must not leave it on the hidden menu: give it back to the pane. A menu whose
-        // owner went away (no rows) draws nothing: close it the same way.
-        if self.menu_open() && self.open_menu_rows(window).is_none() {
-            self.dismiss_menus(window, cx);
-        }
-        if !self.menu_open() && self.menu_focus.contains_focused(window, cx) {
-            self.focus_pane(window, cx);
-        }
-        // Voice input types into the field whose typing canvas registers again during this
-        // frame's paint (§20G); a field that is gone from the screen is no target. That field
-        // paints the listening ring. A pane's field stays the target while its cached view
-        // reuses its paint; that view clears it when it renders again (`render_pane`).
-        let pane_owned = (self.typing_target.owner.get()).is_some_and(|owner| {
-            (self.pane_views.borrow().values()).any(|view| view.entity_id() == owner)
-        });
-        if !pane_owned {
-            self.typing_target.field.replace(None);
-        }
-        // Menus opened from the keyboard hang from what this frame lays out.
-        cx.global::<MenuAnchors>()
-            .clear(window.window_handle().window_id());
-        self.typing_target.ring.set(self.voice_ring(&theme, cx));
-        window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
-        self.sync_traffic_lights(HostId::Main, window, cx.global::<theme::Fonts>().ui_size);
-        // A dialog control that vanished while focused (a button swapped for its disabled twin
-        // while saving, the next step of a dialog) would leave the keyboard on nothing and Esc
-        // would miss the dialog: the dialog itself takes the keyboard back.
-        if self.modal_open()
-            && self.popup_host().is_none_or(|host| host == HostId::Main)
-            && !window.has_active_prompt()
-            && !self.dialog_focus.contains_focused(window, cx)
-        {
-            window.focus(&self.dialog_focus, cx);
-        }
-        if let Some(launched) = self.launched {
-            if !self.first_frame_logged {
-                self.first_frame_logged = true;
-                tracing::info!(ms = launched.elapsed().as_millis(), "first frame");
-            }
-            if matches!(self.status, Status::Connected) {
-                self.launched = None;
-                tracing::info!(ms = launched.elapsed().as_millis(), "first connected frame");
-            }
-        }
-        // One clock reading per frame, so every spinner and time agrees.
-        let now = status::now_ms();
-        // Rendering is what marks the focused pane of the active window viewed (its done leaves
-        // the Inbox): every state change and window activation re-renders. A change in what
-        // needs the user also reaches the badge and the tray.
-        let mut viewed_changed = false;
-        if window.is_window_active()
-            && let Some(id) = self.focused_session(window)
-            && let Some(session) = self.sidebar.sessions().iter().find(|s| s.id == id)
-        {
-            viewed_changed = self.viewed.view(session);
-        }
-        if viewed_changed {
-            self.sync_attention(cx);
-        }
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(rgb(theme.bg))
-            .track_focus(&self.focus_handle)
-            .when(self.view() == View::Board, |el| {
-                el.key_context(BOARD_CONTEXT)
-            })
-            .when(self.view() == View::Docs, |el| el.key_context(DOCS_CONTEXT))
-            .on_action(cx.listener(Self::run))
-            .on_action(cx.listener(Self::expand_diagram))
-            .on_action(cx.listener(Self::open_preview_link))
-            .on_action(cx.listener(Self::toggle_preview_task))
-            .on_action(cx.listener(Self::copy_preview_code))
-            .on_action(cx.listener(Self::open_chat_path))
-            // `/` focuses the sidebar filter while nothing else has the keyboard (a terminal or
-            // a field keeps its `/`).
-            .on_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
-                if shell.reconnecting() && !shell.modal_open() {
-                    return;
-                }
-                shell.docs_key_down(event, window, cx);
-                let filter_shown = !shell.sidebar_layout.hidden()
-                    && !shell.sidebar_layout.compact()
-                    && !shell.sidebar.is_empty();
-                if event.keystroke.key == "/"
-                    && !event.keystroke.modifiers.modified()
-                    && filter_shown
-                    && !shell.modal_open()
-                    && shell.focus_handle.is_focused(window)
-                {
-                    cx.stop_propagation();
-                    shell.sidebar.end_browse();
-                    window.focus(&shell.filter_focus, cx);
-                    cx.notify();
-                }
-            }))
-            .child(tear_off_catcher(cx))
-            .child(self.render_title_bar(HostId::Main, now, &theme, window, cx))
-            .children(self.render_reconnect_banner(&theme, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .relative()
-                    // Hidden: not built at all (nothing to lay out or paint). Its own cached
-                    // view: a pane printing does not lay it out again (`SidebarView`).
-                    .children((!self.sidebar_layout.hidden()).then(|| {
-                        let style = gpui::StyleRefinement::default().flex_none().h_full();
-                        let style = if self.sidebar_layout.compact() {
-                            style.w(theme::rems_px(theme::COMPACT_SIDEBAR_WIDTH))
-                        } else {
-                            style.w(px(self.sidebar_width))
-                        };
-                        let shell = cx.entity().downgrade();
-                        self.sidebar_view
-                            .get_or_insert_with(|| {
-                                cx.new(|cx| shell::sidebar_view::SidebarView::new(shell, cx))
-                            })
-                            .clone()
-                            .cached(style)
-                    }))
-                    .child(self.render_main(now, &theme, window, cx))
-                    // Over the sidebar and the main area, under the dialogs: no mouse input
-                    // reaches them while the connection is down.
-                    .children(self.reconnecting().then(inert_layer))
-                    .children(
-                        self.task_dialog
-                            .as_ref()
-                            .map(|dialog| self.render_task_dialog(dialog, window, &theme, cx)),
-                    )
-                    .children(
-                        self.undo_dialog
-                            .as_ref()
-                            .map(|dialog| self.render_undo_dialog(dialog, &theme, cx)),
-                    )
-                    .children(
-                        self.worktree_dialog
-                            .as_ref()
-                            .map(|dialog| self.render_worktree_dialog(dialog, &theme, cx)),
-                    )
-                    .children(
-                        self.compare
-                            .as_ref()
-                            .map(|compare| self.render_compare(compare, now, &theme, cx)),
-                    )
-                    .children(
-                        self.turns_dialog
-                            .as_ref()
-                            .map(|dialog| self.render_turns_dialog(dialog, now, &theme, cx)),
-                    )
-                    .children(
-                        self.git_discard
-                            .as_ref()
-                            .map(|dialog| self.render_git_discard(dialog, &theme, cx)),
-                    )
-                    .children(
-                        self.git_base
-                            .as_ref()
-                            .map(|dialog| self.render_git_base(dialog, window, &theme, cx)),
-                    )
-                    .children(
-                        self.add_workspace
-                            .as_ref()
-                            .map(|dialog| self.render_add_workspace(dialog, window, &theme, cx)),
-                    )
-                    .children(
-                        self.plan_dialog
-                            .as_ref()
-                            .map(|dialog| self.render_plan_path(dialog, window, &theme, cx)),
-                    )
-                    .children(
-                        self.phone_open
-                            .then(|| self.render_phone_access(&theme, cx)),
-                    )
-                    .children(
-                        self.ports_dialog
-                            .is_some()
-                            .then(|| self.render_ports(&theme, cx)),
-                    )
-                    .children(
-                        self.settings_dialog
-                            .as_ref()
-                            .map(|dialog| self.render_settings_dialog(dialog, window, &theme, cx)),
-                    )
-                    .children(
-                        self.run_setup
-                            .as_ref()
-                            .map(|setup| self.render_run_setup(setup, window, &theme, cx)),
-                    )
-                    .children(
-                        self.broadcast
-                            .as_ref()
-                            .map(|dialog| self.render_broadcast(dialog, window, &theme, cx)),
-                    )
-                    .children(
-                        self.ask
-                            .as_ref()
-                            .map(|dialog| self.render_ask(dialog, window, &theme, cx)),
-                    )
-                    .children(
-                        self.history
-                            .as_ref()
-                            .map(|dialog| self.render_history(dialog, now, &theme, cx)),
-                    )
-                    .children(self.doc_dialog.as_ref().map(|dialog| match dialog {
-                        DocDialog::Send(dialog) => self.render_send_dialog(dialog, now, &theme, cx),
-                        DocDialog::Changes(changes) => self.render_changes(changes, &theme, cx),
-                    }))
-                    .children(
-                        self.diagram_dialog
-                            .as_ref()
-                            .map(|diagram| self.render_diagram_dialog(diagram, &theme, cx)),
-                    )
-                    .children(
-                        self.palette
-                            .as_ref()
-                            .filter(|_| self.palette_host == HostId::Main)
-                            .map(|palette| self.render_palette(palette, &theme, cx)),
-                    )
-                    .children(
-                        self.prompt_picker
-                            .as_ref()
-                            .filter(|_| self.picker_host == HostId::Main)
-                            .map(|picker| self.render_prompt_picker(picker, &theme, cx)),
-                    )
-                    .children(
-                        self.slash_picker
-                            .as_ref()
-                            .filter(|_| self.picker_host == HostId::Main)
-                            .map(|picker| self.render_slash_picker(picker, &theme, cx)),
-                    )
-                    .children(
-                        self.workspace_menu
-                            .as_ref()
-                            .filter(|_| !self.modal_open())
-                            .map(|menu| self.render_workspace_menu(menu, &theme, cx)),
-                    )
-                    .children(
-                        self.tab_menu
-                            .as_ref()
-                            .filter(|_| {
-                                self.view() == View::Terminals
-                                    && !self.modal_open()
-                                    && self.menu_host == HostId::Main
-                            })
-                            .map(|menu| self.render_tab_menu(menu, window, &theme, cx)),
-                    )
-                    .children(
-                        self.layout_menu
-                            .as_ref()
-                            .filter(|_| {
-                                self.view() == View::Terminals
-                                    && !self.modal_open()
-                                    && self.menu_host == HostId::Main
-                            })
-                            .map(|menu| self.render_layout_menu(menu, &theme, cx)),
-                    )
-                    .children(
-                        self.pane_menu
-                            .as_ref()
-                            .filter(|_| {
-                                self.view() == View::Terminals
-                                    && !self.modal_open()
-                                    && self.menu_host == HostId::Main
-                            })
-                            .and_then(|menu| self.render_pane_menu(menu, &theme, cx)),
-                    )
-                    .children(
-                        self.share_menu
-                            .as_ref()
-                            .filter(|_| {
-                                self.view() == View::Terminals
-                                    && !self.modal_open()
-                                    && self.menu_host == HostId::Main
-                            })
-                            .map(|menu| self.render_share_menu(menu, &theme, cx)),
-                    )
-                    .children(
-                        (self.file_menu.as_ref())
-                            .filter(|menu| {
-                                self.workspace == Some(menu.project_id)
-                                    && self.file_tree_shown()
-                                    && !self.modal_open()
-                            })
-                            .map(|menu| self.render_file_menu(menu, &theme, cx)),
-                    )
-                    .children(
-                        self.card_menu
-                            .as_ref()
-                            .filter(|_| self.view() == View::Board && !self.modal_open())
-                            .map(|menu| self.render_card_menu(menu, &theme, cx)),
-                    )
-                    .children(
-                        self.render_toasts(&theme, cx)
-                            .filter(|_| self.toast_host() == HostId::Main),
-                    )
-                    .children(self.render_voice_pill(&theme, cx)),
-            )
-    }
+    /// Where the legacy `main-window.json` lives (read once, when `windows.json` has no Space
+    /// window yet): this computer's file, or the machine window's own.
+    legacy_main_path: PathBuf,
+    /// The saved Space windows of mode 2 waiting for the first listing (`restore_spaces`).
+    saved_spaces: Vec<detached::SavedSpace>,
 }

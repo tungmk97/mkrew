@@ -50,7 +50,7 @@ impl Shell {
                 cx.background_executor()
                     .timer(theme::VOICE_METER_TICK)
                     .await;
-                let recording = this.update_in(cx, |shell, window, cx| {
+                let recording = Shell::answer(&this, cx, |shell, window, cx| {
                     let voice::State::Recording {
                         since: started,
                         level,
@@ -69,7 +69,7 @@ impl Shell {
                     }
                     true
                 });
-                if !matches!(recording, Ok(true)) {
+                if recording != Some(true) {
                     return;
                 }
             }
@@ -100,7 +100,9 @@ impl Shell {
                 .background_executor()
                 .spawn(async move { stt::transcribe(&settings, key.as_deref(), &wav) })
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| shell.voice_text(text, window, cx));
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
+                shell.voice_text(text, window, cx)
+            });
         })
         .detach();
     }

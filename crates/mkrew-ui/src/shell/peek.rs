@@ -71,8 +71,11 @@ impl Shell {
             self.toggle_compact_sidebar(window, cx);
         }
         let rows = self.sidebar.view(&self.viewed).rows;
-        self.sidebar
-            .browse_from(&rows, self.focused_session(window), self.workspace);
+        self.sidebar.browse_from(
+            &rows,
+            self.focused_session(window),
+            self.workspace_in(window),
+        );
         window.focus(&self.filter_focus, cx);
         cx.notify();
     }
@@ -256,7 +259,7 @@ impl Shell {
             cx.background_executor()
                 .timer(theme::PEEK_HOVER_DELAY)
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(session_id) = shell.peek_hover.fire(serial) else {
                     return;
                 };
@@ -297,7 +300,7 @@ impl Shell {
             cx.background_executor()
                 .timer(theme::PEEK_LEAVE_GRACE)
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(peek) = shell.peek.as_ref() else {
                     return;
                 };
@@ -402,7 +405,7 @@ impl Shell {
                 Ok(Outcome::Error(body)) => Err(body.message),
                 Err(error) => Err(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &result {
                     tracing::warn!(%session_id, "session.send failed: {error}");
                 }

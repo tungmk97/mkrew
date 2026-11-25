@@ -62,7 +62,7 @@ impl Shell {
         let spawned = connection.call::<SessionSpawnResult>(Request::SessionSpawn(params));
         cx.spawn_in(window, async move |this, cx| {
             let spawned = spawned.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 shell.starting_pane = None;
                 match spawned {
                     Ok(spawned) => {
@@ -103,8 +103,8 @@ impl Shell {
 
     /// The installed agent profiles a new pane can start with in the active workspace, its
     /// default first (the `+` menu and the palette).
-    pub(crate) fn pane_agents(&self) -> Vec<lifecycle::PaneAgent> {
-        self.pane_agents_of(self.workspace)
+    pub(crate) fn pane_agents(&self, host: HostId) -> Vec<lifecycle::PaneAgent> {
+        self.pane_agents_of(self.workspace_of(host))
     }
 
     /// [`Shell::pane_agents`] for `project_id` (the `+` row of a detached window reads the
@@ -148,7 +148,7 @@ impl Shell {
                 format!("Pick a default {what} for this workspace, then try again."),
                 cx,
             );
-            // The menu hangs on the main window's title bar: not opened from a detached one.
+            // The menu hangs on a Space window's title bar: not opened from a detached one.
             if self.detached_key(window).is_none() {
                 self.open_workspace_menu_at_switcher(project_id, window, cx);
             }
@@ -203,6 +203,15 @@ impl Shell {
             cx.propagate();
             return;
         }
+        // ADR 0115: no sidebar in a window per workspace.
+        if self.window_mode == WindowMode::PerWorkspace
+            && matches!(
+                *command,
+                Command::ToggleSidebar | Command::ToggleCompactSidebar | Command::FocusSidebar
+            )
+        {
+            return;
+        }
         // Alt+→ takes the keyboard from the sidebar filter back to the center; Alt+← stays.
         if self.filter_focus.is_focused(window)
             && let Command::Focus(direction @ (Direction::Left | Direction::Right)) = *command
@@ -234,7 +243,7 @@ impl Shell {
         }
         // Same for a Docs comment draft (Ctrl+Alt+M is AltGr+M on many layouts).
         if self.comment_focus.is_focused(window) {
-            if self.comment_draft().is_some() {
+            if self.comment_draft(self.space_host(window)).is_some() {
                 cx.propagate();
                 return;
             }
@@ -243,7 +252,7 @@ impl Shell {
         // Same for the Git commit box (Esc leaves it, then shortcuts act again), unless it went
         // away (everything committed, mode switched): then the list takes the keyboard back.
         if self.git_commit_focus.is_focused(window) {
-            if self.git_commit_shown() {
+            if self.git_commit_shown(self.space_host(window)) {
                 cx.propagate();
                 return;
             }
@@ -277,7 +286,7 @@ impl Shell {
         }
         // Same for the Docs filter while it has the keyboard.
         if self.docs_filter_focus.is_focused(window) {
-            if self.view() == View::Docs {
+            if self.view(self.space_host(window)) == View::Docs {
                 cx.propagate();
                 return;
             }
@@ -328,7 +337,7 @@ impl Shell {
         if *command != Command::Peek {
             self.close_peek(window, cx);
         }
-        if self.view() != View::Terminals {
+        if self.view(self.space_host(window)) != View::Terminals {
             match *command {
                 // No page can show here: nothing happens, the view stays.
                 Command::SplitBrowser if mkrew_ui::browser::available().is_err() => return,
@@ -368,9 +377,12 @@ impl Shell {
         match *command {
             Command::AddWorkspace => self.add_workspace(window, cx),
             Command::Workspace(n) => {
-                let nth = self.shown_workspaces().get(usize::from(n) - 1).copied();
+                let nth = self
+                    .shown_workspaces(self.space_host(window))
+                    .get(usize::from(n) - 1)
+                    .copied();
                 if let Some(project_id) = nth {
-                    self.activate_workspace(project_id, window, cx);
+                    self.route_workspace(project_id, Then::Nothing, false, None, window, cx);
                 }
             }
             Command::NextWorkspace => self.cycle_workspace(1, window, cx),
@@ -449,10 +461,10 @@ impl Shell {
                 if let Some((project_id, file)) = self.focused_doc(window) {
                     return self.open_file_in_zed(project_id, &file, cx);
                 }
-                match self.workspace {
+                match self.workspace_in(window) {
                     // Docs open the shown file (SPEC §13 "workspace or current file").
                     Some(project_id)
-                        if self.view() == View::Docs
+                        if self.view(self.space_host(window)) == View::Docs
                             && self
                                 .docs
                                 .get(&project_id)
@@ -491,8 +503,10 @@ impl Shell {
                 }
             }
             Command::SendSelection => self.open_selection_dialog(window, cx),
-            Command::ShowBoard if self.view() == View::Board && self.jira_on => {
-                if let Some(project_id) = self.workspace {
+            Command::ShowBoard
+                if self.view(self.space_host(window)) == View::Board && self.jira_on =>
+            {
+                if let Some(project_id) = self.workspace_in(window) {
                     self.toggle_board_source(project_id, window, cx);
                 }
             }
@@ -502,7 +516,7 @@ impl Shell {
             Command::ShowFileTree => self.show_file_tree(window, cx),
             Command::ShowGitPanel => self.show_git_panel(window, cx),
             Command::ShowDiff => {
-                if let Some(project_id) = self.workspace {
+                if let Some(project_id) = self.workspace_in(window) {
                     self.open_diff(project_id, documents::Place::NewTab, window, cx);
                 }
             }
@@ -518,6 +532,9 @@ impl Shell {
             Command::ToggleSidebar => self.toggle_sidebar(window, cx),
             Command::ToggleCompactSidebar => self.toggle_compact_sidebar(window, cx),
             Command::ToggleInspector => self.toggle_inspector(window, cx),
+            Command::TogglePanelSide => self.toggle_panel_side(cx),
+            Command::SplitWindows => self.open_split_picker(window, cx),
+            Command::CombineWindows => self.combine_windows(window, cx),
             // Handled at the top of `run`.
             Command::VoiceInput => {}
             Command::AskAi => self.open_ask(window, cx),
@@ -534,7 +551,7 @@ impl Shell {
                 self.git_key(git_view::Key::Stage(git_view::Stage::Unstage), window, cx);
             }
             Command::GitFocusCommit => {
-                if self.git_commit_shown() {
+                if self.git_commit_shown(self.space_host(window)) {
                     window.focus(&self.git_commit_focus, cx);
                     cx.notify();
                 }
@@ -550,7 +567,7 @@ impl Shell {
                     Command::GitFetch => Remote::Fetch,
                     _ => Remote::Push,
                 };
-                if let Some(project_id) = self.workspace {
+                if let Some(project_id) = self.workspace_in(window) {
                     self.run_git_remote(project_id, remote, window, cx);
                 }
             }
@@ -562,11 +579,13 @@ impl Shell {
             }
             Command::OpenKept => {
                 // Only the tree's cursor: in the editor or a find field Alt+Enter stays theirs.
-                if !(self.file_tree_shown() && self.files_focus.is_focused(window)) {
+                if !(self.file_tree_shown(self.space_host(window))
+                    && self.files_focus.is_focused(window))
+                {
                     cx.propagate();
                     return;
                 }
-                if let Some(project_id) = self.workspace {
+                if let Some(project_id) = self.workspace_in(window) {
                     let cursor = self.files_view(project_id).enter_target();
                     if let Some(cursor) = cursor {
                         self.click_file(project_id, &cursor, true, window, cx);
@@ -575,14 +594,17 @@ impl Shell {
             }
             Command::ToggleIgnored => {
                 // Only bound while the tree has the keyboard.
-                if let Some(project_id) = self.workspace {
+                if let Some(project_id) = self.workspace_in(window) {
                     let requests = self.files_view(project_id).toggle_ignored();
                     self.files_requests(project_id, requests, window, cx);
                 }
             }
             Command::ToggleDocSource => {
                 // Only bound while Docs are shown.
-                if let Some(docs) = self.workspace.and_then(|id| self.docs.get_mut(&id)) {
+                if let Some(docs) = self
+                    .workspace_in(window)
+                    .and_then(|id| self.docs.get_mut(&id))
+                {
                     docs.toggle_mode();
                     cx.notify();
                 }
@@ -602,7 +624,7 @@ impl Shell {
             Command::AddComment => {
                 // Only bound while Docs are shown or the Git list or diff has focus.
                 if let (Some(project_id), Some(context)) =
-                    (self.workspace, self.comment_context(window))
+                    (self.workspace_in(window), self.comment_context(window))
                 {
                     self.start_comment(project_id, context, window, cx);
                 }
@@ -610,7 +632,7 @@ impl Shell {
             Command::SendComments => {
                 // Only bound while Docs are shown or the Git list or diff has focus.
                 if let (Some(project_id), Some(context)) =
-                    (self.workspace, self.comment_context(window))
+                    (self.workspace_in(window), self.comment_context(window))
                 {
                     self.open_send_dialog(project_id, context, window, cx);
                 }
@@ -621,13 +643,13 @@ impl Shell {
                 self.pick_step(*command == Command::PickDown, window, cx);
             }
             Command::NewTask => {
-                if let Some(project_id) = self.workspace {
+                if let Some(project_id) = self.workspace_in(window) {
                     // The new card shows up on the board.
                     self.show_view(View::Board, window, cx);
                     self.open_task_dialog(TaskDialog::new(project_id), window, cx);
                 }
             }
-            Command::RunTask if self.jira_side_shown() => {}
+            Command::RunTask if self.jira_side_shown(self.space_host(window)) => {}
             // Only bound while Docs are shown or the Git list or diff has focus.
             Command::NextComment => self.step_comment(true, window, cx),
             Command::PreviousComment => self.step_comment(false, window, cx),
@@ -635,12 +657,14 @@ impl Shell {
             Command::ResolveComment => self.resolve_selected_comment(window, cx),
             Command::MoveTabLeft => self.move_active_tab(-1, window, cx),
             Command::MoveTabRight => self.move_active_tab(1, window, cx),
-            Command::ApproveCard if self.jira_side_shown() => {}
-            Command::Card(key) if self.jira_side_shown() => self.jira_key(key, window, cx),
+            Command::ApproveCard if self.jira_side_shown(self.space_host(window)) => {}
+            Command::Card(key) if self.jira_side_shown(self.space_host(window)) => {
+                self.jira_key(key, window, cx)
+            }
             Command::Card(key) => self.card_key(key, window, cx),
             Command::ApproveCard => {
                 // Only bound while a board is shown; the selection may be another workspace's.
-                let target = (self.workspace).and_then(|id| {
+                let target = (self.workspace_in(window)).and_then(|id| {
                     (self.board).approve_target(self.selected_card, self.board_scope(id))
                 });
                 if let Some(task_id) = target {
@@ -649,7 +673,7 @@ impl Shell {
             }
             Command::RunTask => {
                 // Only bound while a board is shown; the selection may be another workspace's.
-                let target = (self.workspace).and_then(|id| {
+                let target = (self.workspace_in(window)).and_then(|id| {
                     (self.board).run_target(self.selected_card, self.board_scope(id))
                 });
                 if let Some(task_id) = target {
@@ -657,7 +681,7 @@ impl Shell {
                 }
             }
             Command::RunStart => {
-                if let Some(project_id) = self.workspace {
+                if let Some(project_id) = self.workspace_in(window) {
                     if self.run_summary(project_id).rows.is_empty() {
                         self.open_run_setup(project_id, true, window, cx);
                     } else {
@@ -671,8 +695,9 @@ impl Shell {
                     _ => RunAction::Stop,
                 };
                 // Nothing to restart or stop: no run session lives.
-                if let Some(project_id) =
-                    self.workspace.filter(|id| self.run_summary(*id).any_live())
+                if let Some(project_id) = self
+                    .workspace_in(window)
+                    .filter(|id| self.run_summary(*id).any_live())
                 {
                     self.run_action(project_id, action, None, window, cx);
                 }
@@ -687,7 +712,7 @@ impl Shell {
             Command::Find => {
                 if self.focused_file(window).is_some() {
                     self.open_file_find(false, window, cx);
-                } else if self.view() == View::Docs {
+                } else if self.view(self.space_host(window)) == View::Docs {
                     window.focus(&self.docs_filter_focus, cx);
                     cx.notify();
                 }

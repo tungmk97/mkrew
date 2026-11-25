@@ -50,49 +50,21 @@ impl Shell {
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
         let sidebar_mode = ui.sidebar;
         let right_panel = inspector::RightPanel::from_mode(ui.right_panel);
+        let panel_side = ui.panel_side;
+        let (window_mode, open_pref) = (ui.window_mode, ui.open_workspace);
         let prompts_dir = paths.prompts_dir();
         let themes_dir = paths.themes_dir();
         let config_dir = paths.config_dir.clone();
-        let main_window = window.window_handle();
-        // System mode follows the OS live (ADR 0027).
-        cx.observe_window_appearance(window, |shell, window, cx| {
-            // A preview was built for the old appearance; the kept theme is rebuilt now.
-            shell.drop_gallery_preview();
-            theme::refresh(cx.theme().mode, window, cx);
-            cx.notify();
-        })
-        .detach();
-        // Minimized → detach every pane; restored → re-attach from daemon snapshots (§10).
-        cx.observe_window_visibility(window, |shell, visibility, window, cx| {
-            shell.main_visible = visibility == gpui::WindowVisibility::Visible;
-            shell.sync_panes(window, cx);
-            cx.notify();
-        })
-        .detach();
-        // Coming back to the window views the focused pane (a done session leaves the Inbox),
-        // even one marked unread while it kept the keyboard, and ends the taskbar flash.
-        cx.observe_window_activation(window, |shell, window, cx| {
-            if window.is_window_active() {
-                cx.set_reduce_motion(mkrew_ui::desktop::reduce_motion());
-                shell.activated(HostId::Main);
-                shell.viewed.activated();
-                shell.desktop.flash(false);
-            }
-            cx.notify();
-        })
-        .detach();
-        cx.observe_window_bounds(window, |shell, window, _| {
-            shell.record_bounds(HostId::Main, window);
-        })
-        .detach();
+        // The first Space window (ADR 0115): the window this Shell is created in.
+        let first_space = window.window_handle();
+        let first = HostId::Space(SpaceKey(0));
         let (page_events, page_inbox) = async_channel::unbounded();
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             while let Ok((id, event)) = page_inbox.recv().await {
-                if this
-                    .update_in(cx, |shell, window, cx| {
-                        shell.page_event(id, event, window, cx)
-                    })
-                    .is_err()
+                if Shell::with_primary(&this, cx, |shell, window, cx| {
+                    shell.page_event(id, event, window, cx)
+                })
+                .is_none()
                 {
                     break;
                 }
@@ -101,12 +73,14 @@ impl Shell {
         .detach();
         // The tray icon (Windows): its clicks arrive here from the tray thread. A machine
         // window keeps the hidden tray window (the single-instance target) but shows no icon.
-        let (desktop, tray_events) = Desktop::new(window, &id, local);
-        cx.spawn_in(window, async move |this, cx| {
+        let (mut desktop, tray_events) = Desktop::new(&id, local);
+        desktop.attach(window);
+        cx.spawn(async move |this, cx| {
             while let Ok(event) = tray_events.recv().await {
-                let handled =
-                    this.update_in(cx, |shell, window, cx| shell.tray_event(event, window, cx));
-                if handled.is_err() {
+                let handled = Shell::with_primary(&this, cx, |shell, window, cx| {
+                    shell.tray_event(event, window, cx)
+                });
+                if handled.is_none() {
                     return;
                 }
             }
@@ -129,29 +103,25 @@ impl Shell {
             if let Err(error) = reader {
                 tracing::warn!("cannot read the launcher's commands: {error}");
             }
-            cx.spawn_in(window, async move |this, cx| {
+            cx.spawn(async move |this, cx| {
                 while let Ok(mkrew_ui::launcher::Command::Quit) = commands_rx.recv().await {
-                    let quit = this.update_in(cx, |shell, window, cx| shell.quit_ui(window, cx));
-                    if quit.is_err() {
+                    let quit = Shell::with_primary(&this, cx, |shell, window, cx| {
+                        shell.quit_ui(window, cx)
+                    });
+                    if quit.is_none() {
                         return;
                     }
                 }
             })
             .detach();
         }
-        // Unsaved Files changes (§2.5): the close button asks first.
-        let this = cx.weak_entity();
-        window.on_window_should_close(cx, move |window, cx| {
-            this.update(cx, |shell, cx| shell.window_should_close(window, cx))
-                .unwrap_or(true)
-        });
         // Elapsed/idle times and the loading marks move on their own (§11).
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let mut last = status::now_ms();
             loop {
                 cx.background_executor().timer(theme::STATUS_TICK).await;
                 let now = status::now_ms();
-                let ticked = this.update_in(cx, |shell, window, cx| {
+                let ticked = Shell::with_primary(&this, cx, |shell, window, cx| {
                     // ponytail: mtime poll on the 500 ms tick; a file watcher if it ever shows
                     // in a profile. The themes folder rides the same tick (the names, times
                     // and sizes of its `*.toml` files): a folder with hundreds of files costs
@@ -176,9 +146,6 @@ impl Shell {
                     if shell.windows_dirty {
                         shell.save_windows(cx);
                     }
-                    if shell.main_dirty {
-                        shell.save_main_frame();
-                    }
                     shell.sync_thread(cx);
                     shell.sync_tsps(cx);
                     shell.poll_machines(cx);
@@ -191,14 +158,16 @@ impl Shell {
                         shell.notification_clicked(session, project, window, cx);
                     }
                     let sessions = shell.sidebar.sessions();
-                    let board_due = shell.workspace.is_some_and(|project_id| {
-                        shell.view() == View::Board
-                            && (shell.board).redraw_due(
-                                shell.board_scope(project_id),
-                                sessions,
-                                last,
-                                now,
-                            )
+                    let board_due = shell.spaces_shown().any(|(key, project)| {
+                        project.is_some_and(|project_id| {
+                            shell.view(HostId::Space(key)) == View::Board
+                                && (shell.board).redraw_due(
+                                    shell.board_scope(project_id),
+                                    sessions,
+                                    last,
+                                    now,
+                                )
+                        })
                     });
                     // The recording meter has its own faster redraw (`toggle_voice`).
                     let transcribing = matches!(shell.voice, voice::State::Transcribing);
@@ -214,7 +183,7 @@ impl Shell {
                     }
                 });
                 last = now;
-                if ticked.is_err() {
+                if ticked.is_none() {
                     return;
                 }
             }
@@ -224,15 +193,15 @@ impl Shell {
         if local {
             // The title bar's phone icon follows `daemon.status.web`: read every `PHONE_POLL_IDLE`,
             // and on every tick while the Phone access dialog is open (ADR 0053).
-            cx.spawn_in(window, async move |this, cx| {
+            cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor().timer(theme::PHONE_TICK).await;
-                    let ticked = this.update_in(cx, |shell, window, cx| {
+                    let ticked = Shell::with_primary(&this, cx, |shell, window, cx| {
                         if shell.phone.due(Instant::now(), shell.phone_open) {
                             shell.poll_phone(window, cx);
                         }
                     });
-                    if ticked.is_err() {
+                    if ticked.is_none() {
                         return;
                     }
                 }
@@ -245,12 +214,12 @@ impl Shell {
                     mkrew_ui::update::clean_leftovers(&mkrew_ui::update::current_install());
                 })
                 .detach();
-            cx.spawn_in(window, async move |this, cx| {
+            cx.spawn(async move |this, cx| {
                 loop {
-                    let checked = this.update_in(cx, |shell, window, cx| {
+                    let checked = Shell::with_primary(&this, cx, |shell, window, cx| {
                         shell.check_updates(false, window, cx)
                     });
-                    if checked.is_err() {
+                    if checked.is_none() {
                         return;
                     }
                     cx.background_executor()
@@ -263,26 +232,7 @@ impl Shell {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let rename_focus = cx.focus_handle();
-        let rename_blur = cx.on_blur(&rename_focus, window, |shell, window, cx| {
-            shell.finish_rename(true, window, cx);
-        });
         let follow_up_focus = cx.focus_handle();
-        let follow_up_blur = cx.on_blur(&follow_up_focus, window, |shell, _, cx| {
-            // A typed draft (or one being sent) stays on its card without its caret; an empty
-            // one goes.
-            shell
-                .follow_up
-                .take_if(|draft| draft.text.text().is_empty() && !draft.busy);
-            cx.notify();
-        });
-        // The focused control of a dialog left the frame (a button swapped for the next step):
-        // the dialog takes the keyboard back so Tab and Esc keep working. A confirm prompt
-        // keeps it; menus are never open over a modal.
-        let dialog_focus_lost = cx.on_focus_lost(window, |shell, window, cx| {
-            if shell.modal_open() && !window.has_active_prompt() {
-                window.focus(&shell.dialog_focus, cx);
-            }
-        });
         let (painted, painted_rx) = async_channel::bounded(1);
         // What the user saw before this start (A2): a corrupt or missing file is empty. A
         // machine window has its own file: it knows none of this computer's sessions.
@@ -294,9 +244,22 @@ impl Shell {
         let windows_path = paths
             .data_dir
             .join(detached::windows_file((!local).then_some(id.as_str())));
-        let main_frame_path = paths
+        let legacy_main_path = paths
             .data_dir
             .join(detached::main_file((!local).then_some(id.as_str())));
+        // Mode 2 (ADR 0115): the saved Space windows open after the first listing, the first
+        // window showing the workspace of the one used last.
+        let saved_spaces: Vec<detached::SavedSpace> = if ui.window_mode == WindowMode::PerWorkspace
+        {
+            (detached::load_layout(&windows_path, &legacy_main_path)
+                .spaces
+                .into_iter())
+            .filter(|saved| !saved.workspace.is_nil())
+            .collect()
+        } else {
+            Vec::new()
+        };
+        let first_workspace = saved_spaces.last().map(|saved| saved.workspace);
         // This computer's window is the launcher of the machine windows (spec §4.5); the list
         // is read here, once, and again before each change made on the Machines page.
         let machines = if local {
@@ -323,7 +286,6 @@ impl Shell {
             sidebar: Sidebar::default(),
             refreshing: false,
             refresh_again: false,
-            workspace: None,
             tabs: HashMap::new(),
             loading_tabs: HashSet::new(),
             early_tab_events: Vec::new(),
@@ -349,7 +311,6 @@ impl Shell {
             focus_handle,
             renaming: None,
             rename_focus,
-            _rename_blur: rename_blur,
             keymap,
             keymap_error: keymap::notice(keymap_errors),
             keymap_errors: keymap_errors.to_vec(),
@@ -370,7 +331,6 @@ impl Shell {
             settings_scroll: ScrollHandle::new(),
             prompts_scroll: ScrollHandle::new(),
             prompts_body_scroll: ScrollHandle::new(),
-            comments_scroll: ScrollHandle::new(),
             workspace_menu: None,
             file_menu: None,
             tab_menu: None,
@@ -390,6 +350,7 @@ impl Shell {
             run_setup_drag: scrollbar::Drag::default(),
             run_menu: None,
             workspace_switcher: false,
+            need_you_menu: false,
             new_menu: false,
             plus: Reveals::default(),
             plus_focus: cx.focus_handle(),
@@ -416,11 +377,16 @@ impl Shell {
             plans: Plans::default(),
             plan_error: None,
             sidebar_layout: sidebar::Layout::from_mode(sidebar_mode),
-            right_panel,
+            panel_side,
+            window_mode,
+            open_pref,
+            open_ask: None,
+            modal_host: None,
+            split_picker: None,
             reads: HashMap::new(),
             chats: HashMap::new(),
             tsps: HashMap::new(),
-            thread: None,
+            threads: HashMap::new(),
             inspector_width,
             inspector_dragging: false,
             sidebar_width,
@@ -436,7 +402,6 @@ impl Shell {
             jira_layout,
             jira_keys_focus: cx.focus_handle(),
             jira_filter_focus: cx.focus_handle(),
-            jira_scroll: ScrollHandle::new(),
             board_all,
             limits: mkrew_ui::limits::Limits::default(),
             selected_card: None,
@@ -445,8 +410,6 @@ impl Shell {
             fan_out: None,
             follow_up: None,
             follow_up_focus,
-            _follow_up_blur: follow_up_blur,
-            _dialog_focus_lost: dialog_focus_lost,
             follow_up_scroll: ScrollHandle::new(),
             composers: Composers::default(),
             drop_hover: None,
@@ -468,19 +431,13 @@ impl Shell {
             doc_views: HashMap::new(),
             files: HashMap::new(),
             files_focus: cx.focus_handle(),
-            files_scroll: UniformListScrollHandle::new(),
             docs_filter_focus: cx.focus_handle(),
-            doc_page: preview::Page::default(),
-            doc_source_scroll: UniformListScrollHandle::new(),
             files_after_save: Vec::new(),
             md_mode,
             md_split,
             md_split_dragging: false,
             git: HashMap::new(),
             git_repos: HashMap::new(),
-            git_summary: None,
-            git_summary_busy: false,
-            git_summary_again: false,
             watch_needs: watches::Needs::default(),
             git_focus: cx.focus_handle(),
             git_commit_focus: cx.focus_handle(),
@@ -488,9 +445,7 @@ impl Shell {
             git_menu: None,
             git_repo_query: Input::default(),
             git_repo_query_focus: cx.focus_handle(),
-            git_files_scroll: UniformListScrollHandle::new(),
             diff_views: HashMap::new(),
-            diff_drawn: false,
             diff_mode,
             diff_wrap,
             features,
@@ -531,29 +486,42 @@ impl Shell {
             dialog_serial: 0,
             launched: Some(launched),
             first_frame_logged: false,
-            sidebar_view: None,
             pane_views: RefCell::default(),
             toasts: Toasts::default(),
             detached: Detached::new(),
-            main_window,
+            spaces: HashMap::from([(first_space, SpaceKey(0))]),
+            space_handles: HashMap::from([(SpaceKey(0), first_space)]),
+            next_space: 1,
             windows: HashMap::new(),
             window_handles: HashMap::new(),
-            hosts: HashMap::from([(HostId::Main, shell::hosts::HostUi::default())]),
-            menu_host: HostId::Main,
-            palette_host: HostId::Main,
-            picker_host: HostId::Main,
-            activation: vec![HostId::Main],
+            hosts: HashMap::from([(
+                first,
+                shell::hosts::HostUi {
+                    visible: true,
+                    right_panel,
+                    workspace: first_workspace,
+                    ..Default::default()
+                },
+            )]),
+            panel_default: right_panel,
+            no_view: shell::hosts::HostView::default(),
+            git_summaries: HashMap::new(),
+            git_summary_busy: HashSet::new(),
+            git_summary_again: HashSet::new(),
+            menu_host: first,
+            palette_host: first,
+            picker_host: first,
+            activation: vec![first],
             drop_hint: None,
             tab_drag: false,
-            main_visible: true,
             link_subscriptions: HashMap::new(),
             windows_dirty: false,
             restore: None,
             restored_once: false,
             windows_path,
             windows_save_failed: false,
-            main_dirty: false,
-            main_frame_path,
+            legacy_main_path,
+            saved_spaces,
             pending_jump: jump,
         };
         if let Status::NoMachine(text) = &shell.status {
@@ -562,7 +530,7 @@ impl Shell {
             shell.report_machine_state(reason);
         } else {
             // Not `connect`: the status starts as Connecting and that one refuses then.
-            shell.start_connect(window, cx);
+            shell.start_connect(cx);
         }
         shell.start_machines();
         shell
@@ -570,13 +538,13 @@ impl Shell {
 
     /// The user's Connect / Retry / Reconnect (and startup): connects now and restarts the
     /// automatic retry backoff.
-    pub(crate) fn connect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    pub(crate) fn connect(&mut self, cx: &mut Context<'_, Self>) {
         // One attempt at a time: a second one would install a second connection.
         if matches!(self.status, Status::Connecting) {
             return;
         }
         self.reconnect_attempts = 0;
-        self.start_connect(window, cx);
+        self.start_connect(cx);
     }
 
     /// A machine window's state changed: kept for the title bar chip and written to stdout, one
@@ -596,21 +564,21 @@ impl Shell {
     /// Waits [`mkrew_ui::connect::backoff`] after a failed or lost connect, then connects
     /// again. One timer per failure (no per-frame work); a newer attempt (`connect_gen`, e.g.
     /// the user's Reconnect) makes a pending timer a no-op, so attempts never overlap.
-    fn schedule_reconnect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn schedule_reconnect(&mut self, cx: &mut Context<'_, Self>) {
         let delay = mkrew_ui::connect::backoff(self.reconnect_attempts);
         self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
         self.reconnect_in = Some(delay);
         let generation = self.connect_gen;
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = this.update(cx, |shell, cx| {
                 if shell.connect_gen == generation
                     && matches!(
                         shell.status,
                         Status::Failed(_) | Status::Unreachable { .. } | Status::Disconnected
                     )
                 {
-                    shell.start_connect(window, cx);
+                    shell.start_connect(cx);
                 }
             });
         })
@@ -621,7 +589,7 @@ impl Shell {
     /// daemon over ssh, off the UI thread; then feeds its frames until the connection closes,
     /// then schedules an automatic retry (never after a version mismatch: nothing changes
     /// until the user updates).
-    fn start_connect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn start_connect(&mut self, cx: &mut Context<'_, Self>) {
         let machine = match &self.target {
             Target::Local => None,
             Target::Machine(machine) => Some(machine.clone()),
@@ -642,7 +610,7 @@ impl Shell {
         cx.notify();
         let paths = self.paths.clone();
         let painted_rx = self.painted_rx.clone();
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             // Blocking (polls a starting daemon for up to 10 s, or waits for ssh): off the UI
             // thread.
             let connected = cx
@@ -667,7 +635,7 @@ impl Shell {
             let connection = match connected {
                 Ok(connection) => Rc::new(connection),
                 Err(status) => {
-                    let _ = this.update_in(cx, |shell, window, cx| {
+                    let _ = this.update(cx, |shell, cx| {
                         if shell.connect_gen != generation {
                             return;
                         }
@@ -685,7 +653,7 @@ impl Shell {
                         let retry = !matches!(status, Status::Version(_));
                         shell.status = status;
                         if retry {
-                            shell.schedule_reconnect(window, cx);
+                            shell.schedule_reconnect(cx);
                         }
                         cx.notify();
                     });
@@ -697,7 +665,7 @@ impl Shell {
                 daemon_version = %connection.hello().daemon_version,
                 "connected to the daemon"
             );
-            let loaded = this.update_in(cx, |shell, window, cx| {
+            let loaded = Shell::with_primary(&this, cx, |shell, window, cx| {
                 // A newer attempt started meanwhile: this connection is dropped, not installed.
                 if shell.connect_gen != generation {
                     return false;
@@ -706,13 +674,13 @@ impl Shell {
                 shell.connection = Some(connection);
                 shell.tsp_reconnected();
                 shell.report_machine_state(MachineState::Connected);
-                shell.refresh(window, cx);
+                shell.refresh(cx);
                 if !shell.target.is_machine() {
                     shell.poll_phone(window, cx);
                 }
                 true
             });
-            if !matches!(loaded, Ok(true)) {
+            if loaded != Some(true) {
                 return;
             }
             // Drain at once when frames arrive (low key latency); after feeding output, wait
@@ -728,11 +696,11 @@ impl Shell {
                     batch.push(next);
                 }
                 let started = Instant::now();
-                let fed = this.update_in(cx, |shell, window, cx| {
+                let fed = Shell::with_primary(&this, cx, |shell, window, cx| {
                     (shell.connect_gen == generation).then(|| shell.dispatch(batch, window, cx))
                 });
                 match fed {
-                    Ok(Some(true)) => {
+                    Some(Some(true)) => {
                         let painted = async {
                             let _ = painted_rx.recv().await;
                         };
@@ -742,11 +710,11 @@ impl Shell {
                             cx.background_executor().timer(rest).await;
                         }
                     }
-                    Ok(Some(false)) => {}
-                    Ok(None) | Err(_) => return,
+                    Some(Some(false)) => {}
+                    Some(None) | None => return,
                 }
             }
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::with_primary(&this, cx, |shell, window, cx| {
                 if shell.connect_gen != generation {
                     return;
                 }
@@ -769,7 +737,7 @@ impl Shell {
                             .into(),
                     );
                 }
-                match shell.workspace {
+                match shell.workspace_in(window) {
                     // The last screen stays, input off, until the new connection's lists
                     // arrive (`refresh`); only what acts on the daemon closes now.
                     Some(shown) => {
@@ -778,7 +746,7 @@ impl Shell {
                     }
                     None => shell.reset_connection_state(window, cx),
                 }
-                shell.schedule_reconnect(window, cx);
+                shell.schedule_reconnect(cx);
                 cx.notify();
             });
         })
@@ -833,13 +801,15 @@ impl Shell {
         self.close_menus();
         self.restore_theme_pick(window, cx);
         self.palette = None;
-        self.palette_host = HostId::Main;
-        self.picker_host = HostId::Main;
+        self.palette_host = self.primary_host();
+        self.picker_host = self.primary_host();
         self.prompt_picker = None;
         self.slash_picker = None;
         self.palette_return = None;
         self.peek = None;
         self.peek_return = None;
+        self.open_ask = None;
+        self.split_picker = None;
         // An open confirmation keeps the keyboard; it hands focus back when answered.
         // A kept dialog (typed text survives) keeps it too.
         if !window.has_active_prompt() && self.task_dialog.is_none() && self.add_workspace.is_none()
@@ -851,7 +821,6 @@ impl Shell {
     /// Clears everything bound to the lost connection: the new connection's lists are about to
     /// replace it (or, with nothing shown, at once).
     fn reset_connection_state(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.workspace = None;
         self.tabs.clear();
         self.loading_tabs.clear();
         self.early_tab_events.clear();
@@ -904,14 +873,14 @@ impl Shell {
             .into_iter()
             .filter_map(|(id, view)| Some((id, view.into_commit_draft()?)))
             .collect();
-        self.git_summary = None;
+        self.git_summaries.clear();
         self.limits.clear();
         self.close_popups(window, cx);
     }
 
     /// Re-reads workspaces and sessions. The first time, shows the workspace of the most
     /// recently started live session.
-    pub(crate) fn refresh(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    pub(crate) fn refresh(&mut self, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -927,14 +896,16 @@ impl Shell {
             connection.call::<Vec<Session>>(Request::SessionList(SessionListParams::default()));
         let tasks = connection.call::<Vec<Task>>(Request::TaskList(TaskListParams::default()));
         let profiles = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
-        cx.spawn_in(window, async move |this, cx| {
+        // The answer runs in the primary Space window: the asking window may close meanwhile,
+        // and `refreshing` must still clear.
+        cx.spawn(async move |this, cx| {
             let listed = match (projects.await, sessions.await) {
                 (Ok(projects), Ok(sessions)) => Ok((projects, sessions)),
                 (Err(error), _) | (_, Err(error)) => Err(error),
             };
             let tasks = tasks.await;
             let profiles = profiles.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::with_primary(&this, cx, |shell, window, cx| {
                 shell.refreshing = false;
                 match profiles {
                     Ok(listed) => {
@@ -990,20 +961,39 @@ impl Shell {
                         shell.load_plans(window, cx);
                         shell.load_limits(window, cx);
                         shell.status = Status::Connected;
-                        let current = shell
-                            .workspace
-                            .filter(|id| shell.sidebar.projects().iter().any(|p| p.id == *id));
+                        // The first listing, or a new connection's: each window shows its
+                        // workspace as if it just switched to it (tabs, Git, Files load).
+                        let fresh = kept.is_some() || !shell.restored_once;
                         let kept =
                             mkrew_ui::connect::reconnect_workspace(kept, shell.sidebar.projects());
-                        match current.or(kept).or_else(|| shell.initial_workspace()) {
-                            Some(project_id) => {
-                                // A new session (e.g. spawned by `mk`) fills an empty tab.
-                                shell.fill_empty_tab(project_id, window, cx);
-                                shell.activate_workspace(project_id, window, cx);
+                        // Each Space window keeps its workspace while it is listed, else
+                        // shows the kept one, the default one, or the empty state. Mode 2
+                        // closes a window whose workspace went, but the last one.
+                        let here = shell.host_of(window);
+                        let closed = shell.prune_spaces(cx);
+                        for (key, current) in shell.spaces_shown() {
+                            if closed.contains(&key) {
+                                continue;
                             }
-                            None => {
-                                shell.workspace = None;
-                                shell.sync_panes(window, cx);
+                            let host = HostId::Space(key);
+                            let listed =
+                                |id: &Ulid| shell.sidebar.projects().iter().any(|p| p.id == *id);
+                            let shown = (current.filter(listed))
+                                .or(kept)
+                                .or_else(|| shell.initial_workspace());
+                            let show =
+                                move |shell: &mut Shell,
+                                      window: &mut Window,
+                                      cx: &mut Context<'_, Shell>| {
+                                    if fresh {
+                                        shell.hosts.entry(host).or_default().workspace = None;
+                                    }
+                                    shell.show_in_space(host, shown, window, cx);
+                                };
+                            if host == here {
+                                show(shell, window, cx);
+                            } else {
+                                shell.in_window(host, cx, show);
                             }
                         }
                         // After the default workspace, so the pane a toast asked for wins.
@@ -1017,7 +1007,7 @@ impl Shell {
                         }
                         // Tabs come back with `tab.list`: a detached window's workspace (or a
                         // restore still waiting) loads again after a reconnect.
-                        shell.reload_detached_tabs(window, cx);
+                        shell.reload_detached_tabs(cx);
                     }
                     Err(error) => {
                         tracing::warn!("listing workspaces failed: {error:#}");
@@ -1034,7 +1024,7 @@ impl Shell {
                 }
                 cx.notify();
                 if std::mem::take(&mut shell.refresh_again) {
-                    shell.refresh(window, cx);
+                    shell.refresh(cx);
                 }
             });
         })
@@ -1080,14 +1070,33 @@ impl Shell {
                     self.jira_layout = settings.jira.layout;
                     // A hand edit of `[jira] mine` searches the shown list again.
                     if self.apply_jira_mine(settings.jira.mine)
-                        && self.jira_side_shown()
-                        && let Some(project_id) = self.workspace
+                        && self.jira_side_shown(self.space_host(window))
+                        && let Some(project_id) = self.workspace_in(window)
                     {
                         self.load_jira(project_id, window, cx);
                     }
                     self.reading_default = settings.ui.reading_width;
                     self.chat_default = settings.ui.chat_default;
                     self.board_all = settings.ui.board_all_workspaces;
+                    self.panel_side = settings.ui.panel_side;
+                    self.open_pref = settings.ui.open_workspace;
+                    // A hand edit of `window_mode` (ADR 0115): to `per_workspace` the open
+                    // windows become the windows of their workspaces (no picker); to `single`
+                    // they combine into the one used last.
+                    if settings.ui.window_mode != self.window_mode {
+                        match settings.ui.window_mode {
+                            WindowMode::PerWorkspace => {
+                                self.window_mode = WindowMode::PerWorkspace;
+                                self.windows_dirty = true;
+                                cx.notify();
+                            }
+                            WindowMode::Single => {
+                                self.in_window(self.primary_host(), cx, |shell, window, cx| {
+                                    shell.combine_windows(window, cx);
+                                });
+                            }
+                        }
+                    }
                     self.follow_md_mode(settings.ui.md_mode);
                     if !self.md_split_dragging {
                         self.md_split = files_view::md_split_share(settings.ui.md_split);
@@ -1207,24 +1216,32 @@ impl Shell {
         }
     }
 
-    /// What the window draws now, for [`redraw::event_needs_redraw`].
-    pub(crate) fn shown(&self, window: &Window) -> redraw::Shown {
-        let view = self.view();
-        let panes = (self.hosted_sessions(window.is_visible()).into_iter())
+    /// What every Space window draws now, for [`redraw::event_needs_redraw`]: `window`'s own
+    /// first (with its focused pane), then the others of mode 2, so an event any of them shows
+    /// redraws.
+    pub(crate) fn shown(&self, window: &Window) -> Vec<redraw::Shown> {
+        let here = self.space_host(window);
+        let panes: Vec<Ulid> = (self.hosted_sessions().into_iter())
             .map(|(_, session)| session)
             .collect();
-        redraw::Shown {
-            workspace: self.workspace,
-            view,
-            panes,
-            focused: self.focused_session(window),
-            panel: self.panel_shown().then(|| self.panel_tab()),
-            panel_session: self.panel_session(),
-            sidebar: self.sidebar_layout.mode(),
-            modal: self.modal_open(),
-            all_board: self.all_board_shown(),
-            diff: self.diff_on_screen(),
-        }
+        let others = (self.spaces_shown())
+            .map(|(key, _)| HostId::Space(key))
+            .filter(|host| *host != here)
+            .map(|host| (host, None));
+        (std::iter::once((here, self.focused_session(window))).chain(others))
+            .map(|(host, focused)| redraw::Shown {
+                workspace: self.workspace_of(host),
+                view: self.view(host),
+                panes: panes.clone(),
+                focused,
+                panel: self.panel_shown(host).then(|| self.panel_tab(host)),
+                panel_session: self.panel_session(host),
+                sidebar: self.sidebar_layout.mode(),
+                modal: self.modal_open(),
+                all_board: self.all_board_shown(host),
+                diff: self.diff_on_screen(host),
+            })
+            .collect()
     }
 
     /// [`Self::shown`], built at most once per batch: an output-only batch (up to ~60/s) never
@@ -1233,10 +1250,22 @@ impl Shell {
     /// can only cost one redraw, never a stale screen.
     fn batch_shown<'a>(
         &self,
-        slot: &'a mut Option<redraw::Shown>,
+        slot: &'a mut Option<Vec<redraw::Shown>>,
         window: &Window,
-    ) -> &'a redraw::Shown {
+    ) -> &'a [redraw::Shown] {
         slot.get_or_insert_with(|| self.shown(window))
+    }
+
+    /// Whether `event` changes what some Space window draws.
+    fn event_shown(
+        &self,
+        event: &Event,
+        slot: &mut Option<Vec<redraw::Shown>>,
+        window: &Window,
+    ) -> bool {
+        let sessions = self.sidebar.sessions();
+        (self.batch_shown(slot, window).iter())
+            .any(|shown| redraw::event_needs_redraw(event, shown, sessions))
     }
 
     /// Routes a batch of incoming frames; returns whether a pane got new content.
@@ -1249,7 +1278,7 @@ impl Shell {
         let mut fed: Vec<Entity<TerminalPane>> = Vec::new();
         let mut layout_changed = false;
         let mut peek_changed = false;
-        let mut shown_now: Option<redraw::Shown> = None;
+        let mut shown_now: Option<Vec<redraw::Shown>> = None;
         for incoming in batch {
             if let Incoming::Event(event) = &incoming {
                 // Every model keeps its data; the root only redraws what the window draws.
@@ -1265,11 +1294,8 @@ impl Shell {
                 data_changed |= self.ports.apply(event);
                 data_changed |= self.limits.apply(event);
                 data_changed |= self.composers.apply(event);
-                if data_changed {
-                    let shown = self.batch_shown(&mut shown_now, window);
-                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
-                        cx.notify();
-                    }
+                if data_changed && self.event_shown(event, &mut shown_now, window) {
+                    cx.notify();
                 }
                 if let Some(wait) = self.follow.apply(event) {
                     self.follow_wait(wait, window, cx);
@@ -1312,7 +1338,15 @@ impl Shell {
                         self.sync_attention(cx);
                     }
                     // A new session (e.g. spawned by `mk`): re-list.
-                    Change::Refresh => self.refresh(window, cx),
+                    Change::Refresh => self.refresh(cx),
+                }
+                // Mode 2: a removed workspace's window closes (`prune_spaces`, after a re-list).
+                if self.window_mode == WindowMode::PerWorkspace
+                    && let Event::ProjectUpdated(project) = event
+                    && project.archived
+                    && self.space_of(project.id).is_some()
+                {
+                    self.refresh(cx);
                 }
                 if let Event::SessionUpdated(updated) = event
                     && mkrew_ui::tsp::enters_fallback(tsp_before, updated.tsp)
@@ -1325,7 +1359,8 @@ impl Shell {
                 // `prune` runs on every event; only its notify is gated.
                 let pruned = self.conflicts.prune(&self.board, self.sidebar.sessions());
                 if (pruned || detected)
-                    && redraw::conflicts_need_redraw(self.batch_shown(&mut shown_now, window))
+                    && (self.batch_shown(&mut shown_now, window).iter())
+                        .any(redraw::conflicts_need_redraw)
                 {
                     cx.notify();
                 }
@@ -1352,8 +1387,7 @@ impl Shell {
                     for view in self.git.values_mut() {
                         view.comments.apply_event(view.project_id, comment);
                     }
-                    let shown = self.batch_shown(&mut shown_now, window);
-                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
+                    if self.event_shown(event, &mut shown_now, window) {
                         cx.notify();
                     }
                 }
@@ -1362,9 +1396,9 @@ impl Shell {
                     self.git_event(event, window, cx);
                     if let Event::GitChanged(changed) = event
                         && changed.worktree_task_id.is_none()
-                        && self.workspace == Some(changed.project_id)
+                        && self.on_screen_workspaces().contains(&changed.project_id)
                     {
-                        self.load_git_summary(changed.project_id, window, cx);
+                        self.load_git_summary(changed.project_id, cx);
                     }
                 }
                 if let Event::AiGenerated(done) = event {
@@ -1376,15 +1410,13 @@ impl Shell {
                         dialog.answered(done.generation_id, result.clone());
                     }
                     self.prompt_enhanced(done.generation_id, result);
-                    let shown = self.batch_shown(&mut shown_now, window);
-                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
+                    if self.event_shown(event, &mut shown_now, window) {
                         cx.notify();
                     }
                 }
                 if let Event::TspUpdate(update) = event {
                     self.tsp_update(update, cx);
-                    let shown = self.batch_shown(&mut shown_now, window);
-                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
+                    if self.event_shown(event, &mut shown_now, window) {
                         cx.notify();
                     }
                 }
@@ -1509,12 +1541,12 @@ impl Shell {
         let machine = self.target.is_machine();
         let retry = |id: &'static str, label: &'static str| {
             let label = if machine { "Try now" } else { label };
-            button(id, label, theme, true).on_click(cx.listener(|shell, _, window, cx| {
-                match shell.status {
-                    Status::ListFailed(_) => shell.refresh(window, cx),
-                    _ => shell.connect(window, cx),
-                }
-            }))
+            button(id, label, theme, true).on_click(cx.listener(
+                |shell, _, _, cx| match shell.status {
+                    Status::ListFailed(_) => shell.refresh(cx),
+                    _ => shell.connect(cx),
+                },
+            ))
         };
         let action = match &self.status {
             Status::Connected if self.sidebar.is_empty() => {

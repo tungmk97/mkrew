@@ -29,7 +29,7 @@ impl Shell {
             window.focus(&self.dialog_focus, cx);
         }
         // Rendering marks the focused pane of the active window viewed (its done leaves the
-        // Inbox), as `Render for Shell` does for the main window.
+        // Inbox), as `render_space` does for a Space window.
         let mut viewed_changed = false;
         if window.is_window_active()
             && let Some(id) = self.focused_session(window)
@@ -86,7 +86,7 @@ impl Shell {
     }
 
     /// The popovers drawn over `host`'s window: the menus, the palette and the toasts that
-    /// belong to it (the main window draws its own in `Render for Shell`).
+    /// belong to it (a Space window draws its own in `render_space`).
     fn detached_overlays(
         &self,
         host: HostId,

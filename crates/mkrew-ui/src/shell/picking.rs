@@ -8,7 +8,8 @@ impl Shell {
     /// the first line of the current hunk), or grows / shrinks the pick one line or block, then
     /// scrolls the moved end into view. A text field never gets here: `run` hands the key to it.
     pub(crate) fn pick_step(&mut self, down: bool, window: &Window, cx: &mut Context<'_, Self>) {
-        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context(window))
+        let (Some(project_id), Some(context)) =
+            (self.workspace_in(window), self.comment_context(window))
         else {
             return;
         };
@@ -16,7 +17,9 @@ impl Shell {
             CommentContext::Doc => {
                 let theme = cx.theme();
                 let row = theme.terminal_font_size * theme.code_line_height;
-                let offset = f32::from(self.doc_source_scroll.0.borrow().base_handle.offset().y);
+                let view = self.host_view(self.space_host(window));
+                let offset = f32::from(view.doc_source_scroll.0.borrow().base_handle.offset().y);
+                let page_top = view.doc_page.top();
                 let Some(docs) = self.docs.get_mut(&project_id) else {
                     return;
                 };
@@ -25,7 +28,7 @@ impl Shell {
                 };
                 let (units, start) = match docs.mode {
                     Mode::Source => (shown.line_units(), mkrew_ui::pick::first_row(offset, row)),
-                    Mode::Preview => (shown.block_units(), self.doc_page.top()),
+                    Mode::Preview => (shown.block_units(), page_top),
                 };
                 docs.comments.step_pick(&units, down, start)
             }
@@ -53,9 +56,10 @@ impl Shell {
                 if let Some(docs) = self.docs.get(&project_id)
                     && let Some(line) = docs.comments.head_line()
                     && let Doc::Shown(shown) = &docs.doc
+                    && let Some(view) = self.project_view(project_id)
                 {
                     match docs.mode {
-                        Mode::Source => self.doc_source_scroll.scroll_to_item(
+                        Mode::Source => view.doc_source_scroll.scroll_to_item(
                             (line as usize).saturating_sub(1),
                             ScrollStrategy::Nearest,
                         ),
@@ -65,7 +69,7 @@ impl Shell {
                                 .iter()
                                 .position(|b| b.lines.start <= line && line <= b.lines.end);
                             if let Some(block) = block {
-                                self.doc_page.reveal(block);
+                                view.doc_page.reveal(block);
                             }
                         }
                     }
@@ -99,13 +103,13 @@ impl Shell {
     ) {
         let plain_escape = event.keystroke.key == "escape" && !event.keystroke.modifiers.modified();
         if !plain_escape
-            || self.view() != View::Docs
+            || self.view(self.space_host(window)) != View::Docs
             || self.modal_open()
             || !self.focus_handle.is_focused(window)
         {
             return;
         }
-        let picked = (self.workspace)
+        let picked = (self.workspace_in(window))
             .and_then(|project_id| self.docs.get_mut(&project_id))
             .map(|docs| &mut docs.comments)
             .filter(|comments| comments.selection.is_some());

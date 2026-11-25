@@ -89,7 +89,9 @@ impl Shell {
         }
         self.files
             .insert(project_id, new_files_view(project_id, target));
-        self.files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.host_view(self.space_host(window))
+            .files_scroll
+            .scroll_to_item(0, ScrollStrategy::Top);
         self.refresh_files(project_id, window, cx);
     }
 
@@ -143,7 +145,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let listed = listed.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &listed {
                     tracing::warn!(%project_id, dir, "fs.list failed: {error}");
                 }
@@ -189,7 +191,7 @@ impl Shell {
                     .await),
                 Err(error) => Err(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &read {
                     tracing::warn!(%project_id, path = %file.path, task = ?file.task, "fs.read failed: {error}");
                 }
@@ -246,7 +248,7 @@ impl Shell {
             let page = background
                 .spawn(async move { Shown::from_text(&text) })
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 // The stamp names the text: a page of a text that was replaced is dropped.
                 let dropped = (shell.documents.get_mut(&project_id))
                     .is_some_and(|docs| docs.preview_ready(stamp, page));
@@ -299,8 +301,8 @@ impl Shell {
         }
         let target = (self.files.get(&project_id)).and_then(|view| view.worktree_task_id);
         if changed.worktree_task_id == target
-            && self.workspace == Some(project_id)
-            && self.file_tree_shown()
+            && (self.space_of(project_id))
+                .is_some_and(|key| self.file_tree_shown(HostId::Space(key)))
             && let Some(view) = self.files.get_mut(&project_id)
         {
             let requests = view.apply(event);
@@ -346,7 +348,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let (Some(key), Some(project_id)) = (files_view::key(&event.keystroke), self.workspace)
+        let (Some(key), Some(project_id)) =
+            (files_view::key(&event.keystroke), self.workspace_in(window))
         else {
             return;
         };
@@ -363,7 +366,8 @@ impl Shell {
             matches!(row, files_view::Row::Entry { entry, .. } if Some(&entry.path) == cursor.as_ref())
         });
         if let Some(at) = at {
-            self.files_scroll
+            self.host_view(self.space_host(window))
+                .files_scroll
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
         self.files_requests(project_id, requests, window, cx);
@@ -620,7 +624,7 @@ impl Shell {
             .call::<FsWritten>(Request::FsWrite(documents::write_params(project_id, save)));
         cx.spawn_in(window, async move |this, cx| {
             let written = written.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &written {
                     tracing::warn!(%project_id, path = %saved_file.path, task = ?saved_file.task, "fs.write failed: {error}");
                 }
@@ -706,7 +710,7 @@ impl Shell {
         );
         cx.spawn_in(window, async move |this, cx| {
             let choice = documents::leave_choice(answer.await.ok());
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let rest: AfterSave = Box::new(move |shell, window, cx| {
                     shell.leave_documents(project_id, files, then, window, cx);
                 });
@@ -749,7 +753,7 @@ impl Shell {
     /// hides (unsaved file changes stay in memory); otherwise unsaved file changes ask first,
     /// one file at a time, and the window closes once none are left. The workspace that holds
     /// them is shown first, so a refused save is visible.
-    pub(crate) fn window_should_close(
+    pub(crate) fn last_window_should_close(
         &mut self,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -821,8 +825,8 @@ impl Shell {
         if window.has_active_prompt() {
             return true;
         }
-        if self.workspace != Some(project_id) {
-            self.activate_workspace(project_id, window, cx);
+        if self.workspace_in(window) != Some(project_id) {
+            self.activate_workspace(self.space_host(window), project_id, window, cx);
         }
         // `leave_documents` shows the file's pane, so a refused save is visible.
         self.leave_documents(project_id, files, then, window, cx);
@@ -1056,18 +1060,19 @@ impl Shell {
             .map(|view| view.project_id)
             .collect();
         // Hidden views read again when shown.
-        let shown = self.workspace;
         for project_id in files {
             self.files
                 .insert(project_id, new_files_view(project_id, None));
             // The worktree is gone (as before); the tree starts over.
-            if shown == Some(project_id) && self.files_on_screen() {
+            if (self.space_of(project_id))
+                .is_some_and(|key| self.files_on_screen(HostId::Space(key)))
+            {
                 self.refresh_files(project_id, window, cx);
             }
         }
         for project_id in git {
             self.retarget_git(project_id, None, None);
-            if shown == Some(project_id) && self.git_shown() {
+            if (self.space_of(project_id)).is_some_and(|key| self.git_shown(HostId::Space(key))) {
                 self.refresh_git(project_id, window, cx);
             }
         }

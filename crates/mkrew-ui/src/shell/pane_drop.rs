@@ -355,11 +355,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        // A drop in a detached window leaves the main window's active tab alone.
+        // A drop in a detached window leaves the Space window's active tab alone.
         let detached = (self.tabs.get(&project_id))
             .and_then(|tabs| tabs.tab_with(target))
             .map(|tab| tab.id)
-            .filter(|tab_id| self.terminal_host(project_id, *tab_id) != HostId::Main);
+            .filter(|tab_id| self.is_detached_tab(project_id, *tab_id));
         let writes = (self.tabs.get_mut(&project_id)).and_then(|tabs| match detached {
             Some(tab_id) => {
                 (tabs.with_active(tab_id, |tabs| tabs.move_pane(moved, target, edge))).flatten()
@@ -370,7 +370,7 @@ impl Shell {
         let emptied = (writes.iter().flatten())
             .find(|write| write.layout.is_null())
             .map(|write| write.tab_id)
-            .filter(|tab_id| self.terminal_host(project_id, *tab_id) == HostId::Main);
+            .filter(|tab_id| !self.is_detached_tab(project_id, *tab_id));
         self.sync_panes(window, cx);
         self.focus_pane(window, cx);
         let writes = writes.unwrap_or_default();
@@ -438,7 +438,7 @@ impl Shell {
             }
             let closed =
                 (connection.call::<()>(Request::TabClose(TabRef { tab_id: source }))).await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 match closed {
                     Ok(()) => {
                         if let Some(tabs) = shell.tabs.get_mut(&project_id) {
@@ -537,7 +537,7 @@ impl Shell {
         );
     }
 
-    /// Makes the main window's tab strip take a pane (to its own tab), a Files tree file row
+    /// Makes a Space window's tab strip take a pane (to its own tab), a Files tree file row
     /// (a new tab) and OS files (opened as new tabs), and tint while one hovers.
     /// A tab drag keeps the reorder drop the strip already has.
     pub(crate) fn strip_drops(
@@ -558,7 +558,7 @@ impl Shell {
             .drag_over::<DraggedPath>(move |style, _, _, _| style.bg(tint))
             .drag_over::<DraggedNew>(move |style, _, _, _| style.bg(tint))
             .on_drop(cx.listener(|shell, pane: &DraggedPane, window, cx| {
-                if shell.workspace == Some(pane.project_id) && !shell.modal_open() {
+                if shell.workspace_in(window) == Some(pane.project_id) && !shell.modal_open() {
                     shell.pane_to_new_tab(pane.project_id, &pane.key, window, cx);
                 }
             }))
@@ -566,7 +566,7 @@ impl Shell {
                 shell.drop_new_on_strip(item, window, cx);
             }))
             .on_drop(cx.listener(|shell, path: &DraggedPath, window, cx| {
-                if shell.workspace == Some(path.project_id) && !shell.modal_open() {
+                if shell.workspace_in(window) == Some(path.project_id) && !shell.modal_open() {
                     let leaf = Leaf::of_file(path.file());
                     shell.drop_leaf(path.project_id, None, leaf, window, cx);
                 }

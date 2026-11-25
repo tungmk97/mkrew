@@ -17,38 +17,67 @@ impl Shell {
             .or_else(|| projects.first().map(|project| project.id))
     }
 
-    /// Shows the tabs of `project_id`, loading them the first time.
+    /// Space window `host` shows `project` (a new session, e.g. spawned by `mk`, fills an empty
+    /// tab first), or the empty state for `None`.
+    pub(crate) fn show_in_space(
+        &mut self,
+        host: HostId,
+        project: Option<Ulid>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match project {
+            Some(project_id) => {
+                self.fill_empty_tab(project_id, window, cx);
+                self.activate_workspace(host, project_id, window, cx);
+            }
+            None => {
+                self.hosts.entry(host).or_default().workspace = None;
+                self.sync_panes(window, cx);
+            }
+        }
+    }
+
+    /// Shows the tabs of `project_id` in Space window `host`, loading them the first time.
     pub(crate) fn activate_workspace(
         &mut self,
+        host: HostId,
         project_id: Ulid,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let switched = self.workspace != Some(project_id);
-        self.workspace = Some(project_id);
+        let before = self.workspace_of(host);
+        let switched = before != Some(project_id);
+        self.hosts.entry(host).or_default().workspace = Some(project_id);
         self.workspace_switcher = false;
         if switched {
-            self.close_menus();
+            if self.menu_host == host {
+                self.close_menus();
+            }
             self.end_inspector_drag(cx);
-            // Nothing is kept for the workspace that is no longer shown.
-            self.git_summary = None;
+            // Nothing is kept for a workspace that no window shows any more.
+            if let Some(old) = before
+                && !self.on_screen_workspaces().contains(&old)
+            {
+                self.git_summaries.remove(&old);
+            }
         }
         // First: the daemon answers one connection's requests in order, so an attach sent
         // after the git/files loads below waits for all of them (a git.status can take 1 s).
         self.sync_panes(window, cx);
-        if switched || self.git_summary.is_none() {
-            self.load_git_summary(project_id, window, cx);
+        if switched || self.git_summary(project_id).is_none() {
+            self.load_git_summary(project_id, cx);
         }
         if !self.tabs.contains_key(&project_id) {
-            self.load_tabs(project_id, window, cx);
+            self.load_tabs(project_id, cx);
         }
-        if switched && self.view() == View::Docs {
+        if switched && self.view(host) == View::Docs {
             self.load_docs(project_id, window, cx);
         }
-        if switched && self.files_on_screen() {
+        if switched && self.files_on_screen(host) {
             self.refresh_files(project_id, window, cx);
         }
-        if switched && self.git_shown() {
+        if switched && self.git_shown(host) {
             self.refresh_git(project_id, window, cx);
         }
         self.sync_watches(cx);
@@ -56,12 +85,7 @@ impl Shell {
     }
 
     /// `tab.list` for a workspace; a workspace without tabs gets one.
-    pub(crate) fn load_tabs(
-        &mut self,
-        project_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
+    pub(crate) fn load_tabs(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -70,9 +94,11 @@ impl Shell {
         }
         let listed =
             connection.call::<Vec<TerminalTab>>(Request::TabList(TabListParams { project_id }));
-        cx.spawn_in(window, async move |this, cx| {
+        // The answer runs in the primary Space window: the asking window may have closed
+        // meanwhile, and `loading_tabs` must not keep the workspace for ever.
+        cx.spawn(async move |this, cx| {
             let listed = listed.await;
-            let _ = this.update_in(cx, |shell, window, cx| match listed {
+            let _ = Shell::with_primary(&this, cx, |shell, window, cx| match listed {
                 Ok(list) if list.is_empty() => shell.create_tab(project_id, None, window, cx),
                 Ok(list) => {
                     let mut tabs = Tabs::new(project_id);
@@ -115,7 +141,7 @@ impl Shell {
             position,
             move |shell, _tab_id, window, cx| {
                 if let Some((kind, profile)) = start
-                    && shell.workspace == Some(project_id)
+                    && shell.workspace_in(window) == Some(project_id)
                 {
                     shell.new_pane_with(kind, profile, Axis::Vertical, window, cx);
                 }
@@ -154,7 +180,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let created = created.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let first = shell.loading_tabs.contains(&project_id);
                 match created {
                     Ok(tab) => {
@@ -252,10 +278,9 @@ impl Shell {
     }
 
     /// Shows a session picked in the sidebar, the palette or a notification. A pane in a
-    /// detached window comes forward there (its tab is selected, its window activated); from a
-    /// detached window a session of the main one activates the main window (never a silent
-    /// change of the window we are in). Otherwise it focuses its pane, or places it next to the
-    /// focused pane of its workspace's active tab.
+    /// detached window comes forward there (its tab is selected, its window activated).
+    /// Otherwise its workspace opens the way the window mode says (`route_workspace`), and
+    /// its pane is focused there, or placed next to the focused pane of the active tab.
     pub(crate) fn open_session(
         &mut self,
         session: Ulid,
@@ -267,7 +292,7 @@ impl Shell {
         };
         let held = self.tab_of_session(session);
         if let Some((project, tab_id)) = held
-            && let host @ HostId::Detached(key) = self.terminal_host(project, tab_id)
+            && let Some(host @ HostId::Detached(key)) = self.terminal_host(project, tab_id)
         {
             let dock = DockTab::Terminal { project, tab_id };
             if let Some(at) = self.detached.tabs_of(key).iter().position(|t| *t == dock) {
@@ -283,20 +308,7 @@ impl Shell {
             cx.notify();
             return;
         }
-        if self.host_of(window) != HostId::Main {
-            self.in_window(HostId::Main, cx, move |shell, window, cx| {
-                window.activate_window();
-                shell.open_session(session, window, cx);
-            });
-            return;
-        }
-        self.views.insert(project_id, View::Terminals);
-        if self.tabs.contains_key(&project_id) {
-            self.place_session(project_id, session, None, Axis::Vertical, window, cx);
-        } else {
-            self.reveal = Some(session);
-        }
-        self.activate_workspace(project_id, window, cx);
+        self.route_workspace(project_id, Then::Session(session), false, None, window, cx);
     }
 
     /// An OS notification was clicked (§7): raises the window (showing it again if it was hidden
@@ -312,14 +324,16 @@ impl Shell {
         let (projects, sessions) = (self.sidebar.projects(), self.sidebar.sessions());
         match inbox::jump(projects, sessions, session, project_id) {
             Some(Jump::Session(session)) => self.open_session(session, window, cx),
-            Some(Jump::Workspace(project_id)) => self.activate_workspace(project_id, window, cx),
+            Some(Jump::Workspace(project_id)) => {
+                self.route_workspace(project_id, Then::Nothing, false, None, window, cx)
+            }
             None => {}
         }
     }
 
     /// Focuses the pane of `session` (activating its tab) or splits the focused pane along
     /// `axis` to show it: in `tab` when that is shown in a detached window (a split started
-    /// there must not land in the main window's tab, spec §4.2), else in the workspace's
+    /// there must not land in the Space window's tab, spec §4.2), else in the workspace's
     /// active tab.
     pub(crate) fn place_session(
         &mut self,
@@ -334,14 +348,14 @@ impl Shell {
             .and_then(|tabs| tabs.tab_of(session))
             .map(|tab| tab.id);
         if let Some(tab_id) = held
-            && self.terminal_host(project_id, tab_id) != HostId::Main
+            && self.is_detached_tab(project_id, tab_id)
         {
             if let Some(tabs) = self.tabs.get_mut(&project_id) {
                 tabs.focus_pane(tab_id, &PaneKey::Session(session));
             }
             return;
         }
-        let detached = tab.filter(|id| self.terminal_host(project_id, *id) != HostId::Main);
+        let detached = tab.filter(|id| self.is_detached_tab(project_id, *id));
         // A new agent pane is born with the default of the moment (ADR 0105), so a later
         // change of `[ui] chat_default` never flips it.
         let chat = self.born_chat(session);
@@ -451,14 +465,16 @@ impl Shell {
         .detach();
     }
 
-    pub(crate) fn active_tabs_mut(&mut self) -> Option<&mut Tabs> {
-        self.tabs.get_mut(&self.workspace?)
+    /// The tabs of the workspace `window` shows.
+    pub(crate) fn active_tabs_mut(&mut self, window: &Window) -> Option<&mut Tabs> {
+        let project = self.workspace_in(window)?;
+        self.tabs.get_mut(&project)
     }
 
-    /// The view of the active workspace; Docs reads as Terminals while `[features] docs` is
-    /// off (ADR 0046).
-    pub(crate) fn view(&self) -> View {
-        let Some(id) = self.workspace else {
+    /// The view of the workspace `host` shows; Docs reads as Terminals while `[features] docs`
+    /// is off (ADR 0046).
+    pub(crate) fn view(&self, host: HostId) -> View {
+        let Some(id) = self.workspace_of(host) else {
             return View::default();
         };
         self.views
@@ -471,36 +487,37 @@ impl Shell {
             .unwrap_or_default()
     }
 
-    /// Switches the active workspace to `view`; leaving Terminals detaches its panes. Showing
-    /// Docs re-lists its files (agents may have written new ones); Git (the panel's tab) coming
-    /// on screen refreshes its changes (a diff pane does it in `sync_panes`).
+    /// Switches the workspace `window` shows to `view`; leaving Terminals detaches its panes.
+    /// Showing Docs re-lists its files (agents may have written new ones); Git (the panel's
+    /// tab) coming on screen refreshes its changes (a diff pane does it in `sync_panes`).
     pub(crate) fn show_view(
         &mut self,
         view: View,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace else {
+        let host = self.space_host(window);
+        let Some(project_id) = self.workspace_of(host) else {
             return;
         };
         if view == View::Docs && !self.features.docs {
             return;
         }
         self.close_menus();
-        let tree_before = self.files_on_screen();
-        let git_before = self.git_panel_shown();
+        let tree_before = self.files_on_screen(host);
+        let git_before = self.git_panel_shown(host);
         let shown = self.views.insert(project_id, view).unwrap_or_default();
-        if !self.panel_view() {
+        if !self.panel_view(host) {
             // The panel (and its grip) leaves with the views that draw it: end a drag in progress.
             self.end_inspector_drag(cx);
         }
         if view == View::Docs && shown != View::Docs {
             self.load_docs(project_id, window, cx);
         }
-        if self.files_on_screen() && !tree_before {
+        if self.files_on_screen(host) && !tree_before {
             self.refresh_files(project_id, window, cx);
         }
-        if self.git_panel_shown() && !git_before {
+        if self.git_panel_shown(host) && !git_before {
             self.refresh_git(project_id, window, cx);
         }
         self.sync_watches(cx);
@@ -510,22 +527,23 @@ impl Shell {
         }
     }
 
-    /// Gives the daemon back the file watchers this window no longer shows anything for
+    /// Gives the daemon back the file watchers no window shows anything for any more
     /// (`watch.release`, [`watches`]). Cheap: it compares two small sets.
     pub(crate) fn sync_watches(&mut self, cx: &mut Context<'_, Self>) {
-        let files = self
-            .files_on_screen()
-            .then(|| self.workspace.and_then(|id| self.files.get(&id)))
-            .flatten()
-            .and_then(|view| view.worktree_task_id);
-        let git = self
-            .git_shown()
-            .then(|| self.workspace.and_then(|id| self.git.get(&id)))
-            .flatten()
-            .and_then(|view| view.worktree_task_id);
         // Every file leaf of every workspace, in any tab or window, shown or not.
-        let open = documents::open_worktrees(&self.tabs);
-        let needs = watches::Needs::of(self.workspace, files, git, open);
+        let mut needs = watches::Needs::of(None, None, None, documents::open_worktrees(&self.tabs));
+        for (key, project) in self.spaces_shown() {
+            let host = HostId::Space(key);
+            let files = (self.files_on_screen(host))
+                .then(|| project.and_then(|id| self.files.get(&id)))
+                .flatten()
+                .and_then(|view| view.worktree_task_id);
+            let git = (self.git_shown(host))
+                .then(|| project.and_then(|id| self.git.get(&id)))
+                .flatten()
+                .and_then(|view| view.worktree_task_id);
+            needs = needs.union(watches::Needs::of(project, files, git, []));
+        }
         let released = self.watch_needs.released(&needs);
         self.watch_needs = needs;
         let Some(connection) = self.connection.clone() else {

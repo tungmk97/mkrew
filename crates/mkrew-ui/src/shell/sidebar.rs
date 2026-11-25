@@ -26,10 +26,11 @@ impl RowGroup {
 impl Shell {
     /// Workspace ids in the order the sidebar shows them (the rail keeps empty ones in place,
     /// the full sidebar draws them last): Alt+1…9 and Next/Previous workspace follow it.
-    pub(crate) fn shown_workspaces(&self) -> Vec<Ulid> {
+    pub(crate) fn shown_workspaces(&self, host: HostId) -> Vec<Ulid> {
         let rows = self.sidebar.view(&self.viewed).rows;
         let park = !self.sidebar_layout.compact();
-        self.sidebar.shown_workspaces(&rows, self.workspace, park)
+        self.sidebar
+            .shown_workspaces(&rows, self.workspace_of(host), park)
     }
 
     /// The sidebar's edge was released: saves the dragged width as `[ui] sidebar_width`.
@@ -638,8 +639,10 @@ impl Shell {
                             open.take(),
                             cx,
                         );
-                        let (project_id, active) =
-                            (row.project_id, self.workspace == Some(row.project_id));
+                        let (project_id, active) = (
+                            row.project_id,
+                            self.workspace_in(window) == Some(row.project_id),
+                        );
                         // Its selected session row already says it is the shown one.
                         let highlight = (active && shown_in != Some(project_id))
                             || highlighted == Some(sidebar::Target::Workspace(project_id));
@@ -850,8 +853,8 @@ impl Shell {
                 Row::Workspace(row) => {
                     let project_id = row.project_id;
                     // Its selected session row already says it is the shown one.
-                    let highlight =
-                        self.workspace == Some(project_id) && shown_in != Some(project_id);
+                    let highlight = self.workspace_in(window) == Some(project_id)
+                        && shown_in != Some(project_id);
                     list.push(compact_workspace_row(row, highlight, theme, cx));
                 }
                 Row::Session(row) => {

@@ -53,9 +53,9 @@ impl Shell {
                 .child(loading_dots(now, rgb(theme.text_muted)))
                 .into_any_element();
         }
-        let main = host == HostId::Main;
+        let main = host.space().is_some();
         let project = if main {
-            self.workspace
+            self.workspace_in(window)
         } else {
             self.tab_scope(window).map(|(project, _)| project)
         };
@@ -126,7 +126,7 @@ impl Shell {
             render_menu(
                 self.menu_state(),
                 "new-tab-panel",
-                self.new_menu_rows(),
+                self.new_menu_rows(host),
                 None,
                 Place::Dropdown,
                 theme,
@@ -269,7 +269,7 @@ impl Shell {
             cx.background_executor()
                 .timer(theme::PLUS_ROW_COLLAPSE_DELAY)
                 .await;
-            let _ = this.update_in(cx, |shell, _, cx| {
+            let _ = Shell::answer(&this, cx, |shell, _, cx| {
                 if shell.plus.collapse(host, serial) {
                     cx.notify();
                 }
@@ -278,8 +278,8 @@ impl Shell {
         .detach();
     }
 
-    /// A click (or Enter) on an item. The main window opens a tab. A detached window has no
-    /// new tab of its own (new tabs belong to the main window), so it splits its tab beside
+    /// A click (or Enter) on an item. A Space window opens a tab. A detached window has no
+    /// new tab of its own (new tabs belong to the Space windows), so it splits its tab beside
     /// the focused pane, like its Split ▾.
     pub(crate) fn click_new(
         &mut self,
@@ -328,7 +328,7 @@ impl Shell {
         }
     }
 
-    /// An item dropped on the tab strip (the main window's; `strip_drops`): a new tab right
+    /// An item dropped on the tab strip (a Space window's; `strip_drops`): a new tab right
     /// after the active one.
     pub(crate) fn drop_new_on_strip(
         &mut self,
@@ -358,7 +358,7 @@ impl Shell {
         // The workspace of the pane dropped on, else of this window's tab, else the shown one.
         let Some(project_id) = (at.as_ref().map(|(project, ..)| *project))
             .or_else(|| self.tab_scope(window).map(|(project, _)| project))
-            .or(self.workspace)
+            .or(self.workspace_in(window))
         else {
             return;
         };
@@ -370,7 +370,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let made = made.await;
-            let _ = this.update_in(cx, |shell, window, cx| match made {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match made {
                 Ok(FsCreated { path }) => {
                     shell.open_note(project_id, path, at, window, cx);
                     shell.refresh_files(project_id, window, cx);
@@ -405,9 +405,9 @@ impl Shell {
         };
         let file = FileKey::project(path);
         self.ensure_doc(project_id, &file, Some(MdMode::Source), cx);
-        let main = self.host_of(window) == HostId::Main;
+        let main = self.host_of(window).space().is_some();
         if !main && matches!(place, documents::Place::NewTab) {
-            // New tabs belong to the main window: it takes this one.
+            // New tabs belong to the Space windows: one takes this one.
             return self.open_document(project_id, file, None, place, window, cx);
         }
         let mut leaf = Leaf::of_file(file.clone());
@@ -417,8 +417,8 @@ impl Shell {
         if main {
             // Terminals show the panes: Board, Docs and the Diff give way.
             self.views.insert(project_id, View::Terminals);
-            if self.workspace != Some(project_id) {
-                self.activate_workspace(project_id, window, cx);
+            if self.workspace_in(window) != Some(project_id) {
+                self.activate_workspace(self.space_host(window), project_id, window, cx);
             }
         }
         self.place_leaf(project_id, leaf, place, window, cx);

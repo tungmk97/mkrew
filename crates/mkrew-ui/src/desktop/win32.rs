@@ -594,9 +594,10 @@ pub fn reduce_motion() -> bool {
     reduce_from(read.is_ok(), animations_on.as_bool())
 }
 
-/// The main window's Windows-only extras.
+/// The Windows-only extras of the Space windows (ADR 0115): taskbar badge, flash, tray.
 pub struct Os {
-    hwnd: Option<HWND>,
+    /// Every open Space window (`attach` / `detach`).
+    hwnds: Vec<HWND>,
     list: Option<ITaskbarList3>,
     flashing: bool,
     badge: Option<Badge>,
@@ -606,32 +607,31 @@ pub struct Os {
     tray_icon: bool,
 }
 
+/// The HWND of a gpui window.
+fn hwnd_of(window: &gpui::Window) -> Option<HWND> {
+    match HasWindowHandle::window_handle(window).map(|handle| handle.as_raw()) {
+        Ok(RawWindowHandle::Win32(handle)) => Some(HWND(handle.hwnd.get() as *mut c_void)),
+        _ => None,
+    }
+}
+
 impl Os {
-    pub fn new(
-        window: &gpui::Window,
-        id: &str,
-        tray_icon: bool,
-    ) -> (Self, async_channel::Receiver<TrayEvent>) {
-        let hwnd = match HasWindowHandle::window_handle(window).map(|handle| handle.as_raw()) {
-            Ok(RawWindowHandle::Win32(handle)) => Some(HWND(handle.hwnd.get() as *mut c_void)),
-            _ => None,
-        };
+    pub fn new(id: &str, tray_icon: bool) -> (Self, async_channel::Receiver<TrayEvent>) {
         // gpui initialised OLE (an STA) on this thread, so the shell's taskbar list can be made.
-        let list = hwnd.and_then(|_| {
-            // SAFETY: plain COM activation; no pointers are passed in.
-            let made: windows::core::Result<ITaskbarList3> =
-                unsafe { CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER) };
-            // SAFETY: `HrInit` takes no arguments.
-            made.and_then(|list| unsafe { list.HrInit() }.map(|()| list))
-                .inspect_err(|error| tracing::warn!("taskbar badge unavailable: {error}"))
-                .ok()
-        });
+        // SAFETY: plain COM activation; no pointers are passed in.
+        let made: windows::core::Result<ITaskbarList3> =
+            unsafe { CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER) };
+        // SAFETY: `HrInit` takes no arguments.
+        let list = made
+            .and_then(|list| unsafe { list.HrInit() }.map(|()| list))
+            .inspect_err(|error| tracing::warn!("taskbar badge unavailable: {error}"))
+            .ok();
         let (tray, events) = match Tray::start(&super::current_key(id), tray_icon) {
             Some((tray, events)) => (Some(tray), events),
             None => (None, async_channel::unbounded::<TrayEvent>().1),
         };
         let this = Self {
-            hwnd,
+            hwnds: Vec::new(),
             list,
             flashing: false,
             badge: None,
@@ -639,6 +639,23 @@ impl Os {
             tray_icon,
         };
         (this, events)
+    }
+
+    /// A Space window opened: it gets the badge, the flash and the tray's hide / show.
+    pub fn attach(&mut self, window: &gpui::Window) {
+        if let Some(hwnd) = hwnd_of(window)
+            && !self.hwnds.contains(&hwnd)
+        {
+            self.hwnds.push(hwnd);
+            self.reapply_badge();
+        }
+    }
+
+    /// A Space window is closing: nothing touches its HWND any more.
+    pub fn detach(&mut self, window: &gpui::Window) {
+        if let Some(hwnd) = hwnd_of(window) {
+            self.hwnds.retain(|known| *known != hwnd);
+        }
     }
 
     /// The overlay icon with `count` (cleared at 0).
@@ -649,7 +666,7 @@ impl Os {
 
     /// Sets the overlay again: a button Explorer made after `show_window` or a restart has none.
     pub fn reapply_badge(&self) {
-        let (Some(hwnd), Some(list)) = (self.hwnd, &self.list) else {
+        let Some(list) = &self.list else {
             return;
         };
         let icon = self
@@ -661,35 +678,37 @@ impl Os {
         let handle = icon
             .as_ref()
             .map_or(HICON(std::ptr::null_mut()), |icon| icon.0);
-        // SAFETY: `hwnd` is the live main window; the shell copies the icon during the call; a
-        // null icon clears the overlay.
-        if let Err(error) = unsafe { list.SetOverlayIcon(hwnd, handle, &description) } {
-            tracing::warn!("cannot set the taskbar badge: {error}");
+        for &hwnd in &self.hwnds {
+            // SAFETY: each `hwnd` is a live Space window (detached before it closes); the
+            // shell copies the icon during the call; a null icon clears the overlay.
+            if let Err(error) = unsafe { list.SetOverlayIcon(hwnd, handle, &description) } {
+                tracing::warn!("cannot set the taskbar badge: {error}");
+            }
         }
     }
 
-    /// Starts or stops flashing the taskbar button (until the window is in front).
+    /// Starts or stops flashing the taskbar buttons (until the window is in front).
     pub fn flash(&mut self, on: bool) {
-        let Some(hwnd) = self.hwnd else {
-            return;
-        };
         if std::mem::replace(&mut self.flashing, on) == on {
             return;
         }
-        let info = FLASHWINFO {
-            cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
-            hwnd,
-            dwFlags: if on {
-                FLASHW_TRAY | FLASHW_TIMERNOFG
-            } else {
-                FLASHW_STOP
-            },
-            uCount: 0,
-            dwTimeout: 0,
-        };
-        // SAFETY: `info` is fully initialised and `cbSize` is set.
-        unsafe {
-            let _ = FlashWindowEx(&info);
+        for &hwnd in &self.hwnds {
+            let info = FLASHWINFO {
+                cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
+                hwnd,
+                dwFlags: if on {
+                    FLASHW_TRAY | FLASHW_TIMERNOFG
+                } else {
+                    FLASHW_STOP
+                },
+                uCount: 0,
+                dwTimeout: 0,
+            };
+            // SAFETY: `info` is fully initialised and `cbSize` is set; each `hwnd` is a live
+            // Space window (detached before it closes).
+            unsafe {
+                let _ = FlashWindowEx(&info);
+            }
         }
     }
 
@@ -709,31 +728,32 @@ impl Os {
         }
     }
 
-    /// Hides the window (and its taskbar button); gpui reports it as `WindowVisibility::Hidden`.
+    /// Hides the Space windows (and their taskbar buttons); gpui reports each as
+    /// `WindowVisibility::Hidden`.
     pub fn hide_window(&mut self) {
-        if let Some(hwnd) = self.hwnd {
-            // SAFETY: `hwnd` is the live main window.
+        for &hwnd in &self.hwnds {
+            // SAFETY: each `hwnd` is a live Space window (detached before it closes).
             unsafe {
                 let _ = ShowWindow(hwnd, SW_HIDE);
             }
         }
     }
 
-    /// Shows a hidden or minimized window; the caller raises it with `Window::activate_window`.
+    /// Shows the hidden or minimized Space windows; the caller raises one with
+    /// `Window::activate_window`.
     pub fn show_window(&mut self) {
-        let Some(hwnd) = self.hwnd else {
-            return;
-        };
-        // SAFETY: `hwnd` is the live main window.
-        unsafe {
-            let command = if IsIconic(hwnd).as_bool() {
-                SW_RESTORE
-            } else {
-                SW_SHOW
-            };
-            let _ = ShowWindow(hwnd, command);
+        for &hwnd in &self.hwnds {
+            // SAFETY: each `hwnd` is a live Space window (detached before it closes).
+            unsafe {
+                let command = if IsIconic(hwnd).as_bool() {
+                    SW_RESTORE
+                } else {
+                    SW_SHOW
+                };
+                let _ = ShowWindow(hwnd, command);
+            }
         }
-        // The taskbar button comes back asynchronously, without its overlay: the UI calls
+        // The taskbar buttons come back asynchronously, without their overlay: the UI calls
         // `reapply_badge` shortly after (`Shell::restore_window`).
     }
 }

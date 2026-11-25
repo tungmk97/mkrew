@@ -313,14 +313,14 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         let shown_target = self.files.get(&project_id).and_then(|v| v.worktree_task_id);
         // The file a page's link is in (the focused file pane or the Docs file), the folder it is
         // in, its page and blocks.
         let file = self.focused_doc(window).map(|(_, file)| file);
-        let (from, target, page) = match (action.on_page, self.view()) {
+        let (from, target, page) = match (action.on_page, self.view(self.space_host(window))) {
             (true, View::Terminals) if file.is_some() => {
                 let doc = file.as_ref().and_then(|file| self.doc(project_id, file));
                 let view = file
@@ -335,7 +335,10 @@ impl Shell {
             (true, View::Docs) => {
                 let docs = self.docs.get(&project_id);
                 let page = docs.and_then(|docs| match &docs.doc {
-                    Doc::Shown(shown) => Some((&self.doc_page, Rc::clone(shown))),
+                    Doc::Shown(shown) => Some((
+                        &self.host_view(self.space_host(window)).doc_page,
+                        Rc::clone(shown),
+                    )),
                     _ => None,
                 });
                 (docs.and_then(|docs| docs.selected.clone()), None, page)
@@ -361,11 +364,10 @@ impl Shell {
                     None => self.toast_info(format!("No heading #{anchor} here"), cx),
                 }
             }
-            // A file opens as a tab of the main window.
-            Some(LinkTarget::File { .. }) if self.host_of(window) != HostId::Main => {
+            // A file opens as a tab of its workspace's Space window.
+            Some(LinkTarget::File { .. }) if !self.acts_here(project_id, window) => {
                 let action = action.clone();
-                self.in_window(HostId::Main, cx, move |shell, window, cx| {
-                    window.activate_window();
+                self.in_workspace(project_id, window, cx, move |shell, window, cx| {
                     shell.open_preview_link(&action, window, cx);
                 });
             }
@@ -446,9 +448,8 @@ impl Shell {
             return;
         };
         let line = pill.line;
-        if self.host_of(window) != HostId::Main {
-            return self.in_window(HostId::Main, cx, move |shell, window, cx| {
-                window.activate_window();
+        if !self.acts_here(project_id, window) {
+            return self.in_workspace(project_id, window, cx, move |shell, window, cx| {
                 shell.open_file_at(project_id, target, path, line, window, cx);
             });
         }

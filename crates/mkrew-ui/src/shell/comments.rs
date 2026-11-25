@@ -21,7 +21,7 @@ impl Shell {
     /// Whose comments the comment commands act on: the Docs view's while Docs shows, the
     /// diff's while the focused pane is the Diff leaf.
     pub(crate) fn comment_context(&self, window: &Window) -> Option<CommentContext> {
-        if self.view() == View::Docs {
+        if self.view(self.space_host(window)) == View::Docs {
             Some(CommentContext::Doc)
         } else if self.focused_diff(window).is_some() {
             Some(CommentContext::Diff)
@@ -33,10 +33,10 @@ impl Shell {
     /// Whose comment draft is drawn (what typing in it edits): the Docs view's while Docs
     /// shows, else the Diff leaf's while one is drawn. Needs no window: the field only exists
     /// where it is drawn.
-    pub(crate) fn drawn_comment_context(&self) -> Option<CommentContext> {
-        if self.view() == View::Docs {
+    pub(crate) fn drawn_comment_context(&self, host: HostId) -> Option<CommentContext> {
+        if self.view(host) == View::Docs {
             Some(CommentContext::Doc)
-        } else if self.diff_on_screen() {
+        } else if self.diff_on_screen(host) {
             Some(CommentContext::Diff)
         } else {
             None
@@ -77,9 +77,9 @@ impl Shell {
 
     /// The comment or reply being typed in the active workspace's Docs or Git view, while its
     /// field is on screen (the Docs margin shows with the doc, also while it is re-read).
-    pub(crate) fn comment_draft(&self) -> Option<&comments::Draft> {
-        let project_id = self.workspace?;
-        match self.drawn_comment_context()? {
+    pub(crate) fn comment_draft(&self, host: HostId) -> Option<&comments::Draft> {
+        let project_id = self.workspace_of(host)?;
+        match self.drawn_comment_context(host)? {
             CommentContext::Doc => {
                 let docs = self.docs.get(&project_id)?;
                 if !margin_shown(&docs.doc) {
@@ -180,7 +180,8 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context(window))
+        let (Some(project_id), Some(context)) =
+            (self.workspace_in(window), self.comment_context(window))
         else {
             return;
         };
@@ -191,7 +192,9 @@ impl Shell {
             return;
         };
         if let Some(at) = comments.margin_index(root) {
-            self.comments_scroll.scroll_to_item(at);
+            self.host_view(self.space_host(window))
+                .comments_scroll
+                .scroll_to_item(at);
         }
         self.reveal_pick(project_id, context, cx);
         cx.notify();
@@ -203,7 +206,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context(window))
+        let (Some(project_id), Some(context)) =
+            (self.workspace_in(window), self.comment_context(window))
         else {
             return;
         };
@@ -221,7 +225,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context(window))
+        let (Some(project_id), Some(context)) =
+            (self.workspace_in(window), self.comment_context(window))
         else {
             return;
         };
@@ -234,9 +239,9 @@ impl Shell {
     }
 
     pub(crate) fn close_comment_draft(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let context = self.drawn_comment_context();
-        if let Some(comments) =
-            (self.workspace.zip(context)).and_then(|(id, context)| self.comments_mut(id, context))
+        let context = self.drawn_comment_context(self.space_host(window));
+        if let Some(comments) = (self.workspace_in(window).zip(context))
+            .and_then(|(id, context)| self.comments_mut(id, context))
         {
             comments.draft = None;
         }
@@ -262,8 +267,10 @@ impl Shell {
         let paste = (key == DialogKey::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
-        let (Some(project_id), Some(context)) = (self.workspace, self.drawn_comment_context())
-        else {
+        let (Some(project_id), Some(context)) = (
+            self.workspace_in(window),
+            self.drawn_comment_context(self.space_host(window)),
+        ) else {
             return;
         };
         let Some(draft) = self
@@ -283,9 +290,12 @@ impl Shell {
         }
     }
 
-    /// A press or drag in the comment draft: the caret goes there.
+    /// A press or drag in the comment draft: the caret goes there. The press activated its
+    /// window first, so the primary Space window is the one drawing it.
     fn click_comment_draft(&mut self, caret: Caret) {
-        let (Some(project_id), Some(context)) = (self.workspace, self.drawn_comment_context())
+        let host = self.primary_host();
+        let (Some(project_id), Some(context)) =
+            (self.workspace_of(host), self.drawn_comment_context(host))
         else {
             return;
         };
@@ -321,7 +331,7 @@ impl Shell {
         let saved = connection.call::<DocComment>(request);
         cx.spawn_in(window, async move |this, cx| {
             let saved = saved.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &saved {
                     tracing::warn!(%project_id, "saving a comment failed: {error}");
                 }
@@ -330,8 +340,14 @@ impl Shell {
                     let saved = saved.map_err(|error| format!("Cannot save: {error}"));
                     comments.submitted(serial, saved);
                 }
-                if ok && shell.comment_focus.is_focused(window) && shell.comment_draft().is_none() {
-                    if matches!(shell.drawn_comment_context(), Some(CommentContext::Diff)) {
+                if ok
+                    && shell.comment_focus.is_focused(window)
+                    && shell.comment_draft(shell.space_host(window)).is_none()
+                {
+                    if matches!(
+                        shell.drawn_comment_context(shell.space_host(window)),
+                        Some(CommentContext::Diff)
+                    ) {
                         window.focus(&shell.git_focus, cx);
                     } else {
                         window.focus(&shell.focus_handle, cx);
@@ -482,7 +498,7 @@ impl Shell {
             .w(px(theme::DOC_MARGIN_WIDTH))
             .h_full()
             .overflow_y_scroll()
-            .track_scroll(&self.comments_scroll)
+            .track_scroll(&self.host_view(self.space_host(window)).comments_scroll)
             .flex()
             .flex_col()
             .gap(px(space::S))

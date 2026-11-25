@@ -207,9 +207,8 @@ impl Shell {
                     return;
                 };
                 let (path, line) = (path.clone(), *line);
-                if self.host_of(window) != HostId::Main {
-                    return self.in_window(HostId::Main, cx, move |shell, window, cx| {
-                        window.activate_window();
+                if !self.acts_here(project_id, window) {
+                    return self.in_workspace(project_id, window, cx, move |shell, window, cx| {
                         shell.open_file_at(project_id, target, path, line, window, cx);
                     });
                 }
@@ -261,7 +260,8 @@ impl Shell {
             |row| matches!(row, files_view::Row::Entry { entry, .. } if entry.path == path),
         );
         if let Some(at) = at {
-            self.files_scroll
+            self.host_view(self.space_host(window))
+                .files_scroll
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
         self.files_requests(project_id, requests, window, cx);
@@ -280,17 +280,17 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        // The workspace of the window's tab: the shown one in the main window, the tab's own
+        // The workspace of the window's tab: the shown one in a Space window, the tab's own
         // in a detached one.
         let window_key = self.detached_key(window);
         let workspace = match window_key {
-            None => self.workspace,
+            None => self.workspace_in(window),
             Some(_) => self.tab_scope(window).map(|(project, _)| project),
         };
         let view = if window_key.is_some() {
             View::Terminals
         } else {
-            self.view()
+            self.view(self.space_host(window))
         };
         let terminal = self.focused_session(window).filter(|session| {
             self.panes
@@ -304,17 +304,17 @@ impl Shell {
                     .as_ref()
                     .is_some_and(|target| view.discard(target).is_some())
             });
-        let worktree_task = self
-            .selected_card
-            .is_some_and(|id| self.on_board(id) && self.board.manages_worktree(id));
+        let worktree_task = self.selected_card.is_some_and(|id| {
+            self.on_board(self.space_host(window), id) && self.board.manages_worktree(id)
+        });
         let task_changes = self.selected_card.is_some_and(|id| {
-            self.on_board(id)
+            self.on_board(self.space_host(window), id)
                 && self.board.task(id).is_some_and(|task| {
                     task.status == TaskStatus::Review && task.checkpoint.is_some()
                 })
         });
         let fan_out = self.selected_card.is_some_and(|id| {
-            self.on_board(id)
+            self.on_board(self.space_host(window), id)
                 && self.board.can_fan_out(id, self.sidebar.sessions())
                 && !self.starting.contains(&id)
         });
@@ -322,7 +322,7 @@ impl Shell {
         let focused_info = focused
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id))
             .cloned();
-        // Offered in the main window only (as in the tab menu), for the tabs on its strip.
+        // Offered in a Space window only (as in the tab menu), for the tabs on its strip.
         let tab_closable = |right_only| {
             (self.tab_scope(window).filter(|_| window_key.is_none())).is_some_and(
                 |(project, tab_id)| {
@@ -341,18 +341,18 @@ impl Shell {
             tabs: match (window_key, workspace) {
                 (Some(key), _) => self.detached.tabs_of(key).len(),
                 (None, Some(id)) => self.tabs.get(&id).map_or(0, |tabs| {
-                    let main = |tab: &&Tab| self.terminal_host(id, tab.id) == HostId::Main;
+                    let main = |tab: &&Tab| !self.is_detached_tab(id, tab.id);
                     tabs.tabs().iter().filter(main).count()
                 }),
                 (None, None) => 0,
             },
             file_pane: self.focused_file(window).is_some(),
-            file_tree: self.file_tree_shown(),
+            file_tree: self.file_tree_shown(self.space_host(window)),
             web_pane: self.focused_web(window).is_some(),
             browser: mkrew_ui::browser::available().is_ok(),
             terminal: terminal.is_some(),
             discard,
-            git: self.git_shown(),
+            git: self.git_shown(self.space_host(window)),
             diff_pane: self.focused_diff(window).is_some(),
             worktree_task,
             task_changes,
@@ -388,7 +388,7 @@ impl Shell {
             }),
             composer_open: focused.is_some_and(|id| self.composers.shown(id).is_some()),
             approve_card: workspace.is_some_and(|id| {
-                !self.jira_side_shown()
+                !self.jira_side_shown(self.space_host(window))
                     && (self.board)
                         .approve_target(self.selected_card, self.board_scope(id))
                         .is_some()
@@ -397,7 +397,7 @@ impl Shell {
                 .and_then(|id| self.git.get(&id))
                 .is_some_and(|view| view.section() == git_view::Section::Base),
             git_repos: workspace.is_some_and(|id| self.git_repos_listed(id)),
-            jira: self.jira_side_shown(),
+            jira: self.jira_side_shown(self.space_host(window)),
             last_error: self.toasts.last_error().is_some(),
             toast: !self.toasts.items().is_empty(),
             update_ready: self.update.is_some() && !self.updating,
@@ -410,6 +410,7 @@ impl Shell {
             features: self.features,
             idle_removable: self.sidebar.idle_agents_and_terminals().len(),
             workspaces_open: self.sidebar.any_expanded(),
+            per_workspace: self.window_mode == WindowMode::PerWorkspace,
         };
         let mut entries = palette::settings_error(&self.keymap, self.settings_error.as_deref());
         entries.extend(palette::keymap_errors(&self.keymap, &self.keymap_errors));
@@ -423,7 +424,7 @@ impl Shell {
         entries.extend(palette::agent_entries(
             &self.keymap,
             &context,
-            &self.pane_agents(),
+            &self.pane_agents(self.space_host(window)),
         ));
         entries.extend(palette::machine_entries(&context, &self.machine_names()));
         if workspace.is_some() {
@@ -674,7 +675,7 @@ impl Shell {
             .palette
             .take()
             .and_then(|palette| palette.insert_into());
-        self.palette_host = HostId::Main;
+        self.palette_host = self.primary_host();
         // Esc on an `@` picker types the `@` it replaced (an e-mail, a handle).
         if let Some(target) = insert_into {
             self.palette_return = None;
@@ -762,13 +763,13 @@ impl Shell {
             return;
         }
         self.close_palette(window, cx);
-        // A detached window's own extras; they need no workspace of the main window.
+        // A detached window's own extras; they need no workspace of a Space window.
         if let Some(key) = self.detached_key(window) {
             match action {
-                palette::Action::Extra(Extra::TabMoveToMainWindow) => {
+                palette::Action::Extra(Extra::TabMoveBack) => {
                     if let Some((project, tab_id)) = self.tab_scope(window) {
                         let tab = DockTab::Terminal { project, tab_id };
-                        self.move_tab_to(tab, HostId::Main, None, window, cx);
+                        self.move_tab_to(tab, self.primary_host(), None, window, cx);
                     }
                     return;
                 }
@@ -792,16 +793,18 @@ impl Shell {
                 _ => {}
             }
         }
-        let workspace = self.workspace;
+        let workspace = self.workspace_in(window);
         match action {
             palette::Action::Run(command) => {
-                if self.git_shown()
+                if self.git_shown(self.space_host(window))
                     && command.context().is_some_and(|context| {
                         context == GIT_CONTEXT || context == COMMENTS_CONTEXT
                     })
                 {
                     window.focus(&self.git_focus, cx);
-                } else if self.file_tree_shown() && command.context() == Some(FILE_TREE_CONTEXT) {
+                } else if self.file_tree_shown(self.space_host(window))
+                    && command.context() == Some(FILE_TREE_CONTEXT)
+                {
                     window.focus(&self.files_focus, cx);
                 }
                 // Deferred; gpui-pre captures the focus just restored now and resolves it in
@@ -868,10 +871,10 @@ impl Shell {
                             Extra::MergeBack => worktree_dialog::Kind::Merge,
                             _ => worktree_dialog::Kind::Remove,
                         };
-                        if let Some(task_id) = self
-                            .selected_card
-                            .filter(|&id| self.board.manages_worktree(id) && self.on_board(id))
-                        {
+                        if let Some(task_id) = self.selected_card.filter(|&id| {
+                            self.board.manages_worktree(id)
+                                && self.on_board(self.space_host(window), id)
+                        }) {
                             self.open_worktree_dialog(kind, task_id, window, cx);
                         }
                     }
@@ -937,7 +940,7 @@ impl Shell {
                         }
                     }
                     // Handled above: a detached window's own entries.
-                    Extra::TabMoveToMainWindow | Extra::WindowMoveAllBack | Extra::WindowClose => {}
+                    Extra::TabMoveBack | Extra::WindowMoveAllBack | Extra::WindowClose => {}
                     Extra::PanePin => {
                         let pane = self.focused_session(window).and_then(|id| {
                             let session = self.sidebar.sessions().iter().find(|s| s.id == id)?;
@@ -1034,7 +1037,7 @@ impl Shell {
                 }
             }
             palette::Action::GoTo(palette::Target::Workspace(project_id)) => {
-                self.activate_workspace(project_id, window, cx);
+                self.route_workspace(project_id, Then::Nothing, false, None, window, cx);
             }
             palette::Action::GoTo(palette::Target::Session(session_id)) => {
                 self.open_session(session_id, window, cx);
@@ -1043,12 +1046,11 @@ impl Shell {
                 project_id,
                 task_id,
             }) => {
-                if workspace != Some(project_id) {
-                    self.activate_workspace(project_id, window, cx);
-                }
-                self.selected_card = Some(task_id);
-                self.show_view(View::Board, window, cx);
-                cx.notify();
+                self.in_workspace(project_id, window, cx, move |shell, window, cx| {
+                    shell.selected_card = Some(task_id);
+                    shell.show_view(View::Board, window, cx);
+                    cx.notify();
+                });
             }
             palette::Action::OpenFile { path } => {
                 if let Some(source) = source {
@@ -1071,14 +1073,14 @@ impl Shell {
                 current: false,
             } => {
                 if let Some(source) = source {
-                    self.in_main_window(window, cx, move |shell, window, cx| {
+                    self.in_workspace(source.project_id, window, cx, move |shell, window, cx| {
                         shell.checkout_branch(source, repo, branch, window, cx);
                     });
                 }
             }
             palette::Action::ShowCommit { repo, sha } => {
                 if let Some(source) = source {
-                    self.in_main_window(window, cx, move |shell, window, cx| {
+                    self.in_workspace(source.project_id, window, cx, move |shell, window, cx| {
                         shell.show_palette_commit(source, repo, sha, window, cx);
                     });
                 }
@@ -1099,7 +1101,7 @@ impl Shell {
             return;
         };
         self.palette = None;
-        self.palette_host = HostId::Main;
+        self.palette_host = self.primary_host();
         // A missing or broken settings file types the default form (the daemon reports it).
         let template = mkrew_core::settings::load(&self.settings_file)
             .unwrap_or_default()
@@ -1110,28 +1112,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// Runs `run` in the main window: at once when the palette was opened there, else after
-    /// activating that window. Files, checkouts and commits all live in the main window (the
-    /// Editor and Git views, the title bar summary), also when a detached window's palette
-    /// picked them.
-    pub(crate) fn in_main_window(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-        run: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) + 'static,
-    ) {
-        if self.host_of(window) == HostId::Main {
-            return run(self, window, cx);
-        }
-        self.in_window(HostId::Main, cx, move |shell, window, cx| {
-            window.activate_window();
-            run(shell, window, cx);
-        });
-    }
-
     /// Files and Search picks: the file in a file pane (its folders open, the cursor lands
-    /// on it), the caret on `line` for a search hit. A detached window's pick opens in the
-    /// main one.
+    /// on it), the caret on `line` for a search hit, in the window of its workspace.
     fn open_palette_file(
         &mut self,
         source: palette::Source,
@@ -1141,15 +1123,15 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let (project, target) = (source.project_id, source.worktree_task_id);
-        self.in_main_window(window, cx, move |shell, window, cx| {
+        self.in_workspace(project, window, cx, move |shell, window, cx| {
             shell.open_file_at(project, target, path, line, window, cx);
         });
     }
 
     /// A Branches pick: `git.checkout`, after a question when something is at risk (changed
     /// files in the repository, live agents in that folder). A failure is a toast with git's
-    /// own message; a success refreshes the Git view. Runs in the main window
-    /// ([`Self::in_main_window`]) with the palette's workspace active. `repo_changes` reads
+    /// own message; a success refreshes the Git view. Runs in the window of
+    /// the palette's workspace ([`Self::in_workspace`]). `repo_changes` reads
     /// that workspace's title bar summary; activating a workspace clears it and loads it
     /// again, so while it is missing the summary is read here before the question.
     fn checkout_branch(
@@ -1163,13 +1145,13 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        if self.workspace != Some(source.project_id) {
-            self.activate_workspace(source.project_id, window, cx);
+        if self.workspace_in(window) != Some(source.project_id) {
+            self.activate_workspace(self.space_host(window), source.project_id, window, cx);
         }
         // ponytail: a task worktree's own changes are not in the title bar summary, so no
         // question is asked there; git refuses a switch that would overwrite a change.
         let known = if source.worktree_task_id.is_none() {
-            self.repo_changes(repo.as_deref())
+            self.repo_changes(source.project_id, repo.as_deref())
         } else {
             Some(0)
         };
@@ -1203,7 +1185,7 @@ impl Shell {
             };
             let question = palette::checkout_question(&params.branch, changes, agents);
             if let Some((message, detail)) = question {
-                let Ok(answer) = this.update_in(cx, |_, window, cx| {
+                let Some(answer) = Shell::answer(&this, cx, |_, window, cx| {
                     window.prompt(
                         PromptLevel::Warning,
                         &message,
@@ -1221,7 +1203,7 @@ impl Shell {
             let project_id = params.project_id;
             let branch = params.branch.clone();
             let done = connection.call::<()>(Request::GitCheckout(params)).await;
-            let _ = this.update_in(cx, |shell, window, cx| match done {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match done {
                 Ok(()) => {
                     shell.toast_info(format!("Switched to {branch}"), cx);
                     if shell.git.contains_key(&project_id) {
@@ -1245,8 +1227,8 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let project_id = source.project_id;
-        if self.workspace != Some(project_id) {
-            self.activate_workspace(project_id, window, cx);
+        if self.workspace_in(window) != Some(project_id) {
+            self.activate_workspace(self.space_host(window), project_id, window, cx);
         }
         self.retarget_git(project_id, source.worktree_task_id, repo);
         let requests = self.git_view(project_id).show_commit(sha);

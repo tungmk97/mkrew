@@ -204,7 +204,7 @@ impl Shell {
                 Ok(Outcome::Error(body)) => Some(body.message),
                 Err(error) => Some(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| match failure {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match failure {
                 None => {
                     if shell.open_undo(serial).is_some() {
                         // Done: back to the pane, not to the Turns dialog it may have left.
@@ -527,7 +527,7 @@ impl Shell {
                         .justify_center()
                         .rounded(px(radius::SMALL))
                         .border(px(theme::BORDER_WIDTH))
-                        .border_color(rgb(theme.border))
+                        .border_color(rgb(theme.control_border))
                         .text_size(font_size::META)
                         .text_color(rgb(theme.accent))
                         .child(if row.checked { "✓" } else { "" }),

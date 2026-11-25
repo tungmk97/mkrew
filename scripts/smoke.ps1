@@ -11,6 +11,10 @@ Only processes whose exe lives in "<Root>\bin" are ever stopped.
   smoke.ps1 mk <args...>                run the sandbox's mk (example: smoke.ps1 mk project list)
   smoke.ps1 shot -Out x.png [-Width 1400 -Height 860] [-Mode print|screen] [-AllWindows]
   smoke.ps1 drag -Phase down|move|up -FromX .2 -FromY .5 [-ToX .8 -ToY .5]   positions are fractions of the main window
+  smoke.ps1 click -FromX .5 -FromY .1   left click at a fraction of the window
+  smoke.ps1 keys -Keys "^+y"            send keys to the window (System.Windows.Forms.SendKeys syntax: ^ Ctrl, + Shift, % Alt)
+  smoke.ps1 windows                     list the sandbox windows (title, size), largest first
+  -Window <text>: shot / drag / click / keys act on the largest window whose title holds <text> (default: the largest).
   -Width / -Height and saved images are in physical pixels (the script is DPI aware).
   smoke.ps1 stop                        stop the sandbox daemon and UI, delete the sandbox
 
@@ -19,7 +23,7 @@ The fake agent profile is "fake" (mkrew-fakeagent is on the sandbox PATH).
 If a PrintWindow image is all black, use -Mode screen (the window must be on top and uncovered).
 #>
 param(
-    [Parameter(Mandatory = $true, Position = 0)][ValidateSet("start", "mk", "shot", "drag", "stop")][string]$Command,
+    [Parameter(Mandatory = $true, Position = 0)][ValidateSet("start", "mk", "shot", "drag", "click", "keys", "windows", "stop")][string]$Command,
     [ValidateSet("dark", "light")][string]$Theme = "dark",
     [string]$Root = "$env:TEMP\mkrew-sandbox",
     [string]$Target = "",
@@ -33,6 +37,8 @@ param(
     [double]$FromY = 0,
     [double]$ToX = 0,
     [double]$ToY = 0,
+    [string]$Keys,
+    [string]$Window,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest
 )
 $ErrorActionPreference = "Stop"
@@ -78,6 +84,8 @@ public static class SmokeWin {
     return found;
   }
   static long Area(IntPtr h) { RECT r; GetWindowRect(h, out r); return (long)(r.R - r.L) * (r.B - r.T); }
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
+  public static string Title(IntPtr h) { var s = new System.Text.StringBuilder(512); GetWindowText(h, s, 512); return s.ToString(); }
 }
 "@
 # Physical pixels everywhere: without this, window sizes are scaled but PrintWindow draws every pixel.
@@ -95,6 +103,15 @@ function Get-SandboxWindow {
     $windows
 }
 
+# The window -Window names (its title holds that text), else the largest.
+function Get-TargetWindow {
+    $windows = @(Get-SandboxWindow)
+    if (-not $Window) { return $windows[0] }
+    $match = @($windows | Where-Object { [SmokeWin]::Title($_).Contains($Window) })
+    if ($match.Count -eq 0) { throw "no sandbox window titled *$Window*" }
+    $match[0]
+}
+
 function Get-Rect([IntPtr]$h) {
     $r = New-Object SmokeWin+RECT
     [SmokeWin]::GetWindowRect($h, [ref]$r) | Out-Null
@@ -110,14 +127,17 @@ function Get-Frame([IntPtr]$h) {
 
 # Another window can take the foreground between commands; never send input or a screen copy to it.
 function Set-Front([IntPtr]$h) {
-    # Skip when already in front: an Alt tap leaves the window in the Win32 menu mode (SC_KEYMENU), which eats the next keys.
     if ([SmokeWin]::GetForegroundWindow() -eq $h) { return }
-    # Windows refuses SetForegroundWindow from a background process unless a key was just pressed: tap Alt (0x12; 2 = key up).
-    [SmokeWin]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
-    [SmokeWin]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-    [SmokeWin]::SetForegroundWindow($h) | Out-Null
-    Start-Sleep -Milliseconds 400
-    if ([SmokeWin]::GetForegroundWindow() -ne $h) { throw "another window is in front of the sandbox window; bring Mkrew to the front and retry" }
+    # Windows refuses SetForegroundWindow from a background process unless a key was just pressed: tap Shift (0x10; 2 = key up).
+    # Not Alt: its key up can reach the new window and leave it in the Win32 menu mode (SC_KEYMENU), which eats the next input.
+    foreach ($try in 1..3) {
+        [SmokeWin]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
+        [SmokeWin]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero)
+        [SmokeWin]::SetForegroundWindow($h) | Out-Null
+        Start-Sleep -Milliseconds 400
+        if ([SmokeWin]::GetForegroundWindow() -eq $h) { return }
+    }
+    throw "another window is in front of the sandbox window; bring Mkrew to the front and retry"
 }
 
 function Invoke-Mk([string[]]$MkArgs) {
@@ -177,7 +197,7 @@ switch ($Command) {
     "shot" {
         if (-not $Out) { throw "shot needs -Out <file.png>" }
         $windows = @(Get-SandboxWindow)
-        if (-not $AllWindows) { $windows = @($windows[0]) }
+        if (-not $AllWindows) { $windows = @(Get-TargetWindow) }
         $n = 0
         foreach ($h in $windows) {
             if ($Width -gt 0 -and $n -eq 0) {
@@ -211,7 +231,7 @@ switch ($Command) {
     }
     "drag" {
         if (-not $Phase) { throw "drag needs down, move or up" }
-        $h = @(Get-SandboxWindow)[0]
+        $h = Get-TargetWindow
         if ($Phase -ne "up") { Set-Front $h }
         $r = Get-Frame $h
         $w = $r.R - $r.L
@@ -222,6 +242,31 @@ switch ($Command) {
             "down" { Move-To $FromX $FromY; Start-Sleep -Milliseconds 150; [SmokeWin]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 150 }
             "move" { 1..20 | ForEach-Object { Move-To ($FromX + ($ToX - $FromX) * $_ / 20) ($FromY + ($ToY - $FromY) * $_ / 20); Start-Sleep -Milliseconds 25 }; Start-Sleep -Milliseconds 300 }
             "up" { [SmokeWin]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero) }
+        }
+    }
+    "click" {
+        $h = Get-TargetWindow
+        Set-Front $h
+        $r = Get-Frame $h
+        [SmokeWin]::SetCursorPos([int]($r.L + $FromX * ($r.R - $r.L)), [int]($r.T + $FromY * ($r.B - $r.T))) | Out-Null
+        Start-Sleep -Milliseconds 150
+        [SmokeWin]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+        [SmokeWin]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 400
+    }
+    "keys" {
+        if (-not $Keys) { throw "keys needs -Keys" }
+        Add-Type -AssemblyName System.Windows.Forms
+        Set-Front (Get-TargetWindow)
+        # Plain text goes one character at a time (a burst drops keys); key chords go as one.
+        if ($Keys -match '[\^\+%~\{\}\(\)]') { [System.Windows.Forms.SendKeys]::SendWait($Keys) }
+        else { foreach ($c in $Keys.ToCharArray()) { [System.Windows.Forms.SendKeys]::SendWait([string]$c); Start-Sleep -Milliseconds 30 } }
+        Start-Sleep -Milliseconds 400
+    }
+    "windows" {
+        foreach ($h in @(Get-SandboxWindow)) {
+            $r = Get-Frame $h
+            Write-Output ("{0}  {1} x {2}" -f [SmokeWin]::Title($h), ($r.R - $r.L), ($r.B - $r.T))
         }
     }
     "stop" {

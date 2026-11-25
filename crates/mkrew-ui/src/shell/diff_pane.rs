@@ -4,7 +4,7 @@ use crate::*;
 
 /// The diff list of one workspace's Diff leaf: the `git_diff_*` fields `Shell` held while the
 /// diff was a view of its own. One per workspace, so a diff pane in a detached window
-/// and one in the main window (two workspaces) never share it.
+/// and one in a Space window (two workspaces) never share it.
 pub(crate) struct DiffViewState {
     /// The diff rows (a variable-height list: wrapped lines are taller).
     pub(crate) list: ListState,
@@ -31,17 +31,17 @@ impl DiffViewState {
 }
 
 impl Shell {
-    /// A Diff leaf of the active workspace is drawn: in the main window's tab in front, or in
+    /// A Diff leaf of `host`'s workspace is drawn: in that Space window's tab in front, or in
     /// the tab a visible detached window shows.
-    pub(crate) fn diff_on_screen(&self) -> bool {
-        let Some(project_id) = self.workspace else {
+    pub(crate) fn diff_on_screen(&self, host: HostId) -> bool {
+        let Some(project_id) = self.workspace_of(host) else {
             return false;
         };
         let Some(tabs) = self.tabs.get(&project_id) else {
             return false;
         };
         let holds = |tab: &Tab| tab.shown().contains(&PaneKey::Diff);
-        let in_front = self.view() == View::Terminals && tabs.active().is_some_and(holds);
+        let in_front = self.view(host) == View::Terminals && tabs.active().is_some_and(holds);
         in_front
             || (self.detached.visible_tabs().into_iter()).any(
                 |DockTab::Terminal { project, tab_id }| {
@@ -80,15 +80,13 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        // A detached window has no Git panel: the main window opens it.
-        if self.host_of(window) != HostId::Main {
-            self.in_window(HostId::Main, cx, move |shell, window, cx| {
-                window.activate_window();
+        // A detached window has no Git panel: the workspace's Space window opens it.
+        if !self.acts_here(project_id, window) {
+            return self.in_workspace(project_id, window, cx, move |shell, window, cx| {
                 shell.open_diff(project_id, place, window, cx);
             });
-            return;
         }
-        if self.view() != View::Terminals {
+        if self.view(self.space_host(window)) != View::Terminals {
             self.show_view(View::Terminals, window, cx);
         }
         self.place_leaf(project_id, Leaf::diff(), place, window, cx);
@@ -104,10 +102,10 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        // A Diff leaf of another workspace (torn off to a window while the main window shows
+        // A Diff leaf of another workspace (torn off to a window while the Space window shows
         // a different one): Git and its keys belong to the active workspace only, so this
         // pane never acts on the wrong one.
-        if self.workspace != Some(project_id) {
+        if self.workspace_in(window) != Some(project_id) {
             return message(
                 theme,
                 None,
@@ -118,9 +116,8 @@ impl Shell {
             .child(
                 button("diff-switch-workspace", "Switch to workspace", theme, true).on_click(
                     cx.listener(move |shell, _, window, cx| {
-                        shell.in_main_window(window, cx, move |shell, window, cx| {
-                            shell.activate_workspace(project_id, window, cx);
-                        });
+                        let ctrl = window.modifiers().secondary();
+                        shell.route_workspace(project_id, Then::Nothing, ctrl, None, window, cx);
                     }),
                 ),
             )
@@ -134,7 +131,7 @@ impl Shell {
         let card = self
             .render_git_diff(project_id, view, theme, window, cx)
             .key_context(GIT_CONTEXT);
-        let card = if self.git_panel_shown() {
+        let card = if self.git_panel_shown(self.space_host(window)) {
             card
         } else {
             card.track_focus(&self.git_focus)

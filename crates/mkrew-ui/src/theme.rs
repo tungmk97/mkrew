@@ -186,10 +186,10 @@ pub const PREFERRED_UI_FONT: &str = "Inter";
 /// one is used).
 pub const DIAGRAM_FONT: &str = "Segoe UI, Helvetica Neue, DejaVu Sans, sans-serif";
 
-/// Size of a new main window.
+/// Size of a new Space window (with no saved place).
 pub const WINDOW_WIDTH: f32 = 1200.0;
 pub const WINDOW_HEIGHT: f32 = 760.0;
-/// Smallest main window: the title bar's contents fit (ADR 0034).
+/// Smallest Space window: the title bar's contents fit (ADR 0034).
 pub const WINDOW_MIN_WIDTH: f32 = 1100.0;
 pub const WINDOW_MIN_HEIGHT: f32 = 560.0;
 /// Smallest detached window (ADR 0096): a title bar with tabs and one pane fit.

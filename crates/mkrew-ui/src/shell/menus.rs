@@ -188,7 +188,7 @@ impl Shell {
     }
 
     /// The tab menu (right-click a tab): Pin, Split right / down, Rename,
-    /// the moves to other windows, Close, and in the main window Close others and Close tabs to
+    /// the moves to other windows, Close, and in a Space window Close others and Close tabs to
     /// the right (pinned tabs stay); on the active tab also the focused pane's Rename pane,
     /// Close pane, Zoom pane (with several panes, or while zoomed) and, for an agent, Follow in
     /// Zed (✓ while on) and Turns…, then its Change color swatches. The panes have no header
@@ -253,7 +253,7 @@ impl Shell {
             .keys(key(Command::CloseTab))
             .row(),
         );
-        if matches!(self.menu_host, HostId::Main) {
+        if self.menu_host.space().is_some() {
             rows.push(
                 MenuItem::new(
                     "Close others",
@@ -366,8 +366,9 @@ impl Shell {
     }
 
     /// The split button's menu (SPEC §10): Split right, Split down, Equalize panes, then the
-    /// layouts, each with its thumbnail and shortcut. A layout holding fewer panes than the tab
-    /// has is greyed (its tooltip says why).
+    /// layouts, each with its thumbnail and shortcut, then in a Space window the window mode
+    /// switch (ADR 0115). A layout holding fewer panes than the tab has is greyed (its tooltip
+    /// says why).
     pub(crate) fn layout_menu_rows(&self, menu: &LayoutMenu) -> Rows {
         let panes = (self.tabs.values())
             .find_map(|tabs| tabs.tab(menu.tab_id))
@@ -402,6 +403,22 @@ impl Shell {
             };
             item.row()
         }));
+        let mode_row = match self.window_mode {
+            _ if self.menu_host.space().is_none() => None,
+            WindowMode::Single if self.sidebar.projects().len() > 1 => Some(MenuItem::new(
+                "Open each workspace in its own window…",
+                run(Command::SplitWindows),
+            )),
+            WindowMode::Single => None,
+            WindowMode::PerWorkspace => Some(MenuItem::new(
+                "Combine into one window",
+                run(Command::CombineWindows),
+            )),
+        };
+        if let Some(item) = mode_row {
+            rows.push(MenuRow::Separator);
+            rows.push(item.row());
+        }
         rows
     }
 
@@ -537,11 +554,18 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.workspace == Some(project_id) {
+        if self.workspace_in(window) == Some(project_id) {
             self.sidebar.toggle(project_id);
             cx.notify();
         } else {
-            self.activate_workspace(project_id, window, cx);
+            self.route_workspace(
+                project_id,
+                Then::Nothing,
+                window.modifiers().secondary(),
+                None,
+                window,
+                cx,
+            );
         }
     }
 }

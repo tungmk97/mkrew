@@ -9,9 +9,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let order = self.shown_workspaces();
-        if let Some(project_id) = sidebar::workspace_at_offset(&order, self.workspace, offset) {
-            self.activate_workspace(project_id, window, cx);
+        let order = self.shown_workspaces(self.space_host(window));
+        if let Some(project_id) =
+            sidebar::workspace_at_offset(&order, self.workspace_in(window), offset)
+        {
+            self.route_workspace(project_id, Then::Nothing, false, None, window, cx);
         }
     }
 
@@ -23,7 +25,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project) = self.workspace else {
+        let Some(project) = self.workspace_in(window) else {
             return;
         };
         let detached = &self.detached;
@@ -42,7 +44,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(project_id) = self.workspace
+        if let Some(project_id) = self.workspace_in(window)
             && self.tabs.contains_key(&project_id)
         {
             self.create_tab(project_id, Some((kind, None)), window, cx);
@@ -57,7 +59,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(project_id) = self.workspace
+        if let Some(project_id) = self.workspace_in(window)
             && self.tabs.contains_key(&project_id)
         {
             self.show_view(View::Terminals, window, cx);
@@ -142,7 +144,7 @@ impl Shell {
                     }
                 }
             }
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 shell.starting_pane = None;
                 let write = (shell.tabs.get_mut(&project_id))
                     .and_then(|tabs| tabs.arrange(tab_id, preset, &started));
@@ -202,15 +204,15 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let host = (self.terminal_project(tab_id))
-            .map_or(HostId::Main, |project| self.terminal_host(project, tab_id));
+        let host =
+            (self.terminal_project(tab_id)).and_then(|project| self.terminal_host(project, tab_id));
         match host {
-            HostId::Main => {
-                if let Some(tabs) = self.active_tabs_mut() {
+            Some(HostId::Space(_)) | None => {
+                if let Some(tabs) = self.active_tabs_mut(window) {
                     tabs.activate(tab_id);
                 }
             }
-            HostId::Detached(key) => {
+            Some(HostId::Detached(key)) => {
                 let at = (self.detached.tabs_of(key).iter()).position(
                     |tab| matches!(tab, DockTab::Terminal { tab_id: id, .. } if *id == tab_id),
                 );
@@ -637,7 +639,7 @@ impl Shell {
                 match target {
                     Some(sidebar::Target::Session(id)) => self.open_session(id, window, cx),
                     Some(sidebar::Target::Workspace(id)) => {
-                        self.activate_workspace(id, window, cx);
+                        self.route_workspace(id, Then::Nothing, false, None, window, cx);
                     }
                     None => self.focus_pane(window, cx),
                 }
@@ -736,7 +738,7 @@ impl Shell {
                 let closed = connection
                     .call::<()>(Request::TabClose(TabRef { tab_id }))
                     .await;
-                let shown = this.update_in(cx, |shell, window, cx| {
+                let shown = Shell::answer(&this, cx, |shell, window, cx| {
                     match closed {
                         Ok(()) => {
                             for session in &sessions {
@@ -758,7 +760,7 @@ impl Shell {
                     }
                     cx.notify();
                 });
-                if shown.is_err() {
+                if shown.is_none() {
                     return;
                 }
             }
@@ -776,7 +778,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.tab_menu = None;
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         // Only the tabs of the same window: those in another one are not on this strip.
@@ -786,7 +788,7 @@ impl Shell {
             })
             .map(|target| (project_id, target))
             .collect();
-        if let Some(tabs) = self.active_tabs_mut() {
+        if let Some(tabs) = self.active_tabs_mut(window) {
             tabs.activate(tab_id);
         }
         self.sync_panes(window, cx);
@@ -837,7 +839,7 @@ impl Shell {
                 );
                 cx.spawn_in(window, async move |this, cx| {
                     let choice = CloseChoice::from_answer(answer.await.ok());
-                    let _ = this.update_in(cx, |shell, window, cx| match choice {
+                    let _ = Shell::answer(&this, cx, |shell, window, cx| match choice {
                         CloseChoice::Kill => {
                             shell.remove_pane(session, window, cx);
                             // It may have exited while the dialog was open.
@@ -873,10 +875,10 @@ impl Shell {
             // Saved first: requests go out in call order, so `tab.close` sees no panes and
             // leaves a hidden session alive.
             self.save_layout(project_id, write, window, cx);
-            // A tab in a detached window closes too, whichever workspace the main window shows.
+            // A tab in a detached window closes too, whichever workspace a Space window shows.
             if let Some(tab_id) = emptied
-                && (self.workspace == Some(project_id)
-                    || self.terminal_host(project_id, tab_id) != HostId::Main)
+                && (self.workspace_in(window) == Some(project_id)
+                    || self.is_detached_tab(project_id, tab_id))
             {
                 self.close_tab(project_id, tab_id, window, cx);
             }
@@ -987,7 +989,7 @@ impl Shell {
             let removed = connection
                 .call::<()>(Request::SessionRemove(SessionRef { session_id }))
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| match removed {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match removed {
                 Ok(()) => {
                     shell.sidebar.remove_session(session_id);
                     shell.remove_pane(session_id, window, cx);
@@ -1027,7 +1029,7 @@ impl Shell {
                 let removed = connection
                     .call::<()>(Request::SessionRemove(SessionRef { session_id }))
                     .await;
-                let _ = this.update_in(cx, |shell, window, cx| match removed {
+                let _ = Shell::answer(&this, cx, |shell, window, cx| match removed {
                     Ok(()) => {
                         shell.sidebar.remove_session(session_id);
                         shell.remove_pane(session_id, window, cx);

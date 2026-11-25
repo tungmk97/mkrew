@@ -82,7 +82,9 @@ impl Shell {
         }
         self.sync_panes(window, cx);
         // The Git tab is still on screen: the keyboard stays in its list.
-        if self.workspace == Some(project_id) && self.git_panel_shown() {
+        if self.workspace_in(window) == Some(project_id)
+            && self.git_panel_shown(self.space_host(window))
+        {
             window.focus(&self.git_focus, cx);
         }
         cx.notify();
@@ -98,7 +100,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let git_before = self.git_shown();
+        let git_before = self.git_shown(self.space_host(window));
         self.open_diff(project_id, documents::Place::NewTab, window, cx);
         self.show_panel_tab(PanelTab::Git, window, cx);
         if git_before {
@@ -123,7 +125,9 @@ impl Shell {
         view.repo = repo;
         view.commit.text = draft;
         self.git.insert(project_id, view);
-        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        if let Some(view) = self.project_view(project_id) {
+            view.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        }
         self.scroll_diff_to(project_id, 0);
         true
     }
@@ -165,7 +169,7 @@ impl Shell {
                     return;
                 }
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let view = shell.git_view(project_id);
                 let worktree = view.worktree_task_id;
                 let picked = git_view::pick_repo(view.repo.as_deref(), &repos);
@@ -182,57 +186,44 @@ impl Shell {
         .detach();
     }
 
-    /// The summary of the shown workspace (None until loaded, and for other workspaces).
-    pub(crate) fn git_summary(&self) -> Option<&GitSummary> {
-        self.git_summary
-            .as_ref()
-            .filter(|(id, _)| Some(*id) == self.workspace)
-            .map(|(_, summary)| summary)
+    /// The summary of `project` (None until loaded, and for workspaces no window shows).
+    pub(crate) fn git_summary(&self, project: Ulid) -> Option<&GitSummary> {
+        self.git_summaries.get(&project)
     }
 
-    /// `git.repos`, then one `git.status` per repository, for the shown workspace (title bar).
-    /// Asked on a workspace switch and on its `git.changed`, never polled and never for a
-    /// hidden workspace. One request set at a time: a change that arrives meanwhile asks once
-    /// more when it answers.
-    pub(crate) fn load_git_summary(
-        &mut self,
-        project_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
+    /// `git.repos`, then one `git.status` per repository, for a shown workspace (title bar).
+    /// Asked when a window shows it and on its `git.changed`, never polled and never for a
+    /// hidden workspace. One request set per workspace at a time: a change that arrives
+    /// meanwhile asks once more when it answers.
+    pub(crate) fn load_git_summary(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        if self.git_summary_busy {
-            self.git_summary_again = true;
+        if !self.git_summary_busy.insert(project_id) {
+            self.git_summary_again.insert(project_id);
             return;
         }
-        self.git_summary_busy = true;
-        cx.spawn_in(window, async move |this, cx| {
+        // Not tied to a window: the asking one may close meanwhile, and the busy mark must
+        // still clear.
+        cx.spawn(async move |this, cx| {
             let loaded = git_summary_of(&connection, project_id).await;
-            let _ = this.update_in(cx, |shell, window, cx| {
-                shell.git_summary_busy = false;
-                let again = std::mem::take(&mut shell.git_summary_again);
-                let shown = shell.workspace;
+            let _ = this.update(cx, |shell, cx| {
+                shell.git_summary_busy.remove(&project_id);
+                let again = shell.git_summary_again.remove(&project_id);
+                let shown = shell.on_screen_workspaces().contains(&project_id);
                 match loaded {
                     // An answer for a workspace that is no longer shown is dropped.
-                    Ok(summary) if shown == Some(project_id) => {
-                        let same = matches!(
-                            &shell.git_summary,
-                            Some((id, old)) if *id == project_id && *old == summary
-                        );
-                        if !same {
-                            shell.git_summary = Some((project_id, summary));
+                    Ok(summary) if shown => {
+                        if shell.git_summaries.get(&project_id) != Some(&summary) {
+                            shell.git_summaries.insert(project_id, summary);
                             cx.notify();
                         }
                     }
                     Ok(_) => {}
                     Err(error) => tracing::warn!(%project_id, "git summary failed: {error:#}"),
                 }
-                if let Some(shown) = shown
-                    && (again || shown != project_id)
-                {
-                    shell.load_git_summary(shown, window, cx);
+                if shown && again {
+                    shell.load_git_summary(project_id, cx);
                 }
             });
         })
@@ -284,7 +275,7 @@ impl Shell {
         let loaded = connection.call::<Vec<Commit>>(Request::GitLog(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, "git.log failed: {error}");
                 }
@@ -314,7 +305,7 @@ impl Shell {
         let loaded = connection.call::<CommitDetail>(Request::GitShow(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, commit = hash, "git.show failed: {error}");
                 }
@@ -358,7 +349,9 @@ impl Shell {
     ) {
         window.focus(&self.git_focus, cx);
         let requests = self.git_view(project_id).show(section);
-        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.host_view(self.space_host(window))
+            .git_files_scroll
+            .scroll_to_item(0, ScrollStrategy::Top);
         self.git_requests(project_id, requests, window, cx);
     }
 
@@ -380,7 +373,7 @@ impl Shell {
         let loaded = connection.call::<GitStatus>(Request::GitStatus(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, "git.status failed: {error}");
                 }
@@ -392,7 +385,9 @@ impl Shell {
                 // Which of the listed files are still marked as viewed (no-op in the History).
                 shell.load_git_viewed(project_id, window, cx);
                 // Everything committed: the box is gone, the list takes the keyboard back.
-                if shell.git_commit_focus.is_focused(window) && !shell.git_commit_shown() {
+                if shell.git_commit_focus.is_focused(window)
+                    && !shell.git_commit_shown(shell.space_host(window))
+                {
                     window.focus(&shell.git_focus, cx);
                 }
             });
@@ -423,7 +418,7 @@ impl Shell {
                     return;
                 }
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(view) = shell.git_at(project_id, &at) else {
                     return;
                 };
@@ -443,7 +438,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let requests = self.git_view(project_id).filter_changed_by(session);
-        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.host_view(self.space_host(window))
+            .git_files_scroll
+            .scroll_to_item(0, ScrollStrategy::Top);
         self.git_requests(project_id, requests, window, cx);
     }
 
@@ -478,13 +475,13 @@ impl Shell {
                     .await),
                 Err(error) => Err(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, path = target.path, "git.diff failed: {error}");
                 }
                 let mode = shell.diff_mode;
                 let mut reveal = None;
-                let on_screen = shell.workspace == Some(project_id);
+                let on_screen = shell.on_screen_workspaces().contains(&project_id);
                 let again = shell.git_at(project_id, &at).and_then(|view| {
                     let again = view.diff_loaded(&target, loaded);
                     // A cross-file `n` / `p` picked its hunk: scroll to it (not on a refresh).
@@ -509,7 +506,7 @@ impl Shell {
         .detach();
     }
 
-    /// Follows `git.changed` while the active workspace's Git is on screen (the panel's tab or
+    /// Follows `git.changed` while a shown workspace's Git is on screen (the panel's tab or
     /// the diff); hidden ones refresh when shown.
     pub(crate) fn git_event(
         &mut self,
@@ -517,14 +514,16 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace.filter(|_| self.git_shown()) else {
-            return;
-        };
-        let Some(view) = self.git.get_mut(&project_id) else {
-            return;
-        };
-        let requests = view.apply(event);
-        self.git_requests(project_id, requests, window, cx);
+        let shown: Vec<Ulid> = (self.spaces_shown())
+            .filter_map(|(key, project)| project.filter(|_| self.git_shown(HostId::Space(key))))
+            .collect();
+        for project_id in shown {
+            let Some(view) = self.git.get_mut(&project_id) else {
+                continue;
+            };
+            let requests = view.apply(event);
+            self.git_requests(project_id, requests, window, cx);
+        }
     }
 
     /// A click on a changed file: the diff leaf shows it.
@@ -556,7 +555,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
-            if let Some(project_id) = self.workspace
+            if let Some(project_id) = self.workspace_in(window)
                 && self
                     .git
                     .get(&project_id)
@@ -572,7 +571,7 @@ impl Shell {
         }
         if event.keystroke.key == "enter"
             && !event.keystroke.modifiers.modified()
-            && let Some(project_id) = self.workspace
+            && let Some(project_id) = self.workspace_in(window)
             && self
                 .git
                 .get(&project_id)
@@ -596,7 +595,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         if let git_view::Key::Stage(stage) = key {
@@ -622,7 +621,8 @@ impl Shell {
             _ => None,
         };
         if let Some(at) = file_row {
-            self.git_files_scroll
+            self.host_view(self.space_host(window))
+                .git_files_scroll
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
         match key {
@@ -653,7 +653,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         if let Some(change) = self.git_view(project_id).stage_all_key(stage) {
@@ -665,7 +665,7 @@ impl Shell {
     /// of the selected file (nothing for a file that cannot be discarded: `open_git_discard`
     /// checks).
     pub(crate) fn git_discard_selected(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         let Some(view) = self.git.get(&project_id) else {
@@ -688,8 +688,10 @@ impl Shell {
         let row = view.list_rows().iter().position(|row| {
             matches!(row, git_view::ListRow::File(target, _) if view.selected.as_ref() == Some(target))
         });
-        if let Some(at) = row {
-            self.git_files_scroll
+        if let Some(at) = row
+            && let Some(view) = self.project_view(project_id)
+        {
+            view.git_files_scroll
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
     }
@@ -750,7 +752,7 @@ impl Shell {
                 Ok(Outcome::Error(body)) => Err(body.message),
                 Err(error) => Err(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, ?stage, "git stage/unstage failed: {error}");
                 }
@@ -777,7 +779,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
@@ -802,10 +804,10 @@ impl Shell {
     }
 
     /// Whether the panel's Git tab is shown with its commit box.
-    pub(crate) fn git_commit_shown(&self) -> bool {
-        self.git_panel_shown()
+    pub(crate) fn git_commit_shown(&self, host: HostId) -> bool {
+        self.git_panel_shown(host)
             && self
-                .workspace
+                .workspace_of(host)
                 .and_then(|id| self.git.get(&id))
                 .is_some_and(GitView::commit_box_shown)
     }
@@ -857,7 +859,7 @@ impl Shell {
                     .map_err(|error| format!("{error:#}")),
                 Err(error) => Err(error),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, "git.commit failed: {error}");
                 }
@@ -906,7 +908,7 @@ impl Shell {
             let Err(error) = started.await else {
                 return;
             };
-            let _ = this.update_in(cx, |shell, _, cx| {
+            let _ = Shell::answer(&this, cx, |shell, _, cx| {
                 for view in shell.git.values_mut() {
                     view.commit
                         .generated(generation_id, Err(format!("{error:#}")));
@@ -942,7 +944,7 @@ impl Shell {
                 Ok(Outcome::Error(body)) => Err(body.message),
                 Err(error) => Err(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, ?remote, "git fetch/push failed: {error}");
                 }

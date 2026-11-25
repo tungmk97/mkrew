@@ -133,7 +133,7 @@ impl Shell {
         let sent = connection.call::<Vec<DocComment>>(Request::CommentSendToAgent(params));
         cx.spawn_in(window, async move |this, cx| {
             let sent = sent.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let open = shell.dialog_serial == serial
                     && matches!(shell.doc_dialog, Some(DocDialog::Send(_)));
                 match sent {
@@ -176,14 +176,17 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace.filter(|_| self.connection.is_some()) else {
+        let Some(project_id) = self
+            .workspace_in(window)
+            .filter(|_| self.connection.is_some())
+        else {
             return;
         };
         let sessions = self.sidebar.sessions();
         // The pane's own workspace (a detached window may show another one).
         let file = self.focused_doc(window);
         let diff = self.focused_diff(window).is_some();
-        let (file_path, prefill, task) = match self.view() {
+        let (file_path, prefill, task) = match self.view(self.space_host(window)) {
             View::Terminals if file.is_some() => {
                 let picked = (file.as_ref())
                     .and_then(|(project, file)| self.picked_file_lines(*project, file))

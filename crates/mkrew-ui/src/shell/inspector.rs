@@ -3,24 +3,37 @@
 use crate::*;
 
 impl Shell {
-    /// `ToggleInspector` / the title bar's `◨`: hides or shows the right panel (its tab is
-    /// kept); from a view without it, shows Terminals with the panel open.
+    /// `ToggleInspector` / the title bar's `◨`: hides or shows the window's right panel (its
+    /// tab is kept); from a view without it, shows Terminals with the panel open.
     pub(crate) fn toggle_inspector(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if self.workspace.is_none() {
+        let host = self.space_host(window);
+        if self.workspace_of(host).is_none() {
             return;
         }
-        let mode_before = self.right_panel.mode();
-        let (tree_before, git_before) = if self.panel_view() {
-            let before = (self.files_on_screen(), self.git_shown());
-            self.right_panel.open = !self.right_panel.open;
+        let mode_before = self.panel(host).mode();
+        let (tree_before, git_before) = if self.panel_view(host) {
+            let before = (self.files_on_screen(host), self.git_shown(host));
+            let panel = self.panel_mut(host);
+            panel.open = !panel.open;
             before
         } else {
-            self.right_panel.open = true;
+            self.panel_mut(host).open = true;
             self.show_view(View::Terminals, window, cx);
             // `show_view` refreshed the tree / Git list if it came on screen.
-            (self.files_on_screen(), self.git_shown())
+            (self.files_on_screen(host), self.git_shown(host))
         };
         self.panel_changed(tree_before, git_before, mode_before, window, cx);
+    }
+
+    /// The right panel of Space window `host`, to change it.
+    pub(crate) fn panel_mut(&mut self, host: HostId) -> &mut inspector::RightPanel {
+        let default = self.panel_default;
+        &mut (self.hosts.entry(host))
+            .or_insert_with(|| shell::hosts::HostUi {
+                right_panel: default,
+                ..Default::default()
+            })
+            .right_panel
     }
 
     /// A click on the panel's `Files` / `Session` tab.
@@ -30,22 +43,23 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let host = self.space_host(window);
         let (tree_before, git_before, mode_before) = (
-            self.files_on_screen(),
-            self.git_shown(),
-            self.right_panel.mode(),
+            self.files_on_screen(host),
+            self.git_shown(host),
+            self.panel(host).mode(),
         );
-        self.right_panel.show(tab);
+        self.panel_mut(host).show(tab);
         self.panel_changed(tree_before, git_before, mode_before, window, cx);
     }
 
     /// Ctrl+Shift+3: the right panel on the file tree, which gets the keyboard; from a view
     /// without the panel, Terminals first.
     pub(crate) fn show_file_tree(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
-        if !self.panel_view() {
+        if !self.panel_view(self.space_host(window)) {
             self.show_view(View::Terminals, window, cx);
         }
         self.show_panel_tab(PanelTab::Files, window, cx);
@@ -58,15 +72,17 @@ impl Shell {
     /// Ctrl+Shift+4: the right panel on the Git tab, whose list gets the keyboard; from a
     /// view without the panel, Terminals first.
     pub(crate) fn show_git_panel(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
-        if !self.panel_view() {
+        if !self.panel_view(self.space_host(window)) {
             self.show_view(View::Terminals, window, cx);
         }
         self.show_panel_tab(PanelTab::Git, window, cx);
         // Without loaded tabs the Terminals view draws no panel: nothing to focus.
-        if self.view() != View::Terminals || self.tabs.contains_key(&project_id) {
+        if self.view(self.space_host(window)) != View::Terminals
+            || self.tabs.contains_key(&project_id)
+        {
             window.focus(&self.git_focus, cx);
         }
     }
@@ -82,25 +98,27 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if !self.right_panel.open {
+        let host = self.space_host(window);
+        let panel = self.panel(host);
+        if !panel.open {
             // The grip is gone: no mouse-up will end a drag in progress.
             self.end_inspector_drag(cx);
         }
-        if self.file_tree_shown() {
-            if !tree_before && let Some(project_id) = self.workspace {
+        if self.file_tree_shown(host) {
+            if !tree_before && let Some(project_id) = self.workspace_of(host) {
                 self.refresh_files(project_id, window, cx);
             }
         } else if self.files_focus.is_focused(window) {
             self.focus_center(window, cx);
         }
-        if self.git_shown()
+        if self.git_shown(host)
             && !git_before
-            && let Some(project_id) = self.workspace
+            && let Some(project_id) = self.workspace_of(host)
         {
             self.refresh_git(project_id, window, cx);
         }
         // The Git tab went away under the keyboard: its list, filter field or commit box.
-        if !self.git_panel_shown()
+        if !self.git_panel_shown(host)
             && [
                 &self.git_focus,
                 &self.git_filter_focus,
@@ -111,8 +129,10 @@ impl Shell {
         {
             self.focus_center(window, cx);
         }
-        let value = format!("\"{}\"", self.right_panel.mode().name());
-        if self.right_panel.mode() != mode_before
+        // A new Space window starts with the panel changed last.
+        self.panel_default = panel;
+        let value = format!("\"{}\"", panel.mode().name());
+        if panel.mode() != mode_before
             && let Err(error) =
                 mkrew_core::settings::write_ui_value(&self.settings_file, "right_panel", &value)
         {
@@ -138,15 +158,17 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let sideways = matches!(direction, Direction::Left | Direction::Right);
-        let in_panel = (self.file_tree_shown() && self.files_focus.is_focused(window))
-            || (self.git_panel_shown() && self.git_focus.is_focused(window));
+        let in_panel = (self.file_tree_shown(self.space_host(window))
+            && self.files_focus.is_focused(window))
+            || (self.git_panel_shown(self.space_host(window)) && self.git_focus.is_focused(window));
         if sideways && in_panel {
             if direction == Direction::Left {
                 self.focus_center(window, cx);
             }
             return;
         }
-        if (self.detached_key(window).is_some() || self.view() == View::Terminals)
+        if (self.detached_key(window).is_some()
+            || self.view(self.space_host(window)) == View::Terminals)
             && self
                 .with_tab(window, |tabs| tabs.focus_neighbour(direction))
                 .unwrap_or(false)
@@ -158,14 +180,16 @@ impl Shell {
         }
         match direction {
             // The compact rail widens (it has no filter); a hidden sidebar stays hidden.
-            Direction::Left if !self.sidebar_layout.hidden() => self.focus_sidebar(window, cx),
+            Direction::Left if self.sidebar_drawn() => self.focus_sidebar(window, cx),
             Direction::Right => {
                 // Without loaded tabs the Terminals view draws no panel.
-                let drawn = self.view() != View::Terminals
-                    || self.workspace.is_some_and(|id| self.tabs.contains_key(&id));
-                if drawn && self.file_tree_shown() {
+                let drawn = self.view(self.space_host(window)) != View::Terminals
+                    || self
+                        .workspace_in(window)
+                        .is_some_and(|id| self.tabs.contains_key(&id));
+                if drawn && self.file_tree_shown(self.space_host(window)) {
                     window.focus(&self.files_focus, cx);
-                } else if drawn && self.git_panel_shown() {
+                } else if drawn && self.git_panel_shown(self.space_host(window)) {
                     window.focus(&self.git_focus, cx);
                 }
             }
@@ -191,31 +215,55 @@ impl Shell {
         }
     }
 
-    /// The title bar's right panel toggle: a gray icon, on a raised fill while the panel is
-    /// open.
+    /// The title bar's panel toggle: a gray icon showing the panel's side, on a raised fill
+    /// while the panel is open.
     pub(crate) fn inspector_toggle(
         &self,
+        host: HostId,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let open = self.panel_shown();
+        let open = self.panel_shown(host);
+        let glyph = match self.panel_side {
+            PanelSide::Right => Icon::PanelRight,
+            PanelSide::Left => Icon::PanelLeft,
+        };
         icon_button_in(
             "toggle-inspector",
-            Icon::PanelRight,
+            glyph,
             if open { theme.text } else { theme.text_muted },
             theme,
         )
         .when(open, |el| el.bg(rgb(theme.surface_raised)))
         .tooltip(tooltip(
             theme,
-            if open {
-                "Hide right panel"
-            } else {
-                "Show right panel"
-            },
+            if open { "Hide panel" } else { "Show panel" },
             self.keymap.label(Command::ToggleInspector),
         ))
         .on_click(cx.listener(|shell, _, window, cx| shell.toggle_inspector(window, cx)))
+    }
+
+    /// Moves the panel to the other side and saves `[ui] panel_side` (ADR 0115).
+    pub(crate) fn toggle_panel_side(&mut self, cx: &mut Context<'_, Self>) {
+        self.panel_side = self.panel_side.other();
+        let value = format!("\"{}\"", self.panel_side.name());
+        if let Err(error) =
+            mkrew_core::settings::write_ui_value(&self.settings_file, "panel_side", &value)
+        {
+            self.settings_write_failed("the panel side", error, cx);
+        }
+        cx.notify();
+    }
+
+    /// The drawn sidebar's width in px: what sits left of a left panel.
+    fn sidebar_px(&self, window: &Window) -> f32 {
+        if !self.sidebar_drawn() {
+            0.0
+        } else if self.sidebar_layout.compact() {
+            f32::from(theme::rems_px(theme::COMPACT_SIDEBAR_WIDTH).to_pixels(window.rem_size()))
+        } else {
+            self.sidebar_width
+        }
     }
 
     /// The title bar's sidebar toggle (left of the workspace switcher): hide or show the sidebar.
@@ -248,12 +296,14 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        let side = self.panel_side;
         let grip = div()
             .id("inspector-grip")
             .absolute()
             .top_0()
             .bottom_0()
-            .left_0()
+            .when(side == PanelSide::Right, |el| el.left_0())
+            .when(side == PanelSide::Left, |el| el.right_0())
             .w(px(theme::GRIP_WIDTH))
             .cursor(CursorStyle::ResizeLeftRight)
             .on_drag(InspectorGrip, |_, _, _, cx| cx.new(|_| EmptyView))
@@ -262,9 +312,15 @@ impl Shell {
                     cx.set_active_drag_cursor_style(CursorStyle::ResizeLeftRight, window);
                     // ponytail: live width, one `session.resize` per changed column count;
                     // throttle if an agent TUI flickers while dragging.
+                    let side = shell.panel_side;
+                    let left = match side {
+                        PanelSide::Right => 0.0,
+                        PanelSide::Left => shell.sidebar_px(window),
+                    };
                     shell.inspector_width = inspector::width_from_pointer(
                         f32::from(window.viewport_size().width),
-                        f32::from(event.event.position.x),
+                        f32::from(event.event.position.x) - left,
+                        side,
                     );
                     shell.inspector_dragging = true;
                     cx.notify();
@@ -278,8 +334,8 @@ impl Shell {
                 MouseButton::Left,
                 cx.listener(|shell, _, _, cx| shell.end_inspector_drag(cx)),
             );
-        let tab = self.panel_tab();
-        let changed = self.git_summary().map_or(0, GitSummary::changed);
+        let tab = self.panel_tab(self.space_host(window));
+        let changed = self.git_summary(project_id).map_or(0, GitSummary::changed);
         // The tab row has the height of the title bar's tab chips and the sidebar's filter
         // row on its left: same height, same bottom divider. Icon tabs on the left, Tern style
         // (ADR 0110); the title is in the tooltip.
@@ -330,7 +386,7 @@ impl Shell {
             PanelTab::Files => self.render_file_tree(project_id, theme, window, cx),
             PanelTab::Session => {
                 let session = self
-                    .panel_session()
+                    .panel_session(self.space_host(window))
                     .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
                 let thread = session.and_then(|s| self.render_thread_section(s, theme, cx));
                 let cards = div()
@@ -379,7 +435,12 @@ impl Shell {
             .w(px(self.inspector_width))
             .h_full()
             .relative()
-            .border_l(px(theme::BORDER_WIDTH))
+            .when(side == PanelSide::Right, |el| {
+                el.border_l(px(theme::BORDER_WIDTH))
+            })
+            .when(side == PanelSide::Left, |el| {
+                el.border_r(px(theme::BORDER_WIDTH))
+            })
             .border_color(rgb(theme.divider))
             .bg(rgb(theme.bg))
             .font_family(theme.ui_font_family.clone())
@@ -407,7 +468,7 @@ impl Shell {
             .iter()
             .find(|p| p.id == project_id)
             .map_or("workspace", |p| p.name.as_str());
-        let lines = inspector::changes_card(self.git_summary(), workspace)?;
+        let lines = inspector::changes_card(self.git_summary(project_id), workspace)?;
         let card = inspector_card(theme, "Changes");
         if lines.is_empty() {
             return Some(card.child(meta_line(theme, "Working tree clean".into())));
@@ -693,7 +754,7 @@ impl Shell {
                     if !task_dialog::confirms_delete(answer.await.ok()) {
                         return;
                     }
-                    let _ = this.update_in(cx, |shell, window, cx| {
+                    let _ = Shell::answer(&this, cx, |shell, window, cx| {
                         // It may have exited while the dialog was open.
                         if !shell.is_exited(session) {
                             shell.kill(session, window, cx);

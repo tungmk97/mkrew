@@ -4,7 +4,7 @@ use super::pane_view::{PaneSlot, PaneView};
 use crate::*;
 
 impl Shell {
-    /// The tab area of the main window's title bar: the pinned tabs, the other tabs, a rule
+    /// The tab area of a Space window's title bar: the pinned tabs, the other tabs, a rule
     /// between groups; then `+` outside the scrolled part. A click on a tab shows Terminals
     /// (`tab_chip`).
     pub(crate) fn render_tab_area(
@@ -16,19 +16,20 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let view = self.view();
+        let view = self.view(self.space_host(window));
         let active = tabs.active().map(|tab| tab.id);
         // `place` counts the tabs of other windows too: it is the reorder index.
         let drawn: Vec<(usize, &Tab)> = tabs
             .tabs()
             .iter()
             .enumerate()
-            .filter(|(_, tab)| self.terminal_host(project_id, tab.id) == HostId::Main)
+            .filter(|(_, tab)| !self.is_detached_tab(project_id, tab.id))
             .collect();
         let pinned_count = tabs.tabs().iter().filter(|tab| tab.pinned).count();
         let pinned: Vec<bool> = drawn.iter().map(|(_, tab)| tab.pinned).collect();
         let items = area_items(&pinned);
-        let strip = (self.hosts.get(&HostId::Main))
+        let host = self.host_of(window);
+        let strip = (self.hosts.get(&host))
             .map(|ui| ui.strip.clone())
             .unwrap_or_default();
         let chips: Vec<gpui::AnyElement> = items
@@ -63,7 +64,7 @@ impl Shell {
                             title: label.unwrap_or(&tab.title).to_owned().into(),
                         };
                         let select = move |shell: &mut Shell| {
-                            if let Some(tabs) = shell.active_tabs_mut() {
+                            if let Some(tabs) = shell.tabs.get_mut(&project_id) {
                                 tabs.activate(tab_id);
                             }
                         };
@@ -97,10 +98,10 @@ impl Shell {
             .filter(|_| view == View::Terminals)
             .map(|index| (SharedString::from(format!("tab/{active:?}")), index));
         self.tab_area_frame(
-            HostId::Main,
+            host,
             chips,
             scroll_to,
-            Some(self.render_new_tab_button(HostId::Main, now, theme, window, cx)),
+            Some(self.render_new_tab_button(host, now, theme, window, cx)),
             theme,
             cx,
         )
@@ -145,7 +146,7 @@ impl Shell {
             .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
                 shell.drop_reordered(item, window, cx);
             }))
-            .when(host == HostId::Main, |el| self.strip_drops(el, theme, cx))
+            .when(host.space().is_some(), |el| self.strip_drops(el, theme, cx))
             // First: the strip records before its chips (prepaint goes parent first).
             .child(record_strip(strip, None))
             .child(
@@ -304,9 +305,9 @@ impl Shell {
                 true,
                 cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
                     select(shell);
-                    // A tab of the main window shows its terminals, also from Board or
+                    // A tab of a Space window shows its terminals, also from Board or
                     // Docs.
-                    if shell.host_of(window) == HostId::Main {
+                    if shell.host_of(window).space().is_some() {
                         shell.show_view(View::Terminals, window, cx);
                     }
                     shell.sync_panes(window, cx);
@@ -470,7 +471,7 @@ impl Shell {
         // The panes' 0..1 space in px, as laid out in the last frame (`content_canvas`).
         let area = (self.hosts.get(&slot.host)).map_or(0.0, |ui| f32::from(ui.content.get().width));
         // Voice text goes to the focused terminal when it has the keyboard: ring it.
-        let voice_ring = (slot.host == HostId::Main && is_focused)
+        let voice_ring = (slot.host.space().is_some() && is_focused)
             .then(|| self.voice_ring(&theme, cx))
             .flatten()
             .filter(|_| {
@@ -515,7 +516,11 @@ impl Shell {
                 theme,
                 Some(">_"),
                 Some("No panes in this tab"),
-                "Start an agent or a shell, or pick a session from the sidebar.".into(),
+                if self.sidebar_drawn() && host.space().is_some() {
+                    "Start an agent or a shell, or pick a session from the sidebar.".into()
+                } else {
+                    "Start an agent or a shell.".into()
+                },
                 None,
             )
             .flex_1()
@@ -1173,7 +1178,7 @@ pub(crate) fn detach(connection: &Connection, session_id: Ulid, cx: &mut Context
 pub(crate) enum DropTarget {
     /// A pane: a terminal types the paths, a file or diff pane opens the files.
     Pane(PaneKey),
-    /// The main window's tab strip: the files open as new tabs.
+    /// A Space window's tab strip: the files open as new tabs.
     Strip,
     /// The Prompt box of the open task dialog.
     TaskPrompt,
@@ -1213,7 +1218,7 @@ pub(crate) fn drop_catcher(
                                 }
                             }
                             DropTarget::Strip => {
-                                if let Some(project_id) = shell.workspace {
+                                if let Some(project_id) = shell.workspace_in(window) {
                                     shell.drop_os_files(project_id, &paths, window, cx);
                                 }
                             }

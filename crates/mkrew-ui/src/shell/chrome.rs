@@ -18,7 +18,8 @@ impl Shell {
         self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
-    /// Every workspace (the shown one checked), then "Add workspace…".
+    /// Every workspace (the shown one checked, one in another window marked ◳), then "Add
+    /// workspace…". A pick opens it the way the window mode says (`route_workspace`).
     pub(crate) fn switcher_rows(&self, project_id: Ulid) -> Rows {
         let mut rows: Rows = self
             .sidebar
@@ -28,13 +29,22 @@ impl Shell {
                 let id = project.id;
                 MenuItem::new(
                     project.name.clone(),
-                    act(move |shell, window, cx| shell.activate_workspace(id, window, cx)),
+                    act(move |shell, window, cx| {
+                        let at = shell.menu_anchor(&Anchor::Switcher, window, cx);
+                        let ctrl = window.modifiers().secondary();
+                        shell.route_workspace(id, Then::Nothing, ctrl, Some(at), window, cx);
+                    }),
                 )
                 .lead(Lead::Avatar {
                     name: project.name.clone(),
                     color: project.color.clone(),
                 })
                 .checked(id == project_id)
+                .keys(if id != project_id && self.space_of(id).is_some() {
+                    "◳"
+                } else {
+                    ""
+                })
                 .row()
             })
             .collect();
@@ -53,9 +63,9 @@ impl Shell {
     /// with the agent tab shortcut), the plain "Agent" row while none is listed, "Shell" and
     /// "Empty tab". Every row opens a new tab and shows Terminals; a new pane in the current
     /// tab comes from Split.
-    pub(crate) fn new_menu_rows(&self) -> Rows {
+    pub(crate) fn new_menu_rows(&self, host: HostId) -> Rows {
         let mut rows: Rows = Vec::new();
-        for agent in self.pane_agents() {
+        for agent in self.pane_agents(host) {
             let profile = agent.id.clone();
             let item = MenuItem::new(
                 agent.name.clone(),
@@ -166,7 +176,7 @@ impl Shell {
                 // mismatch it is the only way to try again.
                 .children((!matches!(self.status, Status::Connecting)).then(|| {
                     button("reconnect-now", "Try now", theme, true)
-                        .on_click(cx.listener(|shell, _, window, cx| shell.connect(window, cx)))
+                        .on_click(cx.listener(|shell, _, _, cx| shell.connect(cx)))
                 }))
                 .into_any_element(),
         )
@@ -180,7 +190,10 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         // The last screen stays while a lost connection is down (`reconnecting`).
-        let Some(project_id) = self.workspace.filter(|_| self.shows_workspaces()) else {
+        let Some(project_id) = self
+            .workspace_in(window)
+            .filter(|_| self.shows_workspaces())
+        else {
             let (sentence, detail) = self.status_line();
             return message(theme, Some("Mkrew"), sentence, detail)
                 .children(self.status_action(theme, cx))
@@ -188,18 +201,17 @@ impl Shell {
                 .h_full()
                 .into_any_element();
         };
-        let view = self.view();
+        let view = self.view(self.space_host(window));
         let main = div().flex_1().min_w_0().h_full().flex().flex_col();
         let panel = self
-            .panel_shown()
+            .panel_shown(self.space_host(window))
             .then(|| self.render_right_panel(project_id, now, theme, window, cx));
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
             (View::Terminals, Some(tabs)) => {
                 let every_tab_detached = !tabs.tabs().is_empty()
-                    && (tabs.tabs().iter())
-                        .all(|tab| self.terminal_host(project_id, tab.id) != HostId::Main);
+                    && (tabs.tabs().iter()).all(|tab| self.is_detached_tab(project_id, tab.id));
                 let terminals = div().flex_1().min_w_0().h_full().flex().flex_col().child(
                     if every_tab_detached {
                         empty_state(
@@ -212,27 +224,24 @@ impl Shell {
                         .flex_1()
                     } else {
                         self.render_tab(
-                            HostId::Main,
+                            self.space_host(window),
                             project_id,
                             tabs.active(),
                             now,
                             theme,
                             self.hosts
-                                .get(&HostId::Main)
+                                .get(&self.host_of(window))
                                 .map(|ui| ui.content.clone())
                                 .unwrap_or_default(),
                             cx,
                         )
                     },
                 );
-                main.child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .flex()
-                        .child(terminals)
-                        .children(panel),
-                )
+                let row = div().flex_1().min_h_0().flex();
+                main.child(match self.panel_side {
+                    PanelSide::Right => row.child(terminals).children(panel),
+                    PanelSide::Left => row.children(panel).child(terminals),
+                })
             }
             (View::Terminals, None) => {
                 let (sentence, detail) = self.status_line();
@@ -248,14 +257,15 @@ impl Shell {
     }
 
     /// The title bar above everything (SPEC §10, ADR 0106), one `TITLE_BAR_HEIGHT` bar: on the
-    /// left (main window) the machine chip, the sidebar toggle and the workspace switcher; the
+    /// left (Space window) the machine chip, the sidebar toggle and the workspace switcher; the
     /// tab area (the terminal, file and Diff tabs, the `+` row); a drag area; on the right the
-    /// voice status (only while the sidebar is hidden), the limits chip (main window, only at
-    /// 80% or more; it shows without a workspace too), the Run pill, the update button, the
-    /// Board and Docs icons, Split (while Terminals shows in the main window, always in a
-    /// detached one) and the panel toggle; on Windows minimize, maximize, close. A detached
-    /// window (`host` is not `Main`) has no left group, no workspace controls and no limits
-    /// chip. A 1 px rule sets each group apart (left, tab area, right); the drag area sits
+    /// voice status (only while the sidebar is hidden), the "need you" chip (a Space window in
+    /// mode 2, ADR 0115), the limits chip (Space windows, only at 80% or more; it shows
+    /// without a workspace too), the Run pill, the update button, the Board and Docs icons,
+    /// Split (while Terminals shows in a Space window, always in a detached one) and the panel
+    /// toggle; on Windows minimize, maximize, close. A detached window (`host` is not a Space
+    /// window) has no left group, no workspace controls and no limits chip. A 1 px rule sets
+    /// each group apart (left, tab area, right); the drag area sits
     /// between the last two. Every icon is gray: color is for status only. Without a workspace
     /// only the sidebar toggle, the limits chip, the drag area and the controls show, so the
     /// window can always be moved and closed.
@@ -267,18 +277,20 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let main = host == HostId::Main;
-        let workspace = self.workspace.filter(|_| main && self.shows_workspaces());
-        let view = self.view();
+        let main = host.space().is_some();
+        let workspace = self
+            .workspace_in(window)
+            .filter(|_| main && self.shows_workspaces());
+        let view = self.view(self.space_host(window));
         // An open dialog keeps the mouse too: the bar's controls are inert, only the drag area
         // and the window controls stay live (they never touch the app's state).
         let modal = self.modal_open() || self.reconnecting();
         // Never shrinks: the tab area gives way first.
         let mut left = div().flex_none().flex().items_center().gap(px(space::S));
         if main {
-            left = left
-                .children(self.machine_chip(theme))
-                .child(self.sidebar_toggle(theme, cx));
+            left = left.children(self.machine_chip(theme)).children(
+                (self.window_mode == WindowMode::Single).then(|| self.sidebar_toggle(theme, cx)),
+            );
         }
         if let Some(project_id) = workspace {
             left = left.child(self.render_workspace_switcher(project_id, theme, cx));
@@ -286,7 +298,7 @@ impl Shell {
         // The tab area; its strip is only recorded (for drops from other windows) while it is
         // painted.
         let tab_area = match host {
-            HostId::Main => workspace.and_then(|project_id| {
+            HostId::Space(_) => workspace.and_then(|project_id| {
                 let tabs = self.tabs.get(&project_id)?;
                 Some(
                     self.render_tab_area(project_id, tabs, now, theme, window, cx)
@@ -299,7 +311,7 @@ impl Shell {
         };
         if main
             && tab_area.is_none()
-            && let Some(ui) = self.hosts.get(&HostId::Main)
+            && let Some(ui) = self.hosts.get(&host)
         {
             *ui.strip.borrow_mut() = None;
         }
@@ -357,9 +369,10 @@ impl Shell {
         let mut right: Vec<gpui::AnyElement> = Vec::new();
         // The sidebar footer shows voice input; with the sidebar hidden it shows here, so a
         // live microphone is never unmarked.
-        if self.sidebar_layout.hidden() {
+        if !self.sidebar_drawn() {
             right.extend((self.voice_status(false, theme)).map(IntoElement::into_any_element));
         }
+        right.extend(self.render_need_you_chip(host, theme, cx));
         if main {
             right.extend(
                 self.render_limits_chip(theme, cx)
@@ -396,14 +409,18 @@ impl Shell {
         if let HostId::Detached(key) = host {
             right.push(
                 icon_button("move-all-back", Icon::Minimize2, theme)
-                    .tooltip(tooltip(theme, "Move all tabs back to the main window", ""))
+                    .tooltip(tooltip(
+                        theme,
+                        "Move all tabs back to their workspace windows",
+                        "",
+                    ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.move_all_back(key, window, cx);
                     }))
                     .into_any_element(),
             );
         }
-        // Split acts on the shown terminal tab: only while Terminals shows in the main window.
+        // Split acts on the shown terminal tab: only while Terminals shows in a Space window.
         if !main || (workspace.is_some() && view == View::Terminals) {
             right.push(
                 icon_button("tab-split", Icon::Columns2, theme)
@@ -419,7 +436,7 @@ impl Shell {
             );
         }
         if workspace.is_some() {
-            right.push(self.inspector_toggle(theme, cx).into_any_element());
+            right.push(self.inspector_toggle(host, theme, cx).into_any_element());
         }
         let has_right = !right.is_empty();
         let right = div()

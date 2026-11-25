@@ -63,7 +63,7 @@ impl Shell {
             window_place::drop_target(screen, self.host_of(window), &self.placed_windows(window))?;
         let (
             Target::Strip {
-                host: HostId::Main,
+                host: host @ HostId::Space(_),
                 index,
             },
             DockTab::Terminal { project, tab_id },
@@ -74,19 +74,18 @@ impl Shell {
         let Some(tabs) = self
             .tabs
             .get(&project)
-            .filter(|_| self.workspace == Some(project))
+            .filter(|_| self.workspace_of(host) == Some(project))
         else {
-            return Some(Target::Window(HostId::Main));
+            return Some(Target::Window(host));
         };
         let shown = || {
-            (tabs.tabs().iter()).filter(|other| {
-                other.id != tab_id && self.terminal_host(project, other.id) == HostId::Main
-            })
+            (tabs.tabs().iter())
+                .filter(|other| other.id != tab_id && !self.is_detached_tab(project, other.id))
         };
         let pinned = tabs.tab(tab_id).is_some_and(|tab| tab.pinned);
         let pinned_chips = shown().filter(|other| other.pinned).count();
         Some(Target::Strip {
-            host: HostId::Main,
+            host,
             index: window_place::clamp_to_group(index, pinned_chips, shown().count(), pinned),
         })
     }

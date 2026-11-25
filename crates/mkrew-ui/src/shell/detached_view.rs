@@ -24,7 +24,7 @@ impl DetachedWindow {
                 theme::refresh(cx.theme().mode, window, cx);
                 cx.notify();
             }),
-            // As the main window's: coming back views the focused pane and ends the flash.
+            // As a Space window's: coming back views the focused pane and ends the flash.
             cx.observe_window_activation(window, move |this, window, cx| {
                 if window.is_window_active() {
                     let _ = this.shell.update(cx, |shell, _| {

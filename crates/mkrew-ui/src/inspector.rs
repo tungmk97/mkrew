@@ -1,7 +1,7 @@
 //! The right panel next to Terminals (SPEC §10, ADR 0038, ADR 0081, ADR 0084):
 //! its tabs, width, the Stop rule and the text of the Session card. Pure; `main.rs` draws it.
 
-use mkrew_core::settings::RightPanelMode;
+use mkrew_core::settings::{PanelSide, RightPanelMode};
 use mkrew_protocol::{Session, SessionKind, SessionUsageEvent};
 use ulid::Ulid;
 
@@ -15,13 +15,18 @@ pub fn saved_width(px: u16) -> f32 {
     f32::from(px).clamp(theme::INSPECTOR_MIN_WIDTH, theme::INSPECTOR_MAX_WIDTH)
 }
 
-/// The width while the edge is dragged to `pointer_x` (window coordinates): the panel is flush
-/// with the right edge. At most half of the window, so the terminals keep room.
-pub fn width_from_pointer(window_width: f32, pointer_x: f32) -> f32 {
+/// The width while the edge is dragged to `pointer_x`: from the window's right edge for a
+/// right panel; for a left one, `pointer_x` is measured from the panel's own left edge. At
+/// most half of the window, so the terminals keep room.
+pub fn width_from_pointer(window_width: f32, pointer_x: f32, side: PanelSide) -> f32 {
     let max = theme::INSPECTOR_MAX_WIDTH
         .min(window_width / 2.0)
         .max(theme::INSPECTOR_MIN_WIDTH);
-    (window_width - pointer_x).clamp(theme::INSPECTOR_MIN_WIDTH, max)
+    let width = match side {
+        PanelSide::Right => window_width - pointer_x,
+        PanelSide::Left => pointer_x,
+    };
+    width.clamp(theme::INSPECTOR_MIN_WIDTH, max)
 }
 
 /// The right panel's tabs (SPEC §10, ADR 0081).
@@ -270,18 +275,35 @@ mod tests {
     #[test]
     fn dragging_the_edge_sets_the_width_from_the_pointer() {
         // The panel is flush with the window's right edge: width = window − pointer.
-        assert_eq!(width_from_pointer(1200.0, 900.0), 300.0);
+        assert_eq!(width_from_pointer(1200.0, 900.0, PanelSide::Right), 300.0);
         assert_eq!(
-            width_from_pointer(1200.0, 1190.0),
+            width_from_pointer(1200.0, 1190.0, PanelSide::Right),
             theme::INSPECTOR_MIN_WIDTH
         );
         assert_eq!(
-            width_from_pointer(1200.0, 100.0),
+            width_from_pointer(1200.0, 100.0, PanelSide::Right),
             theme::INSPECTOR_MAX_WIDTH
         );
         // Never more than half of a narrow window (but never below the minimum).
-        assert_eq!(width_from_pointer(700.0, 0.0), 350.0);
-        assert_eq!(width_from_pointer(400.0, 0.0), theme::INSPECTOR_MIN_WIDTH);
+        assert_eq!(width_from_pointer(700.0, 0.0, PanelSide::Right), 350.0);
+        assert_eq!(
+            width_from_pointer(400.0, 0.0, PanelSide::Right),
+            theme::INSPECTOR_MIN_WIDTH
+        );
+    }
+
+    #[test]
+    fn a_left_panel_takes_its_width_from_its_own_left_edge() {
+        assert_eq!(width_from_pointer(1600.0, 300.0, PanelSide::Left), 300.0);
+        assert_eq!(
+            width_from_pointer(1600.0, 10.0, PanelSide::Left),
+            theme::INSPECTOR_MIN_WIDTH
+        );
+        assert_eq!(
+            width_from_pointer(1000.0, 900.0, PanelSide::Left),
+            theme::INSPECTOR_MAX_WIDTH.min(500.0),
+            "at most half the window"
+        );
     }
 
     #[test]

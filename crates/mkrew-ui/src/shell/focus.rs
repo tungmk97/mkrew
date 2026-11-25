@@ -26,6 +26,8 @@ impl Shell {
             || self.slash_picker.is_some()
             || self.run_setup.is_some()
             || self.settings_dialog.is_some()
+            || self.open_ask.is_some()
+            || self.split_picker.is_some()
     }
 
     /// The `/` picker, the prompt picker or the `@` file picker is open.
@@ -116,7 +118,7 @@ impl Shell {
     /// through `dismiss_menus`.
     pub(crate) fn close_menus(&mut self) {
         self.tab_menu = None;
-        self.menu_host = HostId::Main;
+        self.menu_host = self.primary_host();
         self.layout_menu = None;
         self.pane_menu = None;
         self.share_menu = None;
@@ -124,6 +126,7 @@ impl Shell {
         self.file_menu = None;
         self.run_menu = None;
         self.workspace_switcher = false;
+        self.need_you_menu = false;
         self.new_menu = false;
         self.run_with = None;
         self.fan_out = None;
@@ -136,50 +139,51 @@ impl Shell {
     }
 
     /// The views the right panel is drawn next to.
-    pub(crate) fn panel_view(&self) -> bool {
-        self.view() == View::Terminals
+    pub(crate) fn panel_view(&self, host: HostId) -> bool {
+        self.view(host) == View::Terminals
     }
 
-    /// The right panel is drawn.
-    pub(crate) fn panel_shown(&self) -> bool {
-        self.right_panel.open && self.panel_view()
+    /// The right panel is drawn in `host`.
+    pub(crate) fn panel_shown(&self, host: HostId) -> bool {
+        self.panel(host).open && self.panel_view(host)
     }
 
     /// The right panel's tab on screen: a kept Session tab shows Files while
     /// `[features] session` is off.
-    pub(crate) fn panel_tab(&self) -> PanelTab {
-        match self.right_panel.tab {
+    pub(crate) fn panel_tab(&self, host: HostId) -> PanelTab {
+        match self.panel(host).tab {
             PanelTab::Session if !self.features.session => PanelTab::Files,
             tab => tab,
         }
     }
 
-    /// The right panel shows the file tree.
-    pub(crate) fn file_tree_shown(&self) -> bool {
-        self.panel_shown() && self.panel_tab() == PanelTab::Files
+    /// The right panel of `host` shows the file tree.
+    pub(crate) fn file_tree_shown(&self, host: HostId) -> bool {
+        self.panel_shown(host) && self.panel_tab(host) == PanelTab::Files
     }
 
-    /// Some of the active workspace's files are drawn (a file pane or the tree), so they
+    /// Some of `host`'s workspace's files are drawn (a file pane or the tree), so they
     /// follow `git.changed` and refresh when they come back.
-    pub(crate) fn files_on_screen(&self) -> bool {
-        self.file_tree_shown() || !self.visible_files().is_empty()
+    pub(crate) fn files_on_screen(&self, host: HostId) -> bool {
+        self.file_tree_shown(host) || !self.visible_files().is_empty()
     }
 
-    /// The right panel shows the Git list (header, changes or History, commit box).
-    pub(crate) fn git_panel_shown(&self) -> bool {
-        self.panel_shown() && self.right_panel.tab == PanelTab::Git
+    /// The right panel of `host` shows the Git list (header, changes or History, commit box).
+    pub(crate) fn git_panel_shown(&self, host: HostId) -> bool {
+        self.panel_shown(host) && self.panel(host).tab == PanelTab::Git
     }
 
-    /// Some of the active workspace's Git is drawn (the panel's list or a diff pane), so it
+    /// Some of `host`'s workspace's Git is drawn (the panel's list or a diff pane), so it
     /// follows `git.changed` and refreshes when it comes back (SPEC §12B).
-    pub(crate) fn git_shown(&self) -> bool {
-        self.diff_on_screen() || self.git_panel_shown()
+    pub(crate) fn git_shown(&self, host: HostId) -> bool {
+        self.diff_on_screen(host) || self.git_panel_shown(host)
     }
 
-    /// The pane the Session tab describes: the active tab's focused pane, also while a file
-    /// or the diff has the focus (unlike `focused_session`, which is where keys go).
-    pub(crate) fn panel_session(&self) -> Option<Ulid> {
-        let tabs = self.tabs.get(&self.workspace?)?;
+    /// The pane the Session tab of `host` describes: the active tab's focused pane, also
+    /// while a file or the diff has the focus (unlike `focused_session`, which is where keys
+    /// go).
+    pub(crate) fn panel_session(&self, host: HostId) -> Option<Ulid> {
+        let tabs = self.tabs.get(&self.workspace_of(host)?)?;
         tabs.active()?.focused_session()
     }
 
@@ -191,22 +195,27 @@ impl Shell {
             .is_some_and(|tab| tab.focused() == Some(&PaneKey::Diff))
     }
 
-    /// Every session on screen with the window that shows it: the main window's tab (none for a
-    /// hidden window or while it shows another view) and the visible detached tabs.
-    pub(crate) fn hosted_sessions(&self, main_visible: bool) -> Vec<(HostId, Ulid)> {
-        let tabs = (self.workspace)
-            .filter(|_| self.view() == View::Terminals)
-            .and_then(|id| self.tabs.get(&id));
-        let mut hosted: Vec<(HostId, Ulid)> = on_screen(main_visible, tabs)
-            .into_iter()
-            .map(|session| (HostId::Main, session))
-            .collect();
+    /// Every session on screen with the window that shows it: each Space window's tab (none
+    /// for a hidden window or while it shows another view) and the visible detached tabs.
+    pub(crate) fn hosted_sessions(&self) -> Vec<(HostId, Ulid)> {
+        let mut hosted: Vec<(HostId, Ulid)> = Vec::new();
+        for (key, _) in self.spaces_shown() {
+            let space = HostId::Space(key);
+            let tabs = (self.workspace_of(space))
+                .filter(|_| self.view(space) == View::Terminals)
+                .and_then(|id| self.tabs.get(&id));
+            let sessions = on_screen(self.space_visible(space), tabs);
+            hosted.extend(sessions.into_iter().map(|session| (space, session)));
+        }
         for tab in self.detached.visible_tabs() {
             let DockTab::Terminal { project, tab_id } = tab;
             let Some(shown) = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id)) else {
                 continue;
             };
-            let host = self.detached.host_of(&tab);
+            let Some(key) = self.detached.window_of(&tab) else {
+                continue;
+            };
+            let host = HostId::Detached(key);
             hosted.extend(
                 shown
                     .shown_sessions()
@@ -217,8 +226,8 @@ impl Shell {
         hosted
     }
 
-    /// Every file pane drawn now, with its leaf's Markdown mode: the main window's active
-    /// tab (while it shows Terminals) and the visible detached tabs.
+    /// Every file pane drawn now, with its leaf's Markdown mode: each shown Space window's
+    /// active tab (while it shows Terminals) and the visible detached tabs.
     pub(crate) fn visible_files(&self) -> Vec<(Ulid, FileKey, Option<MdMode>)> {
         let mut shown = Vec::new();
         let mut add = |project: Ulid, tab: &Tab| {
@@ -235,12 +244,15 @@ impl Shell {
                 }
             }
         };
-        if self.main_visible
-            && self.view() == View::Terminals
-            && let Some(project) = self.workspace
-            && let Some(tab) = self.tabs.get(&project).and_then(Tabs::active)
-        {
-            add(project, tab);
+        for (key, project) in self.spaces_shown() {
+            let space = HostId::Space(key);
+            if self.space_visible(space)
+                && self.view(space) == View::Terminals
+                && let Some(project) = project
+                && let Some(tab) = self.tabs.get(&project).and_then(Tabs::active)
+            {
+                add(project, tab);
+            }
         }
         for dock in self.detached.visible_tabs() {
             let DockTab::Terminal { project, tab_id } = dock;
@@ -282,14 +294,14 @@ impl Shell {
     }
 
     /// Attaches the sessions on screen in any window (live ones, or already attached; none
-    /// for a hidden window or while the main window shows another view) and detaches all others
+    /// for a hidden window or while its Space window shows another view) and detaches all others
     /// (SPEC §10), then focuses the focused pane of `window`.
     pub(crate) fn sync_panes(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.keep_main_active_visible();
+        self.keep_space_active_visible();
         self.prune_detached(cx);
         self.sync_documents(window, cx);
         self.sync_browsers(cx);
-        let hosted = self.hosted_sessions(self.main_visible);
+        let hosted = self.hosted_sessions();
         let here = self.host_of(window);
         let visible: Vec<Ulid> = hosted.iter().map(|&(_, session)| session).collect();
         for session in self.router.wanted() {
@@ -327,13 +339,18 @@ impl Shell {
         // A Diff leaf that came on screen (opened, restored, its tab shown) loads Git, as the
         // old Diff view did when it was shown; the Git panel's tab keeps its own Git fresh, so a
         // diff beside it must not re-request (the new diff would reset the list's scroll).
-        let drawn = self.diff_on_screen();
-        let came = drawn && !self.diff_drawn;
-        let changed = drawn != self.diff_drawn;
-        self.diff_drawn = drawn;
+        let host = self.space_host(window);
+        let drawn = self.diff_on_screen(host);
+        let before = self.hosts.get_mut(&host).map(|ui| {
+            let before = ui.diff_drawn;
+            ui.diff_drawn = drawn;
+            before
+        });
+        let came = drawn && before == Some(false);
+        let changed = before.is_some_and(|before| before != drawn);
         if came
-            && !self.git_panel_shown()
-            && let Some(project_id) = self.workspace
+            && !self.git_panel_shown(self.space_host(window))
+            && let Some(project_id) = self.workspace_in(window)
         {
             self.refresh_git(project_id, window, cx);
         }
@@ -351,11 +368,14 @@ impl Shell {
                         .map(move |(key, _)| (*project_id, tab.id, key))
                 })
             })
-            .map(|(project_id, tab_id, key)| super::pane_view::PaneSlot {
-                host: self.terminal_host(project_id, tab_id),
-                project_id,
-                tab_id,
-                key,
+            // A tab no window draws (its workspace has no Space window) keeps no view.
+            .filter_map(|(project_id, tab_id, key)| {
+                Some(super::pane_view::PaneSlot {
+                    host: self.terminal_host(project_id, tab_id)?,
+                    project_id,
+                    tab_id,
+                    key,
+                })
             })
             .collect();
         self.pane_views
@@ -461,7 +481,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let attached = attach.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let attached = match attached {
                     Ok(attached) => attached,
                     Err(error) => {

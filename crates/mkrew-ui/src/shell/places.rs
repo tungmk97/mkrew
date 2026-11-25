@@ -6,7 +6,7 @@ impl Shell {
     /// The only way a file opens (SPEC §6.1): where `place` says, or, when the file is open
     /// already in any tab or window, only its pane is focused. `file` says which folder it is
     /// of (the project's or a task worktree's). `line` is a link's (line, column), 1-based,
-    /// shown in either case. Runs in the main window: from a detached one it hops there first.
+    /// shown in either case. Runs in the workspace's Space window (`in_workspace` hops there).
     pub(crate) fn open_document(
         &mut self,
         project_id: Ulid,
@@ -16,9 +16,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.host_of(window) != HostId::Main {
-            return self.in_window(HostId::Main, cx, move |shell, window, cx| {
-                window.activate_window();
+        if !self.acts_here(project_id, window) {
+            return self.in_workspace(project_id, window, cx, move |shell, window, cx| {
                 shell.open_document(project_id, file, line, place, window, cx);
             });
         }
@@ -33,8 +32,8 @@ impl Shell {
         }
         // Terminals show the panes: Board, Docs and the Diff give way.
         self.views.insert(project_id, View::Terminals);
-        if self.workspace != Some(project_id) {
-            self.activate_workspace(project_id, window, cx);
+        if self.workspace_in(window) != Some(project_id) {
+            self.activate_workspace(self.space_host(window), project_id, window, cx);
         }
         self.place_leaf(project_id, leaf, place, window, cx);
         // Shown already: the line applies now; otherwise after the read.
@@ -129,7 +128,7 @@ impl Shell {
         };
         self.focus_pane_key(project_id, key);
         match self.terminal_host(project_id, tab_id) {
-            host @ HostId::Detached(window_key) => {
+            Some(host @ HostId::Detached(window_key)) => {
                 let dock = DockTab::Terminal {
                     project: project_id,
                     tab_id,
@@ -146,7 +145,7 @@ impl Shell {
                     cx.notify();
                 });
             }
-            HostId::Main => {
+            Some(HostId::Space(_)) | None => {
                 if let Some(tabs) = self.tabs.get_mut(&project_id) {
                     tabs.activate(tab_id);
                 }

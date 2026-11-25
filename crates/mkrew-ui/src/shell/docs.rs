@@ -25,7 +25,7 @@ impl Shell {
             connection.call::<Vec<DocFile>>(Request::DocList(DocListParams { project_id }));
         cx.spawn_in(window, async move |this, cx| {
             let listed = listed.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &listed {
                     tracing::warn!(%project_id, "doc.list failed: {error}");
                 }
@@ -72,7 +72,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
+        let (Some(project_id), Some(key)) =
+            (self.workspace_in(window), palette::key(&event.keystroke))
+        else {
             return;
         };
         let paste = (key == palette::Key::Paste)
@@ -156,7 +158,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let shown = self.workspace.filter(|_| self.view() == View::Docs);
+        let shown = self
+            .workspace_in(window)
+            .filter(|_| self.view(self.space_host(window)) == View::Docs);
         let reactions: Vec<_> = self
             .docs
             .values_mut()
@@ -274,10 +278,8 @@ impl Shell {
                         filter_focused,
                         theme,
                         cx,
-                        |shell, caret| {
-                            if let Some(docs) =
-                                shell.workspace.and_then(|id| shell.docs.get_mut(&id))
-                            {
+                        move |shell, caret| {
+                            if let Some(docs) = shell.docs.get_mut(&project_id) {
                                 docs.filter.click(caret.at, caret.extend, caret.clicks);
                             }
                         },
@@ -484,7 +486,7 @@ impl Shell {
                         Rc::clone(shown),
                         docs.comments.selection,
                         on_line,
-                        &self.doc_source_scroll,
+                        &self.host_view(self.space_host(window)).doc_source_scroll,
                         theme,
                     )
                     .flex_1()
@@ -536,7 +538,7 @@ impl Shell {
                     );
                     let fonts = cx.global::<theme::Fonts>();
                     preview::page(
-                        &self.doc_page,
+                        &self.host_view(self.space_host(window)).doc_page,
                         docs.opening,
                         shown,
                         Some(wrap),
