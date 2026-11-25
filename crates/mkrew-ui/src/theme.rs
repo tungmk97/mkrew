@@ -2718,6 +2718,8 @@ pub const SIDEBAR_FILTER_HEIGHT: f32 = 28.0;
 /// (ADR 0039). The track is `Theme::border`, the fill `Theme::accent` (both themes).
 pub const PLAN_BAR_HEIGHT: f32 = 4.0;
 pub const PLAN_ROW_BAR_HEIGHT: f32 = 2.0;
+/// The check glyph inside a 14 px check box (Plan card).
+pub const CHECK_MARK_SIZE: f32 = 10.0;
 /// The sidebar's footer row (Inbox, voice input, compact toggle), in px at the default font
 /// size; drawn with existing tokens.
 pub const SIDEBAR_FOOTER_HEIGHT: f32 = 32.0;

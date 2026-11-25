@@ -967,14 +967,14 @@ impl Shell {
             .flex_col()
             .gap(px(space::XS))
             .p(px(space::M))
-            .rounded(px(radius::MEDIUM))
-            .bg(rgb(theme.surface_raised))
-            // Always bordered, so hovering does not shift the content.
+            .rounded(px(radius::CARD))
+            .bg(rgb(theme.card))
+            // Always ringed, so hovering and selecting do not shift the content.
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(if selected {
-                theme.pane_focus_stripe
+                theme.accent
             } else {
-                theme.surface_raised
+                theme.divider
             }))
             .map(|el| card_press(el, selected, theme))
             .on_click(cx.listener(move |shell, _, window, cx| {

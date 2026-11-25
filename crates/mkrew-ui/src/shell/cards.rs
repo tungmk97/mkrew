@@ -234,14 +234,14 @@ pub(crate) fn task_card(
         .flex_col()
         .gap(px(space::XS))
         .p(px(space::M))
-        .rounded(px(radius::MEDIUM))
-        .bg(rgb(theme.surface_raised))
-        // Always bordered, so selecting a card does not shift its content.
+        .rounded(px(radius::CARD))
+        .bg(rgb(theme.card))
+        // Always ringed (divider at rest, accent when selected), so neither shifts the content.
         .border(px(theme::BORDER_WIDTH))
         .border_color(rgb(if selected {
-            theme.pane_focus_stripe
+            theme.accent
         } else {
-            theme.surface_raised
+            theme.divider
         }))
         .map(|el| card_press(el, selected, theme))
         .group(group.clone())
@@ -548,7 +548,7 @@ pub(crate) fn run_with_button(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::Div {
     let menu = cards.run_with.filter(|menu| menu.task_id == task_id);
-    // One step above the card's own `surface_raised`, like its other quiet buttons.
+    // One step above the card, like its other quiet buttons.
     let button = quiet_button(
         "card-run-with",
         icon_text(Icon::Play, "Run with…", theme.text_muted),
@@ -768,7 +768,7 @@ pub(crate) fn card_action(
     if cards.starting.contains(&task_id) {
         return disabled_button(id, "Starting…", theme, primary);
     }
-    // A quiet button's surface hover would vanish on the raised card: one step above it.
+    // A quiet button's surface hover would vanish on the card: one step above it.
     let action_button = if primary {
         button(id, label, theme, true)
     } else {

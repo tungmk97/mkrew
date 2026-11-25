@@ -697,10 +697,17 @@ impl Shell {
                         div()
                             .w(theme::rems_px(theme::INSPECTOR_LABEL_WIDTH))
                             .flex_none()
-                            .text_color(rgb(theme.text_muted))
+                            .text_color(rgb(theme.text_subtle))
                             .child(*label),
                     )
-                    .child(div().min_w_0().truncate().child(value.clone()))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(theme.terminal_font_family.clone())
+                            .text_color(rgb(theme.text_dim))
+                            .child(value.clone()),
+                    )
             }))
             .child(div().flex().gap(px(space::S)).child(open).children(stop))
             .into_any_element()
@@ -767,8 +774,8 @@ impl Shell {
 /// Payload of a drag of the session panel's left edge (a resize, nothing is dropped).
 pub(crate) struct InspectorGrip;
 
-/// A card of the session panel: a muted title over its content (a block on `card`, like a board
-/// card). The Changes and Plan cards use it too.
+/// A card of the session panel: a muted title over its content (a `card` block with a 1 px
+/// `divider` ring, like a board card). The Changes and Plan cards use it too.
 pub(crate) fn inspector_card(theme: &Theme, title: &'static str) -> gpui::Div {
     div()
         .flex_none()
@@ -776,7 +783,9 @@ pub(crate) fn inspector_card(theme: &Theme, title: &'static str) -> gpui::Div {
         .flex_col()
         .gap(px(space::S))
         .p(px(space::M))
-        .rounded(px(radius::MEDIUM))
+        .rounded(px(radius::CARD))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.divider))
         .bg(rgb(theme.card))
         .child(
             div()
@@ -797,12 +806,24 @@ pub(crate) fn plan_row(row: &plan::Row, theme: &Theme) -> gpui::Div {
     let check = div()
         .flex_none()
         .mt(px(space::XS / 2.0))
-        .w(px(theme::DOC_TASK_BOX_SIZE))
-        .h(px(theme::DOC_TASK_BOX_SIZE))
+        .size(px(theme::ICON_SIZE_SMALL))
+        .flex()
+        .items_center()
+        .justify_center()
         .rounded(px(radius::SMALL))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(if row.done { theme.accent } else { theme.subtle }))
-        .when(row.done, |el| el.bg(rgb(theme.accent)));
+        .border_color(if row.done {
+            rgb(theme.accent)
+        } else {
+            gpui::rgba(theme.layer[3])
+        })
+        .when(row.done, |el| {
+            el.bg(rgb(theme.accent)).child(icon_svg(
+                Icon::Check,
+                theme::CHECK_MARK_SIZE,
+                theme.on_accent,
+            ))
+        });
     div()
         .flex()
         .items_start()
