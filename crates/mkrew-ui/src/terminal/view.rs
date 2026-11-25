@@ -917,7 +917,7 @@ impl TerminalPane {
                     div()
                         .flex()
                         .items_center()
-                        .h(px(theme::FIND_INPUT_HEIGHT))
+                        .h(theme::rems_px(theme::FIND_INPUT_HEIGHT))
                         .px(px(space::S))
                         .rounded(px(radius::MEDIUM))
                         .border(px(theme::BORDER_WIDTH))

@@ -445,10 +445,8 @@ impl Shell {
             .flex_1()
             .min_w_0()
             .h(theme::rems_px(theme::SIDEBAR_FILTER_HEIGHT))
+            .min_h(theme::rems_px(theme::SIDEBAR_FILTER_HEIGHT))
             .bg(rgb(theme.well))
-            .when(!filter_focused, |el| {
-                el.border_color(gpui::rgba(theme.layer[1]))
-            })
             .flex()
             .items_center()
             .py_0()

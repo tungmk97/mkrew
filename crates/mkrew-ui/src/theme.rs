@@ -783,6 +783,8 @@ const DIFF_ROW_MIX: f32 = 0.07;
 const DIFF_GUTTER_MIX: f32 = 0.08;
 const DIFF_NUM_MIX_DARK: f32 = 0.60;
 const DIFF_NUM_MIX_LIGHT: f32 = 0.75;
+/// The least contrast of a changed line's number on its gutter.
+const DIFF_NUM_MIN_CONTRAST: f32 = 2.0;
 const DIFF_ADD_WORD_MIX: f32 = 0.26;
 const DIFF_DEL_WORD_MIX: f32 = 0.25;
 /// A hunk header bar and the current one: the accent over the diff ground.
@@ -1765,10 +1767,18 @@ fn diff_tone(ground: u32, hue: u32, word_mix: f32, dark: bool) -> DiffTone {
     } else {
         DIFF_NUM_MIX_LIGHT
     };
+    // A derived palette's muted hue can read under 2:1 on its gutter (Nord 1.8): the number
+    // takes more of the hue until it does not. The hand-written themes are far above it.
+    let mut num = mix(gutter, hue, number);
+    let mut more = number;
+    while contrast(num, gutter) < DIFF_NUM_MIN_CONTRAST && more < 1.0 {
+        more += 0.05;
+        num = mix(gutter, hue, more);
+    }
     DiffTone {
         row,
         gutter,
-        num: mix(gutter, hue, number),
+        num,
         word: mix(ground, hue, word_mix),
     }
 }
@@ -2908,6 +2918,14 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
             check("hunk header", fg, bg, 4.5);
         }
     }
+    // The line numbers of a changed line are dimmer than text, but not below the context
+    // numbers (`subtle`, about 2:1): a derived palette (One Dark gives 2.2) has no hand-tuned value.
+    for (num, gutter) in [
+        (t.diff_add_num, t.diff_add_gutter),
+        (t.diff_del_num, t.diff_del_gutter),
+    ] {
+        check("diff numbers", num, gutter, 2.0);
+    }
     // Where a swatch or avatar sits: the dialogs, the menu, the sidebar and its row fills.
     // WCAG 1.4.11: graphical objects >= 3:1.
     for color in t.workspace_colors {
@@ -3377,6 +3395,13 @@ mod tests {
                 "hunk header",
                 Theme {
                     accent_text: t.hunk_current_bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "diff numbers",
+                Theme {
+                    diff_add_num: t.diff_add_gutter,
                     ..t.clone()
                 },
             ),

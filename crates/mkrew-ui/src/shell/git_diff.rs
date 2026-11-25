@@ -804,12 +804,10 @@ pub(crate) fn hunk_stage_button(
         git_view::Stage::Unstage => ("Unstage hunk", "Unstage this hunk"),
     };
     hunk_chip(
-        row_action(
-            SharedString::from(format!("git-hunk-stage-{hunk}")),
-            label,
-            theme,
-        ),
+        SharedString::from(format!("git-hunk-stage-{hunk}")),
+        label,
         true,
+        theme.accent_bg,
         theme,
     )
     .ml_auto()
@@ -829,19 +827,22 @@ pub(crate) fn hunk_discard_button(
     project_id: Ulid,
     hunk: usize,
     keys: SharedString,
+    is_current: bool,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::Stateful<gpui::Div> {
+    let row = if is_current {
+        theme.hunk_current_bg
+    } else {
+        theme.hunk_bg
+    };
     hunk_chip(
-        row_action(
-            SharedString::from(format!("git-hunk-discard-{hunk}")),
-            "Discard hunk",
-            theme,
-        ),
+        SharedString::from(format!("git-hunk-discard-{hunk}")),
+        "Discard hunk",
         false,
+        mkrew_ui::pressable::flatten(theme.layer[0], row),
         theme,
     )
-    .text_color(rgb(theme.danger_text))
     .tooltip(tooltip(theme, "Discard this hunk (asks first)", keys))
     .on_click(cx.listener(move |shell, _, window, cx| {
         window.focus(&shell.git_focus, cx);
@@ -849,32 +850,40 @@ pub(crate) fn hunk_discard_button(
     }))
 }
 
-/// A hunk header's action chip: `GIT_HUNK_BUTTON_HEIGHT` tall, `radius::TAG`, a 1 px ring.
-/// `accent` (Stage) is the accent tint with an 18 % accent ring; the other (Discard) is
-/// neutral: `layer[0]` fill, `layer[1]` ring.
+/// A hunk header's action chip: `GIT_HUNK_BUTTON_HEIGHT` tall (rems), `radius::TAG`, a 1 px
+/// ring. `rest` is its resting fill, which `pressable_on` steps on hover. Stage is the accent
+/// tint with an 18 % accent ring; Discard is neutral: `layer[0]` flattened on the row, `layer[1]` ring.
 fn hunk_chip(
-    chip: gpui::Stateful<gpui::Div>,
+    id: SharedString,
+    label: &'static str,
     accent: bool,
+    rest: u32,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    chip.h(px(theme::GIT_HUNK_BUTTON_HEIGHT))
+    div()
+        .id(id)
+        .flex_none()
+        .h(theme::rems_px(theme::GIT_HUNK_BUTTON_HEIGHT))
         .flex()
         .items_center()
         .px(px(space::S))
         .rounded(px(radius::TAG))
         .border(px(theme::BORDER_WIDTH))
-        .when(accent, |el| {
-            el.bg(rgb(theme.accent_bg))
-                .border_color(gpui::rgba(theme::with_alpha(
-                    theme.accent,
-                    theme::HUNK_RING_ALPHA,
-                )))
-                .text_color(rgb(theme.accent_text))
+        .font_family(theme.ui_font_family.clone())
+        .text_size(font_size::META)
+        .bg(rgb(rest))
+        .border_color(if accent {
+            gpui::rgba(theme::with_alpha(theme.accent, theme::HUNK_RING_ALPHA))
+        } else {
+            gpui::rgba(theme.layer[1])
         })
-        .when(!accent, |el| {
-            el.bg(gpui::rgba(theme.layer[0]))
-                .border_color(gpui::rgba(theme.layer[1]))
-        })
+        .text_color(rgb(if accent {
+            theme.accent_text
+        } else {
+            theme.danger_text
+        }))
+        .pressable_on(Look::Raised, rest, theme)
+        .child(label)
 }
 
 /// A row of the Discard dialog's preview: Unified, unwrapped, nothing to pick or stage.
@@ -942,7 +951,7 @@ fn span_row(
             let is_current = current == Some(*at);
             frame
                 .relative()
-                .h(px(theme::GIT_HUNK_HEADER_HEIGHT))
+                .min_h(theme::rems_px(theme::GIT_HUNK_HEADER_HEIGHT))
                 .border_t(px(theme::BORDER_WIDTH))
                 .border_b(px(theme::BORDER_WIDTH))
                 .border_color(rgb(theme.divider))
@@ -995,7 +1004,7 @@ fn span_row(
                     } else {
                         SharedString::default()
                     };
-                    hunk_discard_button(project_id, *at, keys, theme, cx)
+                    hunk_discard_button(project_id, *at, keys, is_current, theme, cx)
                 }))
         }
         _ => frame,
