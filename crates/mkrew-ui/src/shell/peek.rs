@@ -587,30 +587,11 @@ impl Shell {
             )
             .to_owned()
         };
-        let panel = div()
-            .id("peek")
-            .w(px(theme::PEEK_WIDTH))
+        let body = div()
             .flex()
             .flex_col()
             .gap(px(space::S))
             .p(px(space::M))
-            .rounded(px(radius::MEDIUM))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
-            .font_family(theme.ui_font_family.clone())
-            // Only once it has the keyboard: a tracked element takes focus on any mouse down,
-            // so a click on a hover peek would steal the keyboard before `take_peek_focus`.
-            .when(peek.focused, |el| el.track_focus(&self.peek_focus))
-            .on_key_down(cx.listener(Self::peek_key_down))
-            .when(peek.focused, |el| {
-                el.relative()
-                    .child(self.typing(&self.peek_focus, Self::peek_key_down, cx))
-            })
-            .on_mouse_down_out(cx.listener(|shell, _, window, cx| {
-                shell.close_peek(window, cx);
-            }))
             .child(
                 div()
                     .flex()
@@ -660,8 +641,32 @@ impl Shell {
                     .text_size(font_size::META)
                     .text_color(rgb(theme.status_exited))
                     .child(error)
+            }));
+        let foot = div()
+            .px(px(space::M))
+            .py(px(space::S))
+            .border_t(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_subtle))
+            .child(hint);
+        let panel = pop_surface(theme, radius::LARGE)
+            .id("peek")
+            .w(px(theme::PEEK_WIDTH))
+            .flex()
+            .flex_col()
+            // Only once it has the keyboard: a tracked element takes focus on any mouse down,
+            // so a click on a hover peek would steal the keyboard before `take_peek_focus`.
+            .when(peek.focused, |el| el.track_focus(&self.peek_focus))
+            .on_key_down(cx.listener(Self::peek_key_down))
+            .when(peek.focused, |el| {
+                el.child(self.typing(&self.peek_focus, Self::peek_key_down, cx))
+            })
+            .on_mouse_down_out(cx.listener(|shell, _, window, cx| {
+                shell.close_peek(window, cx);
             }))
-            .child(muted(hint));
+            .child(body)
+            .child(foot);
         // The padding bridges the row's edge, so the mouse can travel onto the popover.
         let area = div()
             .id("peek-area")

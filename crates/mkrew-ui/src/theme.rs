@@ -328,6 +328,17 @@ pub const BOARD_COLUMN_HEADER_HEIGHT: f32 = 28.0;
 
 /// Width of a popover menu (`render_menu`'s default).
 pub const MENU_WIDTH: f32 = 240.0;
+/// A menu row's minimum height (Tern `.sf-menu-item`); a row with a second line grows.
+pub const MENU_ROW_HEIGHT: f32 = 28.0;
+/// A tooltip's widest and shortest box.
+pub const TOOLTIP_MAX_WIDTH: f32 = 280.0;
+pub const TOOLTIP_MIN_HEIGHT: f32 = 24.0;
+/// A toast's shortest box, and the alpha of an error toast's `status_exited` ring.
+pub const TOAST_MIN_HEIGHT: f32 = 40.0;
+pub const TOAST_ERROR_RING_ALPHA: f32 = 0.4;
+/// The bar of a picked row (`with_pick`): 2 px wide, 14 px tall, centred at the left edge.
+pub const PICK_BAR_WIDTH: f32 = 2.0;
+pub const PICK_BAR_HEIGHT: f32 = 14.0;
 
 /// Width of the Run menu: a command row also holds its ports and ↻ / ■ / ▶ buttons.
 pub const RUN_MENU_WIDTH: f32 = 280.0;
@@ -634,7 +645,8 @@ pub const PICKER_LIST_HEIGHT: f32 = 360.0;
 /// The scoped palette.
 pub const PALETTE_WIDTH: f32 = 640.0;
 pub const PALETTE_LIST_HEIGHT: f32 = 480.0;
-pub const PALETTE_SELECTED_BAR: f32 = 3.0;
+/// The palette row's accent bar: 2 px wide, inset 8 px top and bottom.
+pub const PALETTE_SELECTED_BAR: f32 = 2.0;
 pub const PALETTE_GROUP_LIMIT: usize = 5;
 /// Distance from the window's top edge to the top of the palette panel (it stays there while
 /// its list grows or shrinks between scopes).

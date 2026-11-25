@@ -1012,21 +1012,24 @@ impl Shell {
                                 } else {
                                     font.clone()
                                 };
-                                menu_item(SharedString::from(format!("list-choice-{i}")), theme)
-                                    .when(i == selected, |el| el.bg(rgb(theme.surface_raised)))
-                                    .on_press(
-                                        true,
-                                        cx.listener(move |shell, _, window, cx| {
-                                            cx.stop_propagation();
-                                            let font = font.clone();
-                                            shell.settings_do(
-                                                move |d, _| d.choose(setting, &font),
-                                                window,
-                                                cx,
-                                            );
-                                        }),
-                                    )
-                                    .child(label)
+                                menu_item(
+                                    SharedString::from(format!("list-choice-{i}")),
+                                    i == selected,
+                                    theme,
+                                )
+                                .on_press(
+                                    true,
+                                    cx.listener(move |shell, _, window, cx| {
+                                        cx.stop_propagation();
+                                        let font = font.clone();
+                                        shell.settings_do(
+                                            move |d, _| d.choose(setting, &font),
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                                )
+                                .child(label)
                             },
                         )),
                 )

@@ -1053,44 +1053,90 @@ pub(crate) fn meta_line(theme: &Theme, text: SharedString) -> gpui::Div {
         .child(text)
 }
 
-/// A full-width row of a popover menu; callers add the label (and a shortcut on the right).
-pub(crate) fn menu_item(id: SharedString, theme: &Theme) -> gpui::Stateful<gpui::Div> {
-    // A menu sits on `surface_raised`: its rows use `Look::Raised` (hover `border`).
-    let style = press_style(Look::Raised, true, theme);
-    apply_press(
+/// A picked row (the menu row under the keyboard, a Settings page, a list pick): the `accent_bg`
+/// fill and a short accent bar centred on the left edge inside the row. The label color is the
+/// caller's (`text`); the keyboard focus ring is separate. A picked row should not also hover:
+/// pair it with `pressable_unless(picked, ..)`.
+pub(crate) fn with_pick<E: ParentElement + Styled>(el: E, picked: bool, theme: &Theme) -> E {
+    if !picked {
+        return el;
+    }
+    el.relative().bg(rgb(theme.accent_bg)).child(
         div()
-            .id(id)
+            .absolute()
+            .left_0()
+            .top_0()
+            .bottom_0()
             .flex()
             .items_center()
-            .gap(px(space::S))
-            .px(px(space::S))
-            .py(px(space::XS))
-            .rounded(px(radius::SMALL))
-            .text_size(font_size::BODY)
-            .text_color(rgb(theme.text_muted)),
-        style,
+            .child(
+                div()
+                    .w(px(theme::PICK_BAR_WIDTH))
+                    .h(px(theme::PICK_BAR_HEIGHT))
+                    .rounded_full()
+                    .bg(rgb(theme.accent)),
+            ),
+    )
+}
+
+/// The surface every popover shares (menu, tooltip, toast, peek, find bar): the glass fill, a 1 px
+/// `layer[1]` ring, `shadow_pop` and the `glass_hi` line along the top edge. The caller sets
+/// size, layout and content; the highlight is the first child, so content paints over it.
+pub(crate) fn pop_surface(theme: &Theme, radius: f32) -> gpui::Div {
+    div()
+        .relative()
+        .rounded(px(radius))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::rgba(theme.layer[1]))
+        .bg(gpui::rgba(theme.glass))
+        .shadow(theme::shadow_pop(theme))
+        .font_family(theme.ui_font_family.clone())
+        .child(top_highlight(theme, radius))
+}
+
+/// The box of a menu row: at least `MENU_ROW_HEIGHT` high, `radius::CHIP`, the `space::S` gap.
+/// No hover, so a row that cannot act (faded) shares it with [`menu_item`].
+pub(crate) fn menu_row_frame(id: SharedString, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .min_h(theme::rems_px(theme::MENU_ROW_HEIGHT))
+        .px(px(space::S))
+        .rounded(px(radius::CHIP))
+        .text_size(font_size::BODY)
+        .text_color(rgb(theme.text_muted))
+}
+
+/// A full-width row of a popover menu; callers add the label (and a shortcut on the right).
+/// `picked` is the keyboard cursor: [`with_pick`] draws it, with no hover fill.
+pub(crate) fn menu_item(
+    id: SharedString,
+    picked: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    with_pick(
+        menu_row_frame(id, theme).pressable_unless(picked, Look::Row, theme),
+        picked,
+        theme,
     )
 }
 
 /// The floating panel of a menu drawn in a `deferred(anchored(..))` (workspace, switcher, Run ▾,
-/// Run with, Several agents, tab, pane and Files menus). It occludes the mouse: gpui hit-tests every hitbox
+/// Run with, Several agents, tab, pane and Files menus): [`pop_surface`] at `radius::LARGE`. It
+/// occludes the mouse: gpui hit-tests every hitbox
 /// until one blocks, so without `.occlude()` a click on the menu also reaches the row or card
 /// painted under it (a color pick would navigate to the row behind the swatch).
 pub(crate) fn menu_panel(
     id: impl Into<gpui::ElementId>,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    div()
+    pop_surface(theme, radius::LARGE)
         .id(id)
         .flex()
         .flex_col()
-        .p(px(space::XS))
-        .rounded(px(radius::MEDIUM))
-        .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.border))
-        .bg(rgb(theme.surface_raised))
-        .shadow_md()
-        .font_family(theme.ui_font_family.clone())
+        .p(px(space::S))
         .occlude()
 }
 
@@ -1159,7 +1205,7 @@ pub(crate) fn dropdown_trigger(
         ))
 }
 
-/// A `Look::Row` list row; `selected` adds the `theme.selected` fill and the
+/// A `Look::Row` list row; `selected` adds the `layer[0]` fill and the 2 px
 /// `PALETTE_SELECTED_BAR` accent bar on the left. Callers add the content and the handler.
 pub(crate) fn list_row(
     id: impl Into<gpui::ElementId>,
@@ -1178,18 +1224,18 @@ pub(crate) fn list_row(
         .text_size(font_size::BODY)
         .text_color(rgb(theme.text))
         .when(selected, |el| {
-            el.bg(rgb(theme.selected)).child(
+            el.bg(gpui::rgba(theme.layer[0])).child(
                 div()
                     .absolute()
                     .left_0()
-                    .top(px(space::XS))
-                    .bottom(px(space::XS))
+                    .top(px(space::S))
+                    .bottom(px(space::S))
                     .w(px(theme::PALETTE_SELECTED_BAR))
                     .rounded_full()
                     .bg(rgb(theme.accent)),
             )
         })
-        // A selected row keeps its `selected` fill and the pointer, with no hover fill.
+        // A selected row keeps its fill and the pointer, with no hover fill.
         .pressable_unless(selected, Look::Row, theme)
 }
 
@@ -1527,19 +1573,17 @@ pub(crate) fn agent_chip(badge: sidebar::Badge, fg: u32, theme: &Theme) -> gpui:
 }
 
 /// Tooltip of a status: its source and how long ago it changed, aged when it opens (a
-/// done or needs-input status is not redrawn while it sits there).
+/// done or needs-input status is not redrawn while it sits there). The `theme` parameter is
+/// unused: the tooltip reads the live theme when it opens.
 pub(crate) fn status_tooltip(
-    theme: &Theme,
+    _theme: &Theme,
     state: SessionState,
     source: StateSource,
     changed_at: i64,
 ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
-    let style = PopupStyle::of(theme);
     move |_, cx| {
         let text = status::hover(state, source, changed_at, status::now_ms()).into();
-        let style = style.clone();
         cx.new(|_| Tooltip {
-            style,
             text,
             keys: SharedString::default(),
         })
@@ -1547,18 +1591,19 @@ pub(crate) fn status_tooltip(
     }
 }
 
-/// Builds a tooltip showing `text` and, if any, its keyboard shortcut.
+/// Builds a tooltip showing `text` and, if any, its keyboard shortcut. The `theme` parameter
+/// stays in the signature (about 400 call sites) but is unused: the tooltip reads the live theme
+/// when it opens, so a theme switch while a tooltip is open cannot leave it stale.
 pub(crate) fn tooltip(
-    theme: &Theme,
+    _theme: &Theme,
     text: &str,
     keys: impl Into<SharedString>,
 ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
-    let style = PopupStyle::of(theme);
     let text = SharedString::from(text.to_owned());
     let keys = keys.into();
     move |_, cx| {
-        let (style, text, keys) = (style.clone(), text.clone(), keys.clone());
-        cx.new(|_| Tooltip { style, text, keys }).into()
+        let (text, keys) = (text.clone(), keys.clone());
+        cx.new(|_| Tooltip { text, keys }).into()
     }
 }
 
@@ -1569,7 +1614,6 @@ pub(crate) struct PopupStyle {
     pub(crate) border: u32,
     pub(crate) surface_raised: u32,
     pub(crate) text: u32,
-    pub(crate) text_muted: u32,
     pub(crate) ui_font_family: SharedString,
 }
 
@@ -1579,41 +1623,32 @@ impl PopupStyle {
             border: theme.border,
             surface_raised: theme.surface_raised,
             text: theme.text,
-            text_muted: theme.text_muted,
             ui_font_family: theme.ui_font_family.clone(),
         }
     }
 }
 
 pub(crate) struct Tooltip {
-    pub(crate) style: PopupStyle,
     pub(crate) text: SharedString,
     pub(crate) keys: SharedString,
 }
 
 impl Render for Tooltip {
-    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
-        let theme = &self.style;
-        div()
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        pop_surface(theme, radius::MEDIUM)
             .flex()
+            .items_center()
             .gap(px(space::S))
+            .max_w(px(theme::TOOLTIP_MAX_WIDTH))
+            .min_h(theme::rems_px(theme::TOOLTIP_MIN_HEIGHT))
             .px(px(space::S))
             .py(px(space::XS))
-            .rounded(px(radius::SMALL))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface_raised))
-            .shadow_sm()
-            .font_family(theme.ui_font_family.clone())
             .text_size(font_size::META)
             .text_color(rgb(theme.text))
             .child(self.text.clone())
             .when(!self.keys.is_empty(), |el| {
-                el.child(
-                    div()
-                        .text_color(rgb(theme.text_muted))
-                        .child(self.keys.clone()),
-                )
+                el.child(kbd(self.keys.to_string(), theme, false))
             })
     }
 }

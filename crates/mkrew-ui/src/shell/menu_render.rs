@@ -106,22 +106,11 @@ fn item_row(
     let trails: Vec<_> = trails.collect();
     // A row that cannot act: the same box without the hover, faded, no click.
     let frame = if enabled {
-        menu_item(row_id.clone(), theme).group(row_id)
+        menu_item(row_id.clone(), selected, theme).group(row_id)
     } else {
-        div()
-            .id(row_id)
-            .flex()
-            .items_center()
-            .gap(px(space::S))
-            .px(px(space::S))
-            .py(px(space::XS))
-            .rounded(px(radius::SMALL))
-            .text_size(font_size::BODY)
-            .text_color(rgb(theme.text_muted))
-            .opacity(opacity::DISABLED)
+        menu_row_frame(row_id, theme).opacity(opacity::DISABLED)
     };
     frame
-        .when(selected, |el| el.bg(rgb(theme.selected)))
         .when(slot, |el| {
             el.child(
                 div()
@@ -147,14 +136,20 @@ fn item_row(
                 )
                 .children(item.sub.map(|sub| meta_line(theme, sub).truncate())),
         )
-        .children(
-            item.detail
-                .map(|detail| div().flex_none().text_size(font_size::META).child(detail)),
-        )
-        .children(
-            item.keys
-                .map(|keys| div().flex_none().text_size(font_size::META).child(keys)),
-        )
+        .children(item.detail.map(|detail| {
+            div()
+                .flex_none()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_subtle))
+                .child(detail)
+        }))
+        .children(item.keys.map(|keys| {
+            div()
+                .flex_none()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_subtle))
+                .child(keys)
+        }))
         .children(trails)
         .when_some(item.tip, |el, tip| el.tooltip(tooltip(theme, &tip, "")))
         .when(enabled, |el| {
@@ -204,31 +199,34 @@ fn swatch_row(
 ) -> gpui::AnyElement {
     let selected = state.selected == Some(ix);
     let current = menu_model::swatch_color(current);
-    div()
-        .flex()
-        .flex_wrap()
-        .gap(px(space::S))
-        .p(px(space::S))
-        .rounded(px(radius::SMALL))
-        .when(selected, |el| el.bg(rgb(theme.selected)))
-        .when(!enabled, |el| el.opacity(opacity::DISABLED))
-        .children((0..count).map(|at| {
-            let action = action.clone();
-            color_swatch(
-                id,
-                menu_model::swatch_color(at),
-                current,
-                theme,
-                selected && at == state.swatch,
-                cx,
-                move |shell, _, window, cx| {
-                    if enabled {
-                        shell.run_menu_item(&action, at, false, window, cx);
-                    }
-                },
-            )
-        }))
-        .into_any_element()
+    with_pick(
+        div()
+            .flex()
+            .flex_wrap()
+            .gap(px(space::S))
+            .p(px(space::S))
+            .rounded(px(radius::CHIP)),
+        selected,
+        theme,
+    )
+    .when(!enabled, |el| el.opacity(opacity::DISABLED))
+    .children((0..count).map(|at| {
+        let action = action.clone();
+        color_swatch(
+            id,
+            menu_model::swatch_color(at),
+            current,
+            theme,
+            selected && at == state.swatch,
+            cx,
+            move |shell, _, window, cx| {
+                if enabled {
+                    shell.run_menu_item(&action, at, false, window, cx);
+                }
+            },
+        )
+    }))
+    .into_any_element()
 }
 
 /// Draws `rows` as one popover. Items, swatches, headings, notes and separators come from
@@ -253,21 +251,23 @@ pub(crate) fn render_menu(
             MenuRow::Separator => div()
                 .h(px(theme::BORDER_WIDTH))
                 .my(px(space::XS))
-                .bg(rgb(theme.border))
+                .mx(px(space::XS))
+                .bg(rgb(theme.divider))
                 .into_any_element(),
             MenuRow::Heading(text) => div()
                 .px(px(space::S))
-                .pt(px(space::XS))
+                .pt(px(space::S))
+                .pb(px(space::XS))
                 .text_size(font_size::META)
                 .font_weight(FontWeight(weight::MEDIUM))
-                .text_color(rgb(theme.text_muted))
+                .text_color(rgb(theme.text_subtle))
                 .child(text)
                 .into_any_element(),
             MenuRow::Note(text) => div()
                 .px(px(space::S))
                 .py(px(space::XS))
                 .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
+                .text_color(rgb(theme.text_subtle))
                 .child(text)
                 .into_any_element(),
             MenuRow::Item(item) => item_row(state, id, ix, item, slot, theme, cx),

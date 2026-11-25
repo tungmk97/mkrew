@@ -1998,7 +1998,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   Top: the query field with a search icon, the scope's placeholder and an `esc` key cap (`search_box`).
   Below it: the scope tabs as pills (`Look::Chip`; the current one has a 1 px accent border and no fill, the others are muted and get the hover fill).
   The list is at most `PALETTE_LIST_HEIGHT` tall and scrolls.
-  It has section overlines, `list_row` rows (the selected one has the `selected` fill and a `PALETTE_SELECTED_BAR` accent bar) and a muted "+N more ›" row; matched characters are accent and semibold, `detail` is muted after the title, `age` is right-aligned, shortcuts are `kbd` key caps.
+  It has section overlines, `list_row` rows (the selected one has a `layer[0]` fill and a 2 px `PALETTE_SELECTED_BAR` accent bar inset 8 px top and bottom) and a muted "+N more ›" row; matched characters are accent and semibold, `detail` is muted after the title, `age` is right-aligned, shortcuts are `kbd` key caps.
   A scope that waits shows a muted "Loading…" and one that failed a muted error line with an `x` icon, in its own tab only.
   Footer: "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right.
   The theme picker and the `@` file picker have no tabs; the theme picker keeps its muted "Dark" / "Light" text instead of key caps.
@@ -2043,7 +2043,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Update button (§20K): Lucide `circle-arrow-up` in `accent-text` in the title bar right before
   the Board icon while a newer release is known; dimmed (`opacity::DISABLED`) and not clickable
   while it downloads, with "Updating…" shown beside it.
-- In-app toasts (`crates/mkrew-ui/src/toast.rs` queue, `shell/toasts.rs` card): bottom-right over
+- In-app toasts (`crates/mkrew-ui/src/toast.rs` queue, `shell/toasts.rs` card, a `pop_surface` glass card; an error toast is ringed in `status_exited` at 40 %): bottom-right over
   the content, at most 3 (a fourth drops the oldest; the same message again restarts its toast),
   each hides after about 4 s (`TOAST_DURATION`, expired on the 500 ms status tick, so 4.0–4.5 s) or
   on its ✕; hovering a toast pauses its expiry and leaving restarts the full time. Clicking an error
