@@ -51,6 +51,10 @@ Measured from Tern's CSS (six gap reports):
 - No setting migration: `THEME_NAMES` only grows.
 - The focus stripe among several panes is 1 px; needs input and a session colour stay 2 px.
 - The sidebar sits on pane_gap without border_r; selected sidebar rows use the tint plus 2 px bar; the right panel's shown icon tab is accent_bg with an accent_text icon.
+- Changed-line numbers keep at least 2:1 on their gutter, also in derived palettes (`diff_tone` raises the hue share until it does; the "diff numbers" contrast rule).
+- A line on an accent-filled button is `accent_highlight`, not `glass_hi` (white at 100 % in light themes).
+- Screenshots (smoke sandbox, fake agent, `docs/screenshots/`): `tern-polish-{split,files,menu,dialog,settings,git}-{mkrew-dark,mkrew-light,tern-dark,tern-light}.png` and `tern-polish-split-font18-mkrew-dark.png`. A fake agent has no Chat view and the sandbox has no omp, tracker or failing action, so the Chat view and toast shots were not taken.
+- HUMAN_CHECKS "2026-11-26 Tern polish" lists what is left: omp pane transcript, tool rows, dock, composer fit, scroll-to-bottom button, Chat Markdown and composer, cards and lists (Jira), find bar and badges, and a second look at every screenshotted view on a real screen.
 
 ## Alternatives
 
