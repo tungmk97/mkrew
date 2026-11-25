@@ -10,7 +10,7 @@ mod native;
 #[cfg(not(any(windows, target_os = "macos")))]
 #[path = "no_native.rs"]
 mod native;
-pub use native::{NativeView, WebSurface};
+pub use native::{NativeView, Parent, WebSurface};
 
 use std::fmt;
 use std::sync::LazyLock;

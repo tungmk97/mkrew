@@ -1,7 +1,7 @@
 //! Browser panes (ADR 0111): the Shell's page state per web leaf, and the pane's body.
 
 use crate::*;
-use mkrew_ui::browser::{NativeView, Page, PageEvent};
+use mkrew_ui::browser::{NativeView, Page, PageEvent, Parent};
 
 /// One browser pane's live state, keyed by its leaf id in `Shell.browsers`.
 pub(crate) struct Browser {
@@ -25,6 +25,8 @@ pub(crate) struct Browser {
     pub(crate) keys: Vec<String>,
     /// The address field is being edited.
     pub(crate) editing: bool,
+    /// The page is being built (`prepare_browsers`); `native` comes with `page_built`.
+    pub(crate) building: bool,
 }
 
 impl Shell {
@@ -74,6 +76,7 @@ impl Shell {
                     page_keys: false,
                     keys: Vec::new(),
                     editing: false,
+                    building: false,
                 }
             });
         }
@@ -377,26 +380,46 @@ impl Shell {
                 && usable
                 && browser.native.is_none()
                 && browser.error.is_none()
+                && !browser.building
                 && !browser.page.url.is_empty()
             {
-                let keys = mkrew_ui::browser::keys::forwarded(&self.keymap);
-                let data_dir = self.paths.data_dir.join("WebView2");
-                match NativeView::build(
-                    window,
-                    *id,
-                    &browser.page.url,
-                    &keys,
-                    dark,
-                    Some(&data_dir),
-                    self.page_events.clone(),
-                ) {
-                    Ok(native) => {
-                        browser.native = Some(native);
-                        browser.page_keys = false;
-                        browser.keys = keys;
+                match Parent::of(window) {
+                    Ok(parent) => {
+                        browser.building = true;
+                        let keys = mkrew_ui::browser::keys::forwarded(&self.keymap);
+                        let data_dir = self.paths.data_dir.join("WebView2");
+                        let (id, url, events) =
+                            (*id, browser.page.url.clone(), self.page_events.clone());
+                        let window_id = window.window_handle().window_id();
+                        // Built from a task, with nothing borrowed: the build runs the message
+                        // loop, and a window update in progress would make every task that
+                        // updates this window fail meanwhile, the daemon connection's included
+                        // (see `Parent`).
+                        cx.spawn(async move |this, cx| {
+                            let open = cx.update(|cx| {
+                                cx.windows().iter().any(|w| w.window_id() == window_id)
+                            });
+                            let built = if open {
+                                NativeView::build(
+                                    &parent,
+                                    id,
+                                    &url,
+                                    &keys,
+                                    dark,
+                                    Some(&data_dir),
+                                    events,
+                                )
+                            } else {
+                                Err("the window closed".to_owned())
+                            };
+                            let _ = this.update(cx, |shell, cx| {
+                                shell.page_built(id, host, &url, built, keys, cx);
+                            });
+                        })
+                        .detach();
                     }
                     Err(error) => {
-                        tracing::warn!(%id, "browser: cannot build the page: {error}");
+                        tracing::warn!(%id, "browser: no window handle for the page: {error}");
                         browser.error = Some(error);
                     }
                 }
@@ -425,6 +448,42 @@ impl Shell {
                 }
             }
         }
+    }
+
+    /// The page of browser pane `id`, built for `host` on `url` (`prepare_browsers`), arrives.
+    /// A pane closed or moved to another window meanwhile drops it (the next render builds
+    /// the moved one in its new window).
+    fn page_built(
+        &mut self,
+        id: Ulid,
+        host: HostId,
+        url: &str,
+        built: Result<NativeView, String>,
+        keys: Vec<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(browser) = self.browsers.get_mut(&id) else {
+            return;
+        };
+        browser.building = false;
+        if browser.host == Some(host) {
+            match built {
+                Ok(native) => {
+                    // The address changed while the page was built.
+                    if browser.page.url != url {
+                        native.load(&browser.page.url);
+                    }
+                    browser.native = Some(native);
+                    browser.page_keys = false;
+                    browser.keys = keys;
+                }
+                Err(error) => {
+                    tracing::warn!(%id, "browser: cannot build the page: {error}");
+                    browser.error = Some(error);
+                }
+            }
+        }
+        cx.notify();
     }
 
     /// The web leaves `host` shows now: its tab's shown panes (a zoom shows one), none while

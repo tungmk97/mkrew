@@ -7,9 +7,19 @@ use ulid::Ulid;
 
 pub enum NativeView {}
 
+/// No window a page could be built in.
+#[derive(Clone, Copy)]
+pub struct Parent;
+
+impl Parent {
+    pub fn of(_window: &Window) -> Result<Self, String> {
+        Err(super::Unavailable::Linux.to_string())
+    }
+}
+
 impl NativeView {
     pub fn build(
-        _window: &Window,
+        _parent: &Parent,
         _id: Ulid,
         _url: &str,
         _keys: &[String],

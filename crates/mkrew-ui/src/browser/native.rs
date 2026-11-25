@@ -13,7 +13,33 @@ use std::path::Path;
 use std::rc::Rc;
 use ulid::Ulid;
 use wry::dpi::{LogicalPosition, LogicalSize};
+use wry::raw_window_handle::{HandleError, HasWindowHandle, RawWindowHandle, WindowHandle};
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebContext, WebViewBuilder};
+
+/// The window a page is built in, by its raw handle. Building a page runs the message loop
+/// (WebView2 waits for its environment), and that loop runs GPUI's other tasks and paints: a
+/// task that then updates a window the build was started from fails. So the handle is copied
+/// while the window is at hand and the page is built later, from a task that borrows nothing
+/// (`Shell::prepare_browsers`, ADR 0114).
+#[derive(Clone, Copy)]
+pub struct Parent(RawWindowHandle);
+
+impl Parent {
+    pub fn of(window: &Window) -> Result<Self, String> {
+        let handle = HasWindowHandle::window_handle(window).map_err(|error| error.to_string())?;
+        Ok(Self(handle.as_raw()))
+    }
+}
+
+impl HasWindowHandle for Parent {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+        // SAFETY: read from a live GPUI window; `Shell::prepare_browsers` builds a page only
+        // after checking, in the same synchronous step, that the window is still open, and
+        // `build_as_child` uses the handle only during that call.
+        #[allow(unsafe_code)]
+        Ok(unsafe { WindowHandle::borrow_raw(self.0) })
+    }
+}
 
 pub struct NativeView {
     view: Rc<wry::WebView>,
@@ -22,10 +48,11 @@ pub struct NativeView {
 }
 
 impl NativeView {
-    /// Builds the page of browser pane `id` on `url` as a child of `window` (hidden until its
-    /// surface is drawn). Events go to `events` with the pane's id.
+    /// Builds the page of browser pane `id` on `url` as a child of `parent` (hidden until its
+    /// surface is drawn). Events go to `events` with the pane's id. Runs the message loop: call
+    /// it with nothing of GPUI borrowed (see [`Parent`]).
     pub fn build(
-        window: &Window,
+        parent: &Parent,
         id: Ulid,
         url: &str,
         keys: &[String],
@@ -65,7 +92,7 @@ impl NativeView {
             builder.with_theme(theme(dark))
         };
         let view = builder
-            .build_as_child(window)
+            .build_as_child(parent)
             .map_err(|error| error.to_string())?;
         Ok(NativeView {
             view: Rc::new(view),
