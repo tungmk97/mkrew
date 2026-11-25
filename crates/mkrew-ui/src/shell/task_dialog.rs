@@ -382,7 +382,7 @@ impl Shell {
                     .justify_center()
                     .rounded(px(radius::SMALL))
                     .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.border))
+                    .border_color(rgb(theme.control_border))
                     .text_size(font_size::META)
                     .text_color(rgb(theme.accent))
                     .child(if dialog.worktree { "✓" } else { "" }),

@@ -117,6 +117,8 @@ pub struct Context {
     pub idle_removable: usize,
     /// Some workspace is expanded in the sidebar (`Sidebar::any_expanded`).
     pub workspaces_open: bool,
+    /// A window per workspace (ADR 0113): no sidebar, so its commands are not listed.
+    pub per_workspace: bool,
 }
 
 /// A palette-only action: no key is bound to it.
@@ -145,7 +147,7 @@ pub enum Extra {
     TabPin,
     TabCloseOthers,
     TabCloseRight,
-    TabMoveToMainWindow,
+    TabMoveBack,
     WindowMoveAllBack,
     WindowClose,
     PanePin,
@@ -204,7 +206,7 @@ impl Extra {
         Self::TabPin,
         Self::TabCloseOthers,
         Self::TabCloseRight,
-        Self::TabMoveToMainWindow,
+        Self::TabMoveBack,
         Self::WindowMoveAllBack,
         Self::WindowClose,
         Self::PanePin,
@@ -263,7 +265,7 @@ impl Extra {
             Self::TabPin => "Tab: Pin / Unpin",
             Self::TabCloseOthers => "Tab: Close others",
             Self::TabCloseRight => "Tab: Close tabs to the right",
-            Self::TabMoveToMainWindow => "Tab: Move to main window",
+            Self::TabMoveBack => "Tab: Move back to its workspace window",
             Self::WindowMoveAllBack => "Window: Move all tabs back",
             Self::WindowClose => "Window: Close",
             Self::PanePin => "Pane: Pin / Unpin",
@@ -338,7 +340,7 @@ impl Extra {
             Self::TabPin => in_view(View::Terminals) && context.tabs > 0,
             Self::TabCloseOthers => in_view(View::Terminals) && context.tab_others,
             Self::TabCloseRight => in_view(View::Terminals) && context.tab_right,
-            Self::TabMoveToMainWindow | Self::WindowMoveAllBack | Self::WindowClose => {
+            Self::TabMoveBack | Self::WindowMoveAllBack | Self::WindowClose => {
                 context.detached_window
             }
             Self::PanePin => in_view(View::Terminals) && context.tabs > 0 && context.pane,
@@ -378,8 +380,8 @@ impl Extra {
             Self::History => context.workspace,
             Self::InstallUpdate => context.update_ready,
             Self::InstallMkCommand => context.mk_install,
-            Self::SidebarRemoveIdle => context.idle_removable > 0,
-            Self::SidebarToggleAll => context.workspaces > 0,
+            Self::SidebarRemoveIdle => context.idle_removable > 0 && !context.per_workspace,
+            Self::SidebarToggleAll => context.workspaces > 0 && !context.per_workspace,
         }
     }
 }
@@ -561,10 +563,7 @@ pub fn acts_in_detached_window(action: &Action) -> bool {
         Action::Run(command) => crate::detached::handles(*command),
         Action::Extra(extra) => matches!(
             extra,
-            Extra::TabMoveToMainWindow
-                | Extra::WindowMoveAllBack
-                | Extra::WindowClose
-                | Extra::TabPin
+            Extra::TabMoveBack | Extra::WindowMoveAllBack | Extra::WindowClose | Extra::TabPin
         ),
         Action::GoTo(Target::Session(_)) => true,
         _ => false,
@@ -754,8 +753,6 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ToggleTheme
         | Command::SelectTheme
         | Command::ToggleFullScreen
-        | Command::ToggleSidebar
-        | Command::ToggleCompactSidebar
         | Command::VoiceInput
         | Command::AskAi => true,
         Command::Workspace(n) => usize::from(n) <= context.workspaces,
@@ -774,8 +771,9 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::TogglePanelSide
         | Command::NewTask
         | Command::ContextMenu
-        | Command::ShowDiff
-        | Command::FocusSidebar => context.workspace,
+        | Command::ShowDiff => context.workspace,
+        Command::ToggleSidebar | Command::ToggleCompactSidebar => !context.per_workspace,
+        Command::FocusSidebar => context.workspace && !context.per_workspace,
         Command::ShowDocs => context.workspace && context.features.docs,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
         Command::Tab(n) => context.workspace && usize::from(n) <= context.tabs,

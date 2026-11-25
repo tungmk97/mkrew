@@ -26,6 +26,7 @@ impl Shell {
             || self.slash_picker.is_some()
             || self.run_setup.is_some()
             || self.settings_dialog.is_some()
+            || self.open_ask.is_some()
     }
 
     /// The `/` picker, the prompt picker or the `@` file picker is open.

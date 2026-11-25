@@ -203,6 +203,15 @@ impl Shell {
             cx.propagate();
             return;
         }
+        // ADR 0113: no sidebar in a window per workspace.
+        if self.window_mode == WindowMode::PerWorkspace
+            && matches!(
+                *command,
+                Command::ToggleSidebar | Command::ToggleCompactSidebar | Command::FocusSidebar
+            )
+        {
+            return;
+        }
         // Alt+→ takes the keyboard from the sidebar filter back to the center; Alt+← stays.
         if self.filter_focus.is_focused(window)
             && let Command::Focus(direction @ (Direction::Left | Direction::Right)) = *command
@@ -373,7 +382,7 @@ impl Shell {
                     .get(usize::from(n) - 1)
                     .copied();
                 if let Some(project_id) = nth {
-                    self.activate_workspace(self.space_host(window), project_id, window, cx);
+                    self.route_workspace(project_id, Then::Nothing, false, None, window, cx);
                 }
             }
             Command::NextWorkspace => self.cycle_workspace(1, window, cx),

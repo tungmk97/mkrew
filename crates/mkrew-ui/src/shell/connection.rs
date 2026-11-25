@@ -51,6 +51,7 @@ impl Shell {
         let sidebar_mode = ui.sidebar;
         let right_panel = inspector::RightPanel::from_mode(ui.right_panel);
         let panel_side = ui.panel_side;
+        let (window_mode, open_pref) = (ui.window_mode, ui.open_workspace);
         let prompts_dir = paths.prompts_dir();
         let themes_dir = paths.themes_dir();
         let config_dir = paths.config_dir.clone();
@@ -376,6 +377,10 @@ impl Shell {
             plan_error: None,
             sidebar_layout: sidebar::Layout::from_mode(sidebar_mode),
             panel_side,
+            window_mode,
+            open_pref,
+            open_ask: None,
+            modal_host: None,
             reads: HashMap::new(),
             chats: HashMap::new(),
             tsps: HashMap::new(),
@@ -801,6 +806,7 @@ impl Shell {
         self.palette_return = None;
         self.peek = None;
         self.peek_return = None;
+        self.open_ask = None;
         // An open confirmation keeps the keyboard; it hands focus back when answered.
         // A kept dialog (typed text survives) keeps it too.
         if !window.has_active_prompt() && self.task_dialog.is_none() && self.add_workspace.is_none()
@@ -956,9 +962,14 @@ impl Shell {
                         let kept =
                             mkrew_ui::connect::reconnect_workspace(kept, shell.sidebar.projects());
                         // Each Space window keeps its workspace while it is listed, else
-                        // shows the kept one, the default one, or the empty state.
+                        // shows the kept one, the default one, or the empty state. Mode 2
+                        // closes a window whose workspace went, but the last one.
                         let here = shell.host_of(window);
+                        let closed = shell.prune_spaces(cx);
                         for (key, current) in shell.spaces_shown() {
+                            if closed.contains(&key) {
+                                continue;
+                            }
                             let host = HostId::Space(key);
                             let listed =
                                 |id: &Ulid| shell.sidebar.projects().iter().any(|p| p.id == *id);
@@ -1063,6 +1074,7 @@ impl Shell {
                     self.chat_default = settings.ui.chat_default;
                     self.board_all = settings.ui.board_all_workspaces;
                     self.panel_side = settings.ui.panel_side;
+                    self.open_pref = settings.ui.open_workspace;
                     self.follow_md_mode(settings.ui.md_mode);
                     if !self.md_split_dragging {
                         self.md_split = files_view::md_split_share(settings.ui.md_split);
@@ -1290,6 +1302,14 @@ impl Shell {
                     }
                     // A new session (e.g. spawned by `mk`): re-list.
                     Change::Refresh => self.refresh(window, cx),
+                }
+                // Mode 2: a removed workspace's window closes (`prune_spaces`, after a re-list).
+                if self.window_mode == WindowMode::PerWorkspace
+                    && let Event::ProjectUpdated(project) = event
+                    && project.archived
+                    && self.space_of(project.id).is_some()
+                {
+                    self.refresh(window, cx);
                 }
                 if let Event::SessionUpdated(updated) = event
                     && mkrew_ui::tsp::enters_fallback(tsp_before, updated.tsp)

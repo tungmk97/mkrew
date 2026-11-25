@@ -228,7 +228,7 @@ impl Shell {
     }
 
     /// A new empty browser pane with its address field focused: on an edge of a pane
-    /// (`at`), or in a new tab (`None`). New tabs belong to the main window.
+    /// (`at`), or in a new tab (`None`) of the workspace's Space window.
     pub(crate) fn new_browser(
         &mut self,
         at: Option<(Ulid, PaneKey, Edge)>,
@@ -249,9 +249,8 @@ impl Shell {
         let place = match at {
             Some((_, key, edge)) => documents::Place::Split(key, edge),
             None => {
-                if self.host_of(window).space().is_none() {
-                    return self.in_window(self.primary_host(), cx, move |shell, window, cx| {
-                        window.activate_window();
+                if !self.acts_here(project_id, window) {
+                    return self.in_workspace(project_id, window, cx, |shell, window, cx| {
                         shell.new_browser(None, window, cx);
                     });
                 }
@@ -315,6 +314,11 @@ impl Shell {
             WebPlace::Split(target) => {
                 let place = documents::Place::Split(target, Edge::Right);
                 self.place_leaf(project_id, Leaf::web(url), place, window, cx);
+            }
+            WebPlace::NewTab if !self.acts_here(project_id, window) => {
+                self.in_workspace(project_id, window, cx, move |shell, window, cx| {
+                    shell.open_web(url, None, window, cx);
+                });
             }
             WebPlace::NewTab => {
                 // Terminals show the panes: Board and Docs give way (as a file from Docs).

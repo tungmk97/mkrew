@@ -167,7 +167,8 @@ impl Shell {
     }
 
     /// Moves `tab` to `to` (strip `index`, else the end): its panes follow, `to` shows it and
-    /// takes the keyboard. A Space window also switches to the tab's workspace.
+    /// takes the keyboard. A Space window also switches to the tab's workspace; in mode 2 a
+    /// Space window of another workspace gives way to the tab's own (opened if needed).
     pub(crate) fn move_tab_to(
         &mut self,
         tab: DockTab,
@@ -176,9 +177,19 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let DockTab::Terminal { project, tab_id } = tab;
+        let mut to = to;
+        if to.space().is_some()
+            && self.window_mode == WindowMode::PerWorkspace
+            && self.workspace_of(to).is_some_and(|shown| shown != project)
+        {
+            match self.space_of(project) {
+                Some(key) => to = HostId::Space(key),
+                None => return self.move_tab_to_new_space(tab, window, cx),
+            }
+        }
         let emptied = self.detached.move_tab(tab, to.detached(), index);
         self.after_move(emptied, cx);
-        let DockTab::Terminal { project, tab_id } = tab;
         if to.space().is_some() {
             // The strip shows the shown workspace's tabs: a drop between its chips lands
             // there; a tab of another workspace keeps its place.
@@ -222,7 +233,33 @@ impl Shell {
         cx.notify();
     }
 
-    /// "Move all back": every tab of `key` returns to the Space window, in strip order.
+    /// Mode 2: `tab` goes back to its workspace, which has no Space window yet: one opens
+    /// with it.
+    fn move_tab_to_new_space(
+        &mut self,
+        tab: DockTab,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let DockTab::Terminal { project, tab_id } = tab;
+        let emptied = self.detached.move_tab(tab, None, None);
+        self.after_move(emptied, cx);
+        if let Some(tabs) = self.tabs.get_mut(&project) {
+            tabs.activate(tab_id);
+        }
+        self.views.insert(project, View::Terminals);
+        self.windows_dirty = true;
+        self.in_workspace(project, window, cx, move |shell, window, cx| {
+            shell.rehost_tab(tab, window, cx);
+            shell.sync_panes(window, cx);
+            cx.notify();
+        });
+        self.sync_panes_if_alive(window, cx);
+        cx.notify();
+    }
+
+    /// "Move all back": every tab of `key` returns to the Space window, in strip order (mode
+    /// 2: each to its workspace's window).
     pub(crate) fn move_all_back(
         &mut self,
         key: WindowKey,
@@ -230,6 +267,12 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let tabs = self.detached.tabs_of(key);
+        if self.window_mode == WindowMode::PerWorkspace {
+            for tab in tabs {
+                self.move_tab_to(tab, self.primary_host(), None, window, cx);
+            }
+            return;
+        }
         let last = tabs.last().copied();
         for tab in &tabs {
             let emptied = self.detached.move_tab(*tab, None, None);
@@ -254,7 +297,7 @@ impl Shell {
         }
     }
 
-    /// The moves a tab menu offers (spec §4.3): to the main window (from a detached one), to a
+    /// The moves a tab menu offers (spec §4.3): back to its Space window (from a detached one), to a
     /// new window (not for the only tab of a detached window) and to every other detached
     /// window, numbered as the windows are.
     pub(crate) fn move_rows(&self, tab: DockTab) -> Rows {
@@ -267,7 +310,7 @@ impl Shell {
         };
         let mut rows: Rows = Vec::new();
         if host.space().is_none() {
-            rows.push(move_to("Move to main window".into(), self.primary_host()).row());
+            rows.push(move_to("Move back".into(), self.primary_host()).row());
         }
         let alone = matches!(host, HostId::Detached(key) if self.detached.tabs_of(key).len() < 2);
         rows.push(

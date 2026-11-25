@@ -80,13 +80,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        // A detached window has no Git panel: the main window opens it.
-        if self.host_of(window).space().is_none() {
-            self.in_window(self.primary_host(), cx, move |shell, window, cx| {
-                window.activate_window();
+        // A detached window has no Git panel: the workspace's Space window opens it.
+        if !self.acts_here(project_id, window) {
+            return self.in_workspace(project_id, window, cx, move |shell, window, cx| {
                 shell.open_diff(project_id, place, window, cx);
             });
-            return;
         }
         if self.view(self.space_host(window)) != View::Terminals {
             self.show_view(View::Terminals, window, cx);
@@ -118,14 +116,8 @@ impl Shell {
             .child(
                 button("diff-switch-workspace", "Switch to workspace", theme, true).on_click(
                     cx.listener(move |shell, _, window, cx| {
-                        shell.in_main_window(window, cx, move |shell, window, cx| {
-                            shell.activate_workspace(
-                                shell.space_host(window),
-                                project_id,
-                                window,
-                                cx,
-                            );
-                        });
+                        let ctrl = window.modifiers().secondary();
+                        shell.route_workspace(project_id, Then::Nothing, ctrl, None, window, cx);
                     }),
                 ),
             )

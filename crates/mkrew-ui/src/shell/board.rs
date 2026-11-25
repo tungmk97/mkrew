@@ -212,12 +212,11 @@ impl Shell {
         let since = Since::task(task_id, &task.title, checkpoint);
         // A worktree task's checkpoint is its worktree's HEAD: compared there.
         let target = task.worktree_path.is_some().then_some(task_id);
-        // A card of the All workspaces board: its own workspace shows the changes.
-        if self.workspace_in(window) != Some(project_id) {
-            self.activate_workspace(self.space_host(window), project_id, window, cx);
-        }
-        self.retarget_git(project_id, target, None);
-        self.show_git_since(project_id, since, window, cx);
+        // A card of the All workspaces board: its own workspace's window shows the changes.
+        self.in_workspace(project_id, window, cx, move |shell, window, cx| {
+            shell.retarget_git(project_id, target, None);
+            shell.show_git_since(project_id, since, window, cx);
+        });
     }
 
     /// The Git tab and Diff pane listing the changes since `since`'s checkpoint.

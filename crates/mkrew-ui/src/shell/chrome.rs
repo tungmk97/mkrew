@@ -18,7 +18,8 @@ impl Shell {
         self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
-    /// Every workspace (the shown one checked), then "Add workspace…".
+    /// Every workspace (the shown one checked, one in another window marked ◳), then "Add
+    /// workspace…". A pick opens it the way the window mode says (`route_workspace`).
     pub(crate) fn switcher_rows(&self, project_id: Ulid) -> Rows {
         let mut rows: Rows = self
             .sidebar
@@ -29,7 +30,9 @@ impl Shell {
                 MenuItem::new(
                     project.name.clone(),
                     act(move |shell, window, cx| {
-                        shell.activate_workspace(shell.space_host(window), id, window, cx)
+                        let at = shell.menu_anchor(&Anchor::Switcher, window, cx);
+                        let ctrl = window.modifiers().secondary();
+                        shell.route_workspace(id, Then::Nothing, ctrl, Some(at), window, cx);
                     }),
                 )
                 .lead(Lead::Avatar {
@@ -37,6 +40,11 @@ impl Shell {
                     color: project.color.clone(),
                 })
                 .checked(id == project_id)
+                .keys(if id != project_id && self.space_of(id).is_some() {
+                    "◳"
+                } else {
+                    ""
+                })
                 .row()
             })
             .collect();
@@ -287,9 +295,9 @@ impl Shell {
         // Never shrinks: the tab area gives way first.
         let mut left = div().flex_none().flex().items_center().gap(px(space::S));
         if main {
-            left = left
-                .children(self.machine_chip(theme))
-                .child(self.sidebar_toggle(theme, cx));
+            left = left.children(self.machine_chip(theme)).children(
+                (self.window_mode == WindowMode::Single).then(|| self.sidebar_toggle(theme, cx)),
+            );
         }
         if let Some(project_id) = workspace {
             left = left.child(self.render_workspace_switcher(project_id, theme, cx));
@@ -368,7 +376,7 @@ impl Shell {
         let mut right: Vec<gpui::AnyElement> = Vec::new();
         // The sidebar footer shows voice input; with the sidebar hidden it shows here, so a
         // live microphone is never unmarked.
-        if self.sidebar_layout.hidden() {
+        if !self.sidebar_drawn() {
             right.extend((self.voice_status(false, theme)).map(IntoElement::into_any_element));
         }
         if main {

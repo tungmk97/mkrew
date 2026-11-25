@@ -180,7 +180,7 @@ impl Shell {
         }
         match direction {
             // The compact rail widens (it has no filter); a hidden sidebar stays hidden.
-            Direction::Left if !self.sidebar_layout.hidden() => self.focus_sidebar(window, cx),
+            Direction::Left if self.sidebar_drawn() => self.focus_sidebar(window, cx),
             Direction::Right => {
                 // Without loaded tabs the Terminals view draws no panel.
                 let drawn = self.view(self.space_host(window)) != View::Terminals
@@ -257,7 +257,7 @@ impl Shell {
 
     /// The drawn sidebar's width in px: what sits left of a left panel.
     fn sidebar_px(&self, window: &Window) -> f32 {
-        if self.sidebar_layout.hidden() {
+        if !self.sidebar_drawn() {
             0.0
         } else if self.sidebar_layout.compact() {
             f32::from(theme::rems_px(theme::COMPACT_SIDEBAR_WIDTH).to_pixels(window.rem_size()))

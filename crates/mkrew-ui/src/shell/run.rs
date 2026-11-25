@@ -64,15 +64,12 @@ impl Shell {
                 match started {
                     Ok(run) => {
                         if reveal {
-                            shell.views.insert(project_id, View::Terminals);
-                            shell.run_reveal = run.tab_id;
-                            shell.reveal_run_tab(project_id, window, cx);
-                            shell.activate_workspace(
-                                shell.space_host(window),
-                                project_id,
-                                window,
-                                cx,
-                            );
+                            let tab = run.tab_id;
+                            shell.in_workspace(project_id, window, cx, move |shell, window, cx| {
+                                shell.views.insert(project_id, View::Terminals);
+                                shell.run_reveal = tab;
+                                shell.reveal_run_tab(project_id, window, cx);
+                            });
                         }
                     }
                     Err(error) => {
@@ -94,6 +91,11 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.run_menu = None;
+        if !self.acts_here(project_id, window) {
+            return self.in_workspace(project_id, window, cx, move |shell, window, cx| {
+                shell.show_run_tab(project_id, window, cx);
+            });
+        }
         self.run_reveal = self.tabs.get(&project_id).and_then(|tabs| {
             tabs.tabs()
                 .iter()
@@ -666,7 +668,7 @@ impl Shell {
                         .justify_center()
                         .rounded(px(radius::SMALL))
                         .border(px(theme::BORDER_WIDTH))
-                        .border_color(rgb(theme.border))
+                        .border_color(rgb(theme.control_border))
                         .text_size(font_size::META)
                         .text_color(rgb(theme.accent))
                         .child(if checked { "✓" } else { "" }),

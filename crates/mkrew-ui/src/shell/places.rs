@@ -6,7 +6,7 @@ impl Shell {
     /// The only way a file opens (SPEC §6.1): where `place` says, or, when the file is open
     /// already in any tab or window, only its pane is focused. `file` says which folder it is
     /// of (the project's or a task worktree's). `line` is a link's (line, column), 1-based,
-    /// shown in either case. Runs in the main window: from a detached one it hops there first.
+    /// shown in either case. Runs in the workspace's Space window (`in_workspace` hops there).
     pub(crate) fn open_document(
         &mut self,
         project_id: Ulid,
@@ -16,9 +16,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.host_of(window).space().is_none() {
-            return self.in_window(self.primary_host(), cx, move |shell, window, cx| {
-                window.activate_window();
+        if !self.acts_here(project_id, window) {
+            return self.in_workspace(project_id, window, cx, move |shell, window, cx| {
                 shell.open_document(project_id, file, line, place, window, cx);
             });
         }

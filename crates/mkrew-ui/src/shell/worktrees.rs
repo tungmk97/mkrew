@@ -353,12 +353,11 @@ impl Shell {
         let Some(dialog) = self.worktree_dialog.take() else {
             return;
         };
-        let project_id = dialog.project_id;
-        if self.workspace_in(window) != Some(project_id) {
-            self.activate_workspace(self.space_host(window), project_id, window, cx);
-        }
-        self.retarget_git(project_id, Some(dialog.task_id), None);
-        self.open_git(project_id, window, cx);
+        let (project_id, task_id) = (dialog.project_id, dialog.task_id);
+        self.in_workspace(project_id, window, cx, move |shell, window, cx| {
+            shell.retarget_git(project_id, Some(task_id), None);
+            shell.open_git(project_id, window, cx);
+        });
     }
 
     /// "Merge back…" / "Remove worktree…" (SPEC §20E.1): the commits to merge or the

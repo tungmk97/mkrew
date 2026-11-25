@@ -207,9 +207,8 @@ impl Shell {
                     return;
                 };
                 let (path, line) = (path.clone(), *line);
-                if self.host_of(window).space().is_none() {
-                    return self.in_window(self.primary_host(), cx, move |shell, window, cx| {
-                        window.activate_window();
+                if !self.acts_here(project_id, window) {
+                    return self.in_workspace(project_id, window, cx, move |shell, window, cx| {
                         shell.open_file_at(project_id, target, path, line, window, cx);
                     });
                 }
@@ -411,6 +410,7 @@ impl Shell {
             features: self.features,
             idle_removable: self.sidebar.idle_agents_and_terminals().len(),
             workspaces_open: self.sidebar.any_expanded(),
+            per_workspace: self.window_mode == WindowMode::PerWorkspace,
         };
         let mut entries = palette::settings_error(&self.keymap, self.settings_error.as_deref());
         entries.extend(palette::keymap_errors(&self.keymap, &self.keymap_errors));
@@ -766,7 +766,7 @@ impl Shell {
         // A detached window's own extras; they need no workspace of the main window.
         if let Some(key) = self.detached_key(window) {
             match action {
-                palette::Action::Extra(Extra::TabMoveToMainWindow) => {
+                palette::Action::Extra(Extra::TabMoveBack) => {
                     if let Some((project, tab_id)) = self.tab_scope(window) {
                         let tab = DockTab::Terminal { project, tab_id };
                         self.move_tab_to(tab, self.primary_host(), None, window, cx);
@@ -940,7 +940,7 @@ impl Shell {
                         }
                     }
                     // Handled above: a detached window's own entries.
-                    Extra::TabMoveToMainWindow | Extra::WindowMoveAllBack | Extra::WindowClose => {}
+                    Extra::TabMoveBack | Extra::WindowMoveAllBack | Extra::WindowClose => {}
                     Extra::PanePin => {
                         let pane = self.focused_session(window).and_then(|id| {
                             let session = self.sidebar.sessions().iter().find(|s| s.id == id)?;
@@ -1037,7 +1037,7 @@ impl Shell {
                 }
             }
             palette::Action::GoTo(palette::Target::Workspace(project_id)) => {
-                self.activate_workspace(self.space_host(window), project_id, window, cx);
+                self.route_workspace(project_id, Then::Nothing, false, None, window, cx);
             }
             palette::Action::GoTo(palette::Target::Session(session_id)) => {
                 self.open_session(session_id, window, cx);
@@ -1046,12 +1046,11 @@ impl Shell {
                 project_id,
                 task_id,
             }) => {
-                if workspace != Some(project_id) {
-                    self.activate_workspace(self.space_host(window), project_id, window, cx);
-                }
-                self.selected_card = Some(task_id);
-                self.show_view(View::Board, window, cx);
-                cx.notify();
+                self.in_workspace(project_id, window, cx, move |shell, window, cx| {
+                    shell.selected_card = Some(task_id);
+                    shell.show_view(View::Board, window, cx);
+                    cx.notify();
+                });
             }
             palette::Action::OpenFile { path } => {
                 if let Some(source) = source {
@@ -1074,14 +1073,14 @@ impl Shell {
                 current: false,
             } => {
                 if let Some(source) = source {
-                    self.in_main_window(window, cx, move |shell, window, cx| {
+                    self.in_workspace(source.project_id, window, cx, move |shell, window, cx| {
                         shell.checkout_branch(source, repo, branch, window, cx);
                     });
                 }
             }
             palette::Action::ShowCommit { repo, sha } => {
                 if let Some(source) = source {
-                    self.in_main_window(window, cx, move |shell, window, cx| {
+                    self.in_workspace(source.project_id, window, cx, move |shell, window, cx| {
                         shell.show_palette_commit(source, repo, sha, window, cx);
                     });
                 }
@@ -1113,28 +1112,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// Runs `run` in the main window: at once when the palette was opened there, else after
-    /// activating that window. Files, checkouts and commits all live in the main window (the
-    /// Editor and Git views, the title bar summary), also when a detached window's palette
-    /// picked them.
-    pub(crate) fn in_main_window(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-        run: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) + 'static,
-    ) {
-        if self.host_of(window).space().is_some() {
-            return run(self, window, cx);
-        }
-        self.in_window(self.primary_host(), cx, move |shell, window, cx| {
-            window.activate_window();
-            run(shell, window, cx);
-        });
-    }
-
     /// Files and Search picks: the file in a file pane (its folders open, the cursor lands
-    /// on it), the caret on `line` for a search hit. A detached window's pick opens in the
-    /// main one.
+    /// on it), the caret on `line` for a search hit, in the window of its workspace.
     fn open_palette_file(
         &mut self,
         source: palette::Source,
@@ -1144,15 +1123,15 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let (project, target) = (source.project_id, source.worktree_task_id);
-        self.in_main_window(window, cx, move |shell, window, cx| {
+        self.in_workspace(project, window, cx, move |shell, window, cx| {
             shell.open_file_at(project, target, path, line, window, cx);
         });
     }
 
     /// A Branches pick: `git.checkout`, after a question when something is at risk (changed
     /// files in the repository, live agents in that folder). A failure is a toast with git's
-    /// own message; a success refreshes the Git view. Runs in the main window
-    /// ([`Self::in_main_window`]) with the palette's workspace active. `repo_changes` reads
+    /// own message; a success refreshes the Git view. Runs in the window of
+    /// the palette's workspace ([`Self::in_workspace`]). `repo_changes` reads
     /// that workspace's title bar summary; activating a workspace clears it and loads it
     /// again, so while it is missing the summary is read here before the question.
     fn checkout_branch(

@@ -278,10 +278,9 @@ impl Shell {
     }
 
     /// Shows a session picked in the sidebar, the palette or a notification. A pane in a
-    /// detached window comes forward there (its tab is selected, its window activated); from a
-    /// detached window a session of the main one activates the main window (never a silent
-    /// change of the window we are in). Otherwise it focuses its pane, or places it next to the
-    /// focused pane of its workspace's active tab.
+    /// detached window comes forward there (its tab is selected, its window activated).
+    /// Otherwise its workspace opens the way the window mode says (`route_workspace`), and
+    /// its pane is focused there, or placed next to the focused pane of the active tab.
     pub(crate) fn open_session(
         &mut self,
         session: Ulid,
@@ -309,20 +308,7 @@ impl Shell {
             cx.notify();
             return;
         }
-        if self.host_of(window).space().is_none() {
-            self.in_window(self.primary_host(), cx, move |shell, window, cx| {
-                window.activate_window();
-                shell.open_session(session, window, cx);
-            });
-            return;
-        }
-        self.views.insert(project_id, View::Terminals);
-        if self.tabs.contains_key(&project_id) {
-            self.place_session(project_id, session, None, Axis::Vertical, window, cx);
-        } else {
-            self.reveal = Some(session);
-        }
-        self.activate_workspace(self.space_host(window), project_id, window, cx);
+        self.route_workspace(project_id, Then::Session(session), false, None, window, cx);
     }
 
     /// An OS notification was clicked (§7): raises the window (showing it again if it was hidden
@@ -339,7 +325,7 @@ impl Shell {
         match inbox::jump(projects, sessions, session, project_id) {
             Some(Jump::Session(session)) => self.open_session(session, window, cx),
             Some(Jump::Workspace(project_id)) => {
-                self.activate_workspace(self.space_host(window), project_id, window, cx)
+                self.route_workspace(project_id, Then::Nothing, false, None, window, cx)
             }
             None => {}
         }

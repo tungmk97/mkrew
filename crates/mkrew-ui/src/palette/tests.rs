@@ -56,7 +56,29 @@ fn context(view: View) -> Context {
         },
         idle_removable: 0,
         workspaces_open: true,
+        per_workspace: false,
     }
+}
+
+#[test]
+fn sidebar_commands_hide_with_a_window_per_workspace() {
+    let single = context(View::Terminals);
+    let spaces = Context {
+        per_workspace: true,
+        ..context(View::Terminals)
+    };
+    for command in [
+        Command::ToggleSidebar,
+        Command::ToggleCompactSidebar,
+        Command::FocusSidebar,
+    ] {
+        assert!(available(command, &single), "{command:?}");
+        assert!(!available(command, &spaces), "{command:?}");
+    }
+    for extra in [Extra::SidebarToggleAll, Extra::SidebarRemoveIdle] {
+        assert!(!extra.available(&spaces), "{extra:?}");
+    }
+    assert!(available(Command::TogglePanelSide, &spaces));
 }
 
 #[test]
@@ -1356,7 +1378,7 @@ fn window_extras_show_only_in_a_detached_window() {
         ..context(View::Terminals)
     };
     for extra in [
-        Extra::TabMoveToMainWindow,
+        Extra::TabMoveBack,
         Extra::WindowMoveAllBack,
         Extra::WindowClose,
     ] {
@@ -1406,7 +1428,7 @@ fn a_detached_window_lists_only_what_acts_there() {
         Action::Run(Command::SplitRight),
         Action::Run(Command::MoveTabToNewWindow),
         Action::Run(Command::CommandPalette),
-        Action::Extra(Extra::TabMoveToMainWindow),
+        Action::Extra(Extra::TabMoveBack),
         Action::Extra(Extra::WindowMoveAllBack),
         Action::Extra(Extra::WindowClose),
         Action::Extra(Extra::TabPin),

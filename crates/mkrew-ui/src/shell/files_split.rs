@@ -364,11 +364,10 @@ impl Shell {
                     None => self.toast_info(format!("No heading #{anchor} here"), cx),
                 }
             }
-            // A file opens as a tab of the main window.
-            Some(LinkTarget::File { .. }) if self.host_of(window).space().is_none() => {
+            // A file opens as a tab of its workspace's Space window.
+            Some(LinkTarget::File { .. }) if !self.acts_here(project_id, window) => {
                 let action = action.clone();
-                self.in_window(self.primary_host(), cx, move |shell, window, cx| {
-                    window.activate_window();
+                self.in_workspace(project_id, window, cx, move |shell, window, cx| {
                     shell.open_preview_link(&action, window, cx);
                 });
             }
@@ -449,9 +448,8 @@ impl Shell {
             return;
         };
         let line = pill.line;
-        if self.host_of(window).space().is_none() {
-            return self.in_window(self.primary_host(), cx, move |shell, window, cx| {
-                window.activate_window();
+        if !self.acts_here(project_id, window) {
+            return self.in_workspace(project_id, window, cx, move |shell, window, cx| {
                 shell.open_file_at(project_id, target, path, line, window, cx);
             });
         }

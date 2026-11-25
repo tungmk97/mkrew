@@ -33,10 +33,19 @@ impl Shell {
         self.typing_target.ring.set(self.voice_ring(&theme, cx));
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
         self.sync_traffic_lights(host, window, cx.global::<theme::Fonts>().ui_size);
+        // The shared dialogs draw in one Space window: the one used last when one opened
+        // (mode 2 has several; ADR 0113).
+        if !self.modal_open() {
+            self.modal_host = None;
+        } else if self.modal_host.is_none() {
+            self.modal_host = Some(self.primary_host());
+        }
+        let dialogs = self.modal_host.is_none_or(|shown| shown == host);
         // A dialog control that vanished while focused (a button swapped for its disabled twin
         // while saving, the next step of a dialog) would leave the keyboard on nothing and Esc
         // would miss the dialog: the dialog itself takes the keyboard back.
         if self.modal_open()
+            && dialogs
             && self.popup_host().is_none_or(|popup| popup == host)
             && !window.has_active_prompt()
             && !self.dialog_focus.contains_focused(window, cx)
@@ -68,10 +77,29 @@ impl Shell {
         if viewed_changed {
             self.sync_attention(cx);
         }
+        // Mode 2 (ADR 0113): no sidebar; the workspace's color across the top and its name in
+        // the OS title, so its taskbar button and Alt+Tab say which workspace it is.
+        let per_workspace = self.window_mode == WindowMode::PerWorkspace;
+        let shown = (self.workspace_of(host))
+            .and_then(|id| self.sidebar.projects().iter().find(|p| p.id == id));
+        let stripe = shown
+            .filter(|_| per_workspace)
+            .and_then(|project| project.color.as_deref())
+            .and_then(|color| theme.workspace_color(color));
+        if per_workspace {
+            let title = shown.map_or_else(|| "Mkrew".to_owned(), |p| format!("{} - Mkrew", p.name));
+            if let Some(ui) = self.hosts.get_mut(&host)
+                && ui.title != title
+            {
+                window.set_window_title(&title);
+                ui.title = title;
+            }
+        }
         div()
             .size_full()
             .flex()
             .flex_col()
+            .relative()
             .bg(rgb(theme.bg))
             .track_focus(&self.focus_handle)
             .when(self.view(self.space_host(window)) == View::Board, |el| {
@@ -93,7 +121,7 @@ impl Shell {
                     return;
                 }
                 shell.docs_key_down(event, window, cx);
-                let filter_shown = !shell.sidebar_layout.hidden()
+                let filter_shown = shell.sidebar_drawn()
                     && !shell.sidebar_layout.compact()
                     && !shell.sidebar.is_empty();
                 if event.keystroke.key == "/"
@@ -119,7 +147,7 @@ impl Shell {
                     .relative()
                     // Hidden: not built at all (nothing to lay out or paint). Its own cached
                     // view: a pane printing does not lay it out again (`SidebarView`).
-                    .children((!self.sidebar_layout.hidden()).then(|| {
+                    .children(self.sidebar_drawn().then(|| {
                         let style = gpui::StyleRefinement::default().flex_none().h_full();
                         let style = if self.sidebar_layout.compact() {
                             style.w(theme::rems_px(theme::COMPACT_SIDEBAR_WIDTH))
@@ -141,90 +169,112 @@ impl Shell {
                     .children(
                         self.task_dialog
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_task_dialog(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.undo_dialog
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_undo_dialog(dialog, &theme, cx)),
                     )
                     .children(
                         self.worktree_dialog
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_worktree_dialog(dialog, &theme, cx)),
                     )
                     .children(
                         self.compare
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|compare| self.render_compare(compare, now, &theme, cx)),
                     )
                     .children(
                         self.turns_dialog
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_turns_dialog(dialog, now, &theme, cx)),
                     )
                     .children(
                         self.git_discard
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_git_discard(dialog, &theme, cx)),
                     )
                     .children(
                         self.git_base
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_git_base(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.add_workspace
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_add_workspace(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.plan_dialog
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_plan_path(dialog, window, &theme, cx)),
                     )
                     .children(
-                        self.phone_open
-                            .then(|| self.render_phone_access(&theme, cx)),
+                        (self.phone_open && dialogs).then(|| self.render_phone_access(&theme, cx)),
                     )
                     .children(
-                        self.ports_dialog
-                            .is_some()
+                        (self.ports_dialog.is_some() && dialogs)
                             .then(|| self.render_ports(&theme, cx)),
                     )
                     .children(
                         self.settings_dialog
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_settings_dialog(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.run_setup
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|setup| self.render_run_setup(setup, window, &theme, cx)),
                     )
                     .children(
                         self.broadcast
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_broadcast(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.ask
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_ask(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.history
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|dialog| self.render_history(dialog, now, &theme, cx)),
                     )
-                    .children(self.doc_dialog.as_ref().map(|dialog| match dialog {
-                        DocDialog::Send(dialog) => self.render_send_dialog(dialog, now, &theme, cx),
-                        DocDialog::Changes(changes) => self.render_changes(changes, &theme, cx),
-                    }))
+                    .children(self.doc_dialog.as_ref().filter(|_| dialogs).map(
+                        |dialog| match dialog {
+                            DocDialog::Send(dialog) => {
+                                self.render_send_dialog(dialog, now, &theme, cx)
+                            }
+                            DocDialog::Changes(changes) => self.render_changes(changes, &theme, cx),
+                        },
+                    ))
                     .children(
                         self.diagram_dialog
                             .as_ref()
+                            .filter(|_| dialogs)
                             .map(|diagram| self.render_diagram_dialog(diagram, &theme, cx)),
+                    )
+                    .children(
+                        self.open_ask
+                            .filter(|ask| ask.host == host)
+                            .map(|ask| self.render_open_ask(&ask, &theme, cx)),
                     )
                     .children(
                         self.palette
@@ -247,7 +297,7 @@ impl Shell {
                     .children(
                         self.workspace_menu
                             .as_ref()
-                            .filter(|_| !self.modal_open())
+                            .filter(|_| !self.modal_open() && self.menu_host == host)
                             .map(|menu| self.render_workspace_menu(menu, &theme, cx)),
                     )
                     .children(
@@ -296,6 +346,7 @@ impl Shell {
                                 self.workspace_in(window) == Some(menu.project_id)
                                     && self.file_tree_shown(self.space_host(window))
                                     && !self.modal_open()
+                                    && self.menu_host == host
                             })
                             .map(|menu| self.render_file_menu(menu, &theme, cx)),
                     )
@@ -305,6 +356,7 @@ impl Shell {
                             .filter(|_| {
                                 self.view(self.space_host(window)) == View::Board
                                     && !self.modal_open()
+                                    && self.menu_host == host
                             })
                             .map(|menu| self.render_card_menu(menu, &theme, cx)),
                     )
@@ -314,6 +366,16 @@ impl Shell {
                     )
                     .children(self.render_voice_pill(&theme, cx)),
             )
+            // Over the title bar: painted last.
+            .children(stripe.map(|color| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(theme::WORKSPACE_STRIPE_WIDTH))
+                    .bg(rgb(color))
+            }))
             .into_any_element()
     }
 }

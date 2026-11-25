@@ -13,7 +13,7 @@ impl Shell {
         if let Some(project_id) =
             sidebar::workspace_at_offset(&order, self.workspace_in(window), offset)
         {
-            self.activate_workspace(self.space_host(window), project_id, window, cx);
+            self.route_workspace(project_id, Then::Nothing, false, None, window, cx);
         }
     }
 
@@ -639,7 +639,7 @@ impl Shell {
                 match target {
                     Some(sidebar::Target::Session(id)) => self.open_session(id, window, cx),
                     Some(sidebar::Target::Workspace(id)) => {
-                        self.activate_workspace(self.space_host(window), id, window, cx);
+                        self.route_workspace(id, Then::Nothing, false, None, window, cx);
                     }
                     None => self.focus_pane(window, cx),
                 }

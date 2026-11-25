@@ -457,7 +457,11 @@ impl Shell {
                 theme,
                 Some(">_"),
                 Some("No panes in this tab"),
-                "Start an agent or a shell, or pick a session from the sidebar.".into(),
+                if self.sidebar_drawn() && self.host_of(window).space().is_some() {
+                    "Start an agent or a shell, or pick a session from the sidebar.".into()
+                } else {
+                    "Start an agent or a shell.".into()
+                },
                 None,
             )
             .flex_1()

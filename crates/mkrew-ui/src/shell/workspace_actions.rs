@@ -183,7 +183,7 @@ impl Shell {
                             shell.close_add_workspace(window, cx);
                         }
                         shell.sidebar.add_project(project);
-                        shell.activate_workspace(shell.space_host(window), project_id, window, cx);
+                        shell.route_workspace(project_id, Then::Nothing, false, None, window, cx);
                     }
                     Err(error) => match shell.add_workspace.as_mut() {
                         Some(dialog) => dialog.error = Some(format!("{error:#}")),
@@ -255,7 +255,7 @@ impl Shell {
             (Some(project), _) if mine => {
                 self.close_add_workspace(window, cx);
                 self.sidebar.add_project(project.clone());
-                self.activate_workspace(self.space_host(window), project.id, window, cx);
+                self.route_workspace(project.id, Then::Nothing, false, None, window, cx);
             }
             (Some(_), _) => {}
             (None, error) => {

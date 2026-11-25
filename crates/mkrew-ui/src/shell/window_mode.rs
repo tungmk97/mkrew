@@ -4,6 +4,27 @@
 use crate::shell::hosts::HostUi;
 use crate::shell::space_view::SpaceWindow;
 use crate::*;
+use mkrew_ui::window_mode::{Choice, OpenTarget, open_target};
+
+/// What runs where an opened workspace lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Then {
+    Nothing,
+    /// The session's pane comes forward (placed next to the focused pane if not shown).
+    Session(Ulid),
+}
+
+/// The "Open <workspace>" question of mode 2 (spec 4.2), drawn in the window that asked.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct OpenAsk {
+    pub(crate) project: Ulid,
+    pub(crate) host: HostId,
+    pub(crate) then: Then,
+    /// Under the switcher when it asked from there, else centered.
+    pub(crate) at: Option<Point<Pixels>>,
+    /// "Don't ask again" is ticked.
+    pub(crate) remember: bool,
+}
 
 /// What runs in a Space window once it opened.
 pub(crate) type AfterOpen = Box<dyn FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>)>;
@@ -142,9 +163,44 @@ impl Shell {
             self.spaces.remove(&handle);
         }
         self.forget_host(HostId::Space(key), cx);
+        if self
+            .open_ask
+            .is_some_and(|ask| ask.host == HostId::Space(key))
+        {
+            self.open_ask = None;
+        }
         self.desktop.detach(window);
         self.sync_watches(cx);
         cx.notify();
+    }
+
+    /// Closes Space window `key` from code (a workspace that went away, a combine).
+    pub(crate) fn close_space_window(&mut self, key: SpaceKey, cx: &mut Context<'_, Self>) {
+        self.in_window(HostId::Space(key), cx, move |shell, window, cx| {
+            shell.forget_space(key, window, cx);
+            window.remove_window();
+        });
+    }
+
+    /// Mode 2: the Space windows whose workspace is no longer listed close, but the last open
+    /// one (the caller shows the default workspace there). Returns the closed ones.
+    pub(crate) fn prune_spaces(&mut self, cx: &mut Context<'_, Self>) -> Vec<SpaceKey> {
+        if self.window_mode != WindowMode::PerWorkspace {
+            return Vec::new();
+        }
+        let projects = self.sidebar.projects();
+        let spaces: Vec<(SpaceKey, Option<Ulid>)> = self.spaces_shown().collect();
+        let mut gone: Vec<SpaceKey> = (spaces.iter())
+            .filter(|(_, shown)| shown.is_some_and(|id| projects.iter().all(|p| p.id != id)))
+            .map(|(key, _)| *key)
+            .collect();
+        if gone.len() == spaces.len() {
+            gone.pop();
+        }
+        for key in &gone {
+            self.close_space_window(*key, cx);
+        }
+        gone
     }
 
     /// The ✕ of Space window `key`: another Space window stays, so only this one goes; the
@@ -191,6 +247,379 @@ impl Shell {
                 primary,
             ));
             self.open_space_window(Some(saved.workspace), bounds, placement, None, cx);
+        }
+    }
+
+    /// Opens `project` the way the window mode says (spec 4.2): mode 1 switches the window
+    /// that asked (the primary one from a detached window); mode 2 focuses its window, opens
+    /// a new one, replaces the asking window's workspace, or asks. `then` runs where it lands.
+    /// `ctrl` takes the other choice than the saved one.
+    pub(crate) fn route_workspace(
+        &mut self,
+        project: Ulid,
+        then: Then,
+        ctrl: bool,
+        at: Option<Point<Pixels>>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let host = self.space_host(window);
+        let spaces: Vec<(SpaceKey, Option<Ulid>)> = self.spaces_shown().collect();
+        // An empty window (no workspace yet) takes it without a question.
+        let target = if self.workspace_of(host).is_none() && self.space_of(project).is_none() {
+            OpenTarget::Replace
+        } else {
+            open_target(project, self.window_mode, self.open_pref, ctrl, &spaces)
+        };
+        match target {
+            OpenTarget::Switch | OpenTarget::Replace => {
+                self.show_in(host, project, then, window, cx)
+            }
+            OpenTarget::Focus(key) => {
+                self.in_host(HostId::Space(key), window, cx, move |shell, window, cx| {
+                    shell.run_then(project, then, window, cx);
+                });
+            }
+            OpenTarget::New => self.open_new_space(host, project, then, cx),
+            OpenTarget::Ask => {
+                self.close_menus();
+                self.open_ask = Some(OpenAsk {
+                    project,
+                    host,
+                    then,
+                    at,
+                    remember: false,
+                });
+                self.dialog_serial += 1;
+                self.in_host(host, window, cx, |shell, window, cx| {
+                    window.focus(&shell.dialog_focus, cx);
+                    cx.notify();
+                });
+            }
+        }
+    }
+
+    /// Space window `host` shows `project`, comes forward and runs `then`.
+    fn show_in(
+        &mut self,
+        host: HostId,
+        project: Ulid,
+        then: Then,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.in_host(host, window, cx, move |shell, window, cx| match then {
+            Then::Nothing => shell.activate_workspace(host, project, window, cx),
+            Then::Session(session) => shell.show_session_here(project, session, window, cx),
+        });
+    }
+
+    /// A new Space window for `project`, cascading from `from`, running `then` once open.
+    fn open_new_space(
+        &mut self,
+        from: HostId,
+        project: Ulid,
+        then: Then,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (bounds, placement) = self.new_space_bounds(from, 1, cx);
+        let after: AfterOpen =
+            Box::new(move |shell, window, cx| shell.run_then(project, then, window, cx));
+        self.open_space_window(Some(project), bounds, placement, Some(after), cx);
+    }
+
+    fn run_then(
+        &mut self,
+        project: Ulid,
+        then: Then,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Then::Session(session) = then {
+            self.show_session_here(project, session, window, cx);
+        }
+    }
+
+    /// The Space window `window` shows the pane of `session` of `project_id`: focused, or
+    /// placed next to the focused pane of the workspace's active tab (revealed once its tabs
+    /// load).
+    pub(crate) fn show_session_here(
+        &mut self,
+        project_id: Ulid,
+        session: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.views.insert(project_id, View::Terminals);
+        if self.tabs.contains_key(&project_id) {
+            self.place_session(project_id, session, None, Axis::Vertical, window, cx);
+        } else {
+            self.reveal = Some(session);
+        }
+        self.activate_workspace(self.space_host(window), project_id, window, cx);
+    }
+
+    /// Runs `f` in `host`'s window: at once when that is `window`, else after activating it.
+    pub(crate) fn in_host(
+        &mut self,
+        host: HostId,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        f: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) + 'static,
+    ) {
+        if self.host_of(window) == host {
+            return f(self, window, cx);
+        }
+        self.in_window(host, cx, move |shell, window, cx| {
+            window.activate_window();
+            f(shell, window, cx);
+        });
+    }
+
+    /// A Space window draws the sidebar: mode 1 only (ADR 0113), unless hidden.
+    pub(crate) fn sidebar_drawn(&self) -> bool {
+        self.window_mode == WindowMode::Single && !self.sidebar_layout.hidden()
+    }
+
+    /// Whether something of `project` asked in `window` runs there: a Space window that
+    /// shows it, or can (mode 1's single window switches; mode 2's empty one takes it).
+    pub(crate) fn acts_here(&self, project: Ulid, window: &Window) -> bool {
+        let host = self.host_of(window);
+        host.space().is_some()
+            && (self.window_mode == WindowMode::Single
+                || self.workspace_of(host).is_none_or(|shown| shown == project))
+    }
+
+    /// Runs `f` in a Space window showing `project`, making one show it first, for something
+    /// the user asked inside that workspace (a file, a diff, a checkout, a tab moved back):
+    /// the window of `project`; else mode 1's single window (or an empty one of mode 2)
+    /// switches to it; else mode 2 opens a new one without asking.
+    pub(crate) fn in_workspace(
+        &mut self,
+        project: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        f: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) + 'static,
+    ) {
+        let here = self.space_host(window);
+        let host = match self.space_of(project) {
+            Some(key) => HostId::Space(key),
+            None if self.window_mode == WindowMode::Single || self.workspace_of(here).is_none() => {
+                here
+            }
+            None => {
+                let (bounds, placement) = self.new_space_bounds(here, 1, cx);
+                self.open_space_window(Some(project), bounds, placement, Some(Box::new(f)), cx);
+                return;
+            }
+        };
+        self.in_host(host, window, cx, move |shell, window, cx| {
+            if shell.workspace_of(host) != Some(project) {
+                shell.activate_workspace(host, project, window, cx);
+            }
+            f(shell, window, cx);
+        });
+    }
+
+    /// Where the `step`-th new window goes: the size of `from`, offset `step` × 32 px right
+    /// and down, windowed, kept on a connected screen.
+    pub(crate) fn new_space_bounds(
+        &self,
+        from: HostId,
+        step: usize,
+        cx: &App,
+    ) -> (Bounds<Pixels>, Placement) {
+        let fallback = Bounds::new(
+            point(px(0.0), px(0.0)),
+            size(px(theme::WINDOW_WIDTH), px(theme::WINDOW_HEIGHT)),
+        );
+        let base = self.hosts.get(&from).map_or(fallback, |ui| ui.restore);
+        let offset = px(space::XXL * step as f32);
+        let moved = Bounds::new(
+            point(base.origin.x + offset, base.origin.y + offset),
+            base.size,
+        );
+        let displays: Vec<Bounds<Pixels>> =
+            cx.displays().iter().map(|d| d.visible_bounds()).collect();
+        let primary = cx.primary_display().map(|d| d.visible_bounds());
+        let (placement, bounds) = Placement::of(window_place::restored(
+            moved,
+            Placement::Windowed,
+            size(px(theme::WINDOW_MIN_WIDTH), px(theme::WINDOW_MIN_HEIGHT)),
+            &displays,
+            primary,
+        ));
+        (bounds, placement)
+    }
+
+    /// The question's answer: `choice` runs (a new window, or this window shows it), and
+    /// "Don't ask again" saves it as `[ui] open_workspace`.
+    pub(crate) fn answer_open_ask(
+        &mut self,
+        choice: Choice,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(ask) = self.open_ask.take() else {
+            return;
+        };
+        if ask.remember {
+            self.open_pref = choice.remembered();
+            let value = format!("\"{}\"", self.open_pref.name());
+            if let Err(error) =
+                mkrew_core::settings::write_ui_value(&self.settings_file, "open_workspace", &value)
+            {
+                self.settings_write_failed("the open workspace choice", error, cx);
+            }
+        }
+        self.focus_pane(window, cx);
+        match choice {
+            Choice::NewWindow => self.open_new_space(ask.host, ask.project, ask.then, cx),
+            Choice::ThisWindow => self.show_in(ask.host, ask.project, ask.then, window, cx),
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_open_ask(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.open_ask = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    fn toggle_open_ask_remember(&mut self, cx: &mut Context<'_, Self>) {
+        if let Some(ask) = self.open_ask.as_mut() {
+            ask.remember = !ask.remember;
+        }
+        cx.notify();
+    }
+
+    /// Tab moves between the check row and the buttons (Space or Enter presses the focused
+    /// one); otherwise Enter opens a new window, Space ticks "Don't ask again", Esc cancels.
+    pub(crate) fn open_ask_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
+        cx.stop_propagation();
+        if event.keystroke.modifiers.modified() {
+            return;
+        }
+        match event.keystroke.key.as_str() {
+            "enter" => self.answer_open_ask(Choice::NewWindow, window, cx),
+            "space" => self.toggle_open_ask_remember(cx),
+            "escape" => self.cancel_open_ask(window, cx),
+            _ => {}
+        }
+    }
+
+    /// "Open <workspace>": under the switcher when asked from there, else centered.
+    pub(crate) fn render_open_ask(
+        &self,
+        ask: &OpenAsk,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let check = div()
+            .id("open-ask-remember")
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::S))
+            .py(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .text_size(font_size::BODY)
+            .text_color(rgb(theme.text))
+            .focus_stop(theme)
+            .pressable(Look::Row, true, theme)
+            .on_press(
+                true,
+                cx.listener(|shell, _, _, cx| shell.toggle_open_ask_remember(cx)),
+            )
+            .child(
+                div()
+                    .size(px(space::M))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(radius::SMALL))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.control_border))
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.accent))
+                    .child(if ask.remember { "✓" } else { "" }),
+            )
+            .child(div().flex_1().child("Don't ask again"));
+        let buttons = div()
+            .flex()
+            .justify_end()
+            .gap(px(space::S))
+            .child(
+                button("open-ask-this", "This window", theme, false)
+                    .focus_stop(theme)
+                    .tooltip(tooltip(theme, "Show it in this window", "Ctrl+click"))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.answer_open_ask(Choice::ThisWindow, window, cx);
+                    })),
+            )
+            .child(
+                button("open-ask-new", "New window", theme, true)
+                    .focus_stop(theme)
+                    .tooltip(tooltip(theme, "Open it in a window of its own", "Enter"))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.answer_open_ask(Choice::NewWindow, window, cx);
+                    })),
+            );
+        let panel = floating_panel("open-ask", theme)
+            .w(px(theme::CONFIRM_DIALOG_WIDTH))
+            .p(px(space::L))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .font_family(theme.ui_font_family.clone())
+            .dialog_root(
+                &self.dialog_focus,
+                false,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::open_ask_key_down),
+            )
+            .child(
+                div()
+                    .text_size(font_size::CARD_TITLE)
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(format!("Open {}", self.workspace_name(ask.project))),
+            )
+            .child(check)
+            .child(buttons);
+        match ask.at {
+            Some(at) => div()
+                .id("open-ask-layer")
+                .absolute()
+                .inset_0()
+                .bg(gpui::rgba(theme.scrim))
+                .occlude()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|shell, _, window, cx| {
+                        cx.stop_propagation();
+                        shell.cancel_open_ask(window, cx);
+                    }),
+                )
+                .child(deferred(
+                    anchored()
+                        .position(at)
+                        .snap_to_window_with_margin(px(space::S))
+                        .child(
+                            panel
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
+                        ),
+                ))
+                .into_any_element(),
+            None => Self::modal_shade("open-ask-shade", panel, cx),
         }
     }
 }

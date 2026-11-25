@@ -25,7 +25,7 @@ use gpui::{
 use mkrew_core::Paths;
 use mkrew_core::UsageFormat;
 use mkrew_core::prompt::PromptVars;
-use mkrew_core::settings::{DiffMode, NotifySettings, PanelSide, WindowMode};
+use mkrew_core::settings::{DiffMode, NotifySettings, OpenWorkspace, PanelSide, WindowMode};
 use mkrew_protocol::{
     AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, ChangeKind, CommentContext,
     CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
@@ -136,6 +136,7 @@ use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
 use mkrew_ui::worktree_dialog::{self, WorktreeDialog};
 use mkrew_ui::worktree_target;
 use mkrew_ui::zed;
+use shell::window_mode::Then;
 use tracing_subscriber::EnvFilter;
 use ulid::Ulid;
 
@@ -735,6 +736,14 @@ struct Shell {
     views: HashMap<Ulid, View>,
     /// The panel's side of the panes, from `[ui] panel_side` (ADR 0113).
     panel_side: PanelSide,
+    /// `[ui] window_mode` (ADR 0113): one window, or one per workspace.
+    window_mode: WindowMode,
+    /// `[ui] open_workspace` (ADR 0113): where opening a workspace goes in mode 2.
+    open_pref: OpenWorkspace,
+    /// The open "Open <workspace>" question of mode 2 (ADR 0113).
+    open_ask: Option<shell::window_mode::OpenAsk>,
+    /// The Space window the open dialog draws in (set by its first frame).
+    modal_host: Option<HostId>,
     /// The transcripts being read, one per session (ADR 0104): the session panel's Thread
     /// section and every pane in Chat mode share them.
     reads: HashMap<Ulid, ThreadRead>,

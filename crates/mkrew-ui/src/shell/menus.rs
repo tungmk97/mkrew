@@ -541,7 +541,14 @@ impl Shell {
             self.sidebar.toggle(project_id);
             cx.notify();
         } else {
-            self.activate_workspace(self.space_host(window), project_id, window, cx);
+            self.route_workspace(
+                project_id,
+                Then::Nothing,
+                window.modifiers().secondary(),
+                None,
+                window,
+                cx,
+            );
         }
     }
 }
