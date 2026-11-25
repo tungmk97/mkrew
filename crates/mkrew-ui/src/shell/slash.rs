@@ -95,7 +95,7 @@ impl Shell {
         let Some(picker) = self.slash_picker.take() else {
             return;
         };
-        self.picker_host = HostId::Main;
+        self.picker_host = self.primary_host();
         match (typed, picker.target) {
             (Some(text), target) => self.prompt_typed(target, &text, window, cx),
             (None, composer::Target::Composer(session))

@@ -202,10 +202,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let host = (self.terminal_project(tab_id))
-            .map_or(HostId::Main, |project| self.terminal_host(project, tab_id));
+        let host = (self.terminal_project(tab_id)).map_or(self.primary_host(), |project| {
+            self.terminal_host(project, tab_id)
+        });
         match host {
-            HostId::Main => {
+            HostId::Space(_) => {
                 if let Some(tabs) = self.active_tabs_mut() {
                     tabs.activate(tab_id);
                 }
@@ -875,8 +876,7 @@ impl Shell {
             self.save_layout(project_id, write, window, cx);
             // A tab in a detached window closes too, whichever workspace the main window shows.
             if let Some(tab_id) = emptied
-                && (self.workspace == Some(project_id)
-                    || self.terminal_host(project_id, tab_id) != HostId::Main)
+                && (self.workspace == Some(project_id) || self.is_detached_tab(project_id, tab_id))
             {
                 self.close_tab(project_id, tab_id, window, cx);
             }

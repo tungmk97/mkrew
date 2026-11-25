@@ -362,9 +362,9 @@ impl Shell {
                 }
             }
             // A file opens as a tab of the main window.
-            Some(LinkTarget::File { .. }) if self.host_of(window) != HostId::Main => {
+            Some(LinkTarget::File { .. }) if self.host_of(window).space().is_none() => {
                 let action = action.clone();
-                self.in_window(HostId::Main, cx, move |shell, window, cx| {
+                self.in_window(self.primary_host(), cx, move |shell, window, cx| {
                     window.activate_window();
                     shell.open_preview_link(&action, window, cx);
                 });
@@ -446,8 +446,8 @@ impl Shell {
             return;
         };
         let line = pill.line;
-        if self.host_of(window) != HostId::Main {
-            return self.in_window(HostId::Main, cx, move |shell, window, cx| {
+        if self.host_of(window).space().is_none() {
+            return self.in_window(self.primary_host(), cx, move |shell, window, cx| {
                 window.activate_window();
                 shell.open_file_at(project_id, target, path, line, window, cx);
             });

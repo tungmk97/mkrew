@@ -283,8 +283,8 @@ impl Shell {
             cx.notify();
             return;
         }
-        if self.host_of(window) != HostId::Main {
-            self.in_window(HostId::Main, cx, move |shell, window, cx| {
+        if self.host_of(window).space().is_none() {
+            self.in_window(self.primary_host(), cx, move |shell, window, cx| {
                 window.activate_window();
                 shell.open_session(session, window, cx);
             });
@@ -334,14 +334,14 @@ impl Shell {
             .and_then(|tabs| tabs.tab_of(session))
             .map(|tab| tab.id);
         if let Some(tab_id) = held
-            && self.terminal_host(project_id, tab_id) != HostId::Main
+            && self.is_detached_tab(project_id, tab_id)
         {
             if let Some(tabs) = self.tabs.get_mut(&project_id) {
                 tabs.focus_pane(tab_id, &PaneKey::Session(session));
             }
             return;
         }
-        let detached = tab.filter(|id| self.terminal_host(project_id, *id) != HostId::Main);
+        let detached = tab.filter(|id| self.is_detached_tab(project_id, *id));
         // A new agent pane is born with the default of the moment (ADR 0105), so a later
         // change of `[ui] chat_default` never flips it.
         let chat = self.born_chat(session);

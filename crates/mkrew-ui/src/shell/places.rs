@@ -16,8 +16,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.host_of(window) != HostId::Main {
-            return self.in_window(HostId::Main, cx, move |shell, window, cx| {
+        if self.host_of(window).space().is_none() {
+            return self.in_window(self.primary_host(), cx, move |shell, window, cx| {
                 window.activate_window();
                 shell.open_document(project_id, file, line, place, window, cx);
             });
@@ -146,7 +146,7 @@ impl Shell {
                     cx.notify();
                 });
             }
-            HostId::Main => {
+            HostId::Space(_) => {
                 if let Some(tabs) = self.tabs.get_mut(&project_id) {
                     tabs.activate(tab_id);
                 }

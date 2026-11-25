@@ -130,7 +130,7 @@ impl Shell {
             PageEvent::Focus
                 if !browser.native.as_ref().is_some_and(NativeView::is_shown)
                     || !browser.host.is_some_and(|h| {
-                        host_active(h, self.main_window, &self.window_handles, cx)
+                        host_active(h, &self.space_handles, &self.window_handles, cx)
                     }) => {}
             PageEvent::Focus => {
                 browser.page_keys = true;
@@ -158,7 +158,7 @@ impl Shell {
                 // and only a forwarded global or browser binding (ADR 0111): the page is not
                 // trusted.
                 if let (true, Some(host)) = (browser.page_keys, browser.host)
-                    && host_active(host, self.main_window, &self.window_handles, cx)
+                    && host_active(host, &self.space_handles, &self.window_handles, cx)
                 {
                     self.in_window(host, cx, move |shell, window, cx| {
                         if shell.focused_key(window) != Some(PaneKey::Web(id))
@@ -249,8 +249,8 @@ impl Shell {
         let place = match at {
             Some((_, key, edge)) => documents::Place::Split(key, edge),
             None => {
-                if self.host_of(window) != HostId::Main {
-                    return self.in_window(HostId::Main, cx, move |shell, window, cx| {
+                if self.host_of(window).space().is_none() {
+                    return self.in_window(self.primary_host(), cx, move |shell, window, cx| {
                         window.activate_window();
                         shell.new_browser(None, window, cx);
                     });
@@ -836,12 +836,12 @@ fn is_web(url: &str) -> bool {
 /// Whether `host`'s window is the OS's active one: real clicks and keys reach a page only then.
 fn host_active(
     host: HostId,
-    main: gpui::AnyWindowHandle,
+    spaces: &HashMap<SpaceKey, gpui::AnyWindowHandle>,
     handles: &HashMap<WindowKey, gpui::AnyWindowHandle>,
     cx: &App,
 ) -> bool {
     let handle = match host {
-        HostId::Main => Some(main),
+        HostId::Space(key) => spaces.get(&key).copied(),
         HostId::Detached(key) => handles.get(&key).copied(),
     };
     handle.is_some() && cx.active_window() == handle

@@ -359,7 +359,7 @@ impl Shell {
         let detached = (self.tabs.get(&project_id))
             .and_then(|tabs| tabs.tab_with(target))
             .map(|tab| tab.id)
-            .filter(|tab_id| self.terminal_host(project_id, *tab_id) != HostId::Main);
+            .filter(|tab_id| self.is_detached_tab(project_id, *tab_id));
         let writes = (self.tabs.get_mut(&project_id)).and_then(|tabs| match detached {
             Some(tab_id) => {
                 (tabs.with_active(tab_id, |tabs| tabs.move_pane(moved, target, edge))).flatten()
@@ -370,7 +370,7 @@ impl Shell {
         let emptied = (writes.iter().flatten())
             .find(|write| write.layout.is_null())
             .map(|write| write.tab_id)
-            .filter(|tab_id| self.terminal_host(project_id, *tab_id) == HostId::Main);
+            .filter(|tab_id| !self.is_detached_tab(project_id, *tab_id));
         self.sync_panes(window, cx);
         self.focus_pane(window, cx);
         let writes = writes.unwrap_or_default();

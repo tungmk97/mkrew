@@ -121,10 +121,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.host_of(window) == HostId::Main {
+        if self.host_of(window).space().is_some() {
             return self.open_turns(session_id, window, cx);
         }
-        self.in_window(HostId::Main, cx, move |shell, window, cx| {
+        self.in_window(self.primary_host(), cx, move |shell, window, cx| {
             window.activate_window();
             shell.open_turns(session_id, window, cx);
         });

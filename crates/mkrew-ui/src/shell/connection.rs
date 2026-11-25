@@ -54,7 +54,9 @@ impl Shell {
         let prompts_dir = paths.prompts_dir();
         let themes_dir = paths.themes_dir();
         let config_dir = paths.config_dir.clone();
-        let main_window = window.window_handle();
+        // The first Space window (ADR 0113): the window this Shell is created in.
+        let first_space = window.window_handle();
+        let first = HostId::Space(SpaceKey(0));
         // System mode follows the OS live (ADR 0027).
         cx.observe_window_appearance(window, |shell, window, cx| {
             // A preview was built for the old appearance; the kept theme is rebuilt now.
@@ -64,26 +66,27 @@ impl Shell {
         })
         .detach();
         // Minimized → detach every pane; restored → re-attach from daemon snapshots (§10).
-        cx.observe_window_visibility(window, |shell, visibility, window, cx| {
-            shell.main_visible = visibility == gpui::WindowVisibility::Visible;
+        cx.observe_window_visibility(window, move |shell, visibility, window, cx| {
+            shell.hosts.entry(first).or_default().visible =
+                visibility == gpui::WindowVisibility::Visible;
             shell.sync_panes(window, cx);
             cx.notify();
         })
         .detach();
         // Coming back to the window views the focused pane (a done session leaves the Inbox),
         // even one marked unread while it kept the keyboard, and ends the taskbar flash.
-        cx.observe_window_activation(window, |shell, window, cx| {
+        cx.observe_window_activation(window, move |shell, window, cx| {
             if window.is_window_active() {
                 cx.set_reduce_motion(mkrew_ui::desktop::reduce_motion());
-                shell.activated(HostId::Main);
+                shell.activated(first);
                 shell.viewed.activated();
                 shell.desktop.flash(false);
             }
             cx.notify();
         })
         .detach();
-        cx.observe_window_bounds(window, |shell, window, _| {
-            shell.record_bounds(HostId::Main, window);
+        cx.observe_window_bounds(window, move |shell, window, _| {
+            shell.record_bounds(first, window);
         })
         .detach();
         let (page_events, page_inbox) = async_channel::unbounded();
@@ -536,17 +539,23 @@ impl Shell {
             sidebar_view: None,
             toasts: Toasts::default(),
             detached: Detached::new(),
-            main_window,
+            spaces: HashMap::from([(first_space, SpaceKey(0))]),
+            space_handles: HashMap::from([(SpaceKey(0), first_space)]),
             windows: HashMap::new(),
             window_handles: HashMap::new(),
-            hosts: HashMap::from([(HostId::Main, shell::hosts::HostUi::default())]),
-            menu_host: HostId::Main,
-            palette_host: HostId::Main,
-            picker_host: HostId::Main,
-            activation: vec![HostId::Main],
+            hosts: HashMap::from([(
+                first,
+                shell::hosts::HostUi {
+                    visible: true,
+                    ..Default::default()
+                },
+            )]),
+            menu_host: first,
+            palette_host: first,
+            picker_host: first,
+            activation: vec![first],
             drop_hint: None,
             tab_drag: false,
-            main_visible: true,
             link_subscriptions: HashMap::new(),
             windows_dirty: false,
             restore: None,
@@ -834,8 +843,8 @@ impl Shell {
         self.close_menus();
         self.restore_theme_pick(window, cx);
         self.palette = None;
-        self.palette_host = HostId::Main;
-        self.picker_host = HostId::Main;
+        self.palette_host = self.primary_host();
+        self.picker_host = self.primary_host();
         self.prompt_picker = None;
         self.slash_picker = None;
         self.palette_return = None;

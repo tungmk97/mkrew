@@ -22,12 +22,13 @@ impl Shell {
             .tabs()
             .iter()
             .enumerate()
-            .filter(|(_, tab)| self.terminal_host(project_id, tab.id) == HostId::Main)
+            .filter(|(_, tab)| !self.is_detached_tab(project_id, tab.id))
             .collect();
         let pinned_count = tabs.tabs().iter().filter(|tab| tab.pinned).count();
         let pinned: Vec<bool> = drawn.iter().map(|(_, tab)| tab.pinned).collect();
         let items = area_items(&pinned);
-        let strip = (self.hosts.get(&HostId::Main))
+        let host = self.host_of(window);
+        let strip = (self.hosts.get(&host))
             .map(|ui| ui.strip.clone())
             .unwrap_or_default();
         let chips: Vec<gpui::AnyElement> = items
@@ -96,10 +97,10 @@ impl Shell {
             .filter(|_| view == View::Terminals)
             .map(|index| (SharedString::from(format!("tab/{active:?}")), index));
         self.tab_area_frame(
-            HostId::Main,
+            host,
             chips,
             scroll_to,
-            Some(self.render_new_tab_button(HostId::Main, now, theme, window, cx)),
+            Some(self.render_new_tab_button(host, now, theme, window, cx)),
             theme,
             cx,
         )
@@ -144,7 +145,7 @@ impl Shell {
             .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
                 shell.drop_reordered(item, window, cx);
             }))
-            .when(host == HostId::Main, |el| self.strip_drops(el, theme, cx))
+            .when(host.space().is_some(), |el| self.strip_drops(el, theme, cx))
             // First: the strip records before its chips (prepaint goes parent first).
             .child(record_strip(strip, None))
             .child(
@@ -305,7 +306,7 @@ impl Shell {
                     select(shell);
                     // A tab of the main window shows its terminals, also from Board or
                     // Docs.
-                    if shell.host_of(window) == HostId::Main {
+                    if shell.host_of(window).space().is_some() {
                         shell.show_view(View::Terminals, window, cx);
                     }
                     shell.sync_panes(window, cx);

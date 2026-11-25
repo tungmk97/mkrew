@@ -19,11 +19,28 @@ pub struct WindowKey(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SpaceKey(pub u64);
 
-/// The window a tab, a render or an input belongs to.
+/// The window a tab, a render or an input belongs to: a Space window (a workspace's window,
+/// ADR 0113) or a detached one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HostId {
-    Main,
+    Space(SpaceKey),
     Detached(WindowKey),
+}
+
+impl HostId {
+    pub fn space(self) -> Option<SpaceKey> {
+        match self {
+            HostId::Space(key) => Some(key),
+            HostId::Detached(_) => None,
+        }
+    }
+
+    pub fn detached(self) -> Option<WindowKey> {
+        match self {
+            HostId::Detached(key) => Some(key),
+            HostId::Space(_) => None,
+        }
+    }
 }
 
 /// A tab that can leave the main window. Plan 2 adds file tabs.
@@ -84,15 +101,16 @@ impl Detached {
         self.windows.iter_mut().find(|window| window.key == key)
     }
 
-    pub fn host_of(&self, tab: &DockTab) -> HostId {
+    /// The detached window holding `tab`; `None` while it is in its workspace's Space window.
+    pub fn window_of(&self, tab: &DockTab) -> Option<WindowKey> {
         self.windows
             .iter()
             .find(|window| window.tabs.contains(tab))
-            .map_or(HostId::Main, |window| HostId::Detached(window.key))
+            .map(|window| window.key)
     }
 
     pub fn is_detached(&self, tab: &DockTab) -> bool {
-        self.host_of(tab) != HostId::Main
+        self.window_of(tab).is_some()
     }
 
     pub fn active(&self, key: WindowKey) -> Option<DockTab> {
@@ -120,18 +138,18 @@ impl Detached {
         key
     }
 
-    /// Moves `tab` to `to` (at `index`, else the end) and shows it there. Moving to
-    /// [`HostId::Main`] forgets it. Returns the window the move left without tabs (dropped).
-    /// Moving to its own window reorders it in place; a window that does not exist changes
-    /// nothing.
+    /// Moves `tab` to detached window `to` (at `index`, else the end) and shows it there;
+    /// `None` forgets it (back to its workspace's Space window). Returns the window the move
+    /// left without tabs (dropped). Moving to its own window reorders it in place; a window
+    /// that does not exist changes nothing.
     pub fn move_tab(
         &mut self,
         tab: DockTab,
-        to: HostId,
+        to: Option<WindowKey>,
         index: Option<usize>,
     ) -> Option<WindowKey> {
-        let current = self.host_of(&tab);
-        if let HostId::Detached(key) = to {
+        let current = self.window_of(&tab);
+        if let Some(key) = to {
             let window = self.window_mut(key)?;
             if current == to {
                 if let Some(pos) = window.tabs.iter().position(|t| *t == tab) {
@@ -144,7 +162,7 @@ impl Detached {
             }
         }
         let emptied = self.take(&tab);
-        if let HostId::Detached(key) = to
+        if let Some(key) = to
             && let Some(window) = self.window_mut(key)
         {
             let at = index.unwrap_or(window.tabs.len()).min(window.tabs.len());
@@ -248,11 +266,11 @@ impl Detached {
     }
 
     /// Where a tab that came from `from` goes back (a window that failed to open): `from` if
-    /// that window is still open, else the main window.
-    pub fn still_open(&self, from: HostId) -> HostId {
+    /// that window is still open (Space windows always are), else `None`.
+    pub fn still_open(&self, from: HostId) -> Option<HostId> {
         match from {
-            HostId::Detached(key) if self.window(key).is_none() => HostId::Main,
-            other => other,
+            HostId::Detached(key) if self.window(key).is_none() => None,
+            other => Some(other),
         }
     }
 
@@ -270,7 +288,7 @@ impl Detached {
                 let (&first, rest) = tabs.split_first()?;
                 let key = self.open(first);
                 for &tab in rest {
-                    self.move_tab(tab, HostId::Detached(key), None);
+                    self.move_tab(tab, Some(key), None);
                 }
                 let shown = window.tabs.get(window.active);
                 if let Some(index) =
@@ -285,11 +303,15 @@ impl Detached {
 }
 
 /// The window that draws the toasts: the most recently active of `activation` that is `shown`
-/// (a hidden or minimized window draws nothing), else the main window.
-pub fn toast_host(activation: &[HostId], shown: impl Fn(HostId) -> bool) -> HostId {
+/// (a hidden or minimized window draws nothing), else `fallback`.
+pub fn toast_host(
+    activation: &[HostId],
+    shown: impl Fn(HostId) -> bool,
+    fallback: HostId,
+) -> HostId {
     (activation.iter().copied())
         .find(|&host| shown(host))
-        .unwrap_or(HostId::Main)
+        .unwrap_or(fallback)
 }
 
 /// The commands a detached window acts on (spec 2026-11-10 §4.2); every other key there does

@@ -116,7 +116,7 @@ impl Shell {
     /// through `dismiss_menus`.
     pub(crate) fn close_menus(&mut self) {
         self.tab_menu = None;
-        self.menu_host = HostId::Main;
+        self.menu_host = self.primary_host();
         self.layout_menu = None;
         self.pane_menu = None;
         self.share_menu = None;
@@ -191,22 +191,26 @@ impl Shell {
             .is_some_and(|tab| tab.focused() == Some(&PaneKey::Diff))
     }
 
-    /// Every session on screen with the window that shows it: the main window's tab (none for a
-    /// hidden window or while it shows another view) and the visible detached tabs.
-    pub(crate) fn hosted_sessions(&self, main_visible: bool) -> Vec<(HostId, Ulid)> {
+    /// Every session on screen with the window that shows it: the Space window's tab (none for
+    /// a hidden window or while it shows another view) and the visible detached tabs.
+    pub(crate) fn hosted_sessions(&self, space_visible: bool) -> Vec<(HostId, Ulid)> {
+        let space = self.primary_host();
         let tabs = (self.workspace)
             .filter(|_| self.view() == View::Terminals)
             .and_then(|id| self.tabs.get(&id));
-        let mut hosted: Vec<(HostId, Ulid)> = on_screen(main_visible, tabs)
+        let mut hosted: Vec<(HostId, Ulid)> = on_screen(space_visible, tabs)
             .into_iter()
-            .map(|session| (HostId::Main, session))
+            .map(|session| (space, session))
             .collect();
         for tab in self.detached.visible_tabs() {
             let DockTab::Terminal { project, tab_id } = tab;
             let Some(shown) = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id)) else {
                 continue;
             };
-            let host = self.detached.host_of(&tab);
+            let Some(key) = self.detached.window_of(&tab) else {
+                continue;
+            };
+            let host = HostId::Detached(key);
             hosted.extend(
                 shown
                     .shown_sessions()
@@ -235,7 +239,7 @@ impl Shell {
                 }
             }
         };
-        if self.main_visible
+        if self.space_visible(self.primary_host())
             && self.view() == View::Terminals
             && let Some(project) = self.workspace
             && let Some(tab) = self.tabs.get(&project).and_then(Tabs::active)
@@ -289,7 +293,7 @@ impl Shell {
         self.prune_detached(cx);
         self.sync_documents(window, cx);
         self.sync_browsers(cx);
-        let hosted = self.hosted_sessions(self.main_visible);
+        let hosted = self.hosted_sessions(self.space_visible(self.primary_host()));
         let here = self.host_of(window);
         let visible: Vec<Ulid> = hosted.iter().map(|&(_, session)| session).collect();
         for session in self.router.wanted() {

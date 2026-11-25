@@ -81,8 +81,8 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         // A detached window has no Git panel: the main window opens it.
-        if self.host_of(window) != HostId::Main {
-            self.in_window(HostId::Main, cx, move |shell, window, cx| {
+        if self.host_of(window).space().is_none() {
+            self.in_window(self.primary_host(), cx, move |shell, window, cx| {
                 window.activate_window();
                 shell.open_diff(project_id, place, window, cx);
             });

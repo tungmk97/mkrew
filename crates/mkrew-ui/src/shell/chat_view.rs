@@ -97,11 +97,13 @@ impl ChatUi {
 }
 
 impl Shell {
-    /// Sessions on screen in any window (the main window's tab and the detached ones').
+    /// Sessions on screen in any window (the Space window's tab and the detached ones').
     pub(crate) fn visible_sessions(&self) -> Vec<Ulid> {
-        (self.hosted_sessions(self.main_visible).into_iter())
-            .map(|(_, session)| session)
-            .collect()
+        (self
+            .hosted_sessions(self.space_visible(self.primary_host()))
+            .into_iter())
+        .map(|(_, session)| session)
+        .collect()
     }
 
     /// `info`'s pane can show Chat.

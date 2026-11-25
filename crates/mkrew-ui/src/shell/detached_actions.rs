@@ -20,8 +20,9 @@ impl Shell {
         let displays: Vec<Bounds<Pixels>> =
             cx.displays().iter().map(|d| d.visible_bounds()).collect();
         let bounds = mkrew_ui::window_place::new_window_bounds(at, size, near, &displays);
-        let from = self.detached.host_of(&tab);
-        let emptied = self.detached.move_tab(tab, HostId::Main, None);
+        let DockTab::Terminal { project, tab_id } = tab;
+        let from = self.terminal_host(project, tab_id);
+        let emptied = self.detached.move_tab(tab, None, None);
         let key = self.detached.open(tab);
         self.after_move(emptied, cx);
         self.open_os_window(key, bounds, Placement::Windowed, from, window, cx);
@@ -85,10 +86,11 @@ impl Shell {
                     let _ = this.update(cx, |shell, cx| {
                         tracing::warn!("cannot open a window: {error:#}");
                         // The tabs go back where they came from: that window if it is still
-                        // open, else the main one.
-                        let back = shell.detached.still_open(origin);
+                        // open, else the Space window.
+                        let back = (shell.detached.still_open(origin))
+                            .unwrap_or_else(|| shell.primary_host());
                         for tab in shell.detached.remove_window(key) {
-                            shell.detached.move_tab(tab, back, None);
+                            shell.detached.move_tab(tab, back.detached(), None);
                         }
                         shell.hosts.remove(&HostId::Detached(key));
                         shell.windows_dirty = true;
@@ -120,10 +122,10 @@ impl Shell {
     }
 
     /// `window` is still one of ours: not a detached window that `close_os_window` just let
-    /// go (it is gone once the current update ends, and `host_of` reads it as the main one).
+    /// go (it is gone once the current update ends, and `host_of` reads it as a Space one).
     fn sync_panes_if_alive(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let handle = window.window_handle();
-        if handle == self.main_window || self.windows.contains_key(&handle) {
+        if self.spaces.contains_key(&handle) || self.windows.contains_key(&handle) {
             self.sync_panes(window, cx);
         }
     }
@@ -165,7 +167,7 @@ impl Shell {
     }
 
     /// Moves `tab` to `to` (strip `index`, else the end): its panes follow, `to` shows it and
-    /// takes the keyboard. The main window also switches to the tab's workspace.
+    /// takes the keyboard. A Space window also switches to the tab's workspace.
     pub(crate) fn move_tab_to(
         &mut self,
         tab: DockTab,
@@ -174,10 +176,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let emptied = self.detached.move_tab(tab, to, index);
+        let emptied = self.detached.move_tab(tab, to.detached(), index);
         self.after_move(emptied, cx);
         let DockTab::Terminal { project, tab_id } = tab;
-        if to == HostId::Main {
+        if to.space().is_some() {
             // The strip shows the shown workspace's tabs: a drop between its chips lands
             // there; a tab of another workspace keeps its place.
             let params = index
@@ -186,8 +188,7 @@ impl Shell {
                     let tabs = self.tabs.get(&project)?;
                     let anchor = (tabs.tabs().iter())
                         .filter(|other| {
-                            other.id != tab_id
-                                && self.terminal_host(project, other.id) == HostId::Main
+                            other.id != tab_id && !self.is_detached_tab(project, other.id)
                         })
                         .nth(at)
                         .map(|other| other.id);
@@ -210,7 +211,7 @@ impl Shell {
         self.windows_dirty = true;
         self.in_window(to, cx, move |shell, window, cx| {
             shell.rehost_tab(tab, window, cx);
-            if to == HostId::Main {
+            if to.space().is_some() {
                 shell.activate_workspace(project, window, cx);
             }
             shell.sync_panes(window, cx);
@@ -221,7 +222,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// "Move all back": every tab of `key` returns to the main window, in strip order.
+    /// "Move all back": every tab of `key` returns to the Space window, in strip order.
     pub(crate) fn move_all_back(
         &mut self,
         key: WindowKey,
@@ -231,19 +232,19 @@ impl Shell {
         let tabs = self.detached.tabs_of(key);
         let last = tabs.last().copied();
         for tab in &tabs {
-            let emptied = self.detached.move_tab(*tab, HostId::Main, None);
+            let emptied = self.detached.move_tab(*tab, None, None);
             self.after_move(emptied, cx);
         }
         let Some(last) = last else {
             return;
         };
-        // The last one is shown; the others wait in the main strip, their panes with them.
-        self.in_window(HostId::Main, cx, move |shell, window, cx| {
+        // The last one is shown; the others wait in the Space strip, their panes with them.
+        self.in_window(self.primary_host(), cx, move |shell, window, cx| {
             for tab in tabs {
                 shell.rehost_tab(tab, window, cx);
             }
         });
-        self.move_tab_to(last, HostId::Main, None, window, cx);
+        self.move_tab_to(last, self.primary_host(), None, window, cx);
     }
 
     /// A move left a window empty: its OS window goes.
@@ -265,8 +266,8 @@ impl Shell {
             )
         };
         let mut rows: Rows = Vec::new();
-        if host != HostId::Main {
-            rows.push(move_to("Move to main window".into(), HostId::Main).row());
+        if host.space().is_none() {
+            rows.push(move_to("Move to main window".into(), self.primary_host()).row());
         }
         let alone = matches!(host, HostId::Detached(key) if self.detached.tabs_of(key).len() < 2);
         rows.push(
@@ -338,7 +339,7 @@ impl Shell {
             if self.modal_open() {
                 cx.propagate();
             } else if !self.reconnecting() {
-                self.in_window(HostId::Main, cx, |shell, window, cx| {
+                self.in_window(self.primary_host(), cx, |shell, window, cx| {
                     window.activate_window();
                     shell.open_settings_dialog(window, cx);
                 });

@@ -1,4 +1,5 @@
-//! Which window code runs for, and the per-window state (spec 2026-11-10 §4.2, §4.3).
+//! Which window code runs for, and the per-window state (spec 2026-11-10 §4.2, §4.3; Space
+//! windows: ADR 0113).
 
 use crate::*;
 
@@ -25,12 +26,43 @@ pub(crate) struct HostUi {
     /// The macOS traffic light position set last (`sync_traffic_lights`): AppKit relayouts the
     /// buttons on every call, so only a change is sent.
     pub(crate) traffic_light: Option<(f32, f32)>,
+    /// The window is shown (not minimized or hidden): its panes stay attached. Space windows
+    /// only; detached ones keep it in `Detached`.
+    pub(crate) visible: bool,
 }
 
 impl Shell {
+    /// The window `window` is: a detached one, else its Space window. A window this Shell does
+    /// not know yet (its first frame) counts as the primary Space window.
     pub(crate) fn host_of(&self, window: &Window) -> HostId {
-        self.detached_key(window)
-            .map_or(HostId::Main, HostId::Detached)
+        if let Some(key) = self.detached_key(window) {
+            return HostId::Detached(key);
+        }
+        let space = self.spaces.get(&window.window_handle()).copied();
+        HostId::Space(space.unwrap_or_else(|| self.primary_or_first()))
+    }
+
+    /// The Space window used last: where Settings, Turns… and app menu actions open.
+    pub(crate) fn primary(&self) -> Option<SpaceKey> {
+        (self.activation.iter())
+            .find_map(|host| host.space())
+            .or_else(|| self.space_handles.keys().min().copied())
+    }
+
+    /// [`Self::primary`]; a Shell has a Space window from `main()` until it quits, and
+    /// `SpaceKey(0)` is the first one's key.
+    pub(crate) fn primary_or_first(&self) -> SpaceKey {
+        self.primary().unwrap_or(SpaceKey(0))
+    }
+
+    /// The primary Space window as a host.
+    pub(crate) fn primary_host(&self) -> HostId {
+        HostId::Space(self.primary_or_first())
+    }
+
+    /// Whether Space window `host` is shown (not minimized or hidden).
+    pub(crate) fn space_visible(&self, host: HostId) -> bool {
+        self.hosts.get(&host).is_some_and(|ui| ui.visible)
     }
 
     pub(crate) fn detached_key(&self, window: &Window) -> Option<WindowKey> {
@@ -42,10 +74,20 @@ impl Shell {
         (self.tabs.iter()).find_map(|(project, tabs)| tabs.tab(tab_id).map(|_| *project))
     }
 
-    /// Where a terminal tab is shown.
+    /// Where a terminal tab is shown: its detached window, else the Space window (mode 1 has
+    /// one).
     pub(crate) fn terminal_host(&self, project: Ulid, tab_id: Ulid) -> HostId {
+        let tab = DockTab::Terminal { project, tab_id };
+        match self.detached.window_of(&tab) {
+            Some(key) => HostId::Detached(key),
+            None => self.primary_host(),
+        }
+    }
+
+    /// Whether a terminal tab sits in a detached window.
+    pub(crate) fn is_detached_tab(&self, project: Ulid, tab_id: Ulid) -> bool {
         self.detached
-            .host_of(&DockTab::Terminal { project, tab_id })
+            .is_detached(&DockTab::Terminal { project, tab_id })
     }
 
     /// The workspace and tab whose layout holds `session`.
@@ -74,10 +116,10 @@ impl Shell {
         Some(format!("{label} - {name}"))
     }
 
-    /// The window that shows the tab holding `session` (the main one if it is in no tab).
+    /// The window that shows the tab holding `session` (the primary one if it is in no tab).
     pub(crate) fn session_host(&self, session: Ulid) -> HostId {
         self.tab_of_session(session)
-            .map_or(HostId::Main, |(project, tab_id)| {
+            .map_or(self.primary_host(), |(project, tab_id)| {
                 self.terminal_host(project, tab_id)
             })
     }
@@ -93,7 +135,7 @@ impl Shell {
     /// the detached window's active tab.
     pub(crate) fn tab_scope(&self, window: &Window) -> Option<(Ulid, Ulid)> {
         match self.host_of(window) {
-            HostId::Main => {
+            HostId::Space(_) => {
                 let project = self.workspace.filter(|_| self.view() == View::Terminals)?;
                 Some((project, self.tabs.get(&project)?.active()?.id))
             }
@@ -103,16 +145,16 @@ impl Shell {
         }
     }
 
-    /// `f` on the tabs of `window`'s tab, with that tab active for the call. In the main
-    /// window the active tab is the shown one and changes stick (a tab switch); in a detached
-    /// window the main window's active tab is given back.
+    /// `f` on the tabs of `window`'s tab, with that tab active for the call. In a Space window
+    /// the active tab is the shown one and changes stick (a tab switch); in a detached window
+    /// the Space window's active tab is given back.
     pub(crate) fn with_tab<R>(
         &mut self,
         window: &Window,
         f: impl FnOnce(&mut Tabs) -> R,
     ) -> Option<R> {
         match self.host_of(window) {
-            HostId::Main => {
+            HostId::Space(_) => {
                 let project = self.workspace?;
                 Some(f(self.tabs.get_mut(&project)?))
             }
@@ -176,7 +218,7 @@ impl Shell {
         else {
             return;
         };
-        let detached = self.terminal_host(project, tab_id) != HostId::Main;
+        let detached = self.is_detached_tab(project, tab_id);
         if let Some(tabs) = self.tabs.get_mut(&project) {
             if detached {
                 tabs.focus_pane(tab_id, key);
@@ -211,11 +253,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
         f: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) + 'static,
     ) {
-        let handle = match host {
-            HostId::Main => Some(self.main_window),
-            HostId::Detached(key) => self.window_handles.get(&key).copied(),
-        };
-        let Some(handle) = handle else {
+        let Some(handle) = self.handle_of(host) else {
             return;
         };
         let this = cx.entity().downgrade();
@@ -226,23 +264,33 @@ impl Shell {
         });
     }
 
+    /// The OS window of `host`, while it is open.
+    pub(crate) fn handle_of(&self, host: HostId) -> Option<gpui::AnyWindowHandle> {
+        match host {
+            HostId::Space(key) => self.space_handles.get(&key).copied(),
+            HostId::Detached(key) => self.window_handles.get(&key).copied(),
+        }
+    }
+
     pub(crate) fn activated(&mut self, host: HostId) {
         self.activation.retain(|known| *known != host);
         self.activation.insert(0, host);
     }
 
-    /// Whether any Mkrew window, main or detached, is the OS's active one.
+    /// Whether any Mkrew window, Space or detached, is the OS's active one.
     pub(crate) fn any_window_active(&self, cx: &App) -> bool {
-        cx.active_window()
-            .is_some_and(|active| active == self.main_window || self.windows.contains_key(&active))
+        cx.active_window().is_some_and(|active| {
+            self.spaces.contains_key(&active) || self.windows.contains_key(&active)
+        })
     }
 
     /// The window that draws the toasts (see [`detached::toast_host`]).
     pub(crate) fn toast_host(&self) -> HostId {
-        detached::toast_host(&self.activation, |host| match host {
-            HostId::Main => self.main_visible,
+        let shown = |host| match host {
+            HostId::Space(_) => self.hosts.get(&host).is_some_and(|ui| ui.visible),
             HostId::Detached(key) => self.detached.window(key).is_some_and(|w| w.visible),
-        })
+        };
+        detached::toast_host(&self.activation, shown, self.primary_host())
     }
 
     pub(crate) fn record_bounds(&mut self, host: HostId, window: &Window) {
@@ -251,18 +299,18 @@ impl Shell {
         ui.bounds = window.bounds();
         ui.restore = restore;
         ui.placement = placement;
-        if host == HostId::Main {
+        if host.space().is_some() {
             self.main_dirty = true;
         } else {
             self.windows_dirty = true;
         }
     }
 
-    /// Writes `main-window.json`: where the main window restores to and whether it is maximized
-    /// or in full screen (SPEC §20L). Not before its size is known.
+    /// Writes `main-window.json`: where the primary Space window restores to and whether it is
+    /// maximized or in full screen (SPEC §20L). Not before its size is known.
     pub(crate) fn save_main_frame(&mut self) {
         self.main_dirty = false;
-        let Some(ui) = self.hosts.get(&HostId::Main) else {
+        let Some(ui) = self.hosts.get(&self.primary_host()) else {
             return;
         };
         if ui.restore.size.width <= px(0.0) {
@@ -352,28 +400,25 @@ impl Shell {
         }
         if palette {
             self.palette = None;
-            self.palette_host = HostId::Main;
+            self.palette_host = self.primary_host();
             self.palette_return = None;
         }
         if picker {
             self.prompt_picker = None;
             self.slash_picker = None;
         }
-        self.menu_host = if self.menu_host == gone {
-            HostId::Main
-        } else {
-            self.menu_host
-        };
-        self.palette_host = if self.palette_host == gone {
-            HostId::Main
-        } else {
-            self.palette_host
-        };
+        let primary = self.primary_host();
+        if self.menu_host == gone {
+            self.menu_host = primary;
+        }
+        if self.palette_host == gone {
+            self.palette_host = primary;
+        }
         if self.picker_host == gone {
-            self.picker_host = HostId::Main;
+            self.picker_host = self.primary_host();
         }
         if menu || palette || picker {
-            self.in_window(HostId::Main, cx, |shell, window, cx| {
+            self.in_window(self.primary_host(), cx, |shell, window, cx| {
                 shell.restore_theme_pick(window, cx);
                 shell.focus_pane(window, cx);
             });
@@ -500,7 +545,7 @@ impl Shell {
                     &displays,
                     primary,
                 ));
-            self.open_os_window(key, bounds, placement, HostId::Main, window, cx);
+            self.open_os_window(key, bounds, placement, self.primary_host(), window, cx);
         }
     }
 

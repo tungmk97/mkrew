@@ -253,7 +253,7 @@ impl Shell {
             .keys(key(Command::CloseTab))
             .row(),
         );
-        if matches!(self.menu_host, HostId::Main) {
+        if self.menu_host.space().is_some() {
             rows.push(
                 MenuItem::new(
                     "Close others",

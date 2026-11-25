@@ -12,7 +12,7 @@ fn a_new_window_holds_its_tab_and_shows_it() {
     let mut detached = Detached::new();
     let tab = term();
     let key = detached.open(tab);
-    assert_eq!(detached.host_of(&tab), HostId::Detached(key));
+    assert_eq!(detached.window_of(&tab), Some(key));
     assert_eq!(detached.active(key), Some(tab));
     assert!(detached.is_detached(&tab));
 }
@@ -23,8 +23,8 @@ fn a_tab_lives_in_one_window_only() {
     let (a, b) = (term(), term());
     let first = detached.open(a);
     let second = detached.open(b);
-    detached.move_tab(a, HostId::Detached(second), Some(0));
-    assert_eq!(detached.host_of(&a), HostId::Detached(second));
+    detached.move_tab(a, Some(second), Some(0));
+    assert_eq!(detached.window_of(&a), Some(second));
     assert_eq!(detached.tabs_of(second), vec![a, b]);
     assert!(
         detached.window(first).is_none(),
@@ -37,8 +37,8 @@ fn moving_inserts_at_the_index_and_selects_the_tab() {
     let mut detached = Detached::new();
     let (a, b, c) = (term(), term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
-    detached.move_tab(c, HostId::Detached(key), Some(1));
+    detached.move_tab(b, Some(key), None);
+    detached.move_tab(c, Some(key), Some(1));
     assert_eq!(detached.tabs_of(key), vec![a, c, b]);
     assert_eq!(detached.active(key), Some(c));
 }
@@ -48,8 +48,8 @@ fn moving_to_main_forgets_the_tab_and_reports_the_emptied_window() {
     let mut detached = Detached::new();
     let a = term();
     let key = detached.open(a);
-    assert_eq!(detached.move_tab(a, HostId::Main, None), Some(key));
-    assert_eq!(detached.host_of(&a), HostId::Main);
+    assert_eq!(detached.move_tab(a, None, None), Some(key));
+    assert_eq!(detached.window_of(&a), None);
 }
 
 #[test]
@@ -57,12 +57,12 @@ fn the_active_tab_passes_right_then_left_when_it_leaves() {
     let mut detached = Detached::new();
     let (a, b, c) = (term(), term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
-    detached.move_tab(c, HostId::Detached(key), None);
+    detached.move_tab(b, Some(key), None);
+    detached.move_tab(c, Some(key), None);
     assert!(detached.select(key, 1));
-    detached.move_tab(b, HostId::Main, None);
+    detached.move_tab(b, None, None);
     assert_eq!(detached.active(key), Some(c));
-    detached.move_tab(c, HostId::Main, None);
+    detached.move_tab(c, None, None);
     assert_eq!(detached.active(key), Some(a));
 }
 
@@ -71,8 +71,8 @@ fn reorder_and_cycle_stay_inside_the_window() {
     let mut detached = Detached::new();
     let (a, b, c) = (term(), term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
-    detached.move_tab(c, HostId::Detached(key), None);
+    detached.move_tab(b, Some(key), None);
+    detached.move_tab(c, Some(key), None);
     detached.move_within(key, 2, 0);
     assert_eq!(detached.tabs_of(key), vec![c, a, b]);
     assert!(detached.select(key, 2));
@@ -88,7 +88,7 @@ fn prune_keeps_tabs_of_unloaded_workspaces() {
     let mut detached = Detached::new();
     let (gone, unknown, kept) = (term(), term(), term());
     let key = detached.open(gone);
-    detached.move_tab(unknown, HostId::Detached(key), None);
+    detached.move_tab(unknown, Some(key), None);
     let other = detached.open(kept);
     assert_eq!(detached.tab_count(), 3);
     let emptied = detached.prune(|tab| match *tab {
@@ -122,7 +122,7 @@ fn removing_a_window_returns_its_tabs_in_order() {
     let mut detached = Detached::new();
     let (a, b) = (term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
+    detached.move_tab(b, Some(key), None);
     assert_eq!(detached.remove_window(key), vec![a, b]);
     assert!(detached.window(key).is_none());
 }
@@ -132,7 +132,7 @@ fn window_keys_are_never_reused() {
     let mut detached = Detached::new();
     let a = term();
     let first = detached.open(a);
-    detached.move_tab(a, HostId::Main, None);
+    detached.move_tab(a, None, None);
     let second = detached.open(a);
     assert_ne!(first, second);
 }
@@ -142,7 +142,7 @@ fn moving_onto_its_own_single_tab_window_keeps_it() {
     let mut detached = Detached::new();
     let a = term();
     let key = detached.open(a);
-    assert_eq!(detached.move_tab(a, HostId::Detached(key), None), None);
+    assert_eq!(detached.move_tab(a, Some(key), None), None);
     assert_eq!(detached.tabs_of(key), vec![a]);
     assert_eq!(detached.active(key), Some(a));
 }
@@ -152,9 +152,9 @@ fn moving_onto_its_own_window_reorders_and_selects_it() {
     let mut detached = Detached::new();
     let (a, b, c) = (term(), term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
-    detached.move_tab(c, HostId::Detached(key), None);
-    assert_eq!(detached.move_tab(a, HostId::Detached(key), Some(2)), None);
+    detached.move_tab(b, Some(key), None);
+    detached.move_tab(c, Some(key), None);
+    assert_eq!(detached.move_tab(a, Some(key), Some(2)), None);
     assert_eq!(detached.tabs_of(key), vec![b, c, a]);
     assert_eq!(detached.active(key), Some(a));
 }
@@ -164,16 +164,10 @@ fn moving_to_an_unknown_window_changes_nothing() {
     let mut detached = Detached::new();
     let (a, b) = (term(), term());
     let key = detached.open(a);
-    assert_eq!(
-        detached.move_tab(a, HostId::Detached(WindowKey(99)), None),
-        None
-    );
+    assert_eq!(detached.move_tab(a, Some(WindowKey(99)), None), None);
     assert_eq!(detached.tabs_of(key), vec![a]);
-    assert_eq!(
-        detached.move_tab(b, HostId::Detached(WindowKey(99)), None),
-        None
-    );
-    assert_eq!(detached.host_of(&b), HostId::Main);
+    assert_eq!(detached.move_tab(b, Some(WindowKey(99)), None), None);
+    assert_eq!(detached.window_of(&b), None);
     assert_eq!(detached.windows().len(), 1);
 }
 
@@ -182,16 +176,16 @@ fn open_takes_the_tab_from_its_window() {
     let mut detached = Detached::new();
     let (a, b) = (term(), term());
     let first = detached.open(a);
-    detached.move_tab(b, HostId::Detached(first), None);
+    detached.move_tab(b, Some(first), None);
     let second = detached.open(b);
     assert_eq!(detached.tabs_of(first), vec![a]);
-    assert_eq!(detached.host_of(&b), HostId::Detached(second));
+    assert_eq!(detached.window_of(&b), Some(second));
     let third = detached.open(a);
     assert!(
         detached.window(first).is_none(),
         "the emptied window is dropped"
     );
-    assert_eq!(detached.host_of(&a), HostId::Detached(third));
+    assert_eq!(detached.window_of(&a), Some(third));
 }
 
 #[test]
@@ -199,8 +193,8 @@ fn move_within_keeps_the_shown_tab_selected() {
     let mut detached = Detached::new();
     let (a, b, c) = (term(), term(), term());
     let key = detached.open(a);
-    detached.move_tab(b, HostId::Detached(key), None);
-    detached.move_tab(c, HostId::Detached(key), None);
+    detached.move_tab(b, Some(key), None);
+    detached.move_tab(c, Some(key), None);
     assert!(detached.select(key, 1));
     detached.move_within(key, 0, 2);
     assert_eq!(detached.tabs_of(key), vec![b, c, a]);
@@ -447,38 +441,41 @@ fn merging_keeps_live_and_pending_windows_without_repeating_a_tab() {
 }
 
 #[test]
-fn a_failed_open_sends_the_tab_back_to_its_window_if_open_else_main() {
+fn a_failed_open_sends_the_tab_back_to_its_window_if_open_else_nowhere() {
     let mut detached = Detached::new();
     let key = detached.open(term());
-    assert_eq!(detached.still_open(HostId::Main), HostId::Main);
+    let space = HostId::Space(SpaceKey(0));
+    assert_eq!(detached.still_open(space), Some(space));
     assert_eq!(
         detached.still_open(HostId::Detached(key)),
-        HostId::Detached(key)
+        Some(HostId::Detached(key))
     );
     detached.remove_window(key);
-    assert_eq!(detached.still_open(HostId::Detached(key)), HostId::Main);
+    assert_eq!(detached.still_open(HostId::Detached(key)), None);
 }
 
 #[test]
 fn toasts_go_to_the_first_shown_window_in_activation_order() {
     let (one, two) = (WindowKey(1), WindowKey(2));
-    let order = [HostId::Detached(one), HostId::Main, HostId::Detached(two)];
+    let space = HostId::Space(SpaceKey(0));
+    let order = [HostId::Detached(one), space, HostId::Detached(two)];
     let shown = |hidden: HostId| move |host: HostId| host != hidden;
     assert_eq!(
-        toast_host(&order, shown(HostId::Main)),
+        toast_host(&order, shown(space), space),
         HostId::Detached(one)
     );
     assert_eq!(
-        toast_host(&order, shown(HostId::Detached(one))),
-        HostId::Main,
+        toast_host(&order, shown(HostId::Detached(one)), space),
+        space,
         "a minimized window draws nothing"
     );
+    let other = HostId::Space(SpaceKey(4));
     assert_eq!(
-        toast_host(&order, |_| false),
-        HostId::Main,
-        "nothing shown: the main one"
+        toast_host(&order, |_| false, other),
+        other,
+        "nothing shown: the fallback"
     );
-    assert_eq!(toast_host(&[], |_| true), HostId::Main);
+    assert_eq!(toast_host(&[], |_| true, space), space);
 }
 
 #[test]

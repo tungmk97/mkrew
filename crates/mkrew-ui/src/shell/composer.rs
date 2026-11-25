@@ -430,7 +430,7 @@ impl Shell {
         let Some(picker) = self.prompt_picker.take() else {
             return;
         };
-        self.picker_host = HostId::Main;
+        self.picker_host = self.primary_host();
         match (picker.target, text) {
             (target, Some(text)) => {
                 let before = self.prompt(target).map_or("", |prompt| prompt.text.text());

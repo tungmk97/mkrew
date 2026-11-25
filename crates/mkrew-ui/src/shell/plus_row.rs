@@ -53,7 +53,7 @@ impl Shell {
                 .child(loading_dots(now, rgb(theme.text_muted)))
                 .into_any_element();
         }
-        let main = host == HostId::Main;
+        let main = host.space().is_some();
         let project = if main {
             self.workspace
         } else {
@@ -405,7 +405,7 @@ impl Shell {
         };
         let file = FileKey::project(path);
         self.ensure_doc(project_id, &file, Some(MdMode::Source), cx);
-        let main = self.host_of(window) == HostId::Main;
+        let main = self.host_of(window).space().is_some();
         if !main && matches!(place, documents::Place::NewTab) {
             // New tabs belong to the main window: it takes this one.
             return self.open_document(project_id, file, None, place, window, cx);

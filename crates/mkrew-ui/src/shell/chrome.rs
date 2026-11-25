@@ -204,8 +204,7 @@ impl Shell {
                         .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
                 });
                 let every_tab_detached = !tabs.tabs().is_empty()
-                    && (tabs.tabs().iter())
-                        .all(|tab| self.terminal_host(project_id, tab.id) != HostId::Main);
+                    && (tabs.tabs().iter()).all(|tab| self.is_detached_tab(project_id, tab.id));
                 let terminals = div().flex_1().min_w_0().h_full().flex().flex_col().child(
                     if every_tab_detached {
                         empty_state(
@@ -225,7 +224,7 @@ impl Shell {
                             voice_ring,
                             theme,
                             self.hosts
-                                .get(&HostId::Main)
+                                .get(&self.host_of(window))
                                 .map(|ui| ui.content.clone())
                                 .unwrap_or_default(),
                             window,
@@ -272,7 +271,7 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let main = host == HostId::Main;
+        let main = host.space().is_some();
         let workspace = self.workspace.filter(|_| main && self.shows_workspaces());
         let view = self.view();
         // An open dialog keeps the mouse too: the bar's controls are inert, only the drag area
@@ -291,7 +290,7 @@ impl Shell {
         // The tab area; its strip is only recorded (for drops from other windows) while it is
         // painted.
         let tab_area = match host {
-            HostId::Main => workspace.and_then(|project_id| {
+            HostId::Space(_) => workspace.and_then(|project_id| {
                 let tabs = self.tabs.get(&project_id)?;
                 Some(
                     self.render_tab_area(project_id, tabs, now, theme, window, cx)
@@ -304,7 +303,7 @@ impl Shell {
         };
         if main
             && tab_area.is_none()
-            && let Some(ui) = self.hosts.get(&HostId::Main)
+            && let Some(ui) = self.hosts.get(&host)
         {
             *ui.strip.borrow_mut() = None;
         }

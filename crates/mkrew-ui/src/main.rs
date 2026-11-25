@@ -55,7 +55,7 @@ use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::context_menu::{LayoutMenu, PaneMenu, TabMenu};
 use mkrew_ui::desktop::{Desktop, TrayEvent};
-use mkrew_ui::detached::{self, Detached, DockTab, HostId, WindowKey};
+use mkrew_ui::detached::{self, Detached, DockTab, HostId, SpaceKey, WindowKey};
 use mkrew_ui::diagram::Diagram;
 use mkrew_ui::dialog_focus::{self, Nav};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
@@ -943,8 +943,9 @@ struct Shell {
     toasts: Toasts,
     /// Which terminal tab is in which detached window (ADR 0096).
     detached: Detached,
-    /// The main window, for work that must run there (a file link from a detached pane).
-    main_window: gpui::AnyWindowHandle,
+    /// The Space windows (ADR 0113) and their keys, both ways; mode 1 has one.
+    spaces: HashMap<gpui::AnyWindowHandle, SpaceKey>,
+    space_handles: HashMap<SpaceKey, gpui::AnyWindowHandle>,
     /// The detached OS windows and their keys, both ways.
     windows: HashMap<gpui::AnyWindowHandle, WindowKey>,
     window_handles: HashMap<WindowKey, gpui::AnyWindowHandle>,
@@ -964,8 +965,6 @@ struct Shell {
     /// A `DraggedItem` drag moved over a window (the tear-off catcher saw its payload): only
     /// then may a release tear the dragged tab off.
     tab_drag: bool,
-    /// The main window is shown (not minimized or hidden): its panes stay attached.
-    main_visible: bool,
     /// `OpenLink` of each attached pane, kept so a move to another window subscribes again.
     link_subscriptions: HashMap<Ulid, gpui::Subscription>,
     /// A detached window moved, resized or changed tabs: saved on the next status tick.
@@ -987,7 +986,8 @@ struct Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.ensure_diff_views();
-        self.prepare_browsers(HostId::Main, window, cx);
+        let host = self.host_of(window);
+        self.prepare_browsers(host, window, cx);
         let theme = cx.theme().clone();
         // A menu closed behind the keyboard's back (workspace switched, dialog opened, daemon
         // event) must not leave it on the hidden menu: give it back to the pane. A menu whose
@@ -1007,12 +1007,12 @@ impl Render for Shell {
             .clear(window.window_handle().window_id());
         self.typing_target.ring.set(self.voice_ring(&theme, cx));
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
-        self.sync_traffic_lights(HostId::Main, window, cx.global::<theme::Fonts>().ui_size);
+        self.sync_traffic_lights(host, window, cx.global::<theme::Fonts>().ui_size);
         // A dialog control that vanished while focused (a button swapped for its disabled twin
         // while saving, the next step of a dialog) would leave the keyboard on nothing and Esc
         // would miss the dialog: the dialog itself takes the keyboard back.
         if self.modal_open()
-            && self.popup_host().is_none_or(|host| host == HostId::Main)
+            && self.popup_host().is_none_or(|popup| popup == host)
             && !window.has_active_prompt()
             && !self.dialog_focus.contains_focused(window, cx)
         {
@@ -1082,7 +1082,7 @@ impl Render for Shell {
                 }
             }))
             .child(tear_off_catcher(cx))
-            .child(self.render_title_bar(HostId::Main, now, &theme, window, cx))
+            .child(self.render_title_bar(host, now, &theme, window, cx))
             .children(self.render_reconnect_banner(&theme, cx))
             .child(
                 div()
@@ -1202,19 +1202,19 @@ impl Render for Shell {
                     .children(
                         self.palette
                             .as_ref()
-                            .filter(|_| self.palette_host == HostId::Main)
+                            .filter(|_| self.palette_host == host)
                             .map(|palette| self.render_palette(palette, &theme, cx)),
                     )
                     .children(
                         self.prompt_picker
                             .as_ref()
-                            .filter(|_| self.picker_host == HostId::Main)
+                            .filter(|_| self.picker_host == host)
                             .map(|picker| self.render_prompt_picker(picker, &theme, cx)),
                     )
                     .children(
                         self.slash_picker
                             .as_ref()
-                            .filter(|_| self.picker_host == HostId::Main)
+                            .filter(|_| self.picker_host == host)
                             .map(|picker| self.render_slash_picker(picker, &theme, cx)),
                     )
                     .children(
@@ -1229,7 +1229,7 @@ impl Render for Shell {
                             .filter(|_| {
                                 self.view() == View::Terminals
                                     && !self.modal_open()
-                                    && self.menu_host == HostId::Main
+                                    && self.menu_host == host
                             })
                             .map(|menu| self.render_tab_menu(menu, window, &theme, cx)),
                     )
@@ -1239,7 +1239,7 @@ impl Render for Shell {
                             .filter(|_| {
                                 self.view() == View::Terminals
                                     && !self.modal_open()
-                                    && self.menu_host == HostId::Main
+                                    && self.menu_host == host
                             })
                             .map(|menu| self.render_layout_menu(menu, &theme, cx)),
                     )
@@ -1249,7 +1249,7 @@ impl Render for Shell {
                             .filter(|_| {
                                 self.view() == View::Terminals
                                     && !self.modal_open()
-                                    && self.menu_host == HostId::Main
+                                    && self.menu_host == host
                             })
                             .and_then(|menu| self.render_pane_menu(menu, &theme, cx)),
                     )
@@ -1259,7 +1259,7 @@ impl Render for Shell {
                             .filter(|_| {
                                 self.view() == View::Terminals
                                     && !self.modal_open()
-                                    && self.menu_host == HostId::Main
+                                    && self.menu_host == host
                             })
                             .map(|menu| self.render_share_menu(menu, &theme, cx)),
                     )
@@ -1280,7 +1280,7 @@ impl Render for Shell {
                     )
                     .children(
                         self.render_toasts(&theme, cx)
-                            .filter(|_| self.toast_host() == HostId::Main),
+                            .filter(|_| self.toast_host() == host),
                     )
                     .children(self.render_voice_pill(&theme, cx)),
             )

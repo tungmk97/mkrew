@@ -13,9 +13,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         // The dialog is drawn in the main window only.
-        if self.host_of(window) != HostId::Main {
+        if self.host_of(window).space().is_none() {
             let action = action.clone();
-            return self.in_window(HostId::Main, cx, move |shell, window, cx| {
+            return self.in_window(self.primary_host(), cx, move |shell, window, cx| {
                 window.activate_window();
                 shell.expand_diagram(&action, window, cx);
             });

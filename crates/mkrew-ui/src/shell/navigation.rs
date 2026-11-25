@@ -207,8 +207,8 @@ impl Shell {
                     return;
                 };
                 let (path, line) = (path.clone(), *line);
-                if self.host_of(window) != HostId::Main {
-                    return self.in_window(HostId::Main, cx, move |shell, window, cx| {
+                if self.host_of(window).space().is_none() {
+                    return self.in_window(self.primary_host(), cx, move |shell, window, cx| {
                         window.activate_window();
                         shell.open_file_at(project_id, target, path, line, window, cx);
                     });
@@ -341,7 +341,7 @@ impl Shell {
             tabs: match (window_key, workspace) {
                 (Some(key), _) => self.detached.tabs_of(key).len(),
                 (None, Some(id)) => self.tabs.get(&id).map_or(0, |tabs| {
-                    let main = |tab: &&Tab| self.terminal_host(id, tab.id) == HostId::Main;
+                    let main = |tab: &&Tab| !self.is_detached_tab(id, tab.id);
                     tabs.tabs().iter().filter(main).count()
                 }),
                 (None, None) => 0,
@@ -674,7 +674,7 @@ impl Shell {
             .palette
             .take()
             .and_then(|palette| palette.insert_into());
-        self.palette_host = HostId::Main;
+        self.palette_host = self.primary_host();
         // Esc on an `@` picker types the `@` it replaced (an e-mail, a handle).
         if let Some(target) = insert_into {
             self.palette_return = None;
@@ -768,7 +768,7 @@ impl Shell {
                 palette::Action::Extra(Extra::TabMoveToMainWindow) => {
                     if let Some((project, tab_id)) = self.tab_scope(window) {
                         let tab = DockTab::Terminal { project, tab_id };
-                        self.move_tab_to(tab, HostId::Main, None, window, cx);
+                        self.move_tab_to(tab, self.primary_host(), None, window, cx);
                     }
                     return;
                 }
@@ -1099,7 +1099,7 @@ impl Shell {
             return;
         };
         self.palette = None;
-        self.palette_host = HostId::Main;
+        self.palette_host = self.primary_host();
         // A missing or broken settings file types the default form (the daemon reports it).
         let template = mkrew_core::settings::load(&self.settings_file)
             .unwrap_or_default()
@@ -1120,10 +1120,10 @@ impl Shell {
         cx: &mut Context<'_, Self>,
         run: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) + 'static,
     ) {
-        if self.host_of(window) == HostId::Main {
+        if self.host_of(window).space().is_some() {
             return run(self, window, cx);
         }
-        self.in_window(HostId::Main, cx, move |shell, window, cx| {
+        self.in_window(self.primary_host(), cx, move |shell, window, cx| {
             window.activate_window();
             run(shell, window, cx);
         });
