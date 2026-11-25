@@ -469,6 +469,9 @@ pub const TSP_OVERLAY_MD_WIDTH: f32 = 576.0;
 /// Widest an inline TSP `image` is.
 pub const TSP_IMAGE_MAX_WIDTH: f32 = 256.0;
 
+/// Side of a pasted image's square thumbnail (the composer's attachments, a sent prompt's images).
+pub const TSP_THUMB_SIZE: f32 = 56.0;
+
 /// Widest share of the Chat page a prompt card takes (it sits at the right).
 pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
 
@@ -755,11 +758,14 @@ pub const TERMINAL_FONTS: &[&str] = &["JetBrains Mono", "SF Mono", "Menlo"];
 #[cfg(not(any(windows, target_os = "macos")))]
 pub const TERMINAL_FONTS: &[&str] = &["JetBrains Mono", "DejaVu Sans Mono"];
 
+/// The bundled Nerd Font symbols ([`BUNDLED_FONTS`]): omp's private-use icons, on every machine.
+pub const ICON_FONT: &str = "Symbols Nerd Font Mono";
+
 /// Per-glyph fallbacks of the terminal font, tried before the system fallback. Nerd Font
 /// icons (private-use code points, used by omp and shell prompts) are in no system font.
 /// Missing families are skipped; "Mono" variants keep icons one cell wide.
 pub const TERMINAL_GLYPH_FALLBACKS: &[&str] = &[
-    "Symbols Nerd Font Mono",
+    ICON_FONT,
     "CaskaydiaCove Nerd Font Mono",
     "CaskaydiaMono Nerd Font Mono",
     "JetBrainsMono Nerd Font Mono",

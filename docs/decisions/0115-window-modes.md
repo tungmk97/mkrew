@@ -24,7 +24,8 @@ The user also wants to switch back to one window at any time, and the one-window
 - `[ui] panel_side = "right" | "left"`: the Files / Session / Git panel's side, in both modes.
 - Split ("Open each workspace in its own window…") picks workspaces in a picker and confirms when several open; Combine ("Combine into one window") keeps the window the user is in and closes the others.
   Changing `window_mode` in Settings or by hand in `settings.toml` runs the same flows.
-- A mode 2 window shows its workspace in the OS title (`<workspace> - Mkrew`), a 3 px stripe of the workspace color on top, and a "need you" chip for sessions of the other workspaces.
+- A mode 2 window shows its workspace in the OS title (`<workspace> - Mkrew`) and a "need you" chip for sessions of the other workspaces.
+  Amended 2026-11-25 (human request): the 3 px stripe of the workspace color on top is gone; the title, the tabs and the switcher already name the workspace.
 - `windows.json` goes to version 2 with a `spaces` list (workspace, bounds, maximized, full screen; the one used last at the end).
   `main-window.json` is read once when `spaces` is missing.
 - `Desktop` keeps the handle of every Space window: the Windows taskbar badge and flash apply to each, and hiding to the tray hides all of them.
