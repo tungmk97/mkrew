@@ -930,10 +930,10 @@ pub fn paged_offset(offset: f32, page: f32, max: f32, up: bool) -> f32 {
     moved.clamp(-max.max(0.0), 0.0)
 }
 
-/// The width in px of the text column of a pane `pane_width` wide: the Chat column's content
-/// (`chat_column`), what the PTY is sized to.
+/// The width in px of the text column of a pane `pane_width` wide: the transcript's content (as
+/// wide as the pane less `space::XL` at both sides, like Tern), what the PTY is sized to.
 pub fn column_px(pane_width: f32) -> f32 {
-    pane_width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * theme::CHAT_COLUMN_PADDING
+    pane_width - 2.0 * theme::CHAT_COLUMN_PADDING
 }
 
 /// The PTY columns for a pane `pane_width` wide; `None` while the width is unknown (not laid out
@@ -2665,10 +2665,10 @@ mod tests {
     }
 
     #[test]
-    fn the_pty_is_sized_to_the_chat_column_of_the_pane() {
+    fn the_pty_is_sized_to_the_pane_less_its_side_padding() {
         let pad = 2.0 * theme::CHAT_COLUMN_PADDING;
         assert_eq!(column_px(400.0), 400.0 - pad);
-        assert_eq!(column_px(5000.0), theme::CHAT_COLUMN_WIDTH - pad);
+        assert_eq!(column_px(5000.0), 5000.0 - pad);
     }
 
     #[test]

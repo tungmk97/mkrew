@@ -25,7 +25,7 @@ use mkrew_ui::tsp::{
 use mkrew_ui::{docs, preview};
 use serde_json::{Value, json};
 
-use super::chat_view::{chat_column, chat_column_in};
+use super::chat_view::{chat_column, page_column};
 use super::composer::{
     composer_card_frame, composer_room, meter_bar, model_pill, permission_chip, placeholder_row,
     quiet_chip,
@@ -923,19 +923,20 @@ impl Shell {
         // can scroll to it. The spacer keeps the first row clear of the pane's 8 px drag strip
         // (`PANE_GRIP_HEIGHT`), the 2 px color line and the badges, like the Chat list's
         // `py(space::L)`.
+        // The transcript is as wide as the pane, like Tern (`tsp::column_px`); the dock below
+        // keeps the Chat column.
         let rows: Vec<AnyElement> = if screen {
             (doc.children("main"))
                 .map(|node| {
-                    chat_column_in(self.tsp_node(&screen_paint, node, cx), true).into_any_element()
+                    page_column(self.tsp_node(&screen_paint, node, cx), None, true)
+                        .into_any_element()
                 })
                 .collect()
         } else {
             std::iter::once(div().h(px(space::L)).into_any_element())
-                .chain(
-                    (doc.children("main")).map(|node| {
-                        chat_column(self.tsp_node(&paint, node, cx)).into_any_element()
-                    }),
-                )
+                .chain((doc.children("main")).map(|node| {
+                    page_column(self.tsp_node(&paint, node, cx), None, false).into_any_element()
+                }))
                 .collect()
         };
         // The dock as the Chat composer when omp sent its composer roles. With the ask card or a
@@ -997,7 +998,7 @@ impl Shell {
                             .left_0()
                             .right_0()
                             .bottom(px(space::S))
-                            .child(chat_column(
+                            .child(page_column(
                                 div().flex().justify_end().child(
                                     float_button("tsp-scroll-end", Icon::ArrowDown, theme)
                                         .tooltip(tooltip(
@@ -1015,6 +1016,8 @@ impl Shell {
                                             }),
                                         ),
                                 ),
+                                None,
+                                false,
                             )),
                     )
                 }),
