@@ -764,8 +764,8 @@ pub(crate) fn segment_in(
 }
 
 /// An icon tab of the right panel's tab row (Files, Session, Git), Tern style (ADR 0110): the
-/// shown one has the `selected` fill and a full-color icon, the others a muted icon and the
-/// `pressable` hover. The caller adds a count chip, the tooltip and the press.
+/// shown one has the `accent_bg` fill and an `accent_text` icon (ADR 0117), the others a muted
+/// icon and the `pressable` hover. The caller adds a count chip, the tooltip and the press.
 pub(crate) fn panel_tab(
     id: impl Into<gpui::ElementId>,
     glyph: Icon,
@@ -781,12 +781,16 @@ pub(crate) fn panel_tab(
         .h(theme::rems_px(theme::PANEL_TAB_HEIGHT))
         .px(px(space::S))
         .rounded(px(radius::MEDIUM))
-        .when(active, |el| el.bg(rgb(theme.selected)))
+        .when(active, |el| el.bg(rgb(theme.accent_bg)))
         .pressable_unless(active, Look::Icon, theme)
         .child(icon_svg(
             glyph,
             theme::ICON_SIZE,
-            if active { theme.text } else { theme.text_muted },
+            if active {
+                theme.accent_text
+            } else {
+                theme.text_muted
+            },
         ))
 }
 

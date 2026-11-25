@@ -2624,6 +2624,9 @@ pub const GIT_REPO_STRIP_HEIGHT: f32 = 42.0;
 pub const GIT_SECTION_TAB_HEIGHT: f32 = 36.0;
 pub const WORKSPACE_ROW_HEIGHT: f32 = 30.0;
 pub const SESSION_ROW_HEIGHT: f32 = 30.0;
+/// The sidebar's filter field (spec §8): one step lower than a dialog input
+/// ([`INPUT_HEIGHT`]) so it sits quietly above the All / Working / Needs you control.
+pub const SIDEBAR_FILTER_HEIGHT: f32 = 28.0;
 /// Height of the Plan card's progress bar, and of the thin one under the selected sidebar row
 /// (ADR 0039). The track is `Theme::border`, the fill `Theme::accent` (both themes).
 pub const PLAN_BAR_HEIGHT: f32 = 4.0;

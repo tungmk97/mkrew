@@ -4514,3 +4514,4 @@ _Decisions the agent made on its own. Override them here if you disagree._
 ## Tern polish, Part F (window chrome)
 
 - [ ] (Task 21) To verify: with omp working, confirm the context meter labels sit above the composer card ring and clear the hud pill and the scroll-to-end button (dark and light).
+- [ ] (Task 21) To verify: check chrome (sidebar rows, filter, panel tabs, focus stripe) visually, dark and light: no vertical line between the sidebar and the pane area but a visible step; the selected session row has the accent tint and the 2x14 bar, no ring; a muted row lifts to full text on hover; the filter is 28 px with a faint ring, a `subtle` placeholder and an accent ring while typing; a focused pane among several has a 1 px stripe, a pane that needs input or has a colour a 2 px one; the shown panel tab is an accent tint with an accent icon. Screenshots were not taken (sandbox not driven).

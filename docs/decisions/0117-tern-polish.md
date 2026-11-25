@@ -49,6 +49,7 @@ Measured from Tern's CSS (six gap reports):
 - Mkrew Light `git_modified` / `git_untracked` move to `#8F5410` (4.5:1 on the new `selected`).
 - No setting migration: `THEME_NAMES` only grows.
 - The focus stripe among several panes is 1 px; needs input and a session colour stay 2 px.
+- The sidebar sits on pane_gap without border_r; selected sidebar rows use the tint plus 2 px bar; the right panel's shown icon tab is accent_bg with an accent_text icon.
 
 ## Alternatives
 

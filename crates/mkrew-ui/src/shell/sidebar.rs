@@ -176,69 +176,67 @@ impl Shell {
                 // Secondary actions: shown on hover only (SPEC §14).
                 .opacity(opacity::HIDDEN)
                 .group_hover(id.clone(), |style| style.opacity(opacity::FULL));
-            let line = div()
-                .id(id.clone())
-                .group(id.clone())
-                .min_h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
-                .flex()
-                .items_center()
-                .gap(px(space::S))
-                .px(px(space::S))
-                .rounded(px(radius::SMALL))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(gpui::transparent_black())
-                .when(selected, |el| {
-                    el.bg(rgb(theme.selected))
-                        .border_color(rgb(theme.selected_ring))
-                })
-                .tooltip(tooltip(
-                    theme,
-                    &format!("{} — {}", row.name, run::state_text(&row.state)),
-                    "",
-                ))
-                .when_some(live, |el, session_id| {
-                    el.pressable_unless(selected, Look::Row, theme)
-                        .on_press(
-                            true,
-                            cx.listener(move |shell, _, window, cx| {
-                                shell.open_session(session_id, window, cx);
-                            }),
-                        )
-                        .on_mouse_down(
-                            MouseButton::Right,
-                            cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                                shell.open_session(session_id, window, cx);
-                                shell.open_pane_menu(session_id, event.position, window, cx);
-                            }),
-                        )
-                })
-                .child(status_dot(color, hollow))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(font_size::BODY)
-                        .text_color(rgb(if running {
-                            theme.text
-                        } else {
-                            theme.text_muted
-                        }))
-                        .child(row.name),
-                )
-                .when(running && !ports.is_empty(), |el| {
-                    el.child(
-                        div()
-                            .flex_none()
-                            .whitespace_nowrap()
-                            .text_size(font_size::META)
-                            .font_family(theme.terminal_font_family.clone())
-                            .text_color(rgb(theme.status_done))
-                            .child(ports.join(" ")),
+            let line = with_pick(
+                div()
+                    .id(id.clone())
+                    .group(id.clone())
+                    .min_h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .px(px(space::S))
+                    .rounded(px(radius::CHIP))
+                    .text_color(rgb(match (running, selected) {
+                        (true, true) => theme.text,
+                        (true, false) => theme.text_muted,
+                        (false, _) => theme.text_subtle,
+                    })),
+                selected,
+                theme,
+            )
+            .tooltip(tooltip(
+                theme,
+                &format!("{} — {}", row.name, run::state_text(&row.state)),
+                "",
+            ))
+            .when_some(live, |el, session_id| {
+                el.pressable_unless(selected, Look::Row, theme)
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, _, window, cx| {
+                            shell.open_session(session_id, window, cx);
+                        }),
                     )
-                })
-                .child(actions)
-                .into_any_element();
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                            shell.open_session(session_id, window, cx);
+                            shell.open_pane_menu(session_id, event.position, window, cx);
+                        }),
+                    )
+            })
+            .child(status_dot(color, hollow))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(font_size::BODY)
+                    .child(row.name),
+            )
+            .when(running && !ports.is_empty(), |el| {
+                el.child(
+                    div()
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .text_size(font_size::META)
+                        .font_family(theme.terminal_font_family.clone())
+                        .text_color(rgb(theme.status_done))
+                        .child(ports.join(" ")),
+                )
+            })
+            .child(actions)
+            .into_any_element();
             // Only configured commands have a place to move to (the config order).
             if index < configured {
                 let item = DraggedItem {
@@ -446,7 +444,11 @@ impl Shell {
             )
             .flex_1()
             .min_w_0()
-            .h(theme::rems_px(theme::INPUT_HEIGHT))
+            .h(theme::rems_px(theme::SIDEBAR_FILTER_HEIGHT))
+            .bg(rgb(theme.well))
+            .when(!filter_focused, |el| {
+                el.border_color(gpui::rgba(theme.layer[1]))
+            })
             .flex()
             .items_center()
             .py_0()
@@ -770,8 +772,6 @@ impl Shell {
             .flex()
             .flex_col()
             .bg(rgb(theme.sidebar))
-            .border_r(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
             .children(header)
             .children(controls)
@@ -871,8 +871,6 @@ impl Shell {
             .flex()
             .flex_col()
             .bg(rgb(theme.sidebar))
-            .border_r(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
             .child(header)
             .child(
@@ -1117,113 +1115,115 @@ pub(crate) fn workspace_row(
                 .child(format!("{} idle", row.idle))
         })
     };
-    div()
-        .id(group.clone())
-        .group(group.clone())
-        .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))
-        .flex()
-        .items_center()
-        .gap(px(space::S))
-        .px(px(space::S))
-        .rounded(px(radius::SMALL))
-        .when(active, |el| el.bg(rgb(theme.selected)))
-        .pressable_unless(active, Look::Row, theme)
-        .when(active, |el| {
-            el.relative()
-                .child(record_bounds(Anchor::WorkspaceRow(project_id), cx))
-        })
-        .tooltip(tooltip(theme, &row.path, ""))
-        .on_press(
-            true,
-            cx.listener(move |shell, _, window, cx| {
-                shell.click_workspace_row(project_id, window, cx);
-            }),
-        )
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                shell.open_workspace_menu(project_id, event.position, false, window, cx);
-            }),
-        )
-        .child(
+    with_pick(
+        div()
+            .id(group.clone())
+            .group(group.clone())
+            .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::S))
+            .rounded(px(radius::CHIP)),
+        active,
+        theme,
+    )
+    .pressable_unless(active, Look::Row, theme)
+    .when(active, |el| {
+        el.child(record_bounds(Anchor::WorkspaceRow(project_id), cx))
+    })
+    .tooltip(tooltip(theme, &row.path, ""))
+    .on_press(
+        true,
+        cx.listener(move |shell, _, window, cx| {
+            shell.click_workspace_row(project_id, window, cx);
+        }),
+    )
+    .on_mouse_down(
+        MouseButton::Right,
+        cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+            shell.open_workspace_menu(project_id, event.position, false, window, cx);
+        }),
+    )
+    .child(
+        div()
+            .id(SharedString::from(format!(
+                "workspace-chevron-{project_id}"
+            )))
+            .flex_none()
+            .flex()
+            .items_center()
+            .rounded(px(radius::SMALL))
+            .pressable(Look::Raised, true, theme)
+            .on_press(
+                true,
+                cx.listener(move |shell, _, _, cx| {
+                    // Only expands / collapses: not a click on the row (which shows it).
+                    cx.stop_propagation();
+                    shell.sidebar.toggle(project_id);
+                    cx.notify();
+                }),
+            )
+            .child(icon_svg(
+                if row.expanded {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                },
+                theme::ICON_SIZE_SMALL,
+                theme.chevron_color(),
+            )),
+    )
+    .child(workspace_avatar(&row.name, color, theme))
+    .child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .truncate()
+            .text_size(font_size::CARD_TITLE)
+            .font_weight(FontWeight(weight::SEMIBOLD))
+            .text_color(rgb(theme.text))
+            .child(row.name),
+    )
+    .when(row.pinned, |el| el.child(pin_mark()))
+    .children(status)
+    .when(row.asking > 0, |el| {
+        el.child(
             div()
-                .id(SharedString::from(format!(
-                    "workspace-chevron-{project_id}"
-                )))
                 .flex_none()
-                .flex()
-                .items_center()
-                .rounded(px(radius::SMALL))
-                .pressable(Look::Raised, true, theme)
-                .on_press(
-                    true,
-                    cx.listener(move |shell, _, _, cx| {
-                        // Only expands / collapses: not a click on the row (which shows it).
-                        cx.stop_propagation();
-                        shell.sidebar.toggle(project_id);
-                        cx.notify();
-                    }),
-                )
-                .child(icon_svg(
-                    if row.expanded {
-                        Icon::ChevronDown
-                    } else {
-                        Icon::ChevronRight
-                    },
-                    theme::ICON_SIZE_SMALL,
-                    theme.chevron_color(),
+                .text_size(font_size::META)
+                .font_weight(FontWeight(weight::SEMIBOLD))
+                .text_color(rgb(theme.status_needs_input))
+                .child(format!(
+                    "{} {}",
+                    sidebar::status_display(SessionState::NeedsInput).icon,
+                    row.asking
                 )),
         )
-        .child(workspace_avatar(&row.name, color, theme))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_size(font_size::CARD_TITLE)
-                .font_weight(FontWeight(weight::SEMIBOLD))
-                .text_color(rgb(theme.text))
-                .child(row.name),
+    })
+    .child(
+        row_action(
+            SharedString::from(format!("workspace-menu-{project_id}")),
+            icon_svg(Icon::Ellipsis, theme::ICON_SIZE_SMALL, theme.text_muted),
+            theme,
         )
-        .when(row.pinned, |el| el.child(pin_mark()))
-        .children(status)
-        .when(row.asking > 0, |el| {
-            el.child(
-                div()
-                    .flex_none()
-                    .text_size(font_size::META)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.status_needs_input))
-                    .child(format!(
-                        "{} {}",
-                        sidebar::status_display(SessionState::NeedsInput).icon,
-                        row.asking
-                    )),
-            )
-        })
-        .child(
-            row_action(
-                SharedString::from(format!("workspace-menu-{project_id}")),
-                icon_svg(Icon::Ellipsis, theme::ICON_SIZE_SMALL, theme.text_muted),
-                theme,
-            )
-            // Shown on hover (SPEC §14 progressive disclosure); right-click opens it too.
-            .opacity(opacity::HIDDEN)
-            .group_hover(group, |style| style.opacity(opacity::FULL))
-            .tooltip(tooltip(
-                theme,
-                "Workspace menu (or right-click the row)",
-                "",
-            ))
-            .on_click(cx.listener(
-                move |shell, event: &gpui::ClickEvent, window, cx| {
-                    // Not a click on the row (which would collapse it).
-                    cx.stop_propagation();
-                    shell.open_workspace_menu(project_id, event.position(), false, window, cx);
-                },
-            )),
-        )
-        .into_any_element()
+        // Shown on hover (SPEC §14 progressive disclosure); right-click opens it too.
+        .opacity(opacity::HIDDEN)
+        .group_hover(group, |style| style.opacity(opacity::FULL))
+        .tooltip(tooltip(
+            theme,
+            "Workspace menu (or right-click the row)",
+            "",
+        ))
+        .on_click(
+            cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
+                // Not a click on the row (which would collapse it).
+                cx.stop_propagation();
+                shell.open_workspace_menu(project_id, event.position(), false, window, cx);
+            }),
+        ),
+    )
+    .into_any_element()
 }
 
 /// A workspace as one card (ADR 0062): its header row, then its rows indented under it. A
@@ -1240,10 +1240,10 @@ fn workspace_card(
         .flex()
         .flex_col()
         .p(px(space::XS))
-        .rounded(px(radius::MEDIUM))
+        .rounded(px(radius::CARD))
         .bg(rgb(theme.card))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.border))
+        .border_color(rgb(theme.divider))
         .children(color.map(|color| {
             div()
                 .absolute()
@@ -1287,7 +1287,7 @@ pub(crate) fn workspace_avatar(name: &str, color: Option<u32>, theme: &Theme) ->
 
 /// A session row: the agent glyph (in an accent chip while the agent works; its hover gives
 /// the status in words), the title (ellipsized), the state glyph of a waiting or finished
-/// agent (none while idle), the time right-aligned, and × on hover. The selected row is ringed.
+/// agent (none while idle), the time right-aligned, and × on hover. The selected row has the accent tint and bar (`with_pick`).
 pub(crate) fn session_row(
     row: SessionRow,
     badge: sidebar::Badge,
@@ -1311,7 +1311,7 @@ pub(crate) fn session_row(
         None => row.agent.clone(),
     };
     let row_id = SharedString::from(format!("session-{session_id}"));
-    div()
+    let frame = div()
         .id(row_id.clone())
         .group(row_id.clone())
         .min_h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
@@ -1320,19 +1320,18 @@ pub(crate) fn session_row(
         .gap(px(space::S))
         .px(px(space::S))
         .when(progress.is_some(), |el| el.py(px(space::XS)))
-        .rounded(px(radius::SMALL))
-        // Same box selected or not, so the ring does not shift the row.
-        .border(px(theme::BORDER_WIDTH))
-        .border_color(gpui::transparent_black())
-        .when(selected, |el| {
-            el.bg(rgb(theme.selected))
-                .border_color(rgb(theme.selected_ring))
-        })
-        // The selected row is picked, not disabled: the pointer, no hover fill.
+        .rounded(px(radius::CHIP))
+        // `Look::Row` lifts this label to `text` on hover.
+        .text_color(rgb(if selected || unseen {
+            theme.text
+        } else {
+            theme.text_muted
+        }));
+    // The selected row is picked, not disabled: the pointer, no hover fill.
+    with_pick(frame, selected, theme)
         .pressable_unless(selected, Look::Row, theme)
         .when(selected, |el| {
-            el.relative()
-                .child(record_bounds(Anchor::SessionRow(session_id), cx))
+            el.child(record_bounds(Anchor::SessionRow(session_id), cx))
         })
         .on_press(
             true,
@@ -1389,7 +1388,6 @@ pub(crate) fn session_row(
                     div()
                         .truncate()
                         .text_size(font_size::BODY)
-                        .text_color(rgb(theme.text))
                         .when(selected || unseen, |el| {
                             el.font_weight(FontWeight(if unseen {
                                 weight::SEMIBOLD
@@ -1464,50 +1462,52 @@ pub(crate) fn compact_workspace_row(
     } else {
         (row.working > 0).then(|| (row.working.to_string(), theme.text_muted))
     };
-    div()
-        .id(SharedString::from(format!("workspace-{project_id}")))
-        .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap(px(space::XS))
-        .rounded(px(radius::SMALL))
-        .when(active, |el| el.bg(rgb(theme.selected)))
-        .pressable_unless(active, Look::Row, theme)
-        .when(active, |el| {
-            el.relative()
-                .child(record_bounds(Anchor::WorkspaceRow(project_id), cx))
-        })
-        .tooltip(tooltip(theme, &sidebar::workspace_tip(&row), ""))
-        .on_press(
-            true,
-            cx.listener(move |shell, _, window, cx| {
-                shell.click_workspace_row(project_id, window, cx);
-            }),
-        )
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                shell.open_workspace_menu(project_id, event.position, false, window, cx);
-            }),
-        )
-        .child(workspace_avatar(&row.name, color, theme))
-        // A fixed-width slot, empty without a mark, so every avatar sits in one column.
-        .child(
-            div()
-                .flex_none()
-                .w(theme::rems_px(theme::STATUS_MARK_WIDTH))
-                .flex()
-                .justify_center()
-                .children(mark.map(|(text, color)| {
-                    div()
-                        .text_size(font_size::META)
-                        .font_weight(FontWeight(weight::SEMIBOLD))
-                        .text_color(rgb(color))
-                        .child(text)
-                })),
-        )
-        .into_any_element()
+    with_pick(
+        div()
+            .id(SharedString::from(format!("workspace-{project_id}")))
+            .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(space::XS))
+            .rounded(px(radius::CHIP)),
+        active,
+        theme,
+    )
+    .pressable_unless(active, Look::Row, theme)
+    .when(active, |el| {
+        el.child(record_bounds(Anchor::WorkspaceRow(project_id), cx))
+    })
+    .tooltip(tooltip(theme, &sidebar::workspace_tip(&row), ""))
+    .on_press(
+        true,
+        cx.listener(move |shell, _, window, cx| {
+            shell.click_workspace_row(project_id, window, cx);
+        }),
+    )
+    .on_mouse_down(
+        MouseButton::Right,
+        cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+            shell.open_workspace_menu(project_id, event.position, false, window, cx);
+        }),
+    )
+    .child(workspace_avatar(&row.name, color, theme))
+    // A fixed-width slot, empty without a mark, so every avatar sits in one column.
+    .child(
+        div()
+            .flex_none()
+            .w(theme::rems_px(theme::STATUS_MARK_WIDTH))
+            .flex()
+            .justify_center()
+            .children(mark.map(|(text, color)| {
+                div()
+                    .text_size(font_size::META)
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(color))
+                    .child(text)
+            })),
+    )
+    .into_any_element()
 }
 
 /// A session in the compact rail: its status mark and agent chip. Clicks as [`session_row`];
@@ -1522,43 +1522,45 @@ pub(crate) fn compact_session_row(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let session_id = row.session_id;
-    div()
-        .id(SharedString::from(format!("session-{session_id}")))
-        .h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap(px(space::XS))
-        .rounded(px(radius::SMALL))
-        .when(selected, |el| el.bg(rgb(theme.selected)))
-        // A finish not yet viewed: tinted until the pane is focused (the rail has no bold title
-        // to say it, ADR 0062).
-        .when(row.unseen && !selected, |el| {
-            el.bg(theme.tint(theme.status_done))
-        })
-        .pressable_unless(selected, Look::Row, theme)
-        .when(selected, |el| {
-            el.relative()
-                .child(record_bounds(Anchor::SessionRow(session_id), cx))
-        })
-        .tooltip(tooltip(theme, &sidebar::session_tip(&row, now), ""))
-        .on_press(
-            true,
-            cx.listener(move |shell, _, window, cx| {
-                shell.open_session(session_id, window, cx);
-            }),
-        )
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                // As in `session_row`: show the pane first (Rename edits its tab chip).
-                shell.open_session(session_id, window, cx);
-                shell.open_pane_menu(session_id, event.position, window, cx);
-            }),
-        )
-        .child(mark_slot(row.mark(), theme))
-        .child(agent_chip(badge, theme.text, theme))
-        .into_any_element()
+    with_pick(
+        div()
+            .id(SharedString::from(format!("session-{session_id}")))
+            .h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(space::XS))
+            .rounded(px(radius::CHIP)),
+        selected,
+        theme,
+    )
+    // A finish not yet viewed: tinted until the pane is focused (the rail has no bold title
+    // to say it, ADR 0062).
+    .when(row.unseen && !selected, |el| {
+        el.bg(theme.tint(theme.status_done))
+    })
+    .pressable_unless(selected, Look::Row, theme)
+    .when(selected, |el| {
+        el.child(record_bounds(Anchor::SessionRow(session_id), cx))
+    })
+    .tooltip(tooltip(theme, &sidebar::session_tip(&row, now), ""))
+    .on_press(
+        true,
+        cx.listener(move |shell, _, window, cx| {
+            shell.open_session(session_id, window, cx);
+        }),
+    )
+    .on_mouse_down(
+        MouseButton::Right,
+        cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+            // As in `session_row`: show the pane first (Rename edits its tab chip).
+            shell.open_session(session_id, window, cx);
+            shell.open_pane_menu(session_id, event.position, window, cx);
+        }),
+    )
+    .child(mark_slot(row.mark(), theme))
+    .child(agent_chip(badge, theme.text, theme))
+    .into_any_element()
 }
 
 /// A sidebar row's state mark in a narrow fixed slot (empty without a mark), so agent chips
