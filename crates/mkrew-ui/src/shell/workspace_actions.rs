@@ -1109,7 +1109,7 @@ impl Shell {
                         disabled_button("add-workspace-clone", "Cloning…", theme, true)
                     } else {
                         button("add-workspace-clone", "Clone", theme, true)
-                            .focus_stop(theme)
+                            .focus_stop_filled(theme)
                             .tooltip(tooltip(theme, "Clone and add as a workspace", "Enter"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.clone_workspace(window, cx);

@@ -66,7 +66,7 @@ impl Shell {
 
         // The filled button while the library is empty, like Machines' first "Add machine…".
         let new_button = if empty {
-            button("prompt-new", "New prompt", theme, true).focus_stop(theme)
+            button("prompt-new", "New prompt", theme, true).focus_stop_filled(theme)
         } else {
             secondary_button("prompt-new", "New prompt", theme).focusable_bordered(theme)
         }
@@ -270,7 +270,7 @@ impl Shell {
 
         let save = if draft.is_dirty() {
             button("prompt-save", "Save", theme, true)
-                .focus_stop(theme)
+                .focus_stop_filled(theme)
                 .tooltip(tooltip(
                     theme,
                     "Save the prompt",
@@ -284,7 +284,7 @@ impl Shell {
         };
         let delete = if draft.origin.is_some() {
             danger_button("prompt-delete", "Delete", theme)
-                .focus_stop(theme)
+                .focusable_bordered(theme)
                 .tooltip(tooltip(theme, "Delete this prompt (asks first)", ""))
                 .on_click(cx.listener(|shell, _, window, cx| {
                     shell.settings_do(|_, _| Effect::Prompts(PromptAction::Delete), window, cx);

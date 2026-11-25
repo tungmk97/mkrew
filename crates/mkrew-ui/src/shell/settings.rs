@@ -414,7 +414,7 @@ impl Shell {
                     .child(dialog.heading()),
             )
             .child(
-                icon_button("settings-close", Icon::X, theme)
+                small_icon_button("settings-close", Icon::X, theme)
                     .tooltip(tooltip(theme, "Close", "Esc"))
                     .on_press(
                         true,

@@ -203,7 +203,7 @@ impl Shell {
             .children(status.switch.map(|switch| {
                 match switch {
                     Switch::Start => button("phone-start", "Start", theme, true)
-                        .focus_stop(theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(
                             theme,
                             "Turn phone access on: the daemon runs mk web",

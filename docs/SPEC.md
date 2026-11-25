@@ -1856,7 +1856,7 @@ Restyle of 2026-10-24 (ADR 0074), retuned to Tern's grounds and tiers by ADR 011
 | `text-muted` (t2: names, labels, inactive tabs) | #A1A1A1 | #55575F |
 | `text-subtle` (t3: meta) | #8A8A92 | #6A6C74 |
 | `text-disabled` | #707077 | #8F9198 |
-| `subtle` (t4: graphics, counts, line numbers) | #55555C | #B3B5BB |
+| `subtle` (t4: graphics, input placeholders, counts, line numbers) | #55555C | #B3B5BB |
 | `accent` | #8E8CF5 | #5452D0 |
 | `accent-text` | #C2C1FA | #4A48C4 |
 | `accent-bg` | #212132 | #E4E3F4 |
@@ -1887,7 +1887,7 @@ Restyle of 2026-10-24 (ADR 0074), retuned to Tern's grounds and tiers by ADR 011
 
 `pane-gap` is darker than `terminal-bg` in dark themes when `terminal-bg` leaves room, a step darker in light themes, and always differs from `terminal-bg` by at least 1.06:1 (`theme::problems()` rule "pane gap"; Tern's own default tokens measure 1.02 to 1.05, Mkrew keeps 1.06); a generated theme derives it with a mix from `terminal-bg` toward black or `text`.
 
-Hover is l1, pressed l2, rings l2, strong rings and scrollbar thumbs l3, check box borders l4 (ADR 0117). Text tiers: t1 content, t2 names and labels, t3 meta and placeholders, t4 line numbers and counts (`theme::problems` rule "meta text" keeps t3 at 4.5:1).
+Hover is l1, pressed l2, rings l2, strong rings and scrollbar thumbs l3, check box borders l4 (ADR 0117). Text tiers: t1 content, t2 names and labels, t3 meta and the composer's placeholder, t4 input-field placeholders, line numbers and counts (`theme::problems` rule "meta text" keeps t3 at 4.5:1).
 
 Tern Dark / Tern Light (ADR 0117) are the table above with these overrides (everything else, and `with_glass`, as Mkrew):
 
@@ -1930,10 +1930,10 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   A pane in a split tab has a drag handle at the centre of its top edge (ADR 0110): while the pointer is over the pane a `PANE_GRIP_BAR_WIDTH` × `PANE_GRIP_BAR_HEIGHT` (32 × 4) muted bar shows; over the handle it becomes a `PANE_GRIP_WIDTH` × `PANE_GRIP_HEIGHT` (40 × 20) `surface_raised` chip with a `grip-horizontal` icon (two rows of three dots), and dragging it moves the pane. Only the handle takes the mouse.
   Floating badges (`pane_badges`: `surface_raised` fill, 1 px `border`, radius 8, META text) sit in its top-right corner `space::S` from the edges, at most `PANE_BADGE_MAX_WIDTH` wide.
   The title bar uses `pane-gap` instead of `chrome`; the sidebar and the right panel keep their colors.
-  The `+` row (§10) is a row of 30 px `Look::Icon` buttons: the `+` button, then the default agent's logo, `square-terminal`, `notebook-pen` and `chevron-down`, `space::XS` apart, growing in 150 ms ease-out (shown at once with reduce motion).
-  The title bar's pane toggles are 30 px icon buttons, accent while on.
+  The `+` row (§10) is a row of 32 px `Look::Icon` buttons: the `+` button, then the default agent's logo, `square-terminal`, `notebook-pen` and `chevron-down`, `space::XS` apart, growing in 150 ms ease-out (shown at once with reduce motion).
+  The title bar's pane toggles are 32 px icon buttons, accent while on.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
-  buttons, 30 px icon button, panel icon tab, underlined tab, search box, status pill, tinted chip, overline, key hint.
+  buttons (`CONTROL_HEIGHT` 32), 32 px icon button, panel icon tab, underlined tab, search box, status pill, tinted chip, overline, key hint (18 px tall, `layer` fill and ring); the switch is 36 x 22 with a white knob; a segmented control is a `layer[0]` track whose selected segment is a lifted `surface_raised` chip with a ring.
 - UI font = Geist (OFL, bundled in `font/geist/` and registered at startup, ADR 0116) unless
   `[ui] font_family` is set. Sizes 11 overline, 12 meta, 13 body, 15 card
   title, 20 view title at the default `[ui] font_size = 13`; other sizes keep their ratio to body
@@ -2030,7 +2030,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   The Machines rows and Add card use `space::S` / `space::M`, `radius::MEDIUM` and `surface-raised`; a broken-file error shows `status-exited` ✕ and `text`.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
 - Focused pane: a 2 px stripe of `pane-focus-stripe` at its top edge when its tab has two or more panes (needs-input and a pane color win); unfocused panes dimmed ~5%.
-- Focus ring (ADR 0085): a dialog control that has the keyboard shows a 1 px border in `focus-ring` (the text color) over its own border, only while it was reached with the keyboard (`focus_visible`), in both themes.
+- Focus ring (ADR 0085, amended by ADR 0117): a dialog control that has the keyboard shows a 1 px accent border and a 3 px halo of the accent at 18 % (`focus_halo`), only while it was reached with the keyboard (`focus_visible`), in both themes; an accent-filled button shows a 1 px `focus-ring` (the text color) border instead, which reads on the fill.
   A click never shows it.
 - Derived tokens (accent mixed into `bg`): `pane-focus-stripe` #49518D / #A4AAE7 (also the focus border of cards, comments and inputs);
   `terminal-selection-bg` #3A406B / #CFD2F0 (selected terminal text is drawn in `text`).

@@ -447,7 +447,7 @@ impl Shell {
                 )
                 .child(
                     button("send-terminals", "Show terminals", theme, true)
-                        .focus_stop(theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(theme, "Start an agent there, then send", ""))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_doc_dialog(window, cx);
@@ -476,7 +476,7 @@ impl Shell {
                     disabled_button("send-confirm", "Sending…", theme, true)
                 } else if selection {
                     button("send-confirm", "Open composer", theme, true)
-                        .focus_stop(theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(
                             theme,
                             "Add the selection to this session's composer",
@@ -487,7 +487,7 @@ impl Shell {
                         }))
                 } else {
                     button("send-confirm", "Send", theme, true)
-                        .focus_stop(theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(theme, "Send to the selected session", "Enter"))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.send_comments(window, cx);
@@ -591,7 +591,7 @@ impl Shell {
             .child(
                 div().flex().justify_end().pt(px(space::S)).child(
                     button("changes-close", "Close", theme, true)
-                        .focus_stop(theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(theme, "Close", "Esc"))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_doc_dialog(window, cx);

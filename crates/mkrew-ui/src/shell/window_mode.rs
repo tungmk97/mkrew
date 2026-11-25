@@ -597,7 +597,7 @@ impl Shell {
             )
             .child(
                 button("open-ask-new", "New window", theme, true)
-                    .focus_stop(theme)
+                    .focus_stop_filled(theme)
                     .tooltip(tooltip(theme, "Open it in a window of its own", "Enter"))
                     .on_click(cx.listener(|shell, _, window, cx| {
                         shell.answer_open_ask(Choice::NewWindow, window, cx);
@@ -915,7 +915,7 @@ impl Shell {
         let label = picker.button_label();
         let primary = if picker.can_confirm() {
             button("split-open", label, theme, true)
-                .focus_stop(theme)
+                .focus_stop_filled(theme)
                 .tooltip(tooltip(theme, "Open the ticked workspaces", "Enter"))
                 .on_click(
                     cx.listener(|shell, _, window, cx| shell.confirm_split_picker(window, cx)),

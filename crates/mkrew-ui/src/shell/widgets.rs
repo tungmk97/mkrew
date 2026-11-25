@@ -2,7 +2,9 @@
 
 use crate::*;
 use gpui::AnimationExt as _;
-pub(crate) use mkrew_ui::pressable::{Look, PressStyle, Pressable, apply_press, press_style};
+pub(crate) use mkrew_ui::pressable::{
+    Look, PressStyle, Pressable, apply_press, press_style, press_style_on,
+};
 
 /// A filled control (primary button, switch): the fill stays, it dims on hover and press.
 fn filled_press(
@@ -33,8 +35,9 @@ pub(crate) fn message(
     empty_state(theme, None, title, sentence, detail)
 }
 
-/// A calm empty state (ADR 0027): an optional glyph tile, an optional title, one muted
-/// sentence and an optional smaller detail, centered in a narrow column.
+/// A calm empty state (ADR 0027): an optional glyph in a circle (`VIEW_TITLE` size, the 20 px of
+/// the spec), an optional title, one muted sentence and an optional smaller detail, centered in
+/// a narrow column. An action under it adds `.mt(px(space::XS))` itself.
 pub(crate) fn empty_state(
     theme: &Theme,
     glyph: Option<&'static str>,
@@ -47,7 +50,7 @@ pub(crate) fn empty_state(
         .flex_col()
         .items_center()
         .justify_center()
-        .gap(px(space::S))
+        .gap(px(space::M))
         .p(px(space::XL))
         .font_family(theme.ui_font_family.clone())
         .when_some(glyph, |el, glyph| {
@@ -57,18 +60,19 @@ pub(crate) fn empty_state(
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(radius::MEDIUM))
-                    .bg(rgb(theme.surface))
+                    .rounded(px(radius::PILL))
+                    .bg(gpui::rgba(theme.layer[0]))
                     .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.border))
-                    .text_color(rgb(theme.text_muted))
+                    .border_color(gpui::rgba(theme.layer[1]))
+                    .text_size(font_size::VIEW_TITLE)
+                    .text_color(rgb(theme.text_subtle))
                     .child(glyph),
             )
         })
         .children(title.map(|title| {
             div()
-                .text_size(font_size::CARD_TITLE)
-                .font_weight(FontWeight(weight::MEDIUM))
+                .text_size(font_size::EMPTY_TITLE)
+                .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(theme.text))
                 .child(title)
         }))
@@ -76,14 +80,14 @@ pub(crate) fn empty_state(
             div()
                 .max_w(px(theme::EMPTY_STATE_MAX_WIDTH))
                 .text_size(font_size::BODY)
-                .text_color(rgb(theme.text_muted))
+                .text_color(rgb(theme.text_subtle))
                 .child(sentence),
         )
         .children(detail.map(|detail| {
             div()
                 .max_w(px(theme::READABLE_WIDTH))
                 .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
+                .text_color(rgb(theme.text_subtle))
                 .child(detail)
         }))
 }
@@ -118,7 +122,7 @@ pub(crate) fn button_frame(id: &'static str, label: impl IntoElement) -> gpui::S
         .child(label)
 }
 
-/// A small text button: primary (accent, `on_accent` text) or ghost (muted, hover bg).
+/// A small text button: primary (accent fill, `on_accent` text, MEDIUM, `glass_hi` line) or ghost.
 pub(crate) fn button(
     id: &'static str,
     label: impl IntoElement,
@@ -128,15 +132,40 @@ pub(crate) fn button(
     if primary {
         filled_press(
             button_frame(id, label)
+                .relative()
                 .bg(rgb(theme.accent))
                 .text_color(rgb(button_fg(theme, true)))
-                .font_weight(FontWeight(weight::SEMIBOLD)),
+                .font_weight(FontWeight(weight::MEDIUM))
+                .child(top_highlight(theme, radius::MEDIUM)),
             true,
             theme,
         )
     } else {
         quiet_button(id, label, theme)
     }
+}
+
+/// The keyboard focus halo (ADR 0085, amended by ADR 0117): a ring of the accent at
+/// `FOCUS_HALO_ALPHA` just outside the box, drawn with the 1 px accent border.
+// ponytail: one small Vec per focus stop per frame, because gpui's `shadow` takes a Vec; cache it
+// on the theme if a profile ever shows it.
+pub(crate) fn focus_halo(accent: u32) -> Vec<gpui::BoxShadow> {
+    vec![
+        gpui::BoxShadow::new(
+            px(0.0),
+            px(0.0),
+            gpui::Hsla::from(gpui::rgba(theme::with_alpha(
+                accent,
+                theme::FOCUS_HALO_ALPHA,
+            ))),
+        )
+        .spread_radius(px(theme::FOCUS_HALO_SPREAD)),
+    ]
+}
+
+/// The ring of a danger button, an error note and a destructive dialog's icon tile.
+pub(crate) fn danger_ring(theme: &Theme, mix: f32) -> u32 {
+    theme::mix(theme.danger_bg, theme.status_exited, mix)
 }
 
 /// A pill in the bottom row of an omp `ask` card (TSP, spec 7.6), its id built per node. `accent`
@@ -295,17 +324,28 @@ pub(crate) fn icon_text(glyph: Icon, text: impl IntoElement, color: u32) -> gpui
         .child(text)
 }
 
-/// A secondary button: transparent with a 1 px border, soft text.
+/// A secondary button: `surface_raised` fill, 1 px `layer[1]` ring, `glass_hi` line, `text` label
+/// MEDIUM; hover steps the fill up and the ring to `layer[2]`.
 pub(crate) fn secondary_button(
     id: &'static str,
     label: impl IntoElement,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    button_frame(id, label)
-        .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.control_border))
-        .text_color(rgb(theme.text_dim))
-        .pressable(Look::Row, true, theme)
+    let style = PressStyle {
+        hover_border: Some(gpui::rgba(theme.layer[2])),
+        ..press_style_on(Look::Row, true, theme, Some(theme.surface_raised))
+    };
+    apply_press(
+        button_frame(id, label)
+            .relative()
+            .bg(rgb(theme.surface_raised))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(gpui::rgba(theme.layer[1]))
+            .text_color(rgb(theme.text))
+            .font_weight(FontWeight(weight::MEDIUM))
+            .child(top_highlight(theme, radius::MEDIUM)),
+        style,
+    )
 }
 
 /// A ghost [`button`]: muted label, the `Look::Icon` hover (a layer step, the label to `text`).
@@ -342,44 +382,50 @@ pub(crate) fn disabled_button(
         // A muted fill, not a faded accent: it must not read as the next step.
         base.bg(rgb(theme.border))
             .text_color(rgb(theme.text_disabled))
-            .font_weight(FontWeight(weight::SEMIBOLD))
+            .font_weight(FontWeight(weight::MEDIUM))
     } else {
         base.text_color(rgb(theme.text_muted))
             .pressable(Look::Row, false, theme)
     }
 }
 
-/// A ghost [`button`] that discards work (Discard, Undo's confirm): danger text, so it never
-/// reads as the accent's safe default.
+/// A ghost [`button`] that discards work (Discard, Undo's confirm): `danger_bg` fill with a 1 px
+/// ring and `danger_text`; hover lifts the fill and strengthens the ring. Give it
+/// `focusable_bordered`, not `focus_stop` (which would clear its ring at rest).
 pub(crate) fn danger_button(
     id: &'static str,
     label: impl IntoElement,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let style = PressStyle {
-        hover_bg: Some(gpui::rgb(theme.danger_bg)),
-        pressed_bg: None,
+        hover_border: Some(rgb(danger_ring(theme, theme::DANGER_RING_HOVER_MIX))),
         hover_fg: None,
-        active_opacity: opacity::ACTIVE,
-        ..press_style(Look::Row, true, theme)
+        ..press_style_on(Look::Row, true, theme, Some(theme.danger_bg))
     };
     apply_press(
-        button_frame(id, label).text_color(rgb(theme.danger_text)),
+        button_frame(id, label)
+            .bg(rgb(theme.danger_bg))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(danger_ring(theme, theme::DANGER_RING_MIX)))
+            .text_color(rgb(theme.danger_text)),
         style,
     )
 }
 
-/// Keyboard focus for the controls of a modal dialog (ADR 0085). gpui keeps the focus handle
-/// of an element that has a tab index in its element state, so a control needs no field on
-/// `Shell`. Every control here is a `Stateful<Div>` ([`button`], [`secondary_button`],
+/// Keyboard focus for the controls of a modal dialog (ADR 0085, amended by ADR 0117). gpui keeps
+/// the focus handle of an element that has a tab index in its element state, so a control needs
+/// no field on `Shell`. Every control here is a `Stateful<Div>` ([`button`], [`secondary_button`],
 /// [`quiet_button`], [`danger_button`], [`icon_button`], [`segment`], chips, check rows).
 pub(crate) trait DialogControl: Sized {
-    /// A Tab stop that shows the `focus_ring` while the keyboard has it. It keeps a 1 px
-    /// border, transparent at rest, so the ring shifts nothing. Enter / Space click it (gpui).
+    /// A Tab stop that shows the accent border and halo while the keyboard has it. It keeps a
+    /// 1 px border, transparent at rest, so the ring shifts nothing. Enter / Space click it (gpui).
     fn focus_stop(self, theme: &Theme) -> Self;
     /// [`DialogControl::focus_stop`] for a control that already draws its own 1 px border (a
-    /// secondary button, a chip): only the ring color changes.
+    /// secondary button, a chip): only the ring color and the halo change.
     fn focusable_bordered(self, theme: &Theme) -> Self;
+    /// [`DialogControl::focus_stop`] for a button filled with the accent: the ring is `focus_ring`
+    /// (the text color), which reads on the fill; no halo.
+    fn focus_stop_filled(self, theme: &Theme) -> Self;
     /// ← / → on a focused chip move the keyboard to its neighbour in a row of `len`; the
     /// ends keep it.
     fn chip_arrows(self, index: usize, len: usize) -> Self;
@@ -403,8 +449,16 @@ impl DialogControl for gpui::Stateful<gpui::Div> {
     }
 
     fn focusable_bordered(self, theme: &Theme) -> Self {
-        let ring = rgb(theme.focus_ring);
+        let accent = theme.accent;
         self.tab_index(0)
+            .focus_visible(move |style| style.border_color(rgb(accent)).shadow(focus_halo(accent)))
+    }
+
+    fn focus_stop_filled(self, theme: &Theme) -> Self {
+        let ring = rgb(theme.focus_ring);
+        self.border(px(theme::BORDER_WIDTH))
+            .border_color(gpui::transparent_black())
+            .tab_index(0)
             .focus_visible(move |style| style.border_color(ring))
     }
 
@@ -435,22 +489,28 @@ impl DialogControl for gpui::Stateful<gpui::Div> {
     }
 }
 
-/// A keyboard shortcut hint (`Keymap::label` text): a small mono key cap. On an accent
-/// button it is drawn in `on_accent` at reduced opacity.
+/// A keyboard shortcut hint (`Keymap::label` text): a small mono key cap, `KBD_HEIGHT` high. On
+/// an accent button it is drawn in `on_accent` at reduced opacity.
 pub(crate) fn kbd(text: String, theme: &Theme, on_accent: bool) -> gpui::Div {
-    let base = div().flex_none().text_size(font_size::META);
+    let base = div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(theme::rems_px(theme::KBD_HEIGHT))
+        .min_w(theme::rems_px(theme::KBD_MIN_WIDTH))
+        .px(px(space::XS))
+        .text_size(font_size::META)
+        .font_weight(FontWeight(weight::MEDIUM));
     if on_accent {
-        base.px(px(space::XS))
-            .text_color(rgb(theme.on_accent))
+        base.text_color(rgb(theme.on_accent))
             .opacity(opacity::SECONDARY)
             .child(text)
     } else {
-        base.px(px(space::XS))
-            .rounded(px(radius::TAG))
+        base.rounded(px(radius::TAG))
             .border(px(theme::BORDER_WIDTH))
-            .border_b(px(theme::KBD_BOTTOM_BORDER))
-            .border_color(rgb(theme.selected))
-            .bg(rgb(theme.row_hover))
+            .border_color(gpui::rgba(theme.layer[1]))
+            .bg(gpui::rgba(theme.layer[0]))
             .font_family(theme.terminal_font_family.clone())
             .text_size(font_size::OVERLINE)
             .text_color(rgb(theme.text_muted))
@@ -504,10 +564,12 @@ pub(crate) fn icon_button(
     icon_button_in(id, glyph, theme.text_muted, theme)
 }
 
-/// The frame of [`icon_button_in`] and [`disabled_icon_button`].
+/// The frame of [`icon_button_in`], [`small_icon_button`] and [`disabled_icon_button`]: a square
+/// of `box_size`, an icon of `icon_size`.
 fn icon_frame(
     id: impl Into<gpui::ElementId>,
     glyph: Icon,
+    (box_size, icon_size): (f32, f32),
     color: u32,
     enabled: bool,
     theme: &Theme,
@@ -515,14 +577,14 @@ fn icon_frame(
     div()
         .id(id)
         .flex_none()
-        .size(theme::rems_px(theme::CONTROL_HEIGHT))
+        .size(theme::rems_px(box_size))
         .flex()
         .items_center()
         .justify_center()
         .rounded(px(radius::MEDIUM))
         .text_color(rgb(theme.text_muted))
         .pressable(Look::Icon, enabled, theme)
-        .child(icon_svg(glyph, theme::ICON_SIZE, color))
+        .child(icon_svg(glyph, icon_size, color))
 }
 
 /// An [`icon_button`] whose icon is drawn in `color`: a state (the phone icon is accent while
@@ -533,7 +595,30 @@ pub(crate) fn icon_button_in(
     color: u32,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    icon_frame(id, glyph, color, true, theme)
+    icon_frame(
+        id,
+        glyph,
+        (theme::CONTROL_HEIGHT, theme::ICON_SIZE),
+        color,
+        true,
+        theme,
+    )
+}
+
+/// A 26 px icon button with a 14 px icon in `text_subtle` (a dialog's close).
+pub(crate) fn small_icon_button(
+    id: impl Into<gpui::ElementId>,
+    glyph: Icon,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    icon_frame(
+        id,
+        glyph,
+        (theme::ICON_BUTTON_SIZE, theme::ICON_SIZE_SMALL),
+        theme.text_subtle,
+        true,
+        theme,
+    )
 }
 
 /// An icon button that cannot be used right now (the update button while it downloads, Fetch
@@ -544,7 +629,14 @@ pub(crate) fn disabled_icon_button(
     color: u32,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    icon_frame(id, glyph, color, false, theme)
+    icon_frame(
+        id,
+        glyph,
+        (theme::CONTROL_HEIGHT, theme::ICON_SIZE),
+        color,
+        false,
+        theme,
+    )
 }
 
 /// A small action inside a list row ("Stage" on a file row, "Stage hunk" on a hunk header, a
@@ -601,8 +693,8 @@ pub(crate) fn card_press(
         .active(|style| style.opacity(opacity::ACTIVE))
 }
 
-/// A segmented control's container (title bar views, sidebar filter, Board, Git): `chrome` with
-/// a divider ring. Children are [`segment`]s.
+/// A segmented control's container (title bar views, sidebar filter, Board, Git): a `layer[0]`
+/// track. Children are [`segment`]s.
 pub(crate) fn segmented(theme: &Theme) -> gpui::Div {
     div()
         .flex_none()
@@ -610,13 +702,11 @@ pub(crate) fn segmented(theme: &Theme) -> gpui::Div {
         .items_center()
         .p(px(theme::SEGMENT_PADDING))
         .rounded(px(radius::SEGMENTED))
-        .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.divider))
-        .bg(rgb(theme.chrome))
+        .bg(gpui::rgba(theme.layer[0]))
 }
 
-/// One segment of a [`segmented`] control: selected = `selected` fill and full text, else
-/// transparent and muted with a hover.
+/// One segment of a [`segmented`] control: selected = a lifted `surface_raised` chip with a ring
+/// and full text, else transparent and muted with a hover.
 pub(crate) fn segment(
     id: impl Into<gpui::ElementId>,
     active: bool,
@@ -634,6 +724,7 @@ pub(crate) fn segment_in(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
+        .relative()
         .flex()
         .items_center()
         .justify_center()
@@ -641,11 +732,16 @@ pub(crate) fn segment_in(
         .h(theme::rems_px(theme::SEGMENT_HEIGHT))
         .px(px(space::M))
         .rounded(px(radius::CHIP))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::transparent_black())
         .whitespace_nowrap()
         .text_size(font_size::BODY)
+        .font_weight(FontWeight(weight::MEDIUM))
         .when(active, |el| {
-            el.bg(rgb(theme.selected))
+            el.bg(rgb(theme.surface_raised))
+                .border_color(gpui::rgba(theme.layer[1]))
                 .text_color(rgb(theme.text))
+                .child(top_highlight(theme, radius::CHIP))
                 .when(enabled, |el| el.cursor_pointer())
                 .when(!enabled, |el| el.opacity(opacity::DISABLED))
         })
@@ -778,6 +874,8 @@ pub(crate) fn status_pill(
         .px(px(space::S))
         .rounded(px(radius::PILL))
         .bg(bg)
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::rgba(theme::with_alpha(color, theme::CHIP_RING_ALPHA)))
         .whitespace_nowrap()
         .text_size(font_size::META)
         .text_color(rgb(fg))
@@ -795,8 +893,10 @@ pub(crate) fn tinted_chip(text: impl Into<SharedString>, fg: u32, theme: &Theme)
         .px(px(space::XS))
         .rounded(px(radius::TAG))
         .bg(theme.tint(fg))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::rgba(theme::with_alpha(fg, theme::CHIP_RING_ALPHA)))
         .text_size(font_size::OVERLINE)
-        .font_weight(FontWeight(weight::SEMIBOLD))
+        .font_weight(FontWeight(weight::MEDIUM))
         .text_color(rgb(fg))
         .child(text.into())
 }
@@ -823,11 +923,16 @@ pub(crate) fn search_box(
         .items_center()
         .gap(px(space::S))
         .h(theme::rems_px(theme::INPUT_HEIGHT))
-        .px(px(space::S))
+        .px(px(space::M))
         .rounded(px(radius::MEDIUM))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(if focused { theme.accent } else { theme.border }))
-        .bg(rgb(theme.chrome))
+        .border_color(if focused {
+            rgb(theme.accent)
+        } else {
+            gpui::rgba(theme.layer[1])
+        })
+        .bg(gpui::rgba(theme.layer[0]))
+        .when(focused, |el| el.shadow(focus_halo(theme.accent)))
         .child(icon_svg(
             Icon::Search,
             theme::ICON_SIZE_SMALL,
@@ -997,18 +1102,25 @@ pub(crate) fn caret_field_for(
     )
 }
 
-/// A field's frame: the accent border while `focused`, an I-beam pointer.
+/// A field's frame: `layer[0]` fill, 1 px `layer[1]` ring, `INPUT_HEIGHT` at least; while `focused`
+/// the accent border and the focus halo. An I-beam pointer. A multi-line field adds its own
+/// vertical padding and height.
 fn field_frame(id: &'static str, focused: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .relative()
         .px(px(space::S))
-        .py(px(space::S))
+        .py(px(space::XS))
+        .min_h(theme::rems_px(theme::INPUT_HEIGHT))
         .rounded(px(radius::MEDIUM))
         .border(px(theme::BORDER_WIDTH))
-        // The focus ring: the accent.
-        .border_color(rgb(if focused { theme.accent } else { theme.border }))
-        .bg(rgb(theme.chrome))
+        .border_color(if focused {
+            rgb(theme.accent)
+        } else {
+            gpui::rgba(theme.layer[1])
+        })
+        .bg(gpui::rgba(theme.layer[0]))
+        .when(focused, |el| el.shadow(focus_halo(theme.accent)))
         .text_size(font_size::BODY)
         .text_color(rgb(theme.text))
         .cursor(CursorStyle::IBeam)
@@ -1141,13 +1253,15 @@ pub(crate) fn menu_panel(
 }
 
 /// The on / off switch: `SWITCH_WIDTH` x `SWITCH_HEIGHT`, knob inset `SWITCH_INSET`, accent
-/// track while `on`. A disabled switch is faded and takes no press.
+/// track while `on` (a `layer[2]` track with a `layer[0]` ring while off), a white knob. A
+/// disabled switch is faded and takes no press.
 pub(crate) fn toggle(
     id: impl Into<gpui::ElementId>,
     on: bool,
     enabled: bool,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
+    // 22 px = 1 px ring + 1 px gap + 18 px knob + 1 px + 1 px.
     let knob = px(theme::SWITCH_HEIGHT - 2.0 * theme::SWITCH_INSET);
     filled_press(
         div()
@@ -1155,12 +1269,31 @@ pub(crate) fn toggle(
             .flex_none()
             .w(px(theme::SWITCH_WIDTH))
             .h(px(theme::SWITCH_HEIGHT))
-            .p(px(theme::SWITCH_INSET))
+            .p(px(theme::SWITCH_INSET - theme::BORDER_WIDTH))
             .rounded_full()
             .flex()
             .when(on, |el| el.justify_end())
-            .bg(rgb(if on { theme.accent } else { theme.border }))
-            .child(div().size(knob).rounded_full().bg(rgb(theme.surface))),
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(if on {
+                gpui::transparent_black()
+            } else {
+                gpui::Hsla::from(gpui::rgba(theme.layer[0]))
+            })
+            .bg(if on {
+                rgb(theme.accent)
+            } else {
+                gpui::rgba(theme.layer[2])
+            })
+            .child(
+                div()
+                    .size(knob)
+                    .rounded_full()
+                    .bg(rgb(theme::SWITCH_KNOB))
+                    .shadow(vec![
+                        gpui::BoxShadow::new(px(0.0), px(1.0), gpui::hsla(0.0, 0.0, 0.0, 0.25))
+                            .blur_radius(px(3.0)),
+                    ]),
+            ),
         enabled,
         theme,
     )
@@ -1185,11 +1318,24 @@ pub(crate) fn dropdown_trigger(
         .py(px(space::XS))
         .rounded(px(radius::MEDIUM))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(if open { theme.accent } else { theme.border }))
-        .bg(rgb(theme.chrome))
+        .border_color(if open {
+            rgb(theme.accent)
+        } else {
+            gpui::rgba(theme.layer[1])
+        })
+        .bg(gpui::rgba(theme.layer[0]))
+        .when(open, |el| el.shadow(focus_halo(theme.accent)))
         .text_size(font_size::BODY)
         .text_color(rgb(theme.text))
-        .pressable(Look::Row, enabled, theme)
+        .map(|el| {
+            let style = PressStyle {
+                hover_bg: None,
+                pressed_bg: None,
+                hover_border: (!open).then(|| gpui::rgba(theme.layer[2])),
+                ..press_style(Look::Row, enabled, theme)
+            };
+            apply_press(el, style)
+        })
         .child(
             div()
                 .min_w_0()

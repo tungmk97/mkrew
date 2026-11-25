@@ -223,6 +223,7 @@ impl Shell {
             },
         )
         .h(px(theme::PROMPT_FIELD_HEIGHT))
+        .py(px(space::S))
         .overflow_y_scroll()
         .track_scroll(&self.prompt_scroll);
         let answer = match &dialog.state {
@@ -294,7 +295,7 @@ impl Shell {
             )
             .child(if can_ask {
                 button("ask-send", ask_label, theme, true)
-                    .focus_stop(theme)
+                    .focus_stop_filled(theme)
                     .tooltip(tooltip(
                         theme,
                         "Ask the question",

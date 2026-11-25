@@ -533,8 +533,7 @@ impl Shell {
                     .and_then(|pick| pick.offer());
                 if let Some(offer) = offer {
                     buttons.push(
-                        danger_button("worktree-remove-others", offer, theme)
-                            .focus_stop(theme)
+                        danger_button("worktree-remove-others", offer, theme).focusable_bordered(theme)
                             .tooltip(tooltip(
                                 theme,
                                 "Delete the other agents' worktree folders (unmerged branches are kept)",
@@ -568,7 +567,7 @@ impl Shell {
                 );
                 buttons.push(if confirm.is_ok() {
                     danger_button("worktree-confirm", "Discard files", theme)
-                        .focus_stop(theme)
+                        .focusable_bordered(theme)
                         .tooltip(tooltip(theme, "Discard every file listed above", ""))
                         .on_click(confirm_listener)
                         .into_any_element()
@@ -584,7 +583,7 @@ impl Shell {
                 if !plan.discardable.is_empty() {
                     buttons.push(
                         danger_button("worktree-discard", "Discard…", theme)
-                            .focus_stop(theme)
+                            .focusable_bordered(theme)
                             .tooltip(tooltip(theme, "Choose to discard these changes", ""))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 if let Some(dialog) = shell.worktree_dialog.as_mut() {
@@ -609,12 +608,12 @@ impl Shell {
                 let ready = confirm.is_ok() && !matches!(step, Step::Loading | Step::Failed(_));
                 buttons.push(match (ready, remove) {
                     (true, true) => danger_button("worktree-confirm", text, theme)
-                        .focus_stop(theme)
+                        .focusable_bordered(theme)
                         .tooltip(tooltip(theme, "Delete the worktree folder", ""))
                         .on_click(confirm_listener)
                         .into_any_element(),
                     (true, false) => button("worktree-confirm", text, theme, true)
-                        .focus_stop(theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(
                             theme,
                             "Merge the commits above into your checkout",

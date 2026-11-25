@@ -287,7 +287,7 @@ impl Shell {
             None => {
                 let first = machines.list.is_empty();
                 let add = if first {
-                    button("machine-add", "Add machine…", theme, true).focus_stop(theme)
+                    button("machine-add", "Add machine…", theme, true).focus_stop_filled(theme)
                 } else {
                     secondary_button("machine-add", "Add machine…", theme).focusable_bordered(theme)
                 };
@@ -396,7 +396,7 @@ impl Shell {
             )
             .child(
                 danger_button("machine-remove", "Remove", theme)
-                    .focus_stop(theme)
+                    .focusable_bordered(theme)
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.ask_remove_machine(remove_name.clone(), window, cx);
                     })),
@@ -484,7 +484,7 @@ impl Shell {
                     .gap(px(space::S))
                     .child(
                         button("machine-save", "Save", theme, true)
-                            .focus_stop(theme)
+                            .focus_stop_filled(theme)
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.settings_do(|d, _| d.submit_add(), window, cx);
                             })),

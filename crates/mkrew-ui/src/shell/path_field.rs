@@ -191,7 +191,7 @@ impl Shell {
                         disabled_button("plan-path-link", "Linking…", theme, true)
                     } else {
                         button("plan-path-link", "Link", theme, true)
-                            .focus_stop(theme)
+                            .focus_stop_filled(theme)
                             .tooltip(tooltip(
                                 theme,
                                 "Link the file as this session's plan",

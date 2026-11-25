@@ -541,6 +541,7 @@ impl Shell {
                                     "Sent to the agent when the task runs.",
                                 )
                                 .h(px(theme::PROMPT_FIELD_HEIGHT))
+                                .py(px(space::S))
                                 .overflow_y_scroll()
                                 .track_scroll(&self.prompt_scroll)
                                 .when(rewriting, |el| el.opacity(opacity::DISABLED)),
@@ -615,8 +616,7 @@ impl Shell {
                     .child(if dialog.busy {
                         disabled_button("task-save", save_label, theme, true)
                     } else {
-                        button("task-save", save_label, theme, true)
-                            .focus_stop(theme)
+                        button("task-save", save_label, theme, true).focus_stop_filled(theme)
                             .tooltip(tooltip(
                                 theme,
                                 save_label,

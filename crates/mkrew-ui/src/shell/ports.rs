@@ -302,7 +302,7 @@ impl Shell {
                     )
                     .child(
                         danger_button("port-stop", "Stop", theme)
-                            .focus_stop(theme)
+                            .focusable_bordered(theme)
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 shell.stop_port(port, pid, window, cx);
                             })),

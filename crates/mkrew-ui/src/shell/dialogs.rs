@@ -424,7 +424,7 @@ impl Shell {
                     .when(nothing_changed, |el| {
                         el.child(
                             button("undo-close", "Close", theme, true)
-                                .focus_stop(theme)
+                                .focus_stop_filled(theme)
                                 .tooltip(tooltip(theme, "Close", "Esc"))
                                 .on_click(cx.listener(|shell, _, window, cx| {
                                     shell.close_undo_dialog(window, cx);
@@ -442,7 +442,7 @@ impl Shell {
                         )
                         .child(match confirm {
                             Ok(_) => danger_button("undo-confirm", "Discard changes", theme)
-                                .focus_stop(theme)
+                                .focusable_bordered(theme)
                                 .tooltip(tooltip(theme, "Discard every change listed above", ""))
                                 .on_click(cx.listener(|shell, _, window, cx| {
                                     shell.confirm_undo(window, cx);
@@ -554,7 +554,7 @@ impl Shell {
                 )
                 .child(
                     button("broadcast-terminals", "Show terminals", theme, true)
-                        .focus_stop(theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(theme, "Start an agent there, then broadcast", ""))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_broadcast(window, cx);
@@ -573,7 +573,7 @@ impl Shell {
                 )
                 .child(if dialog.can_send() {
                     button("broadcast-send", send_label, theme, true)
-                        .focus_stop(theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(theme, "Send to the checked sessions", "Enter"))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.send_broadcast(window, cx);

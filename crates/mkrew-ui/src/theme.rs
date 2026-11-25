@@ -59,6 +59,8 @@ pub mod font_size {
     pub const BODY: Rems = rems(1.0);
     pub const CARD_TITLE: Rems = rems(15.0 / 13.0);
     pub const VIEW_TITLE: Rems = rems(20.0 / 13.0);
+    /// An empty state's title (Tern 14 px).
+    pub const EMPTY_TITLE: Rems = rems(14.0 / 13.0);
 }
 
 /// UI font weights (400/500/600 only).
@@ -141,7 +143,7 @@ pub const SESSION_TIME_WIDTH: f32 = space::XXL;
 /// A square icon-only button (theme toggle, sidebar +).
 pub const ICON_BUTTON_SIZE: f32 = 26.0;
 /// The redesign's controls: icon buttons and buttons are this tall (and icon buttons square).
-pub const CONTROL_HEIGHT: f32 = 30.0;
+pub const CONTROL_HEIGHT: f32 = 32.0;
 /// A text input (search fields), and the bordered sidebar icon buttons beside one.
 pub const INPUT_HEIGHT: f32 = 32.0;
 /// One segment of a segmented control.
@@ -163,11 +165,22 @@ pub const TAB_ICON_SIZE: f32 = 12.0;
 /// The pin before the time of a pinned session row.
 pub const PIN_ICON_SIZE: f32 = TAB_ICON_SIZE;
 /// Inset of a segmented control around its segments.
-pub const SEGMENT_PADDING: f32 = 3.0;
+pub const SEGMENT_PADDING: f32 = 2.0;
 /// The thin vertical rule before the window controls.
 pub const TITLE_RULE_HEIGHT: f32 = 18.0;
 /// The bottom edge of a key hint (a key cap look).
-pub const KBD_BOTTOM_BORDER: f32 = 2.0;
+pub const KBD_BOTTOM_BORDER: f32 = 1.0;
+/// A key hint's fixed height and least width.
+pub const KBD_HEIGHT: f32 = 18.0;
+pub const KBD_MIN_WIDTH: f32 = 18.0;
+/// The keyboard focus halo: a ring this wide, in the accent at this alpha, outside the 1 px border.
+pub const FOCUS_HALO_SPREAD: f32 = 3.0;
+pub const FOCUS_HALO_ALPHA: f32 = 0.18;
+/// The danger ring: `danger_bg` mixed this far toward `status_exited`, at rest and hovered.
+pub const DANGER_RING_MIX: f32 = 0.3;
+pub const DANGER_RING_HOVER_MIX: f32 = 0.6;
+/// A badge's ring is its tone at this alpha.
+pub const CHIP_RING_ALPHA: f32 = 0.22;
 /// The Jira list (Board): a row's height, the key column, the toolbar's filter input and the
 /// leading type icon (px at the default 13 px body, [`rems_px`]).
 pub const BOARD_ROW_HEIGHT: f32 = 38.0;
@@ -418,10 +431,12 @@ pub const THEME_DOT: f32 = 8.0;
 /// How long the pointer rests on a gallery card before the app shows that theme, so moving
 /// across the cards does not flash.
 pub const THEME_PREVIEW_DELAY: Duration = Duration::from_millis(120);
-/// An on/off switch: track size and the knob's inset.
-pub const SWITCH_WIDTH: f32 = 32.0;
-pub const SWITCH_HEIGHT: f32 = 18.0;
+/// An on/off switch: track size and the knob's inset (the knob is height - 2 * inset = 18).
+pub const SWITCH_WIDTH: f32 = 36.0;
+pub const SWITCH_HEIGHT: f32 = 22.0;
 pub const SWITCH_INSET: f32 = 2.0;
+/// The knob of a switch is white in every theme (a shadow lifts it).
+pub const SWITCH_KNOB: u32 = 0xFFFFFF;
 
 /// Side of the Phone access QR code (ADR 0053): px at the default 13 px body, scaled with
 /// `[ui] font_size` ([`rems_px`]). Big enough for a camera across a desk.
@@ -933,7 +948,8 @@ pub struct Theme {
     pub text_dim: u32,
     /// t2: names, labels, inactive tabs.
     pub text_muted: u32,
-    /// Graphics (t4: counts, line numbers); never body text. Placeholders are `text_subtle`.
+    /// Graphics (t4: input placeholders, counts, line numbers); never body text. The composer's
+    /// placeholder is `text_subtle`.
     pub subtle: u32,
     /// Selection, primary buttons, focus.
     pub accent: u32,

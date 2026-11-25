@@ -1060,7 +1060,7 @@ impl Shell {
                         disabled_button("run-save", "Saving…", theme, true)
                     } else {
                         button("run-save", "Save", theme, true)
-                            .focus_stop(theme)
+                            .focus_stop_filled(theme)
                             .tooltip(tooltip(
                                 theme,
                                 "Save the run commands",
@@ -1265,8 +1265,7 @@ impl Shell {
                     )
                     .when(folder, |row| {
                         row.child(
-                            button("run-picker-use", "Use this folder", theme, true)
-                                .focus_stop(theme)
+                            button("run-picker-use", "Use this folder", theme, true).focus_stop_filled(theme)
                                 .tooltip(tooltip(theme, "Run the command in this folder", "Enter"))
                                 .on_click(cx.listener(|shell, _, _, cx| {
                                     if let Some(setup) = shell.run_setup.as_mut() {

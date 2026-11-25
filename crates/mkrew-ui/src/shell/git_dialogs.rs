@@ -401,7 +401,7 @@ impl Shell {
                     )
                     .child(if ready {
                         danger_button("git-discard-confirm", dialog.confirm_label(), theme)
-                            .focus_stop(theme)
+                            .focusable_bordered(theme)
                             .tooltip(tooltip(theme, "Discard the changes shown above", ""))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.confirm_git_discard(window, cx);
@@ -523,7 +523,7 @@ impl Shell {
                         disabled_button("git-base-use", use_label, theme, true)
                     } else {
                         button("git-base-use", use_label, theme, true)
-                            .focus_stop(theme)
+                            .focus_stop_filled(theme)
                             .tooltip(tooltip(theme, "Compare with the typed ref", "Enter"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.set_git_base(false, window, cx);

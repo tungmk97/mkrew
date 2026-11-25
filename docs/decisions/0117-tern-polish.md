@@ -28,6 +28,7 @@ Measured from Tern's CSS (six gap reports):
   - `accent_bg`, `pane_gap` and `composer_fill` join the shared grounds, so `accent_text` reads 4.5:1 on the pick fill and text reads on the page and the composer.
 - **Tern Dark / Tern Light** are built-ins: the retuned Mkrew theme with Tern's blue accent, status, selection and ANSI colors. `ThemeEntry` takes a `Recipe` (`Mkrew`, `Tern`, `Palette(Palette)`); defaults stay Mkrew Dark / Light.
 - **Popovers:** menus, tooltips, toasts and peek share `pop_surface` (glass, `layer[1]` ring, `shadow_pop`, `glass_hi`); picked rows are `accent_bg` plus a 2x14 bar (`with_pick`); the palette row is a `layer[0]` fill with an inset 2 px bar.
+- **Controls:** focus is a 1 px accent border plus a 3 px halo at 18 % (amends 0085); `CONTROL_HEIGHT` 32; secondary buttons are raised fills with a ring; the switch is 36x22 with a white knob; input placeholders are t4 (`subtle`).
 - **Pressables** hover to `layer[0]` and press to `layer[0]+layer[1]`; an element with its own fill flattens the layers over it (`pressable_on`); `quiet_button` has no hover argument.
 - Components (shared controls, chat, composer, files, chrome, settings, git) follow in the same change; see the spec.
 

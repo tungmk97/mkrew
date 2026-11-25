@@ -64,7 +64,7 @@ pub fn caret_text(
     (shown, Some(layout))
 }
 
-/// An empty field: the caret while `focused`, then the muted `placeholder`.
+/// An empty field: the caret while `focused`, then the faint `placeholder` (t4, `subtle`).
 pub fn empty_field(placeholder: impl IntoElement, focused: bool, theme: &Theme) -> AnyElement {
     let caret = div()
         .flex_none()
@@ -75,7 +75,7 @@ pub fn empty_field(placeholder: impl IntoElement, focused: bool, theme: &Theme) 
         .flex()
         .items_center()
         .when(focused, |row| row.child(caret))
-        .child(div().text_color(rgb(theme.text_subtle)).child(placeholder))
+        .child(div().text_color(rgb(theme.subtle)).child(placeholder))
         .into_any_element()
 }
 
