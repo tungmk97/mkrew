@@ -176,6 +176,9 @@ impl Assets {
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        if let Some(icon) = Icon::ALL.iter().find(|icon| icon.path() == path) {
+            return Ok(Some(Cow::Owned(lucide_stroke(icon.bytes()))));
+        }
         Ok(Self::all()
             .find(|(asset, _)| *asset == path)
             .map(|(_, bytes)| Cow::Borrowed(bytes)))
@@ -188,6 +191,18 @@ impl AssetSource for Assets {
             .map(SharedString::from)
             .collect())
     }
+}
+
+/// A Lucide file with its stroke width set to [`theme::ICON_STROKE`] (ADR 0116). gpui caches
+/// what `load` returns, so this runs once per icon.
+fn lucide_stroke(svg: &[u8]) -> Vec<u8> {
+    String::from_utf8_lossy(svg)
+        .replacen(
+            "stroke-width=\"2\"",
+            &format!("stroke-width=\"{}\"", theme::ICON_STROKE),
+            1,
+        )
+        .into_bytes()
 }
 
 /// `icon` as a `size` px square (a `theme` size, scaled with `[ui] font_size`) in `color`.

@@ -1420,6 +1420,39 @@ pub(crate) fn loading_dots(now: i64, color: gpui::Rgba) -> gpui::Div {
         }))
 }
 
+/// The orbit mark of something running (a tool, a `spinner` node; ADR 0116, Tern's look): a
+/// faint ring in `color` with a dot on it that moves one step per [`theme::STATUS_TICK`]. The
+/// status loop redraws while one is on screen, like [`loading_dots`].
+pub(crate) fn orbit_mark(now: i64, color: u32) -> gpui::Div {
+    let size = theme::ORBIT_SIZE;
+    let dot = theme::ORBIT_DOT;
+    // The dot's center runs on the middle of the ring's line.
+    let radius = (size - theme::ORBIT_RING) / 2.0;
+    let angle = status::orbit_step(now) as f32 * std::f32::consts::TAU / theme::ORBIT_STEPS as f32;
+    let x = size / 2.0 + radius * angle.sin() - dot / 2.0;
+    let y = size / 2.0 - radius * angle.cos() - dot / 2.0;
+    div()
+        .flex_none()
+        .relative()
+        .size(theme::rems_px(size))
+        .rounded_full()
+        .border(theme::rems_px(theme::ORBIT_RING))
+        .border_color(gpui::rgba(theme::with_alpha(
+            color,
+            theme::ORBIT_RING_ALPHA,
+        )))
+        .child(
+            div()
+                .absolute()
+                // An absolute child is placed from inside the ring's border.
+                .left(theme::rems_px(x - theme::ORBIT_RING))
+                .top(theme::rems_px(y - theme::ORBIT_RING))
+                .size(theme::rems_px(dot))
+                .rounded_full()
+                .bg(rgb(color)),
+        )
+}
+
 /// A round status dot: filled in `color`, or `hollow` (a ring: idle, stopped). Always still: a
 /// looping animation renders the whole window for as long as it is on screen (ADR 0086).
 pub(crate) fn status_dot(color: u32, hollow: bool) -> gpui::Div {

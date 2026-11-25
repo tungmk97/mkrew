@@ -76,6 +76,7 @@ impl Shell {
             .flex_col()
             .bg(rgb(theme.bg))
             .font_family(theme.ui_font_family.clone())
+            .line_height(gpui::relative(theme::UI_LINE_HEIGHT))
             .child(tear_off_catcher(cx))
             .child(self.render_title_bar(host, now, &theme, window, cx))
             .children(self.render_reconnect_banner(&theme, cx))

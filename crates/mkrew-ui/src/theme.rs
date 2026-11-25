@@ -41,6 +41,8 @@ pub mod radius {
     pub const CARD: f32 = 10.0;
     /// Dialogs, palette, empty-state tile.
     pub const LARGE: f32 = 12.0;
+    /// The prompt composer card (Tern's `--r-panel`, ADR 0116).
+    pub const COMPOSER: f32 = 16.0;
     /// Pills: fully round ends.
     pub const PILL: f32 = 999.0;
 }
@@ -159,7 +161,7 @@ pub const TEXT_LIFT: f32 = 1.5;
 /// A pane icon in a tab chip: a step under [`ICON_SIZE_SMALL`], so it sits with the name.
 pub const TAB_ICON_SIZE: f32 = 12.0;
 /// The pin before the time of a pinned session row.
-pub const PIN_ICON_SIZE: f32 = 13.0;
+pub const PIN_ICON_SIZE: f32 = TAB_ICON_SIZE;
 /// Inset of a segmented control around its segments.
 pub const SEGMENT_PADDING: f32 = 3.0;
 /// The thin vertical rule before the window controls.
@@ -171,16 +173,54 @@ pub const KBD_BOTTOM_BORDER: f32 = 2.0;
 pub const BOARD_ROW_HEIGHT: f32 = 38.0;
 pub const BOARD_KEY_WIDTH: f32 = 62.0;
 pub const BOARD_FILTER_WIDTH: f32 = 240.0;
-pub const BOARD_TYPE_ICON: f32 = 15.0;
+pub const BOARD_TYPE_ICON: f32 = ICON_SIZE_SMALL;
 
 /// Borders are 1 px and faint.
 pub const BORDER_WIDTH: f32 = 1.0;
 
 /// The OS UI font (Segoe UI Variable / SF / …); GPUI resolves this name per platform.
 pub const UI_FONT: &str = ".SystemUIFont";
-/// The design's UI font, used when installed and `[ui] font_family` is unset (not bundled:
-/// a machine without it gets [`UI_FONT`]).
-pub const PREFERRED_UI_FONT: &str = "Inter";
+/// The design's UI font (Geist, OFL, `font/geist/`, ADR 0116): bundled and registered at
+/// startup, so it is used whenever `[ui] font_family` is unset.
+pub const PREFERRED_UI_FONT: &str = "Geist";
+
+/// The fonts the app carries and registers with gpui before the first window (ADR 0116):
+/// Geist for the UI, and the Nerd Font symbols (MIT, `font/nerd-symbols/`) so omp's
+/// private-use icons draw on every machine (first of [`TERMINAL_GLYPH_FALLBACKS`]).
+pub const BUNDLED_FONTS: &[&[u8]] = &[
+    include_bytes!("../../../font/geist/Geist-Regular.ttf"),
+    include_bytes!("../../../font/geist/Geist-Italic.ttf"),
+    include_bytes!("../../../font/geist/Geist-Medium.ttf"),
+    include_bytes!("../../../font/geist/Geist-SemiBold.ttf"),
+    include_bytes!("../../../font/nerd-symbols/SymbolsNerdFontMono-Regular.ttf"),
+];
+
+/// Line height of UI text, as a multiple of the font size (Tern's 1.5; gpui's default is
+/// 1.618). Set on every window's root, so rows and labels inherit it.
+pub const UI_LINE_HEIGHT: f32 = 1.5;
+
+/// Stroke width the Lucide icons are drawn with, in their 24-unit view box (Lucide ships 2;
+/// 1.5 keeps 14–16 px icons light next to Geist, ADR 0116). `icons::Assets` rewrites it.
+pub const ICON_STROKE: &str = "1.5";
+
+/// The orbit mark of a running tool or spinner (ADR 0116, Tern's look): a ring this wide, its
+/// line this thick (the mark's color at [`ORBIT_RING_ALPHA`]), and a dot this wide on the ring
+/// that moves one of [`ORBIT_STEPS`] places per [`STATUS_TICK`] (no continuous animation, ADR
+/// 0086). Px at the default 13 px body ([`rems_px`]).
+pub const ORBIT_SIZE: f32 = 12.0;
+pub const ORBIT_RING: f32 = 1.5;
+pub const ORBIT_DOT: f32 = 3.0;
+pub const ORBIT_RING_ALPHA: f32 = 0.22;
+pub const ORBIT_STEPS: i64 = 8;
+
+/// A tab chip in the title bar (Tern: 26 px, ADR 0116).
+pub const TAB_CHIP_HEIGHT: f32 = 26.0;
+
+/// The square inside the composer's round Stop button.
+pub const STOP_GLYPH_SIZE: f32 = 10.0;
+
+/// The composer's model pill (Tern: 28 px, a ring and no fill).
+pub const COMPOSER_PILL_HEIGHT: f32 = 28.0;
 
 /// Font family list of Mermaid diagram text (an SVG font-family value; the first installed
 /// one is used).
@@ -557,7 +597,7 @@ pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 pub const TREE_ROW_HEIGHT: f32 = 24.0;
 
 /// Folder / file icon in a Files tree row.
-pub const TREE_ICON_SIZE: f32 = 15.0;
+pub const TREE_ICON_SIZE: f32 = ICON_SIZE_SMALL;
 
 /// Chevron (and the spacer that aligns file rows with it) in a Files tree row.
 pub const TREE_CHEVRON_SIZE: f32 = 12.0;
@@ -666,7 +706,7 @@ pub mod doc {
     /// h1–h6.
     pub const HEADINGS: [f32; 6] = [24.0, 20.0, 17.0, 15.0, 14.0, 14.0];
     /// Line heights as multiples of the font size.
-    pub const LINE_HEIGHT: f32 = 1.6;
+    pub const LINE_HEIGHT: f32 = 1.5;
     pub const HEADING_LINE_HEIGHT: f32 = 1.3;
     pub const CODE_LINE_HEIGHT: f32 = 1.45;
     /// The marker column of list items (bullets, numbers, check boxes line up).

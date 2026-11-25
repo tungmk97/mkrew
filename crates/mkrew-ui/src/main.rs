@@ -265,6 +265,16 @@ fn main() {
             shell::app_menu::bind_all(&keymap, cx);
         })
         .detach();
+        // Bundled Geist and Nerd Font symbols (ADR 0116), before the font list is read. A
+        // failure leaves the OS fonts: the UI falls back to `UI_FONT`.
+        if let Err(err) = cx.text_system().add_fonts(
+            theme::BUNDLED_FONTS
+                .iter()
+                .map(|font| std::borrow::Cow::Borrowed(*font))
+                .collect(),
+        ) {
+            tracing::warn!("bundled fonts not loaded: {err:#}");
+        }
         // A broken file: the defaults until it is fixed (the daemon reports it, §20.0).
         let settings = mkrew_core::settings::load(&paths.settings_file()).unwrap_or_default();
         cx.set_global(theme::Fonts::from_settings(

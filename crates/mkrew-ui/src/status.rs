@@ -28,6 +28,13 @@ pub fn loading_dot(now_ms: i64) -> usize {
     (now_ms.max(0) / step) as usize % LOADING_DOTS
 }
 
+/// The place (0 to `ORBIT_STEPS - 1`, clockwise from the top) of the orbit mark's dot at
+/// `now_ms`: one step per status tick (ADR 0116).
+pub fn orbit_step(now_ms: i64) -> i64 {
+    let step = theme::STATUS_TICK.as_millis().max(1) as i64;
+    (now_ms.max(0) / step) % theme::ORBIT_STEPS
+}
+
 /// The state's glyph; `working` is drawn as a still dot (`widgets::status_dot`) wherever there
 /// is room for a mark.
 pub fn icon(state: SessionState) -> &'static str {
@@ -180,6 +187,17 @@ mod tests {
         assert_eq!(loading_dot(-5), 0);
         assert_eq!(icon(SessionState::Idle), "○");
         assert_eq!(icon(SessionState::NeedsInput), "?");
+    }
+
+    #[test]
+    fn the_orbit_dot_goes_round_one_step_per_tick() {
+        let step = theme::STATUS_TICK.as_millis() as i64;
+        let places: Vec<i64> = (0..=theme::ORBIT_STEPS)
+            .map(|i| orbit_step(i * step))
+            .collect();
+        assert_eq!(places, [0, 1, 2, 3, 4, 5, 6, 7, 0]);
+        assert_eq!(orbit_step(step + step / 2), 1);
+        assert_eq!(orbit_step(-5), 0);
     }
 
     fn session(state: SessionState, changed_at: i64) -> Session {

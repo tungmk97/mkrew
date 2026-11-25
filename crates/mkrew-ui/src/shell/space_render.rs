@@ -108,6 +108,8 @@ impl Shell {
             .flex_col()
             .relative()
             .bg(rgb(theme.bg))
+            .font_family(theme.ui_font_family.clone())
+            .line_height(gpui::relative(theme::UI_LINE_HEIGHT))
             .track_focus(&self.focus_handle)
             .when(self.view(self.space_host(window)) == View::Board, |el| {
                 el.key_context(BOARD_CONTEXT)
