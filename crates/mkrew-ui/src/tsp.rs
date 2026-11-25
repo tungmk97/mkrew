@@ -643,12 +643,16 @@ impl Mirror {
 
 /// Whether anything in `doc` changes with time: a spinner, a running `elapsed` (no `stopped`), a
 /// bar without an amount or a checklist with an active item. A `rate` is a static value omp
-/// updates itself, and a shimmer draws as plain text (spec 7.1). The status tick redraws only
-/// while this is true (ADR 0086).
+/// updates itself, and a shimmer draws as plain text (spec 7.1). A `hidden` node and its subtree
+/// are not drawn, so they never count (omp keeps its todo reminder as a hidden checklist, ADR
+/// 0118). The status tick redraws only while this is true (ADR 0086).
 pub fn animating(doc: &Document) -> bool {
     let mut stack = vec![doc.root()];
     while let Some(id) = stack.pop() {
         for node in doc.children(id) {
+            if node.props.get("hidden").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
             let live = match node.kind.as_str() {
                 "spinner" => true,
                 // A bar without an amount draws the loading dots; a ring (the ask timeout) is
@@ -726,6 +730,17 @@ pub fn click_event(doc: &Document, node: &Node, double: bool) -> Option<Value> {
     if matches!(node.kind.as_str(), "editor" | "input") {
         return Some(json!({"ev": "focus", "id": node.id}));
     }
+    // omp 19 sends `click` for a button without one (`tsp.ts` `TspButtonProps`).
+    if node.kind == "button" {
+        if button_inert(node) {
+            return None;
+        }
+        let act = (node.props.get("actions"))
+            .and_then(|actions| actions.get("click"))
+            .and_then(Value::as_str)
+            .unwrap_or("click");
+        return Some(json!({"ev": "action", "id": node.id, "act": act}));
+    }
     let actions = node.props.get("actions")?;
     // A quick second click on a node with only a `click` action is that click again.
     let act = double
@@ -754,11 +769,31 @@ pub fn has_click(doc: &Document, node: &Node) -> bool {
     if matches!(node.kind.as_str(), "editor" | "input") {
         return true;
     }
+    if node.kind == "button" {
+        return !button_inert(node);
+    }
     node.props.get("actions").is_some_and(|actions| {
         ["click", "dblclick"]
             .iter()
             .any(|key| actions.get(key).is_some_and(Value::is_string))
     })
+}
+
+/// A `button` that is `disabled` (true, or the reason as a string) or `busy` sends nothing.
+fn button_inert(node: &Node) -> bool {
+    let disabled = match node.props.get("disabled") {
+        Some(Value::Bool(on)) => *on,
+        Some(Value::String(_)) => true,
+        _ => false,
+    };
+    disabled || node.props.get("busy").and_then(Value::as_bool) == Some(true)
+}
+
+/// A frame of the shown surface that named no row and left `main`'s children as `known`: the
+/// page list has nothing to splice, remeasure or regroup (ADR 0118).
+pub fn rows_unchanged(doc: &Document, known: &[String], dirty: &HashSet<String>) -> bool {
+    dirty.is_empty()
+        && (doc.children("main").map(|node| node.id.as_str())).eq(known.iter().map(String::as_str))
 }
 
 /// How long to wait before asking for a snapshot again after `failures` failed ones in a row:
@@ -2829,6 +2864,75 @@ mod tests {
             "found deep in the tree"
         );
         assert!(!animating(&doc(main_added())));
+    }
+
+    #[test]
+    fn a_hidden_node_never_animates() {
+        // omp keeps its todo reminder as a hidden checklist with an active item.
+        let hidden_todo = json!({"id": "n", "k": "checklist", "p": {
+            "mode": "reminder", "hidden": true,
+            "phases": [{"id": "p0", "title": "", "items": [
+                {"id": "p0.0", "text": "x", "status": "active"}]}]}});
+        assert!(!animating(&with_node(hidden_todo)));
+        let hidden_col = json!({"id": "n", "k": "col", "p": {"hidden": true},
+            "c": [{"id": "s", "k": "spinner"}]});
+        assert!(
+            !animating(&with_node(hidden_col)),
+            "its subtree is not drawn either"
+        );
+        let shown = json!({"id": "n", "k": "col", "p": {"hidden": false},
+            "c": [{"id": "s", "k": "spinner"}]});
+        assert!(animating(&with_node(shown)));
+    }
+
+    #[test]
+    fn a_button_clicks_its_action_or_click_unless_disabled_or_busy() {
+        let d = with_node(json!({"id": "b", "k": "card", "c": [
+            {"id": "b.plain", "k": "button", "p": {"text": "Yes"}},
+            {"id": "b.act", "k": "button", "p": {"text": "No", "actions": {"click": "no"}}},
+            {"id": "b.off", "k": "button", "p": {"text": "x", "disabled": "not now"}},
+            {"id": "b.busy", "k": "button", "p": {"text": "x", "busy": true}}
+        ]}));
+        let event = |id: &str| click_event(&d, d.get(id).unwrap(), false);
+        assert_eq!(
+            event("b.plain"),
+            Some(json!({"ev": "action", "id": "b.plain", "act": "click"}))
+        );
+        assert_eq!(
+            event("b.act"),
+            Some(json!({"ev": "action", "id": "b.act", "act": "no"}))
+        );
+        assert_eq!((event("b.off"), event("b.busy")), (None, None));
+        for id in ["b.plain", "b.act", "b.off", "b.busy"] {
+            assert_eq!(
+                has_click(&d, d.get(id).unwrap()),
+                event(id).is_some(),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn rows_are_unchanged_only_for_the_same_ids_and_nothing_dirty() {
+        use std::collections::HashSet;
+        let mut ops = main_added();
+        for id in ["a", "b"] {
+            ops.push(json!(["add", id, "main", null, {"id": id, "k": "text"}]));
+        }
+        let d = doc(ops);
+        let known = vec!["a".to_owned(), "b".to_owned()];
+        assert!(rows_unchanged(&d, &known, &HashSet::new()));
+        assert!(!rows_unchanged(
+            &d,
+            &known,
+            &HashSet::from(["a".to_owned()])
+        ));
+        assert!(
+            !rows_unchanged(&d, &known[..1], &HashSet::new()),
+            "a row was added"
+        );
+        let moved = ["b".to_owned(), "a".to_owned()];
+        assert!(!rows_unchanged(&d, &moved, &HashSet::new()), "rows moved");
     }
 
     /// `dock` holding a send button, a list with an item, a root-owned row and an editor.
