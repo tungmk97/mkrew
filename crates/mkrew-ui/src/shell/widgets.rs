@@ -1399,7 +1399,7 @@ pub(crate) fn top_highlight(theme: &Theme, radius: f32) -> gpui::Div {
 }
 
 /// The one frame of every floating panel (palette, Settings, dialogs; ADR 0097, ADR 0117): the
-/// glass fill, a 1 px glass border, the `glass_hi` top line, the modal shadow, `radius::LARGE`,
+/// glass fill, a 1 px glass border, the `glass_hi` top line, the modal shadow, `radius::PANEL`,
 /// and it swallows the mouse. Popovers (`tsp_view`) override the shadow with `shadow_pop`.
 /// Callers set size, layout and content; the highlight is the first child, so their children
 /// paint over it.
@@ -1410,13 +1410,203 @@ pub(crate) fn floating_panel(
     div()
         .id(id)
         .relative()
-        .rounded(px(radius::LARGE))
+        .rounded(px(radius::PANEL))
         .border(px(theme::BORDER_WIDTH))
         .border_color(gpui::rgba(theme.glass_border))
         .bg(gpui::rgba(theme.glass))
         .shadow(theme::shadow_modal(theme))
         .occlude()
-        .child(top_highlight(theme, radius::LARGE))
+        .child(top_highlight(theme, radius::PANEL))
+}
+
+/// Whether a dialog is about something destructive: its icon tile takes the danger tint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DialogTone {
+    Normal,
+    Danger,
+}
+
+/// The head of a dialog: a 32 px icon tile, the title, an optional one-line sub.
+pub(crate) struct DialogHead {
+    pub(crate) icon: Icon,
+    pub(crate) tone: DialogTone,
+    pub(crate) title: SharedString,
+    pub(crate) sub: Option<SharedString>,
+}
+
+/// The close button of a dialog head: 26 px, a 14 px X in `text_subtle`. Not a Tab stop (Esc
+/// closes); the caller adds `.on_click(..)`.
+pub(crate) fn dialog_close(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    small_icon_button(id, Icon::X, theme).tooltip(tooltip(theme, "Close", "Esc"))
+}
+
+/// The body column of a dialog: gap `space::L`, `px(XL) pb(L)`, it takes the height the head and
+/// foot leave (a fixed-height dialog scrolls inside it).
+pub(crate) fn dialog_body() -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h_0()
+        .gap(px(space::L))
+        .px(px(space::XL))
+        .pb(px(space::L))
+}
+
+/// The foot band: a `divider` line on top, `py(M) px(L)`, buttons right-aligned with gap `S`.
+/// A hint goes first as [`dialog_hint`] (it grows and pushes the buttons right).
+pub(crate) fn dialog_foot(theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_end()
+        .gap(px(space::S))
+        .px(px(space::L))
+        .py(px(space::M))
+        .border_t(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.divider))
+}
+
+/// A sentence of a dialog body (`text_muted`).
+pub(crate) fn dialog_text(text: impl IntoElement, theme: &Theme) -> gpui::Div {
+    div()
+        .text_size(font_size::BODY)
+        .text_color(rgb(theme.text_muted))
+        .child(text)
+}
+
+/// The hint on the left of a dialog foot (why a button is off, the keys): META `text_subtle`.
+pub(crate) fn dialog_hint(text: impl IntoElement, theme: &Theme) -> gpui::Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text_subtle))
+        .child(text)
+}
+
+/// The primary button of a dialog: at least `DIALOG_BUTTON_MIN_WIDTH` wide, with the key that
+/// presses it drawn as a [`kbd`] on the accent (`Some("↵")` when Enter does it).
+pub(crate) fn primary_button(
+    id: &'static str,
+    label: impl IntoElement,
+    key: Option<String>,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    button(
+        id,
+        div()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .child(label)
+            .children(key.map(|key| kbd(key, theme, true))),
+        theme,
+        true,
+    )
+    .min_w(px(theme::DIALOG_BUTTON_MIN_WIDTH))
+    .justify_center()
+}
+
+/// One error line of a dialog or page: `danger_bg` fill, a 1 px ring of the danger tone, a
+/// CircleAlert and META text.
+pub(crate) fn error_note(text: impl Into<SharedString>, theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .items_start()
+        .gap(px(space::S))
+        .px(px(space::M))
+        .py(px(space::S))
+        .rounded(px(radius::MEDIUM))
+        .bg(rgb(theme.danger_bg))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(danger_ring(theme, theme::DANGER_RING_MIX)))
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text))
+        .child(icon_svg(
+            Icon::CircleAlert,
+            theme::ICON_SIZE_SMALL,
+            theme.danger_text,
+        ))
+        .child(div().flex_1().min_w_0().child(text.into()))
+}
+
+/// The frame of every dialog: `panel` (a `floating_panel` the caller sized and wired with
+/// `dialog_root`), then the head (icon tile, title, sub, close), the `body` and the `foot` band.
+pub(crate) fn dialog_frame(
+    panel: gpui::Stateful<gpui::Div>,
+    head: DialogHead,
+    close: Option<gpui::Stateful<gpui::Div>>,
+    body: Option<gpui::Div>,
+    foot: Option<gpui::Div>,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let danger = head.tone == DialogTone::Danger;
+    let (fill, ring, glyph) = if danger {
+        (
+            rgb(theme.danger_bg),
+            rgb(danger_ring(theme, theme::DANGER_RING_MIX)),
+            theme.danger_text,
+        )
+    } else {
+        (
+            rgb(theme.accent_bg),
+            gpui::rgba(theme.layer[1]),
+            theme.accent_text,
+        )
+    };
+    let head_row = div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(space::M))
+        .px(px(space::XL))
+        .pt(px(space::L))
+        .pb(px(space::M))
+        .child(
+            div()
+                .flex_none()
+                .size(theme::rems_px(theme::DIALOG_ICON_TILE))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(radius::MEDIUM))
+                .bg(fill)
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(ring)
+                .child(icon_svg(head.icon, theme::ICON_SIZE, glyph)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(font_size::CARD_TITLE)
+                        .font_weight(FontWeight(weight::SEMIBOLD))
+                        .text_color(rgb(theme.text))
+                        .child(head.title),
+                )
+                .children(head.sub.map(|sub| {
+                    div()
+                        .truncate()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_subtle))
+                        .child(sub)
+                })),
+        )
+        .children(close);
+    panel
+        .flex()
+        .flex_col()
+        .font_family(theme.ui_font_family.clone())
+        .child(head_row)
+        .children(body)
+        .children(foot)
 }
 
 /// A floating panel's entrance: it fades in and rises `PANEL_RISE` over `motion::FAST`,

@@ -255,14 +255,7 @@ impl Shell {
                 .bg(rgb(theme.surface_raised))
                 .overflow_scroll()
         };
-        let error_row = |error: String| {
-            div()
-                .flex()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                .child(div().text_color(rgb(theme.text)).child(error))
-        };
+        let error_row = |error: String| error_note(error, theme);
         let nothing_changed = dialog.nothing_changed();
         let mut body: Vec<gpui::AnyElement> = Vec::new();
         let mut intro = format!(
@@ -375,91 +368,79 @@ impl Shell {
         let hint = confirm.as_ref().err().copied().filter(|_| {
             matches!(dialog.preview, Preview::Loaded(_)) && !dialog.busy && !nothing_changed
         });
-        let panel = floating_panel("undo-dialog", theme)
-            .w(px(theme::UNDO_DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .dialog_root(
-                &self.dialog_focus,
-                false,
-                cx.listener(Self::dialog_guard),
-                cx.listener(Self::undo_dialog_key_down),
-            )
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(dialog.heading()),
-            )
-            .child(
-                div()
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    .child(if nothing_changed {
-                        format!("{intro}: there is nothing to undo.")
-                    } else {
-                        format!("{intro}. The changes below are discarded and cannot be recovered.")
-                    }),
-            )
+        let column = dialog_body()
+            .child(dialog_text(
+                if nothing_changed {
+                    format!("{intro}: there is nothing to undo.")
+                } else {
+                    format!("{intro}. The changes below are discarded and cannot be recovered.")
+                },
+                theme,
+            ))
             .children(body)
-            .children(dialog.error.clone().map(error_row))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .pt(px(space::S))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(font_size::META)
-                            .text_color(rgb(theme.text_muted))
-                            .children(hint),
-                    )
-                    .when(nothing_changed, |el| {
-                        el.child(
-                            button("undo-close", "Close", theme, true)
-                                .focus_stop_filled(theme)
-                                .tooltip(tooltip(theme, "Close", "Esc"))
-                                .on_click(cx.listener(|shell, _, window, cx| {
-                                    shell.close_undo_dialog(window, cx);
-                                })),
-                        )
-                    })
-                    .when(!nothing_changed, |el| {
-                        el.child(
-                            button("undo-cancel", "Cancel", theme, false)
-                                .focus_stop(theme)
-                                .tooltip(tooltip(theme, "Keep the changes", "Esc"))
-                                .on_click(cx.listener(|shell, _, window, cx| {
-                                    shell.close_undo_dialog(window, cx);
-                                })),
-                        )
-                        .child(match confirm {
-                            Ok(_) => danger_button("undo-confirm", "Discard changes", theme)
-                                .focusable_bordered(theme)
-                                .tooltip(tooltip(theme, "Discard every change listed above", ""))
-                                .on_click(cx.listener(|shell, _, window, cx| {
-                                    shell.confirm_undo(window, cx);
-                                })),
-                            Err(_) => {
-                                let label = if dialog.busy {
-                                    "Discarding…"
-                                } else {
-                                    "Discard changes"
-                                };
-                                disabled_button("undo-confirm", label, theme, false)
-                                    .bg(rgb(theme.diff_del_bg))
-                                    .text_color(rgb(theme.diff_del_text))
-                            }
-                        })
-                    }),
-            );
+            .children(dialog.error.clone().map(error_row));
+        let mut foot = dialog_foot(theme).child(dialog_hint(hint.unwrap_or(""), theme));
+        foot = if nothing_changed {
+            foot.child(
+                primary_button("undo-close", "Close", None, theme)
+                    .focus_stop_filled(theme)
+                    .tooltip(tooltip(theme, "Close", "Esc"))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.close_undo_dialog(window, cx);
+                    })),
+            )
+        } else {
+            foot.child(
+                button("undo-cancel", "Cancel", theme, false)
+                    .focus_stop(theme)
+                    .tooltip(tooltip(theme, "Keep the changes", "Esc"))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.close_undo_dialog(window, cx);
+                    })),
+            )
+            .child(match confirm {
+                Ok(_) => danger_button("undo-confirm", "Discard changes", theme)
+                    .focusable_bordered(theme)
+                    .tooltip(tooltip(theme, "Discard every change listed above", ""))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.confirm_undo(window, cx);
+                    })),
+                Err(_) => {
+                    let label = if dialog.busy {
+                        "Discarding…"
+                    } else {
+                        "Discard changes"
+                    };
+                    disabled_button("undo-confirm", label, theme, false)
+                        .bg(rgb(theme.diff_del_bg))
+                        .text_color(rgb(theme.diff_del_text))
+                }
+            })
+        };
+        let panel = dialog_frame(
+            floating_panel("undo-dialog", theme)
+                .w(px(theme::UNDO_DIALOG_WIDTH))
+                .dialog_root(
+                    &self.dialog_focus,
+                    false,
+                    cx.listener(Self::dialog_guard),
+                    cx.listener(Self::undo_dialog_key_down),
+                ),
+            DialogHead {
+                icon: Icon::Undo2,
+                tone: DialogTone::Danger,
+                title: dialog.heading().into(),
+                sub: None,
+            },
+            Some(dialog_close("undo-close-x", theme).on_click(cx.listener(
+                |shell, _, window, cx| {
+                    shell.close_undo_dialog(window, cx);
+                },
+            ))),
+            Some(column),
+            Some(foot),
+            theme,
+        );
         Self::modal_shade("undo-dialog-shade", panel, cx)
     }
 

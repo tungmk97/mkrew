@@ -399,8 +399,12 @@ pub const BOARD_COLUMN_MIN_WIDTH: f32 = 200.0;
 /// Thickness of the accent line that marks where a dragged card lands.
 pub const DROP_INDICATOR_HEIGHT: f32 = 2.0;
 
-/// Width of a modal dialog (the task dialog).
-pub const DIALOG_WIDTH: f32 = 520.0;
+/// A dialog's width (the task dialog).
+pub const DIALOG_WIDTH: f32 = 560.0;
+/// A dialog head's icon tile (Tern `.mdl-ic`, 34 px rounded to the 4 px grid).
+pub const DIALOG_ICON_TILE: f32 = 32.0;
+/// The primary button of a dialog is at least this wide (room for its key hint).
+pub const DIALOG_BUTTON_MIN_WIDTH: f32 = 84.0;
 
 /// The Settings dialog (ADR 0073): its size, the page list width and the value column.
 pub const SETTINGS_DIALOG_WIDTH: f32 = 880.0;

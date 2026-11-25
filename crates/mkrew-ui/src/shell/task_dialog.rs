@@ -416,11 +416,6 @@ impl Shell {
             .when(ring, move |el| el.bg(tint));
         let panel = floating_panel("task-dialog", theme)
             .w(px(theme::DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
             // A picker over it (library prompt, `@` file) or Settings (opened from the prompt
             // picker's Manage row) has the keyboard meanwhile.
             .when(
@@ -442,14 +437,8 @@ impl Shell {
                         cx,
                     ))
                 },
-            )
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(if editing { "Edit task" } else { "New task" }),
-            )
+            );
+        let body = dialog_body()
             .child(
                 div()
                     .flex()
@@ -577,55 +566,66 @@ impl Shell {
                     .child(div().flex().flex_wrap().gap(px(space::XS)).children(agents)),
             )
             .child(worktree)
-            .children(dialog.error.clone().map(|error| {
-                div()
-                    .flex()
-                    .gap(px(space::XS))
-                    .text_size(font_size::META)
-                    .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                    .child(div().text_color(rgb(theme.text)).child(error))
-            }))
+            .children(dialog.error.clone().map(|error| error_note(error, theme)));
+        let mut foot = dialog_foot(theme);
+        if editing {
+            foot = foot.child(if dialog.busy {
+                disabled_button("task-delete", "Delete", theme, false).into_any_element()
+            } else {
+                button("task-delete", "Delete", theme, false)
+                    .focus_stop(theme)
+                    .tooltip(tooltip(theme, "Delete this task", ""))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.delete_task(window, cx);
+                    }))
+                    .into_any_element()
+            });
+        }
+        let foot = foot
+            .child(div().flex_1())
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .pt(px(space::S))
-                    .when(editing && dialog.busy, |el| {
-                        el.child(disabled_button("task-delete", "Delete", theme, false))
-                    })
-                    .when(editing && !dialog.busy, |el| {
-                        el.child(
-                            button("task-delete", "Delete", theme, false)
-                                .focus_stop(theme)
-                                .tooltip(tooltip(theme, "Delete this task", ""))
-                                .on_click(cx.listener(|shell, _, window, cx| {
-                                    shell.delete_task(window, cx);
-                                })),
-                        )
-                    })
-                    .child(div().flex_1())
-                    .child(
-                        button("task-cancel", "Cancel", theme, false)
-                            .focus_stop(theme)
-                            .tooltip(tooltip(theme, "Discard changes", "Esc"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.close_task_dialog(window, cx);
-                            })),
-                    )
-                    .child(if dialog.busy {
-                        disabled_button("task-save", save_label, theme, true)
-                    } else {
-                        button("task-save", save_label, theme, true).focus_stop_filled(theme)
-                            .tooltip(tooltip(
-                                theme,
-                                save_label,
-                                mkrew_ui::os_text!("Ctrl+Enter", "⌘↩"),
-                            ))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.save_task(window, cx);
-                            }))
-                    }),
+                button("task-cancel", "Cancel", theme, false)
+                    .focus_stop(theme)
+                    .tooltip(tooltip(theme, "Discard changes", "Esc"))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.close_task_dialog(window, cx);
+                    })),
+            )
+            .child(if dialog.busy {
+                disabled_button("task-save", save_label, theme, true).into_any_element()
+            } else {
+                primary_button(
+                    "task-save",
+                    save_label,
+                    Some(mkrew_ui::os_text!("Ctrl+Enter", "⌘↩").to_owned()),
+                    theme,
+                )
+                .focus_stop_filled(theme)
+                .tooltip(tooltip(
+                    theme,
+                    save_label,
+                    mkrew_ui::os_text!("Ctrl+Enter", "⌘↩"),
+                ))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.save_task(window, cx);
+                }))
+                .into_any_element()
+            });
+        let panel =
+            dialog_frame(
+                panel,
+                DialogHead {
+                    icon: if editing { Icon::Pencil } else { Icon::Plus },
+                    tone: DialogTone::Normal,
+                    title: (if editing { "Edit task" } else { "New task" }).into(),
+                    sub: Some("What the agent should do, and which agent does it.".into()),
+                },
+                Some(dialog_close("task-close", theme).on_click(
+                    cx.listener(|shell, _, window, cx| shell.close_task_dialog(window, cx)),
+                )),
+                Some(body),
+                Some(foot),
+                theme,
             );
         Self::modal_shade("task-dialog-shade", panel, cx)
     }
