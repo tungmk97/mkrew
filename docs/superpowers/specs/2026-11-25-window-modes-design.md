@@ -82,8 +82,9 @@ New fields in `HostUi` (`shell/hosts.rs`), set only for Space windows:
 - `workspace: Option<Ulid>`: replaces `Shell.workspace` (about 120 reads).
   Every reader takes the host it draws or acts for; code that has a `Window` gets it with `host_of(window)`.
 - `right_panel: inspector::RightPanel`: shown or not, and its tab, per window.
-- The panel's focus and scroll handles: `files_focus`, `files_scroll`, `git_focus`, `git_commit_focus`, `git_filter_focus`, `git_files_scroll` and the Docs filter focus.
-  A gpui focus handle belongs to one window's element tree, so two windows cannot share one.
+- The scroll and list state of what a Space window draws: `files_scroll`, `git_files_scroll`, `doc_page`, `doc_source_scroll`, `comments_scroll` and `jira_scroll`, moved into a `HostView` struct held by `HostUi`.
+  Two windows scrolling one handle would fight over its offset.
+  Focus handles stay in `Shell`: gpui keeps the focused handle per window, and detached windows already track `git_focus` in their Diff panes while the main window tracks it in the Git panel.
 
 Changed in `Shell`:
 
@@ -146,7 +147,7 @@ Entry points: palette "Window: Open each workspace in its own window…", the `W
 The **workspace picker** ("Open workspaces in windows") is a floating panel in the window that asked:
 
 - A filter field on top, then every listed workspace (avatar, name, `● N working` / `? N` status as in the switcher), each with a checkbox; the shown workspace is ticked.
-- Keys: the filter field keeps the keyboard, so letters, Space and Ctrl+A act on its text; ↑/↓ move the highlight, Tab ticks or unticks the highlighted row, Alt+A ticks every shown row (or unticks them when all are ticked), Enter confirms, Esc cancels and stays in mode 1.
+- Keys follow the Broadcast dialog (`broadcast.rs`): typing edits the filter; ↑/↓ move the highlight and hand the keyboard to the list, where Space ticks or unticks the highlighted row; any other key goes back to the filter (Space is a space again); Alt+A ticks every shown row (or unticks them when all are ticked); Tab moves between the dialog's controls (`dialog_nav`); Enter confirms; Esc cancels and stays in mode 1.
   A click on a row ticks or unticks it.
 - The primary button says what happens: `Switch` with one ticked, `Open N windows` with N > 1; it is disabled with none ticked ("Pick a workspace").
 - With two or more ticked, Enter (or the button) shows a confirmation step inside the same panel: "`api` stays in this window. `web` and `docs` each open in a new window." with [Open N windows] (default) and [Back].
@@ -221,6 +222,7 @@ to `per_workspace` the focused window becomes the Space window of its workspace;
 
 The OS window title of a mode 2 Space window is `<workspace> - Mkrew`; mode 1 keeps today's title.
 The taskbar badge and the tray icon count for the whole app, as today.
+On Windows the badge shows on every Space window's taskbar button: `Desktop` keeps a list of window handles (`attach`, `detach`) instead of the single main window handle, and hiding to the tray hides all of them.
 
 ### 5.2 "Need you" chip
 
@@ -235,7 +237,7 @@ The taskbar badge and the tray icon count for the whole app, as today.
 - `[ui] panel_side = "right" | "left"` (default `right`), both modes.
 - `left` puts the panel left of the panes (right of the sidebar in mode 1); its resize edge and the toggle icon (`◨` / `◧`) follow the side.
 - `inspector_width` is shared by both sides.
-- Palette: "Panel: Move to left" / "Panel: Move to right" (one entry, its label is the other side).
+- Palette: "Panel: Move to the other side" (one entry; a palette title has no state, so it does not name the side).
 
 ### 5.4 What the sidebar did, in mode 2
 
@@ -259,7 +261,7 @@ New `keymap::Command`s (no default keys):
 |---|---|---|
 | `SplitWindows` | Window: Open each workspace in its own window… | mode 1, two or more workspaces |
 | `CombineWindows` | Window: Combine into one window | mode 2 |
-| `TogglePanelSide` | Panel: Move to left / right | always |
+| `TogglePanelSide` | Panel: Move to the other side | a workspace is shown |
 
 New `[ui]` keys in `UiSettings` (`mkrew-core/src/settings.rs`), the template and the `SETTINGS` table (`settings_fields.rs`):
 
@@ -273,9 +275,10 @@ Changing `window_mode` in the Settings dialog runs 4.1 (with the picker) or 4.3.
 
 ## 7. Code layout
 
-- `crates/mkrew-ui/src/window_mode.rs` (pure, no gpui): `Mode`, `OpenPref`, `PanelSide`; `plan_split(listed, ticked, shown) -> SplitPlan { keep, open: Vec<Ulid> }`; `plan_combine(focused, spaces) -> Vec<SpaceKey>` (to close); `open_target(workspace, mode, pref, ctrl, spaces) -> OpenTarget::{Focus(SpaceKey), New, Replace, Ask}`; `WorkspacePicker` (ticks, filter, cursor, button label, confirmation text); `need_you(sessions, viewed, shown) -> NeedYou` (count, label, rows).
+- `crates/mkrew-ui/src/window_mode.rs` (pure, no gpui): `plan_split(listed, ticked, shown) -> Option<SplitPlan { keep, open: Vec<Ulid> }>`; `plan_combine(focused, spaces) -> Vec<SpaceKey>` (to close); `open_target(workspace, mode, pref, ctrl, spaces) -> OpenTarget::{Switch, Focus(SpaceKey), New, Replace, Ask}`; `WorkspacePicker` (ticks, filter, cursor, button label, confirmation text); `need_you(entries, shown) -> Option<NeedYou>` (count, label, rows) over `inbox::Entry`. The mode enums (`WindowMode`, `OpenWorkspace`, `PanelSide`) live in `mkrew_core::settings`.
 - `crates/mkrew-ui/src/detached.rs`: `SpaceKey`, `HostId::Space`, saved file version 2 (`SavedSpace`, legacy `main-window.json` read).
-- `crates/mkrew-ui/src/shell/hosts.rs`: `HostUi` fields of 3.3, `primary()`, `space_of(workspace)`.
+- `crates/mkrew-ui/src/shell/hosts.rs`: `HostUi` fields of 3.3 (`workspace`, `right_panel`, `view: HostView`), `primary()`, `space_of(workspace)`.
+- `crates/mkrew-ui/src/desktop.rs`, `desktop/win32.rs`, `desktop/none.rs`: `Desktop::new` no longer takes a window; `attach(window)` / `detach(window)` keep the Space windows' handles.
 - `crates/mkrew-ui/src/shell/space_view.rs`: `SpaceWindow` root view.
 - `crates/mkrew-ui/src/shell/window_mode.rs`: open / close Space windows, split, combine, the picker and the question panels, the "need you" chip and menu.
 - `crates/mkrew-ui/src/main.rs`: `Shell` created once, the first Space window(s) opened from the saved file, the quit rule of 3.2.
