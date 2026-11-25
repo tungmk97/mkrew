@@ -921,7 +921,7 @@ pub struct Theme {
     pub text_dim: u32,
     /// t2: names, labels, inactive tabs.
     pub text_muted: u32,
-    /// Graphics and placeholders (t4: chevrons, counts, line numbers); never body text.
+    /// Graphics (t4: counts, line numbers); never body text. Placeholders are `text_subtle`.
     pub subtle: u32,
     /// Selection, primary buttons, focus.
     pub accent: u32,
@@ -1564,7 +1564,7 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// The palette a theme can be written back as (the two Mkrew themes have none of their
+    /// The palette a theme can be written back as (the Mkrew and Tern themes have none of their
     /// own): its own background, chrome, surface, text, muted text, accent and ANSI colors,
     /// with the six hues taken from ANSI red to cyan.
     pub fn from_theme(theme: &Theme) -> Self {
@@ -1737,7 +1737,11 @@ impl Theme {
         } else {
             p.surface
         };
-        let accent_bg = tint(p.accent, 0.14);
+        // The accent reads on the grounds the "code" rule checks (Tern's blue on a derived raised
+        // fill is 4.40:1); a palette whose accent already does keeps it. Everything derived from
+        // the accent below uses this one.
+        let accent = readable(p.accent, p.fg, &[p.bg, p.surface, surface_raised], 4.5);
+        let accent_bg = tint(accent, 0.14);
         // The frame is a step off `bg` (the terminal ground): toward black, so panes look
         // raised; toward `fg` when `bg` is already so dark that black is under the floor.
         let pane_gap = {
@@ -1780,15 +1784,17 @@ impl Theme {
         // A brand logo sits on the bar and, in the shown tab, on `tab_active`.
         let brand_grounds = [pane_gap, tab_active];
         // The sidebar is `pane_gap`, a step off `bg`: the avatar letter (`text`) must read on the
-        // workspace tints over it; only a palette whose foreground is that weak changes.
-        let fills = base
-            .workspace_colors
-            .map(|c| base.avatar_colors(c, pane_gap).1);
+        // workspace tints over every ground the "avatar letters" rule checks (`pane_gap`, `hover`,
+        // `surface_raised`); only a palette whose foreground is that weak changes.
+        let fills = [pane_gap, hover, surface_raised]
+            .into_iter()
+            .flat_map(|ground| {
+                base.workspace_colors
+                    .map(|c| base.avatar_colors(c, ground).1)
+            })
+            .collect::<Vec<_>>();
         let letter = readable(p.fg, if p.dark { 0xFFFFFF } else { 0x000000 }, &fills, 4.5);
         let text = |color| readable(color, p.fg, &grounds, 4.5);
-        // The accent reads on the grounds the "code" rule checks (Tern's blue on a derived raised
-        // fill is 4.40:1); a palette whose accent already does keeps it.
-        let accent = readable(p.accent, p.fg, &[p.bg, p.surface, surface_raised], 4.5);
         let on_accent = if contrast(p.bg, accent) >= contrast(p.fg, accent) {
             p.bg
         } else {
@@ -1819,7 +1825,7 @@ impl Theme {
             border: mix(p.bg, p.fg, 0.14),
             control_border: mix(p.bg, p.fg, 0.14),
             divider: mix(p.bg, p.fg, 0.09),
-            selected_ring: mix(p.accent, p.bg, 0.50),
+            selected_ring: mix(accent, p.bg, 0.50),
             text: letter,
             text_dim: text(mix(p.fg, p.bg, 0.20)),
             text_muted: text(p.muted),
@@ -1827,13 +1833,13 @@ impl Theme {
             text_disabled: text(p.muted),
             subtle: mix(p.muted, p.bg, 0.45),
             accent,
-            accent_text: text(p.accent),
+            accent_text: text(accent),
             info: p.blue,
             info_soft: p.blue,
             info_text: text(p.blue),
             accent_bg,
             pane_gap,
-            pane_focus_stripe: mix(p.accent, p.bg, 0.50),
+            pane_focus_stripe: mix(accent, p.bg, 0.50),
             focus_ring: p.fg,
             on_accent,
             terminal_selection_bg: fill(p.bg, p.accent, 0.30, p.fg),
@@ -1881,7 +1887,7 @@ impl Theme {
 
 /// How a built-in theme is made (ADR 0078, ADR 0117).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Recipe {
+enum Recipe {
     /// `Theme::dark()` / `Theme::light()`: written token by token.
     Mkrew,
     /// `Theme::tern_dark()` / `Theme::tern_light()`: Mkrew with Tern's accent family.
@@ -2832,14 +2838,11 @@ mod tests {
 
     #[test]
     fn a_derived_palette_splits_the_text_tiers_and_keeps_meta_readable() {
-        for name in [
-            "One Dark",
-            "Nord",
-            "Gruvbox Dark",
-            "One Light",
-            "Gruvbox Light",
-        ] {
-            let t = Theme::from_palette(name, &palette_of(name));
+        for (name, p) in THEMES
+            .iter()
+            .filter_map(|e| e.palette().map(|p| (e.name, p)))
+        {
+            let t = Theme::from_palette(name, p);
             // t1 > t2 > t3 > t4 in prominence: toward the page goes darker (dark) / lighter (light).
             let (a, b, c) = (t.text_muted, t.text_subtle, t.subtle);
             let steps = if t.dark {
@@ -2854,11 +2857,7 @@ mod tests {
                     "{name} on {ground:06X}"
                 );
             }
-            let ink = if t.dark {
-                palette_of(name).fg
-            } else {
-                LAYER_INK_LIGHT
-            };
+            let ink = if t.dark { p.fg } else { LAYER_INK_LIGHT };
             assert!(
                 t.layer.iter().all(|l| l >> 8 == ink),
                 "{name}: layers use the ink"
@@ -2871,6 +2870,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A palette with almost no contrast must still load: either its meta text reaches 4.5:1 or
+    /// the theme shows the "Low contrast" badge (`problems` is not empty).
+    #[test]
+    fn an_edge_palette_reads_or_is_flagged() {
+        let mut p = palette_of("One Dark");
+        (p.bg, p.surface, p.chrome) = (0x101010, 0x111111, 0x121212);
+        (p.fg, p.muted) = (0x1A1A1A, 0x161616);
+        let t = Theme::from_palette("Edge", &p);
+        let reads = [t.bg, t.surface, t.surface_raised, t.composer_fill]
+            .into_iter()
+            .all(|ground| contrast(t.text_subtle, ground) >= 4.5);
+        assert!(reads || !problems(&t).is_empty());
     }
 
     #[test]
@@ -2887,7 +2900,7 @@ mod tests {
     #[test]
     fn the_mkrew_grounds_are_ordered_and_neutral() {
         let (dark, light) = (Theme::dark(), Theme::light());
-        // Dark: the page frame < the panel < the card < the raised fill.
+        // Dark: the page frame < the panel < the raised fill.
         for pair in [
             [dark.pane_gap, dark.bg],
             [dark.bg, dark.surface],
@@ -3203,6 +3216,10 @@ mod tests {
         let (dark, light) = (Theme::dark(), Theme::light());
         let (d, l) = (shadow_modal(&dark), shadow_modal(&light));
         assert_eq!((d.len(), l.len()), (1, 2));
+        assert_eq!(
+            (d[0].blur_radius, d[0].spread_radius),
+            (gpui::px(72.0), gpui::px(-16.0))
+        );
         assert!(
             d[0].color.a > l[0].color.a,
             "a dark modal is the deeper one"
@@ -3210,15 +3227,6 @@ mod tests {
         assert_eq!(shadow_pop(&dark), shadow_pop(&light));
         assert_ne!(shadow_composer(&dark), shadow_composer(&light));
         assert_eq!(shadow_pop(&dark).len(), 1);
-    }
-
-    #[test]
-    fn the_flattened_glass_fill_is_lighter_than_the_page_in_dark_themes() {
-        for theme in all_themes().into_iter().filter(|t| t.dark) {
-            let alpha = (theme.glass & 0xFF) as f32 / 255.0;
-            let flat = glass_over(theme.glass >> 8, alpha, theme.bg);
-            assert!(darker(theme.bg, flat), "{}", theme.name);
-        }
     }
 
     #[test]
@@ -3360,7 +3368,7 @@ mod tests {
     fn body_text_is_checked_on_the_sidebar_itself() {
         let t = Theme::dark();
         let broken = Theme {
-            text_muted: t.sidebar,
+            sidebar: t.text_muted,
             ..t.clone()
         };
         let rules: Vec<&str> = problems(&broken).iter().map(|p| p.rule).collect();

@@ -22,6 +22,10 @@ Measured from Tern's CSS (six gap reports):
 - **Floating panels:** fill = `surface_raised` (dark) / `surface` (light) at the contrast-loop alpha, `glass_border = layer[1]`, a 1 px `glass_hi` line inside the top edge (`widgets::top_highlight`), scrim black 55 % (dark) / `pane_gap` 50 % (light).
 - **New contrast rules:** "meta text" (`text_subtle` 4.5:1 on bg, surface, card, terminal_bg, surface_raised, composer_fill), "accent text" (`accent_text` on `accent_bg`), "glass lift" (dark glass is lighter than `bg`), "menu pick" (`accent_bg` differs from the glass fill; replaces the unsatisfiable spec wording "`selected` differs from `surface_raised`").
 - **Derived themes** (`from_palette`, theme files) get the layers, `code_bg`, `composer_fill`, a real t2/t3/t4 split and `sidebar = pane_gap`.
+  - `text` (the avatar letter) is adjusted until it reads on the workspace tints over `pane_gap`, `hover` and `surface_raised`; only a palette with a weak foreground changes.
+  - `accent` is adjusted until it reads on `bg`, `surface` and `surface_raised` (the "code" rule); `accent_bg`, `selected_ring`, `pane_focus_stripe` and `accent_text` derive from the adjusted accent.
+  - `text_subtle` is derived on the grounds of the "meta text" rule only (`bg`, `surface`, `surface_raised`, `composer_fill`); with the diff tints it collapses onto `text_muted`.
+  - `accent_bg`, `pane_gap` and `composer_fill` join the shared grounds, so `accent_text` reads 4.5:1 on the pick fill and text reads on the page and the composer.
 - **Tern Dark / Tern Light** are built-ins: the retuned Mkrew theme with Tern's blue accent, status, selection and ANSI colors. `ThemeEntry` takes a `Recipe` (`Mkrew`, `Tern`, `Palette(Palette)`); defaults stay Mkrew Dark / Light.
 - **Pressables** hover to `layer[0]` and press to `layer[0]+layer[1]`; an element with its own fill flattens the layers over it (`pressable_on`); `quiet_button` has no hover argument.
 - Components (shared controls, chat, composer, files, chrome, settings, git) follow in the same change; see the spec.

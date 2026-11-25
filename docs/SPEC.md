@@ -1856,7 +1856,7 @@ Restyle of 2026-10-24 (ADR 0074), retuned to Tern's grounds and tiers by ADR 011
 | `text-muted` (t2: names, labels, inactive tabs) | #A1A1A1 | #55575F |
 | `text-subtle` (t3: meta) | #8A8A92 | #6A6C74 |
 | `text-disabled` | #707077 | #8F9198 |
-| `subtle` (t4: graphics, placeholders, chevrons) | #55555C | #B3B5BB |
+| `subtle` (t4: graphics, counts, line numbers) | #55555C | #B3B5BB |
 | `accent` | #8E8CF5 | #5452D0 |
 | `accent-text` | #C2C1FA | #4A48C4 |
 | `accent-bg` | #212132 | #E4E3F4 |
@@ -1887,7 +1887,7 @@ Restyle of 2026-10-24 (ADR 0074), retuned to Tern's grounds and tiers by ADR 011
 
 `pane-gap` is darker than `terminal-bg` in dark themes when `terminal-bg` leaves room, a step darker in light themes, and always differs from `terminal-bg` by at least 1.06:1 (`theme::problems()` rule "pane gap"; Tern's own default tokens measure 1.02 to 1.05, Mkrew keeps 1.06); a generated theme derives it with a mix from `terminal-bg` toward black or `text`.
 
-Hover is l1, pressed l2, rings l2, strong rings and scrollbar thumbs l3, check box borders l4 (ADR 0117). Text tiers: t1 content, t2 names and labels, t3 meta, t4 placeholders, line numbers and chevrons (`theme::problems` rule "meta text" keeps t3 at 4.5:1).
+Hover is l1, pressed l2, rings l2, strong rings and scrollbar thumbs l3, check box borders l4 (ADR 0117). Text tiers: t1 content, t2 names and labels, t3 meta and placeholders, t4 line numbers and counts (`theme::problems` rule "meta text" keeps t3 at 4.5:1).
 
 Tern Dark / Tern Light (ADR 0117) are the table above with these overrides (everything else, and `with_glass`, as Mkrew):
 
