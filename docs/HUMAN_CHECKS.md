@@ -21,6 +21,14 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-25 Tern polish: theme system (ADR 0117, spec docs/superpowers/specs/2026-11-25-tern-polish-design.md)
+
+The theme tasks (retune, tokens, glass, Tern themes) were checked by unit tests and contrast rules only; no smoke screenshots were taken for them.
+
+- [ ] **Grounds (Mkrew Dark + Light):** page frame, panel, card and raised fill read in that order and look neutral grey; the sidebar sits on the same color as the title bar with the session rows readable (they use the main tokens now).
+- [ ] **Floating panels (dark + light):** palette, Settings and a dialog are lighter than the page in dark, have a faint top line and no blue wash; the scrim is black in dark and a milky veil in light; the menus and toasts keep a soft shadow.
+- [ ] **Tern Dark / Tern Light:** Settings → Appearance lists 24 cards with the two new ones next to the Mkrew pair; picking them gives the blue accent, Tern's status colors and ANSI palette; "New theme from current" on a Tern card saves a theme file that loads without a "Low contrast" badge.
+
 ### To verify - 2026-11-25 UI typography and quiet chrome (ADR 0116, spec docs/superpowers/specs/2026-11-25-ui-typography-design.md)
 
 Screenshots: `docs/screenshots/ui-typography-<fake|split>-<dark|light>.png` (a fake agent alone; the fake agent beside an idle omp pane).
