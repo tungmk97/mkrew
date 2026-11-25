@@ -181,7 +181,7 @@ pub const DANGER_RING_HOVER_MIX: f32 = 0.6;
 pub const CHIP_RING_ALPHA: f32 = 0.22;
 /// The Jira list (Board): a row's height, the key column, the toolbar's filter input and the
 /// leading type icon (px at the default 13 px body, [`rems_px`]).
-pub const BOARD_ROW_HEIGHT: f32 = 38.0;
+pub const BOARD_ROW_HEIGHT: f32 = 32.0;
 pub const BOARD_KEY_WIDTH: f32 = 62.0;
 pub const BOARD_FILTER_WIDTH: f32 = 240.0;
 pub const BOARD_TYPE_ICON: f32 = ICON_SIZE_SMALL;

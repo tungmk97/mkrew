@@ -591,7 +591,7 @@ impl Shell {
                                     .gap(px(space::S))
                                     .px(px(space::S))
                                     .py(px(space::XS))
-                                    .rounded(px(radius::SMALL)),
+                                    .rounded(px(radius::CHIP)),
                                 selected,
                                 theme,
                             )
@@ -624,7 +624,7 @@ impl Shell {
                                             .text_ellipsis()
                                             .whitespace_nowrap()
                                             .text_size(font_size::META)
-                                            .text_color(rgb(theme.text_muted))
+                                            .text_color(rgb(theme.text_subtle))
                                             .child(details),
                                     ),
                             )
@@ -701,7 +701,7 @@ impl Shell {
                             .flex_col()
                             .px(px(space::S))
                             .py(px(space::XS))
-                            .rounded(px(radius::SMALL)),
+                            .rounded(px(radius::CHIP)),
                         selected,
                         theme,
                     )
@@ -736,7 +736,6 @@ impl Shell {
                                     .text_ellipsis()
                                     .whitespace_nowrap()
                                     .text_color(rgb(theme.text))
-                                    .when(selected, |el| el.font_weight(FontWeight(weight::MEDIUM)))
                                     .child(history::label(session)),
                             ),
                     )
@@ -746,7 +745,7 @@ impl Shell {
                             .text_ellipsis()
                             .whitespace_nowrap()
                             .text_size(font_size::META)
-                            .text_color(rgb(theme.text_muted))
+                            .text_color(rgb(theme.text_subtle))
                             .child(history::details(session, now)),
                     )
                     .into_any_element()

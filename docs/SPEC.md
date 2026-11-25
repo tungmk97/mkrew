@@ -1922,7 +1922,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
 - Radius 5 (area chips, key hints), 6 (chips, segments, tree rows), 8 (buttons, inputs, rows),
   9 (segmented container), 10 (cards), 12 (dialogs, palette), 16 (the composer card, `radius::PANEL`), 999 (pills); 4 for old badges.
-- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the right panel tab row 44 with 28 px icon tabs (the shown one: `accent-bg` fill, `accent-text` icon), Git repo strip 42, Git section segmented control (META size) in a 40 px strip, Files tree rows 24, Git file rows 28 with a 16 px status chip (px at 13 px body; ADR 0110).
+- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the right panel tab row 44 with 28 px icon tabs (the shown one: `accent-bg` fill, `accent-text` icon), Git repo strip 42, Git section segmented control (META size) in a 40 px strip, Files tree rows 24, Git file rows 28 with a 16 px status chip, Jira rows 32 (px at 13 px body; ADR 0110).
 - Cards (board, Jira and the session panel; ADR 0117): the `card` fill, `radius::CARD`, a 1 px `divider` ring at rest, `border` on hover and `accent` when selected. (The omp `card` node below is a different element and keeps `surface_raised`.)
 - Tab chip (Tern look, ADR 0106, ADR 0116): height `TAB_CHIP_HEIGHT` (26), radius 8 (`radius::MEDIUM`), no border, META text at regular weight; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
   A chip shows one icon, its focused pane's, in `text_subtle` (`text_muted` when active), never a brand color; a working or needs-input tab colors that icon `status_working` / `status_needs_input` instead of adding a glyph, and its tooltip names the state.
@@ -2964,7 +2964,7 @@ speech to text, this is the second user-configured use of the network, and only 
    stops; no polling). The list shows once every page arrived. JQL `project in (PROJ, BILL) AND
    statusCategory != Done ORDER BY updated DESC`; `Mine` adds `AND assignee = currentUser()`
    before `statusCategory`. While it runs:
-   "Loading Jira issues…" with loading dots. A row: issue type, key, summary (one line, cut with
+   "Loading Jira issues…" with loading dots. A row (32 px, a selected one with the accent tint and bar): issue type, key, summary (one line, cut with
    `…`), status and, when a task is linked, that task's column (`Todo`, `Running`, `Review`,
    `Done`) as a chip. Nothing found: "No open issues in PROJ, BILL" (`Mine`: "No open issues
    assigned to you in PROJ, BILL"). The "Filter issues" field keeps the issues whose key or
