@@ -144,6 +144,8 @@ impl Shell {
                             .child(
                                 div()
                                     .min_w_0()
+                                    .flex_shrink_0()
+                                    .max_w_full()
                                     .truncate()
                                     .text_size(font_size::BODY)
                                     .font_weight(FontWeight(weight::MEDIUM))
@@ -777,11 +779,18 @@ impl Shell {
 }
 
 /// A file's path (`/` separated, relative to its folder) as the header's breadcrumb: its
-/// folder segments, then its name.
+/// folder segments (a leading `/` is kept as a root crumb), then its name.
 fn crumbs(path: &str) -> (impl Iterator<Item = &str>, &str) {
     let (folders, name) = path.rsplit_once('/').unwrap_or(("", path));
     (
-        folders.split('/').filter(|segment| !segment.is_empty()),
+        folders
+            .split('/')
+            .enumerate()
+            .filter_map(move |(at, segment)| match (segment.is_empty(), at) {
+                (false, _) => Some(segment),
+                (true, 0) if !folders.is_empty() => Some("/"),
+                _ => None,
+            }),
         name,
     )
 }
@@ -817,5 +826,15 @@ mod tests {
             "empty segments are dropped"
         );
         assert_eq!(name, "b.rs");
+        let (folders, name) = crumbs("C:/n/a.md");
+        assert_eq!(folders.collect::<Vec<_>>(), ["C:", "n"]);
+        assert_eq!(name, "a.md");
+        let (folders, name) = crumbs("/home/u/a.md");
+        assert_eq!(
+            folders.collect::<Vec<_>>(),
+            ["/", "home", "u"],
+            "a Unix absolute path keeps its root"
+        );
+        assert_eq!(name, "a.md");
     }
 }

@@ -803,8 +803,6 @@ pub const DOC_TASK_BOX_SIZE: f32 = space::M;
 pub mod doc {
     pub const BODY: f32 = 15.0;
     pub const CODE: f32 = 13.0;
-    /// h1–h6.
-    pub const HEADINGS: [f32; 6] = [24.0, 20.0, 17.0, 15.0, 14.0, 14.0];
     /// The Docs flavor's h1-h6 (SPEC §14): the title is 32, no heading is under the body.
     pub const PAGE_HEADINGS: [f32; 6] = [32.0, 22.0, 17.0, 15.0, 15.0, 15.0];
     /// Line height of the Docs page only (the chat has `CHAT_LINE_HEIGHT`, the UI 1.5).
@@ -815,7 +813,7 @@ pub mod doc {
     /// Markdown in the omp transcript and the Chat view (ADR 0117; ADR 0116's 1.5 stays for the UI).
     pub const CHAT_LINE_HEIGHT: f32 = 1.6;
     pub const CHAT_HEADING_LINE_HEIGHT: f32 = 1.35;
-    /// h1-h6 of a chat message: one step under the Docs sizes, kept apart from `HEADINGS`.
+    /// h1-h6 of a chat message: one step under the Docs sizes ([`PAGE_HEADINGS`]).
     pub const CHAT_HEADINGS: [f32; 6] = [20.0, 17.0, 15.0, 14.0, 14.0, 14.0];
     /// The marker column of list items (bullets, numbers, check boxes line up).
     pub const MARKER_WIDTH: f32 = 20.0;
@@ -1158,8 +1156,6 @@ pub struct Theme {
     pub danger_text: u32,
     /// Added-line numbers.
     pub success_text: u32,
-    /// Folder icons in the Files tree.
-    pub folder: u32,
     /// Dotfiles in the Files tree; a primary button's text while it cannot be used.
     pub text_disabled: u32,
     /// The changed token inside a removed / added diff line.
@@ -1354,7 +1350,6 @@ impl Theme {
             well: 0x17171A,
             danger_text: 0xEF8F82,
             success_text: 0x6FD39B,
-            folder: 0x8A8A92,
             text_disabled: 0x707077,
             layer: layers(0xFFFFFF, true),
             code_bg: 0x0C0C0D,
@@ -1460,7 +1455,6 @@ impl Theme {
             well: 0xF4F4F2,
             danger_text: 0xB4382A,
             success_text: 0x1E6B3A,
-            folder: 0x6A6C74,
             text_disabled: 0x8F9198,
             layer: layers(LAYER_INK_LIGHT, false),
             code_bg: 0xF8F8F6,
@@ -1663,7 +1657,6 @@ impl Theme {
             well: 0,
             danger_text: 0,
             success_text: 0,
-            folder: 0,
             text_disabled: 0,
             diff_del_word_bg: 0,
             diff_add_word_bg: 0,
@@ -2062,7 +2055,6 @@ impl Theme {
             syntax_type: text(p.cyan),
             syntax_function: text(p.blue),
             teal: text(p.cyan),
-            folder: text(p.blue),
             brand_claude: readable(base.brand_claude, p.fg, &brand_grounds, 3.0),
             brand_codex: readable(base.brand_codex, p.fg, &brand_grounds, 3.0),
             brand_copilot: readable(base.brand_copilot, p.fg, &brand_grounds, 3.0),
@@ -2896,6 +2888,10 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
         (t.git_untracked, t.bg),
         (t.git_modified, t.selected),
         (t.git_untracked, t.selected),
+        // The Files tree's git-tinted names on the opened row's `accent_bg`.
+        (t.git_modified, t.accent_bg),
+        (t.diff_add_text, t.accent_bg),
+        (t.danger_text, t.accent_bg),
     ] {
         check("diff lines", fg, bg, 4.5);
     }

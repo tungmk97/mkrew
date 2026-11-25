@@ -585,7 +585,8 @@ pub fn closest_byte(layout: &TextLayout, position: gpui::Point<Pixels>) -> usize
 /// The preview's page (ADR 0021): `shown`'s blocks in a centered column of at most
 /// `DOC_PREVIEW_MAX_WIDTH`, in a virtual list (only the blocks on screen are laid out), with a
 /// scroll bar on the right. `opening` names this opening of the file, so another one starts at
-/// the top; `fonts` are the current ones (block heights follow them).
+/// the top; `fonts` are the current ones (block heights follow them). Blocks are 16 px apart,
+/// with 32 px below the last.
 #[allow(clippy::too_many_arguments)]
 pub fn page(
     page: &Page,
@@ -675,23 +676,16 @@ pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> 
     block_in(block, shown, None, Ctx::new(false, Flavor::Doc), theme)
 }
 
-/// The size and line height of a heading of `level` (clamped to 1..=6). A chat message has its
-/// own scale ([`theme::doc::CHAT_HEADINGS`]) so the Docs one can change on its own.
-fn heading_metrics(level: u8, chat: bool) -> (f32, f32) {
+/// The size and line height of a chat heading of `level` (clamped to 1..=6). A chat message has
+/// its own scale ([`theme::doc::CHAT_HEADINGS`]) so the Docs one ([`doc_heading`]) can change on
+/// its own.
+fn heading_metrics(level: u8) -> (f32, f32) {
     let ix = usize::from(level).saturating_sub(1);
-    if chat {
-        let last = theme::doc::CHAT_HEADINGS.len() - 1;
-        (
-            theme::doc::CHAT_HEADINGS[ix.min(last)],
-            theme::doc::CHAT_HEADING_LINE_HEIGHT,
-        )
-    } else {
-        let last = theme::doc::HEADINGS.len() - 1;
-        (
-            theme::doc::HEADINGS[ix.min(last)],
-            theme::doc::HEADING_LINE_HEIGHT,
-        )
-    }
+    let last = theme::doc::CHAT_HEADINGS.len() - 1;
+    (
+        theme::doc::CHAT_HEADINGS[ix.min(last)],
+        theme::doc::CHAT_HEADING_LINE_HEIGHT,
+    )
 }
 
 fn block_in(
@@ -716,29 +710,16 @@ fn block_in(
                 .into_any_element()
         }
         BlockKind::Heading { level, runs } => {
-            let chat = chat_flavor(ctx);
             // Chat headings: `text`, no rule, `XS` above (plus the block gap), the block gap below.
-            let (size, line_height) = heading_metrics(*level, chat);
-            let major = *level <= 2 && !chat;
+            let (size, line_height) = heading_metrics(*level);
             div()
-                .pt(px(if chat {
-                    space::XS
-                } else if major {
-                    space::L
-                } else {
-                    space::S
-                }))
+                .pt(px(space::XS))
                 .text_size(px(size))
                 .line_height(relative(line_height))
                 .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(theme.text))
-                .when(major, |el| {
-                    el.pb(px(space::XS))
-                        .border_b_1()
-                        .border_color(rgb(theme.border))
-                })
                 .child(selectable(pick, links(runs, ctx), |sel, bg| {
-                    text(runs, theme, sel, bg, chat_flavor(ctx))
+                    text(runs, theme, sel, bg, true)
                 }))
                 .into_any_element()
         }
@@ -771,7 +752,7 @@ fn block_in(
             };
             div()
                 .flex()
-                .gap(px(space::L))
+                .gap(px(if chat_flavor(ctx) { space::M } else { space::L }))
                 .child(
                     div()
                         .flex_none()
@@ -889,7 +870,11 @@ fn block_in(
                 .into_any_element()
         }
         BlockKind::Rule => div()
-            .my(px(space::XL))
+            .my(px(if chat_flavor(ctx) {
+                space::S
+            } else {
+                space::XL
+            }))
             .h(px(theme::BORDER_WIDTH))
             .bg(rgb(theme.border))
             .into_any_element(),
@@ -948,15 +933,26 @@ fn list_item(
                 None => check.mt(px(space::XS)).into_any_element(),
             }
         }
+        (None, Some(number)) if chat => div()
+            .text_color(rgb(theme.text_muted))
+            .child(format!("{number}."))
+            .into_any_element(),
+        // Docs: terminal-font META digits on the body's line, so they sit on its first baseline.
         (None, Some(number)) => div()
             .font_family(theme.terminal_font_family.clone())
             .text_size(font_size::META)
+            .line_height(px(theme::doc::BODY * theme::doc::LINE_HEIGHT))
             .text_color(rgb(theme.text_subtle))
             .child(format!("{number}."))
             .into_any_element(),
         (None, None) => {
+            // Centred on the first line: the Docs line height is `BODY * LINE_HEIGHT`.
             let dot = div()
-                .mt(px(space::S))
+                .mt(px(if chat {
+                    space::S
+                } else {
+                    (theme::doc::BODY * theme::doc::LINE_HEIGHT - theme::doc::BULLET_SIZE) / 2.0
+                }))
                 .size(px(theme::doc::BULLET_SIZE))
                 .rounded(px(radius::PILL));
             if chat && ctx.nested {
@@ -1420,7 +1416,7 @@ fn text(
     let accent = Hsla::from(rgb(theme.accent));
     let muted = Hsla::from(rgb(theme.text_muted));
     let strong = Hsla::from(rgb(theme.text));
-    // Chat: `text` links under a quiet accent line, inline code on `layer[0]`. Docs: Part E.
+    // Chat: `text` links under a quiet accent line. Inline code is on `layer[0]` in both flavors.
     let link_color = if chat {
         Hsla::from(rgb(theme.text))
     } else {
@@ -1434,15 +1430,15 @@ fn text(
     } else {
         accent
     };
-    let code_bg = Hsla::from(if chat {
-        gpui::rgba(theme.layer[0])
-    } else {
-        rgb(theme.surface_raised)
-    });
+    let code_bg = Hsla::from(gpui::rgba(theme.layer[0]));
     let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
     for (range, style, link) in styled {
         let base = HighlightStyle {
-            color: link.then_some(link_color).or(style.bold.then_some(strong)),
+            // Bold reads at full `text` on the Docs flavor (body t2, bold t1); chat keeps the
+            // text color it has.
+            color: link
+                .then_some(link_color)
+                .or((style.bold && !chat).then_some(strong)),
             font_weight: style.bold.then_some(FontWeight(weight::SEMIBOLD)),
             font_style: style.italic.then_some(FontStyle::Italic),
             background_color: style.code.then_some(code_bg),
@@ -1722,8 +1718,9 @@ pub struct RowMarks {
 
 /// One row of the Files editor (SPEC §12A): its number, then `text` (tabs already spaces) in
 /// the syntax colors of `spans`, with the find matches, over the selected cells, with the
-/// caret. The caret's row has a faint `row_hover` band and its number at full `text`; the caret is `accent` and does not blink. `text_left` learns where the text
-/// starts on screen, so a click can be turned into a column.
+/// caret. The caret's row has a faint `row_hover` band and its number at full `text`; the caret
+/// is `accent` and does not blink. `text_left` learns where the text starts on screen, so a
+/// click can be turned into a column.
 #[allow(clippy::too_many_arguments)]
 pub fn code_row(
     index: usize,
@@ -1819,19 +1816,12 @@ mod tests {
 
     #[test]
     fn chat_headings_shrink_with_the_level_and_out_of_range_levels_clamp() {
-        for chat in [true, false] {
-            let sizes: Vec<f32> = (1..=6)
-                .map(|level| heading_metrics(level, chat).0)
-                .collect();
-            assert!(
-                sizes.windows(2).all(|w| w[0] >= w[1]),
-                "chat={chat}: {sizes:?}"
-            );
-            assert_eq!(heading_metrics(0, chat), heading_metrics(1, chat));
-            assert_eq!(heading_metrics(9, chat), heading_metrics(6, chat));
-        }
+        let sizes: Vec<f32> = (1..=6).map(|level| heading_metrics(level).0).collect();
+        assert!(sizes.windows(2).all(|w| w[0] >= w[1]), "{sizes:?}");
+        assert_eq!(heading_metrics(0), heading_metrics(1));
+        assert_eq!(heading_metrics(9), heading_metrics(6));
         // Chat keeps its own scale and line height: the Docs ones may grow without it.
-        let (size, line) = heading_metrics(1, true);
+        let (size, line) = heading_metrics(1);
         assert_eq!(size, theme::doc::CHAT_HEADINGS[0]);
         assert_eq!(line, theme::doc::CHAT_HEADING_LINE_HEIGHT);
     }

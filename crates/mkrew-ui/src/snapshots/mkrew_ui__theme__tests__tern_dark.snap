@@ -92,7 +92,6 @@ Theme {
     well: 1513242,
     danger_text: 16736614,
     success_text: 4116366,
-    folder: 9079442,
     text_disabled: 7368823,
     diff_del_word_bg: 5253420,
     diff_add_word_bg: 2115127,

@@ -301,27 +301,32 @@ fn marker_look(marker: GitMarker, theme: &Theme) -> (u32, &'static str) {
     }
 }
 
-/// One cell per ancestor level, each as wide as one indent, with a 1 px `layer[1]` line at
-/// the centre of that level's chevron. The cells are in the flow (a `uniform_list` row has no
-/// neighbours to draw a continuous line), so the row's content starts where `pl(S)` plus
-/// `depth` indents put it before.
+/// One cell per ancestor level, each one indent wide, with a 1 px `layer[1]` line at the centre
+/// of that ancestor's chevron (the chevron sits one row `gap` after the cells, hence the
+/// overflowing inner box). The cells are in the flow (a `uniform_list` row has no neighbours to
+/// draw a continuous line) and as high as the row, so the line runs over the row's ring
+/// without a break.
 fn indent_guides(depth: usize, theme: &Theme) -> gpui::Div {
     let line = gpui::rgba(theme.layer[1]);
+    let height = theme::rems_px(theme::TREE_ROW_HEIGHT);
     div()
         .flex()
         .flex_none()
-        .h_full()
+        .items_center()
+        .h(height)
         .children((0..depth).map(move |_| {
             div()
                 .flex_none()
                 .w(px(theme::FILE_TREE_INDENT))
-                .h_full()
+                .h(height)
                 .child(
                     div()
-                        .ml(px(theme::TREE_CHEVRON_SIZE / 2.0))
-                        .w(px(theme::BORDER_WIDTH))
-                        .h_full()
-                        .bg(line),
+                        .ml(px(space::S))
+                        .w(theme::rems_px(theme::TREE_CHEVRON_SIZE))
+                        .h(height)
+                        .flex()
+                        .justify_center()
+                        .child(div().w(px(theme::BORDER_WIDTH)).h(height).bg(line)),
                 )
         }))
 }
@@ -343,7 +348,7 @@ pub(crate) fn file_row(
                 .h(theme::rems_px(theme::TREE_ROW_HEIGHT))
                 .flex()
                 .items_center()
-                .pl(px(space::S))
+                .gap(px(space::S))
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
                 .child(indent_guides(*depth, theme))
@@ -378,7 +383,7 @@ pub(crate) fn file_row(
         Icon::for_file(&entry.name)
     };
     let icon_color = match (entry.is_dir, opened) {
-        (true, _) => theme.folder,
+        (true, _) => theme.text_subtle,
         (false, true) => theme.accent,
         (false, false) => theme.text_subtle,
     };
@@ -400,7 +405,6 @@ pub(crate) fn file_row(
         .flex()
         .items_center()
         .gap(px(space::S))
-        .pl(px(space::S))
         .pr(px(space::S))
         .rounded(px(radius::CHIP))
         .border(px(theme::BORDER_WIDTH))
