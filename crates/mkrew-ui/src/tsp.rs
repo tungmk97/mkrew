@@ -868,6 +868,116 @@ pub fn row_changes(old: &[String], new: &[String], dirty: &HashSet<String>) -> V
     changes
 }
 
+/// What a `main` row counts as when thinking rows are grouped ([`thought_plan`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowKind {
+    /// Draws nothing: `hidden` (omp hides a finished tool row), or a column without shown children.
+    Hidden,
+    /// Its only shown content is one collapsed `omp.thinking` section, with its `took` in ms.
+    Thought(Option<u64>),
+    /// Anything else: it breaks a run.
+    Other,
+}
+
+/// A section or card whose role is a thinking one (`omp.thinking`, `omp.thinking.*`).
+pub fn is_thinking(node: &Node) -> bool {
+    role_of(node).is_some_and(|role| role.starts_with("omp.thinking"))
+}
+
+/// How row `node` of `main` counts for a run of thoughts.
+pub fn row_kind(doc: &Document, node: &Node) -> RowKind {
+    let hidden = |n: &Node| n.props.get("hidden").and_then(Value::as_bool) == Some(true);
+    if hidden(node) {
+        return RowKind::Hidden;
+    }
+    let section = match node.kind.as_str() {
+        "section" => node,
+        "col" => {
+            let mut shown = doc.children(&node.id).filter(|child| !hidden(child));
+            match (shown.next(), shown.next()) {
+                (None, _) => return RowKind::Hidden,
+                (Some(only), None) => only,
+                _ => return RowKind::Other,
+            }
+        }
+        _ => return RowKind::Other,
+    };
+    let collapsed = section.props.get("collapsed").and_then(Value::as_bool) == Some(true);
+    if section.kind != "section" || role_of(section) != Some("omp.thinking") || !collapsed {
+        return RowKind::Other;
+    }
+    let took = section.props.get("took").and_then(Value::as_f64);
+    RowKind::Thought(took.map(|ms| ms.max(0.0) as u64))
+}
+
+/// How one row of a run of thoughts is drawn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowPlan {
+    /// The run's first row: the group head `label`; `open` draws the row itself under it.
+    Lead { label: String, open: bool },
+    /// A later row of a closed run: nothing.
+    Folded,
+}
+
+/// "Thought for 4s": the sum of the `took`s (ms) rounded up to whole seconds, at least 1 s, like
+/// omp; "Thought 3 times" when a member has no `took`.
+fn thought_label(tooks: &[Option<u64>]) -> String {
+    match tooks.iter().copied().sum::<Option<u64>>() {
+        Some(ms) => format!(
+            "Thought for {}",
+            crate::status::format_duration(ms.div_ceil(1000).max(1) as i64 * 1000)
+        ),
+        None => format!("Thought {} times", tooks.len()),
+    }
+}
+
+fn close_run(
+    plan: &mut HashMap<String, RowPlan>,
+    run: &mut Vec<(&str, Option<u64>)>,
+    open: &HashSet<String>,
+) {
+    if let [(lead, _), rest @ ..] = run.as_slice()
+        && !rest.is_empty()
+    {
+        let tooks: Vec<Option<u64>> = run.iter().map(|(_, took)| *took).collect();
+        let is_open = open.contains(*lead);
+        if !is_open {
+            for (id, _) in rest {
+                plan.insert((*id).to_owned(), RowPlan::Folded);
+            }
+        }
+        let label = thought_label(&tooks);
+        plan.insert(
+            (*lead).to_owned(),
+            RowPlan::Lead {
+                label,
+                open: is_open,
+            },
+        );
+    }
+    run.clear();
+}
+
+/// Groups the thinking rows of `main` (`rows`: id and kind, in order): two or more thoughts with
+/// only hidden rows between them are one run, led by the first (`open`: lead ids the user opened).
+/// A row without an entry draws as it is.
+pub fn thought_plan<'a>(
+    rows: impl IntoIterator<Item = (&'a str, RowKind)>,
+    open: &HashSet<String>,
+) -> HashMap<String, RowPlan> {
+    let mut plan = HashMap::new();
+    let mut run = Vec::new();
+    for (id, kind) in rows {
+        match kind {
+            RowKind::Hidden => {}
+            RowKind::Thought(took) => run.push((id, took)),
+            RowKind::Other => close_run(&mut plan, &mut run, open),
+        }
+    }
+    close_run(&mut plan, &mut run, open);
+    plan
+}
+
 /// Where a `card` or `section` gets its header (reference 4, row 3): a string or spans, or the
 /// child whose id the `head` prop names (omp sends `head: "<id>/head"` and a `text` child with
 /// that id; a spinner or elapsed child can sit there too).
@@ -1427,10 +1537,10 @@ pub struct Checklist {
     pub note: Option<String>,
 }
 
-/// The hud's mark: loading dots (working), a ring (waiting), a filled circle (nothing left).
+/// The hud's mark: the active todo mark (working), a ring (waiting), a filled circle (nothing left).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HudMark {
-    Dots,
+    Active,
     Ring,
     Done,
 }
@@ -1521,7 +1631,7 @@ impl Checklist {
             return None;
         }
         let (mark, text) = if let Some(item) = self.first(TodoStatus::Active) {
-            (HudMark::Dots, item.text.clone())
+            (HudMark::Active, item.text.clone())
         } else if let Some(item) = self.first(TodoStatus::Pending) {
             (HudMark::Ring, item.text.clone())
         } else if let Some(item) = self.first(TodoStatus::Blocked) {
@@ -3551,7 +3661,7 @@ mod tests {
         assert_eq!(
             line,
             HudLine {
-                mark: HudMark::Dots,
+                mark: HudMark::Active,
                 text: "Viết code".into(),
                 done: 3,
                 total: 6
@@ -4078,5 +4188,139 @@ mod tests {
     #[test]
     fn a_huge_age_does_not_overflow() {
         assert_eq!(elapsed_ms(u64::MAX, None, 5), u64::MAX);
+    }
+}
+
+#[cfg(test)]
+mod thought_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn open_none() -> HashSet<String> {
+        HashSet::new()
+    }
+
+    fn plan(kinds: &[RowKind], open: &HashSet<String>) -> HashMap<String, RowPlan> {
+        let ids: Vec<String> = (0..kinds.len()).map(|i| format!("r{i}")).collect();
+        thought_plan(
+            ids.iter().map(String::as_str).zip(kinds.iter().copied()),
+            open,
+        )
+    }
+
+    fn lead(label: &str, open: bool) -> RowPlan {
+        RowPlan::Lead {
+            label: label.into(),
+            open,
+        }
+    }
+
+    use RowKind::{Hidden, Other, Thought};
+
+    #[test]
+    fn thoughts_across_hidden_rows_are_one_run() {
+        let p = plan(
+            &[
+                Thought(Some(1000)),
+                Hidden,
+                Hidden,
+                Thought(Some(1500)),
+                Hidden,
+                Thought(Some(2000)),
+            ],
+            &open_none(),
+        );
+        assert_eq!(p["r0"], lead("Thought for 5s", false));
+        assert_eq!(p["r3"], RowPlan::Folded);
+        assert_eq!(p["r5"], RowPlan::Folded);
+        assert_eq!(p.len(), 3, "hidden rows have no entry");
+    }
+
+    #[test]
+    fn a_shown_row_breaks_the_run_and_a_single_thought_stays_as_it_is() {
+        let p = plan(
+            &[
+                Thought(Some(1000)),
+                Other,
+                Thought(Some(1000)),
+                Thought(Some(1000)),
+                Other,
+                Thought(Some(1000)),
+            ],
+            &open_none(),
+        );
+        assert_eq!(p.get("r0"), None, "alone before a shown row");
+        assert_eq!(p["r2"], lead("Thought for 2s", false));
+        assert_eq!(p["r3"], RowPlan::Folded);
+        assert_eq!(p.get("r5"), None, "alone at the end");
+    }
+
+    #[test]
+    fn the_sum_rounds_up_to_whole_seconds_with_one_second_at_least() {
+        let label = |tooks: &[u64]| {
+            let kinds: Vec<RowKind> = tooks.iter().map(|ms| Thought(Some(*ms))).collect();
+            match &plan(&kinds, &open_none())["r0"] {
+                RowPlan::Lead { label, .. } => label.clone(),
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(label(&[300, 400]), "Thought for 1s");
+        assert_eq!(label(&[0, 0]), "Thought for 1s");
+        assert_eq!(label(&[1200, 1200]), "Thought for 3s");
+        assert_eq!(label(&[30_000, 31_000]), "Thought for 1m");
+    }
+
+    #[test]
+    fn a_member_without_took_makes_it_n_times() {
+        let p = plan(
+            &[
+                Thought(Some(1000)),
+                Thought(None),
+                Hidden,
+                Thought(Some(1000)),
+            ],
+            &open_none(),
+        );
+        assert_eq!(p["r0"], lead("Thought 3 times", false));
+    }
+
+    #[test]
+    fn an_open_run_draws_every_member() {
+        let open = HashSet::from(["r0".to_owned()]);
+        let p = plan(&[Thought(Some(1000)), Thought(Some(1000))], &open);
+        assert_eq!(p["r0"], lead("Thought for 2s", true));
+        assert_eq!(p.get("r1"), None);
+    }
+
+    #[test]
+    fn rows_are_classified_from_the_document() {
+        let thinking = |id: &str, collapsed: bool, hidden: bool| {
+            json!({"id": id, "k": "section", "p": {
+                "role": "omp.thinking", "collapsible": true, "collapsed": collapsed,
+                "hidden": hidden, "took": 1200,
+            }})
+        };
+        let col = |id: &str, kids: Vec<serde_json::Value>| json!({"id": id, "k": "col", "c": kids});
+        let tree = json!({"id": "main", "k": "col", "c": [
+            col("a", vec![thinking("a/t", true, false)]),
+            col("b", vec![thinking("b/t", false, false)]),
+            col("c", vec![thinking("c/t", true, true)]),
+            col("d", vec![thinking("d/t", true, false), json!({"id": "d/m", "k": "md"})]),
+            json!({"id": "e", "k": "card", "p": {"role": "omp.tool.edit", "hidden": true}}),
+            json!({"id": "f", "k": "card", "p": {"role": "omp.tool.edit"}}),
+            thinking("g", true, false),
+        ]});
+        let mut d = Document::new("s:1");
+        let applied = d.apply(&[json!(["add", "main", "s:1", null, tree])]);
+        assert!(applied.errors.is_empty(), "{:?}", applied.errors);
+        let kind = |id: &str| row_kind(&d, d.get(id).unwrap());
+        assert_eq!(kind("a"), Thought(Some(1200)));
+        assert_eq!(kind("b"), Other, "expanded");
+        assert_eq!(kind("c"), Hidden, "its only content is hidden");
+        assert_eq!(kind("d"), Other, "text beside the thought");
+        assert_eq!(kind("e"), Hidden);
+        assert_eq!(kind("f"), Other, "a shown tool");
+        assert_eq!(kind("g"), Thought(Some(1200)), "a bare section row");
     }
 }

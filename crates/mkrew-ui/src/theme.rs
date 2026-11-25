@@ -154,10 +154,10 @@ pub const ICON_SIZE: f32 = 16.0;
 /// A Lucide icon among body / meta text: text buttons, row actions, row chevrons, window
 /// controls.
 pub const ICON_SIZE_SMALL: f32 = 14.0;
-/// The font's ascent is taller than its descent, so one-line UI text sits about 1.5 px below
-/// the middle of its box. A control that must read as centered (the tab name, the address
+/// One-line Geist text at the UI line height sits about half a px below the middle of its
+/// box (measured, ADR 0116). A control that must read as centered (the tab name, the address
 /// field) lifts its text by this much: bottom padding of twice it under `items_center`.
-pub const TEXT_LIFT: f32 = 1.5;
+pub const TEXT_LIFT: f32 = 0.5;
 /// A pane icon in a tab chip: a step under [`ICON_SIZE_SMALL`], so it sits with the name.
 pub const TAB_ICON_SIZE: f32 = 12.0;
 /// The pin before the time of a pinned session row.
@@ -485,8 +485,6 @@ pub const COMPOSER_QUEUE_MAX_HEIGHT: f32 = 88.0;
 /// The model pill: 2 x `space::S` padding, 1 px borders, `opus 5.5` / `sonnet 4.5`, a gap and
 /// the chevron.
 pub const COMPOSER_CHIP_MODEL_WIDTH: f32 = 108.0;
-/// The loading dots (three dots and a gap) before the model name while the agent works.
-pub const COMPOSER_CHIP_LOADING_WIDTH: f32 = 20.0;
 /// `medium`, `xhigh`.
 pub const COMPOSER_CHIP_EFFORT_WIDTH: f32 = 56.0;
 /// The lightning icon and `on-request`.
@@ -503,15 +501,19 @@ pub const COMPOSER_CHIP_CLOCK_WIDTH: f32 = 68.0;
 pub const COMPOSER_ENHANCE_WIDTH: f32 = 46.0;
 /// Prompts (icon only: the same button) and the send button, with their gaps.
 pub const COMPOSER_FIXED_WIDTH: f32 = 82.0;
-/// The Chat composer's round send button.
-pub const SEND_BUTTON_SIZE: f32 = 28.0;
-/// The thin context meter above the Chat composer card.
-pub const CONTEXT_METER_HEIGHT: f32 = 2.0;
+/// The composer's round send and stop buttons (Tern: 32 px).
+pub const SEND_BUTTON_SIZE: f32 = 32.0;
+/// The chevron of the composer's model pill (a chevron step, like the tree's).
+pub const MODEL_CHEVRON_SIZE: f32 = TREE_CHEVRON_SIZE;
+/// The thin context meter above the composer card: a hairline.
+pub const CONTEXT_METER_HEIGHT: f32 = 1.0;
+/// The box of the percent label on the context meter; it is centered on the end of the fill.
+pub const CONTEXT_LABEL_WIDTH: f32 = 32.0;
 
 /// The hover area of a tick on the context meter of an omp dock (a mark such as the
 /// auto-compact point; its tooltip is the mark's title). The 1 px line sits in the middle.
 pub const CONTEXT_MARK_HIT_WIDTH: f32 = space::M;
-pub const CONTEXT_MARK_HIT_HEIGHT: f32 = CONTEXT_METER_HEIGHT + space::XS;
+pub const CONTEXT_MARK_HIT_HEIGHT: f32 = CONTEXT_METER_HEIGHT + space::S;
 
 /// Room reckoned for the bar of an omp dock (px at 13 px UI size, like the `COMPOSER_*` ones):
 /// the round send or stop button and its gap.
@@ -520,13 +522,13 @@ pub const TSP_BAR_FIXED_WIDTH: f32 = SEND_BUTTON_SIZE + space::S;
 pub const TSP_MODEL_CHROME_WIDTH: f32 = 48.0;
 /// The model name never truncates below this many characters.
 pub const TSP_MODEL_MIN_CHARS: usize = 6;
-/// The four-step effort glyph of the effort chip.
-pub const TSP_EFFORT_GLYPH_WIDTH: f32 = 28.0;
+/// The effort glyph that leads the model pill (omp's four bars) and the gap after it.
+pub const TSP_EFFORT_GLYPH_WIDTH: f32 = 28.0 + space::XS;
 /// Characters reckoned for a live elapsed time inside a fact (`12m 03s`).
 // ponytail: `1h 02m 03s` is 10 characters and clips (the facts cell is `overflow_hidden`, so
 // nothing else moves); measure the node's text if long sessions matter.
 pub const TSP_ELAPSED_CHARS: usize = 7;
-/// One average character of the UI font at `META` size (the effort label, the model name); the
+/// One average character of the UI font at `META` size (the model name); the
 /// facts and the cost are mono and use `COMPOSER_MONO_CHAR_WIDTH`.
 pub const TSP_UI_CHAR_WIDTH: f32 = 6.6;
 
@@ -1159,7 +1161,8 @@ impl Theme {
             sidebar: 0x0F1013,
             chrome: 0x0F1013,
             card: 0x1C1F24,
-            tab_active: 0x2A2E35,
+            // Tern's 10 % white over the bar (`pane_gap` is black).
+            tab_active: 0x1A1A1A,
             hover: 0x1F2227,
             selected: 0x2A2E35,
             selected_ring: 0x3D4380,

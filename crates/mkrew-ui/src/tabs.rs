@@ -919,7 +919,7 @@ pub fn rename_params(tab: &Tab, draft: &str) -> Option<TabRenameParams> {
     })
 }
 
-/// The status icon in front of a tab chip: only a state the user should notice.
+/// The state a tab chip's icon is colored for: only a state the user should notice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabStatus {
     Working,
@@ -944,21 +944,16 @@ pub enum PaneIcon {
 /// What a tab chip shows in front of its title.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TabIcons {
-    /// `None` unless a pane needs input or an agent works.
+    /// `None` unless a pane needs input or an agent works; it recolors the icon.
     pub status: Option<TabStatus>,
-    pub panes: Vec<PaneIcon>,
-    /// Panes beyond [`MAX_PANE_ICONS`], shown as `+N`.
-    pub more: usize,
+    /// The focused pane's icon; `None` for a tab without a known pane.
+    pub pane: Option<PaneIcon>,
 }
 
-/// Most pane icons an active tab chip shows before `+N`.
-pub const MAX_PANE_ICONS: usize = 3;
-
 /// The icons of `tab`'s chip. Status: needs input beats a working agent; every other state
-/// (idle, done, exited, starting) shows none. Pane icons: the active tab shows one per pane in
-/// pane order (at most [`MAX_PANE_ICONS`], then `more`), an inactive tab only its focused
-/// pane. Panes without a known session are skipped.
-pub fn tab_icons(tab: &Tab, sessions: &[Session], active: bool) -> TabIcons {
+/// (idle, done, exited, starting) shows none. One pane icon: the focused pane's; a pane
+/// without a known session has none.
+pub fn tab_icons(tab: &Tab, sessions: &[Session]) -> TabIcons {
     let ids = tab.sessions();
     let known = |id: &Ulid| sessions.iter().find(|s| s.id == *id);
     let state = |wanted: SessionState| {
@@ -978,24 +973,13 @@ pub fn tab_icons(tab: &Tab, sessions: &[Session], active: bool) -> TabIcons {
         _ if mkrew_core::run::command_name(s).is_some() => PaneIcon::Run,
         _ => PaneIcon::Shell,
     };
-    let pane_icon = |key: &PaneKey| match key {
+    let pane = tab.focused().and_then(|key| match key {
         PaneKey::Session(id) => known(id).map(icon),
         PaneKey::File(file) => Some(PaneIcon::File(file.path.clone())),
         PaneKey::Diff => Some(PaneIcon::Diff),
         PaneKey::Web(_) => Some(PaneIcon::Web),
-    };
-    let mut panes: Vec<PaneIcon> = if active {
-        tab.keys().iter().filter_map(pane_icon).collect()
-    } else {
-        tab.focused().into_iter().filter_map(pane_icon).collect()
-    };
-    let more = panes.len().saturating_sub(MAX_PANE_ICONS);
-    panes.truncate(MAX_PANE_ICONS);
-    TabIcons {
-        status,
-        panes,
-        more,
-    }
+    });
+    TabIcons { status, pane }
 }
 
 /// Whether `tab` still has its default name: `Terminal` or `Terminal N`.
@@ -1109,37 +1093,6 @@ pub fn double_click_renames(tab: &Tab, sessions: &[Session]) -> Option<Ulid> {
     mkrew_core::run::command_name(session)
         .is_none()
         .then_some(focused)
-}
-
-/// One child of the title bar's tab area, in paint order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AreaItem {
-    /// The 1 px rule between two groups.
-    Rule,
-    /// The `n`th terminal tab this window draws (detached tabs are not counted).
-    Tab(usize),
-}
-
-/// The children of the tab area: the tabs (`pinned[n]` is whether the `n`th drawn tab is
-/// pinned; pinned ones lead) and a rule between the pinned tabs and the rest. A rule only sits
-/// between two groups.
-pub fn area_items(pinned: &[bool]) -> Vec<AreaItem> {
-    let mut items = Vec::with_capacity(pinned.len() + 1);
-    for (at, &pin) in pinned.iter().enumerate() {
-        if at > 0 && pinned[at - 1] && !pin {
-            items.push(AreaItem::Rule);
-        }
-        items.push(AreaItem::Tab(at));
-    }
-    items
-}
-
-/// The index in `items` of the child to scroll into view: the active tab (`active` is its
-/// drawn slot).
-pub fn scroll_index(items: &[AreaItem], active: Option<usize>) -> Option<usize> {
-    items
-        .iter()
-        .position(|item| matches!(item, AreaItem::Tab(at) if active == Some(*at)))
 }
 
 /// Sessions to attach (in `after` only) and to detach (in `before` only) when the visible

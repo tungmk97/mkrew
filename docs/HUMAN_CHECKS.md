@@ -21,6 +21,18 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-25 UI typography and quiet chrome (ADR 0116, spec docs/superpowers/specs/2026-11-25-ui-typography-design.md)
+
+Screenshots: `docs/screenshots/ui-typography-<fake|split>-<dark|light>.png` (a fake agent alone; the fake agent beside an idle omp pane).
+
+- [ ] **Geist everywhere:** with `[ui] font_family` empty the whole UI is Geist (sidebar, tabs, dialogs, Settings); setting it to another font still switches; Settings → Appearance lists Geist.
+- [ ] **omp icons:** the box before the omp composer placeholder (a Nerd Font icon in the session title) is gone, also on a machine without a Nerd Font.
+- [ ] **Working omp pane:** while omp works only the dock's working row shows the three dots; the model pill has none; a running tool or `spinner` shows the orbit mark stepping every half second; the todo HUD and an active checklist phase show the accent ring with a dot.
+- [ ] **Thinking runs:** a long turn with hidden tool calls shows one "Thought for Ns" head instead of a column of "Thought for 1s" rows; a click opens the run and the head closes it; scrolling stays put.
+- [ ] **Tabs:** one gray icon per chip; a working tab's icon is purple and a tab that needs you amber, with the state in the tooltip; the active tab name is regular weight and reads centered.
+- [ ] **Composer:** the effort bars lead the model pill (tooltip "Effort: …", a click still changes it); facts are quiet gray and whole facts drop when narrow (none cut mid-text); Send inverts on hover; Stop is a filled circle; light theme too.
+- [ ] **Chat view (Claude / Codex):** inline code is plain text on a faint fill, table headers muted; subagent chips show a still dot while running.
+
 ### To verify - 2026-11-25 Window modes (ADR 0115, spec docs/superpowers/specs/2026-11-25-window-modes-design.md)
 
 Screenshots: `docs/screenshots/window-modes-<view>-<dark|light>.png` (ask, window, picker, confirm, combined, need-you).

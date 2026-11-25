@@ -60,6 +60,10 @@ pub(crate) struct TspUi {
     todo_chip: Rc<Cell<Bounds<Pixels>>>,
     /// Phase headers the user clicked: (checklist node id, phase id). Flips the phase's default.
     todo_toggled: HashSet<(String, String)>,
+    /// How `main`'s runs of collapsed thoughts are drawn (`tsp::thought_plan`), and the leads
+    /// the user opened (UI only).
+    thoughts: HashMap<String, tsp::RowPlan>,
+    thought_open: HashSet<String>,
     /// The page list (ADR 0114): only the rows on screen (and `TSP_LIST_OVERDRAW` around them)
     /// are laid out. Item 0 and item `n + 1` are spacers; item `i + 1` is row `i` of `main`.
     rows: gpui::ListState,
@@ -141,6 +145,8 @@ impl TspUi {
             todo_open: None,
             todo_chip: Rc::new(Cell::new(Bounds::default())),
             todo_toggled: HashSet::new(),
+            thoughts: HashMap::new(),
+            thought_open: HashSet::new(),
             rows: new_rows(),
             row_ids: Vec::new(),
             rows_surface: None,
@@ -178,6 +184,7 @@ impl TspUi {
     fn sync_rows(&mut self, surface: Option<&str>, dirty: &HashSet<String>) {
         let Some((meta, doc)) = self.mirror.as_ref().and_then(Mirror::shown) else {
             self.row_ids.clear();
+            self.thoughts.clear();
             self.rows_surface = None;
             self.rows.reset(2);
             return;
@@ -217,6 +224,26 @@ impl TspUi {
         }
         self.rows_surface = Some(shown);
         self.row_ids = new;
+        self.refresh_thoughts();
+    }
+
+    /// Groups the shown rows' thoughts again ([`tsp::thought_plan`]). The row count stays: a
+    /// folded row draws nothing, so a row whose plan changed is only measured again.
+    fn refresh_thoughts(&mut self) {
+        let Some((_, doc)) = self.mirror.as_ref().and_then(Mirror::shown) else {
+            self.thoughts.clear();
+            return;
+        };
+        let kinds = (self.row_ids.iter())
+            .filter_map(|id| doc.get(id))
+            .map(|node| (node.id.as_str(), tsp::row_kind(doc, node)));
+        let plan = tsp::thought_plan(kinds, &self.thought_open);
+        for (ix, id) in self.row_ids.iter().enumerate() {
+            if plan.get(id) != self.thoughts.get(id) {
+                self.rows.remeasure_items(ix + 1..ix + 2);
+            }
+        }
+        self.thoughts = plan;
     }
 
     /// Scrolls the page list so its `item` shows. Known heights (the item is laid out or above
@@ -246,6 +273,7 @@ impl TspUi {
         tsp::retain_known(self.elapsed_seen.get_mut(), known);
         tsp::retain_known(self.hits.get_mut(), known);
         tsp::retain_known(self.lists.get_mut(), known);
+        self.thought_open.retain(|id| known(id));
         tsp::retain_known(self.images.get_mut(), |id| mirror.blob(id).is_some());
     }
 }
@@ -898,6 +926,18 @@ impl Shell {
         }
         cx.notify();
     }
+
+    /// A click on the head of a run of thoughts: opens or closes the run (UI only).
+    fn tsp_thought_toggle(&mut self, session: Ulid, row: &str, cx: &mut Context<'_, Self>) {
+        let Some(ui) = self.tsps.get_mut(&session) else {
+            return;
+        };
+        if !ui.thought_open.remove(row) {
+            ui.thought_open.insert(row.to_owned());
+        }
+        ui.refresh_thoughts();
+        cx.notify();
+    }
 }
 
 /// Everything one node builder needs.
@@ -1390,7 +1430,32 @@ impl Shell {
             bounded: false,
             compact,
         };
-        page_column(self.tsp_node(&paint, node, cx), max, false).into_any_element()
+        let el = match ui.thoughts.get(&node.id) {
+            // Folded into the lead's head: the row draws nothing.
+            Some(tsp::RowPlan::Folded) => return div().into_any_element(),
+            Some(tsp::RowPlan::Lead { label, open }) => {
+                let (session, id) = (session, node.id.clone());
+                let head = thinking_head_el(
+                    theme,
+                    format!("tsp-run-{session}-{id}"),
+                    label.clone(),
+                    Some(!open),
+                )
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, _, cx| shell.tsp_thought_toggle(session, &id, cx)),
+                );
+                let el = div().flex().flex_col().gap(px(space::XS)).child(head);
+                if *open {
+                    el.child(self.tsp_node(&paint, node, cx))
+                } else {
+                    el
+                }
+                .into_any_element()
+            }
+            None => self.tsp_node(&paint, node, cx),
+        };
+        page_column(el, max, false).into_any_element()
     }
 
     /// A child of `layer`: an `overlay` is a modal card placed by its `anchor` and `size`; any other
@@ -1767,8 +1832,47 @@ impl Shell {
         if head.is_empty() && head_child.is_none() {
             return None;
         }
+        // A thinking head is its label only (omp's span colors are not used); a live one keeps
+        // its spinner child.
+        if tsp::is_thinking(node) {
+            let label = match head_child {
+                Some(child) if child.kind == "text" => Some(tsp::node_spans(&child.props, p.theme)),
+                Some(_) => None,
+                None => Some(head.clone()),
+            };
+            if let Some(runs) = label {
+                let label: String = runs.into_iter().map(|(text, _)| text).collect();
+                return Some(Self::tsp_thinking_head(p, node, label, cx));
+            }
+        }
         let child = head_child.map(|child| self.tsp_node(p, child, cx));
         Some(Self::tsp_card_head_row(p, node, &head, child, cx))
+    }
+
+    /// The head of an `omp.thinking*` section; a collapsible one toggles on a press.
+    fn tsp_thinking_head(
+        p: &Paint<'_>,
+        node: &Node,
+        label: String,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let collapsible = bool_prop(node, "collapsible");
+        let collapsed = bool_prop(node, "collapsed");
+        let key = format!("tsp-head-{}-{}", p.session, node.id);
+        let head = thinking_head_el(p.theme, key, label, collapsible.then_some(collapsed));
+        if !collapsible {
+            return head.into_any_element();
+        }
+        let (session, id) = (p.session, node.id.clone());
+        head.on_press(
+            true,
+            cx.listener(move |shell, _, _, cx| {
+                if let Some(event) = tsp::toggle_event(&id, !collapsed) {
+                    shell.tsp_emit(session, event, cx);
+                }
+            }),
+        )
+        .into_any_element()
     }
 
     /// The head row around its built child or spans; a collapsible one toggles on a press.
@@ -1785,14 +1889,28 @@ impl Shell {
         let collapsed = bool_prop(node, "collapsed");
         let head_color =
             str_prop(node, "tone").map_or(theme.text, |tone| tsp::tone_color(tone, theme));
-        let mut row = div().flex().items_center().gap(px(space::S));
+        let group = SharedString::from(format!("tsp-hg-{}-{}", p.session, node.id));
+        let mut row = div()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .group(group.clone());
         if collapsible {
             let chevron = if collapsed {
                 Icon::ChevronRight
             } else {
                 Icon::ChevronDown
             };
-            row = row.child(icon_svg(chevron, theme::ICON_SIZE_SMALL, theme.text_muted));
+            let mark = icon_svg(chevron, theme::ICON_SIZE_SMALL, theme.text_muted);
+            // A tool card's chevron shows while its head is hovered.
+            row = if tsp::role_of(node).is_some_and(|role| role.starts_with("omp.tool.")) {
+                row.child(
+                    mark.opacity(theme::opacity::HIDDEN)
+                        .group_hover(group, |style| style.opacity(theme::opacity::FULL)),
+                )
+            } else {
+                row.child(mark)
+            };
         }
         let row = match child {
             Some(child) => row.child(child),
@@ -2328,7 +2446,7 @@ impl Shell {
     fn tsp_bar(p: &Paint<'_>, value: Option<f64>, color: u32) -> AnyElement {
         let theme = p.theme;
         let Some(value) = value else {
-            return loading_dots(p.now, rgb(color)).into_any_element();
+            return orbit_mark(p.now, color).into_any_element();
         };
         div()
             .w(px(theme::TSP_KEY_WIDTH))
@@ -2376,14 +2494,16 @@ impl Shell {
     #[inline(never)]
     fn tsp_spinner(p: &Paint<'_>, node: &Node) -> Div {
         let theme = p.theme;
+        let tone = Self::live_tone(p, node).unwrap_or(theme.status_working);
         div()
             .flex()
             .items_center()
             .gap(px(space::S))
-            .child(loading_dots(
-                p.now,
-                rgb(Self::live_tone(p, node).unwrap_or(theme.status_working)),
-            ))
+            .child(if str_prop(node, "style") == Some("dots") {
+                loading_dots(p.now, rgb(tone)).into_any_element()
+            } else {
+                orbit_mark(p.now, tone).into_any_element()
+            })
             .child(styled_runs(
                 &Self::live_label(p, node),
                 theme.text_muted,
@@ -2753,6 +2873,46 @@ impl Shell {
     }
 }
 
+/// The head of an `omp.thinking*` section, or of a run of them: META italic `text_subtle`
+/// (`text_muted` on hover) with the chevron after the label. `collapsed`: the chevron's state, or
+/// `None` without one. The caller adds the press.
+fn thinking_head_el(
+    theme: &Theme,
+    key: String,
+    label: String,
+    collapsed: Option<bool>,
+) -> gpui::Stateful<Div> {
+    let group = SharedString::from(key.clone());
+    let chevron = collapsed.map(|collapsed| {
+        let icon = if collapsed {
+            Icon::ChevronRight
+        } else {
+            Icon::ChevronDown
+        };
+        icon_svg(icon, theme::GROUP_CHEVRON_SIZE, theme.text_subtle)
+            .group_hover(group.clone(), |style| {
+                style.text_color(rgb(theme.text_muted))
+            })
+    });
+    div()
+        .id(SharedString::from(key))
+        .group(group.clone())
+        .self_start()
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .text_size(font_size::META)
+        .italic()
+        .child(
+            div()
+                .text_color(rgb(theme.text_subtle))
+                .group_hover(group, |style| style.text_color(rgb(theme.text_muted)))
+                .child(label),
+        )
+        .children(chevron)
+        .pressable(Look::Text, true, theme)
+}
+
 /// The mark of a todo item or phase.
 fn todo_mark(mark: tsp::ItemMark, color: u32) -> AnyElement {
     // Every mark has the icon box: a ring for the open states (a dot inside for the active one),
@@ -2843,9 +3003,7 @@ impl Shell {
             let collapsed = tsp::collapsed_now(phase.default_collapsed(), toggled);
             let header = (!phase.headerless()).then(|| {
                 let mark = match phase.mark() {
-                    tsp::PhaseMark::Working => {
-                        loading_dots(p.now, rgb(theme.status_working)).into_any_element()
-                    }
+                    tsp::PhaseMark::Working => todo_mark(tsp::ItemMark::Active, theme.accent),
                     tsp::PhaseMark::Done => status_dot(theme.status_done, false).into_any_element(),
                     tsp::PhaseMark::Open => status_dot(theme.text_muted, true).into_any_element(),
                 };
@@ -2869,6 +3027,11 @@ impl Shell {
                             .flex_1()
                             .min_w_0()
                             .truncate()
+                            .text_color(rgb(if phase.mark() == tsp::PhaseMark::Done {
+                                theme.text_muted
+                            } else {
+                                theme.text
+                            }))
                             .font_weight(FontWeight(weight::SEMIBOLD))
                             .child(title),
                     )
@@ -2973,7 +3136,7 @@ impl Shell {
         };
         let open = p.ui.todo_open.as_deref() == Some(node.id.as_str());
         let mark = match line.mark {
-            tsp::HudMark::Dots => loading_dots(p.now, rgb(theme.status_working)).into_any_element(),
+            tsp::HudMark::Active => todo_mark(tsp::ItemMark::Active, theme.accent),
             tsp::HudMark::Ring => status_dot(theme.text_muted, true).into_any_element(),
             tsp::HudMark::Done => status_dot(theme.status_done, false).into_any_element(),
         };
@@ -3222,18 +3385,17 @@ impl Shell {
             return composer_card_frame(theme).child(field).into_any_element();
         }
         let status = self.tsp_dock_status(p, &m.status, cx);
-        // What the agent works on, before the window size on the meter's row.
-        let title = (self.sidebar.sessions().iter())
-            .find(|s| s.id == p.session)
-            .and_then(mkrew_ui::history::title)
-            .map(str::to_owned);
+        // The fill is neutral; omp's warning and error tones past its thresholds keep theirs.
         let meter = m.context.as_ref().map(|c| {
             let marks = c.marks.iter().map(|k| (k.at, k.title.clone())).collect();
+            let fill = match c.tone {
+                "accent" => theme.text_muted,
+                tone => tsp::tone_color(tone, theme),
+            };
             let bar = meter_bar(
                 c.fraction.unwrap_or(0.0),
-                tsp::tone_color(c.tone, theme),
+                fill,
                 c.label.clone(),
-                title,
                 c.total.clone(),
                 marks,
                 theme,
@@ -3368,22 +3530,12 @@ impl Shell {
         let mut cells: Vec<AnyElement> = Vec::new();
         for part in &m.bar.parts {
             match part {
-                tsp::BarPart::Effort => {
-                    if let (true, Some(effort)) = (fit.effort, &m.bar.effort) {
-                        let mut chip = quiet_chip(div(), theme);
-                        if let Some(glyph) = effort.glyph.as_deref().and_then(|id| p.doc.get(id)) {
-                            chip = chip.child(self.tsp_node(p, glyph, cx));
-                        }
-                        let chip = chip.child(effort.label.clone());
-                        cells.push(self.tsp_chip(p, &effort.id, Look::Chip, chip, cx));
-                    }
-                }
                 tsp::BarPart::Model => {
                     if let Some(model) = &m.bar.model {
                         cells.push(self.tsp_dock_model(
                             p,
                             model,
-                            m.bar.working,
+                            m.bar.effort.as_ref(),
                             fit.model_name,
                             exited,
                             cx,
@@ -3411,6 +3563,7 @@ impl Shell {
                     if let (true, Some(usage)) = (fit.usage, &m.bar.usage) {
                         let chip = quiet_chip(div(), theme)
                             .font_family(theme.terminal_font_family.clone())
+                            .text_color(rgb(usage.color))
                             .child(usage.text.clone());
                         cells.push(self.tsp_chip(p, &usage.id, Look::Chip, chip, cx));
                     }
@@ -3439,13 +3592,14 @@ impl Shell {
             .into_any_element()
     }
 
-    /// The Chat model pill (loading dots while the session works, the name truncated to what
-    /// `fit_bar` left it), a click is omp's `status.model`.
+    /// The model pill, the name truncated to what `fit_bar` left it. omp's effort glyph leads
+    /// the pill and the effort label joins its tooltip. A click is omp's `status.model`; a click
+    /// on the glyph is the effort's own action.
     fn tsp_dock_model(
         &self,
         p: &Paint<'_>,
         model: &tsp::ModelPill,
-        working: bool,
+        effort: Option<&tsp::Effort>,
         name_room: Option<f32>,
         exited: bool,
         cx: &mut Context<'_, Self>,
@@ -3453,22 +3607,61 @@ impl Shell {
         let theme = p.theme;
         let node = p.doc.get(&model.id);
         let click = !exited && node.is_some_and(|n| tsp::has_click(p.doc, n));
-        let title = node.and_then(|n| str_prop(n, "title")).filter(|_| p.tips());
+        let tip = [
+            node.and_then(|n| str_prop(n, "title")).map(str::to_owned),
+            effort
+                .filter(|e| !e.label.is_empty())
+                .map(|e| format!("Effort: {}", e.label)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
         let name = div()
             .min_w_0()
             .truncate()
             .when_some(name_room, |el, room| el.max_w(theme::rems_px(room)))
             .child(model.name.clone());
         let (session, id) = (p.session, model.id.clone());
+        let lead = effort.and_then(|effort| {
+            let glyph = self.tsp_node(p, effort.glyph.as_deref().and_then(|id| p.doc.get(id))?, cx);
+            let press = !exited
+                && p.doc
+                    .get(&effort.id)
+                    .is_some_and(|n| tsp::has_click(p.doc, n));
+            if !press {
+                return Some(glyph);
+            }
+            let effort_id = effort.id.clone();
+            Some(
+                div()
+                    .id(SharedString::from(format!("tsp-effort-{session}")))
+                    .flex()
+                    .items_center()
+                    .rounded(px(theme::radius::PILL))
+                    .child(glyph)
+                    .pressable(Look::Icon, true, theme)
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, event: &ClickEvent, _, cx| {
+                            // The glyph is inside the pill: its click is not the pill's.
+                            cx.stop_propagation();
+                            shell.tsp_click(session, &effort_id, event.click_count() > 1, cx);
+                        }),
+                    )
+                    .into_any_element(),
+            )
+        });
         model_pill(
             SharedString::from(format!("tsp-model-{session}")),
+            lead,
             name,
-            working,
             click,
-            p.now,
             theme,
         )
-        .when_some(title, |el, title| el.tooltip(tooltip(theme, title, "")))
+        .when(p.tips() && !tip.is_empty(), |el| {
+            el.tooltip(tooltip(theme, &tip, ""))
+        })
         .on_press(
             click,
             cx.listener(move |shell, event: &ClickEvent, _, cx| {
@@ -3478,9 +3671,9 @@ impl Shell {
         .into_any_element()
     }
 
-    /// One fact: a quiet mono chip with its icon; the `accent` one is the Chat permission chip;
-    /// the text takes `fact.color` (Chat's colors for the stats Chat shows too); an elapsed time
-    /// is drawn by its own node (it ticks on the status tick).
+    /// One fact: a quiet mono chip with its icon in `fact.color` (`text_subtle`); the `accent`
+    /// one is the Chat permission chip; the colors omp put in the text's spans stay
+    /// (`fact.runs`); an elapsed time is drawn by its own node (it ticks on the status tick).
     fn tsp_dock_fact(
         &self,
         p: &Paint<'_>,
@@ -3493,15 +3686,12 @@ impl Shell {
             body => {
                 let mut el = quiet_chip(div(), theme).text_color(rgb(fact.color));
                 if let Some(icon) = fact.icon {
-                    // Chat's clock icon is as quiet as its time; the others stay `text_muted`.
-                    let tint = if fact.color == theme.text_subtle {
-                        fact.color
-                    } else {
-                        theme.text_muted
-                    };
-                    el = el.child(icon_svg(icon, theme::ICON_SIZE_SMALL, tint));
+                    el = el.child(icon_svg(icon, theme::ICON_SIZE_SMALL, fact.color));
                 }
                 match body {
+                    tsp::FactBody::Text(_) if !fact.runs.is_empty() => {
+                        el.child(styled_runs(&fact.runs, fact.color, true, theme))
+                    }
                     tsp::FactBody::Text(text) | tsp::FactBody::Rate(text) => el.child(text.clone()),
                     tsp::FactBody::Elapsed(id) => {
                         el.children(p.doc.get(id).map(|node| self.tsp_node(p, node, cx)))
@@ -3563,8 +3753,8 @@ impl Shell {
     }
 
     /// The row above the meter, as Tern: on the left the working row (loading dots, elapsed time,
-    /// a divider, the label in `status_needs_input`, a small ghost Stop) and any other status
-    /// node; on the right the todo hud and the glass hud pills. `None` when there is nothing.
+    /// a divider, the label) and any other status node; on the right the todo hud and the hud
+    /// pill. `None` when there is nothing.
     fn tsp_dock_status(
         &self,
         p: &Paint<'_>,
@@ -3609,6 +3799,8 @@ impl Shell {
         )
     }
 
+    /// The working row: loading dots, the elapsed time, a divider and the label. Its own Stop is
+    /// not drawn: the card's round Stop is the one.
     fn tsp_dock_working(
         &self,
         p: &Paint<'_>,
@@ -3616,36 +3808,15 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let theme = p.theme;
-        let session = p.session;
-        let exited = self.is_exited(session);
         let elapsed = (w.elapsed.as_deref())
             .and_then(|id| p.doc.get(id))
             .map(|node| {
                 div()
                     .flex_none()
                     .font_family(theme.terminal_font_family.clone())
-                    .text_color(rgb(theme.text_muted))
+                    .text_color(rgb(theme.text_subtle))
                     .child(self.tsp_node(p, node, cx))
             });
-        let stop = w.stop.clone().map(|id| {
-            let tip = (p.doc.get(&id))
-                .and_then(|node| str_prop(node, "title"))
-                .filter(|_| p.tips())
-                .map(str::to_owned);
-            quiet_button(
-                "tsp-working-stop",
-                icon_text(Icon::Square, "Stop", theme.text_muted),
-                theme,
-                theme.hover,
-            )
-            .h(theme::rems_px(theme::PILL_HEIGHT))
-            .flex_none()
-            .when_some(tip, |el, tip| el.tooltip(tooltip(theme, &tip, "")))
-            .on_press(
-                !exited,
-                cx.listener(move |shell, _, _, cx| shell.tsp_click(session, &id, false, cx)),
-            )
-        });
         div()
             .flex()
             .flex_1()
@@ -3670,15 +3841,14 @@ impl Shell {
                 div()
                     .min_w_0()
                     .truncate()
-                    .text_color(rgb(theme.status_needs_input))
+                    .text_size(font_size::BODY)
+                    .text_color(rgb(theme.text_muted))
                     .child(w.label.clone()),
             )
-            .child(div().flex_1())
-            .children(stop)
             .into_any_element()
     }
 
-    /// One segment of the hud's glass pill (subagents, jobs): the icon in its tone, then the
+    /// One segment of the hud pill (subagents, jobs): the icon in its tone, then the
     /// count in mono; the node's `title` is the tooltip and a click is its action
     /// (`agents.open`, `jobs.open`).
     fn tsp_dock_pill(
@@ -3708,7 +3878,8 @@ impl Shell {
         self.tsp_chip(p, &pill.id, Look::Chip, el, cx)
     }
 
-    /// The hud row as Tern draws it: ONE glass pill, its segments split by a thin divider.
+    /// The hud row as Tern draws it: ONE pill with a `border` ring and no fill, its segments
+    /// split by a thin divider.
     fn tsp_dock_pills(
         &self,
         p: &Paint<'_>,
@@ -3736,9 +3907,8 @@ impl Shell {
             .items_center()
             .h(theme::rems_px(theme::PILL_HEIGHT))
             .rounded(px(theme::radius::PILL))
-            .bg(gpui::rgba(theme.glass))
             .border(px(theme::BORDER_WIDTH))
-            .border_color(gpui::rgba(theme.glass_border))
+            .border_color(rgb(theme.border))
             .font_family(theme.terminal_font_family.clone())
             .text_size(font_size::META)
             .text_color(rgb(theme.text_muted))

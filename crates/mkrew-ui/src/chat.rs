@@ -705,12 +705,11 @@ impl Chips {
     }
 }
 
-/// What else of the chip row takes room: whether ✦ shows (the draft is not blank), whether the
-/// loading dots sit in the model pill (the agent works), and the branch chip's width.
+/// What else of the chip row takes room: whether ✦ shows (the draft is not blank) and the
+/// branch chip's width.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct FitCtx {
     pub typing: bool,
-    pub working: bool,
     /// [`branch_width`] of the shown branch (0 without one).
     pub branch: f32,
 }
@@ -736,10 +735,6 @@ pub fn chips_width(chips: Chips, ctx: FitCtx) -> f32 {
         + [
             (ctx.typing, theme::COMPOSER_ENHANCE_WIDTH),
             (chips.model, theme::COMPOSER_CHIP_MODEL_WIDTH),
-            (
-                chips.model && ctx.working,
-                theme::COMPOSER_CHIP_LOADING_WIDTH,
-            ),
             (chips.effort, theme::COMPOSER_CHIP_EFFORT_WIDTH),
             (chips.permission, theme::COMPOSER_CHIP_PERMISSION_WIDTH),
             (chips.branch, ctx.branch),
@@ -1505,8 +1500,8 @@ mod tests {
     }
 
     #[test]
-    fn the_ends_of_the_row_cost_the_sparkle_button_and_the_loading_dots() {
-        use crate::theme::{COMPOSER_CHIP_LOADING_WIDTH, COMPOSER_ENHANCE_WIDTH};
+    fn the_sparkle_button_costs_room_while_typing() {
+        use crate::theme::COMPOSER_ENHANCE_WIDTH;
         let only_model = Chips {
             effort: false,
             permission: false,
@@ -1520,17 +1515,9 @@ mod tests {
             typing: true,
             ..FitCtx::default()
         };
-        let working = FitCtx {
-            working: true,
-            ..FitCtx::default()
-        };
         assert_eq!(
             chips_width(only_model, typing) - idle,
             COMPOSER_ENHANCE_WIDTH
-        );
-        assert_eq!(
-            chips_width(only_model, working) - idle,
-            COMPOSER_CHIP_LOADING_WIDTH
         );
     }
 
@@ -1567,10 +1554,9 @@ mod tests {
         assert!(branch_width(&branch_chip("a")) < width);
         let (narrow, wide) = (320.0, ROOM_900);
         for room in [narrow, 480.0, wide] {
-            for (typing, working) in [(false, false), (true, false), (true, true)] {
+            for typing in [false, true] {
                 let ctx = FitCtx {
                     typing,
-                    working,
                     branch: width,
                 };
                 let shown = fit_chips(all_chips(), room, ctx);
@@ -1587,7 +1573,7 @@ mod tests {
                 // model chip and the fixed part are left (they never drop).
                 assert!(
                     used <= room || shown == minimal,
-                    "room {room} typing {typing} working {working}: {used} px for {shown:?}"
+                    "room {room} typing {typing}: {used} px for {shown:?}"
                 );
             }
         }

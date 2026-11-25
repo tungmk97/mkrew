@@ -349,8 +349,8 @@ impl Shell {
             .bg(rgb(theme.pane_gap))
             .font_family(theme.ui_font_family.clone())
             .child(left.when(modal, |el| el.relative().child(inert_layer())))
-            // Rules set the groups apart: left | tabs | drag | right (never drag or press
-            // targets, the drag area stays its own sibling).
+            // A rule sets the left group apart from the tabs (never a drag or press target,
+            // the drag area stays its own sibling).
             .when(main && has_tabs, |el| el.child(title_rule(theme)))
             .children(tab_area.map(|area| {
                 div()
@@ -363,7 +363,6 @@ impl Shell {
                     .child(area)
                     .when(modal, |el| el.relative().child(inert_layer()))
             }))
-            .when(has_tabs, |el| el.child(title_rule(theme)))
             .child(drag);
         let controls = DRAWN_CONTROLS && !window.is_fullscreen();
         let mut right: Vec<gpui::AnyElement> = Vec::new();

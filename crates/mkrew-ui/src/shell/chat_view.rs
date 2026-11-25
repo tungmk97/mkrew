@@ -279,7 +279,6 @@ impl Shell {
         &self,
         session: Ulid,
         is_focused: bool,
-        now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
@@ -421,7 +420,7 @@ impl Shell {
                     }),
             )
             .when(!view.tray.is_empty(), |el| {
-                el.child(chat_tray(&view.tray, now, theme))
+                el.child(chat_tray(&view.tray, theme))
             })
             .children(question)
             .into_any_element()
@@ -947,8 +946,8 @@ fn chat_plan(steps: &[chat::PlanRow<'_>], theme: &Theme) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// The subagent tray: a chip per subagent with its description and loading dots or a check.
-fn chat_tray(chips: &[chat::Chip<'_>], now: i64, theme: &Theme) -> gpui::AnyElement {
+/// The subagent tray: a chip per subagent with its description and the working dot or a check.
+fn chat_tray(chips: &[chat::Chip<'_>], theme: &Theme) -> gpui::AnyElement {
     div()
         .flex_none()
         .py(px(space::S))
@@ -974,7 +973,7 @@ fn chat_tray(chips: &[chat::Chip<'_>], now: i64, theme: &Theme) -> gpui::AnyElem
                             icon_svg(Icon::Check, theme::ICON_SIZE_SMALL, theme.success_text)
                                 .into_any_element()
                         } else {
-                            loading_dots(now, rgb(theme.status_working)).into_any_element()
+                            status_dot(theme.status_working, false).into_any_element()
                         })
                         .child(
                             div()

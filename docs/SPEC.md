@@ -1257,7 +1257,9 @@ The tooltip gives the status in words, the time and the turns, so color is never
 
 - Each state's mark has its own color (`status_working`, `status_needs_input`, `status_done`, `status_exited`, `status_idle`; dark and light), drawn beside its icon or text, never alone.
   Nothing loops while an agent works: the dot is still and the time text moves (ADR 0086).
-  The loading mark (a pane being started, a transcription, a Jira fetch) is three dots taking turns on the status tick.
+  The loading mark (a pane being started, a transcription, a Jira fetch, the omp dock's working row, an omp `spinner` of style `dots`) is three dots taking turns on the status tick.
+  Any other omp `spinner`, and a progress of unknown amount, is the orbit mark: a 12 px ring at 22 % with a 3 px dot that moves one of 8 places per tick (ADR 0116).
+  A pane shows dots in one place only; the model pill, the todo HUD, checklist phases and subagent chips show still marks.
 - Pane signals (ADR 0054, ADR 0106): a pane has no header.
   Transient signals are a small stack of floating badges in the pane's top-right corner, drawn only while they apply: a conflict warning, `⧗ N queued`, `Copy mode` with the key hints, and while the pane is zoomed `⤢ Pane zoomed` with a "Show all panes" button.
   Nothing is drawn in the normal case.
@@ -1307,18 +1309,20 @@ The tooltip gives the status in words, the time and the turns, so color is never
   The pane by `Session.tsp`: `off` is the terminal pane with the title bar's `Terminal | Chat` toggle; `waiting` (TSP on, no surface yet) is the starting state of an agent pane; `live` is the surface; `fallback` (no hello within 10 s of the session's first output, because resumed and concurrently started omp sessions need over 2 s to send it, or an unsupported hello version, or omp closed the surface with `x {keep:false}`, or omp said hello but opened no surface within 60 s of the first output) is the terminal grid without the Chat toggle and one info toast "omp is drawing as text: <reason>"; a hello that still arrives within 60 s of the first output after the 10 s fallback is answered and the pane switches to the native surface, while later hellos and the other fallbacks are final; an exited session keeps its last document, read-only, under the existing exited notice.
   While `live` the state comes from omp's hooks only (§6); without hooks it is `unknown`.
   `mk web` shows "This omp session uses Mkrew's native view. Open it on the desktop." in place of the terminal of a live session that has not exited; an exited one shows its replay, which holds only what omp printed before the hello (the log keeps plain bytes only), so the read-only document survives only in a UI that was connected when omp exited; its state, Stop, the reply chips and the quick keys keep working.
-  The dock is drawn as Tern's composer from the pieces of the Chat composer card (§20B, ADR 0105), with omp as the only source of the content: the context meter above the card (`accent` fill, `status_needs_input` past `thresholds.warn`, `danger_text` past `bad`, marks as ticks, a click sends `status.context`), the card (`surface_raised`, `radius::LARGE`, glass border, float shadow) holding the editor line (the placeholder with the sparkle icon, omp's `ghost` text right after the caret) and the chip row, the model pill (`accent_text`, chevron, loading dots while omp works), a quiet effort chip, quiet mono fact chips (an `accent` span such as `⚡ yolo` takes the Chat permission chip look; the stats Chat also shows take Chat's colors), the rate and cost chips, and the round Send (`CornerDownLeft`) or Stop (a square, `danger_text` on hover) at the end of the row.
-  Above the meter, the status row has the working row (loading dots, the elapsed time in mono `text_muted`, a divider, the label in `status_needs_input`, a small ghost Stop), the todo HUD, and the hud as one glass pill whose segments (the agent and jobs pills, each an icon and a count in mono) are split by dividers.
-  When the chip row is too narrow it drops, in this order: the facts by omp's `priority` (highest number first), the effort chip, the cost, and last the model name truncates (not below about six characters); the model pill never shrinks and Send or Stop is never clipped.
+  The dock is drawn as Tern's composer from the pieces of the Chat composer card (§20B, ADR 0105, ADR 0116), with omp as the only source of the content: the context meter above the card (a 1 px line, `text_muted` fill, `status_needs_input` past `thresholds.warn`, `danger_text` past `bad`, the percent above the end of the fill and the total at the right, marks as ticks shown while the meter is hovered, a click sends `status.context`), the card (`surface_raised`, `radius::COMPOSER`, glass border, float shadow) holding the editor line (the placeholder in `text_subtle`, upright, no icon; omp's `ghost` text right after the caret) and the chip row: the model pill (a 1 px `border` ring with no fill, `text` at 500, chevron; omp's effort glyph leads it and the effort label is in its tooltip), quiet mono fact chips in `text_subtle` (colors omp puts in spans stay; an `accent` span such as `⚡ yolo` takes the Chat permission chip look), the rate and cost chips, and the round Send (`CornerDownLeft`, a neutral fill that turns to `text` on hover, never accent) or Stop (a `text` circle with a square) at the end of the row.
+  Above the meter, the status row has the working row (loading dots, the elapsed time in mono `text_subtle`, a divider, the label in `text_muted`; the card's Stop is the only Stop), the todo HUD, and the hud as one pill with a `border` ring and no fill whose segments (the agent and jobs pills, each an icon and a count in mono) are split by dividers.
+  When the chip row is too narrow it drops, in this order: the facts by omp's `priority` (highest number first), the cost, and last the model name truncates (not below about six characters); the model pill never shrinks and Send or Stop is never clipped.
   A dock without omp 18.13.2's roles (`omp.editor`, `omp.composer.*`, `omp.hud*`, `omp.working*`) is drawn by the generic fallback.
-  Nerd Font private-use glyphs in text (spans styled `icon`) are drawn upright in the terminal font with `TERMINAL_GLYPH_FALLBACKS`; a glyph that none of the installed Nerd Fonts has still shows a box until a current Nerd Font (Symbols Nerd Font Mono) is installed.
+  Nerd Font private-use glyphs in text (spans styled `icon`) are drawn upright in the terminal font with `TERMINAL_GLYPH_FALLBACKS`, whose first entry (Symbols Nerd Font Mono) ships with the app (ADR 0116).
   A question from omp (`ask`) replaces the dock's editor and is drawn as the composer card: tab chips in its top row (answered tabs start with a check, a last Review tab, the active tab on a solid `card` background), the question in `weight::SEMIBOLD`, then one row per option with a radio circle (a check box for multi-select) filled with `accent` for the recommended one, the label, the detail muted below, a "Recommended" badge on the right and the picked row on `surface_raised` with a 2 px `accent` bar at its left; "Other..." is a row of the same list; an optional Markdown preview sits under the list.
   The Review tab shows a notice line and the table of answers.
   The bottom row has pill buttons (Hide, Note, Skip, Next or Submit; the default one in `accent` with `on_accent` text; the key hint is the tooltip) and, when the question has a timeout, a small ring with the seconds left.
   Hide folds the card to one row ("Question ...", Skip, Show).
   A click sends `select`, a double-click `activate`, a button `action`; keys still go to omp, and "Other..." opens omp's own text field.
-  omp's todo (`checklist`) shows as a one-line HUD at the right of the status row above the dock (loading dots and the active item, else the first pending one, else "All done", then `done/total` in the terminal font, muted); a click opens the phase list in a glass panel above the row (at most 60% of the pane height, scrolling; Esc or a click outside closes it, nothing is sent to omp).
-  The same phase list is the body of the todo card in the conversation (`full`) and of the todo reminder (a muted note, done phases collapsed): a header per phase with a status mark (loading dots while it has an active item, a `status_done` filled circle when all items are done or dropped, a muted ring otherwise), its Roman numeral, title and `done/count`; a click on a header folds it; items are marked active (`accent` ring and text), pending (muted ring), done (`status_done` check, muted text), dropped (muted, struck through) and blocked (`status_needs_input`, " (blocked)"), with a note as a muted second line.
+  omp's todo (`checklist`) shows as a one-line HUD at the right of the status row above the dock (the active todo mark and the active item, else the first pending one, else "All done", then `done/total` in the terminal font, muted); a click opens the phase list in a glass panel above the row (at most 60% of the pane height, scrolling; Esc or a click outside closes it, nothing is sent to omp).
+  The same phase list is the body of the todo card in the conversation (`full`) and of the todo reminder (a muted note, done phases collapsed): a header per phase with a status mark (the active todo mark while it has an active item, a `status_done` filled circle when all items are done or dropped, a muted ring otherwise), its Roman numeral, title (`text`, `text_muted` once done) and `done/count`; a click on a header folds it; items are marked active (`accent` ring and text), pending (muted ring), done (`status_done` check, muted text), dropped (muted, struck through) and blocked (`status_needs_input`, " (blocked)"), with a note as a muted second line.
+  A thinking head (`omp.thinking`) is META italic `text_subtle` with its chevron after the label.
+  Top-level rows that show only one collapsed thinking section, with only hidden rows between them, show as one head: "Thought for <sum of `took`>" (whole seconds, at least 1 s), or "Thought N times" when one has no `took`; a click opens the run, a click on its head closes it (ADR 0116).
 - Pane menu (right-click a sidebar session row, or Shift+F10 with a terminal focused; a pane has no header to right-click): **Pin**, **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise), **Rename** (inline
   like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears).
   The tab menu has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane.
@@ -1882,8 +1886,10 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Radius 5 (area chips, key hints), 6 (chips, segments, tree rows), 8 (buttons, inputs, rows),
   9 (segmented container), 10 (cards), 12 (dialogs, palette), 999 (pills); 4 for old badges.
 - Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the right panel tab row 44 with 28 px icon tabs, Git repo strip 42, Git section tabs 36, Files tree rows 24, Git file rows 28 (px at 13 px body; ADR 0110).
-- Tab chip (Tern look, ADR 0106): height `CONTROL_HEIGHT`, radius 8 (`radius::MEDIUM`), no border; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
-  Chips shrink to `TAB_MIN_WIDTH` (120, room for the status icon, a pane icon, about five title letters and the ×) before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
+- Tab chip (Tern look, ADR 0106, ADR 0116): height `TAB_CHIP_HEIGHT` (26), radius 8 (`radius::MEDIUM`), no border, META text at regular weight; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
+  A chip shows one icon, its focused pane's, in `text_subtle` (`text_muted` when active), never a brand color; a working or needs-input tab colors that icon `status_working` / `status_needs_input` instead of adding a glyph, and its tooltip names the state.
+  No rule separates pinned tabs from the others.
+  Chips shrink to `TAB_MIN_WIDTH` (120, room for the pane icon, about five title letters and the ×) before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
 - Pane (ADR 0106, ADR 0108, ADR 0109): no header and no border.
   Panes fill the tab area edge to edge with square corners: no gap between them and none at the area's edge, so they touch the sidebar, the right panel and the title bar.
   Two panes meet at a 1 px `divider` line, the same line that sets the sidebar and the right panel apart.
@@ -1900,11 +1906,11 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   The title bar's pane toggles are 30 px icon buttons, accent while on.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
   buttons, 30 px icon button, panel icon tab, underlined tab, search box, status pill, tinted chip, overline, key hint.
-- UI font = Inter when installed, else the system font (Segoe UI Variable / SF), unless
-  `[ui] font_family` is set (Inter is not bundled). Sizes 11 overline, 12 meta, 13 body, 15 card
+- UI font = Geist (OFL, bundled in `font/geist/` and registered at startup, ADR 0116) unless
+  `[ui] font_family` is set. Sizes 11 overline, 12 meta, 13 body, 15 card
   title, 20 view title at the default `[ui] font_size = 13`; other sizes keep their ratio to body
-  (ADR 0024). Weights 400/500/600. All-caps only for 11/600 overlines.
-- Docs preview (ADR 0021): body 14 px, line height 1.6, headings 24/20/17/15/14/14 px, code 13 px,
+  (ADR 0024). Weights 400/500/600. All-caps only for 11/600 overlines. UI line height 1.5 (`UI_LINE_HEIGHT`, set on every window root).
+- Docs preview (ADR 0021): body 14 px, line height 1.5, headings 24/20/17/15/14/14 px, code 13 px,
   a centered column of at most 960 px (ADR 0083). A drawn Mermaid diagram shows "Expand" at
   its bottom-right on hover: a dialog of 90% of the window shows it as wide as fits, up to 2x
   its natural size (a tall one scrolls); Esc or Close closes it.
@@ -1921,8 +1927,8 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   shape wins); a pane has no border; the top stripe marks needs-input, a color and the focused split pane.
   Editor code rows keep line height 1.35 (`code_line_height`).
 - Icons (ADR 0051): icon-only buttons, toggles, window controls, row actions and row chevrons
-  draw Lucide SVG icons (`icon/lucide/`, `crates/mkrew-ui/src/icons.rs`) in a theme token color,
-  16 px in icon buttons and 14 px among text (`ICON_SIZE`, `ICON_SIZE_SMALL`). The glyphs this
+  draw Lucide SVG icons (`icon/lucide/`, `crates/mkrew-ui/src/icons.rs`) in a theme token color with stroke 1.5 (`ICON_STROKE`, ADR 0116),
+  16 px in icon buttons, 14 px among text and 12 px for chevrons, tab and pin icons (`ICON_SIZE`, `ICON_SIZE_SMALL`, `TAB_ICON_SIZE`). The glyphs this
   spec names for those buttons map to Lucide: `+` plus, `▾ ▸ ‹ ›` chevrons, `⋯` ellipsis, `◷`
   history, `⌫` delete, `◐ ☀ ☾` sun-moon / sun / moon, `─ □ ❐ ✕` minus / square / copy / x, `⌕`
   search, `◫` columns-2, `◧ ◨` panel-left / panel-right, `⇤ ⇥` panel-left-close / -open,
@@ -2117,20 +2123,20 @@ The omp question card (§11) draws by node `role`:
 | `meter` with `style` `ring` | a small ring with its `label` |
 | `omp.editor.ask.hidden` | one row: summary, Skip, Show |
 
-The todo marks (`checklist`, §11) are: an `active` item an `accent` ring around a dot, its text in `accent`; `pending` a `text_muted` ring; `done` a `status_done` check with muted text; `dropped` muted text struck through; `blocked` text in `status_needs_input` followed by " (blocked)"; a phase with an active item loading dots (moved on the 500 ms status tick), a phase with every item done or dropped a `status_done` filled circle, any other phase a `text_muted` ring; `done/count` in `text_muted`; the HUD popover is a `floating_panel`.
+The todo marks (`checklist`, §11) are: an `active` item an `accent` ring around a dot, its text in `accent`; `pending` a `text_muted` ring; `done` a `status_done` check with muted text; `dropped` muted text struck through; `blocked` text in `status_needs_input` followed by " (blocked)"; a phase with an active item the `active` mark, a phase with every item done or dropped a `status_done` filled circle, any other phase a `text_muted` ring; `done/count` in `text_muted`; the HUD popover is a `floating_panel`.
 
 The omp dock (§11) draws by node `role`, from the Chat composer's tokens:
 
 | Role | Drawn as |
 | --- | --- |
-| `omp.editor` | the composer card: `surface_raised`, `radius::LARGE`, glass border, float shadow, `space::M` padding |
-| `omp.composer.context` (`meter`, `style` `bar`) | the context meter: a `CONTEXT_METER_HEIGHT` pill bar, `accent` fill, `status_needs_input` past `thresholds.warn`, `danger_text` past `bad`; `label` and `total` in `text_muted` |
-| `omp.composer.line` | the editor line in `BODY`; placeholder italic `text_muted` with the sparkle icon; `ghost` in `text_subtle` after the caret |
-| `omp.composer.model` | the Chat model pill (`raised_border`, `accent_text`, chevron) |
-| `omp.composer.effort`, `omp.composer.usage`, `omp.composer.rate`, `omp.composer.fact` | quiet mono chips; fact colors: context `syntax_keyword`, git branch `syntax_string`, rate `text`, clock and session `text_subtle`, others `text_muted`; an `accent` span takes the permission chip look |
-| `omp.composer.send`, `omp.composer.stop` | the round Send and Stop buttons; Stop is `danger_text` on hover |
-| `omp.working`, `omp.working.label`, `omp.working.stop` | the working row: dots, elapsed in mono `text_muted`, divider, label in `status_needs_input`, a small ghost Stop |
-| `omp.hud`, `omp.hud.seg` | one glass pill, one padded cell per segment (icon, count in mono, tooltip), a `BORDER_WIDTH` divider in `border` between cells |
+| `omp.editor` | the composer card: `surface_raised`, `radius::COMPOSER`, glass border, float shadow; padding `space::M` top and right, `space::S` bottom, `space::L` left |
+| `omp.composer.context` (`meter`, `style` `bar`) | the context meter: a 1 px (`CONTEXT_METER_HEIGHT`) line, `text_muted` fill, `status_needs_input` past `thresholds.warn`, `danger_text` past `bad`; `label` above the end of the fill and `total` at the right in `text_muted`; marks show while hovered |
+| `omp.composer.line` | the editor line in `BODY`; placeholder upright `text_subtle`, no icon; `ghost` in `text_subtle` after the caret |
+| `omp.composer.model` | the Chat model pill (1 px `border` ring, no fill, `text` at 500, chevron) |
+| `omp.composer.effort`, `omp.composer.usage`, `omp.composer.rate`, `omp.composer.fact` | the effort glyph leads the model pill (label in its tooltip); usage, rate and facts are quiet mono chips in `text_subtle`, icons too (colors omp puts in spans stay; tone warning / error take `status_needs_input` / `danger_text`); an `accent` span takes the permission chip look |
+| `omp.composer.send`, `omp.composer.stop` | the round Send (neutral, `text` fill on hover) and Stop (a `text` circle with a square, `text_muted` on hover) |
+| `omp.working`, `omp.working.label`, `omp.working.stop` | the working row: dots, elapsed in mono `text_subtle`, divider, label in `text_muted`; `omp.working.stop` is the card's Stop when the bar has none |
+| `omp.hud`, `omp.hud.seg` | one pill with a `border` ring and no fill, one padded cell per segment (icon, count in mono, tooltip), a `BORDER_WIDTH` divider in `border` between cells |
 | `omp.hud.todo` | the todo HUD chip (§11) |
 
 ---
@@ -2576,7 +2582,7 @@ context_window = 200000        # tokens, for the % shown
    `/` opens the agent's command picker (§20B.7).
    Drafts are kept per session in UI memory (lost on UI restart, which is fine).
    In a pane in Chat mode (§11) the composer is always shown: Enter sends, Shift+Enter is a new line, Esc moves the keys to the chat list instead of hiding it (ADR 0104).
-   In Chat the composer is a floating card (ADR 0105): a 2 px context meter above it (percent left, window right; the warning color from `WARNING_PERCENT`; hidden without a window), the field with the session title in quotes as its italic muted placeholder (a small sparkle icon before it), and a chip row: the model as a bordered pill (a click switches the pane to Terminal and types `/model` + Enter, so the agent's own picker opens; the loading dots show before the name while the agent works), the permission chip with a lightning icon, the effort chip, the branch chip (only at the workspace root, `name *N` changed files), then the context tokens (`74K`, database icon), `102 tok/s`, the elapsed time and the local time the last turn ended (`09:44:27`, clock icons) in the terminal font, or the status line while it shows, ✦, "Prompts…" and a round send button (neutral while the draft is blank or busy, an accent fill when it can send) whose tooltip holds the key hint.
+   In Chat the composer is a floating card (ADR 0105, ADR 0116): a 1 px context meter above it (`text_muted` fill, the percent above the end of the fill and the window at the right; the warning color from `WARNING_PERCENT`; hidden without a window), the field with the session title in quotes as its placeholder (`text_subtle`, upright, no icon), and a chip row: the model as a ring pill (a click switches the pane to Terminal and types `/model` + Enter, so the agent's own picker opens), the permission chip with a lightning icon, the effort chip, the branch chip (only at the workspace root, `name *N` changed files), then the context tokens (`74K`, database icon), `102 tok/s`, the elapsed time and the local time the last turn ended (`09:44:27`, clock icons) in the terminal font, all quiet in `text_subtle`, or the status line while it shows, ✦, "Prompts…" and a round send button (a neutral fill that turns to `text` on hover, never accent; dimmed while the draft is blank or busy) whose tooltip holds the key hint.
    A narrow pane drops chips from the right: the end time, stats, permission, effort, branch; the model chip and the send button stay.
    When the chat list is scrolled up, a small round down-arrow button floats above the composer at the column's right edge and scrolls to the end.
    While the pane has no keyboard and the draft, the queue and the error are empty, the card is a one-line pill with the placeholder; a click opens it.

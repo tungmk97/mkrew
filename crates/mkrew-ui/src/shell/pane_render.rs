@@ -4,9 +4,8 @@ use super::pane_view::{PaneSlot, PaneView};
 use crate::*;
 
 impl Shell {
-    /// The tab area of a Space window's title bar: the pinned tabs, the other tabs, a rule
-    /// between groups; then `+` outside the scrolled part. A click on a tab shows Terminals
-    /// (`tab_chip`).
+    /// The tab area of a Space window's title bar: the pinned tabs, then the other tabs; then
+    /// `+` outside the scrolled part. A click on a tab shows Terminals (`tab_chip`).
     pub(crate) fn render_tab_area(
         &self,
         project_id: Ulid,
@@ -26,75 +25,70 @@ impl Shell {
             .filter(|(_, tab)| !self.is_detached_tab(project_id, tab.id))
             .collect();
         let pinned_count = tabs.tabs().iter().filter(|tab| tab.pinned).count();
-        let pinned: Vec<bool> = drawn.iter().map(|(_, tab)| tab.pinned).collect();
-        let items = area_items(&pinned);
         let host = self.host_of(window);
         let strip = (self.hosts.get(&host))
             .map(|ui| ui.strip.clone())
             .unwrap_or_default();
-        let chips: Vec<gpui::AnyElement> = items
+        let chips: Vec<gpui::AnyElement> = drawn
             .iter()
-            .map(|item| match *item {
-                AreaItem::Rule => title_rule(theme).into_any_element(),
-                AreaItem::Tab(slot) => {
-                    let (place, tab) = drawn[slot];
-                    let tab_id = tab.id;
-                    // The tab's own rename field takes its place, also while its pane is
-                    // renamed.
-                    if let Some(renaming) = self.tab_renaming(tab) {
-                        self.render_rename(&renaming.draft, theme, cx)
-                    } else {
-                        // A file or the focused pane's title stands in for a default tab name.
-                        let file = file_label(tab, self.documents.get(&project_id));
-                        let label = (file.as_ref().map(|file| file.name.as_str()))
-                            .or_else(|| diff_label(tab))
-                            .or_else(|| {
-                                web_label(tab)
-                                    .and_then(|id| self.browsers.get(&id))
-                                    .map(|b| b.page.label())
-                            })
-                            .or_else(|| session_label(tab, self.sidebar.sessions()));
-                        let item = DraggedItem {
-                            list: ReorderList::Tabs(project_id, tab.pinned),
-                            index: if tab.pinned {
-                                place
-                            } else {
-                                place - pinned_count
-                            },
-                            title: label.unwrap_or(&tab.title).to_owned().into(),
-                        };
-                        let select = move |shell: &mut Shell| {
-                            if let Some(tabs) = shell.tabs.get_mut(&project_id) {
-                                tabs.activate(tab_id);
-                            }
-                        };
-                        let chip = self
-                            .tab_chip(
-                                project_id,
-                                tab,
-                                active == Some(tab_id) && view == View::Terminals,
-                                None,
-                                select,
-                                theme,
-                                cx,
-                            )
-                            .child(record_strip(strip.clone(), Some(slot)));
-                        self.reorderable_shrinking(
-                            chip.into_any_element(),
-                            item,
-                            true,
-                            space::XS,
-                            Some(theme::TAB_MIN_WIDTH),
+            .enumerate()
+            .map(|(slot, &(place, tab))| {
+                let tab_id = tab.id;
+                // The tab's own rename field takes its place, also while its pane is
+                // renamed.
+                if let Some(renaming) = self.tab_renaming(tab) {
+                    self.render_rename(&renaming.draft, theme, cx)
+                } else {
+                    // A file or the focused pane's title stands in for a default tab name.
+                    let file = file_label(tab, self.documents.get(&project_id));
+                    let label = (file.as_ref().map(|file| file.name.as_str()))
+                        .or_else(|| diff_label(tab))
+                        .or_else(|| {
+                            web_label(tab)
+                                .and_then(|id| self.browsers.get(&id))
+                                .map(|b| b.page.label())
+                        })
+                        .or_else(|| session_label(tab, self.sidebar.sessions()));
+                    let item = DraggedItem {
+                        list: ReorderList::Tabs(project_id, tab.pinned),
+                        index: if tab.pinned {
+                            place
+                        } else {
+                            place - pinned_count
+                        },
+                        title: label.unwrap_or(&tab.title).to_owned().into(),
+                    };
+                    let select = move |shell: &mut Shell| {
+                        if let Some(tabs) = shell.tabs.get_mut(&project_id) {
+                            tabs.activate(tab_id);
+                        }
+                    };
+                    let chip = self
+                        .tab_chip(
+                            project_id,
+                            tab,
+                            active == Some(tab_id) && view == View::Terminals,
+                            None,
+                            select,
                             theme,
                             cx,
                         )
-                    }
+                        .child(record_strip(strip.clone(), Some(slot)));
+                    self.reorderable_shrinking(
+                        chip.into_any_element(),
+                        item,
+                        true,
+                        space::XS,
+                        Some(theme::TAB_MIN_WIDTH),
+                        theme,
+                        cx,
+                    )
                 }
             })
             .collect();
         let active_slot = active.and_then(|id| drawn.iter().position(|(_, tab)| tab.id == id));
         // The key is the scroll target only: the active tab, while Terminals shows.
-        let scroll_to = scroll_index(&items, active_slot)
+        let scroll_to = active_slot
             .filter(|_| view == View::Terminals)
             .map(|index| (SharedString::from(format!("tab/{active:?}")), index));
         self.tab_area_frame(
@@ -192,9 +186,10 @@ impl Shell {
         }))
     }
 
-    /// One tab of the title bar's tab area (main or detached): status icon, pane icons, pin,
-    /// title, ×. `select` makes it the shown tab of its window (a click); `prefix` (the workspace name,
-    /// in a detached strip) leads the title. The caller wraps it for drag and drop.
+    /// One tab of the title bar's tab area (main or detached): the focused pane's icon
+    /// (recolored by the status), pin, title, ×. `select` makes it the shown tab of its window
+    /// (a click); `prefix` (the workspace name, in a detached strip) leads the title. The
+    /// caller wraps it for drag and drop.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn tab_chip(
         &self,
@@ -222,52 +217,41 @@ impl Shell {
         let rename_pane = double_click_renames(tab, self.sidebar.sessions());
         // The most urgent pane (SPEC §11): the tooltip states its status in words.
         let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
-        let icons = tab_icons(tab, self.sidebar.sessions(), is_active);
+        let icons = tab_icons(tab, self.sidebar.sessions());
         let group = SharedString::from(format!("tab-{tab_id}"));
-        // Only a state to notice: Working or Needs input.
-        let status_icon = icons.status.map(|status| {
-            let (glyph, color) = match status {
-                TabStatus::Working => (Icon::Hourglass, theme.status_working),
-                TabStatus::NeedsInput => (Icon::Bell, theme.status_needs_input),
-            };
-            icon_svg(glyph, theme::TAB_ICON_SIZE, color)
-        });
-        // Every icon is `TAB_ICON_SIZE`: a brand logo in its brand color, an agent without
-        // a logo as its glyph, shell and run panes in `text_muted`.
-        let pane_icons: Vec<gpui::AnyElement> = icons
-            .panes
-            .iter()
-            .map(|pane| match pane {
-                PaneIcon::Agent(profile) => match self.agent_badge(profile) {
-                    sidebar::Badge::Logo(logo) => {
-                        icons::logo_svg(logo, theme::TAB_ICON_SIZE, theme.brand_color(logo))
-                            .into_any_element()
-                    }
-                    sidebar::Badge::Text(text) => div()
-                        .flex_none()
-                        .pb(px(theme::TEXT_LIFT * 2.0))
-                        .text_size(font_size::META)
-                        .text_color(rgb(theme.text_muted))
-                        .child(text)
-                        .into_any_element(),
-                },
-                PaneIcon::Shell => {
-                    icon_svg(Icon::SquareTerminal, theme::TAB_ICON_SIZE, theme.text_muted)
-                        .into_any_element()
+        // One icon, never a brand color: `text_subtle` (`text_muted` on the shown chip), or the
+        // color of a state to notice: Working or Needs input.
+        let color = match icons.status {
+            Some(TabStatus::Working) => theme.status_working,
+            Some(TabStatus::NeedsInput) => theme.status_needs_input,
+            None if is_active => theme.text_muted,
+            None => theme.text_subtle,
+        };
+        let pane_icon = icons.pane.as_ref().map(|pane| match pane {
+            PaneIcon::Agent(profile) => match self.agent_badge(profile) {
+                sidebar::Badge::Logo(logo) => {
+                    icons::logo_svg(logo, theme::TAB_ICON_SIZE, color).into_any_element()
                 }
-                PaneIcon::Run => {
-                    icon_svg(Icon::Play, theme::TAB_ICON_SIZE, theme.text_muted).into_any_element()
-                }
-                PaneIcon::File(_) => {
-                    icon_svg(Icon::File, theme::TAB_ICON_SIZE, theme.text_muted).into_any_element()
-                }
-                PaneIcon::Diff => icon_svg(Icon::FileDiff, theme::TAB_ICON_SIZE, theme.text_muted)
+                sidebar::Badge::Text(text) => div()
+                    .flex_none()
+                    .pb(px(theme::TEXT_LIFT * 2.0))
+                    .text_size(font_size::META)
+                    .text_color(rgb(color))
+                    .child(text)
                     .into_any_element(),
-                PaneIcon::Web => {
-                    icon_svg(Icon::Globe, theme::TAB_ICON_SIZE, theme.text_muted).into_any_element()
-                }
-            })
-            .collect();
+            },
+            PaneIcon::Shell => {
+                icon_svg(Icon::SquareTerminal, theme::TAB_ICON_SIZE, color).into_any_element()
+            }
+            PaneIcon::Run => icon_svg(Icon::Play, theme::TAB_ICON_SIZE, color).into_any_element(),
+            PaneIcon::File(_) => {
+                icon_svg(Icon::File, theme::TAB_ICON_SIZE, color).into_any_element()
+            }
+            PaneIcon::Diff => {
+                icon_svg(Icon::FileDiff, theme::TAB_ICON_SIZE, color).into_any_element()
+            }
+            PaneIcon::Web => icon_svg(Icon::Globe, theme::TAB_ICON_SIZE, color).into_any_element(),
+        });
         // A file of a task worktree names it: a project file and a worktree file look alike.
         let worktree = match tab.focused() {
             Some(PaneKey::File(file)) => worktree_target::label(
@@ -326,16 +310,7 @@ impl Shell {
                     shell.open_tab_menu(tab_id, event.position, window, cx);
                 }),
             )
-            .children(status_icon)
-            .children(pane_icons)
-            .children((icons.more > 0).then(|| {
-                div()
-                    .flex_none()
-                    .pb(px(theme::TEXT_LIFT * 2.0))
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child(format!("+{}", icons.more))
-            }))
+            .children(pane_icon)
             // The tooltip states the status in words and the time: color is never the only
             // signal.
             .tooltip(tooltip(theme, &tip, ""))
@@ -411,7 +386,7 @@ impl Shell {
             .flex()
             .items_center()
             .min_w(px(theme::TAB_RENAME_MIN_WIDTH))
-            .h(theme::rems_px(theme::CONTROL_HEIGHT))
+            .h(theme::rems_px(theme::TAB_CHIP_HEIGHT))
             .px(px(space::S))
             .pb(px(theme::TEXT_LIFT * 2.0))
             .rounded(px(radius::MEDIUM))
@@ -419,8 +394,8 @@ impl Shell {
             .border_color(rgb(theme.pane_focus_stripe))
             .bg(rgb(theme.surface_raised))
             .whitespace_nowrap()
-            .text_size(font_size::BODY)
-            .font_weight(FontWeight(weight::MEDIUM))
+            .text_size(font_size::META)
+            .font_weight(FontWeight(weight::REGULAR))
             .text_color(rgb(theme.text))
             .cursor(CursorStyle::IBeam)
             .track_focus(&self.rename_focus)
@@ -665,7 +640,7 @@ impl Shell {
                 if tsp_drawn {
                     self.render_tsp(*id, is_focused, stacked, width, several, now, theme, cx)
                 } else if info.is_some_and(|info| self.chat_on(info)) {
-                    self.render_chat(*id, is_focused, now, theme, cx)
+                    self.render_chat(*id, is_focused, theme, cx)
                 } else {
                     match self.panes.get(id) {
                         // Cached: output renders this pane and the window root, not the

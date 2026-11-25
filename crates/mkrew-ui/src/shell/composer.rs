@@ -1157,17 +1157,12 @@ impl Shell {
                         cx.notify();
                     }),
                 )
-                .child(icon_svg(
-                    Icon::Sparkles,
-                    theme::ICON_SIZE_SMALL,
-                    theme.text_subtle,
-                ))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .italic()
+                        .text_color(rgb(theme.text_subtle))
                         .child(placeholder),
                 )
                 .child(icon_svg(
@@ -1237,16 +1232,12 @@ impl Shell {
                 let fill = if meter.warning {
                     theme.status_needs_input
                 } else {
-                    theme.accent
+                    theme.text_muted
                 };
-                let title = page
-                    .and_then(|page| page.meta.title.as_deref())
-                    .or_else(|| info.and_then(mkrew_ui::history::title));
                 meter_bar(
                     meter.fraction,
                     fill,
                     format!("{}%", meter.percent),
-                    title.map(str::to_owned),
                     meter.window_label,
                     Vec::new(),
                     theme,
@@ -1255,7 +1246,6 @@ impl Shell {
         let room = composer_room(width, cx);
         let ctx = chat::FitCtx {
             typing: is_focused && !draft.busy && !blank,
-            working,
             branch: stats.branch.as_ref().map_or(0.0, chat::branch_width),
         };
         let shown = chat::fit_chips(chat::Chips::wanted(&stats), room, ctx);
@@ -1265,7 +1255,7 @@ impl Shell {
         let quiet = |el: gpui::Div| quiet_chip(el, theme);
         let exited = self.is_exited(session);
         let model_chip = stats.model.clone().filter(|_| shown.model).map(|model| {
-            model_pill("composer-model", model, working, !exited, now, theme)
+            model_pill("composer-model", None, model, !exited, theme)
                 .tooltip(tooltip(
                     theme,
                     "Change the model (types /model in the terminal)",
@@ -1299,14 +1289,8 @@ impl Shell {
                 .min_w_0()
                 .max_w(theme::rems_px(theme::COMPOSER_BRANCH_MAX_WIDTH))
                 .font_family(mono.clone())
-                .child(glyph(Icon::GitBranch, theme.text_muted))
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(rgb(theme.syntax_string))
-                        .child(name),
-                )
+                .child(glyph(Icon::GitBranch, theme.text_subtle))
+                .child(div().min_w_0().truncate().child(name))
         });
         // The status line replaces the stats and the end clock while it shows.
         let status = self.composer_status(draft, focused, false, theme);
@@ -1334,21 +1318,15 @@ impl Shell {
             None => {
                 let context = stats.context.map(|(used, _)| {
                     quiet(div())
-                        .child(glyph(Icon::Database, theme.text_muted))
-                        .child(
-                            div()
-                                .text_color(rgb(theme.syntax_keyword))
-                                .child(chat::format_k(used)),
-                        )
+                        .child(glyph(Icon::Database, theme.text_subtle))
+                        .child(chat::format_k(used))
                 });
-                let rate = stats.tok_s.map(|rate| {
-                    quiet(div())
-                        .text_color(rgb(theme.text))
-                        .child(format!("{rate} tok/s"))
-                });
+                let rate = stats
+                    .tok_s
+                    .map(|rate| quiet(div()).child(format!("{rate} tok/s")));
                 let elapsed = stats.elapsed_ms.map(|ms| {
                     quiet(div())
-                        .child(glyph(Icon::Clock, theme.text_muted))
+                        .child(glyph(Icon::Clock, theme.text_subtle))
                         .child(chat::format_elapsed(ms))
                 });
                 let ended = stats.ended_clock.clone().filter(|_| shown.clock);
@@ -1364,7 +1342,6 @@ impl Shell {
                     })
                     .children(ended.map(|time| {
                         quiet(div())
-                            .text_color(rgb(theme.text_subtle))
                             .child(glyph(Icon::Clock, theme.text_subtle))
                             .child(time)
                     }))
@@ -1443,40 +1420,28 @@ impl Shell {
                     )
                     .child(send),
             );
-        let card = Self::composer_drops(card, session, radius::LARGE, theme, cx);
+        let card = Self::composer_drops(card, session, radius::COMPOSER, theme, cx);
         super::chat_view::chat_column(div().flex().flex_col().children(meter).child(card))
             .pb(px(space::M))
             .into_any_element()
     }
 }
 
-/// The Chat field's placeholder: a small sparkle icon, then `content` in italic muted (Tern
-/// look). `caret_text` draws the caret before it. An omp dock passes styled runs (its placeholder
-/// holds a private-use glyph that needs the terminal font).
+/// The Chat field's placeholder: `content` in `text_subtle`, no icon and no italics (Tern look).
+/// `caret_text` draws the caret before it. An omp dock passes styled runs (its placeholder holds
+/// a private-use glyph that needs the terminal font).
 pub(super) fn placeholder_row(content: impl IntoElement, theme: &Theme) -> gpui::Div {
     div()
-        .flex()
-        .items_center()
-        .gap(px(space::S))
-        .child(icon_svg(
-            Icon::Sparkles,
-            theme::ICON_SIZE_SMALL,
-            theme.text_subtle,
-        ))
-        .child(
-            div()
-                .min_w_0()
-                .italic()
-                .text_color(rgb(theme.text_muted))
-                .child(content),
-        )
+        .min_w_0()
+        .text_color(rgb(theme.text_subtle))
+        .child(content)
 }
 
 /// Room for the chips of a composer card: the pane's width, capped by the column, less the page
 /// padding and the card's own padding. The chip widths are in rems (`theme::rems_px`, designed
 /// at 13 px), so the room is measured in the same unit.
 pub(super) fn composer_room(width: f32, cx: &gpui::App) -> f32 {
-    (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - 2.0 * space::M)
+    (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - (space::L + space::M))
         / (cx.global::<theme::Fonts>().ui_size / 13.0)
 }
 
@@ -1487,8 +1452,11 @@ pub(super) fn composer_card_frame(theme: &Theme) -> gpui::Div {
         .flex()
         .flex_col()
         .gap(px(space::S))
-        .p(px(space::M))
-        .rounded(px(radius::LARGE))
+        .pt(px(space::M))
+        .pb(px(space::S))
+        .pl(px(space::L))
+        .pr(px(space::M))
+        .rounded(px(radius::COMPOSER))
         .bg(rgb(theme.surface_raised))
         .border(px(theme::BORDER_WIDTH))
         .border_color(gpui::rgba(theme.glass_border))
@@ -1496,19 +1464,22 @@ pub(super) fn composer_card_frame(theme: &Theme) -> gpui::Div {
         .font_family(theme.ui_font_family.clone())
 }
 
+/// Group name of a context meter: its marks show while the meter is hovered.
+const METER_GROUP: &str = "context-meter";
+
 /// The thin context meter over the card: a `CONTEXT_METER_HEIGHT` track filled to `fraction` in
-/// `fill`, `left` and `right` under it in `META` muted, the conversation's `title` (what the
-/// agent works on) just before `right`, truncated. `marks` (position 0..1, tooltip) are small
-/// ticks on the track (omp's auto-compact point); Chat has none.
+/// `fill`, with `left` (centered on the end of the fill) and `right` above it in `META`
+/// `text_subtle`. `marks` (position 0..1, tooltip) are ticks on the track (omp's auto-compact
+/// point) that show only while the meter is hovered; Chat has none.
 pub(super) fn meter_bar(
     fraction: f32,
     fill: u32,
     left: String,
-    title: Option<String>,
     right: String,
     marks: Vec<(f32, String)>,
     theme: &Theme,
 ) -> gpui::Div {
+    let mark = theme.text_muted;
     let ticks = marks.into_iter().enumerate().map(|(i, (at, title))| {
         div()
             .id(("context-mark", i))
@@ -1527,15 +1498,35 @@ pub(super) fn meter_bar(
                 div()
                     .w(px(theme::BORDER_WIDTH))
                     .h_full()
-                    .bg(rgb(theme.text_muted)),
+                    .group_hover(METER_GROUP, move |style| style.bg(rgb(mark))),
             )
     });
     div()
+        .group(METER_GROUP)
         .flex()
         .flex_col()
         .gap(px(space::XS))
         .px(px(space::S))
         .pb(px(space::XS))
+        .child(
+            div()
+                .relative()
+                .flex()
+                .justify_end()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_subtle))
+                .child(
+                    div()
+                        .absolute()
+                        .left(relative(fraction))
+                        .ml(px(-theme::CONTEXT_LABEL_WIDTH / 2.0))
+                        .w(px(theme::CONTEXT_LABEL_WIDTH))
+                        .flex()
+                        .justify_center()
+                        .child(left),
+                )
+                .child(right),
+        )
         .child(
             div()
                 .relative()
@@ -1552,40 +1543,17 @@ pub(super) fn meter_bar(
                 )
                 .children(ticks),
         )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(space::S))
-                .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
-                .child(div().flex_none().child(left))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .justify_end()
-                        .children(title.map(|title| {
-                            div()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(rgb(theme.text_subtle))
-                                .child(title)
-                        })),
-                )
-                .child(div().flex_none().child(right)),
-        )
 }
 
-/// A quiet chip: `META` muted text, icon and text with `space::XS` between, never shrinking.
+/// A quiet chip: `META` `text_subtle` text, icon and text with `space::XS` between, never
+/// shrinking.
 pub(super) fn quiet_chip(el: gpui::Div, theme: &Theme) -> gpui::Div {
     el.flex()
         .flex_none()
         .items_center()
         .gap(px(space::XS))
         .text_size(font_size::META)
-        .text_color(rgb(theme.text_muted))
+        .text_color(rgb(theme.text_subtle))
 }
 
 /// The permission chip: a lightning icon and `text` in `status_needs_input`.
@@ -1600,14 +1568,14 @@ pub(super) fn permission_chip(text: String, theme: &Theme) -> gpui::Div {
         .child(text)
 }
 
-/// The model pill: a raised border, `accent_text`, loading dots while `loading`, the name and a
-/// chevron. Callers add the tooltip and `.on_press(..)`.
+/// The model pill (Tern): a `COMPOSER_PILL_HEIGHT` ring in `border`, no fill, the name in `text`
+/// at MEDIUM, the optional `lead` (the omp dock's effort glyph) before it and a chevron after.
+/// Callers add the tooltip and `.on_press(..)`.
 pub(super) fn model_pill(
     id: impl Into<gpui::ElementId>,
+    lead: Option<gpui::AnyElement>,
     name: impl IntoElement,
-    loading: bool,
     enabled: bool,
-    now: i64,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     div()
@@ -1616,21 +1584,20 @@ pub(super) fn model_pill(
         .flex_none()
         .items_center()
         .gap(px(space::XS))
+        .h(theme::rems_px(theme::COMPOSER_PILL_HEIGHT))
         .px(px(space::S))
-        .py(px(space::XS))
         .rounded(px(radius::PILL))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme::raised_border(theme)))
+        .border_color(rgb(theme.border))
         .text_size(font_size::META)
-        .text_color(rgb(theme.accent_text))
+        .font_weight(FontWeight(weight::MEDIUM))
+        .text_color(rgb(theme.text))
         .pressable(Look::Chip, enabled, theme)
-        .when(loading, |el| {
-            el.child(loading_dots(now, rgb(theme.accent_text)))
-        })
+        .children(lead)
         .child(name)
         .child(icon_svg(
             Icon::ChevronDown,
-            theme::ICON_SIZE_SMALL,
+            theme::MODEL_CHEVRON_SIZE,
             theme.text_muted,
         ))
 }

@@ -718,9 +718,9 @@ fn attach_diff_lists_new_and_hidden_sessions() {
     assert_eq!(attach_diff(&[a], &[a]), (vec![], vec![]));
 }
 
-/// An active tab shows one icon per pane in pane order, an inactive one its focused pane's.
+/// A chip shows one icon: its focused pane's.
 #[test]
-fn a_tab_shows_pane_icons_active_all_inactive_focused() {
+fn a_tab_shows_its_focused_panes_icon() {
     let (mut tabs, a, b) = two_panes(); // a | b, focused on b
     let project = tabs.project_id();
     let mut agent = session(project, SessionState::Idle, 1);
@@ -730,67 +730,42 @@ fn a_tab_shows_pane_icons_active_all_inactive_focused() {
     shell.kind = SessionKind::Shell;
     let sessions = [agent, shell];
     let tab = tabs.active().unwrap();
-
-    let active = tab_icons(tab, &sessions, true);
-    assert_eq!(
-        active.panes,
-        [PaneIcon::Agent("fake".into()), PaneIcon::Shell]
-    );
-    assert_eq!(active.more, 0);
-    assert_eq!(tab_icons(tab, &sessions, false).panes, [PaneIcon::Shell]);
+    assert_eq!(tab_icons(tab, &sessions).pane, Some(PaneIcon::Shell));
     tabs.focus(&k(a));
     let tab = tabs.active().unwrap();
     assert_eq!(
-        tab_icons(tab, &sessions, false).panes,
-        [PaneIcon::Agent("fake".into())]
+        tab_icons(tab, &sessions).pane,
+        Some(PaneIcon::Agent("fake".into()))
     );
     // A pane no session is known for has no icon.
-    assert!(tab_icons(tab, &[], true).panes.is_empty());
-    // The fake agent has no brand logo: the chip draws its glyph in `text_muted`.
+    assert_eq!(tab_icons(tab, &[]).pane, None);
+    // The fake agent has no brand logo: the chip draws its glyph.
     assert!(crate::icons::AgentLogo::of("fake").is_none());
 }
 
-/// A tab without panes shows nothing; more than three panes end in `+N`; a run pane has its
-/// own icon.
+/// A tab without panes shows nothing; a run pane has its own icon.
 #[test]
-fn a_tab_cuts_pane_icons_after_three_and_has_none_when_empty() {
+fn a_tab_has_no_icon_when_empty_and_a_run_pane_its_own() {
     let project = Ulid::new();
     let mut empty = Tabs::new(project);
     empty.load(vec![wire(project, "new", 1.0, serde_json::Value::Null)]);
-    let icons = tab_icons(empty.active().unwrap(), &[], true);
     assert_eq!(
-        icons,
+        tab_icons(empty.active().unwrap(), &[]),
         TabIcons {
             status: None,
-            panes: vec![],
-            more: 0
+            pane: None
         }
     );
 
-    let mut tabs = Tabs::new(project);
-    tabs.load(vec![wire(project, "main", 1.0, serde_json::Value::Null)]);
-    let mut sessions = Vec::new();
-    for n in 0..5 {
-        let mut s = session(project, SessionState::Idle, n);
-        if n == 1 {
-            s.kind = SessionKind::Shell;
-            s.title = Some(mkrew_core::run::session_title("dev"));
-        }
-        tabs.split_focused(Axis::Vertical, s.id).unwrap();
-        sessions.push(s);
-    }
-    let tab = tabs.active().unwrap();
-    let active = tab_icons(tab, &sessions, true);
+    let (tabs, _, b) = two_panes(); // focused on b
+    let mut run = session(tabs.project_id(), SessionState::Idle, 1);
+    run.id = b;
+    run.kind = SessionKind::Shell;
+    run.title = Some(mkrew_core::run::session_title("dev"));
     assert_eq!(
-        active.panes,
-        [
-            PaneIcon::Agent("fake".into()),
-            PaneIcon::Run,
-            PaneIcon::Agent("fake".into())
-        ]
+        tab_icons(tabs.active().unwrap(), &[run]).pane,
+        Some(PaneIcon::Run)
     );
-    assert_eq!(active.more, 2);
-    assert_eq!(tab_icons(tab, &sessions, false).more, 0);
 }
 
 /// The status icon shows only a state to notice: needs input beats a working agent; idle, done,
@@ -809,7 +784,7 @@ fn a_tab_status_shows_needs_input_then_working_and_nothing_else() {
             two.kind = SessionKind::Shell;
             two.title = Some(mkrew_core::run::session_title("dev"));
         }
-        tab_icons(tab, &[one, two], true).status
+        tab_icons(tab, &[one, two]).status
     };
     use SessionState::*;
     assert_eq!(
@@ -1292,35 +1267,6 @@ fn a_new_pane_is_born_with_the_given_mode() {
     );
 }
 
-/// The tab area's children, in paint order: the tabs, a rule between the pinned tabs and the
-/// rest; never a rule at an end.
-#[test]
-fn the_tab_area_orders_pinned_tabs_and_the_rest() {
-    use AreaItem::{Rule, Tab};
-    assert_eq!(area_items(&[]), []);
-    assert_eq!(
-        area_items(&[true, true, false]),
-        [Tab(0), Tab(1), Rule, Tab(2)]
-    );
-    assert_eq!(
-        area_items(&[true, true]),
-        [Tab(0), Tab(1)],
-        "no rule after the last group"
-    );
-    assert_eq!(area_items(&[false, false]), [Tab(0), Tab(1)]);
-    assert_eq!(area_items(&[true, false]), [Tab(0), Rule, Tab(1)]);
-}
-
-/// The child to scroll into view is the active tab (`active` is its drawn slot).
-#[test]
-fn the_scroll_target_is_the_active_tab() {
-    let items = area_items(&[true, false, false]);
-    // [Tab(0), Rule, Tab(1), Tab(2)]
-    assert_eq!(scroll_index(&items, Some(2)), Some(3));
-    assert_eq!(scroll_index(&items, Some(0)), Some(0));
-    assert_eq!(scroll_index(&items, None), None);
-}
-
 /// A tab whose focused pane is the diff is titled "Diff" while it keeps its default name, and
 /// its chip shows the diff icon (an inactive chip shows its focused pane only).
 #[test]
@@ -1340,7 +1286,7 @@ fn a_tab_whose_focused_pane_is_the_diff_is_titled_diff() {
     assert!(tabs.focus(&PaneKey::Diff));
     let tab = tabs.active().unwrap();
     assert_eq!(diff_label(tab), Some("Diff"));
-    assert_eq!(tab_icons(tab, &[], false).panes, [PaneIcon::Diff]);
+    assert_eq!(tab_icons(tab, &[]).pane, Some(PaneIcon::Diff));
     // A name the user gave the tab wins.
     let mut named = Tabs::new(project);
     named.load(vec![wire(project, "Review", 1.0, json!({"diff": true}))]);
@@ -1364,10 +1310,7 @@ fn a_tab_whose_focused_pane_is_a_browser_is_named_by_it() {
     assert!(tabs.focus(&PaneKey::Web(web)));
     let tab = tabs.active().unwrap();
     assert_eq!(web_label(tab), Some(web));
-    assert_eq!(
-        tab_icons(tab, &[], false).panes.last(),
-        Some(&PaneIcon::Web)
-    );
+    assert_eq!(tab_icons(tab, &[]).pane, Some(PaneIcon::Web));
     let mut named = Tabs::new(project);
     named.load(vec![wire(project, "Review", 1.0, tree)]);
     assert!(named.focus(&PaneKey::Web(web)));
@@ -1981,19 +1924,14 @@ fn a_session_pane_has_no_file_label() {
 }
 
 #[test]
-fn file_panes_have_chip_icons_and_unknown_sessions_none() {
+fn a_chip_without_a_known_focused_pane_has_no_icon() {
     let project = Ulid::new();
     let split = split("vertical", pane(Ulid::new()), file("src/a.rs"));
     let mut tabs = Tabs::new(project);
     tabs.load(vec![wire(project, "Terminal", 1.0, split)]);
     let tab = tabs.active().expect("a tab");
-    // The unknown session is skipped, as before; the file shows.
-    assert_eq!(
-        tab_icons(tab, &[], true).panes,
-        [PaneIcon::File("src/a.rs".into())]
-    );
-    // An inactive tab shows its focused leaf only: the first (session) leaf, unknown here.
-    assert!(tab_icons(tab, &[], false).panes.is_empty());
+    // The first (session) leaf has the focus and its session is unknown.
+    assert_eq!(tab_icons(tab, &[]).pane, None);
 }
 
 #[test]

@@ -140,6 +140,8 @@ impl Shell {
             .flex_none()
             .flex()
             .items_center()
+            // Open: `+` and its items sit on one pill.
+            .when(open, |el| el.rounded(px(radius::PILL)).bg(rgb(theme.hover)))
             .track_focus(&self.plus_focus)
             .on_hover(cx.listener(move |shell, hovered: &bool, window, cx| {
                 shell.hover_new_row(host, *hovered, window, cx);

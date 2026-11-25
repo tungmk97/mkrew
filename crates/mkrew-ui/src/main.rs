@@ -111,9 +111,9 @@ use mkrew_ui::split::{Axis, Direction, Divider, Edge, FileKey, Leaf, PaneKey, Pr
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{
-    AreaItem, FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, WebPlace, area_items, diff_label,
-    double_click_renames, file_label, newest_unplaced, on_screen, rename_params, scroll_index,
-    session_label, tab_icons, web_label, web_place,
+    FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, WebPlace, diff_label, double_click_renames,
+    file_label, newest_unplaced, on_screen, rename_params, session_label, tab_icons, web_label,
+    web_place,
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};

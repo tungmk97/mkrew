@@ -963,6 +963,7 @@ fn lined_table(
         .flex_col()
         .child(
             table_row(head, cols, pick, ctx, true, theme.text_muted, theme)
+                .font_weight(FontWeight(weight::MEDIUM))
                 .border_b_1()
                 .border_color(rgb(theme.divider)),
         )
@@ -1287,7 +1288,7 @@ fn diagram_view(diagram: &Diagram, start: u32, theme: &Theme) -> gpui::Div {
 }
 
 /// Inline runs as one text element: bold, italic, struck through, code spans on a raised
-/// background (in `accent_text` for Chat), links in the accent color and underlined.
+/// background (a faint `hover` fill in Chat), links in the accent color and underlined.
 fn text(
     runs: &[Run],
     theme: &Theme,
@@ -1303,14 +1304,16 @@ fn text(
         .collect();
     let accent = Hsla::from(rgb(theme.accent));
     let muted = Hsla::from(rgb(theme.text_muted));
-    let code_color = Hsla::from(rgb(theme.accent_text));
-    let code_bg = Hsla::from(rgb(theme.surface_raised));
+    // Chat: `text` on a faint fill, not accent colored.
+    let code_bg = Hsla::from(rgb(if chat {
+        theme.hover
+    } else {
+        theme.surface_raised
+    }));
     let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
     for (range, style, link) in styled {
         let base = HighlightStyle {
-            color: link
-                .then_some(accent)
-                .or_else(|| (chat && style.code).then_some(code_color)),
+            color: link.then_some(accent),
             font_weight: style.bold.then_some(FontWeight(weight::SEMIBOLD)),
             font_style: style.italic.then_some(FontStyle::Italic),
             background_color: style.code.then_some(code_bg),

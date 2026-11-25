@@ -201,49 +201,68 @@ fn round_neutral(id: &'static str, glyph: Icon, theme: &Theme) -> gpui::Stateful
         .border_color(rgb(theme::raised_border(theme)))
 }
 
-/// The Chat composer's round send button: `primary` (it can send) is an accent fill with an
-/// `on_accent` glyph; otherwise the neutral look, with no hover and no pointer. Attach the
-/// handler with `.on_press(primary, ..)`.
+/// The composer's round send button (Tern): a `border` fill and a `text` glyph, the same with or
+/// without text to send; hover inverts it (`text` fill, `surface_raised` glyph through the id
+/// group: an svg does not inherit its parent's hover color); never accent. `enabled` false
+/// dims it, with no hover and no pointer. Attach the handler with `.on_press(enabled, ..)`.
 pub(crate) fn round_button(
     id: &'static str,
     glyph: Icon,
-    primary: bool,
+    enabled: bool,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    if primary {
-        filled_press(
-            round_frame(id, glyph, theme.on_accent).bg(rgb(theme.accent)),
-            true,
-            theme,
-        )
-    } else {
-        round_neutral(id, glyph, theme)
-    }
+    let inverted = theme.surface_raised;
+    let style = PressStyle {
+        hover_bg: Some(theme.text),
+        hover_fg: None,
+        ..press_style(Look::Chip, enabled, theme)
+    };
+    let glyph = icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.text).when(enabled, |svg| {
+        svg.group_hover(id, move |style| style.text_color(rgb(inverted)))
+    });
+    apply_press(
+        div()
+            .id(id)
+            .group(id)
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(theme::SEND_BUTTON_SIZE))
+            .rounded(px(radius::PILL))
+            .bg(rgb(theme.border))
+            .child(glyph),
+        style,
+    )
 }
 
-/// The round stop button of an omp pane's dock (spec 7.8): the size and neutral look of
-/// [`round_button`], a stop square instead of the send glyph; the square turns `danger_text` on
-/// hover (through the id group: an svg does not inherit its parent's hover color). Attach the
-/// handler with `.on_press(true, ..)`.
+/// The round stop button of an omp pane's dock (Tern): a `text` circle with a
+/// [`theme::STOP_GLYPH_SIZE`] square in `surface_raised`; hover turns the circle `text_muted`.
+/// Attach the handler with `.on_press(true, ..)`.
 pub(crate) fn round_stop_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
-    let danger = theme.danger_text;
-    div()
-        .id(id)
-        .group(id)
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(theme::SEND_BUTTON_SIZE))
-        .rounded(px(radius::PILL))
-        .bg(rgb(theme.surface_raised))
-        .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme::raised_border(theme)))
-        .pressable(Look::Raised, true, theme)
-        .child(
-            icon_svg(Icon::Square, theme::ICON_SIZE_SMALL, theme.text_muted)
-                .group_hover(id, move |style| style.text_color(rgb(danger))),
-        )
+    let style = PressStyle {
+        hover_bg: Some(theme.text_muted),
+        hover_fg: None,
+        ..press_style(Look::Chip, true, theme)
+    };
+    apply_press(
+        div()
+            .id(id)
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(theme::SEND_BUTTON_SIZE))
+            .rounded(px(radius::PILL))
+            .bg(rgb(theme.text))
+            .child(
+                div()
+                    .size(px(theme::STOP_GLYPH_SIZE))
+                    .rounded(px(radius::SMALL))
+                    .bg(rgb(theme.surface_raised)),
+            ),
+        style,
+    )
 }
 
 /// A small floating round button (the Chat page's scroll to the end): the neutral look with a
@@ -692,10 +711,11 @@ pub(crate) fn underline_tab(
         })
 }
 
-/// A tab of the top bar (a terminal, file or Diff tab), Tern style: the shown one is
-/// a solid `tab_active` chip (it always differs from `pane_gap`, see `theme::problems`) with full
-/// text and no border; the others are transparent and muted and get the `pressable` hover fill.
-/// `id` is also the hover group of a ✕ inside.
+/// A tab of the top bar (a terminal, file or Diff tab), Tern style: `TAB_CHIP_HEIGHT` high,
+/// regular weight in every state. The shown one is a solid `tab_active` chip (it always
+/// differs from `pane_gap`, see `theme::problems`) with full text and no border; the others
+/// are transparent and muted and get the `pressable` hover fill. `id` is also the hover group
+/// of a ✕ inside.
 pub(crate) fn tab_frame(id: SharedString, shown: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id.clone())
@@ -703,21 +723,18 @@ pub(crate) fn tab_frame(id: SharedString, shown: bool, theme: &Theme) -> gpui::S
         .relative()
         .flex()
         .items_center()
-        .gap(px(space::XS))
-        .h(theme::rems_px(theme::CONTROL_HEIGHT))
-        .pl(px(space::M))
-        .pr(px(space::S))
+        .gap(px(space::S))
+        .h(theme::rems_px(theme::TAB_CHIP_HEIGHT))
+        .px(px(space::M))
         .rounded(px(radius::MEDIUM))
         // The same (transparent) border as the rename field, so the bar does not shift while
         // a tab is renamed.
         .border(px(theme::BORDER_WIDTH))
         .border_color(gpui::transparent_black())
         .whitespace_nowrap()
-        .text_size(font_size::BODY)
+        .text_size(font_size::META)
         .when(shown, |el| {
-            el.bg(rgb(theme.tab_active))
-                .font_weight(FontWeight(weight::MEDIUM))
-                .text_color(rgb(theme.text))
+            el.bg(rgb(theme.tab_active)).text_color(rgb(theme.text))
         })
         .when(!shown, |el| el.text_color(rgb(theme.text_muted)))
         // The shown tab is picked, not disabled: the pointer for the double-click rename.

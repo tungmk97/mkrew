@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use super::{
     SpanStyle, byte_at_utf16, icon, meter_tone, node_spans, rate_label, role_of, spans_of,
+    tone_color,
 };
 use crate::icons::Icon;
 use crate::theme::{self, Theme, space};
@@ -198,34 +199,40 @@ pub struct Fact {
     pub priority: u32,
     /// A span styled `accent` (omp's `⚡ yolo`): the Chat permission chip look.
     pub permission: bool,
-    /// The text color: Chat's own for the stats Chat shows too, else `text_muted`.
+    /// The text color: `text_subtle`, or `status_needs_input` / `danger_text` for omp's tone
+    /// `warning` / `error`.
     pub color: u32,
+    /// The runs of a text fact (trimmed), so the colors omp put in spans stay; empty for the
+    /// rest.
+    pub runs: Vec<(String, SpanStyle)>,
 }
 
-/// The color of a fact's text. omp styles facts with its own `statusLine*` palette names, which
-/// are not Mkrew tokens; the stats Chat's composer also shows take Chat's colors (context
-/// `syntax_keyword`, branch `syntax_string`, rate `text`, clock and session `text_subtle`), any
-/// other fact stays `text_muted`. `token` is the first `statusLine*` token of the fact's spans.
-pub fn fact_color(id: &str, token: Option<&str>, theme: &Theme) -> u32 {
-    match (id.rsplit('/').next().unwrap_or(id), token) {
-        (_, Some("statusLineContext")) => theme.syntax_keyword,
-        (
-            _,
-            Some(
-                "statusLineGitClean" | "statusLineGitDirty" | "statusLineStaged"
-                | "statusLineDirty",
-            ),
-        ) => theme.syntax_string,
-        ("token_rate", _) => theme.text,
-        ("time" | "session", _) => theme.text_subtle,
-        _ => theme.text_muted,
+/// The color of a dock text (a fact, the cost): `text_subtle`; omp's tone `warning` / `error`
+/// keep their colors.
+fn quiet_color(node: &Node, theme: &Theme) -> u32 {
+    match node.props.get("tone").and_then(Value::as_str) {
+        Some(tone @ ("warning" | "error")) => tone_color(tone, theme),
+        _ => theme.text_subtle,
     }
+}
+
+/// `runs` without the whitespace around the whole text.
+fn trim_runs(mut runs: Vec<(String, SpanStyle)>) -> Vec<(String, SpanStyle)> {
+    if let Some((text, _)) = runs.first_mut() {
+        *text = text.trim_start().to_owned();
+    }
+    if let Some((text, _)) = runs.last_mut() {
+        *text = text.trim_end().to_owned();
+    }
+    runs
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Usage {
     pub id: String,
     pub text: String,
+    /// See [`Fact::color`].
+    pub color: u32,
 }
 
 /// The button at the end of the bar.
@@ -238,7 +245,6 @@ pub enum Primary {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarPart {
-    Effort,
     Model,
     Facts,
     Usage,
@@ -253,8 +259,6 @@ pub struct BarModel {
     pub facts: Vec<Fact>,
     pub usage: Option<Usage>,
     pub primary: Primary,
-    /// The session works (Stop shows or the working row exists): loading dots in the model pill.
-    pub working: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -368,7 +372,14 @@ pub fn dock_model(doc: &Document, theme: &Theme) -> Option<DockModel> {
         .map(|node| node.id.clone())
         .collect();
     let mut bar = bar_model(doc, bar, theme);
-    bar.working = matches!(bar.primary, Primary::Stop(_)) || status.working.is_some();
+    // omp sends Stop in the bar while it works; the working row's own Stop is not drawn (the
+    // card's round button is the one), but it stands in when the bar has none.
+    if let (Primary::Send(_), Some(stop)) = (
+        &bar.primary,
+        status.working.as_ref().and_then(|w| w.stop.clone()),
+    ) {
+        bar.primary = Primary::Stop(stop);
+    }
 
     Some(DockModel {
         editor: editor.id.clone(),
@@ -526,17 +537,6 @@ fn rate_of(node: &Node) -> String {
     )
 }
 
-/// The first `statusLine*` token among a fact's span styles.
-fn status_line_token(node: &Node) -> Option<&str> {
-    node.props
-        .get("spans")
-        .and_then(Value::as_array)?
-        .iter()
-        .filter_map(|span| span.get("s").and_then(Value::as_str))
-        .flat_map(str::split_whitespace)
-        .find(|token| token.starts_with("statusLine"))
-}
-
 fn fact_of(doc: &Document, node: &Node, theme: &Theme) -> Option<Fact> {
     if dock_role_of(node) != Some(DockRole::Fact) {
         return None;
@@ -557,6 +557,7 @@ fn fact_of(doc: &Document, node: &Node, theme: &Theme) -> Option<Fact> {
     } else {
         FactBody::Text(text.trim().to_owned())
     };
+    let styled = matches!(body, FactBody::Text(_)) && !accent;
     Some(Fact {
         id: node.id.clone(),
         icon: node
@@ -565,11 +566,8 @@ fn fact_of(doc: &Document, node: &Node, theme: &Theme) -> Option<Fact> {
             .and_then(Value::as_str)
             .and_then(icon),
         permission: accent && matches!(body, FactBody::Text(_)),
-        color: if matches!(body, FactBody::Rate(_)) {
-            theme.text
-        } else {
-            fact_color(&node.id, status_line_token(node), theme)
-        },
+        color: quiet_color(node, theme),
+        runs: if styled { trim_runs(runs) } else { Vec::new() },
         body,
         priority: node
             .props
@@ -587,7 +585,6 @@ fn bar_model(doc: &Document, bar: &Node, theme: &Theme) -> BarModel {
         facts: Vec::new(),
         usage: None,
         primary: Primary::Send(None),
-        working: false,
     };
     let facts_part = |m: &mut BarModel| {
         if !m.parts.contains(&BarPart::Facts) {
@@ -610,7 +607,6 @@ fn bar_model(doc: &Document, bar: &Node, theme: &Theme) -> BarModel {
                     glyph: glyph.map(|g| g.id.clone()),
                     label,
                 });
-                m.parts.push(BarPart::Effort);
             }
             (Some(DockRole::Model), _) => {
                 let name = doc
@@ -642,7 +638,8 @@ fn bar_model(doc: &Document, bar: &Node, theme: &Theme) -> BarModel {
                     body: FactBody::Rate(rate_of(node)),
                     priority: 0,
                     permission: false,
-                    color: theme.text,
+                    color: quiet_color(node, theme),
+                    runs: Vec::new(),
                 });
                 facts_part(&mut m);
             }
@@ -652,6 +649,7 @@ fn bar_model(doc: &Document, bar: &Node, theme: &Theme) -> BarModel {
                     m.usage = Some(Usage {
                         id: node.id.clone(),
                         text,
+                        color: quiet_color(node, theme),
                     });
                     m.parts.push(BarPart::Usage);
                 }
@@ -746,12 +744,11 @@ fn status_model(
     }
 }
 
-/// What of the bar fits: which facts show (indexes of `BarModel.facts`), whether the effort chip
+/// What of the bar fits: which facts show (indexes of `BarModel.facts`), whether the cost
 /// shows, and, when even that is too wide, the room (px at 13 px UI size) the model name gets.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BarFit {
     pub facts: Vec<bool>,
-    pub effort: bool,
     pub usage: bool,
     pub model_name: Option<f32>,
 }
@@ -760,7 +757,6 @@ impl BarFit {
     pub fn all(bar: &BarModel) -> Self {
         Self {
             facts: vec![true; bar.facts.len()],
-            effort: bar.effort.is_some(),
             usage: bar.usage.is_some(),
             model_name: None,
         }
@@ -771,7 +767,7 @@ fn text_room(text: &str) -> f32 {
     text.chars().count() as f32 * theme::COMPOSER_MONO_CHAR_WIDTH
 }
 
-/// The room of UI-font text (the effort label, the model name).
+/// The room of UI-font text (the model name).
 fn ui_room(text: &str) -> f32 {
     text.chars().count() as f32 * theme::TSP_UI_CHAR_WIDTH
 }
@@ -790,19 +786,15 @@ fn fact_width(fact: &Fact) -> f32 {
 }
 
 /// The room the bar takes (px at 13 px UI size), every chip `flex_none` and the stats cell
-/// shrinking last, like `chat::chips_width`.
+/// shrinking last, like `chat::chips_width`. The effort glyph sits in the model pill.
 pub fn bar_width(bar: &BarModel, fit: &BarFit) -> f32 {
-    let effort = bar.effort.as_ref().filter(|_| fit.effort).map_or(0.0, |e| {
-        theme::TSP_EFFORT_GLYPH_WIDTH + space::XS + ui_room(&e.label) + space::S
-    });
+    let effort = if bar.effort.as_ref().is_some_and(|e| e.glyph.is_some()) {
+        theme::TSP_EFFORT_GLYPH_WIDTH
+    } else {
+        0.0
+    };
     let model = bar.model.as_ref().map_or(0.0, |m| {
-        theme::TSP_MODEL_CHROME_WIDTH
-            + fit.model_name.unwrap_or_else(|| ui_room(&m.name))
-            + if bar.working {
-                theme::COMPOSER_CHIP_LOADING_WIDTH
-            } else {
-                0.0
-            }
+        theme::TSP_MODEL_CHROME_WIDTH + fit.model_name.unwrap_or_else(|| ui_room(&m.name)) + effort
     });
     let facts: f32 = bar
         .facts
@@ -816,13 +808,12 @@ pub fn bar_width(bar: &BarModel, fit: &BarFit) -> f32 {
         .as_ref()
         .filter(|_| fit.usage)
         .map_or(0.0, |u| text_room(&u.text) + space::S);
-    theme::TSP_BAR_FIXED_WIDTH + effort + model + facts + usage
+    theme::TSP_BAR_FIXED_WIDTH + model + facts + usage
 }
 
 /// What of `bar` fits in `room` px (13 px UI size): facts drop highest priority number first
-/// (of equal priorities the later one first), then the effort chip, then the cost, then the model name
-/// truncates down to `TSP_MODEL_MIN_CHARS`. The send or stop button always stays. Mirrors
-/// `chat::fit_chips`.
+/// (of equal priorities the later one first), then the cost, then the model name truncates down
+/// to `TSP_MODEL_MIN_CHARS`. The send or stop button always stays. Mirrors `chat::fit_chips`.
 pub fn fit_bar(bar: &BarModel, room: f32) -> BarFit {
     let mut fit = BarFit::all(bar);
     let mut order: Vec<usize> = (0..bar.facts.len()).collect();
@@ -838,10 +829,6 @@ pub fn fit_bar(bar: &BarModel, room: f32) -> BarFit {
         }
         fit.facts[i] = false;
     }
-    if bar_width(bar, &fit) <= room {
-        return fit;
-    }
-    fit.effort = false;
     if bar_width(bar, &fit) <= room {
         return fit;
     }
@@ -1146,7 +1133,7 @@ mod tests {
         let bar = &m.bar;
         assert_eq!(
             bar.parts,
-            [BarPart::Effort, BarPart::Model, BarPart::Facts],
+            [BarPart::Model, BarPart::Facts],
             "an empty usage is no part"
         );
         let effort = bar.effort.as_ref().expect("effort");
@@ -1181,7 +1168,6 @@ mod tests {
         assert_eq!(bar.facts[2].icon, Some(Icon::Clock));
         assert!(bar.usage.is_none(), "an empty usage text is not a chip");
         assert_eq!(bar.primary, Primary::Send(Some("3.bar/send".into())));
-        assert!(!bar.working);
 
         assert!(m.status.working.is_none() && m.status.todo.is_none());
         assert!(m.status.pills.is_empty() && m.status.others.is_empty());
@@ -1194,7 +1180,6 @@ mod tests {
         assert_eq!(m.skip, ["e", "e.status"], "drawn in the status row instead");
         let bar = &m.bar;
         assert_eq!(bar.primary, Primary::Stop("3.bar/stop".into()));
-        assert!(bar.working, "the model pill shows the loading dots");
         assert_eq!(
             bar.facts.iter().map(|f| f.priority).collect::<Vec<_>>(),
             [6, 5, 4, 3, 2, 10, 6, 2, 11],
@@ -1339,7 +1324,7 @@ mod tests {
     }
 
     #[test]
-    fn a_narrow_bar_drops_facts_by_priority_then_effort_then_truncates_the_model() {
+    fn a_narrow_bar_drops_facts_by_priority_then_the_cost_then_truncates_the_model() {
         let m = model_of(real_children(true)).expect("composer");
         let bar = &m.bar;
         let all = BarFit::all(bar);
@@ -1347,10 +1332,9 @@ mod tests {
         assert_eq!(fit_bar(bar, natural), all, "fits as it is");
         assert_eq!(fit_bar(bar, 10_000.0), all);
         // Shrink the room 1 px at a time: facts leave highest priority number first; of two
-        // equal priorities the later one leaves first; then the effort chip; then the model.
+        // equal priorities the later one leaves first; then the cost; then the model.
         let mut dropped: Vec<usize> = Vec::new();
-        let mut effort_gone_after = None;
-        let mut usage_gone_with_effort = None;
+        let mut usage_gone_after = None;
         let mut room = natural;
         while room > 0.0 {
             room -= 1.0;
@@ -1360,36 +1344,27 @@ mod tests {
                     dropped.push(i);
                 }
             }
-            if !fit.effort && effort_gone_after.is_none() {
-                effort_gone_after = Some(dropped.len());
-            }
             if fit.model_name.is_some() {
                 assert!(
-                    !fit.effort && !fit.usage && fit.facts.iter().all(|shown| !shown),
+                    !fit.usage && fit.facts.iter().all(|shown| !shown),
                     "the model truncates last"
                 );
             }
-            if !fit.usage && usage_gone_with_effort.is_none() {
-                usage_gone_with_effort = Some(fit.effort);
+            if !fit.usage && usage_gone_after.is_none() {
+                usage_gone_after = Some(dropped.len());
             }
         }
         // time 11, time_spent 10, status 6 (later), token_rate 6, cache_write 5, cache_read 4,
         // token_out 3, session 2 (later), token_in 2.
         assert_eq!(dropped, [8, 5, 6, 0, 1, 2, 3, 7, 4]);
         assert_eq!(
-            effort_gone_after,
+            usage_gone_after,
             Some(9),
-            "the effort chip goes after the last fact"
-        );
-        assert_eq!(
-            usage_gone_with_effort,
-            Some(false),
-            "the cost goes after the effort chip, before the model name truncates"
+            "the cost goes after the last fact, before the model name truncates"
         );
 
         let bare = BarFit {
             facts: vec![false; bar.facts.len()],
-            effort: false,
             usage: false,
             model_name: None,
         };
@@ -1409,18 +1384,12 @@ mod tests {
     }
 
     #[test]
-    fn working_costs_the_model_pill_the_loading_dots() {
-        let idle = model_of(real_children(false)).expect("composer");
-        let mut working = idle.bar.clone();
-        working.working = true;
-        let fit = BarFit::all(&idle.bar);
-        assert!(
-            (bar_width(&working, &fit)
-                - bar_width(&idle.bar, &fit)
-                - theme::COMPOSER_CHIP_LOADING_WIDTH)
-                .abs()
-                < 0.01
-        );
+    fn the_working_rows_stop_stands_in_when_the_bar_has_none() {
+        let mut kids = real_children(true);
+        kids[3] = serde_json::from_str(&kids[3].to_string().replace("omp.composer.stop", "x"))
+            .expect("json");
+        let m = model_of(kids).expect("composer");
+        assert_eq!(m.bar.primary, Primary::Stop("x.stop".into()));
     }
 
     #[test]
@@ -1552,90 +1521,60 @@ mod tests {
     }
 
     #[test]
-    fn facts_the_chat_composer_shows_take_chats_colors() {
+    fn facts_and_the_cost_are_subtle_unless_omp_colors_them() {
         let t = Theme::dark();
-        // The pure table: context, branch (omp's git tokens), rate, clock and session.
-        assert_eq!(
-            fact_color("3.bar/extras/ctx", Some("statusLineContext"), &t),
-            t.syntax_keyword
-        );
-        for token in [
-            "statusLineGitClean",
-            "statusLineGitDirty",
-            "statusLineStaged",
-            "statusLineDirty",
-        ] {
-            assert_eq!(
-                fact_color("3.bar/extras/git", Some(token), &t),
-                t.syntax_string,
-                "{token}"
-            );
-        }
-        assert_eq!(fact_color("3.bar/extras/token_rate", None, &t), t.text);
-        assert_eq!(fact_color("3.bar/extras/time", None, &t), t.text_subtle);
-        assert_eq!(fact_color("3.bar/extras/session", None, &t), t.text_subtle);
-        // Any other omp palette name, and plain text, stays quiet.
-        assert_eq!(
-            fact_color("3.bar/extras/token_out", Some("statusLineOutput"), &t),
-            t.text_muted
-        );
-        assert_eq!(
-            fact_color("3.bar/extras/token_in", Some("statusLineSpend"), &t),
-            t.text_muted
-        );
-        assert_eq!(fact_color("3.bar/extras/other", None, &t), t.text_muted);
-        // On the recorded facts.
         let m = model_of(real_children(true)).expect("composer");
-        let colors: Vec<u32> = m.bar.facts.iter().map(|f| f.color).collect();
+        assert!(m.bar.facts.iter().all(|f| f.color == t.text_subtle));
+        assert_eq!(m.bar.usage.as_ref().map(|u| u.color), Some(t.text_subtle));
+
+        let d = doc(vec![
+            json!(["add", "f", "s:1", null, {"id": "f", "k": "seg", "p": {"role": "omp.composer.fact", "tone": "warning", "spans": [{"t": "*1 ", "s": "warning"}, {"t": "?1 ", "s": "muted"}]}}]),
+            json!(["add", "u", "s:1", null, {"id": "u", "k": "text", "p": {"role": "omp.composer.usage", "tone": "error", "text": "$9"}}]),
+            json!(["add", "n", "s:1", null, {"id": "n", "k": "text", "p": {"role": "omp.composer.usage", "tone": "accent", "text": "$1"}}]),
+        ]);
+        let fact = fact_of(&d, d.get("f").expect("fact"), &t).expect("a fact");
+        assert_eq!(fact.color, t.status_needs_input, "tone warning");
         assert_eq!(
-            colors,
+            fact.runs,
             [
-                t.text,
-                t.text_muted,
-                t.text_muted,
-                t.text_muted,
-                t.text_muted,
-                t.text_muted,
-                t.text_muted,
-                t.text_subtle,
-                t.text_subtle
-            ]
+                (
+                    "*1 ".to_owned(),
+                    SpanStyle {
+                        color: Some(t.status_needs_input),
+                        ..SpanStyle::default()
+                    }
+                ),
+                (
+                    "?1".to_owned(),
+                    SpanStyle {
+                        color: Some(t.text_muted),
+                        ..SpanStyle::default()
+                    }
+                ),
+            ],
+            "span colors stay, the whole text is trimmed"
         );
+        assert_eq!(quiet_color(d.get("u").expect("cost"), &t), t.danger_text);
+        assert_eq!(quiet_color(d.get("n").expect("cost"), &t), t.text_subtle);
     }
 
     #[test]
-    fn the_model_name_and_effort_label_are_reckoned_in_the_ui_font_the_facts_in_mono() {
+    fn the_model_name_and_effort_glyph_are_reckoned_in_the_ui_font_the_facts_in_mono() {
         let m = model_of(real_children(false)).expect("composer");
         let none = BarFit {
             facts: vec![false; m.bar.facts.len()],
-            effort: false,
             usage: false,
             model_name: None,
         };
         let name = "Opus 5.5".chars().count() as f32;
-        assert!(
-            (bar_width(&m.bar, &none)
-                - (theme::TSP_BAR_FIXED_WIDTH
-                    + theme::TSP_MODEL_CHROME_WIDTH
-                    + name * theme::TSP_UI_CHAR_WIDTH))
-                .abs()
-                < 0.01
-        );
-        let with_effort = BarFit {
-            effort: true,
-            ..none.clone()
-        };
-        let label = "high".chars().count() as f32;
-        assert!(
-            (bar_width(&m.bar, &with_effort)
-                - bar_width(&m.bar, &none)
-                - (theme::TSP_EFFORT_GLYPH_WIDTH
-                    + space::XS
-                    + label * theme::TSP_UI_CHAR_WIDTH
-                    + space::S))
-                .abs()
-                < 0.01
-        );
+        let bare = theme::TSP_BAR_FIXED_WIDTH
+            + theme::TSP_MODEL_CHROME_WIDTH
+            + name * theme::TSP_UI_CHAR_WIDTH;
+        // The recorded effort has a glyph: it sits in the model pill.
+        assert!((bar_width(&m.bar, &none) - (bare + theme::TSP_EFFORT_GLYPH_WIDTH)).abs() < 0.01);
+        let mut no_effort = m.bar.clone();
+        no_effort.effort = None;
+        assert!((bar_width(&no_effort, &none) - bare).abs() < 0.01);
         let yolo = Fact {
             id: String::new(),
             icon: None,
@@ -1643,6 +1582,7 @@ mod tests {
             priority: 0,
             permission: false,
             color: 0,
+            runs: Vec::new(),
         };
         assert!(
             (fact_width(&m.bar.facts[0])
