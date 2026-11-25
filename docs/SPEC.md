@@ -1836,49 +1836,58 @@ before it (`Theme::classic`).
 
 | Token | Dark | Light |
 | --- | --- | --- |
-| `bg` (content) | #15171B | #FFFFFF |
-| `surface` (panel) | #121418 | #FAFAFB |
-| `surface-raised` | #2A2E35 | #E6E8EC |
-| `chrome` / `sidebar` | #0F1013 | #F7F7F8 |
-| `card` (raised) | #1C1F24 | #F7F8FA |
-| `hover` | #1F2227 | #EEF0F3 |
-| `row-hover` | #1A1D21 | #F4F5F7 |
-| `well` | #17191D | #F1F2F4 |
-| `selected` | #2A2E35 | #E6E8EC |
-| `border` | #23262C | #DFE1E6 |
-| `control-border` | #262A31 | #D9DCE1 |
-| `divider` | #1E2126 | #E9EBEE |
-| `terminal-bg` | #0B0C0E | #FCFCFD |
-| `pane-gap` (the frame behind and between panes, and the title bar) | #000000 | #F3F4F6 |
-| `text` | #ECEDEF | #1B1D22 |
-| `text-dim` | #D5D8DD | #3A3E46 |
-| `text-muted` | #A3A8B0 | #5A606B |
-| `text-subtle` (dimmest text) | #7D838C | #6B717C |
-| `text-disabled` | #8A9099 | #6B717C |
-| `subtle` (graphics only) | #5D616C | #A0A4AF |
+| `bg` (content) | #0F0F12 | #FBFBFA |
+| `surface` (panel) | #161619 | #FFFFFF |
+| `surface-raised` | #232327 | #F4F4F2 |
+| `chrome` (fields on the bar) | #19191B | #E3E3E2 |
+| `sidebar` | `pane-gap` | `pane-gap` |
+| `card` (raised) | #161619 | #FFFFFF |
+| `hover` / `row-hover` (l1 over `bg`) | #202023 | #EDEEEE |
+| `well` | #17171A | #F4F4F2 |
+| `selected` | #232327 | #E7E7E7 |
+| `border` (l2) | #27272A | #E7E7E7 |
+| `control-border` (l3) | #333336 | #DBDCDD |
+| `divider` (l1) | #202023 | #EDEEEE |
+| `terminal-bg` | #0F0F12 | #FBFBFA |
+| `pane-gap` (the frame behind the panes, the sidebar and the title bar) | #050506 | #EFEFEC |
+| `tab-active` | #1E1E1F | #D6D6D4 |
+| `text` (t1) | #EDEDED | #1B1C20 |
+| `text-dim` | #C7C7C7 | #383A40 |
+| `text-muted` (t2: names, labels, inactive tabs) | #A1A1A1 | #55575F |
+| `text-subtle` (t3: meta) | #8A8A92 | #6A6C74 |
+| `text-disabled` | #707077 | #8F9198 |
+| `subtle` (t4: graphics, placeholders, chevrons) | #55555C | #B3B5BB |
 | `accent` | #8E8CF5 | #5452D0 |
 | `accent-text` | #C2C1FA | #4A48C4 |
-| `accent-bg` | #26273A | #EBEBFA |
+| `accent-bg` | #212132 | #E4E3F4 |
+| `selected-ring` / `pane-focus-stripe` | #4F4E84 | #A8A7E5 |
 | `on-accent` | #0F1013 | #FFFFFF |
 | `info` / `info-text` / `info-soft` | #6AA6F2 / #8DB9F5 / #93BCF6 | #2F6FC4 / #2A62AD / #2F6FC4 |
 | `teal` | #74D6C4 | #1A7F70 |
-| `folder` | #8FA3C0 | #5F7590 |
-| `warning-bg` / `success-bg` | #322B23 / #1E302B | #F4EDE2 / #E5F0EA |
-| `danger-bg` | #342526 | #F8E8E6 |
+| `folder` | #8A8A92 | #6A6C74 |
+| `warning-bg` / `success-bg` | #2D241B / #192923 | #EBE4D9 / #DDEAE2 |
+| `danger-bg` | #2E1E1F | #F3E1DE |
 | `danger-text` / `success-text` | #EF8F82 / #6FD39B | #B4382A / #1E6B3A |
 | `status-working` | #8E8CF5 | #5452D0 |
 | `status-needs-input` (attention) | #E4A452 | #8B570D |
 | `status-done` (success) | #57C78A | #23854F |
 | `status-exited` (danger) | #EF7B6C | #C2412F |
-| `status-idle` | #7D838C | #8A8F99 |
+| `status-idle` | #8A8A92 | #6A6C74 |
+| `git-modified` / `git-untracked` (light only) | unchanged | #8F5410 |
 | `diff-add-bg` / `diff-del-bg` | #182422 / #261D20 | #E7EFEC / #F5E9E9 |
 | `diff-add-word-bg` / `diff-del-word-bg` | #254638 / #543331 | #C4DDD0 / #ECCCC8 |
 | `diff-add-text` / `diff-del-text` | #6FD39B / #EF8F82 | #1E6B3A / #A61B1B |
-| `diff-hunk-header` | #17191D | #F1F2F4 |
+| `diff-hunk-header` | #17171A | #F4F4F2 |
+| `code-bg` (sunken code) | #0C0C0D | #F8F8F6 |
+| `composer-fill` | #1D1D21 | #FFFFFF |
+| `layer` l1 / l2 / l3 / l4 (ink at 7 / 10 / 15 / 24 % dark, 6 / 9 / 14 / 22 % light) | white | #181A2C |
+| `glass-hi` | white 5 % | white 100 % |
 | `qr-dark` | #101114 | #101114 |
 | `qr-light` | #FFFFFF | #FFFFFF |
 
-`pane-gap` is darker than `terminal-bg` in dark themes when `terminal-bg` leaves room, a step darker in light themes, and always differs from `terminal-bg` by at least 1.06:1 (`theme::problems()` rule "pane gap"); a generated theme derives it with a mix from `terminal-bg` toward black or `text`.
+`pane-gap` is darker than `terminal-bg` in dark themes when `terminal-bg` leaves room, a step darker in light themes, and always differs from `terminal-bg` by at least 1.06:1 (`theme::problems()` rule "pane gap"; Tern's own default tokens measure 1.02 to 1.05, Mkrew keeps 1.06); a generated theme derives it with a mix from `terminal-bg` toward black or `text`.
+
+Hover is l1, pressed l2, rings l2, strong rings and scrollbar thumbs l3, check box borders l4 (ADR 0117). Text tiers: t1 content, t2 names and labels, t3 meta, t4 placeholders, line numbers and chevrons (`theme::problems` rule "meta text" keeps t3 at 4.5:1).
 
 Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 

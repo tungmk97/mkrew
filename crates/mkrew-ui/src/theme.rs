@@ -273,9 +273,11 @@ pub mod opacity {
     pub const DRAG_SOURCE: f32 = 0.4;
 }
 
-/// Least contrast ratio between [`Theme::pane_gap`] and [`Theme::terminal_bg`] (Tern measures
-/// about 1.07:1). A unit test holds every built-in theme to it and [`Theme::from_palette`]
-/// derives the gap to meet it.
+/// Least contrast ratio between [`Theme::pane_gap`] and [`Theme::terminal_bg`]. Tern's default
+/// tokens measure 1.02 to 1.05 (`--page` vs `--panel`); the 1.07 once quoted came from a themed
+/// screenshot. 1.06 keeps the frame visible: Mkrew Dark `050506` under `0F0F12` reads 1.065:1.
+/// A unit test holds every built-in theme to it and [`Theme::from_palette`] derives the gap to
+/// meet it.
 pub const PANE_GAP_MIN_CONTRAST: f32 = 1.06;
 
 /// Thickness of the stripe along the top edge of a pane (needs input, session color or focus
@@ -896,10 +898,9 @@ pub struct Theme {
     pub surface: u32,
     /// A raised control on a surface (selected segment, selected code line).
     pub surface_raised: u32,
-    /// The workspace sidebar, a shade off `bg`.
+    /// The workspace sidebar: the page frame (`pane_gap`) in every theme.
     pub sidebar: u32,
-    /// Inputs and segmented controls on the title bar, and the sidebar of derived themes. The
-    /// title bar itself is `pane_gap`.
+    /// Inputs and segmented controls on the title bar. The sidebar is `pane_gap`.
     pub chrome: u32,
     /// Board cards and other blocks that sit on `bg`.
     pub card: u32,
@@ -918,8 +919,9 @@ pub struct Theme {
     pub text: u32,
     /// Secondary text that is still read (row titles under a name).
     pub text_dim: u32,
+    /// t2: names, labels, inactive tabs.
     pub text_muted: u32,
-    /// Graphics only (chevrons, idle ring, guide lines); never text.
+    /// Graphics and placeholders (t4: chevrons, counts, line numbers); never body text.
     pub subtle: u32,
     /// Selection, primary buttons, focus.
     pub accent: u32,
@@ -953,6 +955,19 @@ pub struct Theme {
     /// Top of the vertical gradient over the first `GLASS_TINT_HEIGHT` px of a floating panel,
     /// RGBA: `accent` at 5 % (dark) / 4 % (light).
     pub glass_tint: u32,
+    /// Highlight line, RGBA: a 1 px line just inside the top edge of raised and floating
+    /// panels (`widgets::top_highlight`): white at 5 % (dark) / 100 % (light); set by
+    /// [`Theme::with_glass`]. Replaces the accent wash of `glass_tint` (ADR 0117).
+    pub glass_hi: u32,
+    /// Tern's l1..l4 alpha ladder, RGBA: the ink (white in dark themes, `0x181A2C` in light
+    /// ones; the foreground in a derived dark theme) at 7/10/15/24 % (dark) or 6/9/14/22 %
+    /// (light). l1 hover, l2 pressed and rings, l3 strong rings and scrollbar thumbs, l4 check
+    /// box borders (ADR 0117).
+    pub layer: [u32; 4],
+    /// The sunken ground of code blocks, darker than the page (dark) or a shade off it (light).
+    pub code_bg: u32,
+    /// The composer card.
+    pub composer_fill: u32,
     /// The QR code of Phone access (SPEC §14): dark modules on a light panel in both
     /// appearances, because phone cameras read dark-on-light only; so both are set in
     /// `shared()`, not in `dark()` / `light()`.
@@ -1009,8 +1024,8 @@ pub struct Theme {
     pub syntax_number: u32,
     pub syntax_type: u32,
     pub syntax_function: u32,
-    /// Redesign tokens (2026-10 restyle). Meta text that is still read: timestamps, counts,
-    /// placeholders (never dimmer than this).
+    /// t3: meta text (timestamps, counts, tree rows, tool details) that is still read: at least
+    /// 4.5:1 on every ground in `problems`.
     pub text_subtle: u32,
     /// In Progress: the status pill and section icon; `info_text` is its label on the tint,
     /// `info_soft` the BE area chip and JSON keys.
@@ -1155,48 +1170,52 @@ impl Theme {
 
     pub fn dark() -> Self {
         let theme = Self {
-            bg: 0x15171B,
-            surface: 0x121418,
-            surface_raised: 0x2A2E35,
-            sidebar: 0x0F1013,
-            chrome: 0x0F1013,
-            card: 0x1C1F24,
-            // Tern's 10 % white over the bar (`pane_gap` is black).
-            tab_active: 0x1A1A1A,
-            hover: 0x1F2227,
-            selected: 0x2A2E35,
-            selected_ring: 0x3D4380,
-            border: 0x23262C,
-            divider: 0x1E2126,
-            text: 0xECEDEF,
-            text_dim: 0xD5D8DD,
-            text_muted: 0xA3A8B0,
-            subtle: 0x5D616C,
+            bg: 0x0F0F12,
+            surface: 0x161619,
+            surface_raised: 0x232327,
+            sidebar: 0x050506,
+            chrome: 0x19191B,
+            card: 0x161619,
+            // Tern's l2 / ink 12 % over the bar.
+            tab_active: 0x1E1E1F,
+            // l1 over `bg`.
+            hover: 0x202023,
+            selected: 0x232327,
+            // Accent halfway to `bg`.
+            selected_ring: 0x4F4E84,
+            // l2 / l1 over `bg`.
+            border: 0x27272A,
+            divider: 0x202023,
+            text: 0xEDEDED,
+            text_dim: 0xC7C7C7,
+            text_muted: 0xA1A1A1,
+            subtle: 0x55555C,
             accent: 0x8E8CF5,
             accent_text: 0xC2C1FA,
-            accent_bg: 0x26273A,
+            // `mix(bg, accent, 0.14)`.
+            accent_bg: 0x212132,
             on_accent: 0x0F1013,
             on_accent_divider: 0x0000_0040,
-            warning_bg: 0x322B23,
-            success_bg: 0x1E302B,
-            danger_bg: 0x342526,
+            warning_bg: 0x2D241B,
+            success_bg: 0x192923,
+            danger_bg: 0x2E1E1F,
             run_pill_bg: 0x18241D,
             run_pill_border: 0x2A4434,
             run_pill_text: 0xC9EED8,
             // ~14 %: chip and pill fills.
             tint_alpha: 0x24,
-            // Black: 1.07:1 under `terminal_bg` (0B0C0E), the ratio Tern measures.
-            pane_gap: 0x000000,
-            pane_focus_stripe: 0x4A528E,
-            focus_ring: 0xECEDEF,
-            terminal_selection_bg: 0x353B60,
+            // Tern's `--page` darkened to clear `PANE_GAP_MIN_CONTRAST` (1.065:1 under `bg`).
+            pane_gap: 0x050506,
+            pane_focus_stripe: 0x4F4E84,
+            focus_ring: 0xEDEDED,
+            terminal_selection_bg: 0x353556,
             terminal_match_bg: 0x3F3524,
             terminal_match_current_bg: 0x7A5A1F,
             status_working: 0x8E8CF5,
             status_needs_input: 0xE4A452,
             status_done: 0x57C78A,
             status_exited: 0xEF7B6C,
-            status_idle: 0x7D838C,
+            status_idle: 0x8A8A92,
             brand_claude: 0xD97757,
             brand_codex: 0x10A37F,
             brand_copilot: 0xA371F7,
@@ -1208,7 +1227,7 @@ impl Theme {
             diff_del_text: 0xEF8F82,
             diff_mod_bg: 0x25211D,
             diff_mod_text: 0xE4A452,
-            diff_hunk_header: 0x17191D,
+            diff_hunk_header: 0x17171A,
             diff_add_gutter: 0x1E302B,
             diff_del_gutter: 0x342526,
             diff_mod_gutter: 0x322B23,
@@ -1219,19 +1238,22 @@ impl Theme {
             syntax_number: 0xE8B87A,
             syntax_type: 0x8FD8CC,
             syntax_function: 0x93BCF6,
-            text_subtle: 0x7D838C,
+            text_subtle: 0x8A8A92,
             info: 0x6AA6F2,
             info_text: 0x8DB9F5,
             info_soft: 0x93BCF6,
             teal: 0x74D6C4,
-            terminal_bg: 0x0B0C0E,
-            control_border: 0x262A31,
-            row_hover: 0x1A1D21,
-            well: 0x17191D,
+            terminal_bg: 0x0F0F12,
+            control_border: 0x333336,
+            row_hover: 0x202023,
+            well: 0x17171A,
             danger_text: 0xEF8F82,
             success_text: 0x6FD39B,
-            folder: 0x8FA3C0,
-            text_disabled: 0x8A9099,
+            folder: 0x8A8A92,
+            text_disabled: 0x707077,
+            layer: layers(0xFFFFFF, true),
+            code_bg: 0x0C0C0D,
+            composer_fill: 0x1D1D21,
             // Danger at 30 % / success at 28 % over the diff card.
             diff_del_word_bg: 0x543331,
             diff_add_word_bg: 0x254638,
@@ -1258,47 +1280,47 @@ impl Theme {
 
     pub fn light() -> Self {
         let theme = Self {
-            bg: 0xFFFFFF,
-            surface: 0xFAFAFB,
-            surface_raised: 0xE6E8EC,
-            sidebar: 0xF7F7F8,
-            chrome: 0xF7F7F8,
-            card: 0xF7F8FA,
-            tab_active: 0xE6E8EC,
-            hover: 0xEEF0F3,
-            selected: 0xE6E8EC,
-            selected_ring: 0xA7ADEA,
-            border: 0xDFE1E6,
-            divider: 0xE9EBEE,
-            text: 0x1B1D22,
-            text_dim: 0x3A3E46,
-            text_muted: 0x5A606B,
-            subtle: 0xA0A4AF,
+            bg: 0xFBFBFA,
+            surface: 0xFFFFFF,
+            surface_raised: 0xF4F4F2,
+            sidebar: 0xEFEFEC,
+            chrome: 0xE3E3E2,
+            card: 0xFFFFFF,
+            tab_active: 0xD6D6D4,
+            hover: 0xEDEEEE,
+            selected: 0xE7E7E7,
+            selected_ring: 0xA8A7E5,
+            border: 0xE7E7E7,
+            divider: 0xEDEEEE,
+            text: 0x1B1C20,
+            text_dim: 0x383A40,
+            text_muted: 0x55575F,
+            subtle: 0xB3B5BB,
             accent: 0x5452D0,
             accent_text: 0x4A48C4,
-            accent_bg: 0xEBEBFA,
+            accent_bg: 0xE4E3F4,
             on_accent: 0xFFFFFF,
             on_accent_divider: 0xFFFF_FF59,
-            warning_bg: 0xF4EDE2,
-            success_bg: 0xE5F0EA,
-            danger_bg: 0xF8E8E6,
+            warning_bg: 0xEBE4D9,
+            success_bg: 0xDDEAE2,
+            danger_bg: 0xF3E1DE,
             run_pill_bg: 0xE1F5EC,
             run_pill_border: 0xB4DEC8,
             run_pill_text: 0x1E6B3A,
             // ~12 %: chip and pill fills.
             tint_alpha: 0x1F,
-            // 1.07:1 under `terminal_bg` (FCFCFD); 1.11:1 from `tab_active`, 1.04:1 from `hover`.
-            pane_gap: 0xF3F4F6,
-            pane_focus_stripe: 0xA7ADEA,
-            focus_ring: 0x1B1D22,
-            terminal_selection_bg: 0xCACEF2,
+            // Tern's `--page`; 1.11:1 under `terminal_bg`, 1.26:1 from `tab_active`.
+            pane_gap: 0xEFEFEC,
+            pane_focus_stripe: 0xA8A7E5,
+            focus_ring: 0x1B1C20,
+            terminal_selection_bg: 0xC9C8ED,
             terminal_match_bg: 0xF6EBCF,
             terminal_match_current_bg: 0xE9C46A,
             status_working: 0x5452D0,
             status_needs_input: 0x8B570D,
             status_done: 0x23854F,
             status_exited: 0xC2412F,
-            status_idle: 0x8A8F99,
+            status_idle: 0x6A6C74,
             brand_claude: 0xBF5B3A,
             brand_codex: 0x0B7F62,
             brand_copilot: 0x7C4DD6,
@@ -1309,31 +1331,35 @@ impl Theme {
             diff_del_text: 0xA61B1B,
             diff_mod_bg: 0xFFF6DB,
             diff_mod_text: 0x7A5200,
-            diff_hunk_header: 0xF1F2F4,
+            diff_hunk_header: 0xF4F4F2,
             diff_add_gutter: 0xC9E8D2,
             diff_del_gutter: 0xF7D4D4,
             diff_mod_gutter: 0xF8E6AE,
-            git_modified: 0x975A16,
-            git_untracked: 0x975A16,
+            // The old 0x975A16 read 4.48:1 on the new `selected` (rule "diff lines").
+            git_modified: 0x8F5410,
+            git_untracked: 0x8F5410,
             // Darker than the ANSI entries so code stays ≥ 4.5:1 on white.
             syntax_keyword: 0x8A3FB8,
             syntax_string: 0x276749,
             syntax_number: 0x975A16,
             syntax_type: 0x17707F,
             syntax_function: 0x3B47B8,
-            text_subtle: 0x6B717C,
+            text_subtle: 0x6A6C74,
             info: 0x2F6FC4,
             info_text: 0x2A62AD,
             info_soft: 0x2F6FC4,
             teal: 0x1A7F70,
-            terminal_bg: 0xFCFCFD,
-            control_border: 0xD9DCE1,
-            row_hover: 0xF4F5F7,
-            well: 0xF1F2F4,
+            terminal_bg: 0xFBFBFA,
+            control_border: 0xDBDCDD,
+            row_hover: 0xEDEEEE,
+            well: 0xF4F4F2,
             danger_text: 0xB4382A,
             success_text: 0x1E6B3A,
-            folder: 0x5F7590,
-            text_disabled: 0x6B717C,
+            folder: 0x6A6C74,
+            text_disabled: 0x8F9198,
+            layer: layers(LAYER_INK_LIGHT, false),
+            code_bg: 0xF8F8F6,
+            composer_fill: 0xFFFFFF,
             diff_del_word_bg: 0xECCCC8,
             diff_add_word_bg: 0xC4DDD0,
             ansi: [
@@ -1538,6 +1564,10 @@ impl Theme {
             glass: 0,
             glass_border: 0,
             glass_tint: 0,
+            glass_hi: 0,
+            layer: [0; 4],
+            code_bg: 0,
+            composer_fill: 0,
             // The QR code of Phone access: near-black modules on white, in both appearances.
             qr_dark: 0x101114,
             qr_light: 0xFFFFFF,
@@ -1677,6 +1707,22 @@ pub fn with_alpha(color: u32, alpha: f32) -> u32 {
     (color << 8) | (alpha.clamp(0.0, 1.0) * 255.0).round() as u32
 }
 
+/// Alphas of the l1..l4 layers (see [`Theme::layer`]).
+const LAYER_ALPHA_DARK: [f32; 4] = [0.07, 0.10, 0.15, 0.24];
+const LAYER_ALPHA_LIGHT: [f32; 4] = [0.06, 0.09, 0.14, 0.22];
+/// Ink of the light themes' layers (Tern's `24 26 44`).
+const LAYER_INK_LIGHT: u32 = 0x181A2C;
+
+/// The l1..l4 layers of `ink` for a dark or a light appearance.
+fn layers(ink: u32, dark: bool) -> [u32; 4] {
+    let alphas = if dark {
+        LAYER_ALPHA_DARK
+    } else {
+        LAYER_ALPHA_LIGHT
+    };
+    alphas.map(|alpha| with_alpha(ink, alpha))
+}
+
 /// The 1 px border of a control that sits on `surface_raised` (the Chat composer's model pill
 /// and round buttons). `control_border` is a shade of `surface`, so on the raised card it
 /// vanishes; this one is `text_muted` blended 30 % into the raised fill, visible in both themes.
@@ -1730,7 +1776,8 @@ fn fill(bg: u32, hue: u32, t: f32, fg: u32) -> u32 {
 }
 
 impl Theme {
-    /// Sets `scrim`, `glass`, `glass_border` and `glass_tint` from `surface` and `accent`.
+    /// Sets `scrim`, `glass`, `glass_border`, `glass_tint` and `glass_hi` from `surface` and
+    /// `accent`.
     /// The fill alpha starts at the spec value and grows by 2 % until `text` keeps 4.5:1 on the
     /// panel over both `bg` and `text` behind it (the worst light and dark pages).
     fn with_glass(self) -> Self {
@@ -1759,36 +1806,26 @@ impl Theme {
             glass: with_alpha(self.surface, alpha),
             glass_border: with_alpha(edge, 0.08),
             glass_tint: with_alpha(self.accent, tint),
+            glass_hi: with_alpha(0xFFFFFF, if self.dark { 0.05 } else { 1.0 }),
             ..self
         }
     }
 
     /// A built-in theme from its palette (ADR 0078; token table in the spec). Status, workspace
-    /// and QR colors, the classic sidebar palette, fonts and sizes stay the Mkrew base's.
+    /// and QR colors, fonts and sizes stay the Mkrew base's. (The classic sidebar palette goes
+    /// in the next commit.)
     pub fn from_palette(name: impl Into<SharedString>, p: &Palette) -> Self {
         let base = if p.dark { Self::dark() } else { Self::light() };
         let tint = |hue, t| mix(p.bg, hue, t);
         let surface_raised = mix(p.surface, p.fg, 0.10);
         let hover = mix(p.bg, p.fg, 0.06);
-        let diff = |hue| (tint(hue, 0.14), tint(hue, 0.24), tint(hue, 0.30));
-        let (add_bg, add_gutter, add_word) = diff(p.green);
-        let (del_bg, del_gutter, del_word) = diff(p.red);
-        let (mod_bg, mod_gutter, _) = diff(p.yellow);
-        let grounds = [
-            p.bg,
-            p.chrome,
-            p.surface,
-            surface_raised,
-            hover,
-            add_bg,
-            del_bg,
-            mod_bg,
-            add_gutter,
-            del_gutter,
-            mod_gutter,
-            add_word,
-            del_word,
-        ];
+        // The composer card: lifted a step in dark themes, the panel in light ones.
+        let composer_fill = if p.dark {
+            mix(p.bg, p.fg, 0.06)
+        } else {
+            p.surface
+        };
+        let accent_bg = tint(p.accent, 0.14);
         // The frame is a step off `bg` (the terminal ground): toward black, so panes look
         // raised; toward `fg` when `bg` is already so dark that black is under the floor.
         let pane_gap = {
@@ -1799,10 +1836,43 @@ impl Theme {
                 mix(p.bg, p.fg, 0.10)
             }
         };
+        let diff = |hue| (tint(hue, 0.14), tint(hue, 0.24), tint(hue, 0.30));
+        let (add_bg, add_gutter, add_word) = diff(p.green);
+        let (del_bg, del_gutter, del_word) = diff(p.red);
+        let (mod_bg, mod_gutter, _) = diff(p.yellow);
+        let grounds = [
+            p.bg,
+            p.chrome,
+            p.surface,
+            surface_raised,
+            hover,
+            // The sidebar is the page (`pane_gap`); the composer card; the pick fill under
+            // `accent_text`.
+            pane_gap,
+            composer_fill,
+            accent_bg,
+            add_bg,
+            del_bg,
+            mod_bg,
+            add_gutter,
+            del_gutter,
+            mod_gutter,
+            add_word,
+            del_word,
+        ];
+        // Meta text (t3) reads on the grounds of the "meta text" rule only; the diff tints
+        // would pull it up onto `text_muted`.
+        let meta_grounds = [p.bg, p.surface, surface_raised, composer_fill];
         // The shown tab chip sits on the title bar, which is `pane_gap`.
         let tab_active = mix(pane_gap, p.fg, 0.12);
         // A brand logo sits on the bar and, in the shown tab, on `tab_active`.
         let brand_grounds = [pane_gap, tab_active];
+        // The sidebar is `pane_gap`, a step off `bg`: the avatar letter (`text`) must read on the
+        // workspace tints over it; only a palette whose foreground is that weak changes.
+        let fills = base
+            .workspace_colors
+            .map(|c| base.avatar_colors(c, pane_gap).1);
+        let letter = readable(p.fg, if p.dark { 0xFFFFFF } else { 0x000000 }, &fills, 4.5);
         let text = |color| readable(color, p.fg, &grounds, 4.5);
         let on_accent = if contrast(p.bg, p.accent) >= contrast(p.fg, p.accent) {
             p.bg
@@ -1813,7 +1883,14 @@ impl Theme {
             name: name.into(),
             bg: p.bg,
             terminal_bg: p.bg,
-            sidebar: p.chrome,
+            sidebar: pane_gap,
+            composer_fill,
+            code_bg: if p.dark {
+                mix(p.bg, 0x000000, 0.25)
+            } else {
+                mix(p.bg, p.fg, 0.02)
+            },
+            layer: layers(if p.dark { p.fg } else { LAYER_INK_LIGHT }, p.dark),
             chrome: p.chrome,
             surface: p.surface,
             card: p.surface,
@@ -1828,18 +1905,18 @@ impl Theme {
             control_border: mix(p.bg, p.fg, 0.14),
             divider: mix(p.bg, p.fg, 0.09),
             selected_ring: mix(p.accent, p.bg, 0.50),
-            text: p.fg,
+            text: letter,
             text_dim: text(mix(p.fg, p.bg, 0.20)),
             text_muted: text(p.muted),
-            text_subtle: text(p.muted),
+            text_subtle: readable(mix(p.muted, p.bg, 0.25), p.fg, &meta_grounds, 4.5),
             text_disabled: text(p.muted),
-            subtle: mix(p.muted, p.bg, 0.35),
+            subtle: mix(p.muted, p.bg, 0.45),
             accent: p.accent,
             accent_text: text(p.accent),
             info: p.blue,
             info_soft: p.blue,
             info_text: text(p.blue),
-            accent_bg: tint(p.accent, 0.14),
+            accent_bg,
             pane_gap,
             pane_focus_stripe: mix(p.accent, p.bg, 0.50),
             focus_ring: p.fg,
@@ -2598,6 +2675,19 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
             check("body text", fg, bg, 4.5);
         }
     }
+    // Meta text (timestamps, placeholders, counts, tree rows) reads on every ground it sits on.
+    for bg in [
+        t.bg,
+        t.surface,
+        t.card,
+        t.terminal_bg,
+        t.surface_raised,
+        t.composer_fill,
+    ] {
+        check("meta text", t.text_subtle, bg, 4.5);
+    }
+    // The selected panel icon and the picked row's label sit on `accent_bg`.
+    check("accent text", t.accent_text, t.accent_bg, 4.5);
     // Decoded exactly as `with_glass` quantized them; the page behind is a light or a dark one.
     let alpha = (t.glass & 0xFF) as f32 / 255.0;
     let tint = (t.glass_tint & 0xFF) as f32 / 255.0;
@@ -2748,6 +2838,16 @@ mod tests {
         THEMES.iter().map(ThemeEntry::build).collect()
     }
 
+    /// The palette of the built-in theme `name` (a palette-based one).
+    fn palette_of(name: &str) -> Palette {
+        THEMES
+            .iter()
+            .find(|e| e.name == name)
+            .and_then(ThemeEntry::palette)
+            .copied()
+            .unwrap_or_else(|| panic!("{name} has a palette"))
+    }
+
     #[test]
     fn every_built_in_theme_meets_every_contrast_rule() {
         for theme in all_themes() {
@@ -2762,6 +2862,102 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join("; ")
             );
+        }
+    }
+
+    #[test]
+    fn a_derived_palette_splits_the_text_tiers_and_keeps_meta_readable() {
+        for name in [
+            "One Dark",
+            "Nord",
+            "Gruvbox Dark",
+            "One Light",
+            "Gruvbox Light",
+        ] {
+            let t = Theme::from_palette(name, &palette_of(name));
+            // t1 > t2 > t3 > t4 in prominence: toward the page goes darker (dark) / lighter (light).
+            let (a, b, c) = (t.text_muted, t.text_subtle, t.subtle);
+            let steps = if t.dark {
+                darker(b, a) && darker(c, b)
+            } else {
+                darker(a, b) && darker(b, c)
+            };
+            assert!(steps, "{name}: tiers {a:06X} {b:06X} {c:06X}");
+            for ground in [t.bg, t.surface, t.surface_raised, t.composer_fill] {
+                assert!(
+                    contrast(t.text_subtle, ground) >= 4.5,
+                    "{name} on {ground:06X}"
+                );
+            }
+            let ink = if t.dark {
+                palette_of(name).fg
+            } else {
+                LAYER_INK_LIGHT
+            };
+            assert!(
+                t.layer.iter().all(|l| l >> 8 == ink),
+                "{name}: layers use the ink"
+            );
+            if t.dark {
+                assert!(darker(t.code_bg, t.bg), "{name}: code is sunken");
+                assert!(
+                    darker(t.bg, t.composer_fill),
+                    "{name}: the composer is lifted"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_sidebar_is_the_page_in_every_built_in_theme() {
+        let mut themes = all_themes();
+        let mut edge = palette_of("One Dark");
+        edge.bg = 0x000000; // the lighter-gap branch of `from_palette`
+        themes.push(Theme::from_palette("Edge", &edge));
+        for t in themes {
+            assert_eq!(t.sidebar, t.pane_gap, "{}", t.name);
+        }
+    }
+
+    #[test]
+    fn the_mkrew_grounds_are_ordered_and_neutral() {
+        let (dark, light) = (Theme::dark(), Theme::light());
+        // Dark: the page frame < the panel < the card < the raised fill.
+        for pair in [
+            [dark.pane_gap, dark.bg],
+            [dark.bg, dark.surface],
+            [dark.surface, dark.surface_raised],
+        ] {
+            assert!(
+                darker(pair[0], pair[1]),
+                "{:06X} < {:06X}",
+                pair[0],
+                pair[1]
+            );
+        }
+        // Light: the frame is darker than the panel, which is darker than the card.
+        assert!(darker(light.pane_gap, light.bg) && darker(light.bg, light.surface));
+        // Blue is at most 4 over red and green on every ground (Tern's grounds are +3, `232327` +4).
+        for t in [&dark, &light] {
+            for g in [
+                t.pane_gap,
+                t.bg,
+                t.surface,
+                t.surface_raised,
+                t.chrome,
+                t.well,
+                t.tab_active,
+                t.hover,
+                t.divider,
+                t.border,
+                t.control_border,
+                t.selected,
+                t.code_bg,
+                t.composer_fill,
+            ] {
+                let (r, gr, b) = ((g >> 16) & 0xFF, (g >> 8) & 0xFF, g & 0xFF);
+                assert!(b <= r.max(gr) + 4, "{}: {g:06X} leans blue", t.name);
+            }
         }
     }
 
@@ -2797,7 +2993,7 @@ mod tests {
 
     #[test]
     fn a_derived_pane_gap_goes_lighter_only_when_bg_has_no_room_below_it() {
-        let base = *THEMES[1].palette().expect("One Dark has a palette");
+        let base = palette_of("One Dark");
         // (dark, bg, the gap is darker than bg)
         for (dark, bg, below) in [
             (true, 0x000000, false),
@@ -2819,7 +3015,7 @@ mod tests {
 
     #[test]
     fn a_palette_with_no_contrast_reports_the_rules_it_breaks() {
-        let mut palette = *THEMES[1].palette().expect("One Dark has a palette");
+        let mut palette = palette_of("One Dark");
         palette.fg = palette.bg;
         palette.accent = palette.bg;
         let found = problems(&Theme::from_palette("Bad", &palette));
@@ -2919,6 +3115,20 @@ mod tests {
                 "sidebar text",
                 Theme {
                     sidebar: t.text,
+                    ..t.clone()
+                },
+            ),
+            (
+                "meta text",
+                Theme {
+                    text_subtle: t.bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "accent text",
+                Theme {
+                    accent_text: t.accent_bg,
                     ..t.clone()
                 },
             ),
