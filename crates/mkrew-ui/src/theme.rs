@@ -675,7 +675,7 @@ pub const CHANGES_DIFF_HEIGHT: f32 = 420.0;
 /// Indent per folder level in the Files tree.
 pub const FILE_TREE_INDENT: f32 = space::M;
 
-/// Side of the dot on a Files tree folder holding changes.
+/// Side of the git dot of a Files tree row: a changed file's marker and a folder holding changes.
 pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 
 /// Height of a Files tree row (the tree is a uniform list: every row is this high). Dense like

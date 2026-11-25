@@ -73,8 +73,13 @@ icons! {
         Eye => "eye",
         EyeOff => "eye-off",
         File => "file",
+        FileCode => "file-code",
+        FileCog => "file-cog",
         FileDiff => "file-diff",
+        FileImage => "file-image",
+        FileJson => "file-json",
         Files => "files",
+        FileSpreadsheet => "file-spreadsheet",
         FileText => "file-text",
         Folder => "folder",
         FolderOpen => "folder-open",
@@ -92,6 +97,7 @@ icons! {
         Lightbulb => "lightbulb",
         Link => "link",
         ListFilter => "list-filter",
+        Lock => "lock",
         Maximize2 => "maximize-2",
         MessageSquare => "message-square",
         MessageSquarePlus => "message-square-plus",
@@ -134,6 +140,50 @@ icons! {
         Upload => "upload",
         X => "x",
         Zap => "zap",
+    }
+}
+
+impl Icon {
+    /// The icon of a Files tree file (SPEC §12A): lock files and `.env`, tool config
+    /// (dotfiles ending `rc`, `.gitignore`, `*.config.*`), then by extension. Names are
+    /// compared without case and without allocating (rows are drawn every frame).
+    pub fn for_file(name: &str) -> Icon {
+        let ext = name.rsplit_once('.').map_or("", |(_, ext)| ext);
+        let ext_in = |list: &[&str]| list.iter().any(|e| ext.eq_ignore_ascii_case(e));
+        let ends = |suffix: &str| {
+            name.len() >= suffix.len()
+                && name.as_bytes()[name.len() - suffix.len()..]
+                    .eq_ignore_ascii_case(suffix.as_bytes())
+        };
+        let env = name.len() >= 4 && name.as_bytes()[..4].eq_ignore_ascii_case(b".env");
+        if env || ext_in(&["lock"]) || ends("-lock.json") || ends("-lock.yaml") {
+            Icon::Lock
+        } else if matches!(name, ".gitignore" | ".gitattributes" | ".editorconfig")
+            || (name.starts_with('.') && ends("rc"))
+            || name.contains(".config.")
+        {
+            Icon::Settings
+        } else if ext_in(&["json", "jsonc", "json5"]) {
+            Icon::FileJson
+        } else if ext_in(&["toml", "yaml", "yml", "ini", "cfg", "conf", "properties"]) {
+            Icon::FileCog
+        } else if ext_in(&["md", "markdown", "mdx", "txt", "rst", "log"]) {
+            Icon::FileText
+        } else if ext_in(&[
+            "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "avif",
+        ]) {
+            Icon::FileImage
+        } else if ext_in(&["csv", "tsv", "xls", "xlsx", "ods"]) {
+            Icon::FileSpreadsheet
+        } else if ext_in(&[
+            "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "java", "kt", "c", "h", "cc",
+            "cpp", "hpp", "cs", "rb", "php", "swift", "sh", "bash", "ps1", "bat", "cmd", "html",
+            "htm", "css", "scss", "vue", "svelte", "sql", "lua", "zig", "dart",
+        ]) {
+            Icon::FileCode
+        } else {
+            Icon::File
+        }
     }
 }
 
@@ -250,6 +300,36 @@ mod tests {
             assert!(text.starts_with("<svg"), "{logo:?}: not an SVG");
             // gpui only keeps the alpha: a second colour would paint as the first.
             assert!(!text.contains("fill=\"#"), "{logo:?}: not one colour");
+        }
+    }
+
+    #[test]
+    fn files_map_to_icons_by_name_then_extension() {
+        let cases = [
+            ("main.rs", Icon::FileCode),
+            ("App.TSX", Icon::FileCode),
+            ("README.MD", Icon::FileText),
+            ("notes.txt", Icon::FileText),
+            ("package.json", Icon::FileJson),
+            ("package-lock.json", Icon::Lock),
+            ("pnpm-lock.yaml", Icon::Lock),
+            ("Cargo.lock", Icon::Lock),
+            (".env", Icon::Lock),
+            (".env.local", Icon::Lock),
+            ("Cargo.toml", Icon::FileCog),
+            ("ci.yml", Icon::FileCog),
+            (".gitignore", Icon::Settings),
+            (".bashrc", Icon::Settings),
+            ("vite.config.ts", Icon::Settings),
+            ("logo.PNG", Icon::FileImage),
+            ("data.csv", Icon::FileSpreadsheet),
+            ("Makefile", Icon::File),
+            ("archive.tar.gz", Icon::File),
+            (".hidden", Icon::File),
+            ("", Icon::File),
+        ];
+        for (name, icon) in cases {
+            assert_eq!(Icon::for_file(name), icon, "{name}");
         }
     }
 }

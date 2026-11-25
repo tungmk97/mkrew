@@ -1404,8 +1404,7 @@ Only edit this file. When done, for EACH comment run:
 - **Tree** (the right panel's Files tab, ADR 0081; opens with `Ctrl+Shift+3`; its rows drag onto
   panes, §20B.5): lazily loaded per folder, respects `.gitignore` (an
   eye toggle beside the search shows ignored files; accent while they show, ADR 0110),
-  git status markers next to names (M modified, A added, D deleted, ? untracked), a small dot on
-  folders containing changes. In a workspace with child repositories (ADR 0029) the markers come
+  git status as a 6 px dot at the row end in the status color with the name tinted (modified, added or untracked, deleted; the letter M / A / D / ? is in the dot's tooltip), the same dot on folders containing changes; names `text_muted` (hover, cursor and opened rows `text`, ignored and dot files `text_subtle`), a Lucide icon by file type in `text_subtle` (`Icon::for_file`; folders `folder`), 1 px indent guides, the opened row with the selected-row tint and bar and an accent icon (ADR 0117). In a workspace with child repositories (ADR 0029) the markers come
   from the project folder's repository and from each child repository the listed folder is in
   (all of them when the root is listed). Updates live when agents create/delete/rename files.
 - **File pane** (ADR 0108, replaces the Editor view): an open file is a leaf of a terminal tab's split tree.

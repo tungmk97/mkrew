@@ -277,9 +277,58 @@ impl DraggedPath {
     }
 }
 
-/// One Files tree row: indented by depth, a chevron on folders, the name (muted when
-/// ignored), and on the right the git marker letter (files) or a dot (folders with changes).
-/// Every row is one body line high (the tree is a uniform list).
+/// The row's own text color; hover lifts it to `text` (`Look::Chip`), a git-changed name
+/// keeps its tint on top of it. The opened row and the cursor row are `text`, ignored and
+/// dot files `text_subtle`, every other name `text_muted` (SPEC §12A).
+fn name_tone(theme: &Theme, lit: bool, dim: bool) -> u32 {
+    if lit {
+        theme.text
+    } else if dim {
+        theme.text_subtle
+    } else {
+        theme.text_muted
+    }
+}
+
+/// A git marker's color (the name's tint and the row-end dot) and its tooltip, which carries
+/// the letter the tree no longer draws.
+fn marker_look(marker: GitMarker, theme: &Theme) -> (u32, &'static str) {
+    match marker {
+        GitMarker::Modified => (theme.git_modified, "Modified (M)"),
+        GitMarker::Added => (theme.diff_add_text, "Added (A)"),
+        GitMarker::Deleted => (theme.danger_text, "Deleted (D)"),
+        GitMarker::Untracked => (theme.diff_add_text, "Untracked (?)"),
+    }
+}
+
+/// One cell per ancestor level, each as wide as one indent, with a 1 px `layer[1]` line at
+/// the centre of that level's chevron. The cells are in the flow (a `uniform_list` row has no
+/// neighbours to draw a continuous line), so the row's content starts where `pl(S)` plus
+/// `depth` indents put it before.
+fn indent_guides(depth: usize, theme: &Theme) -> gpui::Div {
+    let line = gpui::rgba(theme.layer[1]);
+    div()
+        .flex()
+        .flex_none()
+        .h_full()
+        .children((0..depth).map(move |_| {
+            div()
+                .flex_none()
+                .w(px(theme::FILE_TREE_INDENT))
+                .h_full()
+                .child(
+                    div()
+                        .ml(px(theme::TREE_CHEVRON_SIZE / 2.0))
+                        .w(px(theme::BORDER_WIDTH))
+                        .h_full()
+                        .bg(line),
+                )
+        }))
+}
+
+/// One Files tree row (SPEC §12A): a guide per ancestor level, a chevron on folders, an icon
+/// by file type, the name, and a 6 px git dot at the end (a folder holding changes has one
+/// too). Every row is one body line high (the tree is a uniform list).
 pub(crate) fn file_row(
     project_id: Ulid,
     row: &files_view::Row,
@@ -294,13 +343,18 @@ pub(crate) fn file_row(
                 .h(theme::rems_px(theme::TREE_ROW_HEIGHT))
                 .flex()
                 .items_center()
-                .pl(px(space::S + theme::FILE_TREE_INDENT * *depth as f32))
-                .overflow_hidden()
-                .text_ellipsis()
-                .whitespace_nowrap()
+                .pl(px(space::S))
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
-                .child(text.clone())
+                .child(indent_guides(*depth, theme))
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .child(text.clone()),
+                )
                 .into_any_element();
         }
         files_view::Row::Entry {
@@ -311,17 +365,24 @@ pub(crate) fn file_row(
     };
     let at_cursor = state.cursor == Some(entry.path.as_str());
     let opened = state.opened == Some(entry.path.as_str());
+    let lit = at_cursor || opened;
+    let dim = entry.ignored || entry.name.starts_with('.');
     let chevron = match (entry.is_dir, expanded) {
         (false, _) => None,
         (true, false) => Some(Icon::ChevronRight),
         (true, true) => Some(Icon::ChevronDown),
     };
-    let marker = entry.marker.map(|marker| match marker {
-        GitMarker::Modified => ("M", theme.git_modified, "Modified"),
-        GitMarker::Added => ("A", theme.diff_add_text, "Added"),
-        GitMarker::Deleted => ("D", theme.diff_del_text, "Deleted"),
-        GitMarker::Untracked => ("?", theme.diff_add_text, "Untracked"),
-    });
+    let icon = if entry.is_dir {
+        Icon::Folder
+    } else {
+        Icon::for_file(&entry.name)
+    };
+    let icon_color = match (entry.is_dir, opened) {
+        (true, _) => theme.folder,
+        (false, true) => theme.accent,
+        (false, false) => theme.text_subtle,
+    };
+    let marker = entry.marker.map(|marker| marker_look(marker, theme));
     let path = entry.path.clone();
     let style = PopupStyle::of(theme);
     let accent = theme.accent;
@@ -338,32 +399,32 @@ pub(crate) fn file_row(
         .h(theme::rems_px(theme::TREE_ROW_HEIGHT))
         .flex()
         .items_center()
-        .gap(px(space::XS))
-        .pl(px(space::S + theme::FILE_TREE_INDENT * depth as f32))
+        .gap(px(space::S))
+        .pl(px(space::S))
         .pr(px(space::S))
         .rounded(px(radius::CHIP))
         .border(px(theme::BORDER_WIDTH))
         .border_color(ring)
         .text_size(font_size::BODY)
-        .when(at_cursor || opened, |el| el.bg(rgb(theme.selected)))
-        .pressable_unless(at_cursor || opened, Look::Row, theme)
+        .text_color(rgb(name_tone(theme, lit, dim)))
+        // The cursor row without the opened tint is a plain hover fill; focus adds the ring.
+        .when(at_cursor && !opened, |el| el.bg(gpui::rgba(theme.layer[0])))
+        .map(|el| with_pick(el, opened, theme))
+        .pressable_unless(lit, Look::Chip, theme)
         .when(at_cursor, |el| {
             el.relative()
                 .child(record_bounds(Anchor::FileRow(entry.path.clone()), cx))
         })
+        .child(indent_guides(depth, theme))
         .child(
             div()
                 .flex_none()
                 .w(theme::rems_px(theme::TREE_CHEVRON_SIZE))
                 .children(
-                    chevron.map(|icon| icon_svg(icon, theme::TREE_CHEVRON_SIZE, theme.text_subtle)),
+                    chevron.map(|icon| icon_svg(icon, theme::TREE_CHEVRON_SIZE, theme.subtle)),
                 ),
         )
-        .child(if entry.is_dir {
-            icon_svg(Icon::Folder, theme::TREE_ICON_SIZE, theme.folder)
-        } else {
-            icon_svg(Icon::File, theme::TREE_ICON_SIZE, theme.text_subtle)
-        })
+        .child(icon_svg(icon, theme::TREE_ICON_SIZE, icon_color))
         .child(
             div()
                 .flex_1()
@@ -371,23 +432,19 @@ pub(crate) fn file_row(
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .text_color(rgb(if entry.ignored || entry.name.starts_with('.') {
-                    theme.text_disabled
-                } else {
-                    theme.text
-                }))
+                // Inherits the row's color (so hover can lift it); a changed name keeps its tint.
+                .when_some(marker, |el, (color, _)| el.text_color(rgb(color)))
                 .when(opened, |el| el.font_weight(FontWeight(weight::MEDIUM)))
                 .child(entry.name.clone()),
         )
-        .children(marker.map(|(letter, color, what)| {
+        .children(marker.map(|(color, what)| {
             div()
                 .id(SharedString::from(format!("file-marker-{}", entry.path)))
                 .flex_none()
-                .text_size(font_size::OVERLINE)
-                .font_weight(FontWeight(weight::SEMIBOLD))
-                .text_color(rgb(color))
+                .size(px(theme::FILE_CHANGES_DOT_SIZE))
+                .rounded_full()
+                .bg(rgb(color))
                 .tooltip(tooltip(theme, what, ""))
-                .child(letter)
         }))
         .when(entry.is_dir && entry.has_changes, |el| {
             el.child(
@@ -453,5 +510,24 @@ pub(crate) fn size_label(bytes: u64) -> String {
         format!("{:.1} KB", bytes_f / KB)
     } else {
         format!("{:.1} MB", bytes_f / (KB * KB))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_have_three_tiers_and_a_lit_row_reads_at_full_strength() {
+        for theme in [Theme::dark(), Theme::light()] {
+            assert_eq!(name_tone(&theme, false, false), theme.text_muted);
+            assert_eq!(name_tone(&theme, false, true), theme.text_subtle);
+            assert_eq!(name_tone(&theme, true, false), theme.text);
+            assert_eq!(
+                name_tone(&theme, true, true),
+                theme.text,
+                "an opened dot file"
+            );
+        }
     }
 }

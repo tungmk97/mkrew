@@ -36,6 +36,7 @@ Measured from Tern's CSS (six gap reports):
 - **Prompt bubble.** Tern's right-aligned bubble (`prompt_bubble`) in the omp pane and the Chat view; omp's head row moves under it on hover.
 - **Chat Markdown.** Line height 1.6 for chat only (amends ADR 0116's 1.5; the UI stays 1.5), `text` headings and `text_subtle` bullets (amends ADR 0105's accent headings and dots), code cards sunken on `code_bg`, code lines 1.6 everywhere.
 - **Tool rows.** No box around `omp.tool*` cards; their output sits on `code_bg` with a `layer[0]` ring.
+- **Files tree.** Names `text_muted`, hover / cursor / opened `text`, ignored and dot files `text_subtle`; opened row = selected-row helper with an accent icon; 1 px `layer[1]` indent guides; icons by extension (`Icon::for_file`, six Lucide icons added from `lucide-static` 1.55.0: file-code, file-cog, file-image, file-json, file-spreadsheet, lock); git status = 6 px dot plus tinted name, the letter moves to the tooltip.
 - Components (shared controls, chat, composer, files, chrome, settings, git) follow in the same change; see the spec.
 
 ## Consequences
