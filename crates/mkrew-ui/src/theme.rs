@@ -559,8 +559,6 @@ pub const COMPOSER_FIXED_WIDTH: f32 = COMPOSER_ENHANCE_WIDTH + SEND_CHIP_MIN_WID
 /// What one fact of a bar takes besides its icon and its text: `px(XS)` on both sides and the
 /// `space::XS` gap to the next one.
 pub const COMPOSER_FACT_CHROME_WIDTH: f32 = 3.0 * space::XS;
-/// The composer's round send and stop buttons (Tern: 32 px).
-pub const SEND_BUTTON_SIZE: f32 = 32.0;
 /// The chevron of the composer's model pill (a chevron step, like the tree's).
 pub const MODEL_CHEVRON_SIZE: f32 = TREE_CHEVRON_SIZE;
 /// The thin context meter above the composer card: a hairline.
@@ -596,6 +594,10 @@ pub const TSP_STATUS_ROW_HEIGHT: f32 = 26.0;
 /// to the 4 px grid, spec 6).
 pub const TSP_HUD_SEGMENT_HEIGHT: f32 = 20.0;
 pub const TSP_HUD_PAD: f32 = 2.0;
+/// A queued text of the omp dock is a pill this tall (Tern: 26).
+pub const TSP_QUEUE_ITEM_HEIGHT: f32 = 26.0;
+/// The scroll-to-bottom button of a transcript: a quiet icon button this size (Tern: a bare chevron).
+pub const SCROLL_END_BUTTON_SIZE: f32 = 28.0;
 /// The model name never truncates below this many characters.
 pub const TSP_MODEL_MIN_CHARS: usize = 6;
 /// The effort glyph that leads the model pill (omp's four bars) and the gap after it.

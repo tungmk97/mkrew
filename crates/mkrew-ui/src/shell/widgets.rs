@@ -294,39 +294,26 @@ pub(crate) fn stop_text_button(id: &'static str, theme: &Theme) -> gpui::Statefu
         .child("Stop")
 }
 
-/// The frame of the round icon buttons: a [`theme::SEND_BUTTON_SIZE`] circle holding `glyph`.
-fn round_frame(id: &'static str, glyph: Icon, color: u32) -> gpui::Stateful<gpui::Div> {
+/// The scroll-to-the-end button of a transcript list: a quiet `SCROLL_END_BUTTON_SIZE` icon button
+/// with no fill, no frame and no shadow (so the `Look::Icon` hover, `layer[0]`, shows), a 16 px
+/// chevron in `text_subtle`. It floats over the list, so it takes the mouse itself: only the
+/// wheel passes through.
+pub(crate) fn scroll_end_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex()
         .flex_none()
         .items_center()
         .justify_center()
-        .size(px(theme::SEND_BUTTON_SIZE))
-        .rounded(px(radius::PILL))
-        .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, color))
-}
-
-/// The neutral round look: raised surface, 1 px border, muted glyph.
-fn round_neutral(id: &'static str, glyph: Icon, theme: &Theme) -> gpui::Stateful<gpui::Div> {
-    round_frame(id, glyph, theme.text_muted)
-        .bg(rgb(theme.surface_raised))
-        .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme::raised_border(theme)))
-}
-
-/// A small floating round button (the Chat page's scroll to the end): the neutral look with a
-/// float shadow and the raised hover. It floats over a list, so it takes the mouse itself:
-/// only the wheel passes through.
-pub(crate) fn float_button(
-    id: &'static str,
-    glyph: Icon,
-    theme: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    round_neutral(id, glyph, theme)
-        .shadow(theme::shadow_pop(theme))
+        .size(theme::rems_px(theme::SCROLL_END_BUTTON_SIZE))
+        .rounded(px(radius::MEDIUM))
         .block_mouse_except_scroll()
-        .pressable(Look::Raised, true, theme)
+        .pressable(Look::Icon, true, theme)
+        .child(icon_svg(
+            Icon::ChevronDown,
+            theme::ICON_SIZE,
+            theme.text_subtle,
+        ))
 }
 
 /// A button label with a leading icon: `glyph`, then `text`, on one line, both in `color`.

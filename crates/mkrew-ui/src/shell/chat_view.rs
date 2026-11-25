@@ -399,7 +399,7 @@ impl Shell {
                                 .bottom(px(space::S))
                                 .child(chat_column(
                                     div().flex().justify_end().child(
-                                        float_button("chat-scroll-end", Icon::ArrowDown, theme)
+                                        scroll_end_button("chat-scroll-end", theme)
                                             .tooltip(tooltip(
                                                 theme,
                                                 "Scroll to the latest message",

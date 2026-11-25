@@ -41,6 +41,10 @@ pub enum DockRole {
     HudTodo,
     /// `overlay role=omp.autocomplete`: the completion list under the editor's caret.
     Completion,
+    /// `col role=omp.queue`: the texts queued while omp works.
+    Queue,
+    /// `row role=omp.queue.item` of the queue: an icon, the text, a count and an edit chip.
+    QueueItem,
 }
 
 pub fn dock_role(role: &str) -> Option<DockRole> {
@@ -69,6 +73,8 @@ pub fn dock_role(role: &str) -> Option<DockRole> {
         "omp.hud.seg" => DockRole::HudSeg,
         "omp.hud.todo" => DockRole::HudTodo,
         "omp.autocomplete" => DockRole::Completion,
+        "omp.queue" => DockRole::Queue,
+        "omp.queue.item" => DockRole::QueueItem,
         _ => return None,
     })
 }
@@ -1066,6 +1072,16 @@ mod tests {
         assert_eq!(dock_role("omp.working.sep"), None);
         assert_eq!(dock_role("omp.composer"), None);
         assert_eq!(dock_role(""), None);
+    }
+
+    #[test]
+    fn the_queue_roles_are_matched_whole() {
+        assert_eq!(dock_role("omp.queue"), Some(DockRole::Queue));
+        assert_eq!(dock_role("omp.queue.item"), Some(DockRole::QueueItem));
+        // The count and the edit chip of an item are drawn generically inside it.
+        assert_eq!(dock_role("omp.queue.count"), None);
+        assert_eq!(dock_role("omp.queue.edit"), None);
+        assert_eq!(dock_role("omp.queued"), None);
     }
 
     /// The dock of `real_children(true)` with the ask card where the editor col stood.

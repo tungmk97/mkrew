@@ -1348,7 +1348,7 @@ impl Shell {
                             .bottom(px(space::S))
                             .child(page_column(
                                 div().flex().justify_end().child(
-                                    float_button("tsp-scroll-end", Icon::ArrowDown, theme)
+                                    scroll_end_button("tsp-scroll-end", theme)
                                         .tooltip(tooltip(
                                             theme,
                                             "Scroll to the latest message",
@@ -1726,8 +1726,52 @@ impl Shell {
     }
     #[inline(never)]
     fn tsp_row(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        if tsp::role_of(node).and_then(tsp::dock_role) == Some(tsp::DockRole::QueueItem) {
+            return self.tsp_queue_item(p, node, cx);
+        }
         let kids = self.tsp_children(p, node, cx);
         self.tsp_row_el(p, node, kids, cx)
+    }
+
+    /// One queued text (`omp.queue.item`): a `TSP_QUEUE_ITEM_HEIGHT` pill with a `layer[0]` fill,
+    /// its icon at 14 px in `text_subtle`, the text in META `text_muted` clipped at the row's end,
+    /// then whatever omp put after it (the count, the edit chip) drawn generically.
+    #[inline(never)]
+    fn tsp_queue_item(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let kids: Vec<AnyElement> = (p.doc.children(&node.id))
+            .filter(|child| !bool_prop(child, "hidden"))
+            .map(|child| match child.kind.as_str() {
+                "icon" => str_prop(child, "name")
+                    .and_then(|name| self.tsp_icon(p, name, theme.text_subtle))
+                    .map_or_else(
+                        || div().into_any_element(),
+                        |icon| div().flex_none().child(icon).into_any_element(),
+                    ),
+                "text" => div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(self.tsp_node(p, child, cx))
+                    .into_any_element(),
+                _ => self.tsp_node(p, child, cx),
+            })
+            .collect();
+        let el = div()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .min_w_0()
+            .h(theme::rems_px(theme::TSP_QUEUE_ITEM_HEIGHT))
+            .pl(px(space::M))
+            .pr(px(space::XS))
+            .rounded(px(theme::radius::PILL))
+            .bg(gpui::rgba(theme.layer[0]))
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .children(kids);
+        // `Look::Text`: the pill's own fill is `layer[0]`, which the `Chip` hover would not show on.
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
     }
 
     #[inline(never)]
@@ -1761,6 +1805,9 @@ impl Shell {
         let theme = p.theme;
         let gap = px(tsp::col_gap(tsp::role_of(node), str_prop(node, "gap")));
         let mut el = div().flex().flex_col().gap(gap).min_w_0();
+        if tsp::role_of(node).and_then(tsp::dock_role) == Some(tsp::DockRole::Queue) {
+            el = el.gap(px(space::XS)).pb(px(space::S));
+        }
         if node.kind == "overlay" {
             el = el
                 .p(px(space::M))
