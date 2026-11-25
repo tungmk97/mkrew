@@ -611,7 +611,7 @@ impl Shell {
         let content = match &key {
             PaneKey::Session(id) => {
                 if tsp_drawn {
-                    self.render_tsp(*id, is_focused, stacked, width, now, theme, cx)
+                    self.render_tsp(*id, is_focused, stacked, width, several, now, theme, cx)
                 } else if info.is_some_and(|info| self.chat_on(info)) {
                     self.render_chat(*id, is_focused, now, theme, cx)
                 } else {
@@ -632,8 +632,8 @@ impl Shell {
                 self.render_web_pane(project_id, *id, is_focused, theme, window, cx)
             }
         };
-        // Reading width caps the terminal grid (and the Chat list); a surface keeps its own
-        // 760 px column (`chat_column`), so the cap would only narrow its scroll area.
+        // Reading width caps the terminal grid (and the Chat list); a surface lays out its own
+        // columns (`page_column`), so the cap would only narrow its scroll area.
         let reading = info.is_some_and(|info| self.reading_on(info)) && !tsp_drawn;
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));

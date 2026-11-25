@@ -1081,16 +1081,17 @@ fn keyboard_stop(
 /// `el` in the Chat page's centered column: at most [`theme::CHAT_COLUMN_WIDTH`] wide with
 /// `space::XL` at both sides.
 pub(crate) fn chat_column(el: impl IntoElement) -> gpui::Div {
-    chat_column_in(el, false)
+    page_column(el, Some(theme::CHAT_COLUMN_WIDTH), false)
 }
 
-/// [`chat_column`]; `bounded`: the column is as tall as its parent leaves it (a flex column
-/// whose content may shrink and scroll inside), not as tall as its content.
-pub(crate) fn chat_column_in(el: impl IntoElement, bounded: bool) -> gpui::Div {
+/// `el` with `space::XL` at both sides, at most `max` wide and centered (`None`: as wide as the
+/// pane, an omp surface's transcript like Tern's); `bounded`: the column is as tall as its parent
+/// leaves it (a flex column whose content may shrink and scroll inside), not as tall as its content.
+pub(crate) fn page_column(el: impl IntoElement, max: Option<f32>, bounded: bool) -> gpui::Div {
     let outer = div().w_full().flex().justify_center();
     let inner = div()
         .w_full()
-        .max_w(px(theme::CHAT_COLUMN_WIDTH))
+        .when_some(max, |el, max| el.max_w(px(max)))
         .px(px(theme::CHAT_COLUMN_PADDING));
     if bounded {
         outer

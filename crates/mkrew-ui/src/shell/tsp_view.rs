@@ -25,7 +25,7 @@ use mkrew_ui::tsp::{
 use mkrew_ui::{docs, preview};
 use serde_json::{Value, json};
 
-use super::chat_view::{chat_column, chat_column_in};
+use super::chat_view::{chat_column, page_column};
 use super::composer::{
     composer_card_frame, composer_room, meter_bar, model_pill, permission_chip, placeholder_row,
     quiet_chip,
@@ -977,7 +977,8 @@ impl Shell {
 
     /// The pane of an omp session in TSP mode: the surface, the starting state, or (exited) the
     /// last document read-only. `stacked`: the pane shares the tab's height with another, so its
-    /// composer is compact while the pane has no keyboard.
+    /// composer is compact while the pane has no keyboard. `several`: other panes are shown
+    /// beside it, so the transcript spans the pane (`tsp::column_max`).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_tsp(
         &self,
@@ -985,6 +986,7 @@ impl Shell {
         is_focused: bool,
         stacked: bool,
         width: f32,
+        several: bool,
         now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -1005,7 +1007,7 @@ impl Shell {
         // The grid is never painted, so nothing else sizes the PTY: omp gets its `resize` from the
         // pane's width as soon as the pane has one (the starting state included).
         let cell_width = cell_width(cx.text_system(), theme);
-        if let Some(cols) = tsp::fit_width(width, f32::from(cell_width)) {
+        if let Some(cols) = tsp::fit_width(width, f32::from(cell_width), several) {
             pane.update(cx, |pane, cx| pane.fit_cols(cols, cx));
         }
         let handle = pane.read(cx).focus_handle();
@@ -1063,19 +1065,21 @@ impl Shell {
         // drag strip (`PANE_GRIP_HEIGHT`), the 2 px color line and the badges, like the Chat
         // list's `py(space::L)`; the bottom one parts the last message from the status row and
         // the meter.
+        // Alone, the transcript is in the Chat column; among several panes it spans the pane like
+        // Tern (`tsp::column_max`). The dock below keeps the Chat column.
+        let max = tsp::column_max(several);
         let rows: Vec<AnyElement> = if screen {
             (doc.children("main"))
                 .map(|node| {
-                    chat_column_in(self.tsp_node(&screen_paint, node, cx), true).into_any_element()
+                    page_column(self.tsp_node(&screen_paint, node, cx), max, true)
+                        .into_any_element()
                 })
                 .collect()
         } else {
             std::iter::once(div().h(px(space::L)).into_any_element())
-                .chain(
-                    (doc.children("main")).map(|node| {
-                        chat_column(self.tsp_node(&paint, node, cx)).into_any_element()
-                    }),
-                )
+                .chain((doc.children("main")).map(|node| {
+                    page_column(self.tsp_node(&paint, node, cx), max, false).into_any_element()
+                }))
                 .chain(std::iter::once(div().h(px(space::L)).into_any_element()))
                 .collect()
         };
@@ -1138,7 +1142,7 @@ impl Shell {
                             .left_0()
                             .right_0()
                             .bottom(px(space::S))
-                            .child(chat_column(
+                            .child(page_column(
                                 div().flex().justify_end().child(
                                     float_button("tsp-scroll-end", Icon::ArrowDown, theme)
                                         .tooltip(tooltip(
@@ -1156,6 +1160,8 @@ impl Shell {
                                             }),
                                         ),
                                 ),
+                                max,
+                                false,
                             )),
                     )
                 }),

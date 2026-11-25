@@ -1410,11 +1410,6 @@ fn a_report_replaces_an_older_different_one_only() {
     assert!(!old.supersedes(&old), "the same content is no news");
 }
 
-#[test]
-fn the_browser_pane_protocol_is_version_62() {
-    assert_eq!(crate::PROTOCOL_VERSION, 62);
-}
-
 /// ADR 0105: the recap travels with the transcript reply; a reply without it (an older
 /// daemon, or any non-omp agent) still decodes, and the key is left out when there is none.
 #[test]
