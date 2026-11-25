@@ -488,6 +488,13 @@ pub const TSP_POPOVER_MIN_HEIGHT: f32 = 120.0;
 /// The accent bar on the left of the picked row of an omp `ask` card.
 pub const TSP_ASK_BAR_WIDTH: f32 = 2.0;
 
+/// Space below every top-level row of an omp transcript that draws something (Tern's 20 px
+/// turn gap on the 4/8/12/16/24/32 scale; `tsp::row_gap`).
+pub const TSP_ROW_GAP: f32 = space::L;
+
+/// Least height of a thinking row, a tool head and the working row (Tern's 24 px heads).
+pub const TSP_HEAD_HEIGHT: f32 = space::XL;
+
 /// The ring of an omp `ask` timeout.
 pub const TSP_RING_SIZE: f32 = 24.0;
 

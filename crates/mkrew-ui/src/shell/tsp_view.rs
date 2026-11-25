@@ -1293,10 +1293,14 @@ impl Shell {
                         let compact = paint.compact;
                         main.child(
                             gpui::list(ui.rows.clone(), move |ix, _, cx| {
-                                // The spacers keep the first row clear of the drag strip and
-                                // part the last one from the dock.
-                                if ix == 0 || ix > count {
+                                // The top spacer keeps the first row clear of the drag strip;
+                                // the bottom one is what is left of the dock gap (every row
+                                // that draws something carries `TSP_ROW_GAP` below it).
+                                if ix == 0 {
                                     return div().h(px(space::L)).into_any_element();
+                                }
+                                if ix > count {
+                                    return div().h(px(space::S)).into_any_element();
                                 }
                                 shell
                                     .update(cx, |shell, cx| {
@@ -1435,7 +1439,8 @@ impl Shell {
             bounded: false,
             compact,
         };
-        let el = match ui.thoughts.get(&node.id) {
+        let plan = ui.thoughts.get(&node.id);
+        let el = match plan {
             // Folded into the lead's head: the row draws nothing.
             Some(tsp::RowPlan::Folded) => return div().into_any_element(),
             Some(tsp::RowPlan::Lead { label, open }) => {
@@ -1460,7 +1465,8 @@ impl Shell {
             }
             None => self.tsp_node(&paint, node, cx),
         };
-        page_column(el, max, false).into_any_element()
+        let gap = tsp::row_gap(tsp::row_kind(doc, node), plan);
+        page_column(el, max, false).pb(px(gap)).into_any_element()
     }
 
     /// A child of `layer`: an `overlay` is a modal card placed by its `anchor` and `size`; any other
@@ -1602,6 +1608,7 @@ impl Shell {
     ) -> Vec<AnyElement> {
         p.doc
             .children(&node.id)
+            .filter(|child| !bool_prop(child, "hidden"))
             .map(|child| self.tsp_node(p, child, cx))
             .collect()
     }
@@ -1749,7 +1756,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let theme = p.theme;
-        let gap = px(tsp::gap_px(str_prop(node, "gap")));
+        let gap = px(tsp::col_gap(tsp::role_of(node), str_prop(node, "gap")));
         let mut el = div().flex().flex_col().gap(gap).min_w_0();
         if node.kind == "overlay" {
             el = el
@@ -1813,7 +1820,21 @@ impl Shell {
                 .rounded(px(theme::radius::MEDIUM))
                 .bg(rgb(theme.surface_raised));
         }
-        let el = Self::tsp_flow(el, node).children(head_el).children(body);
+        let el = Self::tsp_flow(el, node).children(head_el);
+        let el = if tsp::is_thinking(node) && !body.is_empty() {
+            el.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::S))
+                    .min_w_0()
+                    .pl(px(space::L))
+                    .italic()
+                    .children(body),
+            )
+        } else {
+            el.children(body)
+        };
         self.tsp_decorate(el, p, node, Look::Text, false, cx)
     }
 
@@ -1958,7 +1979,18 @@ impl Shell {
 
     #[inline(never)]
     fn tsp_md(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
-        let theme = p.theme;
+        // A thinking body is `text_subtle`: paragraphs take `theme.text`, so give them that tier.
+        // ponytail: one Theme clone per painted thinking body; a Flavor variant if it shows up in a profile.
+        let thought_theme;
+        let theme = if parent_is(p, node, tsp::is_thinking) {
+            thought_theme = Theme {
+                text: p.theme.text_subtle,
+                ..p.theme.clone()
+            };
+            &thought_theme
+        } else {
+            p.theme
+        };
         let text = str_prop(node, "text").unwrap_or("");
         // The cache keys on the node's revision; a fence is built on a miss only.
         let (kind, lang) = (node.kind.as_str(), str_prop(node, "lang"));
@@ -2905,9 +2937,17 @@ fn thumbnail(image: Arc<gpui::Image>, theme: &Theme) -> Div {
         )
 }
 
-/// The head of an `omp.thinking*` section, or of a run of them: META italic `text_subtle`
-/// (`text_muted` on hover) with the chevron after the label. `collapsed`: the chevron's state, or
-/// `None` without one. The caller adds the press.
+/// Whether `node`'s parent satisfies `want` (a role test such as `tsp::is_thinking`).
+fn parent_is(p: &Paint<'_>, node: &Node, want: fn(&Node) -> bool) -> bool {
+    node.parent
+        .as_deref()
+        .and_then(|id| p.doc.get(id))
+        .is_some_and(want)
+}
+
+/// The head of an `omp.thinking*` section, or of a run of them: BODY italic `text_subtle`
+/// (`text` on hover), 24 px at least, with the chevron after the label. `collapsed`: the
+/// chevron's state, or `None` without one. The caller adds the press.
 fn thinking_head_el(
     theme: &Theme,
     key: String,
@@ -2922,9 +2962,7 @@ fn thinking_head_el(
             Icon::ChevronDown
         };
         icon_svg(icon, theme::GROUP_CHEVRON_SIZE, theme.text_subtle)
-            .group_hover(group.clone(), |style| {
-                style.text_color(rgb(theme.text_muted))
-            })
+            .group_hover(group.clone(), |style| style.text_color(rgb(theme.text)))
     });
     div()
         .id(SharedString::from(key))
@@ -2933,12 +2971,13 @@ fn thinking_head_el(
         .flex()
         .items_center()
         .gap(px(space::XS))
-        .text_size(font_size::META)
+        .min_h(px(theme::TSP_HEAD_HEIGHT))
+        .text_size(font_size::BODY)
         .italic()
         .child(
             div()
                 .text_color(rgb(theme.text_subtle))
-                .group_hover(group, |style| style.text_color(rgb(theme.text_muted)))
+                .group_hover(group, |style| style.text_color(rgb(theme.text)))
                 .child(label),
         )
         .children(chevron)
@@ -3827,7 +3866,6 @@ impl Shell {
                 .items_center()
                 .gap(px(space::M))
                 .min_w_0()
-                .px(px(space::S))
                 .pb(px(space::XS))
                 .child(
                     div()
@@ -3869,6 +3907,7 @@ impl Shell {
             .items_center()
             .gap(px(space::S))
             .min_w_0()
+            .min_h(px(theme::TSP_HEAD_HEIGHT))
             .text_size(font_size::META)
             .child(
                 div()
@@ -3888,6 +3927,7 @@ impl Shell {
                     .min_w_0()
                     .truncate()
                     .text_size(font_size::BODY)
+                    .font_weight(FontWeight(weight::MEDIUM))
                     .text_color(rgb(theme.text_muted))
                     .child(w.label.clone()),
             )
