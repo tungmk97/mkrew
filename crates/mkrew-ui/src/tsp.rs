@@ -1128,48 +1128,6 @@ pub fn decor_pieces(
         .collect()
 }
 
-/// One drawn piece of an editor line: decorated text, or the caret.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Atom {
-    Text(std::ops::Range<usize>, Decor),
-    Caret,
-}
-
-/// What the line `line` (a byte range of the whole text) draws: its pieces without the hidden
-/// ones, the caret (a byte offset, `None` when this editor has no focus) where it falls.
-pub fn line_atoms(
-    pieces: &[(std::ops::Range<usize>, Decor)],
-    line: std::ops::Range<usize>,
-    caret: Option<usize>,
-) -> Vec<Atom> {
-    let mut caret = caret.filter(|at| (line.start..=line.end).contains(at));
-    let mut atoms = Vec::new();
-    for (range, decor) in pieces {
-        let (start, end) = (range.start.max(line.start), range.end.min(line.end));
-        if start >= end {
-            continue;
-        }
-        let text = |atoms: &mut Vec<Atom>, from: usize, to: usize| {
-            if from < to && !decor.hide {
-                atoms.push(Atom::Text(from..to, *decor));
-            }
-        };
-        match caret {
-            Some(at) if (start..end).contains(&at) => {
-                text(&mut atoms, start, at);
-                atoms.push(Atom::Caret);
-                text(&mut atoms, at, end);
-                caret = None;
-            }
-            _ => text(&mut atoms, start, end),
-        }
-    }
-    if caret.is_some() {
-        atoms.push(Atom::Caret);
-    }
-    atoms
-}
-
 /// Filled blocks of 4 for a thinking level.
 pub fn effort_steps(level: &str) -> usize {
     match level {
@@ -1721,6 +1679,8 @@ pub fn choice_filled(node: &Node) -> bool {
 
 mod dock;
 pub use dock::*;
+mod editor;
+pub use editor::*;
 
 #[cfg(test)]
 mod tests {
@@ -2716,41 +2676,6 @@ mod tests {
         assert_eq!(mid.style.color, Some(t.accent));
         assert!(mid.style.bold && mid.hide);
         assert!(!pieces[0].1.hide && !pieces[2].1.hide);
-    }
-
-    #[test]
-    fn an_editor_line_draws_its_visible_pieces_and_the_caret_where_it_falls() {
-        let t = Theme::dark();
-        let text = "ab\ncdef";
-        let pieces = decor_pieces(text, &[json!({"from": 4, "to": 6, "s": "hide"})], &t);
-        let plain = Decor::default();
-        // Line 2 is bytes 3..7: "c" visible, "de" hidden, "f" visible.
-        let texts = |atoms: &[Atom]| -> Vec<String> {
-            atoms
-                .iter()
-                .map(|a| match a {
-                    Atom::Text(r, _) => text[r.clone()].to_owned(),
-                    Atom::Caret => "|".to_owned(),
-                })
-                .collect()
-        };
-        assert_eq!(texts(&line_atoms(&pieces, 3..7, None)), ["c", "f"]);
-        assert_eq!(texts(&line_atoms(&pieces, 3..7, Some(3))), ["|", "c", "f"]);
-        assert_eq!(
-            texts(&line_atoms(&pieces, 3..7, Some(5))),
-            ["c", "|", "f"],
-            "a caret inside hidden text sits where it starts"
-        );
-        assert_eq!(texts(&line_atoms(&pieces, 3..7, Some(7))), ["c", "f", "|"]);
-        assert_eq!(texts(&line_atoms(&pieces, 0..2, Some(1))), ["a", "|", "b"]);
-        assert_eq!(
-            texts(&line_atoms(&pieces, 0..2, Some(5))),
-            ["ab"],
-            "another line's caret"
-        );
-        let blank = decor_pieces("\nx", &[], &t);
-        assert_eq!(line_atoms(&blank, 0..0, Some(0)), [Atom::Caret]);
-        assert_eq!(line_atoms(&blank, 1..2, None), [Atom::Text(1..2, plain)]);
     }
 
     #[test]

@@ -21,6 +21,14 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-25 omp composer edited by Mkrew (ADR 0113)
+
+- [ ] **Restart the daemon first** (protocol 63; a window from before it shows a version mismatch).
+- [ ] **Paste an image (PNG) into an omp composer:** a small accent `#1` chip shows above the text, not the picture; a click opens the picture in a panel above it; Esc or a click outside closes it; a second image is `#2`.
+- [ ] **Two omp panes stacked (one above the other):** the pane without the keyboard shows only the composer card's field (no meter, no status row, no chips, no bar); clicking into it brings them back.
+- [ ] **Light theme:** the caret, the selection highlight, the skill color and the `#n` chip read well in the omp composer.
+- [ ] **Keys with a real keyboard:** Up on the first line recalls omp's history, Enter sends, Esc interrupts, Ctrl+C without a selection still interrupts, Vietnamese input (Unikey) types into the field.
+
 ### To verify - 2026-11-24 Browser pane (ADR 0111, spec docs/superpowers/specs/2026-11-24-browser-pane-design.md)
 
 Screenshots: `docs/screenshots/browser-pane-<view>-<dark|light>.png`.

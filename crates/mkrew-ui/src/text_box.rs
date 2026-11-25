@@ -248,6 +248,22 @@ impl Input {
         }
     }
 
+    /// Another program changed the whole text (omp's composer, ADR 0113): `text` replaces it as
+    /// one undo step and the caret goes to byte `cursor` (clamped, on a char boundary), the
+    /// selection gone. Nothing changes when both are already these.
+    pub fn replace_all(&mut self, text: &str, cursor: usize) {
+        if self.text != text {
+            self.splice(0..self.text.len(), text, false);
+        }
+        let mut cursor = cursor.min(self.text.len());
+        while !self.text.is_char_boundary(cursor) {
+            cursor -= 1;
+        }
+        self.cursor = cursor;
+        self.anchor = None;
+        self.typing = false;
+    }
+
     /// Ctrl+Z: back to the state before the last undo step. `true` when there was one.
     pub fn undo(&mut self) -> bool {
         let Some(before) = self.undo.pop() else {

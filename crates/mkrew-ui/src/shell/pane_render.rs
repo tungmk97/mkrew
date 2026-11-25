@@ -520,6 +520,8 @@ impl Shell {
                         key,
                         several,
                         zoomed,
+                        // Another pane above or below it: its composer goes compact unfocused.
+                        rect.h < 1.0 && !zoomed,
                         width,
                         is_focused,
                         is_focused && composer_focused,
@@ -580,7 +582,8 @@ impl Shell {
     /// divider line (`pane_divider`, ADR 0109). Among several the unfocused ones get a dim and a
     /// session pane a slim handle on the top edge that drags it. Transient signals float in the
     /// top-right corner (`pane_badges`). A file pane is the editor (`render_file_pane`).
-    /// `zoomed`: the pane fills the tab. `voice_ring`: the listening ring over the pane;
+    /// `zoomed`: the pane fills the tab. `stacked`: it shares the tab's height with another pane.
+    /// `voice_ring`: the listening ring over the pane;
     /// `width`: the pane's width in px in the last frame (the composer's room).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pane_frame(
@@ -589,6 +592,7 @@ impl Shell {
         key: PaneKey,
         several: bool,
         zoomed: bool,
+        stacked: bool,
         width: f32,
         is_focused: bool,
         composer_focused: bool,
@@ -607,7 +611,7 @@ impl Shell {
         let content = match &key {
             PaneKey::Session(id) => {
                 if tsp_drawn {
-                    self.render_tsp(*id, is_focused, width, now, theme, cx)
+                    self.render_tsp(*id, is_focused, stacked, width, now, theme, cx)
                 } else if info.is_some_and(|info| self.chat_on(info)) {
                     self.render_chat(*id, is_focused, now, theme, cx)
                 } else {

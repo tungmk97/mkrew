@@ -294,10 +294,11 @@ fn tsp_event_rejects_events_the_p1_list_does_not_have_and_never_writes_them() {
     let snapshot = wait_frames(&mut client, id);
     let editor = find(&snapshot.surfaces[0].root, &|n| n.k == "editor").unwrap();
 
-    // Local text editing is P3: `edit` is refused, with a reason, before anything is written.
-    let edit = json!({"ev": "edit", "id": editor.id, "from": 0, "to": 0, "cursor": 1, "len": 0, "text": "a"});
+    // omp's own undo is never sent (Mkrew undoes in its field, ADR 0113): refused, with a reason,
+    // before anything is written.
+    let undo = json!({"ev": "undo", "id": editor.id});
     assert_eq!(
-        error_code(tsp_event(&mut client, id, edit)),
+        error_code(tsp_event(&mut client, id, undo)),
         ErrorCode::InvalidRequest
     );
     let no_ev = json!({"id": editor.id});
@@ -305,13 +306,19 @@ fn tsp_event_rejects_events_the_p1_list_does_not_have_and_never_writes_them() {
         error_code(tsp_event(&mut client, id, no_ev)),
         ErrorCode::InvalidRequest
     );
-    // A valid event after it proves the order on the wire: `focus` arrives, `edit` never did.
+    // Valid events after it prove the order on the wire: `edit` and `focus` arrive, `undo` never
+    // did.
+    let edit = json!({"ev": "edit", "id": editor.id, "from": 0, "to": 0, "cursor": 1, "len": 0, "text": "a"});
+    tsp_event(&mut client, id, edit)
+        .into_result::<()>()
+        .unwrap();
     let focus = json!({"ev": "focus", "id": editor.id});
     tsp_event(&mut client, id, focus)
         .into_result::<()>()
         .unwrap();
     let recorded = wait_record(&record, |text| text.contains("\"ev\":\"focus\""));
-    assert!(!recorded.contains("\"ev\":\"edit\""), "{recorded:?}");
+    assert!(recorded.contains("\"ev\":\"edit\""), "{recorded:?}");
+    assert!(!recorded.contains("\"ev\":\"undo\""), "{recorded:?}");
     kill(&mut client, id);
     client.stop();
 }
