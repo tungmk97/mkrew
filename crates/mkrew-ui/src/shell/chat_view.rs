@@ -156,17 +156,20 @@ impl Shell {
         changed
     }
 
-    /// An agent works or a subagent runs in a visible Chat pane: the elapsed time of the
-    /// composer and the loading dots move on the status tick (ADR 0086: no looping animation).
-    pub(crate) fn chat_animating(&self) -> bool {
-        self.chats.keys().any(|id| {
-            !self.is_exited(*id)
-                && ((self.sidebar.sessions().iter())
-                    .any(|s| s.id == *id && s.state == SessionState::Working)
-                    || (self.reads.get(id))
-                        .and_then(|read| read.page.as_ref())
-                        .is_some_and(|page| chat::subagent_runs(page)))
-        })
+    /// The visible Chat panes where an agent works or a subagent runs: the elapsed time of the
+    /// composer and the loading dots move on the status tick (ADR 0086: no looping animation),
+    /// which renders those panes again (ADR 0118).
+    pub(crate) fn chat_animating(&self) -> Vec<Ulid> {
+        (self.chats.keys().copied())
+            .filter(|id| {
+                !self.is_exited(*id)
+                    && ((self.sidebar.sessions().iter())
+                        .any(|s| s.id == *id && s.state == SessionState::Working)
+                        || (self.reads.get(id))
+                            .and_then(|read| read.page.as_ref())
+                            .is_some_and(|page| chat::subagent_runs(page)))
+            })
+            .collect()
     }
 
     pub(crate) fn toggle_chat_row(
