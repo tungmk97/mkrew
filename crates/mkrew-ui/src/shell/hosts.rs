@@ -403,39 +403,13 @@ impl Shell {
         ui.bounds = window.bounds();
         ui.restore = restore;
         ui.placement = placement;
-        if host.space().is_some() {
-            self.main_dirty = true;
-        } else {
-            self.windows_dirty = true;
-        }
+        self.windows_dirty = true;
     }
 
-    /// Writes `main-window.json`: where the primary Space window restores to and whether it is
-    /// maximized or in full screen (SPEC §20L). Not before its size is known.
-    pub(crate) fn save_main_frame(&mut self) {
-        self.main_dirty = false;
-        let Some(ui) = self.hosts.get(&self.primary_host()) else {
-            return;
-        };
-        if ui.restore.size.width <= px(0.0) {
-            return;
-        }
-        let (maximized, fullscreen) = ui.placement.flags();
-        let frame = detached::SavedFrame {
-            bounds: window_place::to_saved(ui.restore),
-            maximized,
-            fullscreen,
-        };
-        if let Err(error) = detached::save_frame(&self.main_frame_path, &frame) {
-            tracing::warn!("cannot save the main window's place: {error}");
-        }
-    }
-
-    /// What every way out of the app does: the places of the detached windows and of the main
-    /// one are written, the machine windows are asked to quit.
+    /// What every way out of the app does: the places of the windows are written, the machine
+    /// windows are asked to quit.
     pub(crate) fn save_before_exit(&mut self, cx: &mut Context<'_, Self>) {
         self.save_windows(cx);
-        self.save_main_frame();
         self.close_machines();
     }
 
@@ -486,16 +460,21 @@ impl Shell {
             return;
         };
         self.windows.remove(&handle);
-        self.hosts.remove(&HostId::Detached(key));
-        self.activation
-            .retain(|host| *host != HostId::Detached(key));
+        self.forget_host(HostId::Detached(key), cx);
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        });
+    }
+
+    /// A window is going: its state goes, a popover it drew closes (no one else draws it) and
+    /// the keyboard comes back in the primary Space window.
+    pub(crate) fn forget_host(&mut self, gone: HostId, cx: &mut Context<'_, Self>) {
+        self.hosts.remove(&gone);
+        self.activation.retain(|host| *host != gone);
         self.windows_dirty = true;
         self.drop_hint = None;
         self.reorder = None;
         self.tab_drag = false;
-        // A popover of the closing window has no one to draw it: close it, and give the
-        // keyboard back in the main window.
-        let gone = HostId::Detached(key);
         let menu = self.menu_host == gone && self.menu_open();
         let palette = self.palette_host == gone && self.palette.is_some();
         let picker = self.picker_host == gone && self.picker_open();
@@ -504,7 +483,6 @@ impl Shell {
         }
         if palette {
             self.palette = None;
-            self.palette_host = self.primary_host();
             self.palette_return = None;
         }
         if picker {
@@ -519,23 +497,21 @@ impl Shell {
             self.palette_host = primary;
         }
         if self.picker_host == gone {
-            self.picker_host = self.primary_host();
+            self.picker_host = primary;
         }
         if menu || palette || picker {
-            self.in_window(self.primary_host(), cx, |shell, window, cx| {
+            self.in_window(primary, cx, |shell, window, cx| {
                 shell.restore_theme_pick(window, cx);
                 shell.focus_pane(window, cx);
             });
         }
-        cx.defer(move |cx| {
-            let _ = handle.update(cx, |_, window, _| window.remove_window());
-        });
     }
 
-    /// Writes `windows.json` (spec §6.1): the live windows, plus the saved ones a pending
-    /// restore has not opened yet, so neither is lost. Not before the file was read (an app
-    /// that never got that far must not erase it). A failed write is a toast (once) and is
-    /// tried again on the next tick.
+    /// Writes `windows.json` (spec §6.1, ADR 0113): the Space windows (the one used last at the
+    /// end; `Ulid::nil()` for one showing no workspace) and the live detached windows, plus the
+    /// saved ones a pending restore has not opened yet, so neither is lost. Not before the file
+    /// was read (an app that never got that far must not erase it). A failed write is a toast
+    /// (once) and is tried again on the next tick.
     pub(crate) fn save_windows(&mut self, cx: &mut Context<'_, Self>) {
         if !self.restored_once {
             return;
@@ -556,10 +532,30 @@ impl Shell {
             .collect();
         let pending = self.restore.as_deref().unwrap_or(&[]);
         let windows = detached::merge_saved(live, pending);
-        let layout = detached::Layout {
-            spaces: vec![],
-            windows,
+        // Least recently used first: the primary window is the last entry.
+        let used = |key: SpaceKey| {
+            (self.activation.iter())
+                .position(|host| *host == HostId::Space(key))
+                .unwrap_or(usize::MAX)
         };
+        let mut keys: Vec<SpaceKey> = self.space_handles.keys().copied().collect();
+        keys.sort_by_key(|&key| std::cmp::Reverse(used(key)));
+        let spaces = (keys.into_iter())
+            .filter_map(|key| {
+                let ui = self.hosts.get(&HostId::Space(key))?;
+                // Not before its size is known (a window still opening).
+                (ui.restore.size.width > px(0.0)).then(|| {
+                    let (maximized, fullscreen) = ui.placement.flags();
+                    detached::SavedSpace {
+                        workspace: ui.workspace.unwrap_or(Ulid::nil()),
+                        bounds: window_place::to_saved(ui.restore),
+                        maximized,
+                        fullscreen,
+                    }
+                })
+            })
+            .collect();
+        let layout = detached::Layout { spaces, windows };
         match detached::save(&self.windows_path, &layout) {
             Ok(()) => self.windows_save_failed = false,
             Err(error) => {
@@ -572,21 +568,17 @@ impl Shell {
         }
     }
 
-    /// Reads `windows.json` once the workspaces are listed: loads the tabs of every workspace
-    /// a saved window shows; the windows open once all answered (`restore_progress`).
+    /// Reads `windows.json` once the workspaces are listed: the saved Space windows of mode 2
+    /// open (`restore_spaces`), and the tabs of every workspace a saved detached window shows
+    /// load; the detached windows open once all answered (`restore_progress`).
     pub(crate) fn start_restore(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let text = match std::fs::read_to_string(&self.windows_path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            Err(error) => return tracing::warn!("cannot read the detached windows: {error}"),
-        };
-        let windows = match detached::from_json(&text).map(|layout| layout.windows) {
-            Ok(windows) if !windows.is_empty() => windows,
-            Ok(_) => return,
-            Err(error) => return tracing::warn!("ignoring the detached windows file: {error}"),
-        };
+        self.restore_spaces(cx);
+        let windows = detached::load_layout(&self.windows_path, &self.legacy_main_path).windows;
+        if windows.is_empty() {
+            return;
+        }
         self.restore = Some(windows);
-        self.load_restore_tabs(window, cx);
+        self.load_restore_tabs(cx);
         self.restore_progress(window, cx);
     }
 
@@ -606,9 +598,9 @@ impl Shell {
         detached::waiting_projects(restore, |project| self.tabs.contains_key(&project))
     }
 
-    fn load_restore_tabs(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn load_restore_tabs(&mut self, cx: &mut Context<'_, Self>) {
         for project in self.restore_waiting() {
-            self.load_tabs(project, window, cx);
+            self.load_tabs(project, cx);
         }
     }
 
@@ -655,15 +647,15 @@ impl Shell {
 
     /// After a reconnect (or a failed answer) the tabs are read again: those of every listed
     /// workspace a detached window or a pending restore shows.
-    pub(crate) fn reload_detached_tabs(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.load_restore_tabs(window, cx);
+    pub(crate) fn reload_detached_tabs(&mut self, cx: &mut Context<'_, Self>) {
+        self.load_restore_tabs(cx);
         let listed: HashSet<Ulid> = self.sidebar.projects().iter().map(|p| p.id).collect();
         let shown = (self.detached.windows().iter())
             .flat_map(|w| w.tabs.iter().map(DockTab::project))
             .filter(|project| listed.contains(project) && !self.tabs.contains_key(project))
             .collect::<HashSet<_>>();
         for project in shown {
-            self.load_tabs(project, window, cx);
+            self.load_tabs(project, cx);
         }
     }
 

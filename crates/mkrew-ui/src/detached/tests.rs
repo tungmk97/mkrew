@@ -503,16 +503,11 @@ fn frame() -> SavedFrame {
 }
 
 #[test]
-fn the_main_frame_round_trips_through_its_file() {
+fn the_legacy_main_frame_reads_from_its_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(main_file(None));
-    save_frame(&path, &frame()).unwrap();
+    std::fs::write(&path, serde_json::to_string(&frame()).unwrap()).unwrap();
     assert_eq!(load_frame(&path), Some(frame()));
-    let names: Vec<_> = std::fs::read_dir(dir.path())
-        .unwrap()
-        .map(|e| e.unwrap().file_name())
-        .collect();
-    assert_eq!(names.len(), 1, "no temp file is left: {names:?}");
 }
 
 #[test]

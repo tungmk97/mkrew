@@ -753,7 +753,7 @@ impl Shell {
     /// hides (unsaved file changes stay in memory); otherwise unsaved file changes ask first,
     /// one file at a time, and the window closes once none are left. The workspace that holds
     /// them is shown first, so a refused save is visible.
-    pub(crate) fn window_should_close(
+    pub(crate) fn last_window_should_close(
         &mut self,
         window: &mut Window,
         cx: &mut Context<'_, Self>,

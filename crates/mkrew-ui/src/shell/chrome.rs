@@ -168,7 +168,7 @@ impl Shell {
                 // mismatch it is the only way to try again.
                 .children((!matches!(self.status, Status::Connecting)).then(|| {
                     button("reconnect-now", "Try now", theme, true)
-                        .on_click(cx.listener(|shell, _, window, cx| shell.connect(window, cx)))
+                        .on_click(cx.listener(|shell, _, _, cx| shell.connect(cx)))
                 }))
                 .into_any_element(),
         )

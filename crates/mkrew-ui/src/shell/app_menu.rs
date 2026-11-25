@@ -7,10 +7,11 @@ use mkrew_ui::app_menu::{
 
 use crate::*;
 
-/// The main window: the actions that work on the shell whatever window has the keyboard.
-pub(crate) struct MainWindow(pub gpui::WindowHandle<Shell>);
+/// The one `Shell`: the actions that work on it whatever window has the keyboard run in its
+/// primary Space window (ADR 0113).
+pub(crate) struct ShellHandle(pub Entity<Shell>);
 
-impl gpui::Global for MainWindow {}
+impl gpui::Global for ShellHandle {}
 
 /// Whether this process is this computer's window (a machine window has no update check).
 pub(crate) struct LocalWindow(pub bool);
@@ -32,22 +33,35 @@ pub(crate) fn bind_all(keymap: &Keymap, cx: &mut App) {
     }
 }
 
-/// Runs `f` on the main window's shell (nothing when it is gone). Deferred: an action listener
-/// runs while gpui has the dispatching window taken out of the app, so updating that window
-/// right away fails silently.
-fn with_main(
+/// Runs `f` on the shell in its primary Space window (nothing when none is left). Deferred: an
+/// action listener runs while gpui has the dispatching window taken out of the app, so
+/// updating that window right away fails silently.
+fn with_primary(
     cx: &mut App,
     f: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) + 'static,
 ) {
-    cx.defer(move |cx| {
-        let Some(main) = cx.try_global::<MainWindow>().map(|main| main.0) else {
-            return;
-        };
-        let _ = main.update(cx, f);
+    cx.defer(move |cx| in_primary(cx, f));
+}
+
+/// [`with_primary`] now (callers that run outside a dispatch).
+fn in_primary(cx: &mut App, f: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>)) {
+    let Some(shell) = cx
+        .try_global::<ShellHandle>()
+        .map(|handle| handle.0.clone())
+    else {
+        return;
+    };
+    let primary = shell.read(cx);
+    let Some(handle) = (primary.primary()).and_then(|key| primary.space_handles.get(&key).copied())
+    else {
+        return;
+    };
+    let _ = handle.update(cx, |_, window, cx| {
+        shell.update(cx, |shell, cx| f(shell, window, cx));
     });
 }
 
-/// Runs `f` on the window that is active now. Deferred for the reason of [`with_main`]; the
+/// Runs `f` on the window that is active now. Deferred for the reason of [`with_primary`]; the
 /// active window is read after the dispatch.
 fn with_active(cx: &mut App, f: impl FnOnce(&mut Window) + 'static) {
     cx.defer(move |cx| {
@@ -60,9 +74,9 @@ fn with_active(cx: &mut App, f: impl FnOnce(&mut Window) + 'static) {
 /// The handlers of the menu-only actions, and what the app does when it is quit without a
 /// question.
 pub(crate) fn register(cx: &mut App) {
-    cx.on_action(|_: &Quit, cx| with_main(cx, |shell, window, cx| shell.quit_ui(window, cx)));
+    cx.on_action(|_: &Quit, cx| with_primary(cx, |shell, window, cx| shell.quit_ui(window, cx)));
     cx.on_action(|_: &CheckForUpdates, cx| {
-        with_main(cx, |shell, window, cx| {
+        with_primary(cx, |shell, window, cx| {
             shell.check_updates(true, window, cx)
         });
     });
@@ -77,8 +91,11 @@ pub(crate) fn register(cx: &mut App) {
     // Not deferred: the app is already quitting, a deferred job would never run. No window is
     // being dispatched here, so the direct update works.
     cx.on_app_quit(|cx| {
-        if let Some(main) = cx.try_global::<MainWindow>().map(|main| main.0) {
-            let _ = main.update(cx, |shell, _, cx| shell.save_before_exit(cx));
+        if let Some(shell) = cx
+            .try_global::<ShellHandle>()
+            .map(|handle| handle.0.clone())
+        {
+            shell.update(cx, |shell, cx| shell.save_before_exit(cx));
         }
         std::future::ready(())
     })
@@ -86,12 +103,10 @@ pub(crate) fn register(cx: &mut App) {
 }
 
 /// A click on the Dock icon while no window shows (macOS `applicationShouldHandleReopen`): the
-/// main window comes back, as from the tray on Windows. Not deferred: gpui runs this callback
+/// Space windows come back, as from the tray on Windows. Not deferred: gpui runs this callback
 /// outside `App::update`, so a deferred job would wait for some later update, and no window is
 /// being dispatched, so the direct update works.
 pub(crate) fn reopen(cx: &mut App) {
     cx.activate(true);
-    if let Some(main) = cx.try_global::<MainWindow>().map(|main| main.0) {
-        let _ = main.update(cx, |shell, window, cx| shell.restore_window(window, cx));
-    }
+    in_primary(cx, |shell, window, cx| shell.restore_window(window, cx));
 }

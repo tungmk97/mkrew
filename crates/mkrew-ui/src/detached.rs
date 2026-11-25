@@ -603,10 +603,5 @@ pub fn load_frame(path: &Path) -> Option<SavedFrame> {
     SavedFrame::parse(&std::fs::read_to_string(path).ok()?)
 }
 
-pub fn save_frame(path: &Path, frame: &SavedFrame) -> std::io::Result<()> {
-    // A struct of plain fields always serializes.
-    write_atomic(path, &serde_json::to_string(frame).unwrap_or_default())
-}
-
 #[cfg(test)]
 mod tests;

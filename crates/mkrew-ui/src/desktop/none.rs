@@ -12,13 +12,13 @@ pub struct Os;
 
 impl Os {
     /// The receiver is closed at once: there is no tray to listen to.
-    pub fn new(
-        _window: &gpui::Window,
-        _id: &str,
-        _tray_icon: bool,
-    ) -> (Self, async_channel::Receiver<TrayEvent>) {
+    pub fn new(_id: &str, _tray_icon: bool) -> (Self, async_channel::Receiver<TrayEvent>) {
         (Self, async_channel::unbounded::<TrayEvent>().1)
     }
+
+    pub fn attach(&mut self, _window: &gpui::Window) {}
+
+    pub fn detach(&mut self, _window: &gpui::Window) {}
 
     pub fn has_tray(&self) -> bool {
         false

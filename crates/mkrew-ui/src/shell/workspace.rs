@@ -69,7 +69,7 @@ impl Shell {
             self.load_git_summary(project_id, window, cx);
         }
         if !self.tabs.contains_key(&project_id) {
-            self.load_tabs(project_id, window, cx);
+            self.load_tabs(project_id, cx);
         }
         if switched && self.view(host) == View::Docs {
             self.load_docs(project_id, window, cx);
@@ -85,12 +85,7 @@ impl Shell {
     }
 
     /// `tab.list` for a workspace; a workspace without tabs gets one.
-    pub(crate) fn load_tabs(
-        &mut self,
-        project_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
+    pub(crate) fn load_tabs(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -99,9 +94,11 @@ impl Shell {
         }
         let listed =
             connection.call::<Vec<TerminalTab>>(Request::TabList(TabListParams { project_id }));
-        cx.spawn_in(window, async move |this, cx| {
+        // The answer runs in the primary Space window: the asking window may have closed
+        // meanwhile, and `loading_tabs` must not keep the workspace for ever.
+        cx.spawn(async move |this, cx| {
             let listed = listed.await;
-            let _ = this.update_in(cx, |shell, window, cx| match listed {
+            let _ = Shell::with_primary(&this, cx, |shell, window, cx| match listed {
                 Ok(list) if list.is_empty() => shell.create_tab(project_id, None, window, cx),
                 Ok(list) => {
                     let mut tabs = Tabs::new(project_id);

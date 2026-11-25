@@ -57,46 +57,13 @@ impl Shell {
         // The first Space window (ADR 0113): the window this Shell is created in.
         let first_space = window.window_handle();
         let first = HostId::Space(SpaceKey(0));
-        // System mode follows the OS live (ADR 0027).
-        cx.observe_window_appearance(window, |shell, window, cx| {
-            // A preview was built for the old appearance; the kept theme is rebuilt now.
-            shell.drop_gallery_preview();
-            theme::refresh(cx.theme().mode, window, cx);
-            cx.notify();
-        })
-        .detach();
-        // Minimized → detach every pane; restored → re-attach from daemon snapshots (§10).
-        cx.observe_window_visibility(window, move |shell, visibility, window, cx| {
-            shell.hosts.entry(first).or_default().visible =
-                visibility == gpui::WindowVisibility::Visible;
-            shell.sync_panes(window, cx);
-            cx.notify();
-        })
-        .detach();
-        // Coming back to the window views the focused pane (a done session leaves the Inbox),
-        // even one marked unread while it kept the keyboard, and ends the taskbar flash.
-        cx.observe_window_activation(window, move |shell, window, cx| {
-            if window.is_window_active() {
-                cx.set_reduce_motion(mkrew_ui::desktop::reduce_motion());
-                shell.activated(first);
-                shell.viewed.activated();
-                shell.desktop.flash(false);
-            }
-            cx.notify();
-        })
-        .detach();
-        cx.observe_window_bounds(window, move |shell, window, _| {
-            shell.record_bounds(first, window);
-        })
-        .detach();
         let (page_events, page_inbox) = async_channel::unbounded();
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             while let Ok((id, event)) = page_inbox.recv().await {
-                if this
-                    .update_in(cx, |shell, window, cx| {
-                        shell.page_event(id, event, window, cx)
-                    })
-                    .is_err()
+                if Shell::with_primary(&this, cx, |shell, window, cx| {
+                    shell.page_event(id, event, window, cx)
+                })
+                .is_none()
                 {
                     break;
                 }
@@ -105,12 +72,14 @@ impl Shell {
         .detach();
         // The tray icon (Windows): its clicks arrive here from the tray thread. A machine
         // window keeps the hidden tray window (the single-instance target) but shows no icon.
-        let (desktop, tray_events) = Desktop::new(window, &id, local);
-        cx.spawn_in(window, async move |this, cx| {
+        let (mut desktop, tray_events) = Desktop::new(&id, local);
+        desktop.attach(window);
+        cx.spawn(async move |this, cx| {
             while let Ok(event) = tray_events.recv().await {
-                let handled =
-                    this.update_in(cx, |shell, window, cx| shell.tray_event(event, window, cx));
-                if handled.is_err() {
+                let handled = Shell::with_primary(&this, cx, |shell, window, cx| {
+                    shell.tray_event(event, window, cx)
+                });
+                if handled.is_none() {
                     return;
                 }
             }
@@ -133,29 +102,25 @@ impl Shell {
             if let Err(error) = reader {
                 tracing::warn!("cannot read the launcher's commands: {error}");
             }
-            cx.spawn_in(window, async move |this, cx| {
+            cx.spawn(async move |this, cx| {
                 while let Ok(mkrew_ui::launcher::Command::Quit) = commands_rx.recv().await {
-                    let quit = this.update_in(cx, |shell, window, cx| shell.quit_ui(window, cx));
-                    if quit.is_err() {
+                    let quit = Shell::with_primary(&this, cx, |shell, window, cx| {
+                        shell.quit_ui(window, cx)
+                    });
+                    if quit.is_none() {
                         return;
                     }
                 }
             })
             .detach();
         }
-        // Unsaved Files changes (§2.5): the close button asks first.
-        let this = cx.weak_entity();
-        window.on_window_should_close(cx, move |window, cx| {
-            this.update(cx, |shell, cx| shell.window_should_close(window, cx))
-                .unwrap_or(true)
-        });
         // Elapsed/idle times and the loading marks move on their own (§11).
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let mut last = status::now_ms();
             loop {
                 cx.background_executor().timer(theme::STATUS_TICK).await;
                 let now = status::now_ms();
-                let ticked = this.update_in(cx, |shell, window, cx| {
+                let ticked = Shell::with_primary(&this, cx, |shell, window, cx| {
                     // ponytail: mtime poll on the 500 ms tick; a file watcher if it ever shows
                     // in a profile. The themes folder rides the same tick (the names, times
                     // and sizes of its `*.toml` files): a folder with hundreds of files costs
@@ -179,9 +144,6 @@ impl Shell {
                     shell.warn_running_sessions(cx);
                     if shell.windows_dirty {
                         shell.save_windows(cx);
-                    }
-                    if shell.main_dirty {
-                        shell.save_main_frame();
                     }
                     shell.sync_thread(cx);
                     shell.sync_tsps(cx);
@@ -220,7 +182,7 @@ impl Shell {
                     }
                 });
                 last = now;
-                if ticked.is_err() {
+                if ticked.is_none() {
                     return;
                 }
             }
@@ -230,15 +192,15 @@ impl Shell {
         if local {
             // The title bar's phone icon follows `daemon.status.web`: read every `PHONE_POLL_IDLE`,
             // and on every tick while the Phone access dialog is open (ADR 0053).
-            cx.spawn_in(window, async move |this, cx| {
+            cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor().timer(theme::PHONE_TICK).await;
-                    let ticked = this.update_in(cx, |shell, window, cx| {
+                    let ticked = Shell::with_primary(&this, cx, |shell, window, cx| {
                         if shell.phone.due(Instant::now(), shell.phone_open) {
                             shell.poll_phone(window, cx);
                         }
                     });
-                    if ticked.is_err() {
+                    if ticked.is_none() {
                         return;
                     }
                 }
@@ -251,12 +213,12 @@ impl Shell {
                     mkrew_ui::update::clean_leftovers(&mkrew_ui::update::current_install());
                 })
                 .detach();
-            cx.spawn_in(window, async move |this, cx| {
+            cx.spawn(async move |this, cx| {
                 loop {
-                    let checked = this.update_in(cx, |shell, window, cx| {
+                    let checked = Shell::with_primary(&this, cx, |shell, window, cx| {
                         shell.check_updates(false, window, cx)
                     });
-                    if checked.is_err() {
+                    if checked.is_none() {
                         return;
                     }
                     cx.background_executor()
@@ -269,26 +231,7 @@ impl Shell {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let rename_focus = cx.focus_handle();
-        let rename_blur = cx.on_blur(&rename_focus, window, |shell, window, cx| {
-            shell.finish_rename(true, window, cx);
-        });
         let follow_up_focus = cx.focus_handle();
-        let follow_up_blur = cx.on_blur(&follow_up_focus, window, |shell, _, cx| {
-            // A typed draft (or one being sent) stays on its card without its caret; an empty
-            // one goes.
-            shell
-                .follow_up
-                .take_if(|draft| draft.text.text().is_empty() && !draft.busy);
-            cx.notify();
-        });
-        // The focused control of a dialog left the frame (a button swapped for the next step):
-        // the dialog takes the keyboard back so Tab and Esc keep working. A confirm prompt
-        // keeps it; menus are never open over a modal.
-        let dialog_focus_lost = cx.on_focus_lost(window, |shell, window, cx| {
-            if shell.modal_open() && !window.has_active_prompt() {
-                window.focus(&shell.dialog_focus, cx);
-            }
-        });
         let (painted, painted_rx) = async_channel::bounded(1);
         // What the user saw before this start (A2): a corrupt or missing file is empty. A
         // machine window has its own file: it knows none of this computer's sessions.
@@ -300,9 +243,22 @@ impl Shell {
         let windows_path = paths
             .data_dir
             .join(detached::windows_file((!local).then_some(id.as_str())));
-        let main_frame_path = paths
+        let legacy_main_path = paths
             .data_dir
             .join(detached::main_file((!local).then_some(id.as_str())));
+        // Mode 2 (ADR 0113): the saved Space windows open after the first listing, the first
+        // window showing the workspace of the one used last.
+        let saved_spaces: Vec<detached::SavedSpace> = if ui.window_mode == WindowMode::PerWorkspace
+        {
+            (detached::load_layout(&windows_path, &legacy_main_path)
+                .spaces
+                .into_iter())
+            .filter(|saved| !saved.workspace.is_nil())
+            .collect()
+        } else {
+            Vec::new()
+        };
+        let first_workspace = saved_spaces.last().map(|saved| saved.workspace);
         // This computer's window is the launcher of the machine windows (spec §4.5); the list
         // is read here, once, and again before each change made on the Machines page.
         let machines = if local {
@@ -354,7 +310,6 @@ impl Shell {
             focus_handle,
             renaming: None,
             rename_focus,
-            _rename_blur: rename_blur,
             keymap,
             keymap_error: keymap::notice(keymap_errors),
             keymap_errors: keymap_errors.to_vec(),
@@ -448,8 +403,6 @@ impl Shell {
             fan_out: None,
             follow_up: None,
             follow_up_focus,
-            _follow_up_blur: follow_up_blur,
-            _dialog_focus_lost: dialog_focus_lost,
             follow_up_scroll: ScrollHandle::new(),
             composers: Composers::default(),
             drop_hover: None,
@@ -531,6 +484,7 @@ impl Shell {
             detached: Detached::new(),
             spaces: HashMap::from([(first_space, SpaceKey(0))]),
             space_handles: HashMap::from([(SpaceKey(0), first_space)]),
+            next_space: 1,
             windows: HashMap::new(),
             window_handles: HashMap::new(),
             hosts: HashMap::from([(
@@ -538,6 +492,7 @@ impl Shell {
                 shell::hosts::HostUi {
                     visible: true,
                     right_panel,
+                    workspace: first_workspace,
                     ..Default::default()
                 },
             )]),
@@ -558,8 +513,8 @@ impl Shell {
             restored_once: false,
             windows_path,
             windows_save_failed: false,
-            main_dirty: false,
-            main_frame_path,
+            legacy_main_path,
+            saved_spaces,
             pending_jump: jump,
         };
         if let Status::NoMachine(text) = &shell.status {
@@ -568,7 +523,7 @@ impl Shell {
             shell.report_machine_state(reason);
         } else {
             // Not `connect`: the status starts as Connecting and that one refuses then.
-            shell.start_connect(window, cx);
+            shell.start_connect(cx);
         }
         shell.start_machines();
         shell
@@ -576,13 +531,13 @@ impl Shell {
 
     /// The user's Connect / Retry / Reconnect (and startup): connects now and restarts the
     /// automatic retry backoff.
-    pub(crate) fn connect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    pub(crate) fn connect(&mut self, cx: &mut Context<'_, Self>) {
         // One attempt at a time: a second one would install a second connection.
         if matches!(self.status, Status::Connecting) {
             return;
         }
         self.reconnect_attempts = 0;
-        self.start_connect(window, cx);
+        self.start_connect(cx);
     }
 
     /// A machine window's state changed: kept for the title bar chip and written to stdout, one
@@ -602,21 +557,21 @@ impl Shell {
     /// Waits [`mkrew_ui::connect::backoff`] after a failed or lost connect, then connects
     /// again. One timer per failure (no per-frame work); a newer attempt (`connect_gen`, e.g.
     /// the user's Reconnect) makes a pending timer a no-op, so attempts never overlap.
-    fn schedule_reconnect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn schedule_reconnect(&mut self, cx: &mut Context<'_, Self>) {
         let delay = mkrew_ui::connect::backoff(self.reconnect_attempts);
         self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
         self.reconnect_in = Some(delay);
         let generation = self.connect_gen;
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = this.update(cx, |shell, cx| {
                 if shell.connect_gen == generation
                     && matches!(
                         shell.status,
                         Status::Failed(_) | Status::Unreachable { .. } | Status::Disconnected
                     )
                 {
-                    shell.start_connect(window, cx);
+                    shell.start_connect(cx);
                 }
             });
         })
@@ -627,7 +582,7 @@ impl Shell {
     /// daemon over ssh, off the UI thread; then feeds its frames until the connection closes,
     /// then schedules an automatic retry (never after a version mismatch: nothing changes
     /// until the user updates).
-    fn start_connect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn start_connect(&mut self, cx: &mut Context<'_, Self>) {
         let machine = match &self.target {
             Target::Local => None,
             Target::Machine(machine) => Some(machine.clone()),
@@ -648,7 +603,7 @@ impl Shell {
         cx.notify();
         let paths = self.paths.clone();
         let painted_rx = self.painted_rx.clone();
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             // Blocking (polls a starting daemon for up to 10 s, or waits for ssh): off the UI
             // thread.
             let connected = cx
@@ -673,7 +628,7 @@ impl Shell {
             let connection = match connected {
                 Ok(connection) => Rc::new(connection),
                 Err(status) => {
-                    let _ = this.update_in(cx, |shell, window, cx| {
+                    let _ = this.update(cx, |shell, cx| {
                         if shell.connect_gen != generation {
                             return;
                         }
@@ -691,7 +646,7 @@ impl Shell {
                         let retry = !matches!(status, Status::Version(_));
                         shell.status = status;
                         if retry {
-                            shell.schedule_reconnect(window, cx);
+                            shell.schedule_reconnect(cx);
                         }
                         cx.notify();
                     });
@@ -703,7 +658,7 @@ impl Shell {
                 daemon_version = %connection.hello().daemon_version,
                 "connected to the daemon"
             );
-            let loaded = this.update_in(cx, |shell, window, cx| {
+            let loaded = Shell::with_primary(&this, cx, |shell, window, cx| {
                 // A newer attempt started meanwhile: this connection is dropped, not installed.
                 if shell.connect_gen != generation {
                     return false;
@@ -718,7 +673,7 @@ impl Shell {
                 }
                 true
             });
-            if !matches!(loaded, Ok(true)) {
+            if loaded != Some(true) {
                 return;
             }
             // Drain at once when frames arrive (low key latency); after feeding output, wait
@@ -734,11 +689,11 @@ impl Shell {
                     batch.push(next);
                 }
                 let started = Instant::now();
-                let fed = this.update_in(cx, |shell, window, cx| {
+                let fed = Shell::with_primary(&this, cx, |shell, window, cx| {
                     (shell.connect_gen == generation).then(|| shell.dispatch(batch, window, cx))
                 });
                 match fed {
-                    Ok(Some(true)) => {
+                    Some(Some(true)) => {
                         let painted = async {
                             let _ = painted_rx.recv().await;
                         };
@@ -748,11 +703,11 @@ impl Shell {
                             cx.background_executor().timer(rest).await;
                         }
                     }
-                    Ok(Some(false)) => {}
-                    Ok(None) | Err(_) => return,
+                    Some(Some(false)) => {}
+                    Some(None) | None => return,
                 }
             }
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::with_primary(&this, cx, |shell, window, cx| {
                 if shell.connect_gen != generation {
                     return;
                 }
@@ -784,7 +739,7 @@ impl Shell {
                     }
                     None => shell.reset_connection_state(window, cx),
                 }
-                shell.schedule_reconnect(window, cx);
+                shell.schedule_reconnect(cx);
                 cx.notify();
             });
         })
@@ -995,9 +950,9 @@ impl Shell {
                         shell.load_plans(window, cx);
                         shell.load_limits(window, cx);
                         shell.status = Status::Connected;
-                        // A new connection lists everything again: each window shows its
-                        // workspace as if it just switched to it (tabs, Git, Files reload).
-                        let reconnected = kept.is_some();
+                        // The first listing, or a new connection's: each window shows its
+                        // workspace as if it just switched to it (tabs, Git, Files load).
+                        let fresh = kept.is_some() || !shell.restored_once;
                         let kept =
                             mkrew_ui::connect::reconnect_workspace(kept, shell.sidebar.projects());
                         // Each Space window keeps its workspace while it is listed, else
@@ -1014,7 +969,7 @@ impl Shell {
                                 move |shell: &mut Shell,
                                       window: &mut Window,
                                       cx: &mut Context<'_, Shell>| {
-                                    if reconnected {
+                                    if fresh {
                                         shell.hosts.entry(host).or_default().workspace = None;
                                     }
                                     shell.show_in_space(host, shown, window, cx);
@@ -1036,7 +991,7 @@ impl Shell {
                         }
                         // Tabs come back with `tab.list`: a detached window's workspace (or a
                         // restore still waiting) loads again after a reconnect.
-                        shell.reload_detached_tabs(window, cx);
+                        shell.reload_detached_tabs(cx);
                     }
                     Err(error) => {
                         tracing::warn!("listing workspaces failed: {error:#}");
@@ -1534,7 +1489,7 @@ impl Shell {
             button(id, label, theme, true).on_click(cx.listener(|shell, _, window, cx| {
                 match shell.status {
                     Status::ListFailed(_) => shell.refresh(window, cx),
-                    _ => shell.connect(window, cx),
+                    _ => shell.connect(cx),
                 }
             }))
         };

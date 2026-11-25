@@ -17,6 +17,8 @@ pub(crate) mod plus_row;
 pub(crate) mod reorder;
 pub(crate) mod sidebar;
 pub(crate) mod sidebar_view;
+pub(crate) mod space_render;
+pub(crate) mod space_view;
 pub(crate) mod tear_off;
 pub(crate) mod widgets;
 
@@ -76,6 +78,7 @@ mod toasts;
 pub(crate) mod tsp_view;
 mod update;
 mod voice_input;
+pub(crate) mod window_mode;
 mod workspace;
 mod workspace_actions;
 mod worktrees;
