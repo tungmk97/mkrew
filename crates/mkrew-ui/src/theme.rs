@@ -551,7 +551,7 @@ pub const COMPOSER_MONO_CHAR_WIDTH: f32 = 6.6;
 /// (about 165 to 185 px measured; the cell shrinks past that, it never clips a button).
 pub const COMPOSER_CHIP_STATS_WIDTH: f32 = 184.0;
 /// The clock time of the last turn's end (icon, `09:44:27` and the chip's padding).
-pub const COMPOSER_CHIP_CLOCK_WIDTH: f32 = 72.0;
+pub const COMPOSER_CHIP_CLOCK_WIDTH: f32 = 80.0;
 /// The ✦ button (2 x `space::M` padding and an icon) and its gap.
 pub const COMPOSER_ENHANCE_WIDTH: f32 = 46.0;
 /// Prompts (icon only: the same button as ✦) and the Send chip, with their gaps.
@@ -569,7 +569,7 @@ pub const CONTEXT_LABEL_WIDTH: f32 = 32.0;
 pub const CONTEXT_METER_RISE: f32 = 12.0;
 /// The meter's box: the labels ([`CONTEXT_LABEL_HEIGHT`]) with the 1 px track right under them.
 /// The track therefore lies on the card's top border.
-pub const CONTEXT_METER_BOX_HEIGHT: f32 = 14.0;
+pub const CONTEXT_METER_BOX_HEIGHT: f32 = CONTEXT_LABEL_HEIGHT + CONTEXT_METER_HEIGHT;
 /// Height of the label row of the context meter (OVERLINE text, 11 px).
 pub const CONTEXT_LABEL_HEIGHT: f32 = 11.0;
 /// Alpha of the meter's rail and of its neutral fill: `text` at these (Tern `t1` 9 % / 42 %).
@@ -585,7 +585,7 @@ pub const CONTEXT_MARK_HIT_HEIGHT: f32 = CONTEXT_METER_HEIGHT + space::S;
 /// the Stop button (the wider of Send and Stop) and its gap.
 pub const TSP_BAR_FIXED_WIDTH: f32 = STOP_BUTTON_WIDTH + space::S;
 /// The Stop button: `px(M)` both sides and `Stop` (four UI characters at `META`).
-pub const STOP_BUTTON_WIDTH: f32 = 2.0 * space::M + 4.0 * TSP_UI_CHAR_WIDTH;
+pub const STOP_BUTTON_WIDTH: f32 = 2.0 * space::M + 2.0 * BORDER_WIDTH + 4.0 * TSP_UI_CHAR_WIDTH;
 /// The model pill without its name: padding, chevron, gaps and the gap after it (no border).
 pub const TSP_MODEL_CHROME_WIDTH: f32 = 46.0;
 /// The omp status row (working row, hud) is this tall (Tern: 26).

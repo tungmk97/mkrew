@@ -269,8 +269,13 @@ pub(crate) fn send_key_chip(
 
 /// The Stop button of an omp pane's dock (Tern): a text button "Stop", `COMPOSER_PILL_HEIGHT`
 /// tall, `px(M)`, `radius::MEDIUM`, META SEMIBOLD `danger_text` on `status_exited` at 8 % with a
-/// 22 % ring; hover 14 %. Attach the tooltip (with its key) and `.on_press(true, ..)`.
-pub(crate) fn stop_text_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+/// 22 % ring; hover 14 %. Dimmed with no hover or pointer while `enabled` is false. Attach the
+/// tooltip (with its key) and `.on_press(enabled, ..)`.
+pub(crate) fn stop_text_button(
+    id: &'static str,
+    enabled: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
     let tint = |alpha: f32| gpui::rgba(theme::with_alpha(theme.status_exited, alpha));
     let hover = tint(theme::STOP_HOVER_ALPHA);
     div()
@@ -288,19 +293,25 @@ pub(crate) fn stop_text_button(id: &'static str, theme: &Theme) -> gpui::Statefu
         .text_size(font_size::META)
         .font_weight(FontWeight(weight::SEMIBOLD))
         .text_color(rgb(theme.danger_text))
-        .cursor_pointer()
-        .hover(move |style| style.bg(hover))
-        .active(|style| style.opacity(opacity::ACTIVE))
+        .when(enabled, |el| {
+            el.cursor_pointer()
+                .hover(move |style| style.bg(hover))
+                .active(|style| style.opacity(opacity::ACTIVE))
+        })
+        .when(!enabled, |el| el.opacity(opacity::DISABLED))
         .child("Stop")
 }
 
 /// The scroll-to-the-end button of a transcript list: a quiet `SCROLL_END_BUTTON_SIZE` icon button
 /// with no fill, no frame and no shadow (so the `Look::Icon` hover, `layer[0]`, shows), a 16 px
-/// chevron in `text_subtle`. It floats over the list, so it takes the mouse itself: only the
+/// chevron in `text_subtle` that turns `text` on hover (through the id group: an svg does not
+/// inherit its parent's color). It floats over the list, so it takes the mouse itself: only the
 /// wheel passes through.
 pub(crate) fn scroll_end_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    let lit = theme.text;
     div()
         .id(id)
+        .group(id)
         .flex()
         .flex_none()
         .items_center()
@@ -309,11 +320,10 @@ pub(crate) fn scroll_end_button(id: &'static str, theme: &Theme) -> gpui::Statef
         .rounded(px(radius::MEDIUM))
         .block_mouse_except_scroll()
         .pressable(Look::Icon, true, theme)
-        .child(icon_svg(
-            Icon::ChevronDown,
-            theme::ICON_SIZE,
-            theme.text_subtle,
-        ))
+        .child(
+            icon_svg(Icon::ChevronDown, theme::ICON_SIZE, theme.text_subtle)
+                .group_hover(id, move |style| style.text_color(rgb(lit))),
+        )
 }
 
 /// A button label with a leading icon: `glyph`, then `text`, on one line, both in `color`.

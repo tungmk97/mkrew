@@ -338,7 +338,7 @@ impl Shell {
         ui.stops.borrow_mut().end();
         // A list at its end stays there when its viewport shrinks (the tray or the composer's
         // key hint appearing): `at_bottom` reads the last frame, the jump uses this frame's size.
-        // Scrolled up from the end, a round button jumps back down.
+        // Scrolled up from the end, a quiet chevron button jumps back down.
         let at_end = super::thread_panel::at_bottom(&ui.scroll);
         if at_end {
             ui.scroll.scroll_to_bottom();

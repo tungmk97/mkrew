@@ -398,7 +398,7 @@ pub fn dock_model(doc: &Document, theme: &Theme) -> Option<DockModel> {
         .collect();
     let mut bar = bar_model(doc, bar, theme);
     // omp sends Stop in the bar while it works; the working row's own Stop is not drawn (the
-    // card's round button is the one), but it stands in when the bar has none.
+    // card's Send key chip or Stop button is the one), but it stands in when the bar has none.
     if let (Primary::Send(_), Some(stop)) = (
         &bar.primary,
         status.working.as_ref().and_then(|w| w.stop.clone()),

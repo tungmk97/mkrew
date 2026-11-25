@@ -2170,7 +2170,7 @@ The omp dock (§11) draws by node `role`, from the Chat composer's tokens:
 | `omp.composer.line` | the editor line in `BODY`; placeholder upright `text_subtle`, no icon; `ghost` in `text_subtle` after the caret |
 | `omp.composer.model` | the Chat model pill (1 px `border` ring, no fill, `text` at 500, chevron) |
 | `omp.composer.effort`, `omp.composer.usage`, `omp.composer.rate`, `omp.composer.fact` | the effort glyph leads the model pill (label in its tooltip); usage, rate and facts are quiet mono chips in `text_subtle`, icons too (colors omp puts in spans stay; tone warning / error take `status_needs_input` / `danger_text`); an `accent` span takes the permission chip look |
-| `omp.composer.send`, `omp.composer.stop` | the round Send (neutral, `text` fill on hover) and Stop (a `text` circle with a square, `text_muted` on hover) |
+| `omp.composer.send`, `omp.composer.stop` | the Send key chip (24 px high, `layer[0]` fill, `layer[1]` ring, return glyph to `text` on hover) and the Stop text button (`status_exited` at 8 / 22 / 14 % for fill, ring and hover, label `danger_text` SEMIBOLD) |
 | `omp.working`, `omp.working.label`, `omp.working.stop` | the working row: dots, elapsed in mono `text_subtle`, divider, label in `text_muted`; `omp.working.stop` is the card's Stop when the bar has none |
 | `omp.hud`, `omp.hud.seg` | one pill with a `border` ring and no fill, one padded cell per segment (icon, count in mono, tooltip), a `BORDER_WIDTH` divider in `border` between cells |
 | `omp.hud.todo` | the todo HUD chip (§11) |

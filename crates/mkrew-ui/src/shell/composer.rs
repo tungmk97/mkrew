@@ -1095,7 +1095,7 @@ impl Shell {
     /// The Chat composer (ADR 0105): in the page's centered column, `space::M` above the pane's
     /// bottom edge, a thin context meter over a floating card (the queue, the field, then the
     /// chip row: model, effort, permission, branch, stats or the status line, ✦, Prompts…, and
-    /// the round send button). Collapsed to a one-line pill while the pane has no keyboard, the
+    /// the send key chip). Collapsed to a one-line pill while the pane has no keyboard, the
     /// draft is empty and nothing is queued or failed.
     #[allow(clippy::too_many_arguments)]
     fn composer_card(
@@ -1341,8 +1341,12 @@ impl Shell {
                     shell.send_composer(session, window, cx);
                 }),
             );
+        let rise = meter.is_some();
         let card = composer_card_frame(theme)
             .children(meter)
+            .when(rise, |el| {
+                el.mt(theme::rems_px(theme::CONTEXT_METER_RISE - space::S))
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |shell, _, window, cx| {
@@ -1416,13 +1420,13 @@ pub(super) fn placeholder_row(content: impl IntoElement, theme: &Theme) -> gpui:
 
 /// Room for the bar of a composer card, in 13 px rems like the `COMPOSER_*` widths: the text
 /// `column` (px, page padding already off: `tsp::column_px`, or the Chat column less its padding)
-/// less the card's own padding.
+/// less the card's own padding and its two 1 px rings.
 pub(super) fn composer_room(column: f32, cx: &gpui::App) -> f32 {
     room_in(column, cx.global::<theme::Fonts>().ui_size)
 }
 
 fn room_in(column: f32, ui_size: f32) -> f32 {
-    (column - 2.0 * space::M) / (ui_size / 13.0)
+    (column - 2.0 * (space::M + theme::BORDER_WIDTH)) / (ui_size / 13.0)
 }
 
 /// The card of a composer: Chat's, and an omp pane's dock (spec 6). `composer_fill`, a 1 px
@@ -1493,17 +1497,18 @@ pub(super) fn meter_bar(
     div()
         .group(METER_GROUP)
         .absolute()
-        .top(px(-theme::CONTEXT_METER_RISE))
+        .top(theme::rems_px(-theme::CONTEXT_METER_RISE))
         .left(px(space::L))
         .right(px(space::L))
-        .h(px(theme::CONTEXT_METER_BOX_HEIGHT))
+        .h(theme::rems_px(theme::CONTEXT_METER_BOX_HEIGHT))
         .child(
             div()
                 .absolute()
                 .top_0()
                 .left_0()
                 .right_0()
-                .h(px(theme::CONTEXT_LABEL_HEIGHT))
+                .h(theme::rems_px(theme::CONTEXT_LABEL_HEIGHT))
+                .line_height(theme::rems_px(theme::CONTEXT_LABEL_HEIGHT))
                 .flex()
                 .justify_end()
                 .font_family(theme.terminal_font_family.clone())
@@ -1525,7 +1530,7 @@ pub(super) fn meter_bar(
         .child(
             div()
                 .absolute()
-                .top(px(theme::CONTEXT_LABEL_HEIGHT))
+                .top(theme::rems_px(theme::CONTEXT_LABEL_HEIGHT))
                 .left_0()
                 .right_0()
                 .h(px(theme::CONTEXT_METER_HEIGHT))
@@ -1612,14 +1617,15 @@ mod tests {
     fn the_bar_room_is_the_text_column_less_the_cards_padding_in_13px_rems() {
         // Chat at 900 px: the 760 column less the page padding, less the card's two sides.
         let chat = theme::CHAT_COLUMN_WIDTH - 2.0 * theme::CHAT_COLUMN_PADDING;
-        assert_eq!(room_in(chat, 13.0), chat - 2.0 * space::M);
+        let pad = 2.0 * (space::M + theme::BORDER_WIDTH);
+        assert_eq!(room_in(chat, 13.0), chat - pad);
         // A 26 px UI font halves the room that is measured in 13 px rems.
-        assert_eq!(room_in(chat, 26.0), (chat - 2.0 * space::M) / 2.0);
+        assert_eq!(room_in(chat, 26.0), (chat - pad) / 2.0);
         // An omp pane among several spans its pane: no cap, only the page padding off.
         let pane = mkrew_ui::tsp::column_px(500.0, true);
         assert_eq!(
             room_in(pane, 13.0),
-            500.0 - 2.0 * theme::CHAT_COLUMN_PADDING - 2.0 * space::M
+            500.0 - 2.0 * theme::CHAT_COLUMN_PADDING - pad
         );
         // Alone, the column caps at the Chat width however wide the pane is.
         assert_eq!(

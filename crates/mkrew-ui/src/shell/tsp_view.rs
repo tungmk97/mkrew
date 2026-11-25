@@ -1227,7 +1227,7 @@ impl Shell {
         // color line and the badges, like the Chat list's `py(space::L)`; the bottom one parts
         // the last message from the status row and the meter.
         // Alone, the transcript is in the Chat column; among several panes it spans the pane like
-        // Tern (`tsp::column_max`). The dock below keeps the Chat column.
+        // Tern (`tsp::column_max`). The dock below uses the same `max`.
         let screen_rows: Vec<AnyElement> = if screen {
             (doc.children("main"))
                 .map(|node| {
@@ -3629,8 +3629,12 @@ impl Shell {
             .filter_map(|id| doc.get(id))
             .map(|node| self.tsp_attachment(p, node, cx))
             .collect();
+        let rise = meter.is_some();
         let card = composer_card_frame(theme)
             .children(meter)
+            .when(rise, |el| {
+                el.mt(theme::rems_px(theme::CONTEXT_METER_RISE - space::S))
+            })
             .children(focus)
             .when(!chips.is_empty(), |el| {
                 el.child(
@@ -3691,12 +3695,10 @@ impl Shell {
                 }),
         };
         // The text chip has its own `accent_bg` fill: its hover must not erase it.
-        let chip = (if open {
-            chip.cursor_pointer()
-        } else if filled {
+        let chip = (if filled && !open {
             chip.pressable_on(Look::Chip, theme.accent_bg, theme)
         } else {
-            chip.pressable(Look::Chip, true, theme)
+            chip.pressable_unless(open, Look::Chip, theme)
         })
         .when(p.tips(), |el| {
             el.tooltip(tooltip(theme, "Preview the attachment", ""))
@@ -3812,7 +3814,7 @@ impl Shell {
                 }
             }
         }
-        // The chips share what the round button leaves; `fit_bar` decides what drops, and a low
+        // The chips share what the send chip leaves; `fit_bar` decides what drops, and a low
         // estimate clips a chip (the model name truncates), never the button.
         div()
             .flex()
@@ -3969,8 +3971,8 @@ impl Shell {
         match &m.bar.primary {
             tsp::Primary::Stop(id) => {
                 let (tip, id) = (title(id, "Stop"), id.clone());
-                stop_text_button("tsp-stop", theme)
-                    .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "Esc")))
+                stop_text_button("tsp-stop", !exited, theme)
+                    .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "")))
                     .on_press(
                         !exited,
                         cx.listener(move |shell, _, _, cx| {
@@ -3998,7 +4000,7 @@ impl Shell {
         }
     }
 
-    /// The row above the meter, as Tern: on the left the working row (loading dots, elapsed time,
+    /// The row above the card and its meter, as Tern: on the left the working row (loading dots, elapsed time,
     /// a divider, the label) and any other status node; on the right the todo hud and the hud
     /// pill. `None` when there is nothing.
     fn tsp_dock_status(

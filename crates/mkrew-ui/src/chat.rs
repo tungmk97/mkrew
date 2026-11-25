@@ -1276,7 +1276,9 @@ mod tests {
     }
 
     /// The card's chip room at a 900 px pane: the 760 px column less page and card padding.
-    const ROOM_900: f32 = theme::CHAT_COLUMN_WIDTH - 2.0 * theme::space::XL - 2.0 * theme::space::M;
+    const ROOM_900: f32 = theme::CHAT_COLUMN_WIDTH
+        - 2.0 * theme::space::XL
+        - 2.0 * (theme::space::M + theme::BORDER_WIDTH);
 
     #[test]
     fn omp_and_codex_sessions_show_their_stats_at_900_px() {
