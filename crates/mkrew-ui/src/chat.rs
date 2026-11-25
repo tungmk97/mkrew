@@ -1305,6 +1305,14 @@ mod tests {
                 ..FitCtx::default()
             };
             let shown = fit_chips(want, ROOM_900, ctx);
+            // With the branch chip too, the clock (the first to drop) no longer fits: its
+            // width and the cards' rings are now counted.
+            assert!(shown.stats, "{name}: dropped {shown:?}");
+            let bare = Chips {
+                branch: false,
+                ..want
+            };
+            let shown = fit_chips(bare, ROOM_900, FitCtx::default());
             assert!(shown.stats && shown.clock, "{name}: dropped {shown:?}");
             assert_eq!(stat_parts(&stats).len(), 3, "{name}: {stats:?}");
         }
