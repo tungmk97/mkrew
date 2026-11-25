@@ -50,6 +50,7 @@ impl Shell {
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
         let sidebar_mode = ui.sidebar;
         let right_panel = inspector::RightPanel::from_mode(ui.right_panel);
+        let panel_side = ui.panel_side;
         let prompts_dir = paths.prompts_dir();
         let themes_dir = paths.themes_dir();
         let config_dir = paths.config_dir.clone();
@@ -417,6 +418,7 @@ impl Shell {
             plan_error: None,
             sidebar_layout: sidebar::Layout::from_mode(sidebar_mode),
             right_panel,
+            panel_side,
             reads: HashMap::new(),
             chats: HashMap::new(),
             tsps: HashMap::new(),
@@ -1087,6 +1089,7 @@ impl Shell {
                     self.reading_default = settings.ui.reading_width;
                     self.chat_default = settings.ui.chat_default;
                     self.board_all = settings.ui.board_all_workspaces;
+                    self.panel_side = settings.ui.panel_side;
                     self.follow_md_mode(settings.ui.md_mode);
                     if !self.md_split_dragging {
                         self.md_split = files_view::md_split_share(settings.ui.md_split);

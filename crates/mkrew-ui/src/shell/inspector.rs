@@ -191,31 +191,54 @@ impl Shell {
         }
     }
 
-    /// The title bar's right panel toggle: a gray icon, on a raised fill while the panel is
-    /// open.
+    /// The title bar's panel toggle: a gray icon showing the panel's side, on a raised fill
+    /// while the panel is open.
     pub(crate) fn inspector_toggle(
         &self,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let open = self.panel_shown();
+        let glyph = match self.panel_side {
+            PanelSide::Right => Icon::PanelRight,
+            PanelSide::Left => Icon::PanelLeft,
+        };
         icon_button_in(
             "toggle-inspector",
-            Icon::PanelRight,
+            glyph,
             if open { theme.text } else { theme.text_muted },
             theme,
         )
         .when(open, |el| el.bg(rgb(theme.surface_raised)))
         .tooltip(tooltip(
             theme,
-            if open {
-                "Hide right panel"
-            } else {
-                "Show right panel"
-            },
+            if open { "Hide panel" } else { "Show panel" },
             self.keymap.label(Command::ToggleInspector),
         ))
         .on_click(cx.listener(|shell, _, window, cx| shell.toggle_inspector(window, cx)))
+    }
+
+    /// Moves the panel to the other side and saves `[ui] panel_side` (ADR 0113).
+    pub(crate) fn toggle_panel_side(&mut self, cx: &mut Context<'_, Self>) {
+        self.panel_side = self.panel_side.other();
+        let value = format!("\"{}\"", self.panel_side.name());
+        if let Err(error) =
+            mkrew_core::settings::write_ui_value(&self.settings_file, "panel_side", &value)
+        {
+            self.settings_write_failed("the panel side", error, cx);
+        }
+        cx.notify();
+    }
+
+    /// The drawn sidebar's width in px: what sits left of a left panel.
+    fn sidebar_px(&self, window: &Window) -> f32 {
+        if self.sidebar_layout.hidden() {
+            0.0
+        } else if self.sidebar_layout.compact() {
+            f32::from(theme::rems_px(theme::COMPACT_SIDEBAR_WIDTH).to_pixels(window.rem_size()))
+        } else {
+            self.sidebar_width
+        }
     }
 
     /// The title bar's sidebar toggle (left of the workspace switcher): hide or show the sidebar.
@@ -248,12 +271,14 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        let side = self.panel_side;
         let grip = div()
             .id("inspector-grip")
             .absolute()
             .top_0()
             .bottom_0()
-            .left_0()
+            .when(side == PanelSide::Right, |el| el.left_0())
+            .when(side == PanelSide::Left, |el| el.right_0())
             .w(px(theme::GRIP_WIDTH))
             .cursor(CursorStyle::ResizeLeftRight)
             .on_drag(InspectorGrip, |_, _, _, cx| cx.new(|_| EmptyView))
@@ -262,9 +287,15 @@ impl Shell {
                     cx.set_active_drag_cursor_style(CursorStyle::ResizeLeftRight, window);
                     // ponytail: live width, one `session.resize` per changed column count;
                     // throttle if an agent TUI flickers while dragging.
+                    let side = shell.panel_side;
+                    let left = match side {
+                        PanelSide::Right => 0.0,
+                        PanelSide::Left => shell.sidebar_px(window),
+                    };
                     shell.inspector_width = inspector::width_from_pointer(
                         f32::from(window.viewport_size().width),
-                        f32::from(event.event.position.x),
+                        f32::from(event.event.position.x) - left,
+                        side,
                     );
                     shell.inspector_dragging = true;
                     cx.notify();
@@ -379,7 +410,12 @@ impl Shell {
             .w(px(self.inspector_width))
             .h_full()
             .relative()
-            .border_l(px(theme::BORDER_WIDTH))
+            .when(side == PanelSide::Right, |el| {
+                el.border_l(px(theme::BORDER_WIDTH))
+            })
+            .when(side == PanelSide::Left, |el| {
+                el.border_r(px(theme::BORDER_WIDTH))
+            })
             .border_color(rgb(theme.divider))
             .bg(rgb(theme.bg))
             .font_family(theme.ui_font_family.clone())

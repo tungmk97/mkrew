@@ -1337,6 +1337,18 @@ fn the_picker_starts_on_the_current_theme_and_moves_from_there() {
 }
 
 #[test]
+fn the_panel_side_command_shows_with_a_workspace() {
+    assert!(available(
+        Command::TogglePanelSide,
+        &context(View::Terminals)
+    ));
+    assert_eq!(
+        title(Command::TogglePanelSide),
+        "Panel: Move to the other side"
+    );
+}
+
+#[test]
 fn window_extras_show_only_in_a_detached_window() {
     let main = context(View::Terminals);
     let detached = Context {

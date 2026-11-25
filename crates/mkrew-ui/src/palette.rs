@@ -731,6 +731,7 @@ pub fn title(command: Command) -> String {
         Command::ToggleSidebar => "Global: Toggle sidebar".into(),
         Command::ToggleCompactSidebar => "Global: Toggle compact sidebar".into(),
         Command::ToggleInspector => "View: Toggle right panel".into(),
+        Command::TogglePanelSide => "Panel: Move to the other side".into(),
         Command::VoiceInput => "Global: Voice input (start / stop)".into(),
         Command::AskAi => "Global: Ask AI…".into(),
         Command::ContextMenu => "Global: Open context menu".into(),
@@ -770,6 +771,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::SearchInFiles
         | Command::QuickOpen
         | Command::ToggleInspector
+        | Command::TogglePanelSide
         | Command::NewTask
         | Command::ContextMenu
         | Command::ShowDiff

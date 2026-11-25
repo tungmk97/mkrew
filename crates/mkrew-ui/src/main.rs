@@ -25,7 +25,7 @@ use gpui::{
 use mkrew_core::Paths;
 use mkrew_core::UsageFormat;
 use mkrew_core::prompt::PromptVars;
-use mkrew_core::settings::{DiffMode, NotifySettings};
+use mkrew_core::settings::{DiffMode, NotifySettings, PanelSide};
 use mkrew_protocol::{
     AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, ChangeKind, CommentContext,
     CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
@@ -756,6 +756,8 @@ struct Shell {
     /// The right panel (Files / Session / Git tabs) next to Terminals;
     /// from `[ui] right_panel`, written by its toggle and tab row (SPEC §10, ADR 0081, ADR 0084).
     right_panel: inspector::RightPanel,
+    /// The panel's side of the panes, from `[ui] panel_side` (ADR 0113).
+    panel_side: PanelSide,
     /// The transcripts being read, one per session (ADR 0104): the session panel's Thread
     /// section and every pane in Chat mode share them.
     reads: HashMap<Ulid, ThreadRead>,

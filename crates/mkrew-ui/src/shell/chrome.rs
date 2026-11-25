@@ -233,14 +233,11 @@ impl Shell {
                         )
                     },
                 );
-                main.child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .flex()
-                        .child(terminals)
-                        .children(panel),
-                )
+                let row = div().flex_1().min_h_0().flex();
+                main.child(match self.panel_side {
+                    PanelSide::Right => row.child(terminals).children(panel),
+                    PanelSide::Left => row.children(panel).child(terminals),
+                })
             }
             (View::Terminals, None) => {
                 let (sentence, detail) = self.status_line();
