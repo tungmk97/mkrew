@@ -177,9 +177,14 @@ impl Shell {
                     if window.is_visible() && (due || status::redraw_due(sessions, last, now)) {
                         cx.notify();
                     } else {
-                        // A pane's own spinner, elapsed or dots: that pane only (ADR 0118).
+                        // A pane's own spinner, elapsed or dots: that pane only (ADR 0118); the
+                        // peek popover draws a moving surface outside its pane.
                         let mut moving = shell.tsp_animating();
                         moving.extend(shell.chat_animating());
+                        let peeked = (shell.peek.as_ref()).map(|peek| peek.session_id);
+                        if moving.iter().any(|session| Some(*session) == peeked) {
+                            cx.notify();
+                        }
                         for session in moving {
                             shell.notify_session_panes(session, cx);
                         }
