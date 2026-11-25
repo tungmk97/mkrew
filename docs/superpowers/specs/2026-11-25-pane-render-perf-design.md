@@ -1,15 +1,14 @@
 # Pane render performance - Design
 
 - Date: 2026-11-25
-- Status: design approved in chat by the user (2026-11-25), section by section; this file waits for the user's review.
-- Branch and worktree: `feat/pane-perf` in `.worktrees/pane-perf`, from `master` at `a2033e7`.
+- Status: approved by the user (2026-11-25).
+- Branch and worktree: `feat/pane-perf` in `.worktrees/pane-perf`, rebased onto `master` at `79be8a6` (after the `fix/omp-composer-input` merge).
 - ADR: `docs/decisions/0114-pane-render-perf.md`, written with the code (repo rule: ADR and SPEC change in the same commit as the code).
-  `master` has 0112 (omp surface full width); the unmerged `fix/omp-composer-input` takes 0113, so this one takes 0114.
+  `master` has 0113 (omp composer local editing), so this one takes 0114.
   Re-check when this branch merges; take the next free number if it moved.
-- Protocol: no change.
+- Protocol: no change (master is at 63).
 - Migration: none.
-- Depends on: `fix/omp-composer-input` (ADR 0113) rewrites large parts of `shell/tsp_view.rs` (its dock and composer).
-  Implementation starts after that branch merges, or rebases onto it, so the two never conflict.
+- Builds on ADR 0113 (`fix/omp-composer-input`, merged): Mkrew edits the omp composer itself, so typing in it no longer waits for an omp frame; the transcript layout cost this spec removes remains.
 - Restores SPEC §15 "Input latency: key press to glyph on screen < 16 ms", which the app no longer meets with long omp sessions.
 
 ## 1. Goal
@@ -67,26 +66,34 @@ Assumed (accepted in chat):
 ```rust
 pub(crate) struct PaneView {
     shell: WeakEntity<Shell>,
-    host: HostId,
-    project_id: Ulid,
-    key: PaneKey,
+    slot: PaneSlot,
+    _shell_changed: Subscription,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct PaneSlot {
+    pub(crate) host: HostId,
+    pub(crate) project_id: Ulid,
+    pub(crate) tab_id: Ulid,
+    pub(crate) key: PaneKey,
 }
 ```
 
-- It follows `SidebarView`: `new` calls `cx.observe(&shell, |_, _, cx| cx.notify())`.
-- `render` calls `Shell::render_pane(host, project_id, &key, window, cx)` through `shell.update`; a dropped `Shell` renders `gpui::Empty`.
+- It follows `SidebarView`: `new` observes the `Shell` and notifies itself (`cx.observe(&shell, |_, _, cx| cx.notify())`), keeping the subscription.
+- `render` calls `Shell::render_pane(&slot, window, cx)` through `shell.update`; a dropped `Shell` renders `gpui::Empty`.
 
 ### 3.2 `Shell::render_pane`
 
-- It works out what `render_tab` passes to `pane_frame` today: `several`, `zoomed`, the pane's `width` (the host's recorded content size times the pane's rect width), `is_focused`, `composer_focused`, `voice_ring`, `now` (`status::now_ms()`) and the theme.
+- It works out what `render_tab` passes to `pane_frame` today from the slot's tab: `several`, `zoomed`, `stacked`, the pane's `width` (the host's recorded content width times the pane's rect width), `is_focused`, `composer_focused`, `voice_ring` (main window only, as today), `now` (`status::now_ms()`) and the theme.
   A cached view has no way to receive per-frame arguments from its parent, so it reads them from `Shell` and the window itself.
 - Then it calls `pane_frame` unchanged.
+- A slot whose tab or key is gone renders nothing (`sync_panes` drops it soon after).
 
 ### 3.3 Where pane views live
 
-- `Shell.pane_views: HashMap<(HostId, PaneKey), Entity<PaneView>>`.
-- `render_tab` makes a view on first use and puts `view.cached(StyleRefinement::default().size_full())` inside each pane's absolutely positioned slot, in the main window and in detached windows alike.
-- `sync_panes` drops the views whose key is in no tab layout of their host any more.
+- `Shell.pane_views: RefCell<HashMap<PaneSlot, Entity<PaneView>>>` (`render_tab` takes `&self`).
+- `render_tab` makes a view on first use and puts `view.cached(StyleRefinement::default().size_full())` inside each pane's absolutely positioned slot, in the main window and in detached windows alike; it no longer takes `composer_focused` and `voice_ring`.
+- `sync_panes` drops the views whose tab is gone or no longer holds their key.
 
 ### 3.4 The terminal grid
 
@@ -113,8 +120,8 @@ A cached view that is reused does not run its paint callbacks again, so anything
 
 - `MenuAnchors`: `Anchor::in_sidebar` becomes `in_cached_view` and also covers `Anchor::Pane(_)`.
   `Shell` clears only the other anchors at its frame start; each `PaneView` clears its own pane's anchor when it renders, as `SidebarView` does with `clear_sidebar`.
-- `typing_target` (where voice input types): it records which pane registered the field (`None` for one `Shell` draws itself).
-  `Shell` clears it at its frame start only when `Shell` owns it; a `PaneView` clears it when the field is its own.
+- `typing_target` (where voice input types): `TypingTarget` gains `owner: Cell<Option<EntityId>>`, set while painting to `window.current_view()` (the `PaneView` for a field inside a pane; GPUI paints a view inside `with_rendered_view`).
+  `Shell` clears the field at its frame start unless its owner is one of its pane views; a `PaneView` clears it when it renders and the owner is itself.
 - The web pane places its native child window from bounds read while painting.
   Bounds changes always miss the cache, so it should stay right; it is checked by hand (section 7).
 - Every other `canvas(...)` recorder inside a pane is listed and checked in the plan.
@@ -123,25 +130,25 @@ A cached view that is reused does not run its paint callbacks again, so anything
 
 ### 4.1 State (`TspUi`, `shell/tsp_view.rs`)
 
-- Removed: `scroll: ScrollHandle`, `reveal_pending`.
+- Removed: `scroll: ScrollHandle`, `reveal_pending`, `TspUi::page` and `tsp::paged_offset` (the list scrolls itself).
 - Added:
   - `rows: gpui::ListState` (`ListAlignment::Top`, `FollowMode::Tail`, overdraw `theme::TSP_LIST_OVERDRAW`),
   - `row_ids: Vec<String>`: the ids of `main`'s children the list was last told about,
-  - `rows_surface: Option<String>`: the shown surface those rows belong to.
-- Item 0 is the spacer under the pane's drag strip (`space::L`), as today; item `i + 1` is row `i` of `main`.
+  - `rows_surface: Option<String>`: the shown surface those rows belong to,
+  - `measured: RefCell<Option<(Theme, theme::Fonts)>>`: the theme and fonts the rows were measured with.
+- Item 0 is the spacer under the pane's drag strip (`space::L`), items `1..=n` are the rows of `main`, item `n + 1` is the spacer above the dock (`space::L`), as today.
 
 ### 4.2 Which rows changed (`crates/mkrew-ui/src/tsp.rs`)
 
-- `Mirror::apply` returns `MirrorResult::Applied { dirty_rows: HashSet<String> }` (empty for `Open` and `Closed`, which `sync_rows` treats as a possible change of the shown surface).
-  `dirty_rows` holds the ids of the frame surface's rows: every id an op names (`add` and `move` also name a parent) is mapped up to its ancestor that is a direct child of `main`.
+- `Mirror::apply` keeps its `MirrorResult`; a frame it applies also records its dirty rows, which `Mirror::take_dirty_rows() -> HashSet<String>` hands over (and clears).
+  The dirty rows are ids of the frame surface's rows: every id an op names (`add` and `move` also name a parent) is mapped up to its ancestor that is a direct child of `main`.
   `sync_rows` uses them only when the frame's surface is the shown one.
-  The mapping runs **before** the ops apply (so `del` and `move` find where the node was) and **after** (so `add`, `set`, `text`, `splice` and `move` find where it is).
-  An op that names `main` itself, or a node outside `main` (the dock, a layer, the hud), dirties no row.
+  The mapping runs **before** the ops apply (so `del` and `move` find where the node was) and **after** (so `add`, `set`, `text`, `splice`, `settle` and `move` find where it is).
+  An op that names `main` itself, a node outside `main` (the dock, a layer, the hud), or only points at a node (`reveal`, `scroll`, `focus`) dirties no row.
 - A pure function computes what the list must hear:
 
 ```rust
 pub enum RowChange {
-    Reset(usize),
     Splice { range: Range<usize>, count: usize },
     Remeasure(usize),
 }
@@ -150,10 +157,10 @@ pub fn row_changes(old: &[String], new: &[String], dirty: &HashSet<String>) -> V
 ```
 
 - It trims the common prefix and suffix of the two id lists; the middle is one `Splice`.
-  Each kept row in `dirty` is a `Remeasure`.
-  Indexes are row indexes; the caller adds 1 for the spacer.
+  Each kept row in `dirty` is a `Remeasure`, numbered as in `new`, so applying the changes in order is right.
+  Indexes are row indexes; the caller adds 1 for the top spacer.
 - `TspUi::sync_rows` runs after every mirror change (a snapshot, an update, a surface opened or closed).
-  A new snapshot or a different shown surface is a `Reset`.
+  A new snapshot or a different shown surface resets the list (`ListState::reset(n + 2)`).
 
 ### 4.3 UI-only changes that change a row's height
 
@@ -161,7 +168,7 @@ pub fn row_changes(old: &[String], new: &[String], dirty: &HashSet<String>) -> V
 |---|---|
 | A checklist phase folded or unfolded (`todo_toggled`) | `remeasure_items` for the row holding that checklist |
 | A frame carrying `blobs` (an image arrived) | `remeasure_items` for each row holding an `image` node that names one of them |
-| Font family or size changed (settings) | `rows.remeasure()` |
+| Theme or fonts changed (settings, light and dark) | `rows.remeasure()`, when `measured` differs from the current theme and fonts at render |
 | Pane width changed | none: `ListState` measures again on a new width |
 
 ### 4.4 Scrolling
@@ -249,4 +256,4 @@ End to end in the smoke sandbox (`scripts/smoke.ps1`), screenshots in dark and l
 - A pane whose state changes without a `Shell` notify shows the old state.
   Approach A keeps this as rare as today: every `Shell` notify still renders every pane.
 - `gpui::ListState` needs to hear about every height change of an off-screen row (section 4.3); a missed one puts the scroll position off until that row is measured again.
-- The `fix/omp-composer-input` branch changes the same file; this work waits for it (see the header).
+- `shell/tsp_view.rs` is large and often edited by other branches; keep this branch short-lived and rebase before merging.
