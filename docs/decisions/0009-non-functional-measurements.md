@@ -39,6 +39,7 @@ Windows 11 Pro 10.0.26100, developer desktop, release builds, 2026-10-06.
 | Memory, 6 sessions | UI < 150 MB, daemon < 50 MB | UI 60–109 MiB, daemon 19–24 MiB | ok |
 | Throughput, 6 panes flooding | UI < 16 ms, RAM flat, daemon < 1 core | ~13 MiB/pane: round trip p50 0.19 ms / p95 0.48 ms, batch feed p50 4.0 ms / p95 8.5 ms, daemon 78% of a core, daemon RSS 35→35 MiB, client 130→131 MiB | ok |
 | Git status, 10,000 files | < 150 ms on Windows | median 98 ms (94–112 ms) | ok |
+| Long omp transcript (2,000 rows) beside a printing pane (ADR 0114) | UI < 15% of a core | 5.0% of a core (101.2% before ADR 0114) | ok |
 
 Not measured here (→ `docs/HUMAN_CHECKS.md`): key press → glyph on screen (the stress test's
 round trip and batch times are proxies, not a painted glyph), the 50 MB-per-pane flood (the test

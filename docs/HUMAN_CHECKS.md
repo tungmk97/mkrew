@@ -21,6 +21,17 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-25 pane render performance (ADR 0114)
+
+Screenshots: `docs/screenshots/2026-11-25-pane-perf-<view>-<dark|light>.png`.
+
+- [ ] **Typing in a long omp session:** open an omp session with a long history; type quickly in its composer; letters appear at once, no stutter.
+- [ ] **Typing next to busy agents:** with two or three agents working in panes of the same tab, type in another pane; no stutter.
+- [ ] **Scrolling a long omp transcript:** wheel and Shift+PageUp / Shift+PageDown through it; no blank rows, no rows on top of each other; while omp writes, the page stays at the end; scrolled up, it stays where you read and the round button brings you back.
+- [ ] **Theme and font:** switch light and dark, then change the font size in Settings, while scrolled to the middle of a long omp transcript; the rows redraw at their new size without overlaps.
+- [ ] **Browser pane beside busy panes:** open a browser pane (Alt+Shift+B) next to a printing agent; the agent's output keeps moving and new sessions still show in the sidebar.
+- [ ] **Voice input** (if you use it): start it in an omp composer and in a terminal pane; the text goes there and the ring shows.
+
 ### To verify - 2026-11-25 omp composer edited by Mkrew (ADR 0113)
 
 - [ ] **Restart the daemon first** (protocol 63; a window from before it shows a version mismatch).
