@@ -557,6 +557,16 @@ pub const MODEL_CHEVRON_SIZE: f32 = TREE_CHEVRON_SIZE;
 pub const CONTEXT_METER_HEIGHT: f32 = 1.0;
 /// The box of the percent label on the context meter; it is centered on the end of the fill.
 pub const CONTEXT_LABEL_WIDTH: f32 = 32.0;
+/// How far the context meter rises above the composer card's top edge (Tern: `top: -12px`).
+pub const CONTEXT_METER_RISE: f32 = 12.0;
+/// The meter's box: the labels ([`CONTEXT_LABEL_HEIGHT`]) with the 1 px track right under them.
+/// The track therefore lies on the card's top border.
+pub const CONTEXT_METER_BOX_HEIGHT: f32 = 14.0;
+/// Height of the label row of the context meter (OVERLINE text, 11 px).
+pub const CONTEXT_LABEL_HEIGHT: f32 = 11.0;
+/// Alpha of the meter's rail and of its neutral fill: `text` at these (Tern `t1` 9 % / 42 %).
+pub const METER_RAIL_ALPHA: f32 = 0.09;
+pub const METER_FILL_ALPHA: f32 = 0.42;
 
 /// The hover area of a tick on the context meter of an omp dock (a mark such as the
 /// auto-compact point; its tooltip is the mark's title). The 1 px line sits in the middle.

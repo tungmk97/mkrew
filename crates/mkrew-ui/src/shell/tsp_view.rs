@@ -25,7 +25,7 @@ use mkrew_ui::tsp::{
 use mkrew_ui::{docs, preview};
 use serde_json::{Value, json};
 
-use super::chat_view::{chat_column, page_column, prompt_bubble};
+use super::chat_view::{page_column, prompt_bubble};
 use super::composer::{
     composer_card_frame, composer_room, meter_bar, model_pill, permission_chip, placeholder_row,
     quiet_chip,
@@ -1248,7 +1248,7 @@ impl Shell {
             .flatten();
         let card_dock = dock_model.is_some() || status_dock.is_some();
         let dock: Vec<AnyElement> = match (dock_model.as_ref(), status_dock.as_ref()) {
-            (Some(m), _) => self.tsp_dock(&paint, m, width, cx),
+            (Some(m), _) => self.tsp_dock(&paint, m, tsp::column_px(width, several), cx),
             (None, Some(d)) => self.tsp_dock_card(&paint, d, cx),
             (None, None) => (doc.children("dock"))
                 .map(|node| self.tsp_node(&paint, node, cx))
@@ -1371,15 +1371,18 @@ impl Shell {
                 }),
         )
         .child(
-            chat_column(
+            page_column(
                 div()
                     .flex()
                     .flex_col()
                     .when(!card_dock, |el| el.pb(px(space::S)))
                     .children(dock),
+                max,
+                false,
             )
-            // Chat: the card sits `space::M` above the pane's bottom edge.
-            .when(card_dock, |el| el.pb(px(space::M))),
+            // The card sits `space::L` above the pane's bottom edge and spans the transcript
+            // column like the rows above it.
+            .when(card_dock, |el| el.pb(px(space::L))),
         )
         // The session ended: the last document stays, read-only, under the usual notice.
         .children(exited.map(|code| exited_notice(code, theme)))
@@ -3407,18 +3410,19 @@ impl Shell {
 
 impl Shell {
     /// The dock of an omp pane that has the composer roles (spec 7.8): the dock's own children in
-    /// order, except that the node where the editor stands becomes the status row, the meter and
-    /// the card, and the nodes the status row took over are skipped.
+    /// order, except that the node where the editor stands becomes the status row and the card
+    /// (with the meter on it), and the nodes the status row took over are skipped. `column` is the
+    /// text column in px (page padding off).
     fn tsp_dock(
         &self,
         p: &Paint<'_>,
         m: &tsp::DockModel,
-        width: f32,
+        column: f32,
         cx: &mut Context<'_, Self>,
     ) -> Vec<AnyElement> {
         let mut out = Vec::new();
         for node in p.doc.children("dock") {
-            self.tsp_dock_node(p, m, node, width, &mut out, cx);
+            self.tsp_dock_node(p, m, node, column, &mut out, cx);
         }
         out
     }
@@ -3428,7 +3432,7 @@ impl Shell {
         p: &Paint<'_>,
         m: &tsp::DockModel,
         node: &Node,
-        width: f32,
+        column: f32,
         out: &mut Vec<AnyElement>,
         cx: &mut Context<'_, Self>,
     ) {
@@ -3436,10 +3440,10 @@ impl Shell {
             return;
         }
         if node.id == m.editor {
-            out.push(self.tsp_composer(p, m, width, cx));
+            out.push(self.tsp_composer(p, m, column, cx));
         } else if m.path.contains(&node.id) {
             for child in p.doc.children(&node.id) {
-                self.tsp_dock_node(p, m, child, width, out, cx);
+                self.tsp_dock_node(p, m, child, column, out, cx);
             }
         } else {
             out.push(self.tsp_node(p, node, cx));
@@ -3500,13 +3504,14 @@ impl Shell {
         }
     }
 
-    /// The status row (when it has anything), the context meter and the card: the Chat composer
-    /// with omp's content. Compact (`Paint::compact`): the card with the field only.
+    /// The status row (when it has anything) and the card, with the context meter on its top
+    /// edge: the Chat composer with omp's content. Compact (`Paint::compact`): the card with the
+    /// field only.
     fn tsp_composer(
         &self,
         p: &Paint<'_>,
         m: &tsp::DockModel,
-        width: f32,
+        column: f32,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let theme = p.theme;
@@ -3539,16 +3544,13 @@ impl Shell {
             return composer_card_frame(theme).child(field).into_any_element();
         }
         let status = self.tsp_dock_status(p, &m.status, cx);
-        // The fill is neutral; omp's warning and error tones past its thresholds keep theirs.
         let meter = m.context.as_ref().map(|c| {
             let marks = c.marks.iter().map(|k| (k.at, k.title.clone())).collect();
-            let fill = match c.tone {
-                "accent" => theme.text_muted,
-                tone => tsp::tone_color(tone, theme),
-            };
+            // Neutral fill; omp's warning and error tones past its thresholds keep theirs.
+            let tone = (c.tone != "accent").then(|| tsp::tone_color(c.tone, theme));
             let bar = meter_bar(
                 c.fraction.unwrap_or(0.0),
-                fill,
+                tone,
                 c.label.clone(),
                 c.total.clone(),
                 marks,
@@ -3562,6 +3564,7 @@ impl Shell {
             .map(|node| self.tsp_attachment(p, node, cx))
             .collect();
         let card = composer_card_frame(theme)
+            .children(meter)
             .children(focus)
             .when(!chips.is_empty(), |el| {
                 el.child(
@@ -3571,13 +3574,12 @@ impl Shell {
                 )
             })
             .child(field)
-            .child(self.tsp_dock_bar(p, m, width, cx));
+            .child(self.tsp_dock_bar(p, m, column, cx));
         div()
             .flex()
             .flex_col()
             .gap(px(space::S))
             .children(status)
-            .children(meter)
             .child(card)
             .into_any_element()
     }
@@ -3688,12 +3690,12 @@ impl Shell {
         &self,
         p: &Paint<'_>,
         m: &tsp::DockModel,
-        width: f32,
+        column: f32,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let theme = p.theme;
         let exited = self.is_exited(p.session);
-        let fit = tsp::fit_bar(&m.bar, composer_room(width, cx));
+        let fit = tsp::fit_bar(&m.bar, composer_room(column, cx));
         let mut cells: Vec<AnyElement> = Vec::new();
         for part in &m.bar.parts {
             match part {
