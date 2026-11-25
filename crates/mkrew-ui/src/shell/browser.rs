@@ -435,7 +435,7 @@ impl Shell {
     }
 
     /// The web leaves `host` shows now: its tab's shown panes (a zoom shows one), none while
-    /// the main window shows another view.
+    /// its Space window shows another view.
     fn shown_browsers(&self, host: HostId, window: &Window) -> Vec<Ulid> {
         let Some((project, tab_id)) = self.tab_scope(window) else {
             return Vec::new();

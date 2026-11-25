@@ -368,7 +368,7 @@ impl Shell {
 
     /// The keys of a detached window: only [`detached::handles`]' commands act, on this
     /// window's tab; the rest do nothing here (spec §4.2). Settings (the macOS menu has it in
-    /// every window) opens in the main window.
+    /// every window) opens in the primary Space window.
     pub(crate) fn run_detached(
         &mut self,
         key: WindowKey,
@@ -377,7 +377,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         if command == Command::OpenSettings {
-            // The main window's own guards: no Settings over another dialog or the palette
+            // The Space window's own guards: no Settings over another dialog or the palette
             // (the key goes on, as in the rest of this function), none while reconnecting.
             if self.modal_open() {
                 cx.propagate();

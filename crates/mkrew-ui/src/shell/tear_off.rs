@@ -74,7 +74,7 @@ impl Shell {
         let Some(tabs) = self
             .tabs
             .get(&project)
-            .filter(|_| self.workspace_in(window) == Some(project))
+            .filter(|_| self.workspace_of(host) == Some(project))
         else {
             return Some(Target::Window(host));
         };

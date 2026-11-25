@@ -1412,7 +1412,7 @@ fn window_extras_show_only_in_a_detached_window() {
         Extra::WindowMoveAllBack,
         Extra::WindowClose,
     ] {
-        assert!(!extra.available(&main), "{extra:?} in the main window");
+        assert!(!extra.available(&main), "{extra:?} in a Space window");
         assert!(extra.available(&detached), "{extra:?} in a detached window");
     }
     assert!(available(Command::MoveTabToNewWindow, &main));

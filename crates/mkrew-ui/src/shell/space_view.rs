@@ -34,8 +34,11 @@ impl SpaceWindow {
             // Minimized → detach every pane; restored → re-attach from daemon snapshots (§10).
             cx.observe_window_visibility(window, move |this, visibility, window, cx| {
                 let _ = this.shell.update(cx, |shell, cx| {
-                    shell.hosts.entry(host).or_default().visible =
-                        visibility == gpui::WindowVisibility::Visible;
+                    // Not after `forget_space`: a closing window must not come back as a ghost.
+                    let Some(ui) = shell.hosts.get_mut(&host) else {
+                        return;
+                    };
+                    ui.visible = visibility == gpui::WindowVisibility::Visible;
                     shell.sync_panes(window, cx);
                     cx.notify();
                 });

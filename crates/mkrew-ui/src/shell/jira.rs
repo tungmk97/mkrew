@@ -285,7 +285,7 @@ impl Shell {
                 .background_executor()
                 .spawn(async move { mkrew_ui::jira::issue_draft(&settings, &token, &fetched_key) })
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 // A slow reply never replaces a dialog opened meanwhile, nor opens in another
                 // workspace: the draft is dropped (the human clicks the row again).
                 let free = !shell.modal_open() && shell.workspace_in(window) == Some(project_id);
@@ -333,7 +333,7 @@ impl Shell {
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let saved = saved.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(view) = shell.jira.get_mut(&project_id) else {
                     return;
                 };

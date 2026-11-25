@@ -754,7 +754,7 @@ impl Shell {
                     if !task_dialog::confirms_delete(answer.await.ok()) {
                         return;
                     }
-                    let _ = this.update_in(cx, |shell, window, cx| {
+                    let _ = Shell::answer(&this, cx, |shell, window, cx| {
                         // It may have exited while the dialog was open.
                         if !shell.is_exited(session) {
                             shell.kill(session, window, cx);

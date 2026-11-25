@@ -23,14 +23,14 @@ impl Shell {
         cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(theme::PORTS_TICK).await;
-                let open = this.update_in(cx, |shell, window, cx| {
+                let open = Shell::answer(&this, cx, |shell, window, cx| {
                     let open = shell.ports_dialog.is_some() && shell.dialog_serial == serial;
                     if open {
                         shell.poll_ports(window, cx);
                     }
                     open
                 });
-                if !matches!(open, Ok(true)) {
+                if open != Some(true) {
                     return;
                 }
             }
@@ -97,7 +97,7 @@ impl Shell {
                 Ok(Outcome::Error(body)) => ports::stop_failure(pid, &body),
                 Err(error) => Some(format!("Can't stop pid {pid}: {error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Some(dialog) = shell.ports_dialog.as_mut() {
                     dialog.stop_error = failure;
                 }

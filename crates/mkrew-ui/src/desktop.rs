@@ -1,4 +1,4 @@
-//! The OS around the main window (SPEC §20J, ADR 0064): taskbar badge and flashing, the tray
+//! The OS around the Space windows (SPEC §20J, ADR 0064): taskbar badge and flashing, the tray
 //! icon and its menu, hiding and showing the window: Windows. macOS gets the Dock badge, the
 //! Dock bounce and the About panel (SPEC §20L, ADR 0100); elsewhere every call does nothing
 //! and `has_tray()` is false.

@@ -133,7 +133,7 @@ impl Shell {
         let sent = connection.call::<Vec<DocComment>>(Request::CommentSendToAgent(params));
         cx.spawn_in(window, async move |this, cx| {
             let sent = sent.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let open = shell.dialog_serial == serial
                     && matches!(shell.doc_dialog, Some(DocDialog::Send(_)));
                 match sent {

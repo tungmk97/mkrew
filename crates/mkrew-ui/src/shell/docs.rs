@@ -25,7 +25,7 @@ impl Shell {
             connection.call::<Vec<DocFile>>(Request::DocList(DocListParams { project_id }));
         cx.spawn_in(window, async move |this, cx| {
             let listed = listed.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &listed {
                     tracing::warn!(%project_id, "doc.list failed: {error}");
                 }

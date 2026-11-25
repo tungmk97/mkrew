@@ -253,7 +253,7 @@ impl Shell {
             let Err(error) = started.await else {
                 return;
             };
-            let _ = this.update_in(cx, |shell, _, cx| {
+            let _ = Shell::answer(&this, cx, |shell, _, cx| {
                 shell.prompt_enhanced(generation_id, Err(format!("{error:#}")));
                 cx.notify();
             });

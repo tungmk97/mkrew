@@ -331,7 +331,7 @@ impl Shell {
         let saved = connection.call::<DocComment>(request);
         cx.spawn_in(window, async move |this, cx| {
             let saved = saved.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &saved {
                     tracing::warn!(%project_id, "saving a comment failed: {error}");
                 }

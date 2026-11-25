@@ -96,7 +96,7 @@ Unchanged (already per workspace): `tabs`, `views`, `files`, `git`, `git_repos`,
 
 Stays global, one at a time across all windows: the palette, dialogs and menus.
 They open in the window that asked, through the existing `palette_host`, `menu_host` and `picker_host` fields.
-A dialog, palette or menu whose window closes or changes workspace is closed first.
+A palette or menu whose window closes or changes workspace is closed first; an open dialog (or the split picker) moves to the Space window used last, keeping what was typed.
 
 ### 3.4 Rules
 
@@ -134,7 +134,7 @@ A dialog, palette or menu whose window closes or changes workspace is closed fir
 - Mode 1 saves one entry; mode 2 one per Space window.
 - `main-window.json` (`detached::main_file`) is read only when `spaces` is missing (version 1); its frame becomes the single Space window and the file is deleted after the first version 2 write.
 - At start a saved Space window whose workspace is gone (removed, archived) is skipped; when none is left one Space window opens for `initial_workspace` (or the empty state).
-- In mode 1 only the first saved entry with a live workspace is used.
+- In mode 1 the single window takes the place of the last saved entry; mode 2's first window takes the place of the last entry that has a workspace, and shows that workspace.
 - Bounds go through `window_place::restored`, so a window saved on an unplugged screen comes back on a connected one.
 - Reading or parsing errors fall back to one centered Space window, as today.
 
@@ -190,7 +190,7 @@ Entry points: palette "Window: Combine into one window", and the Settings row.
 - The Space window the user is in becomes the single window: the sidebar shows, its workspace stays shown.
 - Every other Space window closes without a question (nothing is lost: sessions and tabs live in the daemon).
 - Detached windows stay as they are.
-- A toast says "Combined N windows" (N counts the closed ones; no toast when there were none).
+- A toast says "Combined N windows" (N counts every window combined, the kept one too; no toast when no other window was open).
 - `[ui] window_mode` is written as `single`.
 
 ### 4.4 Changing the setting by hand
@@ -200,7 +200,7 @@ to `per_workspace` the focused window becomes the Space window of its workspace;
 
 ### 4.5 Edge cases
 
-- In mode 2, a workspace removed or archived closes its Space window; when it was the last one, that window stays and shows the empty state with Add workspace.
+- In mode 2, a workspace removed or archived closes its Space window; when it was the last one, that window stays and shows the default workspace (`initial_workspace`), or the empty state with Add workspace when none is left.
 - A lost daemon connection shows the reconnect banner in every window.
   After reconnecting each Space window keeps its workspace when the workspace still exists, else takes `initial_workspace` (today's reset of `workspace` to `None` in `connection.rs` keeps the window blank until then).
 - A failed `cx.open_window` shows a toast "Cannot open a window for `web`: <error>"; that workspace stays without a window and the other windows of the same action still open (no rollback).

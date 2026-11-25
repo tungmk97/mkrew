@@ -280,7 +280,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        // The workspace of the window's tab: the shown one in the main window, the tab's own
+        // The workspace of the window's tab: the shown one in a Space window, the tab's own
         // in a detached one.
         let window_key = self.detached_key(window);
         let workspace = match window_key {
@@ -322,7 +322,7 @@ impl Shell {
         let focused_info = focused
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id))
             .cloned();
-        // Offered in the main window only (as in the tab menu), for the tabs on its strip.
+        // Offered in a Space window only (as in the tab menu), for the tabs on its strip.
         let tab_closable = |right_only| {
             (self.tab_scope(window).filter(|_| window_key.is_none())).is_some_and(
                 |(project, tab_id)| {
@@ -763,7 +763,7 @@ impl Shell {
             return;
         }
         self.close_palette(window, cx);
-        // A detached window's own extras; they need no workspace of the main window.
+        // A detached window's own extras; they need no workspace of a Space window.
         if let Some(key) = self.detached_key(window) {
             match action {
                 palette::Action::Extra(Extra::TabMoveBack) => {
@@ -1185,7 +1185,7 @@ impl Shell {
             };
             let question = palette::checkout_question(&params.branch, changes, agents);
             if let Some((message, detail)) = question {
-                let Ok(answer) = this.update_in(cx, |_, window, cx| {
+                let Some(answer) = Shell::answer(&this, cx, |_, window, cx| {
                     window.prompt(
                         PromptLevel::Warning,
                         &message,
@@ -1203,7 +1203,7 @@ impl Shell {
             let project_id = params.project_id;
             let branch = params.branch.clone();
             let done = connection.call::<()>(Request::GitCheckout(params)).await;
-            let _ = this.update_in(cx, |shell, window, cx| match done {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match done {
                 Ok(()) => {
                     shell.toast_info(format!("Switched to {branch}"), cx);
                     if shell.git.contains_key(&project_id) {

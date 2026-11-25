@@ -312,7 +312,7 @@ fn a_detached_window_bigger_than_its_display_is_cut_with_the_detached_minimum() 
         ),
         WindowBounds::Windowed(primary)
     );
-    // A small one stays small (the minimum is the detached one, not the main window's).
+    // A small one stays small (the minimum is the detached one, not the Space window's).
     let small = rect(200.0, 200.0, 600.0, 400.0);
     assert_eq!(
         restored(small, Placement::Windowed, min, &[primary], Some(primary)),

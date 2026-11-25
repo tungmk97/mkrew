@@ -66,7 +66,7 @@ impl Shell {
         // after the git/files loads below waits for all of them (a git.status can take 1 s).
         self.sync_panes(window, cx);
         if switched || self.git_summary(project_id).is_none() {
-            self.load_git_summary(project_id, window, cx);
+            self.load_git_summary(project_id, cx);
         }
         if !self.tabs.contains_key(&project_id) {
             self.load_tabs(project_id, cx);
@@ -180,7 +180,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let created = created.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let first = shell.loading_tabs.contains(&project_id);
                 match created {
                     Ok(tab) => {
@@ -333,7 +333,7 @@ impl Shell {
 
     /// Focuses the pane of `session` (activating its tab) or splits the focused pane along
     /// `axis` to show it: in `tab` when that is shown in a detached window (a split started
-    /// there must not land in the main window's tab, spec §4.2), else in the workspace's
+    /// there must not land in the Space window's tab, spec §4.2), else in the workspace's
     /// active tab.
     pub(crate) fn place_session(
         &mut self,

@@ -121,7 +121,7 @@ impl Shell {
         let saved = connection.call::<Task>(request);
         cx.spawn_in(window, async move |this, cx| {
             let saved = saved.await;
-            let _ = this.update_in(cx, |shell, window, cx| match saved {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match saved {
                 Ok(task) => {
                     // Shown at once, without waiting for the `task.updated` echo.
                     shell.board.apply(&Event::TaskUpdated(task));
@@ -185,7 +185,7 @@ impl Shell {
                 Ok(Outcome::Error(body)) => Some(body.message),
                 Err(error) => Some(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| match failure {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match failure {
                 None => {
                     if shell.open_dialog(serial).is_some() {
                         shell.close_task_dialog(window, cx);

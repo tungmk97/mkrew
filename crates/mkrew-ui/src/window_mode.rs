@@ -149,10 +149,6 @@ impl WorkspacePicker {
         }
     }
 
-    pub fn rows(&self) -> &[PickRow] {
-        &self.rows
-    }
-
     pub fn filter(&self) -> &str {
         self.filter.as_str()
     }

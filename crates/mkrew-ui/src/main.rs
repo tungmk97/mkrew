@@ -248,7 +248,7 @@ fn main() {
     };
     let opening = Opening { target, id, jump };
     let app = gpui_platform::application().with_assets(icons::Assets);
-    // macOS: a click on the Dock icon while the app is hidden brings the main window back.
+    // macOS: a click on the Dock icon while the app is hidden brings the Space windows back.
     app.on_reopen(shell::app_menu::reopen);
     app.run(move |cx: &mut App| {
         cx.set_global(ActiveKeymap(keymap.clone()));
@@ -280,7 +280,9 @@ fn main() {
         // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
         cx.set_prompt_builder(shell::confirm_prompt::build);
         // The place the window was left (a machine window has its own files): the Space window
-        // used last (ADR 0115), else the legacy main window frame.
+        // used last (ADR 0115), else the legacy main window frame. Mode 2's first window shows
+        // the workspace of the last saved entry that has one (`Shell::new`), so it takes that
+        // entry's place.
         let instance = opening.target.is_machine().then_some(opening.id.as_str());
         let layout = detached::load_layout(
             &paths.data_dir.join(detached::windows_file(instance)),
@@ -292,7 +294,12 @@ fn main() {
             .map(|display| display.visible_bounds())
             .collect();
         let primary = cx.primary_display().map(|display| display.visible_bounds());
-        let window_bounds = match layout.spaces.last() {
+        let first = if settings.ui.window_mode == WindowMode::PerWorkspace {
+            (layout.spaces.iter().rev()).find(|saved| !saved.workspace.is_nil())
+        } else {
+            layout.spaces.last()
+        };
+        let window_bounds = match first {
             Some(saved) => window_place::restored(
                 window_place::saved_rect(&saved.bounds),
                 Placement::from_flags(saved.maximized, saved.fullscreen),
@@ -326,10 +333,14 @@ fn main() {
         }
         // Sessions live in the daemon: the app ends with its last Space window
         // (`Shell::space_should_close` saved first); detached windows never keep it alone.
+        // The last one's ✕ keeps its key in `space_handles`, so this asks which are still open.
         cx.on_window_closed(|cx, _| {
-            let none_left = (cx.try_global::<shell::app_menu::ShellHandle>())
-                .is_none_or(|handle| handle.0.read(cx).space_handles.is_empty());
-            if none_left || cx.windows().is_empty() {
+            let open = cx.windows();
+            let none_left =
+                (cx.try_global::<shell::app_menu::ShellHandle>()).is_none_or(|handle| {
+                    (handle.0.read(cx).space_handles.values()).all(|space| !open.contains(space))
+                });
+            if none_left || open.is_empty() {
                 cx.quit();
             }
         })
@@ -751,8 +762,9 @@ struct Shell {
     /// The transcripts being read, one per session (ADR 0104): the session panel's Thread
     /// section and every pane in Chat mode share them.
     reads: HashMap<Ulid, ThreadRead>,
-    /// The session panel's Thread section UI state.
-    thread: Option<ThreadWatch>,
+    /// The Thread section UI state of each session a Space window's panel shows (mode 2 can
+    /// show several), by session.
+    threads: HashMap<Ulid, ThreadWatch>,
     /// What each pane in Chat mode remembers (open rows, scroll), ADR 0104.
     chats: HashMap<Ulid, ChatUi>,
     /// What each omp pane with a live native surface keeps: the mirror of the daemon's documents
@@ -822,8 +834,6 @@ struct Shell {
     git_repo_query_focus: FocusHandle,
     /// The diff list of each workspace's Diff leaf (`ensure_diff_views` creates it).
     diff_views: HashMap<Ulid, DiffViewState>,
-    /// A Diff leaf was drawn at the last `sync_panes`: one that comes on screen refreshes Git.
-    diff_drawn: bool,
     /// How the Git diff viewer lays out a file (`[ui] diff_mode`, §12B); global, every repo.
     diff_mode: DiffMode,
     /// Long diff lines wrap (`[ui] diff_wrap`, on by default); global, every repo.

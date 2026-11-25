@@ -12,7 +12,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        // The dialog is drawn in the main window only.
+        // The dialog is drawn in a Space window only.
         if self.host_of(window).space().is_none() {
             let action = action.clone();
             return self.in_window(self.primary_host(), cx, move |shell, window, cx| {

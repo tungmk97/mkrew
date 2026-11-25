@@ -188,7 +188,7 @@ impl Shell {
     }
 
     /// The tab menu (right-click a tab): Pin, Split right / down, Rename,
-    /// the moves to other windows, Close, and in the main window Close others and Close tabs to
+    /// the moves to other windows, Close, and in a Space window Close others and Close tabs to
     /// the right (pinned tabs stay); on the active tab also the focused pane's Rename pane,
     /// Close pane, Zoom pane (with several panes, or while zoomed) and, for an agent, Follow in
     /// Zed (✓ while on) and Turns…, then its Change color swatches. The panes have no header

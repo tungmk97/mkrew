@@ -37,21 +37,24 @@ pub(crate) fn at_bottom(scroll: &ScrollHandle) -> bool {
 
 impl Shell {
     /// Starts, keeps or stops the readings to match what is shown (status tick): the session
-    /// of the primary Space window's panel (one Thread section at a time), and the Chat panes.
+    /// of each Space window's panel (mode 2 has several Thread sections), and the Chat panes.
     /// No work unless something shows a session with a native id.
     pub(crate) fn sync_thread(&mut self, cx: &mut Context<'_, Self>) {
-        let host = self.primary_host();
-        let session = self
-            .panel_session(host)
-            .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
-        let wanted = self.panel_shown(host) && self.panel_tab(host) == PanelTab::Session;
-        let panel = inspector::wanted_thread(wanted, session);
+        let mut panels: Vec<(Ulid, String)> = Vec::new();
+        for (key, _) in self.spaces_shown() {
+            let host = HostId::Space(key);
+            let session = self
+                .panel_session(host)
+                .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
+            let wanted = self.panel_shown(host) && self.panel_tab(host) == PanelTab::Session;
+            panels.extend(inspector::wanted_thread(wanted, session));
+        }
         let panes = self.chat_panes();
         let chats = panes
             .iter()
-            .filter_map(|(id, native)| Some((*id, native.clone()?)))
-            .collect();
-        let keys = chat::wanted_reads(panel.clone(), chats);
+            .filter_map(|(id, native)| Some((*id, native.clone()?)));
+        // The panels first: a session shown in both keeps the panel's key.
+        let keys = chat::wanted_reads(None, panels.iter().cloned().chain(chats).collect());
         let before = self.reads.len();
         self.reads.retain(|_, read| keys.contains(&read.key));
         let mut changed = self.reads.len() != before;
@@ -70,26 +73,31 @@ impl Shell {
                 changed = true;
             }
         }
-        match panel {
-            None => changed |= self.thread.take().is_some(),
-            Some(key) if self.thread.as_ref().is_some_and(|w| w.key == key) => {}
-            Some(key) => {
-                let scroll = ScrollHandle::new();
-                // The read is shared: it may have a page already, so no first page will come.
-                if self
-                    .reads
-                    .get(&key.0)
-                    .is_some_and(|read| read.page.is_some())
-                {
-                    scroll.scroll_to_bottom();
-                }
-                self.thread = Some(ThreadWatch {
+        let before = self.threads.len();
+        self.threads.retain(|_, watch| panels.contains(&watch.key));
+        changed |= self.threads.len() != before;
+        for key in panels {
+            if self.threads.contains_key(&key.0) {
+                continue;
+            }
+            let scroll = ScrollHandle::new();
+            // The read is shared: it may have a page already, so no first page will come.
+            if self
+                .reads
+                .get(&key.0)
+                .is_some_and(|read| read.page.is_some())
+            {
+                scroll.scroll_to_bottom();
+            }
+            self.threads.insert(
+                key.0,
+                ThreadWatch {
                     key,
                     expanded: HashSet::new(),
                     scroll,
-                });
-                changed = true;
-            }
+                },
+            );
+            changed = true;
         }
         changed |= self.sync_chats(&panes);
         if changed {
@@ -100,7 +108,7 @@ impl Shell {
     /// A new page of `session` was stored: a list that showed its end (or had nothing yet,
     /// `first`) keeps following it.
     fn page_arrived(&mut self, session: Ulid, first: bool) {
-        if let Some(watch) = self.thread.as_mut().filter(|w| w.key.0 == session)
+        if let Some(watch) = self.threads.get_mut(&session)
             && (first || at_bottom(&watch.scroll))
         {
             watch.scroll.scroll_to_bottom();
@@ -214,7 +222,7 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> Option<gpui::AnyElement> {
-        let watch = self.thread.as_ref().filter(|w| w.key.0 == session.id)?;
+        let watch = self.threads.get(&session.id)?;
         let read = self.reads.get(&session.id)?;
         let page = read.page.clone().filter(|p| !p.turns.is_empty())?;
         let id = session.id;
@@ -278,7 +286,7 @@ impl Shell {
                                     .on_press(
                                         true,
                                         cx.listener(move |shell, _, _, cx| {
-                                            if let Some(watch) = shell.thread.as_mut()
+                                            if let Some(watch) = shell.threads.get_mut(&id)
                                                 && !watch.expanded.remove(&(turn_key, item_index))
                                             {
                                                 watch.expanded.insert((turn_key, item_index));

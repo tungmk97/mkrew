@@ -3,7 +3,7 @@
 use crate::*;
 
 impl Shell {
-    /// The tab area of the main window's title bar: the pinned tabs, the other tabs, a rule
+    /// The tab area of a Space window's title bar: the pinned tabs, the other tabs, a rule
     /// between groups; then `+` outside the scrolled part. A click on a tab shows Terminals
     /// (`tab_chip`).
     pub(crate) fn render_tab_area(
@@ -304,7 +304,7 @@ impl Shell {
                 true,
                 cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
                     select(shell);
-                    // A tab of the main window shows its terminals, also from Board or
+                    // A tab of a Space window shows its terminals, also from Board or
                     // Docs.
                     if shell.host_of(window).space().is_some() {
                         shell.show_view(View::Terminals, window, cx);
@@ -1122,7 +1122,7 @@ pub(crate) fn detach(connection: &Connection, session_id: Ulid, cx: &mut Context
 pub(crate) enum DropTarget {
     /// A pane: a terminal types the paths, a file or diff pane opens the files.
     Pane(PaneKey),
-    /// The main window's tab strip: the files open as new tabs.
+    /// A Space window's tab strip: the files open as new tabs.
     Strip,
     /// The Prompt box of the open task dialog.
     TaskPrompt,

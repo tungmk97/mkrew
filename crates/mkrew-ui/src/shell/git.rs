@@ -169,7 +169,7 @@ impl Shell {
                     return;
                 }
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let view = shell.git_view(project_id);
                 let worktree = view.worktree_task_id;
                 let picked = git_view::pick_repo(view.repo.as_deref(), &repos);
@@ -195,12 +195,7 @@ impl Shell {
     /// Asked when a window shows it and on its `git.changed`, never polled and never for a
     /// hidden workspace. One request set per workspace at a time: a change that arrives
     /// meanwhile asks once more when it answers.
-    pub(crate) fn load_git_summary(
-        &mut self,
-        project_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
+    pub(crate) fn load_git_summary(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -208,9 +203,11 @@ impl Shell {
             self.git_summary_again.insert(project_id);
             return;
         }
-        cx.spawn_in(window, async move |this, cx| {
+        // Not tied to a window: the asking one may close meanwhile, and the busy mark must
+        // still clear.
+        cx.spawn(async move |this, cx| {
             let loaded = git_summary_of(&connection, project_id).await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = this.update(cx, |shell, cx| {
                 shell.git_summary_busy.remove(&project_id);
                 let again = shell.git_summary_again.remove(&project_id);
                 let shown = shell.on_screen_workspaces().contains(&project_id);
@@ -226,7 +223,7 @@ impl Shell {
                     Err(error) => tracing::warn!(%project_id, "git summary failed: {error:#}"),
                 }
                 if shown && again {
-                    shell.load_git_summary(project_id, window, cx);
+                    shell.load_git_summary(project_id, cx);
                 }
             });
         })
@@ -278,7 +275,7 @@ impl Shell {
         let loaded = connection.call::<Vec<Commit>>(Request::GitLog(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, "git.log failed: {error}");
                 }
@@ -308,7 +305,7 @@ impl Shell {
         let loaded = connection.call::<CommitDetail>(Request::GitShow(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, commit = hash, "git.show failed: {error}");
                 }
@@ -376,7 +373,7 @@ impl Shell {
         let loaded = connection.call::<GitStatus>(Request::GitStatus(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, "git.status failed: {error}");
                 }
@@ -421,7 +418,7 @@ impl Shell {
                     return;
                 }
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(view) = shell.git_at(project_id, &at) else {
                     return;
                 };
@@ -478,7 +475,7 @@ impl Shell {
                     .await),
                 Err(error) => Err(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, path = target.path, "git.diff failed: {error}");
                 }
@@ -755,7 +752,7 @@ impl Shell {
                 Ok(Outcome::Error(body)) => Err(body.message),
                 Err(error) => Err(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, ?stage, "git stage/unstage failed: {error}");
                 }
@@ -862,7 +859,7 @@ impl Shell {
                     .map_err(|error| format!("{error:#}")),
                 Err(error) => Err(error),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, "git.commit failed: {error}");
                 }
@@ -911,7 +908,7 @@ impl Shell {
             let Err(error) = started.await else {
                 return;
             };
-            let _ = this.update_in(cx, |shell, _, cx| {
+            let _ = Shell::answer(&this, cx, |shell, _, cx| {
                 for view in shell.git.values_mut() {
                     view.commit
                         .generated(generation_id, Err(format!("{error:#}")));
@@ -947,7 +944,7 @@ impl Shell {
                 Ok(Outcome::Error(body)) => Err(body.message),
                 Err(error) => Err(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, ?remote, "git fetch/push failed: {error}");
                 }

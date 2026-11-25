@@ -31,7 +31,7 @@ pub struct Shown {
     pub modal: bool,
     /// The Board draws every workspace's cards (the All workspaces board).
     pub all_board: bool,
-    /// A Diff pane is drawn (in the main window or a visible detached one).
+    /// A Diff pane is drawn (in this Space window or a visible detached one).
     pub diff: bool,
 }
 
@@ -99,7 +99,7 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
         Event::AiGenerated(_) => {
             shown.view == View::Terminals || shown.panel == Some(PanelTab::Git)
         }
-        // Rare, and the title bar's limits chip is always drawn in the main window (ADR 0106).
+        // Rare, and the title bar's limits chip is always drawn in a Space window (ADR 0106).
         Event::AgentLimits(_)
         | Event::SessionState(_)
         | Event::SessionExited(_)

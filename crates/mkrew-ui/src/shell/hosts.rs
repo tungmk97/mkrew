@@ -35,6 +35,12 @@ pub(crate) struct HostUi {
     pub(crate) right_panel: inspector::RightPanel,
     /// The scroll and list state of what the window draws.
     pub(crate) view: HostView,
+    /// A Diff leaf was drawn in this Space window at its last `sync_panes`: one that comes on
+    /// screen refreshes Git.
+    pub(crate) diff_drawn: bool,
+    /// Work `in_window` asked for while this Space window was still opening (no handle yet):
+    /// it runs once the window is up (a close from a combine, a session to focus).
+    pub(crate) pending: RefCell<Vec<shell::window_mode::AfterOpen>>,
     /// The sidebar of a Space window, a cached child view (created on its first frame).
     pub(crate) sidebar_view: Option<Entity<shell::sidebar_view::SidebarView>>,
 }
@@ -314,7 +320,7 @@ impl Shell {
     }
 
     /// Focuses the pane of `key` in its tab; a tab in a detached window does not become the
-    /// main window's active tab (spec §4.4).
+    /// Space window's active tab (spec §4.4).
     pub(crate) fn focus_pane_key(&mut self, project: Ulid, key: &PaneKey) {
         let Some(tab_id) = (self.tabs.get(&project))
             .and_then(|tabs| tabs.tab_with(key))
@@ -338,8 +344,8 @@ impl Shell {
         }
     }
 
-    /// The main window's active tab never names a detached tab (spec §4.1).
-    pub(crate) fn keep_main_active_visible(&mut self) {
+    /// A Space window's active tab never names a detached tab (spec §4.1).
+    pub(crate) fn keep_space_active_visible(&mut self) {
         for (project, tabs) in self.tabs.iter_mut() {
             let project = *project;
             let detached = &self.detached;
@@ -350,7 +356,8 @@ impl Shell {
     }
 
     /// Runs `f` with `host`'s window once the current update is over (the `Shell` and the
-    /// window that started it are busy until then).
+    /// window that started it are busy until then). A Space window still opening runs it once
+    /// it is up; a window that is gone drops it.
     pub(crate) fn in_window(
         &self,
         host: HostId,
@@ -358,6 +365,11 @@ impl Shell {
         f: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) + 'static,
     ) {
         let Some(handle) = self.handle_of(host) else {
+            if host.space().is_some()
+                && let Some(ui) = self.hosts.get(&host)
+            {
+                ui.pending.borrow_mut().push(Box::new(f));
+            }
             return;
         };
         let this = cx.entity().downgrade();
@@ -399,7 +411,15 @@ impl Shell {
 
     pub(crate) fn record_bounds(&mut self, host: HostId, window: &Window) {
         let (placement, restore) = Placement::of(window.window_bounds());
-        let ui = self.hosts.entry(host).or_default();
+        // A Space window's state exists from `open_space_window` until `forget_space`: an OS
+        // resize after its ✕ must not bring a ghost back (it would count as a window).
+        let ui = match host {
+            HostId::Space(_) => match self.hosts.get_mut(&host) {
+                Some(ui) => ui,
+                None => return,
+            },
+            HostId::Detached(_) => self.hosts.entry(host).or_default(),
+        };
         ui.bounds = window.bounds();
         ui.restore = restore;
         ui.placement = placement;
@@ -467,7 +487,8 @@ impl Shell {
     }
 
     /// A window is going: its state goes, a popover it drew closes (no one else draws it) and
-    /// the keyboard comes back in the primary Space window.
+    /// the keyboard comes back in the primary Space window. An open dialog (or the split
+    /// picker) moves there with its draft: the next frame draws it in the primary window.
     pub(crate) fn forget_host(&mut self, gone: HostId, cx: &mut Context<'_, Self>) {
         self.hosts.remove(&gone);
         self.activation.retain(|host| *host != gone);
@@ -499,6 +520,9 @@ impl Shell {
         if self.picker_host == gone {
             self.picker_host = primary;
         }
+        if self.modal_host == Some(gone) {
+            self.modal_host = None;
+        }
         if menu || palette || picker {
             self.in_window(primary, cx, |shell, window, cx| {
                 shell.restore_theme_pick(window, cx);
@@ -509,29 +533,32 @@ impl Shell {
 
     /// Writes `windows.json` (spec §6.1, ADR 0115): the Space windows (the one used last at the
     /// end; `Ulid::nil()` for one showing no workspace) and the live detached windows, plus the
-    /// saved ones a pending restore has not opened yet, so neither is lost. Not before the file
-    /// was read (an app that never got that far must not erase it). A failed write is a toast
+    /// saved ones a pending restore has not opened yet, so neither is lost. Before the first
+    /// listing (a daemon that does not answer) the saved detached windows and mode 2's saved
+    /// Space windows are kept as read, so moving the window and quitting still keeps its place.
+    /// The first good write deletes the legacy `main-window.json`. A failed write is a toast
     /// (once) and is tried again on the next tick.
     pub(crate) fn save_windows(&mut self, cx: &mut Context<'_, Self>) {
-        if !self.restored_once {
-            return;
-        }
         self.windows_dirty = false;
-        let live: Vec<detached::SavedWindow> = (self.detached.windows().iter())
-            .filter_map(|window| {
-                let ui = self.hosts.get(&HostId::Detached(window.key))?;
-                let (maximized, fullscreen) = ui.placement.flags();
-                Some(detached::SavedWindow {
-                    bounds: window_place::to_saved(ui.restore),
-                    maximized,
-                    fullscreen,
-                    tabs: window.tabs.clone(),
-                    active: window.active,
+        let windows = if self.restored_once {
+            let live: Vec<detached::SavedWindow> = (self.detached.windows().iter())
+                .filter_map(|window| {
+                    let ui = self.hosts.get(&HostId::Detached(window.key))?;
+                    let (maximized, fullscreen) = ui.placement.flags();
+                    Some(detached::SavedWindow {
+                        bounds: window_place::to_saved(ui.restore),
+                        maximized,
+                        fullscreen,
+                        tabs: window.tabs.clone(),
+                        active: window.active,
+                    })
                 })
-            })
-            .collect();
-        let pending = self.restore.as_deref().unwrap_or(&[]);
-        let windows = detached::merge_saved(live, pending);
+                .collect();
+            let pending = self.restore.as_deref().unwrap_or(&[]);
+            detached::merge_saved(live, pending)
+        } else {
+            detached::load_layout(&self.windows_path, &self.legacy_main_path).windows
+        };
         // Least recently used first: the primary window is the last entry.
         let used = |key: SpaceKey| {
             (self.activation.iter())
@@ -540,8 +567,14 @@ impl Shell {
         };
         let mut keys: Vec<SpaceKey> = self.space_handles.keys().copied().collect();
         keys.sort_by_key(|&key| std::cmp::Reverse(used(key)));
-        let spaces = (keys.into_iter())
-            .filter_map(|key| {
+        // Mode 2's saved windows that `restore_spaces` has not opened yet (all but the last,
+        // which the first window shows) come first: they were used longer ago.
+        let waiting = self
+            .saved_spaces
+            .split_last()
+            .map_or(&[][..], |(_, rest)| rest);
+        let spaces = (waiting.iter().cloned())
+            .chain((keys.into_iter()).filter_map(|key| {
                 let ui = self.hosts.get(&HostId::Space(key))?;
                 // Not before its size is known (a window still opening).
                 (ui.restore.size.width > px(0.0)).then(|| {
@@ -553,11 +586,15 @@ impl Shell {
                         fullscreen,
                     }
                 })
-            })
+            }))
             .collect();
         let layout = detached::Layout { spaces, windows };
         match detached::save(&self.windows_path, &layout) {
-            Ok(()) => self.windows_save_failed = false,
+            Ok(()) => {
+                self.windows_save_failed = false;
+                // Read once (a version 1 file had no `spaces`): `windows.json` holds them now.
+                let _ = std::fs::remove_file(&self.legacy_main_path);
+            }
             Err(error) => {
                 tracing::warn!("cannot save the detached windows: {error}");
                 self.windows_dirty = true;
@@ -629,7 +666,7 @@ impl Shell {
                 continue;
             };
             let bounds = Bounds::new(point(px(b.x), px(b.y)), size(px(b.width), px(b.height)));
-            // As the main window: cut to its display, title bar reachable, in its placement.
+            // As a Space window: cut to its display, title bar reachable, in its placement.
             let (placement, bounds) =
                 mkrew_ui::window_place::Placement::of(mkrew_ui::window_place::restored(
                     bounds,

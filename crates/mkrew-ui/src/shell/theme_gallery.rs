@@ -118,7 +118,7 @@ impl Shell {
             cx.background_executor()
                 .timer(theme::THEME_PREVIEW_DELAY)
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Some(dialog) = shell.settings_dialog.as_mut() {
                     dialog.gallery_hover_due(serial);
                 }

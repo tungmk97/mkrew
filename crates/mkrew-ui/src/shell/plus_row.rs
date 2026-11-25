@@ -269,7 +269,7 @@ impl Shell {
             cx.background_executor()
                 .timer(theme::PLUS_ROW_COLLAPSE_DELAY)
                 .await;
-            let _ = this.update_in(cx, |shell, _, cx| {
+            let _ = Shell::answer(&this, cx, |shell, _, cx| {
                 if shell.plus.collapse(host, serial) {
                     cx.notify();
                 }
@@ -278,8 +278,8 @@ impl Shell {
         .detach();
     }
 
-    /// A click (or Enter) on an item. The main window opens a tab. A detached window has no
-    /// new tab of its own (new tabs belong to the main window), so it splits its tab beside
+    /// A click (or Enter) on an item. A Space window opens a tab. A detached window has no
+    /// new tab of its own (new tabs belong to the Space windows), so it splits its tab beside
     /// the focused pane, like its Split ▾.
     pub(crate) fn click_new(
         &mut self,
@@ -328,7 +328,7 @@ impl Shell {
         }
     }
 
-    /// An item dropped on the tab strip (the main window's; `strip_drops`): a new tab right
+    /// An item dropped on the tab strip (a Space window's; `strip_drops`): a new tab right
     /// after the active one.
     pub(crate) fn drop_new_on_strip(
         &mut self,
@@ -370,7 +370,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let made = made.await;
-            let _ = this.update_in(cx, |shell, window, cx| match made {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match made {
                 Ok(FsCreated { path }) => {
                     shell.open_note(project_id, path, at, window, cx);
                     shell.refresh_files(project_id, window, cx);
@@ -407,7 +407,7 @@ impl Shell {
         self.ensure_doc(project_id, &file, Some(MdMode::Source), cx);
         let main = self.host_of(window).space().is_some();
         if !main && matches!(place, documents::Place::NewTab) {
-            // New tabs belong to the main window: it takes this one.
+            // New tabs belong to the Space windows: one takes this one.
             return self.open_document(project_id, file, None, place, window, cx);
         }
         let mut leaf = Leaf::of_file(file.clone());

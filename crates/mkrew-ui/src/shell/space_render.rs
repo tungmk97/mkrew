@@ -371,7 +371,11 @@ impl Shell {
                         self.render_toasts(&theme, cx)
                             .filter(|_| self.toast_host() == host),
                     )
-                    .children(self.render_voice_pill(&theme, cx)),
+                    // One microphone: its pill shows once, where the toasts do.
+                    .children(
+                        self.render_voice_pill(&theme, cx)
+                            .filter(|_| self.toast_host() == host),
+                    ),
             )
             // Over the title bar: painted last.
             .children(stripe.map(|color| {

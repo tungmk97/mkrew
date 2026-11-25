@@ -144,7 +144,7 @@ impl Shell {
                     }
                 }
             }
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 shell.starting_pane = None;
                 let write = (shell.tabs.get_mut(&project_id))
                     .and_then(|tabs| tabs.arrange(tab_id, preset, &started));
@@ -738,7 +738,7 @@ impl Shell {
                 let closed = connection
                     .call::<()>(Request::TabClose(TabRef { tab_id }))
                     .await;
-                let shown = this.update_in(cx, |shell, window, cx| {
+                let shown = Shell::answer(&this, cx, |shell, window, cx| {
                     match closed {
                         Ok(()) => {
                             for session in &sessions {
@@ -760,7 +760,7 @@ impl Shell {
                     }
                     cx.notify();
                 });
-                if shown.is_err() {
+                if shown.is_none() {
                     return;
                 }
             }
@@ -839,7 +839,7 @@ impl Shell {
                 );
                 cx.spawn_in(window, async move |this, cx| {
                     let choice = CloseChoice::from_answer(answer.await.ok());
-                    let _ = this.update_in(cx, |shell, window, cx| match choice {
+                    let _ = Shell::answer(&this, cx, |shell, window, cx| match choice {
                         CloseChoice::Kill => {
                             shell.remove_pane(session, window, cx);
                             // It may have exited while the dialog was open.
@@ -875,7 +875,7 @@ impl Shell {
             // Saved first: requests go out in call order, so `tab.close` sees no panes and
             // leaves a hidden session alive.
             self.save_layout(project_id, write, window, cx);
-            // A tab in a detached window closes too, whichever workspace the main window shows.
+            // A tab in a detached window closes too, whichever workspace a Space window shows.
             if let Some(tab_id) = emptied
                 && (self.workspace_in(window) == Some(project_id)
                     || self.is_detached_tab(project_id, tab_id))
@@ -989,7 +989,7 @@ impl Shell {
             let removed = connection
                 .call::<()>(Request::SessionRemove(SessionRef { session_id }))
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| match removed {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match removed {
                 Ok(()) => {
                     shell.sidebar.remove_session(session_id);
                     shell.remove_pane(session_id, window, cx);
@@ -1029,7 +1029,7 @@ impl Shell {
                 let removed = connection
                     .call::<()>(Request::SessionRemove(SessionRef { session_id }))
                     .await;
-                let _ = this.update_in(cx, |shell, window, cx| match removed {
+                let _ = Shell::answer(&this, cx, |shell, window, cx| match removed {
                     Ok(()) => {
                         shell.sidebar.remove_session(session_id);
                         shell.remove_pane(session_id, window, cx);

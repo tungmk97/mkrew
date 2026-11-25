@@ -1222,14 +1222,15 @@ Its tab row is `[Files│Session│Git]`; files and the diff open as tabs and pa
   Ctrl+click or Ctrl+Enter takes the other choice than the saved one (with `ask`: a new window without asking).
   A session that lives in a detached window comes forward there.
 - **Mode 2 to mode 1:** the palette "Window: Combine into one window", the Settings row or the Split ▾ menu.
-  The window the user is in becomes the single window with the sidebar and keeps its workspace; every other Space window closes without a question (sessions and tabs live in the daemon); detached windows stay; a toast says "Combined N windows" when some closed.
+  The window the user is in becomes the single window with the sidebar and keeps its workspace; every other Space window closes without a question (sessions and tabs live in the daemon); detached windows stay; a toast says "Combined N windows" (N counts every window combined, this one too) when some closed.
 - Changing `window_mode` in Settings runs these flows (`per_workspace` opens the picker and saves only when it is confirmed); a hand edit of `settings.toml` switches without a picker (to `per_workspace` every window becomes its workspace's window; to `single` they combine into the one used last).
 - **"Need you" chip** (mode 2): while sessions of other workspaces need the user (§20J), the title bar shows `● N need you · <workspace>` (or `· M workspaces`) in the needs-input color.
   A click lists them, `<workspace> · <title> · <state>` with the workspace avatar, newest first; picking one shows the session where it lives.
   It never shrinks: the tab area gives way first.
 - **Closing:** in mode 2 a Space window's ✕ closes that window only; the agents keep running and its detached windows stay.
   Closing the last Space window hides every window to the tray with `[ui] close_to_tray`, else Mkrew saves and quits; detached windows alone never keep the app running.
-  A workspace that is removed or archived closes its window, except the last one, which shows the empty state.
+  A workspace that is removed or archived closes its window, except the last one, which shows the default workspace (the one with the newest live session), or the empty state with Add workspace when none is left.
+  A palette or menu whose window closes closes with it; an open dialog moves to the Space window used last with what was typed.
 - `[ui] panel_side` (`right` default, `left`; both modes) puts the Files / Session / Git panel on that side of the panes; its resize edge and the toggle icon follow; the palette "Panel: Move to the other side" switches it.
 - `<data>/windows.json` version 2 keeps the Space windows (`spaces`: workspace, bounds, maximized, full screen; the one used last at the end, which gets the keyboard at start) and the detached windows.
   Mode 1 opens its one window where the window used last was, showing the workspace it showed before modes existed (the one with the newest live session); mode 2 restores every entry whose workspace is listed, the one used last in front.

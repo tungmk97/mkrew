@@ -143,7 +143,7 @@ impl Shell {
             let Some(path) = path else {
                 return;
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let path = path.to_string_lossy().into_owned();
                 if clone_into {
                     if let Some(dialog) = shell.add_workspace.as_mut() {
@@ -175,7 +175,7 @@ impl Shell {
             let added = connection
                 .call::<Project>(Request::ProjectAdd(ProjectAddParams { path, name: None }))
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 match added {
                     Ok(project) => {
                         let project_id = project.id;
@@ -305,7 +305,7 @@ impl Shell {
             let Some(path) = path else {
                 return;
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let path = path.to_string_lossy().into_owned();
                 shell.link_plan(session_id, Some(path), window, cx);
             });
@@ -364,7 +364,7 @@ impl Shell {
                 Ok(listed) => Agents::Loaded(listed.profiles),
                 Err(error) => Agents::Failed(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 // Unless the menu closed (or moved to another workspace) meanwhile.
                 let Some(menu) = shell
                     .workspace_menu
@@ -541,7 +541,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let made = made.await;
-            let _ = this.update_in(cx, |shell, window, cx| match made {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match made {
                 Ok(FsCreated { path }) => {
                     shell.show_created_entry(project_id, target, path, folder, window, cx);
                 }
@@ -628,7 +628,7 @@ impl Shell {
         let path = path.to_owned();
         cx.spawn_in(window, async move |this, cx| {
             let ignored = ignored.await;
-            let _ = this.update_in(cx, |shell, window, cx| match ignored {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match ignored {
                 Ok(()) => {
                     if shell.files_at(project_id, target).is_some() {
                         shell.refresh_files(project_id, window, cx);
@@ -831,9 +831,9 @@ impl Shell {
             let archived = connection
                 .call::<Project>(Request::ProjectArchive(ProjectRef { project_id }))
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, _, cx| {
                 match archived {
-                    Ok(_) => shell.refresh(window, cx),
+                    Ok(_) => shell.refresh(cx),
                     Err(error) => {
                         tracing::warn!(%project_id, "project.archive failed: {error:#}");
                         shell.toast_error(format!("Cannot remove the workspace: {error:#}"), cx);

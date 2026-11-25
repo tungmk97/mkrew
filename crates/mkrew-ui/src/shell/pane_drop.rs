@@ -355,7 +355,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        // A drop in a detached window leaves the main window's active tab alone.
+        // A drop in a detached window leaves the Space window's active tab alone.
         let detached = (self.tabs.get(&project_id))
             .and_then(|tabs| tabs.tab_with(target))
             .map(|tab| tab.id)
@@ -438,7 +438,7 @@ impl Shell {
             }
             let closed =
                 (connection.call::<()>(Request::TabClose(TabRef { tab_id: source }))).await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 match closed {
                     Ok(()) => {
                         if let Some(tabs) = shell.tabs.get_mut(&project_id) {
@@ -537,7 +537,7 @@ impl Shell {
         );
     }
 
-    /// Makes the main window's tab strip take a pane (to its own tab), a Files tree file row
+    /// Makes a Space window's tab strip take a pane (to its own tab), a Files tree file row
     /// (a new tab) and OS files (opened as new tabs), and tint while one hovers.
     /// A tab drag keeps the reorder drop the strip already has.
     pub(crate) fn strip_drops(

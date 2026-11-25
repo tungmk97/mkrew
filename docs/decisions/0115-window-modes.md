@@ -34,11 +34,13 @@ The user also wants to switch back to one window at any time, and the one-window
 
 - A `Shell` per window: N daemon connections, N copies of the sidebar and session state, and the tray, badge and settings watchers would each run N times.
 - A UI process per workspace: N tray icons, it breaks the single-instance rule, and tabs could no longer be dragged between windows.
-- Amends ADR 0096: "Move all back" and the tab menu's "Move back" (was "Move to main window"; palette "Tab: Move back to its workspace window") go to the Space window showing the tab's workspace; in mode 2 a new Space window opens when none shows it.
+- Keeping the main window and hiding it in mode 2: a hidden window that can be reused is state that leaks into every flow (focus, tray, quit, restore).
 
 ## Consequences
 
-- Amends ADR 0096: "Move all back" and the tab menu's "Move back" (was "Move to main window") go to the Space window showing the tab's workspace; in mode 2 a new Space window opens when none shows it.
+- Amends ADR 0096: "Move all back" and the tab menu's "Move back" (was "Move to main window"; palette "Tab: Move back to its workspace window") go to the Space window showing the tab's workspace; in mode 2 a new Space window opens when none shows it.
+- Replies to requests a window started (`spawn_in`) run through `Shell::answer`: in that window, or in the primary one once it closed, so a busy mark they clear is never left set.
+- `windows.json` version 2 cannot be read by an older build (it ignores the file and loses the saved detached windows once); `main-window.json` is deleted after the first version 2 write.
 - About 250 places moved from `self.workspace` and `HostId::Main` to the host-aware forms (`workspace_in(window)`, `space_host(window)`, `in_workspace`).
 - A window is never narrower than `WINDOW_MIN_WIDTH`, so the "need you" chip always shows its full text; the tab area gives way first.
 - The taskbar badge, Alt+Tab entries and multi-screen restore can only be checked by hand (HUMAN_CHECKS "2026-11-25 Window modes").

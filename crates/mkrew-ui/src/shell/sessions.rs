@@ -62,7 +62,7 @@ impl Shell {
         let spawned = connection.call::<SessionSpawnResult>(Request::SessionSpawn(params));
         cx.spawn_in(window, async move |this, cx| {
             let spawned = spawned.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 shell.starting_pane = None;
                 match spawned {
                     Ok(spawned) => {
@@ -148,7 +148,7 @@ impl Shell {
                 format!("Pick a default {what} for this workspace, then try again."),
                 cx,
             );
-            // The menu hangs on the main window's title bar: not opened from a detached one.
+            // The menu hangs on a Space window's title bar: not opened from a detached one.
             if self.detached_key(window).is_none() {
                 self.open_workspace_menu_at_switcher(project_id, window, cx);
             }

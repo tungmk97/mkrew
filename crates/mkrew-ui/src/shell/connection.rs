@@ -386,7 +386,7 @@ impl Shell {
             reads: HashMap::new(),
             chats: HashMap::new(),
             tsps: HashMap::new(),
-            thread: None,
+            threads: HashMap::new(),
             inspector_width,
             inspector_dragging: false,
             sidebar_width,
@@ -446,7 +446,6 @@ impl Shell {
             git_repo_query: Input::default(),
             git_repo_query_focus: cx.focus_handle(),
             diff_views: HashMap::new(),
-            diff_drawn: false,
             diff_mode,
             diff_wrap,
             features,
@@ -674,7 +673,7 @@ impl Shell {
                 shell.connection = Some(connection);
                 shell.tsp_reconnected();
                 shell.report_machine_state(MachineState::Connected);
-                shell.refresh(window, cx);
+                shell.refresh(cx);
                 if !shell.target.is_machine() {
                     shell.poll_phone(window, cx);
                 }
@@ -880,7 +879,7 @@ impl Shell {
 
     /// Re-reads workspaces and sessions. The first time, shows the workspace of the most
     /// recently started live session.
-    pub(crate) fn refresh(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    pub(crate) fn refresh(&mut self, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -896,14 +895,16 @@ impl Shell {
             connection.call::<Vec<Session>>(Request::SessionList(SessionListParams::default()));
         let tasks = connection.call::<Vec<Task>>(Request::TaskList(TaskListParams::default()));
         let profiles = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
-        cx.spawn_in(window, async move |this, cx| {
+        // The answer runs in the primary Space window: the asking window may close meanwhile,
+        // and `refreshing` must still clear.
+        cx.spawn(async move |this, cx| {
             let listed = match (projects.await, sessions.await) {
                 (Ok(projects), Ok(sessions)) => Ok((projects, sessions)),
                 (Err(error), _) | (_, Err(error)) => Err(error),
             };
             let tasks = tasks.await;
             let profiles = profiles.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::with_primary(&this, cx, |shell, window, cx| {
                 shell.refreshing = false;
                 match profiles {
                     Ok(listed) => {
@@ -1022,7 +1023,7 @@ impl Shell {
                 }
                 cx.notify();
                 if std::mem::take(&mut shell.refresh_again) {
-                    shell.refresh(window, cx);
+                    shell.refresh(cx);
                 }
             });
         })
@@ -1214,26 +1215,32 @@ impl Shell {
         }
     }
 
-    /// What the window draws now, for [`redraw::event_needs_redraw`].
-    pub(crate) fn shown(&self, window: &Window) -> redraw::Shown {
-        let view = self.view(self.space_host(window));
-        let panes = (self.hosted_sessions().into_iter())
+    /// What every Space window draws now, for [`redraw::event_needs_redraw`]: `window`'s own
+    /// first (with its focused pane), then the others of mode 2, so an event any of them shows
+    /// redraws.
+    pub(crate) fn shown(&self, window: &Window) -> Vec<redraw::Shown> {
+        let here = self.space_host(window);
+        let panes: Vec<Ulid> = (self.hosted_sessions().into_iter())
             .map(|(_, session)| session)
             .collect();
-        redraw::Shown {
-            workspace: self.workspace_in(window),
-            view,
-            panes,
-            focused: self.focused_session(window),
-            panel: self
-                .panel_shown(self.space_host(window))
-                .then(|| self.panel_tab(self.space_host(window))),
-            panel_session: self.panel_session(self.space_host(window)),
-            sidebar: self.sidebar_layout.mode(),
-            modal: self.modal_open(),
-            all_board: self.all_board_shown(self.space_host(window)),
-            diff: self.diff_on_screen(self.space_host(window)),
-        }
+        let others = (self.spaces_shown())
+            .map(|(key, _)| HostId::Space(key))
+            .filter(|host| *host != here)
+            .map(|host| (host, None));
+        (std::iter::once((here, self.focused_session(window))).chain(others))
+            .map(|(host, focused)| redraw::Shown {
+                workspace: self.workspace_of(host),
+                view: self.view(host),
+                panes: panes.clone(),
+                focused,
+                panel: self.panel_shown(host).then(|| self.panel_tab(host)),
+                panel_session: self.panel_session(host),
+                sidebar: self.sidebar_layout.mode(),
+                modal: self.modal_open(),
+                all_board: self.all_board_shown(host),
+                diff: self.diff_on_screen(host),
+            })
+            .collect()
     }
 
     /// [`Self::shown`], built at most once per batch: an output-only batch (up to ~60/s) never
@@ -1242,10 +1249,22 @@ impl Shell {
     /// can only cost one redraw, never a stale screen.
     fn batch_shown<'a>(
         &self,
-        slot: &'a mut Option<redraw::Shown>,
+        slot: &'a mut Option<Vec<redraw::Shown>>,
         window: &Window,
-    ) -> &'a redraw::Shown {
+    ) -> &'a [redraw::Shown] {
         slot.get_or_insert_with(|| self.shown(window))
+    }
+
+    /// Whether `event` changes what some Space window draws.
+    fn event_shown(
+        &self,
+        event: &Event,
+        slot: &mut Option<Vec<redraw::Shown>>,
+        window: &Window,
+    ) -> bool {
+        let sessions = self.sidebar.sessions();
+        (self.batch_shown(slot, window).iter())
+            .any(|shown| redraw::event_needs_redraw(event, shown, sessions))
     }
 
     /// Routes a batch of incoming frames; returns whether a pane got new content.
@@ -1258,7 +1277,7 @@ impl Shell {
         let mut fed: Vec<Entity<TerminalPane>> = Vec::new();
         let mut layout_changed = false;
         let mut peek_changed = false;
-        let mut shown_now: Option<redraw::Shown> = None;
+        let mut shown_now: Option<Vec<redraw::Shown>> = None;
         for incoming in batch {
             if let Incoming::Event(event) = &incoming {
                 // Every model keeps its data; the root only redraws what the window draws.
@@ -1274,11 +1293,8 @@ impl Shell {
                 data_changed |= self.ports.apply(event);
                 data_changed |= self.limits.apply(event);
                 data_changed |= self.composers.apply(event);
-                if data_changed {
-                    let shown = self.batch_shown(&mut shown_now, window);
-                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
-                        cx.notify();
-                    }
+                if data_changed && self.event_shown(event, &mut shown_now, window) {
+                    cx.notify();
                 }
                 if let Some(wait) = self.follow.apply(event) {
                     self.follow_wait(wait, window, cx);
@@ -1321,7 +1337,7 @@ impl Shell {
                         self.sync_attention(cx);
                     }
                     // A new session (e.g. spawned by `mk`): re-list.
-                    Change::Refresh => self.refresh(window, cx),
+                    Change::Refresh => self.refresh(cx),
                 }
                 // Mode 2: a removed workspace's window closes (`prune_spaces`, after a re-list).
                 if self.window_mode == WindowMode::PerWorkspace
@@ -1329,7 +1345,7 @@ impl Shell {
                     && project.archived
                     && self.space_of(project.id).is_some()
                 {
-                    self.refresh(window, cx);
+                    self.refresh(cx);
                 }
                 if let Event::SessionUpdated(updated) = event
                     && mkrew_ui::tsp::enters_fallback(tsp_before, updated.tsp)
@@ -1342,7 +1358,8 @@ impl Shell {
                 // `prune` runs on every event; only its notify is gated.
                 let pruned = self.conflicts.prune(&self.board, self.sidebar.sessions());
                 if (pruned || detected)
-                    && redraw::conflicts_need_redraw(self.batch_shown(&mut shown_now, window))
+                    && (self.batch_shown(&mut shown_now, window).iter())
+                        .any(redraw::conflicts_need_redraw)
                 {
                     cx.notify();
                 }
@@ -1369,8 +1386,7 @@ impl Shell {
                     for view in self.git.values_mut() {
                         view.comments.apply_event(view.project_id, comment);
                     }
-                    let shown = self.batch_shown(&mut shown_now, window);
-                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
+                    if self.event_shown(event, &mut shown_now, window) {
                         cx.notify();
                     }
                 }
@@ -1381,7 +1397,7 @@ impl Shell {
                         && changed.worktree_task_id.is_none()
                         && self.on_screen_workspaces().contains(&changed.project_id)
                     {
-                        self.load_git_summary(changed.project_id, window, cx);
+                        self.load_git_summary(changed.project_id, cx);
                     }
                 }
                 if let Event::AiGenerated(done) = event {
@@ -1393,15 +1409,13 @@ impl Shell {
                         dialog.answered(done.generation_id, result.clone());
                     }
                     self.prompt_enhanced(done.generation_id, result);
-                    let shown = self.batch_shown(&mut shown_now, window);
-                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
+                    if self.event_shown(event, &mut shown_now, window) {
                         cx.notify();
                     }
                 }
                 if let Event::TspUpdate(update) = event {
                     self.tsp_update(update, cx);
-                    let shown = self.batch_shown(&mut shown_now, window);
-                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
+                    if self.event_shown(event, &mut shown_now, window) {
                         cx.notify();
                     }
                 }
@@ -1526,12 +1540,12 @@ impl Shell {
         let machine = self.target.is_machine();
         let retry = |id: &'static str, label: &'static str| {
             let label = if machine { "Try now" } else { label };
-            button(id, label, theme, true).on_click(cx.listener(|shell, _, window, cx| {
-                match shell.status {
-                    Status::ListFailed(_) => shell.refresh(window, cx),
+            button(id, label, theme, true).on_click(cx.listener(
+                |shell, _, _, cx| match shell.status {
+                    Status::ListFailed(_) => shell.refresh(cx),
                     _ => shell.connect(cx),
-                }
-            }))
+                },
+            ))
         };
         let action = match &self.status {
             Status::Connected if self.sidebar.is_empty() => {

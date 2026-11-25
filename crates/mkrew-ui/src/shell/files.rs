@@ -145,7 +145,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let listed = listed.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &listed {
                     tracing::warn!(%project_id, dir, "fs.list failed: {error}");
                 }
@@ -191,7 +191,7 @@ impl Shell {
                     .await),
                 Err(error) => Err(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &read {
                     tracing::warn!(%project_id, path = %file.path, task = ?file.task, "fs.read failed: {error}");
                 }
@@ -248,7 +248,7 @@ impl Shell {
             let page = background
                 .spawn(async move { Shown::from_text(&text) })
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 // The stamp names the text: a page of a text that was replaced is dropped.
                 let dropped = (shell.documents.get_mut(&project_id))
                     .is_some_and(|docs| docs.preview_ready(stamp, page));
@@ -624,7 +624,7 @@ impl Shell {
             .call::<FsWritten>(Request::FsWrite(documents::write_params(project_id, save)));
         cx.spawn_in(window, async move |this, cx| {
             let written = written.await.map_err(|error| format!("{error:#}"));
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Err(error) = &written {
                     tracing::warn!(%project_id, path = %saved_file.path, task = ?saved_file.task, "fs.write failed: {error}");
                 }
@@ -710,7 +710,7 @@ impl Shell {
         );
         cx.spawn_in(window, async move |this, cx| {
             let choice = documents::leave_choice(answer.await.ok());
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let rest: AfterSave = Box::new(move |shell, window, cx| {
                     shell.leave_documents(project_id, files, then, window, cx);
                 });

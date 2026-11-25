@@ -48,7 +48,7 @@ impl RowItem {
         }
     }
 
-    /// The tooltip text; the main window opens tabs, a detached window splits its tab.
+    /// The tooltip text; a Space window opens tabs, a detached window splits its tab.
     pub fn label(&self, main: bool) -> String {
         let what = if main { "tab" } else { "pane" };
         match self {
@@ -81,7 +81,7 @@ pub fn default_agent(agents: &[PaneAgent]) -> Option<&PaneAgent> {
     agents.first().filter(|agent| agent.default)
 }
 
-/// The items after `+`, in order. `main`: the main window, which also has `▾` (a detached
+/// The items after `+`, in order. `main`: a Space window, which also has `▾` (a detached
 /// window has Split ▾ in its title bar and no new-tab menu). `browser`: pages can show here.
 pub fn plus_row_items(
     default_agent: Option<&PaneAgent>,

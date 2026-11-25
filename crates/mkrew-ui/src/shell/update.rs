@@ -138,7 +138,7 @@ impl Shell {
         cx.spawn_in(window, async move |this, cx| {
             let choice = answer.await.ok();
             if choice == Some(1) {
-                let _ = this.update_in(cx, |shell, window, cx| {
+                let _ = Shell::answer(&this, cx, |shell, window, cx| {
                     cx.open_url(&page_url);
                     shell.start_update(window, cx);
                 });
@@ -156,7 +156,7 @@ impl Shell {
                 .background_executor()
                 .spawn(async move { update::download(&asset, &dir) })
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| match file {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match file {
                 Ok(file) => shell.apply_update(kind, file, window, cx),
                 Err(error) => shell.update_failed(&error, cx),
             });
@@ -210,7 +210,7 @@ impl Shell {
                 .background_executor()
                 .spawn(async move { update::apply(&kind, &file) })
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| match result {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| match result {
                 Ok(()) => shell.quit_ui(window, cx),
                 Err(error) => shell.update_failed(&error, cx),
             });

@@ -75,6 +75,20 @@ impl Shell {
             .ok()?
     }
 
+    /// Runs a reply's `f` in the window that asked (`cx` of `spawn_in`), or in the primary
+    /// Space window once that one is gone: in mode 2 a window closes while its requests are in
+    /// flight, and the busy marks they clear must not stay set. `None` once no window is left.
+    pub(crate) fn answer<R>(
+        this: &gpui::WeakEntity<Shell>,
+        cx: &mut gpui::AsyncWindowContext,
+        f: impl FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>) -> R,
+    ) -> Option<R> {
+        if cx.window_handle().update(cx, |_, _, _| ()).is_ok() {
+            return this.update_in(cx, f).ok();
+        }
+        Shell::with_primary(this, cx, f)
+    }
+
     /// Opens a Space window showing `project`. Its `HostUi` exists at once, so `space_of`
     /// already finds it while the OS window opens (a second request focuses it). `then` runs
     /// in it once open.
@@ -122,6 +136,12 @@ impl Shell {
                             }
                             if let Some(then) = then {
                                 then(shell, window, cx);
+                            }
+                            let pending = (shell.hosts.get(&HostId::Space(key)))
+                                .map(|ui| ui.pending.take())
+                                .unwrap_or_default();
+                            for f in pending {
+                                f(shell, window, cx);
                             }
                         });
                     });
@@ -207,7 +227,7 @@ impl Shell {
     }
 
     /// The ✕ of Space window `key`: another Space window stays, so only this one goes; the
-    /// last one does what the main window's ✕ did (hide to the tray, ask about unsaved
+    /// last one does what the old main window's ✕ did (hide to the tray, ask about unsaved
     /// edits, or save and end the app).
     pub(crate) fn space_should_close(
         &mut self,
@@ -224,7 +244,8 @@ impl Shell {
 
     /// The saved Space windows of `window_mode = per_workspace` (ADR 0115), but the last one,
     /// whose workspace the open first window shows: each opens with its workspace while that
-    /// is listed.
+    /// is listed, in the saved order (the one used longest ago first), and the first window,
+    /// the one used last, gets the keyboard back once they are up.
     pub(crate) fn restore_spaces(&mut self, cx: &mut Context<'_, Self>) {
         let saved = std::mem::take(&mut self.saved_spaces);
         let Some((_, others)) = saved.split_last() else {
@@ -233,15 +254,16 @@ impl Shell {
         let displays: Vec<Bounds<Pixels>> =
             cx.displays().iter().map(|d| d.visible_bounds()).collect();
         let primary = cx.primary_display().map(|d| d.visible_bounds());
-        for saved in others {
-            let listed = self
-                .sidebar
-                .projects()
-                .iter()
-                .any(|p| p.id == saved.workspace);
-            if !listed || self.space_of(saved.workspace).is_some() {
-                continue;
-            }
+        let projects = self.sidebar.projects();
+        let mut seen: HashSet<Ulid> = HashSet::new();
+        let opening: Vec<&detached::SavedSpace> = (others.iter())
+            .filter(|saved| projects.iter().any(|p| p.id == saved.workspace))
+            .filter(|saved| self.space_of(saved.workspace).is_none())
+            .filter(|saved| seen.insert(saved.workspace))
+            .collect();
+        let first = self.primary_host();
+        let last = opening.len();
+        for (step, saved) in (1..).zip(opening) {
             let (placement, bounds) = Placement::of(window_place::restored(
                 window_place::saved_rect(&saved.bounds),
                 Placement::from_flags(saved.maximized, saved.fullscreen),
@@ -249,7 +271,12 @@ impl Shell {
                 &displays,
                 primary,
             ));
-            self.open_space_window(Some(saved.workspace), bounds, placement, None, cx);
+            let then = (step == last).then(|| -> AfterOpen {
+                Box::new(move |shell, _, cx| {
+                    shell.in_window(first, cx, |_, window, _| window.activate_window());
+                })
+            });
+            self.open_space_window(Some(saved.workspace), bounds, placement, then, cx);
         }
     }
 
@@ -688,8 +715,7 @@ impl Shell {
                 }
             }
             PickOutcome::Done(plan) => {
-                self.split_picker = None;
-                self.focus_pane(window, cx);
+                self.close_split_picker(window, cx);
                 self.split_into_windows(plan, window, cx);
             }
             PickOutcome::Edited => {}
@@ -710,8 +736,7 @@ impl Shell {
             return;
         };
         if let PickOutcome::Done(plan) = picker.confirm() {
-            self.split_picker = None;
-            self.focus_pane(window, cx);
+            self.close_split_picker(window, cx);
             self.split_into_windows(plan, window, cx);
         }
         cx.notify();

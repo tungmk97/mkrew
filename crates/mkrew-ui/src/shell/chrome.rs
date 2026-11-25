@@ -417,14 +417,18 @@ impl Shell {
         if let HostId::Detached(key) = host {
             right.push(
                 icon_button("move-all-back", Icon::Minimize2, theme)
-                    .tooltip(tooltip(theme, "Move all tabs back to the main window", ""))
+                    .tooltip(tooltip(
+                        theme,
+                        "Move all tabs back to their workspace windows",
+                        "",
+                    ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.move_all_back(key, window, cx);
                     }))
                     .into_any_element(),
             );
         }
-        // Split acts on the shown terminal tab: only while Terminals shows in the main window.
+        // Split acts on the shown terminal tab: only while Terminals shows in a Space window.
         if !main || (workspace.is_some() && view == View::Terminals) {
             right.push(
                 icon_button("tab-split", Icon::Columns2, theme)

@@ -294,10 +294,10 @@ impl Shell {
     }
 
     /// Attaches the sessions on screen in any window (live ones, or already attached; none
-    /// for a hidden window or while the main window shows another view) and detaches all others
+    /// for a hidden window or while its Space window shows another view) and detaches all others
     /// (SPEC §10), then focuses the focused pane of `window`.
     pub(crate) fn sync_panes(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.keep_main_active_visible();
+        self.keep_space_active_visible();
         self.prune_detached(cx);
         self.sync_documents(window, cx);
         self.sync_browsers(cx);
@@ -339,10 +339,15 @@ impl Shell {
         // A Diff leaf that came on screen (opened, restored, its tab shown) loads Git, as the
         // old Diff view did when it was shown; the Git panel's tab keeps its own Git fresh, so a
         // diff beside it must not re-request (the new diff would reset the list's scroll).
-        let drawn = self.diff_on_screen(self.space_host(window));
-        let came = drawn && !self.diff_drawn;
-        let changed = drawn != self.diff_drawn;
-        self.diff_drawn = drawn;
+        let host = self.space_host(window);
+        let drawn = self.diff_on_screen(host);
+        let before = self.hosts.get_mut(&host).map(|ui| {
+            let before = ui.diff_drawn;
+            ui.diff_drawn = drawn;
+            before
+        });
+        let came = drawn && before == Some(false);
+        let changed = before.is_some_and(|before| before != drawn);
         if came
             && !self.git_panel_shown(self.space_host(window))
             && let Some(project_id) = self.workspace_in(window)
@@ -448,7 +453,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let attached = attach.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let attached = match attached {
                     Ok(attached) => attached,
                     Err(error) => {

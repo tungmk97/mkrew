@@ -295,7 +295,7 @@ impl Shell {
         }));
         cx.spawn_in(window, async move |this, cx| {
             let listed = listed.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(dialog) = shell.open_history(serial) else {
                     return;
                 };
@@ -384,7 +384,7 @@ impl Shell {
                     .await),
                 Err(error) => Err(format!("Cannot read the log: {error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(dialog) = shell.open_history(serial) else {
                     return;
                 };
@@ -457,7 +457,7 @@ impl Shell {
             }));
         cx.spawn_in(window, async move |this, cx| {
             let resumed = resumed.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(dialog) = shell.open_history(serial) else {
                     return;
                 };

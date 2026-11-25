@@ -60,7 +60,7 @@ impl Shell {
         let started = connection.call::<RunStarted>(request);
         cx.spawn_in(window, async move |this, cx| {
             let started = started.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 match started {
                     Ok(run) => {
                         if reveal {
@@ -291,7 +291,7 @@ impl Shell {
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let updated = updated.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if shell.dialog_serial != serial || shell.run_setup.is_none() {
                     // Closed while saving: a failure has no dialog left to show in.
                     if let Err(error) = &updated {

@@ -31,7 +31,7 @@ impl Shell {
                     return;
                 }
             };
-            let _ = this.update_in(cx, |shell, _, cx| {
+            let _ = Shell::answer(&this, cx, |shell, _, cx| {
                 if let Some(view) = shell.git_at(project_id, &at) {
                     view.viewed_loaded(serial, asked, files);
                     cx.notify();
@@ -72,7 +72,7 @@ impl Shell {
                 Ok(Outcome::Error(body)) => Some(body.message),
                 Err(error) => Some(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if let Some(error) = failure {
                     tracing::warn!(%project_id, path = target.path, "git.set_viewed failed: {error}");
                     shell.toast_error(format!("Cannot mark {}: {error}", target.path), cx);

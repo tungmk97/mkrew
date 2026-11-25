@@ -342,7 +342,7 @@ impl Shell {
                 Ok(listed) => Agents::Loaded(listed.profiles),
                 Err(error) => Agents::Failed(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 // Unless the picker closed (or moved to another card) meanwhile.
                 if let Some(menu) = shell
                     .run_with
@@ -451,7 +451,7 @@ impl Shell {
                 Ok(listed) => Agents::Loaded(listed.profiles),
                 Err(error) => Agents::Failed(format!("{error:#}")),
             };
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 // Unless the picker closed (or moved to another card) meanwhile.
                 if let Some(menu) = shell
                     .fan_out

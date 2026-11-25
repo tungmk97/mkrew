@@ -292,7 +292,7 @@ impl Shell {
         let sent = connection.call::<serde_json::Value>(request);
         cx.spawn_in(window, async move |this, cx| {
             let answer = sent.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 let Some(dialog) = shell.open_worktree(serial) else {
                     // Closed meanwhile: a merge or removal that failed, or a merge stopped by
                     // conflicts, has no dialog to say so.

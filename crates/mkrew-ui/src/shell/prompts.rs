@@ -140,7 +140,7 @@ impl Shell {
         );
         cx.spawn_in(window, async move |this, cx| {
             let choice = documents::leave_choice(answer.await.ok());
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 match choice {
                     Some(documents::Leave::Save) => shell.save_prompt(Some(then), window, cx),
                     Some(documents::Leave::DontSave) => {
@@ -204,7 +204,7 @@ impl Shell {
         );
         cx.spawn_in(window, async move |this, cx| {
             let confirmed = task_dialog::confirms_delete(answer.await.ok());
-            let _ = this.update_in(cx, |shell, window, cx| {
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
                 if confirmed {
                     shell.delete_prompt(&name);
                 }

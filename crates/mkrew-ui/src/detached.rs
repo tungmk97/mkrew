@@ -43,7 +43,7 @@ impl HostId {
     }
 }
 
-/// A tab that can leave the main window. Plan 2 adds file tabs.
+/// A tab that can leave its Space window. Plan 2 adds file tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DockTab {
@@ -315,8 +315,8 @@ pub fn toast_host(
 }
 
 /// The commands a detached window acts on (spec 2026-11-10 §4.2); every other key there does
-/// nothing, so none can act on the main window's tabs. The exception is Settings (Ctrl+, or ⌘,),
-/// which opens in the main window on every OS (`run_detached`); it is not in this list.
+/// nothing, so none can act on a Space window's tabs. The exception is Settings (Ctrl+, or ⌘,),
+/// which opens in the primary Space window on every OS (`run_detached`); it is not in this list.
 pub fn handles(command: Command) -> bool {
     matches!(
         command,
