@@ -184,14 +184,7 @@ impl Shell {
                 .text_color(rgb(theme.text))
                 .child(text)
         };
-        let error_row = |text: String| {
-            div()
-                .flex()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                .child(div().text_color(rgb(theme.text)).child(text))
-        };
+        let error_row = |text: String| error_note(text, theme);
 
         let status = phone_dialog::status_row(&phone.daemon, phone.pending());
         let status_row = div()
@@ -343,46 +336,43 @@ impl Shell {
 
         let panel = floating_panel("phone-access-dialog", theme)
             .w(px(theme::DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
                 false,
                 cx.listener(Self::dialog_guard),
                 cx.listener(Self::phone_access_key_down),
-            )
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Phone access"),
-            )
+            );
+        let body = dialog_body()
             .child(status_row)
             .children(phone.notice.clone().map(error_row))
             .child(serve_row)
             .children(serve.error.map(error_row))
             .children(push_row)
             .children(push_hint)
-            .children(link)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .pt(px(space::S))
-                    .child(
-                        button("phone-close", "Close", theme, false)
-                            .focus_stop(theme)
-                            .tooltip(tooltip(theme, "Close", "Esc"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.close_phone_access(window, cx);
-                            })),
-                    ),
-            );
+            .children(link);
+        let foot = dialog_foot(theme).child(
+            button("phone-close", "Close", theme, false)
+                .focus_stop(theme)
+                .tooltip(tooltip(theme, "Close", "Esc"))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.close_phone_access(window, cx);
+                })),
+        );
+        let panel = dialog_frame(
+            panel,
+            DialogHead {
+                icon: Icon::Smartphone,
+                tone: DialogTone::Normal,
+                title: "Phone access".into(),
+                sub: None,
+            },
+            Some(dialog_close("phone-close-x", theme).on_click(
+                cx.listener(|shell, _, window, cx| shell.close_phone_access(window, cx)),
+            )),
+            Some(body),
+            Some(foot),
+            theme,
+        );
         Self::modal_shade("phone-access-shade", panel, cx)
     }
 }
