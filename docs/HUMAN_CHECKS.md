@@ -4515,3 +4515,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
 
 - [ ] (Task 21) To verify: with omp working, confirm the context meter labels sit above the composer card ring and clear the hud pill and the scroll-to-end button (dark and light).
 - [ ] (Task 21) To verify: check chrome (sidebar rows, filter, panel tabs, focus stripe) visually, dark and light: no vertical line between the sidebar and the pane area but a visible step; the selected session row has the accent tint and the 2x14 bar, no ring; a muted row lifts to full text on hover; the filter is 28 px with a faint ring, a `subtle` placeholder and an accent ring while typing; a focused pane among several has a 1 px stripe, a pane that needs input or has a colour a 2 px one; the shown panel tab is an accent tint with an accent icon. Screenshots were not taken (sandbox not driven).
+
+## Tern polish, Part G (Git, diff, cards, lists, pane chrome)
+
+- [ ] (Task 22) To verify: Git diff, Unified and Split, dark and light: 20 px lines, a gutter band one step stronger than its row, dim numbers with full-hue signs, hunk header 24 px with `@@` in the accent, the current hunk (press `n`) with the 3 px bar and the stronger fill, Stage / Discard chips 18 px. Screenshots not taken.

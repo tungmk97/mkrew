@@ -755,15 +755,33 @@ pub const DIFF_HATCH_INTERVAL: f32 = 6.0;
 pub const GIT_DIFF_OVERDRAW: f32 = 200.0;
 
 /// Git diff lines: monospace size and line height, px (a wrapped line is a multiple of it).
-pub const DIFF_FONT_SIZE: f32 = 12.5;
-pub const DIFF_LINE_HEIGHT: f32 = 24.0;
+pub const DIFF_FONT_SIZE: f32 = 12.0;
+pub const DIFF_LINE_HEIGHT: f32 = 20.0;
 /// The line-number gutter of a diff half: its width in px (it grows for 5+ digit numbers at
 /// [`DIFF_DIGIT_WIDTH`] per digit) and the sign column after it.
 pub const DIFF_GUTTER_WIDTH: f32 = 40.0;
 pub const DIFF_DIGIT_WIDTH: f32 = 8.0;
 pub const DIFF_SIGN_WIDTH: f32 = space::L;
-/// A diff hunk header bar's height.
-pub const GIT_HUNK_HEADER_HEIGHT: f32 = 34.0;
+/// A diff hunk header bar's height (one grid step above a line), the height of the Stage /
+/// Discard chips on it, the bar of the current hunk, and the alpha of the Stage chip's ring.
+pub const GIT_HUNK_HEADER_HEIGHT: f32 = 24.0;
+pub const GIT_HUNK_BUTTON_HEIGHT: f32 = 18.0;
+pub const HUNK_BAR_WIDTH: f32 = 3.0;
+pub const HUNK_RING_ALPHA: f32 = 0.18;
+
+/// The diff rule (spec §10): a changed row is `DIFF_ROW_MIX` of its hue over the diff ground
+/// (`surface`); its gutter is a step on (`DIFF_GUTTER_MIX` more of the hue); the line numbers are
+/// the hue at `DIFF_NUM_MIX_*` over the gutter (60 % over a pale light gutter reads 2:1, so light
+/// themes use 75 %, Tern's own light value); the changed word is `DIFF_*_WORD_MIX` over the ground.
+const DIFF_ROW_MIX: f32 = 0.07;
+const DIFF_GUTTER_MIX: f32 = 0.08;
+const DIFF_NUM_MIX_DARK: f32 = 0.60;
+const DIFF_NUM_MIX_LIGHT: f32 = 0.75;
+const DIFF_ADD_WORD_MIX: f32 = 0.26;
+const DIFF_DEL_WORD_MIX: f32 = 0.25;
+/// A hunk header bar and the current one: the accent over the diff ground.
+const HUNK_MIX: f32 = 0.045;
+const HUNK_CURRENT_MIX: f32 = 0.09;
 
 /// Rough width of one char of a Git repository tab label, px: the repo strip shows every tab
 /// only when their labels fit.
@@ -1101,6 +1119,13 @@ pub struct Theme {
     pub diff_add_gutter: u32,
     pub diff_del_gutter: u32,
     pub diff_mod_gutter: u32,
+    /// Line numbers of added and removed lines: the hue at 60 % (75 % light) over the gutter
+    /// (the sign keeps the full `success_text` / `danger_text`).
+    pub diff_add_num: u32,
+    pub diff_del_num: u32,
+    /// A hunk header bar, and the current hunk's: the accent at 4.5 % / 9 % over `surface`.
+    pub hunk_bg: u32,
+    pub hunk_current_bg: u32,
     /// Git file status letters: modified-like (M R C T) and untracked (?).
     pub git_modified: u32,
     pub git_untracked: u32,
@@ -1295,17 +1320,22 @@ impl Theme {
             brand_codex: 0x10A37F,
             brand_copilot: 0xA371F7,
             brand_omp: 0x56B6C2,
-            // Removed / added lines: danger / success at 9 % over the diff card (`surface`).
-            diff_add_bg: 0x182422,
+            // Spec §10, over `surface` (0x161619): hue at 7 % (row), +8 % (gutter), 60 % over the
+            // gutter (number), 26 % / 25 % (word); the hunk bars are the accent at 4.5 % / 9 %.
+            diff_add_bg: 0x1B2221,
             diff_add_text: 0x6FD39B,
-            diff_del_bg: 0x261D20,
+            diff_del_bg: 0x251D1F,
             diff_del_text: 0xEF8F82,
-            diff_mod_bg: 0x25211D,
+            diff_mod_bg: 0x24201D,
             diff_mod_text: 0xE4A452,
             diff_hunk_header: 0x17171A,
-            diff_add_gutter: 0x1E302B,
-            diff_del_gutter: 0x342526,
-            diff_mod_gutter: 0x322B23,
+            diff_add_gutter: 0x202F29,
+            diff_del_gutter: 0x352525,
+            diff_mod_gutter: 0x332B21,
+            diff_add_num: 0x418A63,
+            diff_del_num: 0xA55950,
+            hunk_bg: 0x1B1B23,
+            hunk_current_bg: 0x21212D,
             git_modified: 0xE4A452,
             git_untracked: 0xE4A452,
             syntax_keyword: 0xC2C1FA,
@@ -1329,9 +1359,9 @@ impl Theme {
             layer: layers(0xFFFFFF, true),
             code_bg: 0x0C0C0D,
             composer_fill: 0x1D1D21,
-            // Danger at 30 % / success at 28 % over the diff card.
-            diff_del_word_bg: 0x543331,
-            diff_add_word_bg: 0x254638,
+            // Hue at 26 % / 25 % over `surface` (the changed word of a diff line).
+            diff_del_word_bg: 0x4C2F2E,
+            diff_add_word_bg: 0x274436,
             // red → danger, green → success, yellow → attention, blue → info, magenta →
             // accent, white → text, bright black → text_subtle.
             ansi: [
@@ -1396,16 +1426,20 @@ impl Theme {
             brand_codex: 0x0B7F62,
             brand_copilot: 0x7C4DD6,
             brand_omp: 0x0E7490,
-            diff_add_bg: 0xE7EFEC,
+            diff_add_bg: 0xF0F6F3,
             diff_add_text: 0x1E6B3A,
-            diff_del_bg: 0xF5E9E9,
+            diff_del_bg: 0xFBF2F0,
             diff_del_text: 0xA61B1B,
-            diff_mod_bg: 0xFFF6DB,
+            diff_mod_bg: 0xF7F3EE,
             diff_mod_text: 0x7A5200,
             diff_hunk_header: 0xF4F4F2,
-            diff_add_gutter: 0xC9E8D2,
-            diff_del_gutter: 0xF7D4D4,
-            diff_mod_gutter: 0xF8E6AE,
+            diff_add_gutter: 0xE0EDE6,
+            diff_del_gutter: 0xF6E4E1,
+            diff_mod_gutter: 0xEEE7DC,
+            diff_add_num: 0x529F75,
+            diff_del_num: 0xCF6A5C,
+            hunk_bg: 0xF7F7FD,
+            hunk_current_bg: 0xF0EFFB,
             // The old 0x975A16 read 4.48:1 on the new `selected` (rule "diff lines").
             git_modified: 0x8F5410,
             git_untracked: 0x8F5410,
@@ -1431,8 +1465,8 @@ impl Theme {
             layer: layers(LAYER_INK_LIGHT, false),
             code_bg: 0xF8F8F6,
             composer_fill: 0xFFFFFF,
-            diff_del_word_bg: 0xECCCC8,
-            diff_add_word_bg: 0xC4DDD0,
+            diff_del_word_bg: 0xF0D0CB,
+            diff_add_word_bg: 0xC6DFD1,
             ansi: [
                 // "White" stays readable on the light background (≥ 3:1).
                 0x1D1E22, 0xC2412F, 0x23854F, 0xA4660F, 0x2F6FC4, 0x5B59D6, 0x1A7F70, 0x8A8C94,
@@ -1478,6 +1512,19 @@ impl Theme {
                 0x7A7C85, 0xFF8A8E, 0x6FE3B0, 0xFFD27A, 0x8FB6FF, 0xD2B3FF, 0x7FDCF0, 0xF7F7F8,
             ],
             name: "Tern Dark".into(),
+            // Tern Dark
+            diff_add_bg: 0x192321,
+            diff_add_gutter: 0x1C312A,
+            diff_add_num: 0x309066,
+            diff_add_word_bg: 0x204637,
+            diff_del_bg: 0x261B1E,
+            diff_del_gutter: 0x372124,
+            diff_del_num: 0xAF474C,
+            diff_del_word_bg: 0x50292C,
+            diff_mod_bg: 0x26201A,
+            diff_mod_gutter: 0x372B1B,
+            hunk_bg: 0x191B23,
+            hunk_current_bg: 0x1C212E,
             ..Self::dark()
         }
         .with_glass()
@@ -1510,6 +1557,19 @@ impl Theme {
                 0x80838C, 0xE5484D, 0x2FAE74, 0xC98A0B, 0x3D6FFF, 0xA86AF4, 0x16A3C4, 0x9EA1A8,
             ],
             name: "Tern Light".into(),
+            // Tern Light
+            diff_add_bg: 0xEFF6F3,
+            diff_add_gutter: 0xDEECE6,
+            diff_add_num: 0x489773,
+            diff_add_word_bg: 0xC2DCD1,
+            diff_del_bg: 0xFBF1F1,
+            diff_del_gutter: 0xF6E2E2,
+            diff_del_num: 0xCD5D63,
+            diff_del_word_bg: 0xEFCBCD,
+            diff_mod_bg: 0xF7F3EE,
+            diff_mod_gutter: 0xEEE7DC,
+            hunk_bg: 0xF6F8FE,
+            hunk_current_bg: 0xECF1FE,
             ..Self::light()
         }
         .with_glass()
@@ -1581,6 +1641,10 @@ impl Theme {
             diff_add_gutter: 0,
             diff_del_gutter: 0,
             diff_mod_gutter: 0,
+            diff_add_num: 0,
+            diff_del_num: 0,
+            hunk_bg: 0,
+            hunk_current_bg: 0,
             git_modified: 0,
             git_untracked: 0,
             syntax_keyword: 0,
@@ -1684,6 +1748,30 @@ pub fn mix(a: u32, b: u32, t: f32) -> u32 {
         let (x, y) = (((a >> shift) & 0xFF) as f32, ((b >> shift) & 0xFF) as f32);
         out | (((x + (y - x) * t).round() as u32) << shift)
     })
+}
+
+/// The fills of one diff hue (see [`DIFF_ROW_MIX`]).
+struct DiffTone {
+    row: u32,
+    gutter: u32,
+    num: u32,
+    word: u32,
+}
+
+fn diff_tone(ground: u32, hue: u32, word_mix: f32, dark: bool) -> DiffTone {
+    let row = mix(ground, hue, DIFF_ROW_MIX);
+    let gutter = mix(row, hue, DIFF_GUTTER_MIX);
+    let number = if dark {
+        DIFF_NUM_MIX_DARK
+    } else {
+        DIFF_NUM_MIX_LIGHT
+    };
+    DiffTone {
+        row,
+        gutter,
+        num: mix(gutter, hue, number),
+        word: mix(ground, hue, word_mix),
+    }
 }
 
 /// `0xRRGGBB` as `0xRRGGBBAA` at `alpha` (0.0 to 1.0).
@@ -1847,10 +1935,11 @@ impl Theme {
                 mix(p.bg, p.fg, 0.10)
             }
         };
-        let diff = |hue| (tint(hue, 0.14), tint(hue, 0.24), tint(hue, 0.30));
-        let (add_bg, add_gutter, add_word) = diff(p.green);
-        let (del_bg, del_gutter, del_word) = diff(p.red);
-        let (mod_bg, mod_gutter, _) = diff(p.yellow);
+        let add = diff_tone(p.surface, p.green, DIFF_ADD_WORD_MIX, p.dark);
+        let del = diff_tone(p.surface, p.red, DIFF_DEL_WORD_MIX, p.dark);
+        let changed = diff_tone(p.surface, p.yellow, DIFF_ADD_WORD_MIX, p.dark);
+        let hunk_bg = mix(p.surface, p.accent, HUNK_MIX);
+        let hunk_current_bg = mix(p.surface, p.accent, HUNK_CURRENT_MIX);
         let grounds = [
             p.bg,
             p.chrome,
@@ -1862,14 +1951,16 @@ impl Theme {
             pane_gap,
             composer_fill,
             accent_bg,
-            add_bg,
-            del_bg,
-            mod_bg,
-            add_gutter,
-            del_gutter,
-            mod_gutter,
-            add_word,
-            del_word,
+            add.row,
+            del.row,
+            changed.row,
+            add.gutter,
+            del.gutter,
+            changed.gutter,
+            add.word,
+            del.word,
+            hunk_bg,
+            hunk_current_bg,
         ];
         // Meta text (t3) reads on the grounds of the "meta text" rule only; the diff tints
         // would pull it up onto `text_muted`.
@@ -1946,14 +2037,18 @@ impl Theme {
             run_pill_bg: tint(p.green, 0.12),
             run_pill_border: tint(p.green, 0.35),
             run_pill_text: text(p.green),
-            diff_add_bg: add_bg,
-            diff_del_bg: del_bg,
-            diff_mod_bg: mod_bg,
-            diff_add_gutter: add_gutter,
-            diff_del_gutter: del_gutter,
-            diff_mod_gutter: mod_gutter,
-            diff_add_word_bg: add_word,
-            diff_del_word_bg: del_word,
+            diff_add_bg: add.row,
+            diff_del_bg: del.row,
+            diff_mod_bg: changed.row,
+            diff_add_gutter: add.gutter,
+            diff_del_gutter: del.gutter,
+            diff_mod_gutter: changed.gutter,
+            diff_add_num: add.num,
+            diff_del_num: del.num,
+            hunk_bg,
+            hunk_current_bg,
+            diff_add_word_bg: add.word,
+            diff_del_word_bg: del.word,
             diff_add_text: text(p.green),
             success_text: text(p.green),
             diff_del_text: text(p.red),
@@ -2804,6 +2899,13 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
     ] {
         check("diff lines", fg, bg, 4.5);
     }
+    // A hunk header: `@@` in `accent_text`, its section in `text_dim`, on the plain and on the
+    // current hunk's fill.
+    for bg in [t.hunk_bg, t.hunk_current_bg] {
+        for fg in [t.accent_text, t.text_dim] {
+            check("hunk header", fg, bg, 4.5);
+        }
+    }
     // Where a swatch or avatar sits: the dialogs, the menu, the sidebar and its row fills.
     // WCAG 1.4.11: graphical objects >= 3:1.
     for color in t.workspace_colors {
@@ -2911,6 +3013,82 @@ mod tests {
 
     fn all_themes() -> Vec<Theme> {
         THEMES.iter().map(ThemeEntry::build).collect()
+    }
+
+    /// Channel-wise distance between two RGB colors (sum of |a - b|).
+    fn distance(a: u32, b: u32) -> u32 {
+        [16, 8, 0]
+            .into_iter()
+            .map(|s| (((a >> s) & 0xFF) as i32 - ((b >> s) & 0xFF) as i32).unsigned_abs())
+            .sum()
+    }
+
+    #[test]
+    fn the_hand_written_diff_fills_follow_the_seven_percent_rule() {
+        // One step per channel of slack: the literals are rounded once, the rule rounds per mix.
+        let close = |a: u32, b: u32| distance(a, b) <= 3;
+        for theme in [
+            Theme::dark(),
+            Theme::light(),
+            Theme::tern_dark(),
+            Theme::tern_light(),
+        ] {
+            let name = theme.name.clone();
+            let ground = theme.surface;
+            let add = diff_tone(ground, theme.status_done, DIFF_ADD_WORD_MIX, theme.dark);
+            let del = diff_tone(ground, theme.status_exited, DIFF_DEL_WORD_MIX, theme.dark);
+            let changed = diff_tone(
+                ground,
+                theme.status_needs_input,
+                DIFF_ADD_WORD_MIX,
+                theme.dark,
+            );
+            for (what, got, want) in [
+                ("add row", theme.diff_add_bg, add.row),
+                ("add gutter", theme.diff_add_gutter, add.gutter),
+                ("add number", theme.diff_add_num, add.num),
+                ("add word", theme.diff_add_word_bg, add.word),
+                ("del row", theme.diff_del_bg, del.row),
+                ("del gutter", theme.diff_del_gutter, del.gutter),
+                ("del number", theme.diff_del_num, del.num),
+                ("del word", theme.diff_del_word_bg, del.word),
+                ("mod row", theme.diff_mod_bg, changed.row),
+                ("mod gutter", theme.diff_mod_gutter, changed.gutter),
+                ("hunk", theme.hunk_bg, mix(ground, theme.accent, HUNK_MIX)),
+                (
+                    "current hunk",
+                    theme.hunk_current_bg,
+                    mix(ground, theme.accent, HUNK_CURRENT_MIX),
+                ),
+            ] {
+                assert!(
+                    close(got, want),
+                    "{name} {what}: {got:06X}, the rule gives {want:06X}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn diff_tiers_step_away_from_the_ground_in_every_theme() {
+        for theme in all_themes() {
+            let name = &theme.name;
+            let ground = theme.surface;
+            for (what, row, gutter) in [
+                ("add", theme.diff_add_bg, theme.diff_add_gutter),
+                ("del", theme.diff_del_bg, theme.diff_del_gutter),
+                ("mod", theme.diff_mod_bg, theme.diff_mod_gutter),
+            ] {
+                assert!(
+                    distance(ground, row) < distance(ground, gutter),
+                    "{name}: the {what} gutter is not a step stronger than its row"
+                );
+            }
+            assert!(
+                distance(ground, theme.hunk_bg) < distance(ground, theme.hunk_current_bg),
+                "{name}: the current hunk is not stronger than the others"
+            );
+        }
     }
 
     /// The palette of the built-in theme `name` (a palette-based one).
@@ -3190,6 +3368,13 @@ mod tests {
                 "diff lines",
                 Theme {
                     git_modified: t.bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "hunk header",
+                Theme {
+                    accent_text: t.hunk_current_bg,
                     ..t.clone()
                 },
             ),

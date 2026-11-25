@@ -817,17 +817,15 @@ pub(crate) fn hunk_stage_button(
         git_view::Stage::Stage => ("Stage hunk", "Stage this hunk"),
         git_view::Stage::Unstage => ("Unstage hunk", "Unstage this hunk"),
     };
-    // A small ghost button, a little taller than a list row's action.
-    row_action(
-        SharedString::from(format!("git-hunk-stage-{hunk}")),
-        label,
+    hunk_chip(
+        row_action(
+            SharedString::from(format!("git-hunk-stage-{hunk}")),
+            label,
+            theme,
+        ),
+        true,
         theme,
     )
-    .h(px(space::XL))
-    .flex()
-    .items_center()
-    .px(px(space::S))
-    .rounded(px(radius::CHIP))
     .ml_auto()
     // The key acts on the current hunk only (n / p), so other hunks show none.
     .tooltip(tooltip(theme, tip, keys))
@@ -848,22 +846,49 @@ pub(crate) fn hunk_discard_button(
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::Stateful<gpui::Div> {
-    row_action(
-        SharedString::from(format!("git-hunk-discard-{hunk}")),
-        "Discard hunk",
+    hunk_chip(
+        row_action(
+            SharedString::from(format!("git-hunk-discard-{hunk}")),
+            "Discard hunk",
+            theme,
+        ),
+        false,
         theme,
     )
-    .h(px(space::XL))
-    .flex()
-    .items_center()
-    .px(px(space::S))
-    .rounded(px(radius::CHIP))
     .text_color(rgb(theme.danger_text))
     .tooltip(tooltip(theme, "Discard this hunk (asks first)", keys))
     .on_click(cx.listener(move |shell, _, window, cx| {
         window.focus(&shell.git_focus, cx);
         shell.open_git_hunk_discard(project_id, hunk, window, cx);
     }))
+}
+
+/// A hunk header's action chip: `GIT_HUNK_BUTTON_HEIGHT` tall, `radius::TAG`, a 1 px ring.
+/// `accent` (Stage) is the accent tint with an 18 % accent ring; the other (Discard) is
+/// neutral: `layer[0]` fill, `layer[1]` ring.
+fn hunk_chip(
+    chip: gpui::Stateful<gpui::Div>,
+    accent: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    chip.h(px(theme::GIT_HUNK_BUTTON_HEIGHT))
+        .flex()
+        .items_center()
+        .px(px(space::S))
+        .rounded(px(radius::TAG))
+        .border(px(theme::BORDER_WIDTH))
+        .when(accent, |el| {
+            el.bg(rgb(theme.accent_bg))
+                .border_color(gpui::rgba(theme::with_alpha(
+                    theme.accent,
+                    theme::HUNK_RING_ALPHA,
+                )))
+                .text_color(rgb(theme.accent_text))
+        })
+        .when(!accent, |el| {
+            el.bg(gpui::rgba(theme.layer[0]))
+                .border_color(gpui::rgba(theme.layer[1]))
+        })
 }
 
 /// A row of the Discard dialog's preview: Unified, unwrapped, nothing to pick or stage.
@@ -893,9 +918,10 @@ fn diff_frame(wrap: bool, theme: &Theme) -> gpui::Div {
 }
 
 /// A row spanning the whole width (both Split halves): a collapsed gap of unchanged lines the
-/// diff does not include, or a hunk header (a 34 px `well` bar: `@@ … @@` and its section in
-/// mono muted text, ▸ on the current hunk, a small Stage hunk button on the right and a
-/// Discard hunk button after it on unstaged modified files).
+/// diff does not include, or a hunk header (a 24 px bar on `hunk_bg`, `hunk_current_bg` and a
+/// 3 px accent bar on the current hunk, with `divider` lines above and below: `@@ … @@` in
+/// `accent_text`, its section in `text_dim`, a Stage hunk chip on the right and a Discard hunk
+/// chip after it on unstaged modified files).
 #[allow(clippy::too_many_arguments)]
 fn span_row(
     shown: &git_view::Shown,
@@ -929,23 +955,35 @@ fn span_row(
             };
             let is_current = current == Some(*at);
             frame
+                .relative()
                 .h(px(theme::GIT_HUNK_HEADER_HEIGHT))
-                .bg(rgb(theme.well))
+                .border_t(px(theme::BORDER_WIDTH))
+                .border_b(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.divider))
+                .bg(rgb(if is_current {
+                    theme.hunk_current_bg
+                } else {
+                    theme.hunk_bg
+                }))
+                // The current hunk: a bar down its left edge (an overlay, so nothing shifts).
+                .when(is_current, |el| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left_0()
+                            .w(px(theme::HUNK_BAR_WIDTH))
+                            .bg(rgb(theme.accent)),
+                    )
+                })
                 .child(
                     div()
                         .flex_none()
-                        .text_color(rgb(theme.text_muted))
-                        .when(is_current, |el| {
-                            el.font_weight(FontWeight(weight::SEMIBOLD))
-                        })
-                        // The current hunk gets a marker, not only weight.
+                        .text_color(rgb(theme.accent_text))
                         .child(format!(
-                            "{}@@ -{},{} +{},{} @@",
-                            if is_current { "▸ " } else { "" },
-                            hunk.old_start,
-                            hunk.old_lines,
-                            hunk.new_start,
-                            hunk.new_lines,
+                            "@@ -{},{} +{},{} @@",
+                            hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines,
                         )),
                 )
                 // Shrinks, so the hunk action after it stays on screen.
@@ -954,7 +992,7 @@ fn span_row(
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_color(rgb(theme.text_muted))
+                        .text_color(rgb(theme.text_dim))
                         .child(hunk.header.clone()),
                 )
                 .children(hunk_stage.map(|stage| {
@@ -978,13 +1016,41 @@ fn span_row(
     }
 }
 
-/// A line's row fill, line-number and sign color, and sign: removed lines red and added lines
-/// green (a paired change too: its changed token has its own fill), context plain.
-fn line_colors(kind: DiffLineKind, theme: &Theme) -> (Option<u32>, u32, &'static str) {
+/// A line's colors: the row fill and the gutter band (none on context), the line-number color,
+/// the sign and its color. Removed lines are red and added lines green (a paired change too: its
+/// changed token has its own fill); the numbers are the dimmer `diff_*_num`, the sign the full
+/// hue; context numbers are `subtle`.
+struct LineColors {
+    row: Option<u32>,
+    gutter: Option<u32>,
+    number: u32,
+    sign_color: u32,
+    sign: &'static str,
+}
+
+fn line_colors(kind: DiffLineKind, theme: &Theme) -> LineColors {
     match kind {
-        DiffLineKind::Add => (Some(theme.diff_add_bg), theme.success_text, "+"),
-        DiffLineKind::Del => (Some(theme.diff_del_bg), theme.danger_text, "−"),
-        DiffLineKind::Context => (None, theme.text_subtle, " "),
+        DiffLineKind::Add => LineColors {
+            row: Some(theme.diff_add_bg),
+            gutter: Some(theme.diff_add_gutter),
+            number: theme.diff_add_num,
+            sign_color: theme.success_text,
+            sign: "+",
+        },
+        DiffLineKind::Del => LineColors {
+            row: Some(theme.diff_del_bg),
+            gutter: Some(theme.diff_del_gutter),
+            number: theme.diff_del_num,
+            sign_color: theme.danger_text,
+            sign: "−",
+        },
+        DiffLineKind::Context => LineColors {
+            row: None,
+            gutter: None,
+            number: theme.subtle,
+            sign_color: theme.text_subtle,
+            sign: " ",
+        },
     }
 }
 
@@ -1023,11 +1089,13 @@ fn sign_cell(sign: &'static str, color: u32) -> gpui::Div {
         .child(sign)
 }
 
-/// The gutter of a line (numbers and sign): the accent fill while picked.
-fn gutter(picked: bool, theme: &Theme) -> gpui::Div {
+/// The gutter of a line (numbers and sign): its own band in `fill` (the line's gutter token,
+/// none on context), the accent fill while picked.
+fn gutter(fill: Option<u32>, picked: bool, theme: &Theme) -> gpui::Div {
     div()
         .flex_none()
         .flex()
+        .when_some(fill, |el, fill| el.bg(rgb(fill)))
         .when(picked, |el| el.bg(rgb(theme.accent_bg)))
 }
 
@@ -1041,9 +1109,13 @@ fn unified_line(
     wrap: bool,
     theme: &Theme,
 ) -> gpui::Div {
-    let (bg, fg, sign) = line_colors(line.kind, theme);
+    let look = line_colors(line.kind, theme);
     let is_picked = is_picked(line.new_line, picked);
-    let number = if is_picked { theme.accent_text } else { fg };
+    let number = if is_picked {
+        theme.accent_text
+    } else {
+        look.number
+    };
     let width = gutter_width(shown.number_width);
     diff_frame(wrap, theme)
         .border_l(px(theme::DIFF_PICK_BAR_WIDTH))
@@ -1052,12 +1124,12 @@ fn unified_line(
         } else {
             gpui::transparent_black()
         })
-        .when_some(bg, |el, bg| el.bg(rgb(bg)))
+        .when_some(look.row, |el, bg| el.bg(rgb(bg)))
         .child(
-            gutter(is_picked, theme)
+            gutter(look.gutter, is_picked, theme)
                 .child(line_number(line.old_line, number, width))
                 .child(line_number(line.new_line, number, width))
-                .child(sign_cell(sign, fg)),
+                .child(sign_cell(look.sign, look.sign_color)),
         )
         .child(diff_text(shown, index, line, theme))
 }
@@ -1186,28 +1258,32 @@ fn split_half(
         index.and_then(|at| Some((at, shown.rows.get(at)?)))
     else {
         return half.bg(pattern_slash(
-            rgb(theme.border),
+            rgb(theme.divider),
             theme::DIFF_HATCH_WIDTH,
             theme::DIFF_HATCH_INTERVAL,
         ));
     };
-    let (bg, fg, sign) = line_colors(line.kind, theme);
+    let look = line_colors(line.kind, theme);
     let number = match side {
         DiffSide::Old => line.old_line,
         DiffSide::New => line.new_line,
     };
     let is_picked = side == DiffSide::New && is_picked(line.new_line, picked);
-    let number_color = if is_picked { theme.accent_text } else { fg };
-    half.when_some(bg, |el, bg| el.bg(rgb(bg)))
+    let number_color = if is_picked {
+        theme.accent_text
+    } else {
+        look.number
+    };
+    half.when_some(look.row, |el, bg| el.bg(rgb(bg)))
         .when(is_picked, |el| el.border_color(rgb(theme.accent)))
         .child(
-            gutter(is_picked, theme)
+            gutter(look.gutter, is_picked, theme)
                 .child(line_number(
                     number,
                     number_color,
                     gutter_width(shown.number_width),
                 ))
-                .child(sign_cell(sign, fg)),
+                .child(sign_cell(look.sign, look.sign_color)),
         )
         .child(diff_text(shown, at, line, theme))
 }

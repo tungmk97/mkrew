@@ -1553,7 +1553,7 @@ Windows (tens of ms, worse with antivirus), so:
       working tree — like a pull request diff.
 - **Changed-file list** (the Git tab) with +/− counts; selecting one shows its diff.
 - **Diff viewer:** unified or split (side-by-side), hunk navigation, collapsed unchanged regions, syntax
-  highlighting. Diffs > 1 MB show a summary and "Open in Zed".
+  highlighting (12 px on 20 px lines; hunk header 24 px). Diffs > 1 MB show a summary and "Open in Zed".
 - **Diff modes:** a Unified | Split toggle in the diff header (key `d`, §13) switches between one
   column (removed lines, then added lines) and two columns (old on the left, new on the right). Split
   is one virtualized list of paired rows, so one scroll handle moves both sides. In a hunk the i-th
@@ -1606,8 +1606,9 @@ Windows (tens of ms, worse with antivirus), so:
   `code "<quote>"` instead of `passage "<quote>"`. Comments on non-Markdown files are not
   re-anchored when the code changes (backlog); `doc.list` ignores diff comments.
 - **Extra tokens:** `diff-add-bg`, `diff-add-text`, `diff-del-bg`, `diff-del-text`,
-  `diff-mod-bg`, `diff-mod-text` (a line changed in place, Split), `diff-hunk-header` (dark + light)
-  in `theme.rs`. Diff backgrounds stay very subtle.
+  `diff-mod-bg`, `diff-mod-text` (a line changed in place, Split), `diff-hunk-header` (dark + light),
+  `diff-*-gutter`, `diff-add-num`, `diff-del-num`, `hunk-bg`, `hunk-current-bg`
+  in `theme.rs`. Diff backgrounds stay very subtle: the hue (`status-done`, `status-exited`, `status-needs-input`) at 7 % over `surface`; the gutter adds 8 %; line numbers are the hue at 60 % (75 % in light themes) over the gutter; changed words 26 % / 25 % over `surface`; hunk bars are the accent at 4.5 % / 9 %. Tern Dark: add row #192321, del row #261B1E, hunk #191B23; Tern Light: add row #EFF6F3, del row #FBF1F1, hunk #F6F8FE (full values in `theme.rs`).
 
 ---
 
@@ -1879,8 +1880,11 @@ Restyle of 2026-10-24 (ADR 0074), retuned to Tern's grounds and tiers by ADR 011
 | `status-exited` (danger) | #EF7B6C | #C2412F |
 | `status-idle` | #8A8A92 | #6A6C74 |
 | `git-modified` / `git-untracked` (light only) | unchanged | #8F5410 |
-| `diff-add-bg` / `diff-del-bg` | #182422 / #261D20 | #E7EFEC / #F5E9E9 |
-| `diff-add-word-bg` / `diff-del-word-bg` | #254638 / #543331 | #C4DDD0 / #ECCCC8 |
+| `diff-add-bg` / `diff-del-bg` | #1B2221 / #251D1F | #F0F6F3 / #FBF2F0 |
+| `diff-add-gutter` / `diff-del-gutter` | #202F29 / #352525 | #E0EDE6 / #F6E4E1 |
+| `diff-add-num` / `diff-del-num` | #418A63 / #A55950 | #529F75 / #CF6A5C |
+| `diff-add-word-bg` / `diff-del-word-bg` | #274436 / #4C2F2E | #C6DFD1 / #F0D0CB |
+| `hunk-bg` / `hunk-current-bg` | #1B1B23 / #21212D | #F7F7FD / #F0EFFB |
 | `diff-add-text` / `diff-del-text` | #6FD39B / #EF8F82 | #1E6B3A / #A61B1B |
 | `diff-hunk-header` | #17171A | #F4F4F2 |
 | `code-bg` (sunken code) | #0C0C0D | #F8F8F6 |
