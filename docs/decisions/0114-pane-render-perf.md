@@ -1,7 +1,7 @@
 # 0114 - Cached pane views and a virtual omp transcript
 
 - Date: 2026-11-25
-- Status: accepted (amends SPEC §11 omp native surface and §15)
+- Status: accepted (amends SPEC §11 omp native surface and §15; amended by ADR 0118: an omp frame or a pane animation notifies that session's pane views, not `Shell`)
 - Spec: `docs/superpowers/specs/2026-11-25-pane-render-perf-design.md`
 
 ## Context

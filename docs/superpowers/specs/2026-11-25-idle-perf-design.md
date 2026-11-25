@@ -52,7 +52,7 @@ Separately, omp 19.1.1 (installed today) sends node kinds Mkrew does not know:
 ### 4.2 One warning per surface (core `tsp::engine`)
 
 - `Engine::frame` still sends omp one `error` event per frame with failing ops (omp's contract).
-- It logs `Step::Warn` only for the first such frame of a surface; the message says later ones are not logged.
+- It logs `Step::Warn` only for the first such frame of a surface; later ones are `Step::Debug` (logged at `debug`).
   A surface opened again starts a new document and may warn again.
 
 ### 4.3 `button` clicks (UI `tsp`)
@@ -67,7 +67,7 @@ Separately, omp 19.1.1 (installed today) sends node kinds Mkrew does not know:
 
 - New `Shell::notify_session_panes(session, cx)`: every `PaneView` in `pane_views` whose slot shows `session` renders again (in any window); the window root renders with it (GPUI marks ancestors dirty), other panes and other windows reuse their last frame.
 - `Event::TspUpdate`: when `event_shown` says the session is on a pane, notify that session's panes instead of `Shell`.
-  The peek popover draws a session's surface outside any pane: when it shows that session, `Shell` is notified too.
+  The peek popover never draws an omp surface (it shows "omp draws this session natively"), so it needs no notify.
 - Status tick: `tsp_animating` and `chat_animating` return the sessions that animate; the tick notifies their panes.
   It notifies `Shell` only for what other surfaces draw (Board, starting pane, voice, Jira, time labels), as today.
 - Everything else that notifies `Shell` stays as it is (layout, theme, focus, dialogs, sidebar state).
