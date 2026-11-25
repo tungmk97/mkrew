@@ -930,16 +930,24 @@ pub fn paged_offset(offset: f32, page: f32, max: f32, up: bool) -> f32 {
     moved.clamp(-max.max(0.0), 0.0)
 }
 
-/// The width in px of the text column of a pane `pane_width` wide: the transcript's content (as
-/// wide as the pane less `space::XL` at both sides, like Tern), what the PTY is sized to.
-pub fn column_px(pane_width: f32) -> f32 {
-    pane_width - 2.0 * theme::CHAT_COLUMN_PADDING
+/// The widest the transcript of an omp surface is: the Chat column (`CHAT_COLUMN_WIDTH`,
+/// centered) when its pane is the only one shown, `None` (as wide as the pane, like Tern) among
+/// `several` (ADR 0112).
+pub fn column_max(several: bool) -> Option<f32> {
+    (!several).then_some(theme::CHAT_COLUMN_WIDTH)
+}
+
+/// The width in px of the text column of a pane `pane_width` wide: the transcript's content
+/// ([`column_max`] less `space::XL` at both sides), what the PTY is sized to.
+pub fn column_px(pane_width: f32, several: bool) -> f32 {
+    column_max(several).map_or(pane_width, |max| pane_width.min(max))
+        - 2.0 * theme::CHAT_COLUMN_PADDING
 }
 
 /// The PTY columns for a pane `pane_width` wide; `None` while the width is unknown (not laid out
 /// yet, or no room for one cell): the PTY keeps its size then, it is never sized to a guess.
-pub fn fit_width(pane_width: f32, cell_px: f32) -> Option<u16> {
-    let column = column_px(pane_width);
+pub fn fit_width(pane_width: f32, cell_px: f32, several: bool) -> Option<u16> {
+    let column = column_px(pane_width, several);
     (pane_width > 0.0 && cell_px > 0.0 && column >= cell_px).then(|| cols_for(column, cell_px))
 }
 
@@ -2665,10 +2673,11 @@ mod tests {
     }
 
     #[test]
-    fn the_pty_is_sized_to_the_pane_less_its_side_padding() {
+    fn the_pty_is_sized_to_the_chat_column_alone_and_to_the_pane_among_several() {
         let pad = 2.0 * theme::CHAT_COLUMN_PADDING;
-        assert_eq!(column_px(400.0), 400.0 - pad);
-        assert_eq!(column_px(5000.0), 5000.0 - pad);
+        assert_eq!(column_px(400.0, false), 400.0 - pad);
+        assert_eq!(column_px(5000.0, false), theme::CHAT_COLUMN_WIDTH - pad);
+        assert_eq!(column_px(5000.0, true), 5000.0 - pad);
     }
 
     #[test]
@@ -3020,13 +3029,17 @@ mod tests {
 
     #[test]
     fn the_pty_is_never_fitted_to_an_unknown_width() {
-        assert_eq!(fit_width(-24.0, 8.0), None, "before the first layout");
-        assert_eq!(fit_width(0.0, 8.0), None);
-        assert_eq!(fit_width(40.0, 8.0), None, "no room for one cell");
-        assert_eq!(fit_width(500.0, 0.0), None);
-        assert_eq!(fit_width(500.0, f32::NAN), None);
-        let cols = fit_width(500.0, 8.0).unwrap();
-        assert_eq!(cols, cols_for(column_px(500.0), 8.0));
+        assert_eq!(
+            fit_width(-24.0, 8.0, false),
+            None,
+            "before the first layout"
+        );
+        assert_eq!(fit_width(0.0, 8.0, false), None);
+        assert_eq!(fit_width(40.0, 8.0, true), None, "no room for one cell");
+        assert_eq!(fit_width(500.0, 0.0, false), None);
+        assert_eq!(fit_width(500.0, f32::NAN, false), None);
+        let cols = fit_width(500.0, 8.0, false).unwrap();
+        assert_eq!(cols, cols_for(column_px(500.0, false), 8.0));
         assert!(cols >= 20);
     }
 

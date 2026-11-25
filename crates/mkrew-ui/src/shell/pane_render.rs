@@ -607,7 +607,7 @@ impl Shell {
         let content = match &key {
             PaneKey::Session(id) => {
                 if tsp_drawn {
-                    self.render_tsp(*id, is_focused, width, now, theme, cx)
+                    self.render_tsp(*id, is_focused, width, several, now, theme, cx)
                 } else if info.is_some_and(|info| self.chat_on(info)) {
                     self.render_chat(*id, is_focused, now, theme, cx)
                 } else {

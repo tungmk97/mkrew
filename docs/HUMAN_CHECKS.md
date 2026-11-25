@@ -21,6 +21,12 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-25 omp surface width (ADR 0112)
+
+Screenshots: `docs/screenshots/2026-11-25-omp-tsp-single-pane-<dark|light>.png` (alone: centered column).
+
+- [ ] **Split (dark + light):** split an omp pane beside another pane; its transcript spans the pane with 32 px at both sides and omp's own rows rewrap to it, the composer stays in the 760 px column; close the neighbour (or zoom the pane) and the transcript goes back to the centered column. (smoke clicks did not reach the split button, so this was not shot)
+
 ### To verify - 2026-11-24 Browser pane (ADR 0111, spec docs/superpowers/specs/2026-11-24-browser-pane-design.md)
 
 Screenshots: `docs/screenshots/browser-pane-<view>-<dark|light>.png`.
