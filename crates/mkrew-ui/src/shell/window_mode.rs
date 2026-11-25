@@ -4,7 +4,9 @@
 use crate::shell::hosts::HostUi;
 use crate::shell::space_view::SpaceWindow;
 use crate::*;
-use mkrew_ui::window_mode::{Choice, OpenTarget, open_target};
+use mkrew_ui::window_mode::{
+    Choice, OpenTarget, PickOutcome, PickRow, SplitPlan, WorkspacePicker, open_target, plan_combine,
+};
 
 /// What runs where an opened workspace lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -621,5 +623,332 @@ impl Shell {
                 .into_any_element(),
             None => Self::modal_shade("open-ask-shade", panel, cx),
         }
+    }
+
+    /// "Open workspaces in windows" (spec 4.1); with one workspace or none the mode changes
+    /// at once.
+    pub(crate) fn open_split_picker(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let host = self.space_host(window);
+        let shown = self.workspace_of(host);
+        let listed = self.shown_workspaces(host);
+        if listed.len() <= 1 {
+            let keep = shown
+                .or_else(|| listed.first().copied())
+                .unwrap_or_default();
+            return self.split_into_windows(SplitPlan { keep, open: vec![] }, window, cx);
+        }
+        let projects = self.sidebar.projects();
+        let sessions = self.sidebar.sessions();
+        let count = |project: Ulid, state: SessionState| {
+            (sessions.iter())
+                .filter(|s| {
+                    s.project_id == project && s.kind == SessionKind::Agent && s.state == state
+                })
+                .count()
+        };
+        let rows = (listed.iter())
+            .filter_map(|id| projects.iter().find(|project| project.id == *id))
+            .map(|project| PickRow {
+                id: project.id,
+                name: project.name.clone(),
+                color: project.color.clone(),
+                working: count(project.id, SessionState::Working),
+                asking: count(project.id, SessionState::NeedsInput),
+            })
+            .collect();
+        self.close_menus();
+        self.split_picker = Some(WorkspacePicker::new(rows, shown));
+        self.palette_host = host;
+        self.dialog_serial += 1;
+        self.in_host(host, window, cx, |shell, window, cx| {
+            window.focus(&shell.dialog_focus, cx);
+            cx.notify();
+        });
+    }
+
+    pub(crate) fn split_picker_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
+        cx.stop_propagation();
+        let Some(picker) = self.split_picker.as_mut() else {
+            return;
+        };
+        match picker.key(&event.keystroke) {
+            PickOutcome::Close => return self.close_split_picker(window, cx),
+            PickOutcome::Paste => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    picker.insert(&text);
+                }
+            }
+            PickOutcome::Done(plan) => {
+                self.split_picker = None;
+                self.focus_pane(window, cx);
+                self.split_into_windows(plan, window, cx);
+            }
+            PickOutcome::Edited => {}
+        }
+        cx.notify();
+    }
+
+    fn close_split_picker(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.split_picker = None;
+        self.palette_host = self.primary_host();
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    /// The primary button or Enter: the confirmation step first with several ticked.
+    fn confirm_split_picker(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(picker) = self.split_picker.as_mut() else {
+            return;
+        };
+        if let PickOutcome::Done(plan) = picker.confirm() {
+            self.split_picker = None;
+            self.focus_pane(window, cx);
+            self.split_into_windows(plan, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The asking window shows `plan.keep`; every other ticked workspace opens in a new
+    /// window, cascading from it; the mode is saved.
+    pub(crate) fn split_into_windows(
+        &mut self,
+        plan: SplitPlan,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let host = self.space_host(window);
+        self.set_window_mode(WindowMode::PerWorkspace, cx);
+        if !plan.keep.is_nil() && self.workspace_of(host) != Some(plan.keep) {
+            self.in_host(host, window, cx, move |shell, window, cx| {
+                shell.activate_workspace(host, plan.keep, window, cx);
+            });
+        }
+        let open: Vec<Ulid> = (plan.open.into_iter())
+            .filter(|project| self.space_of(*project).is_none())
+            .collect();
+        let last = open.len();
+        for (step, project) in (1..).zip(open) {
+            let (bounds, placement) = self.new_space_bounds(host, step, cx);
+            // The asking window keeps the keyboard once the new ones are up.
+            let then = (step == last).then(|| -> AfterOpen {
+                Box::new(move |shell, _, cx| {
+                    shell.in_window(host, cx, |_, window, _| window.activate_window());
+                })
+            });
+            self.open_space_window(Some(project), bounds, placement, then, cx);
+        }
+    }
+
+    /// Mode 1 again (spec 4.3): the asking window keeps its workspace and shows the sidebar;
+    /// every other Space window closes. Detached windows stay.
+    pub(crate) fn combine_windows(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let HostId::Space(keep) = self.space_host(window) else {
+            return;
+        };
+        let spaces: Vec<SpaceKey> = self.spaces_shown().map(|(key, _)| key).collect();
+        let closing = plan_combine(keep, &spaces);
+        for key in &closing {
+            self.close_space_window(*key, cx);
+        }
+        self.set_window_mode(WindowMode::Single, cx);
+        if !closing.is_empty() {
+            self.toast_info(format!("Combined {} windows", closing.len() + 1), cx);
+        }
+        cx.notify();
+    }
+
+    /// Sets and saves `[ui] window_mode`.
+    pub(crate) fn set_window_mode(&mut self, mode: WindowMode, cx: &mut Context<'_, Self>) {
+        self.window_mode = mode;
+        let value = format!("\"{}\"", mode.name());
+        if let Err(error) =
+            mkrew_core::settings::write_ui_value(&self.settings_file, "window_mode", &value)
+        {
+            self.settings_write_failed("the window mode", error, cx);
+        }
+        self.windows_dirty = true;
+        // Every Space window draws again: sidebar, stripe and title follow the mode.
+        cx.notify();
+    }
+
+    /// The picker: a filter, one row per workspace (its ✓, avatar, name and what its agents
+    /// do), then Cancel and the primary button; or the confirmation step with Back.
+    pub(crate) fn render_split_picker(
+        &self,
+        picker: &WorkspacePicker,
+        window: &Window,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let body = if picker.confirming() {
+            let text = picker.confirmation(|id| self.workspace_name(id).to_owned());
+            div()
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text))
+                .child(text)
+                .into_any_element()
+        } else {
+            let rows = (picker.visible().into_iter().enumerate()).map(|(index, row)| {
+                let id = row.id;
+                let color = row.color.as_deref().and_then(|c| theme.workspace_color(c));
+                let meta = mkrew_ui::sidebar::workspace_summary(row.working, row.asking, 0);
+                list_row(
+                    ("split-row", index),
+                    index == picker.cursor() && picker.in_list(),
+                    theme,
+                )
+                .tooltip(tooltip(theme, "Tick or untick", "Space"))
+                .on_click(cx.listener(move |shell, _, _, cx| {
+                    if let Some(picker) = shell.split_picker.as_mut() {
+                        picker.toggle(id);
+                    }
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .size(px(space::M))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(radius::SMALL))
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(rgb(theme.control_border))
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.accent))
+                        .child(if picker.is_ticked(id) { "✓" } else { "" }),
+                )
+                .child(super::sidebar::workspace_avatar(&row.name, color, theme))
+                .child(div().flex_1().min_w_0().truncate().child(row.name.clone()))
+                .children(meta.map(|meta| {
+                    div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::XS))
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .child(status_dot(
+                            if row.asking > 0 {
+                                theme.status_needs_input
+                            } else {
+                                theme.status_working
+                            },
+                            false,
+                        ))
+                        .child(meta)
+                }))
+            });
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(space::S))
+                .child(search_box(
+                    caret_field(
+                        "split-filter",
+                        picker.filter_input(),
+                        "Filter workspaces",
+                        self.dialog_focus.is_focused(window) && !picker.in_list(),
+                        theme,
+                        cx,
+                        |shell, caret| {
+                            if let Some(picker) = shell.split_picker.as_mut() {
+                                picker.click(caret.at, caret.extend, caret.clicks);
+                            }
+                        },
+                    ),
+                    None,
+                    self.dialog_focus.is_focused(window),
+                    theme,
+                ))
+                .child(
+                    div()
+                        .id("split-rows")
+                        .max_h(px(theme::SEND_SESSIONS_HEIGHT))
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .gap(px(space::XS))
+                        .children(rows),
+                )
+                .child(
+                    div()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .child("↑↓ pick · Space ticks · Alt+A ticks all · Enter opens"),
+                )
+                .into_any_element()
+        };
+        let label = picker.button_label();
+        let primary = if picker.can_confirm() {
+            button("split-open", label, theme, true)
+                .focus_stop(theme)
+                .tooltip(tooltip(theme, "Open the ticked workspaces", "Enter"))
+                .on_click(
+                    cx.listener(|shell, _, window, cx| shell.confirm_split_picker(window, cx)),
+                )
+                .into_any_element()
+        } else {
+            disabled_button("split-open", label, theme, true)
+                .tooltip(tooltip(theme, "Tick a workspace", ""))
+                .into_any_element()
+        };
+        let secondary = if picker.confirming() {
+            button("split-back", "Back", theme, false)
+                .focus_stop(theme)
+                .tooltip(tooltip(theme, "Back to the list", "Esc"))
+                .on_click(cx.listener(|shell, _, _, cx| {
+                    if let Some(picker) = shell.split_picker.as_mut() {
+                        picker.back();
+                    }
+                    cx.notify();
+                }))
+        } else {
+            button("split-cancel", "Cancel", theme, false)
+                .focus_stop(theme)
+                .tooltip(tooltip(theme, "Stay in one window", "Esc"))
+                .on_click(cx.listener(|shell, _, window, cx| shell.close_split_picker(window, cx)))
+        };
+        let panel = floating_panel("split-picker", theme)
+            .w(px(theme::DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .font_family(theme.ui_font_family.clone())
+            .dialog_root(
+                &self.dialog_focus,
+                true,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::split_picker_key_down),
+            )
+            .relative()
+            .child(self.typing(&self.dialog_focus, Self::split_picker_key_down, cx))
+            .child(
+                div()
+                    .text_size(font_size::CARD_TITLE)
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child("Open workspaces in windows"),
+            )
+            .child(body)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(space::S))
+                    .pt(px(space::S))
+                    .child(secondary)
+                    .child(primary),
+            );
+        Self::modal_shade("split-picker-shade", panel, cx)
     }
 }

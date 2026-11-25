@@ -366,8 +366,9 @@ impl Shell {
     }
 
     /// The split button's menu (SPEC §10): Split right, Split down, Equalize panes, then the
-    /// layouts, each with its thumbnail and shortcut. A layout holding fewer panes than the tab
-    /// has is greyed (its tooltip says why).
+    /// layouts, each with its thumbnail and shortcut, then in a Space window the window mode
+    /// switch (ADR 0113). A layout holding fewer panes than the tab has is greyed (its tooltip
+    /// says why).
     pub(crate) fn layout_menu_rows(&self, menu: &LayoutMenu) -> Rows {
         let panes = (self.tabs.values())
             .find_map(|tabs| tabs.tab(menu.tab_id))
@@ -402,6 +403,22 @@ impl Shell {
             };
             item.row()
         }));
+        let mode_row = match self.window_mode {
+            _ if self.menu_host.space().is_none() => None,
+            WindowMode::Single if self.sidebar.projects().len() > 1 => Some(MenuItem::new(
+                "Open each workspace in its own window…",
+                run(Command::SplitWindows),
+            )),
+            WindowMode::Single => None,
+            WindowMode::PerWorkspace => Some(MenuItem::new(
+                "Combine into one window",
+                run(Command::CombineWindows),
+            )),
+        };
+        if let Some(item) = mode_row {
+            rows.push(MenuRow::Separator);
+            rows.push(item.row());
+        }
         rows
     }
 

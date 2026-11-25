@@ -533,6 +533,8 @@ impl Shell {
             Command::ToggleCompactSidebar => self.toggle_compact_sidebar(window, cx),
             Command::ToggleInspector => self.toggle_inspector(window, cx),
             Command::TogglePanelSide => self.toggle_panel_side(cx),
+            Command::SplitWindows => self.open_split_picker(window, cx),
+            Command::CombineWindows => self.combine_windows(window, cx),
             // Handled at the top of `run`.
             Command::VoiceInput => {}
             Command::AskAi => self.open_ask(window, cx),

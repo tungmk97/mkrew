@@ -61,6 +61,36 @@ fn context(view: View) -> Context {
 }
 
 #[test]
+fn split_and_combine_show_in_their_mode() {
+    let single = Context {
+        workspaces: 2,
+        ..context(View::Terminals)
+    };
+    let alone = Context {
+        workspaces: 1,
+        ..context(View::Terminals)
+    };
+    let spaces = Context {
+        workspaces: 2,
+        per_workspace: true,
+        ..context(View::Terminals)
+    };
+    assert!(available(Command::SplitWindows, &single));
+    assert!(!available(Command::SplitWindows, &alone));
+    assert!(!available(Command::SplitWindows, &spaces));
+    assert!(available(Command::CombineWindows, &spaces));
+    assert!(!available(Command::CombineWindows, &single));
+    assert_eq!(
+        title(Command::SplitWindows),
+        "Window: Open each workspace in its own window…"
+    );
+    assert_eq!(
+        title(Command::CombineWindows),
+        "Window: Combine into one window"
+    );
+}
+
+#[test]
 fn sidebar_commands_hide_with_a_window_per_workspace() {
     let single = context(View::Terminals);
     let spaces = Context {

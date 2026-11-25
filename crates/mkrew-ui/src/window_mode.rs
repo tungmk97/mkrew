@@ -320,6 +320,12 @@ impl WorkspacePicker {
         }
     }
 
+    /// A click or drag in the filter field.
+    pub fn click(&mut self, at: usize, extend: bool, clicks: usize) {
+        self.filter.click(at, extend, clicks);
+        self.in_list = false;
+    }
+
     /// Typed or pasted filter text (one line).
     pub fn insert(&mut self, text: &str) {
         let line: String = text.chars().filter(|c| *c != '\r' && *c != '\n').collect();

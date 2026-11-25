@@ -731,6 +731,8 @@ pub fn title(command: Command) -> String {
         Command::ToggleCompactSidebar => "Global: Toggle compact sidebar".into(),
         Command::ToggleInspector => "View: Toggle right panel".into(),
         Command::TogglePanelSide => "Panel: Move to the other side".into(),
+        Command::SplitWindows => "Window: Open each workspace in its own window…".into(),
+        Command::CombineWindows => "Window: Combine into one window".into(),
         Command::VoiceInput => "Global: Voice input (start / stop)".into(),
         Command::AskAi => "Global: Ask AI…".into(),
         Command::ContextMenu => "Global: Open context menu".into(),
@@ -773,6 +775,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ContextMenu
         | Command::ShowDiff => context.workspace,
         Command::ToggleSidebar | Command::ToggleCompactSidebar => !context.per_workspace,
+        Command::SplitWindows => !context.per_workspace && context.workspaces > 1,
+        Command::CombineWindows => context.per_workspace,
         Command::FocusSidebar => context.workspace && !context.per_workspace,
         Command::ShowDocs => context.workspace && context.features.docs,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,

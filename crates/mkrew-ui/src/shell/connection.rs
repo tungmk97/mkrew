@@ -381,6 +381,7 @@ impl Shell {
             open_pref,
             open_ask: None,
             modal_host: None,
+            split_picker: None,
             reads: HashMap::new(),
             chats: HashMap::new(),
             tsps: HashMap::new(),
@@ -807,6 +808,7 @@ impl Shell {
         self.peek = None;
         self.peek_return = None;
         self.open_ask = None;
+        self.split_picker = None;
         // An open confirmation keeps the keyboard; it hands focus back when answered.
         // A kept dialog (typed text survives) keeps it too.
         if !window.has_active_prompt() && self.task_dialog.is_none() && self.add_workspace.is_none()
@@ -1075,6 +1077,23 @@ impl Shell {
                     self.board_all = settings.ui.board_all_workspaces;
                     self.panel_side = settings.ui.panel_side;
                     self.open_pref = settings.ui.open_workspace;
+                    // A hand edit of `window_mode` (ADR 0113): to `per_workspace` the open
+                    // windows become the windows of their workspaces (no picker); to `single`
+                    // they combine into the one used last.
+                    if settings.ui.window_mode != self.window_mode {
+                        match settings.ui.window_mode {
+                            WindowMode::PerWorkspace => {
+                                self.window_mode = WindowMode::PerWorkspace;
+                                self.windows_dirty = true;
+                                cx.notify();
+                            }
+                            WindowMode::Single => {
+                                self.in_window(self.primary_host(), cx, |shell, window, cx| {
+                                    shell.combine_windows(window, cx);
+                                });
+                            }
+                        }
+                    }
                     self.follow_md_mode(settings.ui.md_mode);
                     if !self.md_split_dragging {
                         self.md_split = files_view::md_split_share(settings.ui.md_split);

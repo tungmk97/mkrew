@@ -86,14 +86,15 @@ impl Shell {
             .filter(|_| per_workspace)
             .and_then(|project| project.color.as_deref())
             .and_then(|color| theme.workspace_color(color));
-        if per_workspace {
-            let title = shown.map_or_else(|| "Mkrew".to_owned(), |p| format!("{} - Mkrew", p.name));
-            if let Some(ui) = self.hosts.get_mut(&host)
-                && ui.title != title
-            {
-                window.set_window_title(&title);
-                ui.title = title;
-            }
+        let title = match shown {
+            Some(project) if per_workspace => format!("{} - Mkrew", project.name),
+            _ => "Mkrew".to_owned(),
+        };
+        if let Some(ui) = self.hosts.get_mut(&host)
+            && ui.title != title
+        {
+            window.set_window_title(&title);
+            ui.title = title;
         }
         div()
             .size_full()
@@ -270,6 +271,12 @@ impl Shell {
                             .as_ref()
                             .filter(|_| dialogs)
                             .map(|diagram| self.render_diagram_dialog(diagram, &theme, cx)),
+                    )
+                    .children(
+                        self.split_picker
+                            .as_ref()
+                            .filter(|_| self.palette_host == host)
+                            .map(|picker| self.render_split_picker(picker, window, &theme, cx)),
                     )
                     .children(
                         self.open_ask

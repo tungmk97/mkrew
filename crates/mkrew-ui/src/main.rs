@@ -744,6 +744,8 @@ struct Shell {
     open_ask: Option<shell::window_mode::OpenAsk>,
     /// The Space window the open dialog draws in (set by its first frame).
     modal_host: Option<HostId>,
+    /// The open "Open workspaces in windows" picker (ADR 0113); drawn in `palette_host`.
+    split_picker: Option<mkrew_ui::window_mode::WorkspacePicker>,
     /// The transcripts being read, one per session (ADR 0104): the session panel's Thread
     /// section and every pane in Chat mode share them.
     reads: HashMap<Ulid, ThreadRead>,

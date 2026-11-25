@@ -249,6 +249,12 @@ pub enum Command {
     /// Move the Files / Session / Git panel to the other side of the panes (ADR 0113), saved
     /// as `[ui] panel_side`.
     TogglePanelSide,
+    /// Open each picked workspace in its own window (ADR 0113): `[ui] window_mode` becomes
+    /// `per_workspace`. Palette, Settings and the Split menu; no default key.
+    SplitWindows,
+    /// Combine the workspace windows into the one this runs in (ADR 0113): `[ui] window_mode`
+    /// becomes `single`. No default key.
+    CombineWindows,
     /// Git only: wrap long diff lines or cut them at the edge (the Wrap button).
     GitToggleWrap,
     /// Tree only: open the tree's cursor file in a kept tab (Enter opens a transient one).
@@ -411,6 +417,8 @@ impl Command {
             Command::MoveTabRight,
             Command::MoveTabToNewWindow,
             Command::TogglePanelSide,
+            Command::SplitWindows,
+            Command::CombineWindows,
             Command::GitToggleWrap,
             Command::OpenKept,
         ]);
@@ -531,6 +539,8 @@ impl Command {
             Command::MoveTabRight => "move_tab_right".into(),
             Command::MoveTabToNewWindow => "move_tab_to_new_window".into(),
             Command::TogglePanelSide => "toggle_panel_side".into(),
+            Command::SplitWindows => "split_windows".into(),
+            Command::CombineWindows => "combine_windows".into(),
             Command::GitToggleWrap => "git_toggle_wrap".into(),
             Command::OpenKept => "open_kept".into(),
         }
@@ -673,7 +683,9 @@ impl Command {
             | Command::BrowserForward
             | Command::BrowserReload
             | Command::BrowserOpenExternal
-            | Command::TogglePanelSide => String::new(),
+            | Command::TogglePanelSide
+            | Command::SplitWindows
+            | Command::CombineWindows => String::new(),
             Command::Layout(preset) => match preset {
                 Preset::Columns2 => "alt-shift-1",
                 Preset::Rows2 => "alt-shift-2",
