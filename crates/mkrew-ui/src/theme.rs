@@ -407,10 +407,14 @@ pub const DIALOG_ICON_TILE: f32 = 32.0;
 pub const DIALOG_BUTTON_MIN_WIDTH: f32 = 84.0;
 
 /// The Settings dialog (ADR 0073): its size, the page list width and the value column.
-pub const SETTINGS_DIALOG_WIDTH: f32 = 880.0;
-pub const SETTINGS_DIALOG_HEIGHT: f32 = 640.0;
-pub const SETTINGS_NAV_WIDTH: f32 = 200.0;
-pub const SETTINGS_CONTROL_WIDTH: f32 = 240.0;
+pub const SETTINGS_DIALOG_WIDTH: f32 = 960.0;
+pub const SETTINGS_DIALOG_HEIGHT: f32 = 720.0;
+pub const SETTINGS_NAV_WIDTH: f32 = 232.0;
+pub const SETTINGS_CONTROL_WIDTH: f32 = 260.0;
+/// The page column: its widest and the height of a navigation row and of a setting row.
+pub const SETTINGS_CONTENT_MAX_WIDTH: f32 = 740.0;
+pub const SETTINGS_NAV_ROW_HEIGHT: f32 = 30.0;
+pub const SETTINGS_ROW_MIN_HEIGHT: f32 = 56.0;
 /// Tallest the font pick's list grows (it scrolls past that).
 pub const SETTINGS_FONT_LIST_HEIGHT: f32 = 200.0;
 /// Settings → Prompts (spec 2026-11-04 section 7.2): the prompt list's width, how tall it grows

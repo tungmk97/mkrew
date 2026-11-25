@@ -1977,10 +1977,10 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   panel (`qr-light`) in both themes, `PHONE_QR_SIZE` px. The dialog re-reads `daemon.status`
   and Tailscale about once a second while open (off the UI thread). A failed Start / Stop shows in the dialog. The link carries the
   access token: it is never logged and never in a tooltip.
-- Settings (Ctrl+,, palette "Global: Open settings", ADR 0073, ADR 0097): a floating glass panel (`SETTINGS_DIALOG_WIDTH` ×
-  `SETTINGS_DIALOG_HEIGHT`, never larger than the window minus a margin). The left navigation (`SETTINGS_NAV_WIDTH`) starts with a
-  search box (Ctrl+F focuses it) and lists the pages under three overlines: App (General, Appearance, Notifications, Voice, Features),
-  Integrations (Jira, Phone, Machines) and Input (Keyboard, Prompts). The right side has the page title and a close button.
+- Settings (Ctrl+,, palette "Global: Open settings", ADR 0073, ADR 0097, ADR 0117): a floating glass panel (`SETTINGS_DIALOG_WIDTH` 960 ×
+  `SETTINGS_DIALOG_HEIGHT` 720, never larger than the window minus a margin). The left navigation (`SETTINGS_NAV_WIDTH` 232, a `well` fill, full height) starts with a
+  search box (Ctrl+F focuses it) and lists the pages, each with its own icon in 30 px rows, under three sentence-case group titles: App (General, Appearance, Notifications, Voice, Features),
+  Integrations (Jira, Phone, Machines) and Input (Keyboard, Prompts); the shown page is a tint plus a bar (`with_pick`). The right side is a scroll with a page head (the title in `VIEW_TITLE` and a one-sentence lead, `Tab::lead`) in a `SETTINGS_CONTENT_MAX_WIDTH` (740) column, a floating close button top right and a footer.
   With a query, the right side lists the matching settings of every page (a muted `Page › Group` breadcrumb, the label with the
   matched characters in accent and semibold, the help line and the real control); a setting matches when `palette::fuzzy` scores its label,
   help, TOML key or page name above zero; a label match always ranks above a help-only match, then by score; pages with no match are dimmed; shortcuts are not searched.
@@ -2055,8 +2055,8 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   dialog's error row, the commit box, a card notice) stays there; the tab strip's errors and notices are toasts (ADR 0106).
 - Confirmations (`window.prompt`) are drawn in the window, never as the OS message box
   (`App::set_prompt_builder`, `shell/confirm_prompt.rs`): the modal shade, a `surface` card
-  (`CONFIRM_DIALOG_WIDTH`, radius 12, faint border, light shadow), the question as a card
-  title, the detail in `text-muted`, buttons on the right with Cancel leftmost and the first
+  (`CONFIRM_DIALOG_WIDTH`, a `dialog_frame` with an icon tile: `CircleHelp`, or `TriangleAlert` in the danger tint for `PromptLevel::Critical`), the question as the head title,
+  the detail in `text-muted`, buttons on the right with Cancel leftmost and the first
   answer rightmost (accent; the danger button for `PromptLevel::Critical`). Esc = Cancel,
   Enter/Space = the ringed button (default: the first answer), Tab/←/→ move the ring. A click
   on the shade does nothing. OS file/folder pickers stay native.
@@ -2092,7 +2092,7 @@ Shadows: pop `0 18 50 -12` black 30 %; modal dark `0 28 72 -16` black 78 %, ligh
 There is no real backdrop blur (gpui-pre 0.3.7 cannot blur behind one element).
 The scrim behind a modal is black at 55 % (dark) or the page frame (`pane-gap`) at 50 % (light), a milky veil.
 A panel fades in and rises 4 px over `motion::FAST` and disappears at once; with the OS "Animation effects" setting off (Windows) it appears at once.
-No dialog builds its own panel frame.
+No dialog builds its own panel frame: a question-and-answer dialog is `widgets::dialog_frame` on that panel (ADR 0117): a head with a 32 px icon tile (danger tint for a destructive one), the title, an optional one-line sub and a close button, a body column (`dialog_body`, gap 16, side padding 24) and a foot band (`dialog_foot`, a divider on top, buttons right-aligned, an optional `dialog_hint` on the left); the primary button is `primary_button` (at least 84 px, with a `kbd` of the key that presses it); an error is an `error_note` (`danger_bg` fill, danger ring, CircleAlert), never a `✕` row. `DIALOG_WIDTH` is 560 and floating panels are `radius::PANEL` (16).
 
 **Pressable states, ADR 0097.**
 Every element with a click or mouse-down handler gets its hover, press and disabled look from `shell/widgets.rs` and `mkrew_ui::pressable` (`Look`, `press_style`, `Pressable`).

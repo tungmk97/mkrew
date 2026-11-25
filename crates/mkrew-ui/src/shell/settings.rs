@@ -133,8 +133,9 @@ impl Shell {
                     let search = usize::from(keyboard_search_shown(dialog));
                     let gallery = usize::from(dialog.gallery_shown());
                     let card = dialog.group_of(index, &self.keymap);
+                    // The page head is the first scroll child.
                     self.settings_scroll
-                        .scroll_to_item(card + banner + note + search + gallery);
+                        .scroll_to_item(1 + card + banner + note + search + gallery);
                 }
                 Focus::Gallery(_) if dialog.gallery_shown() => self.gallery_reveal.set(true),
                 _ => {}
@@ -261,43 +262,61 @@ impl Shell {
         let tab_item = |tab: Tab| {
             let active = tab == dialog.tab && !dialog.searching();
             let focused = tab == dialog.tab && dialog.focus == Focus::Tabs;
-            div()
-                .id(SharedString::from(format!("settings-tab-{}", tab.title())))
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::SMALL))
-                .text_size(font_size::BODY)
-                .text_color(rgb(if active { theme.text } else { theme.text_muted }))
-                // The active page keeps its `selected` fill and the pointer; the others hover.
-                .when(active, |el| el.bg(rgb(theme.selected)))
-                .pressable_unless(active, Look::Row, theme)
-                .when(focused, |el| {
-                    el.border(px(theme::BORDER_WIDTH))
-                        .border_color(rgb(theme.selected_ring))
-                })
-                // Dimmed, still readable and still clickable.
-                .when(dimmed.contains(&tab), |el| el.opacity(opacity::DIMMED))
-                .on_press(
-                    true,
-                    cx.listener(move |shell, _, window, cx| {
-                        shell.settings_do(|d, _| d.set_tab(tab), window, cx);
-                    }),
-                )
-                .child(tab.title())
-                .into_any_element()
+            with_pick(
+                div()
+                    .id(SharedString::from(format!("settings-tab-{}", tab.title())))
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .h(theme::rems_px(theme::SETTINGS_NAV_ROW_HEIGHT))
+                    .px(px(space::S))
+                    .rounded(px(radius::MEDIUM))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(if focused {
+                        rgb(theme.selected_ring).into()
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .text_size(font_size::BODY)
+                    .text_color(rgb(if active { theme.text } else { theme.text_muted }))
+                    // The active page keeps its tint and the pointer; the others hover.
+                    .pressable_unless(active, Look::Row, theme)
+                    // Dimmed, still readable and still clickable.
+                    .when(dimmed.contains(&tab), |el| el.opacity(opacity::DIMMED))
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, _, window, cx| {
+                            shell.settings_do(|d, _| d.set_tab(tab), window, cx);
+                        }),
+                    )
+                    .child(icon_svg(
+                        tab.icon(),
+                        theme::ICON_SIZE_SMALL,
+                        if active {
+                            theme.accent_text
+                        } else {
+                            theme.text_subtle
+                        },
+                    ))
+                    .child(tab.title()),
+                active,
+                theme,
+            )
+            .into_any_element()
         };
-        let nav_items: Vec<gpui::AnyElement> = settings_dialog::NAV
-            .iter()
-            .flat_map(|(title, tabs)| {
-                std::iter::once(
-                    overline(title, theme)
-                        .px(px(space::S))
-                        .pt(px(space::S))
-                        .into_any_element(),
-                )
-                .chain(tabs.iter().map(|&tab| tab_item(tab)))
-            })
-            .collect();
+        let nav_groups =
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(space::L))
+                .children(settings_dialog::NAV.iter().map(|(title, tabs)| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(space::XS))
+                        .child(section_title(title, theme).px(px(space::S)))
+                        .children(tabs.iter().map(|&tab| tab_item(tab)))
+                }));
         let find = search_box(
             caret_field(
                 "settings-find",
@@ -326,12 +345,17 @@ impl Shell {
             .flex_none()
             .flex()
             .flex_col()
-            .gap(px(space::XS))
-            .p(px(space::M))
+            .gap(px(space::L))
+            .px(px(space::M))
+            .py(px(space::L))
+            .bg(rgb(theme.well))
+            // gpui does not clip a fill to the panel's rounded corners.
+            .rounded_tl(px(radius::PANEL))
+            .rounded_bl(px(radius::PANEL))
             .border_r(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
+            .border_color(gpui::rgba(theme.layer[1]))
             .child(find)
-            .children(nav_items);
+            .child(nav_groups);
 
         let banner = self
             .settings_notice(dialog)
@@ -366,6 +390,33 @@ impl Shell {
         // carry their own.
         let one_card = dialog.tab == Tab::Keyboard && !dialog.searching();
         let below = if one_card { space::M } else { 0.0 };
+        // Each direct child of the scroll container is a 740 px column, so
+        // `settings_scroll.scroll_to_item(n)` indexes one child per item, the page head first.
+        let column = |el: gpui::AnyElement| {
+            div()
+                .w_full()
+                .max_w(px(theme::SETTINGS_CONTENT_MAX_WIDTH))
+                .child(el)
+                .into_any_element()
+        };
+        let page_head = div()
+            .flex()
+            .flex_col()
+            .gap(px(space::XS))
+            .pb(px(space::L))
+            .child(
+                div()
+                    .text_size(font_size::VIEW_TITLE)
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(dialog.heading()),
+            )
+            .child(
+                div()
+                    .text_size(font_size::BODY)
+                    .text_color(rgb(theme.text_subtle))
+                    .child(dialog.lead()),
+            );
         let body = div()
             .id("settings-rows")
             .flex_1()
@@ -374,55 +425,39 @@ impl Shell {
             .track_scroll(&self.settings_scroll)
             .flex()
             .flex_col()
+            .items_center()
             .gap(px(if one_card { 0.0 } else { space::M }))
-            .p(px(space::M))
-            .children(banner.map(|banner| banner.mb(px(below))))
-            .children(daemon_note.map(|note| note.mb(px(below))))
+            .px(px(space::XXL))
+            .py(px(space::XXL))
+            .child(column(page_head.into_any_element()))
+            .children(banner.map(|banner| column(banner.mb(px(below)).into_any_element())))
+            .children(daemon_note.map(|note| column(note.mb(px(below)).into_any_element())))
             .children(
                 (dialog.tab == Tab::Machines && !dialog.searching())
                     .then(|| self.render_machines_page(dialog, typing, theme, cx))
                     .into_iter()
-                    .flatten(),
+                    .flatten()
+                    .map(column),
             )
             .children(
                 (dialog.tab == Tab::Prompts && !dialog.searching())
                     .then(|| self.render_prompts_page(dialog, typing, theme, cx))
                     .into_iter()
-                    .flatten(),
+                    .flatten()
+                    .map(column),
             )
-            .children(search.map(|search| search.mb(px(below))))
+            .children(search.map(|search| column(search.mb(px(below)).into_any_element())))
             .children(
                 dialog
                     .gallery_shown()
-                    .then(|| self.render_theme_gallery(dialog, theme, cx)),
+                    .then(|| column(self.render_theme_gallery(dialog, theme, cx))),
             )
-            .children(self.settings_cards(dialog, &rows, typing, theme, cx));
-
-        let header = div()
-            .flex()
-            .items_center()
-            .px(px(space::L))
-            .py(px(space::M))
-            .border_b(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
-            .child(
-                div()
-                    .flex_1()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(dialog.heading()),
-            )
-            .child(
-                small_icon_button("settings-close", Icon::X, theme)
-                    .tooltip(tooltip(theme, "Close", "Esc"))
-                    .on_press(
-                        true,
-                        cx.listener(|shell, _, window, cx| {
-                            shell.close_settings_dialog(window, cx);
-                        }),
-                    ),
+            .children(
+                self.settings_cards(dialog, &rows, typing, theme, cx)
+                    .into_iter()
+                    .map(column),
             );
+
         let footer = div()
             .flex()
             .items_center()
@@ -434,7 +469,7 @@ impl Shell {
             .text_size(font_size::META)
             .child(
                 div()
-                    .text_color(rgb(theme.text_muted))
+                    .text_color(rgb(theme.text_subtle))
                     .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
             )
             .child(self.settings_link(
@@ -456,7 +491,7 @@ impl Shell {
                 },
             ))
             .child(div().flex_1())
-            .child(div().text_color(rgb(theme.text_muted)).child(
+            .child(div().text_color(rgb(theme.text_subtle)).child(
                 // The Prompts page saves by itself, so its own keys stay in the hint.
                 if dialog.tab == Tab::Prompts && !dialog.searching() {
                     mkrew_ui::os_text!(
@@ -470,13 +505,29 @@ impl Shell {
 
         let max_height = (viewport_height - px(space::XXL * 2.0)).max(px(0.0));
         let max_width = (window.viewport_size().width - px(space::XXL * 2.0)).max(px(0.0));
+        let right = div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .child(body)
+            .child(footer)
+            .child(
+                div()
+                    .absolute()
+                    .top(px(space::M))
+                    .right(px(space::M))
+                    .child(dialog_close("settings-close", theme).on_click(
+                        cx.listener(|shell, _, window, cx| shell.close_settings_dialog(window, cx)),
+                    )),
+            );
         let panel = floating_panel("settings-dialog", theme)
             .w(px(theme::SETTINGS_DIALOG_WIDTH))
             .h(px(theme::SETTINGS_DIALOG_HEIGHT))
             .max_w(max_width)
             .max_h(max_height)
             .flex()
-            .flex_col()
             .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
@@ -486,9 +537,8 @@ impl Shell {
             )
             .relative()
             .child(self.typing(&self.dialog_focus, Self::settings_key_down, cx))
-            .child(header)
-            .child(div().flex().flex_1().min_h_0().child(nav).child(body))
-            .child(footer);
+            .child(nav)
+            .child(right);
         Self::modal_shade("settings-shade", panel, cx)
     }
 
@@ -518,29 +568,24 @@ impl Shell {
         let searching = dialog.searching();
         if searching && rows.is_empty() {
             return vec![
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(space::M))
-                    .py(px(space::XL))
-                    .child(empty_state(
-                        theme,
-                        None,
-                        None,
-                        format!("No setting matches “{}”.", dialog.find.trim()).into(),
-                        None,
-                    ))
-                    .child(
-                        secondary_button("settings-clear-search", "Clear search (Esc)", theme)
-                            .on_press(
-                                true,
-                                cx.listener(|shell, _, window, cx| {
-                                    shell.settings_do(|d, _| d.clear_find(), window, cx);
-                                }),
-                            ),
-                    )
-                    .into_any_element(),
+                empty_state(
+                    theme,
+                    None,
+                    None,
+                    format!("No setting matches “{}”.", dialog.find.trim()).into(),
+                    None,
+                )
+                .child(
+                    secondary_button("settings-clear-search", "Clear search (Esc)", theme)
+                        .mt(px(space::XS))
+                        .on_press(
+                            true,
+                            cx.listener(|shell, _, window, cx| {
+                                shell.settings_do(|d, _| d.clear_find(), window, cx);
+                            }),
+                        ),
+                )
+                .into_any_element(),
             ];
         }
         let hits = dialog.hits();
@@ -582,7 +627,7 @@ impl Shell {
                     .flex()
                     .flex_col()
                     .bg(rgb(theme.surface))
-                    .border_color(rgb(theme.border));
+                    .border_color(gpui::rgba(theme.layer[1]));
                 if shortcut {
                     // The Keyboard page stays a flat list inside one card. Each row is a
                     // piece of it (the page has no gap), so the scroll can still follow a row.
@@ -601,8 +646,12 @@ impl Shell {
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(space::XS))
-                        .children((!flat).then(|| overline(title, theme).px(px(space::S))))
+                        .gap(px(space::S))
+                        .children((!flat).then(|| {
+                            section_title(title, theme)
+                                .px(px(space::S))
+                                .pt(px(space::M))
+                        }))
                         .child(
                             card.rounded(px(radius::LARGE))
                                 .border(px(theme::BORDER_WIDTH))
@@ -626,18 +675,7 @@ impl Shell {
             .flex()
             .items_center()
             .gap(px(space::S))
-            .p(px(space::S))
-            .rounded(px(radius::MEDIUM))
-            .bg(rgb(theme.surface_raised))
-            .text_size(font_size::META)
-            .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_color(rgb(theme.text))
-                    .child(text),
-            )
+            .child(error_note(text, theme).flex_1().min_w_0())
             .child(
                 self.settings_link("settings-fix", "Fix in Zed", theme, cx, move |shell, cx| {
                     if settings_file {
@@ -731,70 +769,78 @@ impl Shell {
                 .into_any_element(),
             None => title.into_any_element(),
         };
-        div()
-            .id(SharedString::from(format!("settings-row-{}", row.id())))
-            .flex()
-            .flex_col()
-            .gap(px(space::XS))
-            .p(px(space::M))
-            // The first and last row follow the card's rounded corners: gpui does not clip a
-            // fill to them.
-            .when(first, |el| el.rounded_t(px(radius::LARGE)))
-            .when(last, |el| el.rounded_b(px(radius::LARGE)))
-            .when(!first, |el| {
-                el.border_t(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.divider))
-            })
-            .when(focused, |el| el.bg(rgb(theme.selected)))
-            .pressable_unless(focused, Look::Row, theme)
-            .on_press(true, Self::press_row(index, cx))
-            .children(crumb.map(|crumb| meta_line(theme, crumb.into())))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::M))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap(px(space::S))
-                                    .text_size(font_size::BODY)
-                                    .text_color(rgb(theme.text))
-                                    .child(label)
-                                    .when(is_default, |el| {
-                                        el.child(
-                                            div()
-                                                .text_size(font_size::META)
-                                                .text_color(rgb(theme.text_muted))
-                                                .child("default"),
-                                        )
-                                    }),
-                            )
-                            .children(help.map(|help| meta_line(theme, help.into()))),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .w(px(theme::SETTINGS_CONTROL_WIDTH))
-                            .flex()
-                            .justify_end()
-                            .child(control),
-                    ),
-            )
-            .children(error.map(|error| {
-                div()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.status_exited))
-                    .child(error)
-            }))
-            .children(self.list_pick_view(dialog, row, typing, theme, cx))
-            .into_any_element()
+        with_pick(
+            div()
+                .id(SharedString::from(format!("settings-row-{}", row.id())))
+                .flex()
+                .flex_col()
+                .gap(px(space::XS))
+                .min_h(theme::rems_px(theme::SETTINGS_ROW_MIN_HEIGHT))
+                .px(px(space::L))
+                .py(px(space::M))
+                // The first and last row follow the card's rounded corners: gpui does not clip a
+                // fill to them.
+                .when(first, |el| el.rounded_t(px(radius::LARGE)))
+                .when(last, |el| el.rounded_b(px(radius::LARGE)))
+                .when(!first, |el| {
+                    el.border_t(px(theme::BORDER_WIDTH))
+                        .border_color(rgb(theme.divider))
+                })
+                .pressable_unless(focused, Look::Row, theme),
+            focused,
+            theme,
+        )
+        .on_press(true, Self::press_row(index, cx))
+        .children(crumb.map(|crumb| meta_line(theme, crumb.into())))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::XL))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(space::S))
+                                .text_size(font_size::BODY)
+                                .font_weight(FontWeight(weight::MEDIUM))
+                                .text_color(rgb(theme.text))
+                                .child(label)
+                                .when(is_default, |el| {
+                                    el.child(
+                                        div()
+                                            .text_size(font_size::META)
+                                            .text_color(rgb(theme.text_subtle))
+                                            .child("default"),
+                                    )
+                                }),
+                        )
+                        .children(help.map(|help| {
+                            meta_line(theme, help.into()).text_color(rgb(theme.text_subtle))
+                        })),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(theme::SETTINGS_CONTROL_WIDTH))
+                        .flex()
+                        .justify_end()
+                        .child(control),
+                ),
+        )
+        .children(error.map(|error| {
+            div()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.status_exited))
+                .child(error)
+        }))
+        .children(self.list_pick_view(dialog, row, typing, theme, cx))
+        .into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -159,7 +159,7 @@ impl Shell {
                     shell.gallery_leave(window, cx);
                 }
             }))
-            .child(overline("Themes", theme).px(px(space::S)));
+            .child(section_title("Themes", theme).px(px(space::S)));
         for (title, dark) in [("Dark", true), ("Light", false)] {
             let listed: Vec<&CatalogTheme> = dialog.catalog.group(dark).collect();
             if listed.is_empty() {
@@ -174,7 +174,7 @@ impl Shell {
                     .flex()
                     .flex_col()
                     .gap(px(space::S))
-                    .child(overline(title, theme).px(px(space::S)))
+                    .child(section_title(title, theme).px(px(space::S)))
                     .child(div().flex().flex_wrap().gap(px(space::M)).children(row)),
             );
         }

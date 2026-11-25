@@ -29,6 +29,17 @@ The theme tasks (retune, tokens, glass, Tern themes) were checked by unit tests 
 - [ ] **Floating panels (dark + light):** palette, Settings and a dialog are lighter than the page in dark, have a faint top line and no blue wash; the scrim is black in dark and a milky veil in light; the menus and toasts keep a soft shadow.
 - [ ] **Tern Dark / Tern Light:** Settings → Appearance lists 24 cards with the two new ones next to the Mkrew pair; picking them gives the blue accent, Tern's status colors and ANSI palette; "New theme from current" on a Tern card saves a theme file that loads without a "Low contrast" badge.
 
+### To verify - 2026-11-26 Tern polish: shared controls, popovers, dialogs, Settings (ADR 0117)
+
+Part B was checked by unit tests, clippy and the contrast rules; no smoke screenshots were taken. Check each in dark and light (`tern-polish-<view>-<dark|light>.png` if you save them).
+
+- [ ] **Hover and press steps:** hover a sidebar row, a tab, a raised pill (model pill, maximize chip, need-you chip) and a quiet button; press an icon button. The step shows on `pane_gap`, `bg` and `surface_raised`, and a pill with its own fill keeps its fill on hover.
+- [ ] **Menus and tooltips:** a tab right-click menu and the Run menu are glass popovers with a ring and a top line; the keyboard row is an accent tint with a short bar, the hover row a faint layer; a tooltip with keys (hover the sidebar +) shows a key cap; the palette row (`Ctrl+Shift+P`, Down) has a 2 px inset bar.
+- [ ] **Toasts and peek:** "Global: Copy last error" shows a toast; an error toast has a red ring; the ✕ appears on hover. The peek popover (a session that needs input) has a body and a foot band with the hint.
+- [ ] **Controls:** Tab to a button in the New task dialog: accent border plus a soft halo (the primary button shows a plain `focus_ring` border); primary, secondary and danger buttons; the switch is 36x22 with a white knob; the segmented control shows a lifted chip; the search box and fields show the halo while focused; the key hint is 18 px; an empty state shows a circle glyph and a subtle sentence. The title bar still fits the 32 px controls, also at `[ui] font_size = 18`.
+- [ ] **Dialogs:** confirm prompt (a destructive one shows the danger tile), New task (`Ctrl+Shift+N`), Undo, Discard, Ports, Phone access, Ask AI, Broadcast, Add workspace, Run setup, History and Turns all share the icon-tile head, close X, body and foot band; the primary shows its key (`↵` or `Ctrl+Enter`); errors are red-ringed notes; the picked row (turns, history, run picker, prompt picker) is a tint plus bar.
+- [ ] **Settings:** `Ctrl+,` opens 960x720 with the icon navigation; page head with a one-sentence lead; the shown page is a tint plus a bar; Down on a row scrolls to it and Tab goes nav, find, rows; a window narrower than 960 shrinks the panel; the Keyboard page is one card; the empty search shows "Clear search (Esc)" under the sentence.
+
 ### To verify - 2026-11-25 UI typography and quiet chrome (ADR 0116, spec docs/superpowers/specs/2026-11-25-ui-typography-design.md)
 
 Screenshots: `docs/screenshots/ui-typography-<fake|split>-<dark|light>.png` (a fake agent alone; the fake agent beside an idle omp pane).

@@ -910,6 +910,15 @@ pub(crate) fn overline(text: &str, theme: &Theme) -> gpui::Div {
         .child(text.to_uppercase())
 }
 
+/// A section title in sentence case: META MEDIUM in `text_subtle` (Settings groups and cards).
+pub(crate) fn section_title(text: &'static str, theme: &Theme) -> gpui::Div {
+    div()
+        .text_size(font_size::META)
+        .font_weight(FontWeight(weight::MEDIUM))
+        .text_color(rgb(theme.text_subtle))
+        .child(text)
+}
+
 /// A search box: a 32 px framed row with a search icon, `field` (its own frame removed) and an
 /// optional trailing hint (a [`kbd`]). The frame turns accent while `focused`.
 pub(crate) fn search_box(
