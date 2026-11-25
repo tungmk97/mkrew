@@ -900,6 +900,11 @@ pub fn is_user_prompt(node: &Node) -> bool {
     role_of(node) == Some("omp.user")
 }
 
+/// A tool call: `card` with role `omp.tool` or `omp.tool.<name>`.
+pub fn is_tool(node: &Node) -> bool {
+    role_of(node).is_some_and(|role| role == "omp.tool" || role.starts_with("omp.tool."))
+}
+
 /// How row `node` of `main` counts for a run of thoughts.
 pub fn row_kind(doc: &Document, node: &Node) -> RowKind {
     let hidden = |n: &Node| n.props.get("hidden").and_then(Value::as_bool) == Some(true);
@@ -4357,6 +4362,7 @@ mod gap_tests {
     use super::RowKind::{Hidden, Other, Thought};
     use super::*;
     use crate::theme::{TSP_ROW_GAP, space};
+    use serde_json::json;
 
     #[test]
     fn rows_that_draw_nothing_leave_no_gap() {
@@ -4389,5 +4395,23 @@ mod gap_tests {
         );
         assert_eq!(col_gap(Some("omp.tool.bash"), None), 0.0);
         assert_eq!(col_gap(None, Some("md")), space::M);
+    }
+
+    #[test]
+    fn only_tool_roles_lose_their_box() {
+        let node = |role: &str| {
+            let mut d = Document::new("s:1");
+            let tree = json!({"id": "main", "k": "col", "c": [
+                {"id": "c", "k": "card", "p": {"role": role}},
+            ]});
+            let applied = d.apply(&[json!(["add", "main", "s:1", null, tree])]);
+            assert!(applied.errors.is_empty(), "{:?}", applied.errors);
+            is_tool(d.get("c").unwrap())
+        };
+        assert!(node("omp.tool"));
+        assert!(node("omp.tool.edit"));
+        assert!(!node("omp.toolbar"));
+        assert!(!node("omp.welcome"));
+        assert!(!node("omp.user"));
     }
 }

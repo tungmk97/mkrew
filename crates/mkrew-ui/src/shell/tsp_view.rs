@@ -1790,9 +1790,17 @@ impl Shell {
         } else if let Some(split) = split {
             self.tsp_scroll_body(p, node, split, cx)
         } else {
+            let tool = tsp::is_tool(node);
             (p.doc.children(&node.id))
                 .filter(|child| head_child.is_none_or(|head| head.id != child.id))
-                .map(|child| self.tsp_node(p, child, cx))
+                .map(|child| {
+                    let el = self.tsp_node(p, child, cx);
+                    if tool && matches!(child.kind.as_str(), "ansi" | "rows") {
+                        tool_well(el, p.theme)
+                    } else {
+                        el
+                    }
+                })
                 .collect()
         };
         self.tsp_card_el(p, node, head_el, body, cx)
@@ -1817,7 +1825,8 @@ impl Shell {
             // The pane (or the overlay container) bounds this card: its list or body scrolls.
             el = el.overflow_hidden();
         }
-        if !p.in_layer && card {
+        // A tool row is plain rows on the page (Tern); other cards keep their raised frame.
+        if !p.in_layer && card && !tsp::is_tool(node) {
             el = el
                 .p(px(space::M))
                 .rounded(px(theme::radius::MEDIUM))
@@ -1938,6 +1947,7 @@ impl Shell {
         let collapsible = bool_prop(node, "collapsible");
         let collapsed = bool_prop(node, "collapsed");
         let user = tsp::is_user_prompt(node);
+        let tool = tsp::is_tool(node);
         let head_color = if user {
             theme.text_subtle
         } else {
@@ -1952,15 +1962,27 @@ impl Shell {
         if user {
             row = row.justify_end();
         }
+        if tool {
+            row = row
+                .min_h(px(theme::TSP_HEAD_HEIGHT))
+                .mx(px(-space::XS))
+                .px(px(space::XS))
+                .rounded(px(theme::radius::SMALL));
+        }
         if collapsible {
             let chevron = if collapsed {
                 Icon::ChevronRight
             } else {
                 Icon::ChevronDown
             };
-            let mark = icon_svg(chevron, theme::ICON_SIZE_SMALL, theme.text_muted);
+            let color = if tool {
+                theme.text_subtle
+            } else {
+                theme.text_muted
+            };
+            let mark = icon_svg(chevron, theme::ICON_SIZE_SMALL, color);
             // A tool card's chevron shows while its head is hovered.
-            row = if tsp::role_of(node).is_some_and(|role| role.starts_with("omp.tool.")) {
+            row = if tool {
                 row.child(
                     mark.opacity(theme::opacity::HIDDEN)
                         .group_hover(group, |style| style.opacity(theme::opacity::FULL)),
@@ -1971,6 +1993,13 @@ impl Shell {
         }
         let row = match child {
             Some(child) => row.child(child),
+            None if tool => row.child(styled_runs_w(
+                head,
+                head_color,
+                false,
+                weight::MEDIUM,
+                theme,
+            )),
             None => row.child(
                 div()
                     .when(!user, |el| el.font_weight(FontWeight(weight::SEMIBOLD)))
@@ -1985,7 +2014,7 @@ impl Shell {
             "tsp-head-{}-{}",
             p.session, node.id
         )))
-        .pressable(Look::Text, true, theme)
+        .pressable(if tool { Look::Row } else { Look::Text }, true, theme)
         .on_press(
             true,
             cx.listener(move |shell, _, _, cx| {
@@ -2980,6 +3009,22 @@ fn parent_is(p: &Paint<'_>, node: &Node, want: fn(&Node) -> bool) -> bool {
         .as_deref()
         .and_then(|id| p.doc.get(id))
         .is_some_and(want)
+}
+
+/// An `ansi` or `rows` body of a tool row (command output, a diff): `code_bg` with a `layer[0]`
+/// ring, `radius::MEDIUM`, 8 by 12 padding. A `code` node is a code card already.
+fn tool_well(body: AnyElement, theme: &Theme) -> AnyElement {
+    div()
+        .min_w_0()
+        .overflow_hidden()
+        .px(px(space::M))
+        .py(px(space::S))
+        .rounded(px(theme::radius::MEDIUM))
+        .bg(rgb(theme.code_bg))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::rgba(theme.layer[0]))
+        .child(body)
+        .into_any_element()
 }
 
 /// The head of an `omp.thinking*` section, or of a run of them: BODY italic `text_subtle`
