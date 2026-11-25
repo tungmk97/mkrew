@@ -1,5 +1,6 @@
 //! Tab area, tabs, rename field, pane frame and its floating badges.
 
+use super::pane_view::{PaneSlot, PaneView};
 use crate::*;
 
 impl Shell {
@@ -434,24 +435,82 @@ impl Shell {
         .into_any_element()
     }
 
-    /// The tab's split tree: each pane placed at its fraction of the area (`None`: the
-    /// empty state). `composer_focused`: the focused pane's composer has the keyboard.
-    /// `voice_ring`: the focused pane's terminal gets the voice text; its ring color (§20G).
-    /// `content` gets the size of the area.
+    /// The pane of `slot`, for its `PaneView` (ADR 0114): what `render_tab` used to pass to
+    /// `pane_frame` is read from the slot's tab, the window and the `Shell`. A slot whose tab or
+    /// leaf is gone draws nothing (`sync_panes` drops it).
+    pub(crate) fn render_pane(
+        &self,
+        slot: &PaneSlot,
+        view: gpui::EntityId,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        if let Some(session) = slot.key.session() {
+            cx.global::<MenuAnchors>()
+                .clear_pane(window.window_handle().window_id(), session);
+        }
+        if self.typing_target.owner.get() == Some(view) {
+            self.typing_target.field.replace(None);
+        }
+        let tab = (self.tabs.get(&slot.project_id)).and_then(|tabs| tabs.tab(slot.tab_id));
+        let Some(tab) = tab else {
+            return gpui::Empty.into_any_element();
+        };
+        let rects = tab.rects();
+        let Some(rect) = (rects.iter())
+            .find(|(key, _)| *key == slot.key)
+            .map(|(_, rect)| *rect)
+        else {
+            return gpui::Empty.into_any_element();
+        };
+        let theme = cx.theme().clone();
+        let several = rects.len() > 1;
+        let zoomed = tab.zoomed().is_some();
+        let is_focused = tab.focused() == Some(&slot.key);
+        // The panes' 0..1 space in px, as laid out in the last frame (`content_canvas`).
+        let area = (self.hosts.get(&slot.host)).map_or(0.0, |ui| f32::from(ui.content.get().width));
+        // Voice text goes to the focused terminal when it has the keyboard: ring it.
+        let voice_ring = (slot.host == HostId::Main && is_focused)
+            .then(|| self.voice_ring(&theme, cx))
+            .flatten()
+            .filter(|_| {
+                (slot.key.session())
+                    .and_then(|session| self.panes.get(&session))
+                    .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
+            });
+        self.pane_frame(
+            slot.project_id,
+            slot.key.clone(),
+            several,
+            zoomed,
+            // Another pane above or below it: its composer goes compact unfocused.
+            rect.h < 1.0 && !zoomed,
+            rect.w as f32 * area,
+            is_focused,
+            is_focused && self.composer_focus.is_focused(window),
+            voice_ring,
+            status::now_ms(),
+            &theme,
+            window,
+            cx,
+        )
+        .into_any_element()
+    }
+
+    /// The tab's split tree: each pane, a cached `PaneView`, placed at its fraction of the area
+    /// (`None`: the empty state). `content` gets the size of the area.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_tab(
         &self,
+        host: HostId,
         project_id: Ulid,
         tab: Option<&Tab>,
         now: i64,
-        composer_focused: bool,
-        voice_ring: Option<Hsla>,
         theme: &Theme,
         content: Rc<Cell<gpui::Size<Pixels>>>,
-        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
-        if tab.and_then(|tab| tab.layout()).is_none() {
+        let Some(tab) = tab.filter(|tab| tab.layout().is_some()) else {
             return empty_state(
                 theme,
                 Some(">_"),
@@ -494,20 +553,23 @@ impl Shell {
             })
             .relative()
             .child(content_canvas(content));
-        }
-        let focused = tab.and_then(Tab::focused);
-        let rects: Vec<_> = tab.map(Tab::rects).unwrap_or_default();
-        let dividers = tab.map(Tab::dividers).unwrap_or_default();
-        // Every pane drawn counts (a session, a file, the diff).
-        let several = rects.len() > 1;
-        let zoomed = tab.is_some_and(|tab| tab.zoomed().is_some());
-        // The panes' 0..1 space in px, as laid out in the last frame (`content_canvas`).
-        let area = f32::from(content.get().width);
+        };
+        let rects = tab.rects();
+        let dividers = tab.dividers();
+        let shell = cx.entity();
         let panes: Vec<_> = rects
             .into_iter()
             .map(|(key, rect)| {
-                let is_focused = focused == Some(&key);
-                let width = rect.w as f32 * area;
+                let slot = PaneSlot {
+                    host,
+                    project_id,
+                    tab_id: tab.id,
+                    key: key.clone(),
+                };
+                let view = (self.pane_views.borrow_mut())
+                    .entry(slot.clone())
+                    .or_insert_with(|| cx.new(|cx| PaneView::new(&shell, slot, cx)))
+                    .clone();
                 div()
                     .id(pane_id(&key))
                     .absolute()
@@ -515,22 +577,7 @@ impl Shell {
                     .top(relative(rect.y as f32))
                     .w(relative(rect.w as f32))
                     .h(relative(rect.h as f32))
-                    .child(self.pane_frame(
-                        project_id,
-                        key,
-                        several,
-                        zoomed,
-                        // Another pane above or below it: its composer goes compact unfocused.
-                        rect.h < 1.0 && !zoomed,
-                        width,
-                        is_focused,
-                        is_focused && composer_focused,
-                        voice_ring.filter(|_| is_focused),
-                        now,
-                        theme,
-                        window,
-                        cx,
-                    ))
+                    .child(view.cached(gpui::StyleRefinement::default().size_full()))
             })
             .collect();
         let dividers: Vec<_> = dividers
@@ -616,7 +663,11 @@ impl Shell {
                     self.render_chat(*id, is_focused, now, theme, cx)
                 } else {
                     match self.panes.get(id) {
-                        Some(pane) => pane.clone().into_any_element(),
+                        // Cached: output renders the grid alone, and a pane render reuses it.
+                        Some(pane) => pane
+                            .clone()
+                            .cached(gpui::StyleRefinement::default().size_full())
+                            .into_any_element(),
                         None => {
                             let (sentence, detail) = self.pane_placeholder(*id);
                             message(theme, None, sentence, detail)

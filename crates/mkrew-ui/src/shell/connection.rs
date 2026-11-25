@@ -532,6 +532,7 @@ impl Shell {
             launched: Some(launched),
             first_frame_logged: false,
             sidebar_view: None,
+            pane_views: RefCell::default(),
             toasts: Toasts::default(),
             detached: Detached::new(),
             main_window,

@@ -135,6 +135,9 @@ pub struct TypingTarget<V> {
     pub field: RefCell<Option<(FocusHandle, OnKey<V>)>>,
     /// While voice input listens, the focused field paints a ring in this color (§20G).
     pub ring: Cell<Option<gpui::Hsla>>,
+    /// The view whose paint registered `field` (`Window::current_view`): a cached pane view
+    /// keeps it across frames that reuse its paint (ADR 0114).
+    pub owner: Cell<Option<gpui::EntityId>>,
 }
 
 impl<V> Default for TypingTarget<V> {
@@ -142,6 +145,7 @@ impl<V> Default for TypingTarget<V> {
         Self {
             field: RefCell::new(None),
             ring: Cell::new(None),
+            owner: Cell::new(None),
         }
     }
 }

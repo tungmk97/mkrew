@@ -341,6 +341,25 @@ impl Shell {
         if changed {
             self.sync_watches(cx);
         }
+        // A pane view lives while its tab, in its window, still holds its leaf.
+        let live: HashSet<super::pane_view::PaneSlot> = (self.tabs.iter())
+            .flat_map(|(project_id, tabs)| {
+                tabs.tabs().iter().flat_map(move |tab| {
+                    tab.rects()
+                        .into_iter()
+                        .map(move |(key, _)| (*project_id, tab.id, key))
+                })
+            })
+            .map(|(project_id, tab_id, key)| super::pane_view::PaneSlot {
+                host: self.terminal_host(project_id, tab_id),
+                project_id,
+                tab_id,
+                key,
+            })
+            .collect();
+        self.pane_views
+            .get_mut()
+            .retain(|slot, _| live.contains(slot));
         self.focus_pane(window, cx);
     }
 

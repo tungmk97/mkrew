@@ -550,29 +550,41 @@ impl Anchor {
     fn in_sidebar(&self) -> bool {
         matches!(self, Self::WorkspaceRow(_) | Self::SessionRow(_))
     }
+
+    /// Owners inside a cached view (the sidebar, a pane): a `Shell` frame keeps them.
+    fn in_cached_view(&self) -> bool {
+        self.in_sidebar() || matches!(self, Self::Pane(_))
+    }
 }
 
 type Recorded = HashMap<(gpui::WindowId, Anchor), Bounds<Pixels>>;
 
 /// Where owners were laid out in the last frame (recorded by [`record_bounds`] during
-/// prepaint, cleared at the start of every `Shell` render, except the sidebar's keys: the
-/// sidebar is a cached view that clears and records them itself). Per window.
+/// prepaint, cleared at the start of every `Shell` render, except the keys of cached views: the
+/// sidebar and each pane clear and record them themselves). Per window.
 #[derive(Clone, Default)]
 pub(crate) struct MenuAnchors(Rc<RefCell<Recorded>>);
 
 impl gpui::Global for MenuAnchors {}
 
 impl MenuAnchors {
-    /// Forgets `window`'s anchors but the sidebar's, and leaves other windows' alone (the
-    /// `Shell` frame start).
+    /// Forgets `window`'s anchors but those of cached views, and leaves other windows' alone
+    /// (the `Shell` frame start).
     pub(crate) fn clear(&self, window: gpui::WindowId) {
-        (self.0.borrow_mut()).retain(|(id, key), _| *id != window || key.in_sidebar());
+        (self.0.borrow_mut()).retain(|(id, key), _| *id != window || key.in_cached_view());
     }
 
     /// Forgets the sidebar's anchors (it records them again while it renders; only the main
     /// window has a sidebar).
     pub(crate) fn clear_sidebar(&self) {
         self.0.borrow_mut().retain(|(_, key), _| !key.in_sidebar());
+    }
+
+    /// Forgets the anchor of `session`'s pane in `window` (its `PaneView` records it again while
+    /// it renders).
+    pub(crate) fn clear_pane(&self, window: gpui::WindowId, session: Ulid) {
+        let key = (window, Anchor::Pane(session));
+        self.0.borrow_mut().remove(&key);
     }
 
     fn bottom_left(&self, window: gpui::WindowId, key: &Anchor) -> Option<Point<Pixels>> {
@@ -698,13 +710,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_cached_sidebar_keeps_its_anchors_across_shell_frames() {
-        let id = Ulid::from(1u128);
+    fn cached_views_keep_their_anchors_across_shell_frames() {
+        let (id, other_id) = (Ulid::from(1u128), Ulid::from(2u128));
         let (main, other) = (gpui::WindowId::from(1u64), gpui::WindowId::from(2u64));
         let anchors = MenuAnchors::default();
         for key in [
             Anchor::Switcher,
             Anchor::Pane(id),
+            Anchor::Pane(other_id),
             Anchor::WorkspaceRow(id),
             Anchor::SessionRow(id),
         ] {
@@ -717,21 +730,29 @@ mod tests {
             .0
             .borrow_mut()
             .insert((other, Anchor::Pane(id)), Bounds::default());
-        anchors.clear(main);
         let left = |anchors: &MenuAnchors| {
             let mut keys: Vec<_> = anchors.0.borrow().keys().cloned().collect();
             keys.sort_by_key(|key| format!("{key:?}"));
             keys
         };
+        anchors.clear(main);
         assert_eq!(
             left(&anchors),
             [
+                (main, Anchor::Pane(id)),
+                (main, Anchor::Pane(other_id)),
                 (main, Anchor::SessionRow(id)),
                 (main, Anchor::WorkspaceRow(id)),
                 (other, Anchor::Pane(id)),
-            ]
+            ],
+            "a Shell frame keeps what the cached sidebar and panes recorded"
         );
+        anchors.clear_pane(main, id);
         anchors.clear_sidebar();
-        assert_eq!(left(&anchors), [(other, Anchor::Pane(id))]);
+        assert_eq!(
+            left(&anchors),
+            [(main, Anchor::Pane(other_id)), (other, Anchor::Pane(id))],
+            "each cached view clears only its own anchors"
+        );
     }
 }

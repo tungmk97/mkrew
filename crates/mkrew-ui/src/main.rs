@@ -936,6 +936,8 @@ struct Shell {
     /// The sidebar as its own view (see [`shell::sidebar_view::SidebarView`]); made on first
     /// render.
     sidebar_view: Option<Entity<shell::sidebar_view::SidebarView>>,
+    /// One cached view per pane slot (ADR 0114), made by `render_tab`, pruned by `sync_panes`.
+    pane_views: RefCell<HashMap<shell::pane_view::PaneSlot, Entity<shell::pane_view::PaneView>>>,
     /// The in-app toasts (SPEC §14): pushed by `toast_error` / `toast_info`, expired on the
     /// status tick.
     toasts: Toasts,
@@ -998,8 +1000,14 @@ impl Render for Shell {
         }
         // Voice input types into the field whose typing canvas registers again during this
         // frame's paint (§20G); a field that is gone from the screen is no target. That field
-        // paints the listening ring.
-        self.typing_target.field.replace(None);
+        // paints the listening ring. A pane's field stays the target while its cached view
+        // reuses its paint; that view clears it when it renders again (`render_pane`).
+        let pane_owned = (self.typing_target.owner.get()).is_some_and(|owner| {
+            (self.pane_views.borrow().values()).any(|view| view.entity_id() == owner)
+        });
+        if !pane_owned {
+            self.typing_target.field.replace(None);
+        }
         // Menus opened from the keyboard hang from what this frame lays out.
         cx.global::<MenuAnchors>()
             .clear(window.window_handle().window_id());

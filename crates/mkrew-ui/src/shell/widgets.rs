@@ -892,6 +892,7 @@ pub(crate) fn typing_input_for(
             // listens.
             if focus.is_focused(window) {
                 typing_target.field.replace(Some((focus.clone(), on_key)));
+                typing_target.owner.set(Some(window.current_view()));
                 if let Some(color) = typing_target.ring.get() {
                     // Over the field's own border (this layer fills the box inside it).
                     let ring = bounds.dilate(px(theme::BORDER_WIDTH));

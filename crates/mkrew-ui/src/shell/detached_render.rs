@@ -62,18 +62,8 @@ impl Shell {
         let body = match scope {
             Some((project, tab_id)) => {
                 let tab = self.tabs.get(&project).and_then(|tabs| tabs.tab(tab_id));
-                self.render_tab(
-                    project,
-                    tab,
-                    now,
-                    self.composer_focus.is_focused(window),
-                    None,
-                    &theme,
-                    content,
-                    window,
-                    cx,
-                )
-                .into_any_element()
+                self.render_tab(host, project, tab, now, &theme, content, cx)
+                    .into_any_element()
             }
             None => message(&theme, None, "Loading…".into(), None)
                 .flex_1()

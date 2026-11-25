@@ -197,12 +197,6 @@ impl Shell {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
             (View::Terminals, Some(tabs)) => {
-                // Voice text goes to the focused terminal when it has the keyboard: ring it.
-                let voice_ring = self.voice_ring(theme, cx).filter(|_| {
-                    (tabs.active().and_then(Tab::focused_session))
-                        .and_then(|session| self.panes.get(&session))
-                        .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
-                });
                 let every_tab_detached = !tabs.tabs().is_empty()
                     && (tabs.tabs().iter())
                         .all(|tab| self.terminal_host(project_id, tab.id) != HostId::Main);
@@ -218,17 +212,15 @@ impl Shell {
                         .flex_1()
                     } else {
                         self.render_tab(
+                            HostId::Main,
                             project_id,
                             tabs.active(),
                             now,
-                            self.composer_focus.is_focused(window),
-                            voice_ring,
                             theme,
                             self.hosts
                                 .get(&HostId::Main)
                                 .map(|ui| ui.content.clone())
                                 .unwrap_or_default(),
-                            window,
                             cx,
                         )
                     },
