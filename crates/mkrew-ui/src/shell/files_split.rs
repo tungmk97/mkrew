@@ -335,7 +335,10 @@ impl Shell {
             (true, View::Docs) => {
                 let docs = self.docs.get(&project_id);
                 let page = docs.and_then(|docs| match &docs.doc {
-                    Doc::Shown(shown) => Some((&self.doc_page, Rc::clone(shown))),
+                    Doc::Shown(shown) => Some((
+                        &self.host_view(self.space_host(window)).doc_page,
+                        Rc::clone(shown),
+                    )),
                     _ => None,
                 });
                 (docs.and_then(|docs| docs.selected.clone()), None, page)

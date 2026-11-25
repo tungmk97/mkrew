@@ -56,14 +56,16 @@ impl Shell {
             }
             self.end_inspector_drag(cx);
             // Nothing is kept for a workspace that no window shows any more.
-            if before.is_some_and(|old| !self.on_screen_workspaces().contains(&old)) {
-                self.git_summary = None;
+            if let Some(old) = before
+                && !self.on_screen_workspaces().contains(&old)
+            {
+                self.git_summaries.remove(&old);
             }
         }
         // First: the daemon answers one connection's requests in order, so an attach sent
         // after the git/files loads below waits for all of them (a git.status can take 1 s).
         self.sync_panes(window, cx);
-        if switched || self.git_summary.is_none() {
+        if switched || self.git_summary(project_id).is_none() {
             self.load_git_summary(project_id, window, cx);
         }
         if !self.tabs.contains_key(&project_id) {

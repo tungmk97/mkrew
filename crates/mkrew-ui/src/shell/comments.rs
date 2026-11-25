@@ -192,7 +192,9 @@ impl Shell {
             return;
         };
         if let Some(at) = comments.margin_index(root) {
-            self.comments_scroll.scroll_to_item(at);
+            self.host_view(self.space_host(window))
+                .comments_scroll
+                .scroll_to_item(at);
         }
         self.reveal_pick(project_id, context, cx);
         cx.notify();
@@ -496,7 +498,7 @@ impl Shell {
             .w(px(theme::DOC_MARGIN_WIDTH))
             .h_full()
             .overflow_y_scroll()
-            .track_scroll(&self.comments_scroll)
+            .track_scroll(&self.host_view(self.space_host(window)).comments_scroll)
             .flex()
             .flex_col()
             .gap(px(space::S))

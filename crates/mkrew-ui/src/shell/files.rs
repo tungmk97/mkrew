@@ -89,7 +89,9 @@ impl Shell {
         }
         self.files
             .insert(project_id, new_files_view(project_id, target));
-        self.files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.host_view(self.space_host(window))
+            .files_scroll
+            .scroll_to_item(0, ScrollStrategy::Top);
         self.refresh_files(project_id, window, cx);
     }
 
@@ -364,7 +366,8 @@ impl Shell {
             matches!(row, files_view::Row::Entry { entry, .. } if Some(&entry.path) == cursor.as_ref())
         });
         if let Some(at) = at {
-            self.files_scroll
+            self.host_view(self.space_host(window))
+                .files_scroll
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
         self.files_requests(project_id, requests, window, cx);

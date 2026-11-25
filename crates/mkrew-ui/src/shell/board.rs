@@ -229,7 +229,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let _ = self.git_view(project_id).show_since(since);
-        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.host_view(self.space_host(window))
+            .git_files_scroll
+            .scroll_to_item(0, ScrollStrategy::Top);
         // `open_git` refreshes either way, asking the status `show_since` would.
         self.open_git(project_id, window, cx);
     }

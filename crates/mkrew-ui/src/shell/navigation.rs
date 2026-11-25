@@ -261,7 +261,8 @@ impl Shell {
             |row| matches!(row, files_view::Row::Entry { entry, .. } if entry.path == path),
         );
         if let Some(at) = at {
-            self.files_scroll
+            self.host_view(self.space_host(window))
+                .files_scroll
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
         self.files_requests(project_id, requests, window, cx);

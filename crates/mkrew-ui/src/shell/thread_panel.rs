@@ -44,7 +44,7 @@ impl Shell {
         let session = self
             .panel_session(host)
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
-        let wanted = self.panel_shown(host) && self.panel_tab() == PanelTab::Session;
+        let wanted = self.panel_shown(host) && self.panel_tab(host) == PanelTab::Session;
         let panel = inspector::wanted_thread(wanted, session);
         let panes = self.chat_panes();
         let chats = panes

@@ -17,7 +17,9 @@ impl Shell {
             CommentContext::Doc => {
                 let theme = cx.theme();
                 let row = theme.terminal_font_size * theme.code_line_height;
-                let offset = f32::from(self.doc_source_scroll.0.borrow().base_handle.offset().y);
+                let view = self.host_view(self.space_host(window));
+                let offset = f32::from(view.doc_source_scroll.0.borrow().base_handle.offset().y);
+                let page_top = view.doc_page.top();
                 let Some(docs) = self.docs.get_mut(&project_id) else {
                     return;
                 };
@@ -26,7 +28,7 @@ impl Shell {
                 };
                 let (units, start) = match docs.mode {
                     Mode::Source => (shown.line_units(), mkrew_ui::pick::first_row(offset, row)),
-                    Mode::Preview => (shown.block_units(), self.doc_page.top()),
+                    Mode::Preview => (shown.block_units(), page_top),
                 };
                 docs.comments.step_pick(&units, down, start)
             }
@@ -54,9 +56,10 @@ impl Shell {
                 if let Some(docs) = self.docs.get(&project_id)
                     && let Some(line) = docs.comments.head_line()
                     && let Doc::Shown(shown) = &docs.doc
+                    && let Some(view) = self.project_view(project_id)
                 {
                     match docs.mode {
-                        Mode::Source => self.doc_source_scroll.scroll_to_item(
+                        Mode::Source => view.doc_source_scroll.scroll_to_item(
                             (line as usize).saturating_sub(1),
                             ScrollStrategy::Nearest,
                         ),
@@ -66,7 +69,7 @@ impl Shell {
                                 .iter()
                                 .position(|b| b.lines.start <= line && line <= b.lines.end);
                             if let Some(block) = block {
-                                self.doc_page.reveal(block);
+                                view.doc_page.reveal(block);
                             }
                         }
                     }

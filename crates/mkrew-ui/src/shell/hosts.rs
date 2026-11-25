@@ -31,6 +31,41 @@ pub(crate) struct HostUi {
     pub(crate) visible: bool,
     /// The workspace a Space window shows (`None`: the empty state).
     pub(crate) workspace: Option<Ulid>,
+    /// The right panel of a Space window: open or not, and its tab.
+    pub(crate) right_panel: inspector::RightPanel,
+    /// The scroll and list state of what the window draws.
+    pub(crate) view: HostView,
+    /// The sidebar of a Space window, a cached child view (created on its first frame).
+    pub(crate) sidebar_view: Option<Entity<shell::sidebar_view::SidebarView>>,
+}
+
+/// The scroll and list state a window keeps for the lists it draws: one window scrolling a
+/// shared handle would move it in the other window too.
+pub(crate) struct HostView {
+    /// The panel's file tree.
+    pub(crate) files_scroll: UniformListScrollHandle,
+    /// The panel's Git file list.
+    pub(crate) git_files_scroll: UniformListScrollHandle,
+    /// The Docs view's preview page and source list.
+    pub(crate) doc_page: preview::Page,
+    pub(crate) doc_source_scroll: UniformListScrollHandle,
+    /// The comment threads beside a doc or diff.
+    pub(crate) comments_scroll: ScrollHandle,
+    /// The Jira list of the Board.
+    pub(crate) jira_scroll: ScrollHandle,
+}
+
+impl Default for HostView {
+    fn default() -> Self {
+        HostView {
+            files_scroll: UniformListScrollHandle::new(),
+            git_files_scroll: UniformListScrollHandle::new(),
+            doc_page: preview::Page::default(),
+            doc_source_scroll: UniformListScrollHandle::new(),
+            comments_scroll: ScrollHandle::new(),
+            jira_scroll: ScrollHandle::new(),
+        }
+    }
 }
 
 impl Shell {
@@ -113,6 +148,25 @@ impl Shell {
     /// Whether Space window `host` is shown (not minimized or hidden).
     pub(crate) fn space_visible(&self, host: HostId) -> bool {
         self.hosts.get(&host).is_some_and(|ui| ui.visible)
+    }
+
+    /// The right panel of `host` (closed for a window that has none).
+    pub(crate) fn panel(&self, host: HostId) -> inspector::RightPanel {
+        self.hosts
+            .get(&host)
+            .map(|ui| ui.right_panel)
+            .unwrap_or_default()
+    }
+
+    /// The scroll and list state of what `host` draws.
+    pub(crate) fn host_view(&self, host: HostId) -> &HostView {
+        self.hosts.get(&host).map_or(&self.no_view, |ui| &ui.view)
+    }
+
+    /// [`Self::host_view`] of the Space window showing `project`, if any.
+    pub(crate) fn project_view(&self, project: Ulid) -> Option<&HostView> {
+        let key = self.space_of(project)?;
+        Some(self.host_view(HostId::Space(key)))
     }
 
     pub(crate) fn detached_key(&self, window: &Window) -> Option<WindowKey> {

@@ -3,30 +3,37 @@
 use crate::*;
 
 impl Shell {
-    /// `ToggleInspector` / the title bar's `◨`: hides or shows the right panel (its tab is
-    /// kept); from a view without it, shows Terminals with the panel open.
+    /// `ToggleInspector` / the title bar's `◨`: hides or shows the window's right panel (its
+    /// tab is kept); from a view without it, shows Terminals with the panel open.
     pub(crate) fn toggle_inspector(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if self.workspace_in(window).is_none() {
+        let host = self.space_host(window);
+        if self.workspace_of(host).is_none() {
             return;
         }
-        let mode_before = self.right_panel.mode();
-        let (tree_before, git_before) = if self.panel_view(self.space_host(window)) {
-            let before = (
-                self.files_on_screen(self.space_host(window)),
-                self.git_shown(self.space_host(window)),
-            );
-            self.right_panel.open = !self.right_panel.open;
+        let mode_before = self.panel(host).mode();
+        let (tree_before, git_before) = if self.panel_view(host) {
+            let before = (self.files_on_screen(host), self.git_shown(host));
+            let panel = self.panel_mut(host);
+            panel.open = !panel.open;
             before
         } else {
-            self.right_panel.open = true;
+            self.panel_mut(host).open = true;
             self.show_view(View::Terminals, window, cx);
             // `show_view` refreshed the tree / Git list if it came on screen.
-            (
-                self.files_on_screen(self.space_host(window)),
-                self.git_shown(self.space_host(window)),
-            )
+            (self.files_on_screen(host), self.git_shown(host))
         };
         self.panel_changed(tree_before, git_before, mode_before, window, cx);
+    }
+
+    /// The right panel of Space window `host`, to change it.
+    pub(crate) fn panel_mut(&mut self, host: HostId) -> &mut inspector::RightPanel {
+        let default = self.panel_default;
+        &mut (self.hosts.entry(host))
+            .or_insert_with(|| shell::hosts::HostUi {
+                right_panel: default,
+                ..Default::default()
+            })
+            .right_panel
     }
 
     /// A click on the panel's `Files` / `Session` tab.
@@ -36,12 +43,13 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let host = self.space_host(window);
         let (tree_before, git_before, mode_before) = (
-            self.files_on_screen(self.space_host(window)),
-            self.git_shown(self.space_host(window)),
-            self.right_panel.mode(),
+            self.files_on_screen(host),
+            self.git_shown(host),
+            self.panel(host).mode(),
         );
-        self.right_panel.show(tab);
+        self.panel_mut(host).show(tab);
         self.panel_changed(tree_before, git_before, mode_before, window, cx);
     }
 
@@ -90,25 +98,27 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if !self.right_panel.open {
+        let host = self.space_host(window);
+        let panel = self.panel(host);
+        if !panel.open {
             // The grip is gone: no mouse-up will end a drag in progress.
             self.end_inspector_drag(cx);
         }
-        if self.file_tree_shown(self.space_host(window)) {
-            if !tree_before && let Some(project_id) = self.workspace_in(window) {
+        if self.file_tree_shown(host) {
+            if !tree_before && let Some(project_id) = self.workspace_of(host) {
                 self.refresh_files(project_id, window, cx);
             }
         } else if self.files_focus.is_focused(window) {
             self.focus_center(window, cx);
         }
-        if self.git_shown(self.space_host(window))
+        if self.git_shown(host)
             && !git_before
-            && let Some(project_id) = self.workspace_in(window)
+            && let Some(project_id) = self.workspace_of(host)
         {
             self.refresh_git(project_id, window, cx);
         }
         // The Git tab went away under the keyboard: its list, filter field or commit box.
-        if !self.git_panel_shown(self.space_host(window))
+        if !self.git_panel_shown(host)
             && [
                 &self.git_focus,
                 &self.git_filter_focus,
@@ -119,8 +129,10 @@ impl Shell {
         {
             self.focus_center(window, cx);
         }
-        let value = format!("\"{}\"", self.right_panel.mode().name());
-        if self.right_panel.mode() != mode_before
+        // A new Space window starts with the panel changed last.
+        self.panel_default = panel;
+        let value = format!("\"{}\"", panel.mode().name());
+        if panel.mode() != mode_before
             && let Err(error) =
                 mkrew_core::settings::write_ui_value(&self.settings_file, "right_panel", &value)
         {
@@ -322,7 +334,7 @@ impl Shell {
                 MouseButton::Left,
                 cx.listener(|shell, _, _, cx| shell.end_inspector_drag(cx)),
             );
-        let tab = self.panel_tab();
+        let tab = self.panel_tab(self.space_host(window));
         let changed = self.git_summary(project_id).map_or(0, GitSummary::changed);
         // The tab row has the height of the title bar's tab chips and the sidebar's filter
         // row on its left: same height, same bottom divider. Icon tabs on the left, Tern style

@@ -486,7 +486,7 @@ impl Shell {
                         Rc::clone(shown),
                         docs.comments.selection,
                         on_line,
-                        &self.doc_source_scroll,
+                        &self.host_view(self.space_host(window)).doc_source_scroll,
                         theme,
                     )
                     .flex_1()
@@ -538,7 +538,7 @@ impl Shell {
                     );
                     let fonts = cx.global::<theme::Fonts>();
                     preview::page(
-                        &self.doc_page,
+                        &self.host_view(self.space_host(window)).doc_page,
                         docs.opening,
                         shown,
                         Some(wrap),

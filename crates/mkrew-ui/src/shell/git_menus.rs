@@ -404,7 +404,9 @@ impl Shell {
                 filter.insert(&text);
             }
         }
-        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.host_view(self.space_host(window))
+            .git_files_scroll
+            .scroll_to_item(0, ScrollStrategy::Top);
         cx.notify();
     }
 

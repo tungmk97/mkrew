@@ -237,7 +237,9 @@ impl Shell {
             view.selected = Some(next);
         }
         if let Some(at) = at {
-            self.jira_scroll.scroll_to_item(at);
+            self.host_view(self.space_host(window))
+                .jira_scroll
+                .scroll_to_item(at);
         }
         cx.notify();
     }
@@ -754,7 +756,7 @@ impl Shell {
                             .collect();
                         div()
                             .id("jira-issues")
-                            .track_scroll(&self.jira_scroll)
+                            .track_scroll(&self.host_view(self.space_host(window)).jira_scroll)
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()

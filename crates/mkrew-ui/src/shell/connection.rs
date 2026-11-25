@@ -375,7 +375,6 @@ impl Shell {
             settings_scroll: ScrollHandle::new(),
             prompts_scroll: ScrollHandle::new(),
             prompts_body_scroll: ScrollHandle::new(),
-            comments_scroll: ScrollHandle::new(),
             workspace_menu: None,
             file_menu: None,
             tab_menu: None,
@@ -421,7 +420,6 @@ impl Shell {
             plans: Plans::default(),
             plan_error: None,
             sidebar_layout: sidebar::Layout::from_mode(sidebar_mode),
-            right_panel,
             panel_side,
             reads: HashMap::new(),
             chats: HashMap::new(),
@@ -442,7 +440,6 @@ impl Shell {
             jira_layout,
             jira_keys_focus: cx.focus_handle(),
             jira_filter_focus: cx.focus_handle(),
-            jira_scroll: ScrollHandle::new(),
             board_all,
             limits: mkrew_ui::limits::Limits::default(),
             selected_card: None,
@@ -474,19 +471,13 @@ impl Shell {
             doc_views: HashMap::new(),
             files: HashMap::new(),
             files_focus: cx.focus_handle(),
-            files_scroll: UniformListScrollHandle::new(),
             docs_filter_focus: cx.focus_handle(),
-            doc_page: preview::Page::default(),
-            doc_source_scroll: UniformListScrollHandle::new(),
             files_after_save: Vec::new(),
             md_mode,
             md_split,
             md_split_dragging: false,
             git: HashMap::new(),
             git_repos: HashMap::new(),
-            git_summary: None,
-            git_summary_busy: false,
-            git_summary_again: false,
             watch_needs: watches::Needs::default(),
             git_focus: cx.focus_handle(),
             git_commit_focus: cx.focus_handle(),
@@ -494,7 +485,6 @@ impl Shell {
             git_menu: None,
             git_repo_query: Input::default(),
             git_repo_query_focus: cx.focus_handle(),
-            git_files_scroll: UniformListScrollHandle::new(),
             diff_views: HashMap::new(),
             diff_drawn: false,
             diff_mode,
@@ -537,7 +527,6 @@ impl Shell {
             dialog_serial: 0,
             launched: Some(launched),
             first_frame_logged: false,
-            sidebar_view: None,
             toasts: Toasts::default(),
             detached: Detached::new(),
             spaces: HashMap::from([(first_space, SpaceKey(0))]),
@@ -548,9 +537,15 @@ impl Shell {
                 first,
                 shell::hosts::HostUi {
                     visible: true,
+                    right_panel,
                     ..Default::default()
                 },
             )]),
+            panel_default: right_panel,
+            no_view: shell::hosts::HostView::default(),
+            git_summaries: HashMap::new(),
+            git_summary_busy: HashSet::new(),
+            git_summary_again: HashSet::new(),
             menu_host: first,
             palette_host: first,
             picker_host: first,
@@ -914,7 +909,7 @@ impl Shell {
             .into_iter()
             .filter_map(|(id, view)| Some((id, view.into_commit_draft()?)))
             .collect();
-        self.git_summary = None;
+        self.git_summaries.clear();
         self.limits.clear();
         self.close_popups(window, cx);
     }
@@ -1235,7 +1230,7 @@ impl Shell {
             focused: self.focused_session(window),
             panel: self
                 .panel_shown(self.space_host(window))
-                .then(|| self.panel_tab()),
+                .then(|| self.panel_tab(self.space_host(window))),
             panel_session: self.panel_session(self.space_host(window)),
             sidebar: self.sidebar_layout.mode(),
             modal: self.modal_open(),

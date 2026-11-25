@@ -125,7 +125,9 @@ impl Shell {
         view.repo = repo;
         view.commit.text = draft;
         self.git.insert(project_id, view);
-        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        if let Some(view) = self.project_view(project_id) {
+            view.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        }
         self.scroll_diff_to(project_id, 0);
         true
     }
@@ -186,16 +188,13 @@ impl Shell {
 
     /// The summary of `project` (None until loaded, and for workspaces no window shows).
     pub(crate) fn git_summary(&self, project: Ulid) -> Option<&GitSummary> {
-        self.git_summary
-            .as_ref()
-            .filter(|(id, _)| *id == project)
-            .map(|(_, summary)| summary)
+        self.git_summaries.get(&project)
     }
 
-    /// `git.repos`, then one `git.status` per repository, for the shown workspace (title bar).
-    /// Asked on a workspace switch and on its `git.changed`, never polled and never for a
-    /// hidden workspace. One request set at a time: a change that arrives meanwhile asks once
-    /// more when it answers.
+    /// `git.repos`, then one `git.status` per repository, for a shown workspace (title bar).
+    /// Asked when a window shows it and on its `git.changed`, never polled and never for a
+    /// hidden workspace. One request set per workspace at a time: a change that arrives
+    /// meanwhile asks once more when it answers.
     pub(crate) fn load_git_summary(
         &mut self,
         project_id: Ulid,
@@ -205,36 +204,29 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        if self.git_summary_busy {
-            self.git_summary_again = true;
+        if !self.git_summary_busy.insert(project_id) {
+            self.git_summary_again.insert(project_id);
             return;
         }
-        self.git_summary_busy = true;
         cx.spawn_in(window, async move |this, cx| {
             let loaded = git_summary_of(&connection, project_id).await;
             let _ = this.update_in(cx, |shell, window, cx| {
-                shell.git_summary_busy = false;
-                let again = std::mem::take(&mut shell.git_summary_again);
-                let shown = shell.workspace_in(window);
+                shell.git_summary_busy.remove(&project_id);
+                let again = shell.git_summary_again.remove(&project_id);
+                let shown = shell.on_screen_workspaces().contains(&project_id);
                 match loaded {
                     // An answer for a workspace that is no longer shown is dropped.
-                    Ok(summary) if shown == Some(project_id) => {
-                        let same = matches!(
-                            &shell.git_summary,
-                            Some((id, old)) if *id == project_id && *old == summary
-                        );
-                        if !same {
-                            shell.git_summary = Some((project_id, summary));
+                    Ok(summary) if shown => {
+                        if shell.git_summaries.get(&project_id) != Some(&summary) {
+                            shell.git_summaries.insert(project_id, summary);
                             cx.notify();
                         }
                     }
                     Ok(_) => {}
                     Err(error) => tracing::warn!(%project_id, "git summary failed: {error:#}"),
                 }
-                if let Some(shown) = shown
-                    && (again || shown != project_id)
-                {
-                    shell.load_git_summary(shown, window, cx);
+                if shown && again {
+                    shell.load_git_summary(project_id, window, cx);
                 }
             });
         })
@@ -360,7 +352,9 @@ impl Shell {
     ) {
         window.focus(&self.git_focus, cx);
         let requests = self.git_view(project_id).show(section);
-        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.host_view(self.space_host(window))
+            .git_files_scroll
+            .scroll_to_item(0, ScrollStrategy::Top);
         self.git_requests(project_id, requests, window, cx);
     }
 
@@ -447,7 +441,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let requests = self.git_view(project_id).filter_changed_by(session);
-        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.host_view(self.space_host(window))
+            .git_files_scroll
+            .scroll_to_item(0, ScrollStrategy::Top);
         self.git_requests(project_id, requests, window, cx);
     }
 
@@ -628,7 +624,8 @@ impl Shell {
             _ => None,
         };
         if let Some(at) = file_row {
-            self.git_files_scroll
+            self.host_view(self.space_host(window))
+                .git_files_scroll
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
         match key {
@@ -694,8 +691,10 @@ impl Shell {
         let row = view.list_rows().iter().position(|row| {
             matches!(row, git_view::ListRow::File(target, _) if view.selected.as_ref() == Some(target))
         });
-        if let Some(at) = row {
-            self.git_files_scroll
+        if let Some(at) = row
+            && let Some(view) = self.project_view(project_id)
+        {
+            view.git_files_scroll
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
     }

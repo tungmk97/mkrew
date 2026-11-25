@@ -142,13 +142,13 @@ impl Shell {
 
     /// The right panel is drawn in `host`.
     pub(crate) fn panel_shown(&self, host: HostId) -> bool {
-        self.right_panel.open && self.panel_view(host)
+        self.panel(host).open && self.panel_view(host)
     }
 
     /// The right panel's tab on screen: a kept Session tab shows Files while
     /// `[features] session` is off.
-    pub(crate) fn panel_tab(&self) -> PanelTab {
-        match self.right_panel.tab {
+    pub(crate) fn panel_tab(&self, host: HostId) -> PanelTab {
+        match self.panel(host).tab {
             PanelTab::Session if !self.features.session => PanelTab::Files,
             tab => tab,
         }
@@ -156,7 +156,7 @@ impl Shell {
 
     /// The right panel of `host` shows the file tree.
     pub(crate) fn file_tree_shown(&self, host: HostId) -> bool {
-        self.panel_shown(host) && self.panel_tab() == PanelTab::Files
+        self.panel_shown(host) && self.panel_tab(host) == PanelTab::Files
     }
 
     /// Some of `host`'s workspace's files are drawn (a file pane or the tree), so they
@@ -167,7 +167,7 @@ impl Shell {
 
     /// The right panel of `host` shows the Git list (header, changes or History, commit box).
     pub(crate) fn git_panel_shown(&self, host: HostId) -> bool {
-        self.panel_shown(host) && self.right_panel.tab == PanelTab::Git
+        self.panel_shown(host) && self.panel(host).tab == PanelTab::Git
     }
 
     /// Some of `host`'s workspace's Git is drawn (the panel's list or a diff pane), so it

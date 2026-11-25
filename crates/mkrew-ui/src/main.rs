@@ -587,8 +587,6 @@ struct Shell {
     /// Scrolls the prompt text of Settings → Prompts (not `prompt_scroll`: the task dialog can
     /// be open under Settings).
     prompts_body_scroll: ScrollHandle,
-    /// Keeps the selected comment thread in view in the Docs / Git margin.
-    comments_scroll: ScrollHandle,
     /// The open workspace menu (Open in Zed, default agent).
     workspace_menu: Option<WorkspaceMenu>,
     /// The open right-click menu of the Files tree.
@@ -707,8 +705,6 @@ struct Shell {
     jira_keys_focus: FocusHandle,
     /// The Jira list's "Filter issues" field.
     jira_filter_focus: FocusHandle,
-    /// Keeps the selected Jira List row in view.
-    jira_scroll: ScrollHandle,
     /// The Board shows every workspace's tasks (`[ui] board_all_workspaces`, SPEC §10).
     board_all: bool,
     /// The agents' usage limits the title bar's chip shows (events and `limits.get`).
@@ -751,9 +747,6 @@ struct Shell {
     composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
-    /// The right panel (Files / Session / Git tabs) next to Terminals;
-    /// from `[ui] right_panel`, written by its toggle and tab row (SPEC §10, ADR 0081, ADR 0084).
-    right_panel: inspector::RightPanel,
     /// The panel's side of the panes, from `[ui] panel_side` (ADR 0113).
     panel_side: PanelSide,
     /// The transcripts being read, one per session (ADR 0104): the session panel's Thread
@@ -800,8 +793,6 @@ struct Shell {
     files: HashMap<Ulid, FilesView>,
     /// Focused while the right panel's tree has the keyboard, so arrow keys move its cursor.
     files_focus: FocusHandle,
-    /// Keeps the Files tree cursor in view.
-    files_scroll: UniformListScrollHandle,
     /// What waits for a Files save in flight (a "Save" answered while one was already sent):
     /// `(workspace, path, then)`, run after that save succeeds.
     files_after_save: Vec<(Ulid, FileKey, AfterSave)>,
@@ -813,21 +804,11 @@ struct Shell {
     md_split_dragging: bool,
     /// The Docs list filter field.
     docs_filter_focus: FocusHandle,
-    /// The rendered Markdown page of Docs (a virtual list, kept across frames).
-    doc_page: preview::Page,
-    /// Scroll of the Docs source view: where Shift+↓ starts, and what keeps a pick in view.
-    doc_source_scroll: UniformListScrollHandle,
     /// The Git view of every workspace it was shown for.
     git: HashMap<Ulid, GitView>,
     /// The `git.repos` of each workspace whose Git view was shown (ADR 0029), for the "Repo"
     /// chooser; kept in memory only.
     git_repos: HashMap<Ulid, Vec<String>>,
-    /// The title bar's branch chip and `Git N` badge: the shown workspace only (hidden ones
-    /// are never loaded), in memory only.
-    git_summary: Option<(Ulid, GitSummary)>,
-    /// A summary request is in flight / another change arrived meanwhile.
-    git_summary_busy: bool,
-    git_summary_again: bool,
     /// The daemon watchers this window uses for what it shows (`watches`, ADR 0087).
     watch_needs: watches::Needs,
     /// Focused while a Git view is shown, so its single-key shortcuts work.
@@ -840,8 +821,6 @@ struct Shell {
     git_menu: Option<GitMenu>,
     git_repo_query: Input,
     git_repo_query_focus: FocusHandle,
-    /// Keep the selected changed file in view.
-    git_files_scroll: UniformListScrollHandle,
     /// The diff list of each workspace's Diff leaf (`ensure_diff_views` creates it).
     diff_views: HashMap<Ulid, DiffViewState>,
     /// A Diff leaf was drawn at the last `sync_panes`: one that comes on screen refreshes Git.
@@ -933,9 +912,6 @@ struct Shell {
     /// (`scripts/measure.*`, SPEC §15 UI startup).
     launched: Option<Instant>,
     first_frame_logged: bool,
-    /// The sidebar as its own view (see [`shell::sidebar_view::SidebarView`]); made on first
-    /// render.
-    sidebar_view: Option<Entity<shell::sidebar_view::SidebarView>>,
     /// The in-app toasts (SPEC §14): pushed by `toast_error` / `toast_info`, expired on the
     /// status tick.
     toasts: Toasts,
@@ -947,8 +923,19 @@ struct Shell {
     /// The detached OS windows and their keys, both ways.
     windows: HashMap<gpui::AnyWindowHandle, WindowKey>,
     window_handles: HashMap<WindowKey, gpui::AnyWindowHandle>,
-    /// Per window: screen bounds, maximized, the strip and content size painted last.
+    /// Per window: screen bounds, maximized, the strip and content size painted last, the
+    /// shown workspace, the right panel and the scroll state of what it draws.
     hosts: HashMap<HostId, shell::hosts::HostUi>,
+    /// The right panel a new Space window starts with (`[ui] right_panel`).
+    panel_default: inspector::RightPanel,
+    /// Scroll state for a window whose `HostUi` is not there yet (drawn with fresh state).
+    no_view: shell::hosts::HostView,
+    /// The title bar summaries of the workspaces some window shows (ADR 0074).
+    git_summaries: HashMap<Ulid, GitSummary>,
+    /// Workspaces whose `git.repos` + `git.status` is in flight, and those that changed
+    /// meanwhile (asked once more when the answer arrives).
+    git_summary_busy: HashSet<Ulid>,
+    git_summary_again: HashSet<Ulid>,
     /// The window the open popover menu / the palette belongs to (spec §4.3).
     menu_host: HostId,
     palette_host: HostId,
@@ -1100,7 +1087,7 @@ impl Render for Shell {
                             style.w(px(self.sidebar_width))
                         };
                         let shell = cx.entity().downgrade();
-                        self.sidebar_view
+                        (self.hosts.entry(host).or_default().sidebar_view)
                             .get_or_insert_with(|| {
                                 cx.new(|cx| shell::sidebar_view::SidebarView::new(shell, cx))
                             })
