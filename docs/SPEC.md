@@ -1957,7 +1957,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Terminal: `terminal-bg` fill, 16 px padding on every side, line height 1.75;
   bar cursor in the text color (hollow block when the pane is unfocused; a program's DECSCUSR
   shape wins); a pane has no border; the top stripe marks needs-input, a color and the focused split pane.
-  Editor code rows keep line height 1.35 (`code_line_height`).
+  Editor code rows have line height 1.5 (`code_line_height`); the editor gutter is `text_subtle` with the caret row's number `text`, the caret row has a `row_hover` band and the caret is `accent` (ADR 0117).
 - Icons (ADR 0051): icon-only buttons, toggles, window controls, row actions and row chevrons
   draw Lucide SVG icons (`icon/lucide/`, `crates/mkrew-ui/src/icons.rs`) in a theme token color with stroke 1.5 (`ICON_STROKE`, ADR 0116),
   16 px in icon buttons, 14 px among text and 12 px for chevrons, tab and pin icons (`ICON_SIZE`, `ICON_SIZE_SMALL`, `TAB_ICON_SIZE`). The glyphs this

@@ -49,6 +49,15 @@ Part C was checked by unit tests and clippy; an omp pane cannot run in the smoke
 - [ ] **Chat Markdown (Chat view of a fake agent, and the omp pane):** an answer with a heading, a nested list, a table, a code block, inline code and a link shows: `text` headings, grey bullets (ring bullet when nested), a lined table with a muted head, a sunken code card with a 32 px head and a text-only Copy, inline code on a faint fill, links in `text` under a quiet accent line, line height 1.6. Docs preview code blocks are 1.6 too.
 - [ ] **Tool rows:** a tool call is a plain 24 px row (chevron on hover, hover fill); open, its output sits on a darker well with a faint ring; the welcome card and overlays keep their frame. If a tool head's meta run still reads `text_muted`, map `dim` to `text_subtle` in `tsp::color`.
 
+### To verify - 2026-11-26 Tern polish: Files tree, file pane header, Docs flavor, editor (ADR 0117)
+
+Part E was checked by unit tests and clippy; no screenshots were taken (the smoke sandbox needs a full bin build and scripted clicks). Check each in dark and light.
+
+- [ ] **Files tree (Task 17):** names `text_muted`, hover lifts a name to `text`; the opened row is a tint plus bar with an accent icon; 1 px guides under an expanded folder; type icons (`main.rs` code, `package.json` json, `Cargo.lock` lock, `.gitignore` gear); `main.rs` and `new.rs` show a 6 px dot with a tinted name and the letter in the tooltip.
+- [ ] **File pane header (Task 18):** breadcrumb `src › main.rs` (folders quiet, name medium); typing shows a dot on the Save icon; Review (Markdown), Save, Find, Open in Zed and close are icon buttons with tooltips and keys; dragging the pane narrow cuts the folders first and keeps the name.
+- [ ] **Docs flavor (Task 19):** open a Markdown file with h1-h4, bold, bullets, numbers, a quote, a table and `---`: column about 720 px, no rules under h1/h2, muted body in dark with bold at full `text`, grey bullets and mono numbers (if the numbers sit high, add `.mt(px(1.0))` to that marker), 16 px between blocks, 32 below the last.
+- [ ] **Editor (Task 20):** dim line numbers, the caret row's number bright, a faint band under it, an accent caret, 19.5 px rows; a click lands on the right column and PageUp/PageDown still move by whole pages.
+
 ### To verify - 2026-11-25 UI typography and quiet chrome (ADR 0116, spec docs/superpowers/specs/2026-11-25-ui-typography-design.md)
 
 Screenshots: `docs/screenshots/ui-typography-<fake|split>-<dark|light>.png` (a fake agent alone; the fake agent beside an idle omp pane).

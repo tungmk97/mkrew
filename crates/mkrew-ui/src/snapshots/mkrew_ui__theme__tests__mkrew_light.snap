@@ -125,7 +125,7 @@ Theme {
     mode: System,
     terminal_font_size: 13.0,
     terminal_line_height: 1.75,
-    code_line_height: 1.35,
+    code_line_height: 1.5,
     terminal_padding_x: 16.0,
     terminal_padding_y: 16.0,
     terminal_underline_thickness: 1.0,

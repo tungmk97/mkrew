@@ -39,6 +39,7 @@ Measured from Tern's CSS (six gap reports):
 - **Files tree.** Names `text_muted`, hover / cursor / opened `text`, ignored and dot files `text_subtle`; opened row = selected-row helper with an accent icon; 1 px `layer[1]` indent guides; icons by extension (`Icon::for_file`, six Lucide icons added from `lucide-static` 1.55.0: file-code, file-cog, file-image, file-json, file-spreadsheet, lock); git status = 6 px dot plus tinted name, the letter moves to the tooltip.
 - **File pane header.** Breadcrumb instead of the full path; Save, Find, Open in Zed and Review in Docs are icon buttons; the unsaved mark is a dot on Save.
 - **Docs flavor.** Column 960 → 720, body 14 → 15 at 1.5 → 1.65 (amends ADR 0116's 1.5), h1 32 / h2 22 with no rules, bullets `text_subtle` (amends ADR 0105's accent dot), ordered numbers terminal META `text_subtle`, quote gap 16, table header META `text_muted`, ring `layer[1]`, hr `my(XL)`.
+- **Editor.** Gutter `text_subtle`, current number `text` (no accent), current line `row_hover` band (now a ground of the "code" contrast rule), caret `accent`, `code_line_height` 1.35 → 1.5.
 - Components (shared controls, chat, composer, files, chrome, settings, git) follow in the same change; see the spec.
 
 ## Consequences

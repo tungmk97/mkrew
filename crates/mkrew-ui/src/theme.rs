@@ -1155,7 +1155,7 @@ pub struct Theme {
     pub terminal_font_size: f32,
     /// Line height of the terminal grid, as a multiple of the font size.
     pub terminal_line_height: f32,
-    /// Line height of code rows in the Files editor and preview (tighter than the terminal's).
+    /// Line height of code rows in the Files editor and the source view (tighter than the terminal's, Tern's 1.5).
     pub code_line_height: f32,
     /// Padding left and right of the terminal grid.
     pub terminal_padding_x: f32,
@@ -1611,7 +1611,7 @@ impl Theme {
             terminal_font_family: pick_family(TERMINAL_FONTS, &[]).into(),
             terminal_font_size: 13.0,
             terminal_line_height: 1.75,
-            code_line_height: 1.35,
+            code_line_height: 1.5,
             terminal_padding_x: space::L,
             terminal_padding_y: space::L,
             terminal_underline_thickness: 1.0,
@@ -2755,12 +2755,18 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
         t.syntax_type,
         t.syntax_function,
     ];
-    // `surface_raised` is the Files viewer's selected line.
+    // `row_hover` is the band under the Files editor's caret row; `surface_raised` is the
+    // Docs view's selected line. On the band the accent is only the caret (a graphical
+    // object, WCAG 1.4.11), so it needs 3:1 there and 4.5:1 on the grounds that carry text.
     for fg in code.into_iter().chain([t.accent]) {
         for bg in [t.bg, t.surface, t.surface_raised] {
             check("code", fg, bg, 4.5);
         }
     }
+    for fg in code {
+        check("code", fg, t.row_hover, 4.5);
+    }
+    check("code", t.accent, t.row_hover, 3.0);
     // A toast card is `surface_raised`; its marks are the info accent, the error red and the X.
     check("toast", t.text, t.surface_raised, 4.5);
     for mark in [t.accent_text, t.status_exited, t.text_muted] {
@@ -3276,6 +3282,24 @@ mod tests {
             let rules: Vec<&str> = problems(&theme).iter().map(|p| p.rule).collect();
             assert!(rules.contains(&rule), "{rule} missing from {rules:?}");
         }
+    }
+
+    #[test]
+    fn code_colors_are_checked_on_the_current_line_band() {
+        let t = Theme::dark();
+        // Fine on `bg`, unreadable on the band that the caret row is drawn on.
+        let broken = Theme {
+            row_hover: t.syntax_keyword,
+            ..t.clone()
+        };
+        let found = problems(&broken);
+        let want = format!("{:06X} on {:06X}", t.syntax_keyword, t.syntax_keyword);
+        assert!(
+            found
+                .iter()
+                .any(|p| p.rule == "code" && p.detail.starts_with(&want)),
+            "{found:?}"
+        );
     }
 
     #[test]

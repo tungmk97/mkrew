@@ -1553,7 +1553,7 @@ pub fn source(
     theme: &Theme,
 ) -> UniformList {
     let total = shown.lines.len();
-    let (text, muted, selection_bg) = (theme.text, theme.text_muted, theme.terminal_selection_bg);
+    let (text, subtle, selection_bg) = (theme.text, theme.text_subtle, theme.terminal_selection_bg);
     let line_height = theme.terminal_font_size * theme.code_line_height;
     let row_theme = theme.clone();
     uniform_list(id, total, move |range, _, _| {
@@ -1581,7 +1581,7 @@ pub fn source(
                     .child(
                         div()
                             .flex_none()
-                            .text_color(rgb(muted))
+                            .text_color(rgb(subtle))
                             .child(gutter(index + 1, total)),
                     )
                     .child(
@@ -1722,7 +1722,7 @@ pub struct RowMarks {
 
 /// One row of the Files editor (SPEC §12A): its number, then `text` (tabs already spaces) in
 /// the syntax colors of `spans`, with the find matches, over the selected cells, with the
-/// caret. The caret's row is raised and its number accented. `text_left` learns where the text
+/// caret. The caret's row has a faint `row_hover` band and its number at full `text`; the caret is `accent` and does not blink. `text_left` learns where the text
 /// starts on screen, so a click can be turned into a column.
 #[allow(clippy::too_many_arguments)]
 pub fn code_row(
@@ -1746,18 +1746,17 @@ pub fn code_row(
         .gap(px(space::L))
         .whitespace_nowrap()
         .cursor(CursorStyle::IBeam)
-        // A raised band plus an accent number: syntax colors and muted comments stay
-        // ≥ 4.5:1 on it.
-        .when(current, |el| el.bg(rgb(theme.surface_raised)))
+        // A faint band (`problems()` keeps syntax colors and comments ≥ 4.5:1 on it).
+        .when(current, |el| el.bg(rgb(theme.row_hover)))
         .child(
             div()
                 .flex_none()
                 .flex()
                 .gap(px(space::XS))
                 .text_color(rgb(if current {
-                    theme.accent
+                    theme.text
                 } else {
-                    theme.text_muted
+                    theme.text_subtle
                 }))
                 .child(gutter(index + 1, total))
                 .child(change_bar(marks.change, theme)),
@@ -1792,7 +1791,7 @@ pub fn code_row(
                         .bottom_0()
                         .left(cells(at))
                         .w(px(theme::CARET_WIDTH))
-                        .bg(rgb(theme.text))
+                        .bg(rgb(theme.accent))
                 })),
         )
 }
