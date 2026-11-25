@@ -275,16 +275,24 @@ fn saved(tabs: Vec<DockTab>) -> SavedWindow {
 
 #[test]
 fn windows_round_trip() {
-    let windows = vec![saved(vec![term(), term()])];
-    let json = to_json(&windows);
-    assert!(json.contains("\"version\":1"), "{json}");
+    let layout = only(vec![saved(vec![term(), term()])]);
+    let json = to_json(&layout);
+    assert!(json.contains("\"version\":2"), "{json}");
     assert!(json.contains("\"terminal\""), "{json}");
-    assert_eq!(from_json(&json), Ok(windows));
+    assert_eq!(from_json(&json), Ok(layout));
+}
+
+/// A layout with detached windows only.
+fn only(windows: Vec<SavedWindow>) -> Layout {
+    Layout {
+        spaces: vec![],
+        windows,
+    }
 }
 
 #[test]
 fn unknown_version_and_broken_files_are_errors() {
-    assert!(from_json(r#"{"version":2,"windows":[]}"#).is_err());
+    assert!(from_json(r#"{"version":3,"windows":[]}"#).is_err());
     assert!(from_json("not json").is_err());
     assert!(from_json("").is_err());
 }
@@ -301,7 +309,7 @@ fn unknown_tab_kinds_are_skipped_and_empty_windows_dropped() {
             {{"bounds":{{"x":0,"y":0,"width":800,"height":600}},"maximized":false,
               "tabs":[{{"file":{{"project":"{project}","path":"b.rs"}}}}],"active":0}}]}}"#
     );
-    let windows = from_json(&json).unwrap();
+    let windows = from_json(&json).unwrap().windows;
     assert_eq!(windows.len(), 1);
     assert_eq!(windows[0].tabs, vec![DockTab::Terminal { project, tab_id }]);
     assert_eq!(windows[0].active, 0, "re-based onto the kept tabs");
@@ -313,10 +321,10 @@ fn unknown_tab_kinds_are_skipped_and_empty_windows_dropped() {
 fn save_writes_through_a_temp_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(WINDOWS_FILE);
-    let windows = vec![saved(vec![term()])];
-    save(&path, &windows).unwrap();
+    let layout = only(vec![saved(vec![term()])]);
+    save(&path, &layout).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(from_json(&text), Ok(windows));
+    assert_eq!(from_json(&text), Ok(layout));
     let names: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
         .map(|e| e.unwrap().file_name())
@@ -358,11 +366,11 @@ fn restore_rebuilds_windows_and_skips_duplicates() {
 #[test]
 fn from_json_drops_repeated_tabs() {
     let (a, b) = (term(), term());
-    let json = to_json(&[SavedWindow {
+    let json = to_json(&only(vec![SavedWindow {
         active: 2,
         ..saved(vec![a, b, a])
-    }]);
-    let windows = from_json(&json).unwrap();
+    }]));
+    let windows = from_json(&json).unwrap().windows;
     assert_eq!(windows[0].tabs, vec![a, b]);
     assert_eq!(windows[0].active, 0, "shown tab a");
 }
@@ -475,13 +483,13 @@ fn toasts_go_to_the_first_shown_window_in_activation_order() {
 
 #[test]
 fn a_window_closed_in_full_screen_comes_back_in_full_screen() {
-    let windows = vec![SavedWindow {
+    let layout = only(vec![SavedWindow {
         fullscreen: true,
         ..saved(vec![term()])
-    }];
-    let json = to_json(&windows);
+    }]);
+    let json = to_json(&layout);
     assert!(json.contains("\"fullscreen\":true"), "{json}");
-    assert_eq!(from_json(&json), Ok(windows));
+    assert_eq!(from_json(&json), Ok(layout));
 }
 
 fn frame() -> SavedFrame {
@@ -526,6 +534,97 @@ fn a_missing_broken_or_impossible_frame_is_no_frame() {
         !parsed.maximized && !parsed.fullscreen,
         "flags default to false"
     );
+}
+
+fn space(workspace: Ulid) -> SavedSpace {
+    SavedSpace {
+        workspace,
+        bounds: SavedBounds {
+            x: 10.0,
+            y: 20.0,
+            width: 1400.0,
+            height: 900.0,
+        },
+        maximized: true,
+        fullscreen: false,
+    }
+}
+
+#[test]
+fn a_version_2_layout_round_trips() {
+    let layout = Layout {
+        spaces: vec![space(Ulid::new()), space(Ulid::new())],
+        windows: vec![saved(vec![term()])],
+    };
+    let json = to_json(&layout);
+    assert!(json.contains("\"version\":2"), "{json}");
+    assert_eq!(from_json(&json), Ok(layout));
+}
+
+#[test]
+fn a_version_1_file_reads_as_windows_without_spaces() {
+    let tab = term();
+    let v1 = format!(
+        r#"{{"version":1,"windows":[{{"bounds":{{"x":1,"y":2,"width":300,"height":200}},"tabs":[{}],"active":0}}]}}"#,
+        serde_json::to_string(&tab).unwrap()
+    );
+    let layout = from_json(&v1).unwrap();
+    assert!(layout.spaces.is_empty());
+    assert_eq!(layout.windows[0].tabs, vec![tab]);
+}
+
+#[test]
+fn unknown_fields_of_a_saved_space_are_ignored() {
+    let w = Ulid::new();
+    let text = format!(
+        r#"{{"version":2,"spaces":[{{"workspace":"{w}","bounds":{{"x":0,"y":0,"width":800,"height":600}},"zoom":2}}],"windows":[],"later":true}}"#
+    );
+    assert_eq!(from_json(&text).unwrap().spaces[0].workspace, w);
+}
+
+#[test]
+fn load_layout_takes_the_legacy_main_frame_when_spaces_are_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let windows = dir.path().join(WINDOWS_FILE);
+    let legacy = dir.path().join(main_file(None));
+    assert_eq!(
+        load_layout(&windows, &legacy),
+        Layout::default(),
+        "nothing saved yet"
+    );
+    std::fs::write(&legacy, serde_json::to_string(&frame()).unwrap()).unwrap();
+    let layout = load_layout(&windows, &legacy);
+    assert_eq!(layout.spaces.len(), 1);
+    assert_eq!(layout.spaces[0].workspace, Ulid::nil());
+    assert_eq!(layout.spaces[0].bounds, frame().bounds);
+    assert!(layout.spaces[0].fullscreen);
+    std::fs::write(&windows, "not json").unwrap();
+    assert_eq!(
+        load_layout(&windows, &legacy).spaces.len(),
+        1,
+        "a bad file keeps the frame"
+    );
+    let saved = Layout {
+        spaces: vec![space(Ulid::new())],
+        windows: vec![],
+    };
+    save(&windows, &saved).unwrap();
+    assert_eq!(
+        load_layout(&windows, &legacy),
+        saved,
+        "version 2 wins over the legacy frame"
+    );
+}
+
+#[test]
+fn spaces_keep_their_order() {
+    let [a, b] = [Ulid::new(), Ulid::new()];
+    let layout = Layout {
+        spaces: vec![space(a), space(b)],
+        windows: vec![],
+    };
+    let back = from_json(&to_json(&layout)).unwrap();
+    assert_eq!(back.spaces.last().map(|s| s.workspace), Some(b));
 }
 
 #[test]

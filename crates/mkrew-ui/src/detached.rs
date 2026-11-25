@@ -333,7 +333,7 @@ pub fn handles(command: Command) -> bool {
 
 /// This computer's detached windows, in the data dir (UI-only: the daemon never reads it).
 pub const WINDOWS_FILE: &str = "windows.json";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// The windows file of a window: [`WINDOWS_FILE`] for this computer's window (`None`), its own
 /// `windows-<key>.json` for a machine window (same key as [`crate::inbox::viewed_file`]).
@@ -400,9 +400,31 @@ pub fn merge_saved(mut live: Vec<SavedWindow>, pending: &[SavedWindow]) -> Vec<S
     live
 }
 
+/// One saved Space window (ADR 0113).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedSpace {
+    /// `Ulid::nil()` when not known (read from the legacy `main-window.json`).
+    pub workspace: Ulid,
+    pub bounds: SavedBounds,
+    #[serde(default)]
+    pub maximized: bool,
+    #[serde(default)]
+    pub fullscreen: bool,
+}
+
+/// What `windows.json` keeps: the Space windows, the one focused last at the end, and the
+/// detached windows.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Layout {
+    pub spaces: Vec<SavedSpace>,
+    pub windows: Vec<SavedWindow>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct File {
     version: u32,
+    #[serde(default)]
+    spaces: Vec<SavedSpace>,
     windows: Vec<FileWindow>,
 }
 
@@ -419,10 +441,11 @@ struct FileWindow {
     active: usize,
 }
 
-pub fn to_json(windows: &[SavedWindow]) -> String {
+pub fn to_json(layout: &Layout) -> String {
     let file = File {
         version: VERSION,
-        windows: (windows.iter())
+        spaces: layout.spaces.clone(),
+        windows: (layout.windows.iter())
             .map(|window| FileWindow {
                 bounds: window.bounds.clone(),
                 maximized: window.maximized,
@@ -438,12 +461,21 @@ pub fn to_json(windows: &[SavedWindow]) -> String {
     serde_json::to_string(&file).unwrap_or_default()
 }
 
-pub fn from_json(text: &str) -> Result<Vec<SavedWindow>, String> {
+/// Versions 1 (detached windows only) and 2; a newer version is refused.
+pub fn from_json(text: &str) -> Result<Layout, String> {
     let file: File = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    if file.version != VERSION {
+    if !(1..=VERSION).contains(&file.version) {
         return Err(format!("unknown version {}", file.version));
     }
-    Ok((file.windows.into_iter())
+    Ok(Layout {
+        spaces: file.spaces,
+        windows: saved_windows(file.windows),
+    })
+}
+
+/// The saved detached windows: unknown and repeated tabs dropped, empty windows skipped.
+fn saved_windows(windows: Vec<FileWindow>) -> Vec<SavedWindow> {
+    (windows.into_iter())
         .filter_map(|window| {
             let shown = window.tabs.get(window.active).cloned();
             let mut tabs: Vec<DockTab> = Vec::with_capacity(window.tabs.len());
@@ -466,12 +498,39 @@ pub fn from_json(text: &str) -> Result<Vec<SavedWindow>, String> {
                 active,
             })
         })
-        .collect())
+        .collect()
 }
 
 /// Writes through `<file>.tmp` and a rename, so a crash never leaves half a file.
-pub fn save(path: &Path, windows: &[SavedWindow]) -> std::io::Result<()> {
-    write_atomic(path, &to_json(windows))
+pub fn save(path: &Path, layout: &Layout) -> std::io::Result<()> {
+    write_atomic(path, &to_json(layout))
+}
+
+/// The saved layout; without saved Space windows, the legacy main window frame becomes the
+/// one Space window (its workspace unknown). Read errors are logged and give what is left.
+pub fn load_layout(windows_path: &Path, legacy_main: &Path) -> Layout {
+    let mut layout = match std::fs::read_to_string(windows_path) {
+        Ok(text) => from_json(&text).unwrap_or_else(|error| {
+            tracing::warn!("ignoring the windows file: {error}");
+            Layout::default()
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Layout::default(),
+        Err(error) => {
+            tracing::warn!("cannot read the windows file: {error}");
+            Layout::default()
+        }
+    };
+    if layout.spaces.is_empty()
+        && let Some(frame) = load_frame(legacy_main)
+    {
+        layout.spaces.push(SavedSpace {
+            workspace: Ulid::nil(),
+            bounds: frame.bounds,
+            maximized: frame.maximized,
+            fullscreen: frame.fullscreen,
+        });
+    }
+    layout
 }
 
 fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {

@@ -407,7 +407,11 @@ impl Shell {
             .collect();
         let pending = self.restore.as_deref().unwrap_or(&[]);
         let windows = detached::merge_saved(live, pending);
-        match detached::save(&self.windows_path, &windows) {
+        let layout = detached::Layout {
+            spaces: vec![],
+            windows,
+        };
+        match detached::save(&self.windows_path, &layout) {
             Ok(()) => self.windows_save_failed = false,
             Err(error) => {
                 tracing::warn!("cannot save the detached windows: {error}");
@@ -427,7 +431,7 @@ impl Shell {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
             Err(error) => return tracing::warn!("cannot read the detached windows: {error}"),
         };
-        let windows = match detached::from_json(&text) {
+        let windows = match detached::from_json(&text).map(|layout| layout.windows) {
             Ok(windows) if !windows.is_empty() => windows,
             Ok(_) => return,
             Err(error) => return tracing::warn!("ignoring the detached windows file: {error}"),
