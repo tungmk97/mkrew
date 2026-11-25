@@ -1260,15 +1260,15 @@ Two causes:
 In §10, in the omp native surface bullet (the sentence starting "`main` is a scrolling list that follows its end, with the scroll-to-end button"), after "with the scroll-to-end button" insert ", laid out only around what is on screen (ADR 0114)".
 In §15, change the Input latency row's requirement cell to "key press → glyph on screen < 16 ms (local), also beside busy panes and in an omp pane with a 2,000-row transcript (ADR 0114)".
 
-- [ ] **Step 3: ADR 0009** — add a row to its results table, in the same column format as the other rows (number from Task 4):
+- [ ] **Step 3: ADR 0009.** Add a row to its results table, in the same column format as the other rows (number from Task 4):
 
 `| Long omp transcript (2,000 rows) beside a printing pane | UI < 15% of a core | <Task 4 number>% of a core | ok |`
 
-- [ ] **Step 4: PROGRESS** — add one line at the end of its notes list:
+- [ ] **Step 4: PROGRESS.** Add one line at the end of its notes list:
 
 `- 2026-11-25 pane render perf (spec docs/superpowers/specs/2026-11-25-pane-render-perf-design.md, plan docs/superpowers/plans/2026-11-25-pane-render-perf.md, ADR 0114): cached \`PaneView\` per pane slot, cached terminal grid, virtual omp transcript (\`tsp::row_changes\`); no protocol or migration change. Manual checks in HUMAN_CHECKS "2026-11-25 pane render performance".`
 
-- [ ] **Step 5: HUMAN_CHECKS** — insert above "### To verify - 2026-11-25 omp composer edited by Mkrew (ADR 0113)":
+- [ ] **Step 5: HUMAN_CHECKS.** Insert above "### To verify - 2026-11-25 omp composer edited by Mkrew (ADR 0113)":
 
 ```markdown
 ### To verify - 2026-11-25 pane render performance (ADR 0114)
