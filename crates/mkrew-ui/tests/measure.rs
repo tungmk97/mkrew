@@ -64,16 +64,55 @@ fn paths(dir: &Path) -> Paths {
     }
 }
 
-/// `fake.toml` running the built fake agent (default `ask` scenario: asks, then waits).
-fn write_fake_profile(paths: &Paths) {
+/// A profile `id` running the built fake agent with `args` (a TOML array) and `extra` keys.
+fn write_fake_profile_as(paths: &Paths, id: &str, args: &str, extra: &str) {
     let fake = sibling_exe("mkrew-fakeagent");
-    let profile = include_str!("../../../agents/fake.toml").replace(
-        "command = \"mkrew-fakeagent\"",
-        &format!("command = '{}'", fake.display()),
+    let shipped = include_str!("../../../agents/fake.toml");
+    let profile = shipped
+        .replace(
+            "command = \"mkrew-fakeagent\"",
+            &format!("command = '{}'", fake.display()),
+        )
+        .replace("args = []", &format!("args = {args}\n{extra}"));
+    assert!(
+        shipped.contains("args = []"),
+        "fake.toml's `args = []` line moved"
     );
     let agents = paths.config_dir.join("agents");
     std::fs::create_dir_all(&agents).unwrap();
-    std::fs::write(agents.join("fake.toml"), profile).unwrap();
+    std::fs::write(agents.join(format!("{id}.toml")), profile).unwrap();
+}
+
+/// Rows of the long omp transcript (ADR 0114).
+const TSP_ROWS: usize = 2_000;
+
+/// A TSP fixture for `mkrew-fakeagent --tsp`: an inline surface whose `main` gets `rows`
+/// Markdown rows, 500 per frame.
+fn long_tsp_fixture(rows: usize) -> String {
+    let mut lines = vec![json!({"dir": "out", "verb": "o", "body": {
+        "id": "s:1", "mode": "inline", "title": "omp", "role": "omp.session"
+    }})];
+    let mut ops = vec![
+        json!(["add", "main", "s:1", null, {"id": "main", "k": "col"}]),
+        json!(["add", "dock", "s:1", null, {"id": "dock", "k": "col"}]),
+        json!(["add", "layer", "s:1", null, {"id": "layer", "k": "col"}]),
+    ];
+    let mut seq = 1;
+    for i in 0..rows {
+        let id = format!("r{i}");
+        let text = format!(
+            "### Turn {i}\n\nThe agent read `src/lib.rs` and **changed** three functions; \
+             the tests pass.\n\n- first point\n- second point"
+        );
+        ops.push(json!(["add", id, "main", null, {"id": id, "k": "md", "p": {"text": text}}]));
+        if ops.len() >= 500 || i + 1 == rows {
+            lines.push(json!({"dir": "out", "verb": "f", "body": {
+                "sf": "s:1", "s": seq, "ops": std::mem::take(&mut ops)
+            }}));
+            seq += 1;
+        }
+    }
+    lines.iter().map(|line| format!("{line}\n")).collect()
 }
 
 /// Stops the spawned daemon and the window even when an assertion fails.
@@ -208,7 +247,7 @@ fn startup_idle_cpu_and_memory_with_six_sessions() {
 
     let dir = tempfile::tempdir().unwrap();
     let paths = paths(dir.path());
-    write_fake_profile(&paths);
+    write_fake_profile_as(&paths, "fake", "[]", "");
     let mut stop = StopOnDrop(paths.clone(), None);
     let project_dir = dir.path().join("proj");
     std::fs::create_dir(&project_dir).unwrap();
@@ -287,4 +326,92 @@ fn startup_idle_cpu_and_memory_with_six_sessions() {
         verdict(daemon_rss < 50 * 1024 * 1024),
     );
     assert!(ui_rss > 0 && daemon_rss > 0, "a process was not found");
+}
+
+#[test]
+#[ignore = "opens a real window; run by scripts/measure.*"]
+fn ui_cpu_with_a_long_omp_transcript_beside_a_printing_pane() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths(dir.path());
+    let fixture = dir.path().join("long.tsp.jsonl");
+    std::fs::write(&fixture, long_tsp_fixture(TSP_ROWS)).unwrap();
+    let scenario = dir.path().join("spin.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"spinner\"\ntext = \"Working\"\nms = 600000\n",
+    )
+    .unwrap();
+    let quoted = |path: &Path| format!("'{}'", path.display());
+    write_fake_profile_as(
+        &paths,
+        "printing",
+        &format!("['--scenario', {}]", quoted(&scenario)),
+        "",
+    );
+    write_fake_profile_as(
+        &paths,
+        "longtsp",
+        &format!("['--tsp', {}]", quoted(&fixture)),
+        "tsp = true",
+    );
+    let mut stop = StopOnDrop(paths.clone(), None);
+    let project_dir = dir.path().join("proj");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let mut launcher =
+        DaemonLauncher::new(paths.clone(), sibling_exe("mkrew-daemon")).without_notifications();
+    let connection = connect_or_spawn(&mut launcher, TIMEOUT, POLL).unwrap();
+    let project: Project = block_on(connection.call(Request::ProjectAdd(ProjectAddParams {
+        path: project_dir.to_string_lossy().into_owned(),
+        name: None,
+    })))
+    .unwrap();
+    let tab: TerminalTab = block_on(connection.call(Request::TabCreate(TabCreateParams {
+        project_id: project.id,
+        title: "Agents".into(),
+        position: None,
+    })))
+    .unwrap();
+    let mut sessions = Vec::new();
+    for profile in ["printing", "longtsp"] {
+        let mut params =
+            lifecycle::spawn_params(project.id, Some(tab.id), SessionKind::Agent, None);
+        params.agent_profile = Some(profile.into());
+        let spawned: SessionSpawnResult =
+            block_on(connection.call(Request::SessionSpawn(params))).unwrap();
+        sessions.push(spawned.session_id);
+    }
+    let pane = |id: Ulid| json!({ "session": id.to_string() });
+    block_on(
+        connection.call::<serde_json::Value>(Request::TabSetLayout(TabSetLayoutParams {
+            tab_id: tab.id,
+            layout: json!({"split": "vertical", "ratio": 0.5, "children": [
+                pane(sessions[0]), pane(sessions[1]),
+            ]}),
+        })),
+    )
+    .unwrap();
+
+    let launched = Instant::now();
+    let (window, lines) = launch(
+        Command::new(env!("CARGO_BIN_EXE_mkrew"))
+            .env(ENV_DATA_DIR, &paths.data_dir)
+            .env(ENV_CONFIG_DIR, &paths.config_dir)
+            .env(ENV_SOCKET, &paths.socket)
+            .env("MKREW_LOG", "info")
+            .env("NO_COLOR", "1"),
+    );
+    let window_pid = window.id();
+    stop.1 = Some(window);
+    wait_for(&lines, "first connected frame", launched);
+    // The fake omp says hello, gets the reply and sends its frames; the spinner keeps printing.
+    std::thread::sleep(SETTLE * 2);
+    let mut ui = Probe::new(window_pid);
+    std::thread::sleep(IDLE_WINDOW);
+    let (_, ui_cpu) = ui.sample();
+    let verdict = if ui_cpu < 15.0 { "ok" } else { "OVER BUDGET" };
+    eprintln!(
+        "measure: long omp transcript ({TSP_ROWS} rows) beside a printing pane: ui \
+         {ui_cpu:.1}% of a core over {IDLE_WINDOW:?} ({verdict}, budget 15%, ADR 0114)"
+    );
 }
