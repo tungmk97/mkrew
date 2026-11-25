@@ -64,6 +64,21 @@ pub enum Flavor {
 struct Ctx {
     page: bool,
     flavor: Flavor,
+    /// Inside a list item (Chat: a nested item gets a ring bullet).
+    nested: bool,
+    /// Chat: paragraphs in `text_muted` (nested list items, quotes).
+    muted: bool,
+}
+
+impl Ctx {
+    fn new(page: bool, flavor: Flavor) -> Self {
+        Self {
+            page,
+            flavor,
+            nested: false,
+            muted: false,
+        }
+    }
 }
 
 /// The code block whose Copy button says "Copied" (its [`code_key`]; 0 = none). Set by the
@@ -93,16 +108,7 @@ pub fn copied() -> Option<u64> {
 /// The rendered preview of `blocks`, top to bottom, outside a page (a thread message, an
 /// answer): their links open only from the folder root.
 pub fn blocks(blocks: &[Block], shown: &Shown, flavor: Flavor, theme: &Theme) -> Vec<AnyElement> {
-    blocks_in(
-        blocks,
-        shown,
-        None,
-        Ctx {
-            page: false,
-            flavor,
-        },
-        theme,
-    )
+    blocks_in(blocks, shown, None, Ctx::new(false, flavor), theme)
 }
 
 /// The blocks of a Chat message with `selection` drawn; the painted texts are recorded in
@@ -129,16 +135,7 @@ pub fn message(
                 hits: hits.clone(),
                 bg,
             };
-            let element = block_in(
-                block,
-                shown,
-                Some(&pick),
-                Ctx {
-                    page: false,
-                    flavor,
-                },
-                theme,
-            );
+            let element = block_in(block, shown, Some(&pick), Ctx::new(false, flavor), theme);
             debug_assert_eq!(
                 pick.next.get(),
                 preview_select::piece_count(block, shown),
@@ -624,7 +621,7 @@ pub fn page(
             block,
             &shown,
             pick.as_ref(),
-            Ctx { page: true, flavor },
+            Ctx::new(true, flavor),
             item_theme,
         );
         if let Some(pick) = &pick {
@@ -672,16 +669,26 @@ pub fn page(
 
 /// `None` for blocks without anything to show (a text-less task item's paragraph).
 pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> {
-    block_in(
-        block,
-        shown,
-        None,
-        Ctx {
-            page: false,
-            flavor: Flavor::Doc,
-        },
-        theme,
-    )
+    block_in(block, shown, None, Ctx::new(false, Flavor::Doc), theme)
+}
+
+/// The size and line height of a heading of `level` (clamped to 1..=6). A chat message has its
+/// own scale ([`theme::doc::CHAT_HEADINGS`]) so the Docs one can change on its own.
+fn heading_metrics(level: u8, chat: bool) -> (f32, f32) {
+    let ix = usize::from(level).saturating_sub(1);
+    if chat {
+        let last = theme::doc::CHAT_HEADINGS.len() - 1;
+        (
+            theme::doc::CHAT_HEADINGS[ix.min(last)],
+            theme::doc::CHAT_HEADING_LINE_HEIGHT,
+        )
+    } else {
+        let last = theme::doc::HEADINGS.len() - 1;
+        (
+            theme::doc::HEADINGS[ix.min(last)],
+            theme::doc::HEADING_LINE_HEIGHT,
+        )
+    }
 }
 
 fn block_in(
@@ -694,20 +701,21 @@ fn block_in(
     let element = match &block.kind {
         BlockKind::Heading { level, runs } => {
             let chat = chat_flavor(ctx);
-            // Chat headings are one step smaller (h1 uses the h2 size), accent colored, and
-            // have no rule under them.
-            let step = usize::from(*level).saturating_sub(1) + usize::from(chat);
-            let size = theme::doc::HEADINGS
-                .get(step.min(theme::doc::HEADINGS.len() - 1))
-                .copied()
-                .unwrap_or(theme::doc::BODY);
+            // Chat headings: `text`, no rule, `XS` above (plus the block gap), the block gap below.
+            let (size, line_height) = heading_metrics(*level, chat);
             let major = *level <= 2 && !chat;
             div()
-                .pt(px(if major { space::L } else { space::S }))
+                .pt(px(if chat {
+                    space::XS
+                } else if major {
+                    space::L
+                } else {
+                    space::S
+                }))
                 .text_size(px(size))
-                .line_height(relative(theme::doc::HEADING_LINE_HEIGHT))
+                .line_height(relative(line_height))
                 .font_weight(FontWeight(weight::SEMIBOLD))
-                .text_color(rgb(if chat { theme.accent_text } else { theme.text }))
+                .text_color(rgb(theme.text))
                 .when(major, |el| {
                     el.pb(px(space::XS))
                         .border_b_1()
@@ -720,7 +728,11 @@ fn block_in(
         }
         BlockKind::Paragraph(runs) if runs.is_empty() => return None,
         BlockKind::Paragraph(runs) => div()
-            .text_color(rgb(theme.text))
+            .text_color(rgb(if ctx.muted {
+                theme.text_muted
+            } else {
+                theme.text
+            }))
             .child(selectable(pick, links(runs, ctx), |sel, bg| {
                 text(runs, theme, sel, bg, chat_flavor(ctx))
             }))
@@ -728,13 +740,18 @@ fn block_in(
         BlockKind::List { start, items } => div()
             .flex()
             .flex_col()
-            .gap(px(space::XS))
+            .gap(px(if chat_flavor(ctx) {
+                space::S
+            } else {
+                space::XS
+            }))
             .children(items.iter().enumerate().map(|(index, item)| {
                 let number = start.map(|first| first + index as u64);
                 list_item(item, number, shown, pick, ctx, theme)
             }))
             .into_any_element(),
         BlockKind::Quote { alert, blocks } => {
+            let chat = chat_flavor(ctx);
             let look = alert.map(|alert| alert_look(alert, theme));
             div()
                 .flex()
@@ -744,9 +761,14 @@ fn block_in(
                         .flex_none()
                         .w(px(theme::DOC_QUOTE_BAR_WIDTH))
                         .rounded(px(radius::SMALL))
-                        .bg(rgb(
-                            look.map_or(theme.pane_focus_stripe, |(_, _, color)| color)
-                        )),
+                        .bg(rgb(look.map_or(
+                            if chat {
+                                theme.border
+                            } else {
+                                theme.pane_focus_stripe
+                            },
+                            |(_, _, color)| color,
+                        ))),
                 )
                 .child(
                     div()
@@ -755,7 +777,7 @@ fn block_in(
                         .flex()
                         .flex_col()
                         .gap(px(space::S))
-                        .text_color(rgb(theme.text))
+                        .text_color(rgb(if chat { theme.text_muted } else { theme.text }))
                         .children(look.map(|(icon, title, color)| {
                             div()
                                 .flex()
@@ -766,7 +788,16 @@ fn block_in(
                                 .child(icons::icon_svg(icon, theme::ICON_SIZE_SMALL, color))
                                 .child(title)
                         }))
-                        .children(blocks_in(blocks, shown, pick, ctx, theme)),
+                        .children(blocks_in(
+                            blocks,
+                            shown,
+                            pick,
+                            Ctx {
+                                muted: ctx.muted || chat,
+                                ..ctx
+                            },
+                            theme,
+                        )),
                 )
                 .into_any_element()
         }
@@ -780,7 +811,14 @@ fn block_in(
                     Some(highlighted) => code_lines(highlighted, pick, theme),
                     None => plain_lines(text, theme),
                 };
-                code_card(lang.as_deref(), body, text, beside_edit, theme)
+                code_card(
+                    lang.as_deref(),
+                    body,
+                    text,
+                    beside_edit,
+                    chat_flavor(ctx),
+                    theme,
+                )
             };
             // A drawing or table that failed: why, over the source.
             let failed = |why: String| {
@@ -807,7 +845,15 @@ fn block_in(
                         row_count(table.rows.len() + table.more)
                     );
                     let body = delimited_table(table, pick, ctx, theme);
-                    code_card(Some(&label), body, text, beside_edit, theme).into_any_element()
+                    code_card(
+                        Some(&label),
+                        body,
+                        text,
+                        beside_edit,
+                        chat_flavor(ctx),
+                        theme,
+                    )
+                    .into_any_element()
                 }
                 (None, Some(Err(error))) => failed(format!("Cannot read this table: {error}")),
                 (None, None) => source().into_any_element(),
@@ -860,6 +906,7 @@ fn list_item(
     ctx: Ctx,
     theme: &Theme,
 ) -> gpui::Div {
+    let chat = chat_flavor(ctx);
     let marker = match (item.checked, number) {
         (Some(checked), _) => {
             let check = div()
@@ -905,12 +952,20 @@ fn list_item(
             .text_color(rgb(theme.text_muted))
             .child(format!("{number}."))
             .into_any_element(),
-        (None, None) => div()
-            .mt(px(space::S))
-            .size(px(theme::doc::BULLET_SIZE))
-            .rounded(px(radius::PILL))
-            .bg(rgb(theme.accent))
-            .into_any_element(),
+        (None, None) => {
+            let dot = div()
+                .mt(px(space::S))
+                .size(px(theme::doc::BULLET_SIZE))
+                .rounded(px(radius::PILL));
+            if !chat {
+                dot.bg(rgb(theme.accent)) // Docs: Part E
+            } else if ctx.nested {
+                dot.border_1().border_color(rgb(theme.text_subtle))
+            } else {
+                dot.bg(rgb(theme.text_subtle))
+            }
+            .into_any_element()
+        }
     };
     div()
         .flex()
@@ -929,11 +984,21 @@ fn list_item(
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .gap(px(space::XS))
+                .gap(px(if chat { space::S } else { space::XS }))
                 .when(item.checked == Some(true), |el| {
                     el.text_color(rgb(theme.text_muted))
                 })
-                .children(blocks_in(&item.blocks, shown, pick, ctx, theme)),
+                .children(blocks_in(
+                    &item.blocks,
+                    shown,
+                    pick,
+                    Ctx {
+                        nested: true,
+                        muted: ctx.muted || (chat && ctx.nested),
+                        ..ctx
+                    },
+                    theme,
+                )),
         )
 }
 
@@ -958,14 +1023,16 @@ fn lined_table(
     ctx: Ctx,
     theme: &Theme,
 ) -> gpui::Div {
+    let chat = chat_flavor(ctx);
     div()
         .flex()
         .flex_col()
         .child(
             table_row(head, cols, pick, ctx, true, theme.text_muted, theme)
                 .font_weight(FontWeight(weight::MEDIUM))
+                .when(chat, |el| el.text_size(font_size::META))
                 .border_b_1()
-                .border_color(rgb(theme.divider)),
+                .border_color(rgb(if chat { theme.border } else { theme.divider })),
         )
         .children(rows.iter().enumerate().map(|(i, row)| {
             table_row(row, cols, pick, ctx, true, theme.text, theme)
@@ -1035,7 +1102,7 @@ fn table_row(
                         .when(column > 0, |el| el.pl(px(space::M)))
                 })
                 .when(!tight, |el| el.px(px(space::M)))
-                .py(px(space::S))
+                .py(px(if chat { space::XS } else { space::S }))
                 .text_color(rgb(color))
                 .map(|el| match align {
                     Align::Center => el.text_center(),
@@ -1115,15 +1182,17 @@ fn front_matter(text: &str, theme: &Theme) -> gpui::Div {
         )
 }
 
-/// A fenced code block as a card (ADR 0105): the language (or "text") muted on the left of a
-/// header row, a Copy button always visible on the right ("Copied" for
-/// [`theme::COPIED_FEEDBACK`] after a click), the code below with `space::M` padding.
+/// A fenced code block as a card (ADR 0105): the language (or "text") on the left of a header
+/// row, a Copy button always visible on the right ("Copied" for [`theme::COPIED_FEEDBACK`]
+/// after a click), the code below with `space::M` padding. Chat is a sunken `code_bg` card with
+/// a `layer[1]` ring, a 32 px head with a `divider` line under it and a text-only Copy.
 /// `beside_edit` leaves room for the Files preview's ✎.
 fn code_card(
     lang: Option<&str>,
     body: gpui::Div,
     text: &str,
     beside_edit: bool,
+    chat: bool,
     theme: &Theme,
 ) -> gpui::Div {
     let right = if beside_edit {
@@ -1134,13 +1203,51 @@ fn code_card(
     // Hashed only while a "Copied" mark exists, not for every block on every render.
     let done = copied().is_some_and(|key| key == code_key(text));
     let copy_text = text.to_owned();
+    let label = if chat {
+        theme.text_subtle
+    } else {
+        theme.text_muted
+    };
+    let copy = div()
+        .id(("code-copy", text.as_ptr() as usize))
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .text_size(font_size::META)
+        .text_color(rgb(label))
+        .pressable(if chat { Look::Text } else { Look::Raised }, true, theme)
+        .when(!chat, |el| {
+            el.child(icons::icon_svg(
+                if done { Icon::Check } else { Icon::Copy },
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ))
+        })
+        .child(if done { "Copied" } else { "Copy" })
+        // Not a press on the page (text selection) or a pick of the block.
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_press(true, move |_, window, cx| {
+            cx.stop_propagation();
+            window.dispatch_action(Box::new(CopyCode(copy_text.clone())), cx);
+        });
     div()
         .flex()
         .flex_col()
-        .rounded(px(radius::MEDIUM))
-        .bg(rgb(theme.surface_raised))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.divider))
+        .when(chat, |el| {
+            el.rounded(px(radius::LARGE))
+                .bg(rgb(theme.code_bg))
+                .border_color(gpui::rgba(theme.layer[1]))
+        })
+        .when(!chat, |el| {
+            el.rounded(px(radius::MEDIUM))
+                .bg(rgb(theme.surface_raised))
+                .border_color(rgb(theme.divider))
+        })
         .overflow_hidden()
         .child(
             div()
@@ -1150,41 +1257,21 @@ fn code_card(
                 .gap(px(space::S))
                 .pl(px(space::M))
                 .pr(px(right))
-                .py(px(space::XS))
+                .when(chat, |el| {
+                    el.h(px(theme::CODE_HEAD_HEIGHT))
+                        .border_b_1()
+                        .border_color(rgb(theme.divider))
+                })
+                .when(!chat, |el| el.py(px(space::XS)))
                 .child(
                     div()
                         .min_w_0()
                         .truncate()
                         .text_size(font_size::META)
-                        .text_color(rgb(theme.text_muted))
+                        .text_color(rgb(label))
                         .child(lang.filter(|l| !l.is_empty()).unwrap_or("text").to_owned()),
                 )
-                .child(
-                    div()
-                        .id(("code-copy", text.as_ptr() as usize))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap(px(space::XS))
-                        .px(px(space::S))
-                        .py(px(space::XS))
-                        .rounded(px(radius::SMALL))
-                        .text_size(font_size::META)
-                        .text_color(rgb(theme.text_muted))
-                        .pressable(Look::Raised, true, theme)
-                        .child(icons::icon_svg(
-                            if done { Icon::Check } else { Icon::Copy },
-                            theme::ICON_SIZE_SMALL,
-                            theme.text_muted,
-                        ))
-                        .child(if done { "Copied" } else { "Copy" })
-                        // Not a press on the page (text selection) or a pick of the block.
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_press(true, move |_, window, cx| {
-                            cx.stop_propagation();
-                            window.dispatch_action(Box::new(CopyCode(copy_text.clone())), cx);
-                        }),
-                ),
+                .child(copy),
         )
         .child(body.p(px(space::M)))
 }
@@ -1287,8 +1374,9 @@ fn diagram_view(diagram: &Diagram, start: u32, theme: &Theme) -> gpui::Div {
         )
 }
 
-/// Inline runs as one text element: bold, italic, struck through, code spans on a raised
-/// background (a faint `hover` fill in Chat), links in the accent color and underlined.
+/// Inline runs as one text element: bold, italic, struck through, code spans on a `layer[0]`
+/// fill in Chat (a raised background in Docs), links `text` with a 1 px accent underline at 40 %
+/// in Chat, accent colored and underlined in Docs.
 fn text(
     runs: &[Run],
     theme: &Theme,
@@ -1306,22 +1394,35 @@ fn text(
     let fonts = font_overrides(&code, &glyphs, theme);
     let accent = Hsla::from(rgb(theme.accent));
     let muted = Hsla::from(rgb(theme.text_muted));
-    // Chat: `text` on a faint fill, not accent colored.
-    let code_bg = Hsla::from(rgb(if chat {
-        theme.hover
+    // Chat: `text` links under a quiet accent line, inline code on `layer[0]`. Docs: Part E.
+    let link_color = if chat {
+        Hsla::from(rgb(theme.text))
     } else {
-        theme.surface_raised
-    }));
+        accent
+    };
+    let link_line = if chat {
+        Hsla::from(gpui::rgba(theme::with_alpha(
+            theme.accent,
+            theme::LINK_UNDERLINE_ALPHA,
+        )))
+    } else {
+        accent
+    };
+    let code_bg = Hsla::from(if chat {
+        gpui::rgba(theme.layer[0])
+    } else {
+        rgb(theme.surface_raised)
+    });
     let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
     for (range, style, link) in styled {
         let base = HighlightStyle {
-            color: link.then_some(accent),
+            color: link.then_some(link_color),
             font_weight: style.bold.then_some(FontWeight(weight::SEMIBOLD)),
             font_style: style.italic.then_some(FontStyle::Italic),
             background_color: style.code.then_some(code_bg),
             underline: link.then_some(UnderlineStyle {
                 thickness: px(theme::BORDER_WIDTH),
-                color: Some(accent),
+                color: Some(link_line),
                 wavy: false,
             }),
             strikethrough: style.strike.then_some(StrikethroughStyle {
@@ -1690,6 +1791,25 @@ fn change_bar(change: Option<crate::gutter::Change>, theme: &Theme) -> Div {
 mod tests {
     use super::*;
     use gpui::ListOffset;
+
+    #[test]
+    fn chat_headings_shrink_with_the_level_and_out_of_range_levels_clamp() {
+        for chat in [true, false] {
+            let sizes: Vec<f32> = (1..=6)
+                .map(|level| heading_metrics(level, chat).0)
+                .collect();
+            assert!(
+                sizes.windows(2).all(|w| w[0] >= w[1]),
+                "chat={chat}: {sizes:?}"
+            );
+            assert_eq!(heading_metrics(0, chat), heading_metrics(1, chat));
+            assert_eq!(heading_metrics(9, chat), heading_metrics(6, chat));
+        }
+        // Chat keeps its own scale and line height: the Docs ones may grow without it.
+        let (size, line) = heading_metrics(1, true);
+        assert_eq!(size, theme::doc::CHAT_HEADINGS[0]);
+        assert_eq!(line, theme::doc::CHAT_HEADING_LINE_HEIGHT);
+    }
 
     fn page_of(text: &str) -> Rc<Shown> {
         Rc::new(Shown::from_text(text))

@@ -623,6 +623,12 @@ pub const DIAGRAM_ZOOM_MAX: f32 = 2.0;
 /// Width of the bar left of a Markdown quote.
 pub const DOC_QUOTE_BAR_WIDTH: f32 = 2.0;
 
+/// Height of a code card's head row (language and Copy), Tern's 32 px.
+pub const CODE_HEAD_HEIGHT: f32 = space::XXL;
+
+/// Alpha of the accent underline under a link in a chat message.
+pub const LINK_UNDERLINE_ALPHA: f32 = 0.4;
+
 /// Width of the accent bar left of diff lines picked for a comment.
 pub const DIFF_PICK_BAR_WIDTH: f32 = 2.0;
 
@@ -753,7 +759,13 @@ pub mod doc {
     /// Line heights as multiples of the font size.
     pub const LINE_HEIGHT: f32 = 1.5;
     pub const HEADING_LINE_HEIGHT: f32 = 1.3;
-    pub const CODE_LINE_HEIGHT: f32 = 1.45;
+    /// Code blocks, Chat and Docs (ADR 0117: 1.45 to 1.6).
+    pub const CODE_LINE_HEIGHT: f32 = 1.6;
+    /// Markdown in the omp transcript and the Chat view (ADR 0117; ADR 0116's 1.5 stays for the UI).
+    pub const CHAT_LINE_HEIGHT: f32 = 1.6;
+    pub const CHAT_HEADING_LINE_HEIGHT: f32 = 1.35;
+    /// h1-h6 of a chat message: one step under the Docs sizes, kept apart from `HEADINGS`.
+    pub const CHAT_HEADINGS: [f32; 6] = [20.0, 17.0, 15.0, 14.0, 14.0, 14.0];
     /// The marker column of list items (bullets, numbers, check boxes line up).
     pub const MARKER_WIDTH: f32 = 20.0;
     /// The accent dot before an unnumbered list item (ADR 0105).

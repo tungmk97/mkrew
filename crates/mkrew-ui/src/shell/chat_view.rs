@@ -606,7 +606,7 @@ impl Shell {
                                 .flex()
                                 .flex_col()
                                 .gap(px(space::M))
-                                .line_height(relative(theme::doc::LINE_HEIGHT))
+                                .line_height(relative(theme::doc::CHAT_LINE_HEIGHT))
                                 .children(preview::message(
                                     shown,
                                     selection,

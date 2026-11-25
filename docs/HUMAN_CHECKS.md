@@ -40,6 +40,15 @@ Part B was checked by unit tests, clippy and the contrast rules; no smoke screen
 - [ ] **Dialogs:** confirm prompt (a destructive one shows the danger tile), New task (`Ctrl+Shift+N`), Undo, Discard, Ports, Phone access, Ask AI, Broadcast, Add workspace, Run setup, History and Turns all share the icon-tile head, close X, body and foot band; the primary shows its key (`↵` or `Ctrl+Enter`); errors are red-ringed notes; the picked row (turns, history, run picker, prompt picker) is a tint plus bar.
 - [ ] **Settings:** `Ctrl+,` opens 960x720 with the icon navigation; page head with a one-sentence lead; the shown page is a tint plus a bar; Down on a row scrolls to it and Tab goes nav, find, rows; a window narrower than 960 shrinks the panel; the Keyboard page is one card; the empty search shows "Clear search (Esc)" under the sentence.
 
+### To verify - 2026-11-26 Tern polish: omp transcript and Chat view (ADR 0117)
+
+Part C was checked by unit tests and clippy; an omp pane cannot run in the smoke sandbox and no Chat screenshots were taken. Check each in dark and light.
+
+- [ ] **omp pane rhythm:** 16 px between turns, no extra space after folded or hidden rows, 8 px between thinking, text and tool rows of one turn, thinking rows 24 px tall (BODY italic, `text` on hover), the working row's label starts at the text's left edge.
+- [ ] **Prompt bubble:** the omp prompt is a right-aligned rounded bubble (square bottom-right corner), at most 540 px; its copy / rewind / time row appears under it only on hover and its buttons still work. The Chat view shows the same bubble.
+- [ ] **Chat Markdown (Chat view of a fake agent, and the omp pane):** an answer with a heading, a nested list, a table, a code block, inline code and a link shows: `text` headings, grey bullets (ring bullet when nested), a lined table with a muted head, a sunken code card with a 32 px head and a text-only Copy, inline code on a faint fill, links in `text` under a quiet accent line, line height 1.6. Docs preview code blocks are 1.6 too.
+- [ ] **Tool rows:** a tool call is a plain 24 px row (chevron on hover, hover fill); open, its output sits on a darker well with a faint ring; the welcome card and overlays keep their frame. If a tool head's meta run still reads `text_muted`, map `dim` to `text_subtle` in `tsp::color`.
+
 ### To verify - 2026-11-25 UI typography and quiet chrome (ADR 0116, spec docs/superpowers/specs/2026-11-25-ui-typography-design.md)
 
 Screenshots: `docs/screenshots/ui-typography-<fake|split>-<dark|light>.png` (a fake agent alone; the fake agent beside an idle omp pane).

@@ -2048,11 +2048,17 @@ impl Shell {
             theme,
         );
         let (session, id) = (p.session, node.id.clone());
+        // The prompt bubble keeps the UI's 1.5.
+        let line_height = if parent_is(p, node, tsp::is_user_prompt) {
+            theme::UI_LINE_HEIGHT
+        } else {
+            theme::doc::CHAT_LINE_HEIGHT
+        };
         let el = div()
             .flex()
             .flex_col()
             .gap(px(space::M))
-            .line_height(relative(theme::doc::LINE_HEIGHT))
+            .line_height(relative(line_height))
             .min_w_0()
             .children(blocks)
             .on_mouse_down(
