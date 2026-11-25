@@ -616,6 +616,8 @@ struct Shell {
     run_menu: Option<Ulid>,
     /// The title bar's workspace dropdown is open.
     workspace_switcher: bool,
+    /// The title bar's "need you" chip menu is open (ADR 0113), in `menu_host`'s window.
+    need_you_menu: bool,
     /// The tab area's `+ ▾` dropdown is open.
     new_menu: bool,
     /// The pointer holds the tab strip's `+` row open (`plus_row::Reveal`); a focused item

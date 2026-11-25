@@ -281,7 +281,6 @@ fn need_you_counts_other_workspaces_only_newest_first() {
     let one = need_you(&entries, Some(api)).unwrap();
     assert_eq!(one.count, 2);
     assert_eq!(one.label, "2 need you · web");
-    assert_eq!(one.short, "2");
     assert_eq!(one.rows[0].text, "web · lint · needs input");
     let mixed = [
         entries[0].clone(),

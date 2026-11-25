@@ -228,9 +228,9 @@ On Windows the badge shows on every Space window's taskbar button: `Desktop` kee
 
 - Shown in mode 2 only, while sessions of **other** workspaces need the user (`inbox::needs_you`).
 - Text `● N need you · <workspace>` with one workspace, `● N need you · M workspaces` with several; amber dot and text, chip look (`Look::Chip`).
-- A click opens a menu: one row per session, `<avatar> <workspace> · <title> · <state>`, newest first; picking a row runs 4.2 for its workspace, then focuses the session.
+- A click opens a menu: one row per session, `<avatar> <workspace> · <title> · <state>`, newest first; picking a row shows the session where it lives (its torn-off window, else 4.2 for its workspace, then the session is focused).
 - Ctrl+Shift+I (Jump to next) keeps working across windows.
-- When the title bar runs out of room the chip drops its `· <workspace>` part first and keeps `● N`; it never hides while N is above 0.
+- The chip never hides while N is above 0: it does not shrink, and the tab area gives way first (a window is never narrower than `WINDOW_MIN_WIDTH`, so the full text always fits).
 
 ### 5.3 Panel side
 

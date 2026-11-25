@@ -5,7 +5,8 @@ use crate::shell::hosts::HostUi;
 use crate::shell::space_view::SpaceWindow;
 use crate::*;
 use mkrew_ui::window_mode::{
-    Choice, OpenTarget, PickOutcome, PickRow, SplitPlan, WorkspacePicker, open_target, plan_combine,
+    Choice, OpenTarget, PickOutcome, PickRow, SplitPlan, WorkspacePicker, need_you, open_target,
+    plan_combine,
 };
 
 /// What runs where an opened workspace lands.
@@ -950,5 +951,99 @@ impl Shell {
                     .child(primary),
             );
         Self::modal_shade("split-picker-shade", panel, cx)
+    }
+
+    /// The title bar chip of a Space window in mode 2 (ADR 0113): sessions of the other
+    /// workspaces that need the user, `● N need you · <place>`; it never shrinks (the tab area
+    /// gives way first). A click lists them. `None` while no other workspace needs the user.
+    pub(crate) fn render_need_you_chip(
+        &self,
+        host: HostId,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::AnyElement> {
+        if self.window_mode != WindowMode::PerWorkspace || host.space().is_none() {
+            return None;
+        }
+        let need = need_you(&self.inbox_entries(), self.workspace_of(host))?;
+        let open = self.need_you_menu && self.menu_host == host;
+        let chip = div()
+            .id("need-you")
+            .relative()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .h(theme::rems_px(theme::CONTROL_HEIGHT))
+            .px(px(space::S))
+            .rounded(px(radius::PILL))
+            .bg(rgb(theme.warning_bg))
+            .text_size(font_size::META)
+            .text_color(rgb(theme.status_needs_input))
+            .pressable(Look::Chip, true, theme)
+            // Not while its menu is open: the tooltip would cover the rows.
+            .when(!open, |el| {
+                el.tooltip(tooltip(
+                    theme,
+                    "Sessions in other workspaces need you",
+                    self.keymap.label(Command::NextInbox),
+                ))
+            })
+            .on_press(
+                true,
+                cx.listener(|shell, _, window, cx| shell.open_need_you(window, cx)),
+            )
+            .child(status_dot(theme.status_needs_input, false))
+            .child(need.label);
+        let menu = (open && !self.modal_open()).then(|| {
+            render_menu(
+                self.menu_state(),
+                "need-you-menu",
+                self.need_you_rows(host),
+                None,
+                Place::Dropdown,
+                theme,
+                cx,
+            )
+        });
+        Some(
+            div()
+                .flex_none()
+                .child(chip)
+                .children(menu)
+                .into_any_element(),
+        )
+    }
+
+    pub(crate) fn open_need_you(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.begin_menu(window, cx);
+        self.need_you_menu = true;
+        self.menu_host = self.host_of(window);
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
+    }
+
+    /// One row per session of another workspace that needs the user, newest first; picking
+    /// one shows the session where it lives (`open_session`: its torn-off window, else its
+    /// workspace's window the way the window mode says).
+    pub(crate) fn need_you_rows(&self, host: HostId) -> Rows {
+        let Some(need) = need_you(&self.inbox_entries(), self.workspace_of(host)) else {
+            return Rows::new();
+        };
+        let projects = self.sidebar.projects();
+        (need.rows.into_iter())
+            .map(|row| {
+                let project = projects.iter().find(|project| project.id == row.project);
+                let session = row.session;
+                MenuItem::new(
+                    row.text,
+                    act(move |shell, window, cx| shell.open_session(session, window, cx)),
+                )
+                .lead(Lead::Avatar {
+                    name: project.map_or_else(String::new, |project| project.name.clone()),
+                    color: project.and_then(|project| project.color.clone()),
+                })
+                .row()
+            })
+            .collect()
     }
 }

@@ -351,8 +351,6 @@ pub struct NeedYou {
     pub count: usize,
     /// `N need you · web`, or `N need you · M workspaces`.
     pub label: String,
-    /// `N`: what stays when the title bar runs out of room.
-    pub short: String,
     /// Newest first.
     pub rows: Vec<NeedRow>,
 }
@@ -389,7 +387,6 @@ pub fn need_you(entries: &[Entry], shown: Option<Ulid>) -> Option<NeedYou> {
     Some(NeedYou {
         count,
         label: format!("{count} need you · {place}"),
-        short: count.to_string(),
         rows,
     })
 }

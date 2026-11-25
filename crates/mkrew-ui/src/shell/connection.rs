@@ -350,6 +350,7 @@ impl Shell {
             run_setup_drag: scrollbar::Drag::default(),
             run_menu: None,
             workspace_switcher: false,
+            need_you_menu: false,
             new_menu: false,
             plus: Reveals::default(),
             plus_focus: cx.focus_handle(),

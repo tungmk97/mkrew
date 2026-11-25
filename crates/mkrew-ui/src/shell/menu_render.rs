@@ -324,6 +324,7 @@ impl Shell {
             || self.file_menu.is_some()
             || self.run_menu.is_some()
             || self.workspace_switcher
+            || self.need_you_menu
             || self.new_menu
             || self.run_with.is_some()
             || self.fan_out.is_some()
@@ -359,6 +360,9 @@ impl Shell {
             return self
                 .workspace_in(window)
                 .map(|project_id| self.switcher_rows(project_id));
+        }
+        if self.need_you_menu {
+            return Some(self.need_you_rows(self.menu_host));
         }
         if self.new_menu {
             return Some(self.new_menu_rows(self.space_host(window)));
