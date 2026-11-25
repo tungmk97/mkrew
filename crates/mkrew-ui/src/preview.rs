@@ -68,6 +68,8 @@ struct Ctx {
     nested: bool,
     /// Chat: paragraphs in `text_muted` (nested list items, quotes).
     muted: bool,
+    /// Inside a block quote: running text is `text_muted` (SPEC §14).
+    quoted: bool,
 }
 
 impl Ctx {
@@ -77,6 +79,7 @@ impl Ctx {
             flavor,
             nested: false,
             muted: false,
+            quoted: false,
         }
     }
 }
@@ -642,7 +645,7 @@ pub fn page(
             .w_full()
             .px(px(space::XL))
             .when(index == 0, |el| el.pt(px(space::L)))
-            .pb(px(if index == last { space::L } else { space::M }))
+            .pb(px(if index == last { space::XXL } else { space::L }))
             .child(
                 div()
                     .w_full()
@@ -699,6 +702,19 @@ fn block_in(
     theme: &Theme,
 ) -> Option<AnyElement> {
     let element = match &block.kind {
+        BlockKind::Heading { level, runs } if !chat_flavor(ctx) => {
+            let (size, above) = doc_heading(usize::from(*level));
+            div()
+                .pt(px(above))
+                .text_size(px(size))
+                .line_height(relative(theme::doc::HEADING_LINE_HEIGHT))
+                .font_weight(FontWeight(weight::SEMIBOLD))
+                .text_color(rgb(theme.text))
+                .child(selectable(pick, links(runs, ctx), |sel, bg| {
+                    text(runs, theme, sel, bg, false)
+                }))
+                .into_any_element()
+        }
         BlockKind::Heading { level, runs } => {
             let chat = chat_flavor(ctx);
             // Chat headings: `text`, no rule, `XS` above (plus the block gap), the block gap below.
@@ -728,11 +744,7 @@ fn block_in(
         }
         BlockKind::Paragraph(runs) if runs.is_empty() => return None,
         BlockKind::Paragraph(runs) => div()
-            .text_color(rgb(if ctx.muted {
-                theme.text_muted
-            } else {
-                theme.text
-            }))
+            .text_color(rgb(body_color(ctx, theme)))
             .child(selectable(pick, links(runs, ctx), |sel, bg| {
                 text(runs, theme, sel, bg, chat_flavor(ctx))
             }))
@@ -751,24 +763,21 @@ fn block_in(
             }))
             .into_any_element(),
         BlockKind::Quote { alert, blocks } => {
-            let chat = chat_flavor(ctx);
             let look = alert.map(|alert| alert_look(alert, theme));
+            let inner = Ctx {
+                quoted: true,
+                muted: ctx.muted || chat_flavor(ctx),
+                ..ctx
+            };
             div()
                 .flex()
-                .gap(px(space::M))
+                .gap(px(space::L))
                 .child(
                     div()
                         .flex_none()
                         .w(px(theme::DOC_QUOTE_BAR_WIDTH))
                         .rounded(px(radius::SMALL))
-                        .bg(rgb(look.map_or(
-                            if chat {
-                                theme.border
-                            } else {
-                                theme.pane_focus_stripe
-                            },
-                            |(_, _, color)| color,
-                        ))),
+                        .bg(rgb(look.map_or(theme.border, |(_, _, color)| color))),
                 )
                 .child(
                     div()
@@ -777,7 +786,7 @@ fn block_in(
                         .flex()
                         .flex_col()
                         .gap(px(space::S))
-                        .text_color(rgb(if chat { theme.text_muted } else { theme.text }))
+                        .text_color(rgb(theme.text_muted))
                         .children(look.map(|(icon, title, color)| {
                             div()
                                 .flex()
@@ -788,16 +797,7 @@ fn block_in(
                                 .child(icons::icon_svg(icon, theme::ICON_SIZE_SMALL, color))
                                 .child(title)
                         }))
-                        .children(blocks_in(
-                            blocks,
-                            shown,
-                            pick,
-                            Ctx {
-                                muted: ctx.muted || chat,
-                                ..ctx
-                            },
-                            theme,
-                        )),
+                        .children(blocks_in(blocks, shown, pick, inner, theme)),
                 )
                 .into_any_element()
         }
@@ -872,24 +872,24 @@ fn block_in(
             div()
                 .flex()
                 .flex_col()
-                .rounded(px(radius::MEDIUM))
+                .rounded(px(radius::LARGE))
                 .border_1()
-                .border_color(rgb(theme.border))
+                .border_color(gpui::rgba(theme.layer[1]))
                 .overflow_hidden()
                 .child(
-                    table_row(head, cols, pick, ctx, false, theme.text, theme)
-                        .bg(rgb(theme.surface_raised))
-                        .font_weight(FontWeight(weight::SEMIBOLD)),
+                    table_row(head, cols, pick, ctx, false, theme.text_muted, theme)
+                        .bg(rgb(theme.surface))
+                        .text_size(font_size::META),
                 )
                 .children(rows.iter().map(|row| {
                     table_row(row, cols, pick, ctx, false, theme.text, theme)
                         .border_t_1()
-                        .border_color(rgb(theme.border))
+                        .border_color(rgb(theme.divider))
                 }))
                 .into_any_element()
         }
         BlockKind::Rule => div()
-            .my(px(space::S))
+            .my(px(space::XL))
             .h(px(theme::BORDER_WIDTH))
             .bg(rgb(theme.border))
             .into_any_element(),
@@ -949,7 +949,9 @@ fn list_item(
             }
         }
         (None, Some(number)) => div()
-            .text_color(rgb(theme.text_muted))
+            .font_family(theme.terminal_font_family.clone())
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_subtle))
             .child(format!("{number}."))
             .into_any_element(),
         (None, None) => {
@@ -957,9 +959,7 @@ fn list_item(
                 .mt(px(space::S))
                 .size(px(theme::doc::BULLET_SIZE))
                 .rounded(px(radius::PILL));
-            if !chat {
-                dot.bg(rgb(theme.accent)) // Docs: Part E
-            } else if ctx.nested {
+            if chat && ctx.nested {
                 dot.border_1().border_color(rgb(theme.text_subtle))
             } else {
                 dot.bg(rgb(theme.text_subtle))
@@ -1004,6 +1004,31 @@ fn list_item(
 
 fn chat_flavor(ctx: Ctx) -> bool {
     matches!(ctx.flavor, Flavor::Chat { .. })
+}
+
+/// The color of running text (paragraphs, list items): `text_muted` in a quote, where Part C's
+/// `muted` says so, and on the Docs flavor in a dark theme (Tern: body t2, bold and headings
+/// t1); `text` otherwise (light themes, Chat).
+fn body_color(ctx: Ctx, theme: &Theme) -> u32 {
+    if ctx.muted || ctx.quoted || (theme.dark && !chat_flavor(ctx)) {
+        theme.text_muted
+    } else {
+        theme.text
+    }
+}
+
+/// A Docs-flavor heading: its size and the space above it. No rule under h1 or h2; the
+/// bigger the heading, the more air before it (the block gap below is the page's 16).
+fn doc_heading(level: usize) -> (f32, f32) {
+    let level = level.clamp(1, theme::doc::PAGE_HEADINGS.len());
+    let above = match level {
+        1 => 0.0,
+        2 => space::XXL,
+        3 => space::XL,
+        4 => space::L,
+        _ => space::M,
+    };
+    (theme::doc::PAGE_HEADINGS[level - 1], above)
 }
 
 /// A table's columns: their alignments and, for a ```csv table, their widths in characters
@@ -1394,6 +1419,7 @@ fn text(
     let fonts = font_overrides(&code, &glyphs, theme);
     let accent = Hsla::from(rgb(theme.accent));
     let muted = Hsla::from(rgb(theme.text_muted));
+    let strong = Hsla::from(rgb(theme.text));
     // Chat: `text` links under a quiet accent line, inline code on `layer[0]`. Docs: Part E.
     let link_color = if chat {
         Hsla::from(rgb(theme.text))
@@ -1416,7 +1442,7 @@ fn text(
     let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
     for (range, style, link) in styled {
         let base = HighlightStyle {
-            color: link.then_some(link_color),
+            color: link.then_some(link_color).or(style.bold.then_some(strong)),
             font_weight: style.bold.then_some(FontWeight(weight::SEMIBOLD)),
             font_style: style.italic.then_some(FontStyle::Italic),
             background_color: style.code.then_some(code_bg),
@@ -1809,6 +1835,63 @@ mod tests {
         let (size, line) = heading_metrics(1, true);
         assert_eq!(size, theme::doc::CHAT_HEADINGS[0]);
         assert_eq!(line, theme::doc::CHAT_HEADING_LINE_HEIGHT);
+    }
+
+    fn ctx(flavor: Flavor) -> Ctx {
+        Ctx::new(true, flavor)
+    }
+
+    #[test]
+    fn running_text_is_muted_on_dark_docs_and_in_quotes_only() {
+        let chat = Flavor::Chat {
+            session: Ulid::nil(),
+        };
+        for theme in [
+            Theme::dark(),
+            Theme::light(),
+            Theme::tern_dark(),
+            Theme::tern_light(),
+        ] {
+            let doc = body_color(ctx(Flavor::Doc), &theme);
+            let want = if theme.dark {
+                theme.text_muted
+            } else {
+                theme.text
+            };
+            assert_eq!(doc, want, "{}", theme.name);
+            assert_eq!(body_color(ctx(chat), &theme), theme.text, "{}", theme.name);
+            for flavor in [Flavor::Doc, chat] {
+                let quoted = Ctx {
+                    quoted: true,
+                    ..ctx(flavor)
+                };
+                assert_eq!(
+                    body_color(quoted, &theme),
+                    theme.text_muted,
+                    "{}",
+                    theme.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn doc_headings_shrink_stay_above_body_and_get_less_air() {
+        let sizes: Vec<f32> = (1..=6).map(|level| doc_heading(level).0).collect();
+        assert!(sizes.windows(2).all(|pair| pair[0] >= pair[1]), "{sizes:?}");
+        assert!(
+            sizes.iter().all(|size| *size >= theme::doc::BODY),
+            "{sizes:?}"
+        );
+        let tops: Vec<f32> = (2..=6).map(|level| doc_heading(level).1).collect();
+        assert!(tops.windows(2).all(|pair| pair[0] >= pair[1]), "{tops:?}");
+        assert_eq!(
+            doc_heading(1).1,
+            0.0,
+            "the title sits on the page's own top padding"
+        );
+        assert_eq!(doc_heading(0), doc_heading(1));
+        assert_eq!(doc_heading(9), doc_heading(6));
     }
 
     fn page_of(text: &str) -> Rc<Shown> {

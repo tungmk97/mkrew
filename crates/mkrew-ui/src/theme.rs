@@ -641,9 +641,9 @@ pub const HISTORY_LIST_WIDTH: f32 = 280.0;
 /// Width of the Docs view's file list.
 pub const DOC_LIST_WIDTH: f32 = 240.0;
 
-/// Max width of the rendered Markdown preview: wide enough for tables and diagrams, still a
-/// readable line (≈ 120 characters of body text).
-pub const DOC_PREVIEW_MAX_WIDTH: f32 = 960.0;
+/// Max width of the Docs flavor's column (file preview, Docs view): about 75 characters of
+/// 15 px body text. Wide tables and diagrams shrink or scroll inside it.
+pub const DOC_PREVIEW_MAX_WIDTH: f32 = 720.0;
 
 /// An expanded Mermaid diagram (its dialog takes `HISTORY_DIALOG_FRACTION` of the window) is
 /// drawn at most this many times its natural size: gpui rasterizes SVGs at 2x, so it stays
@@ -782,12 +782,14 @@ pub const DOC_TASK_BOX_SIZE: f32 = space::M;
 /// Docs preview typography (SPEC §12, ADR 0021): long-form reading, a step above the UI
 /// scale.
 pub mod doc {
-    pub const BODY: f32 = 14.0;
+    pub const BODY: f32 = 15.0;
     pub const CODE: f32 = 13.0;
     /// h1–h6.
     pub const HEADINGS: [f32; 6] = [24.0, 20.0, 17.0, 15.0, 14.0, 14.0];
-    /// Line heights as multiples of the font size.
-    pub const LINE_HEIGHT: f32 = 1.5;
+    /// The Docs flavor's h1-h6 (SPEC §14): the title is 32, no heading is under the body.
+    pub const PAGE_HEADINGS: [f32; 6] = [32.0, 22.0, 17.0, 15.0, 15.0, 15.0];
+    /// Line height of the Docs page only (the chat has `CHAT_LINE_HEIGHT`, the UI 1.5).
+    pub const LINE_HEIGHT: f32 = 1.65;
     pub const HEADING_LINE_HEIGHT: f32 = 1.3;
     /// Code blocks, Chat and Docs (ADR 0117: 1.45 to 1.6).
     pub const CODE_LINE_HEIGHT: f32 = 1.6;

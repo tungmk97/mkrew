@@ -1943,8 +1943,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   `[ui] font_family` is set. Sizes 11 overline, 12 meta, 13 body, 15 card
   title, 20 view title at the default `[ui] font_size = 13`; other sizes keep their ratio to body
   (ADR 0024). Weights 400/500/600. All-caps only for 11/600 overlines. UI line height 1.5 (`UI_LINE_HEIGHT`, set on every window root).
-- Docs preview (ADR 0021): body 14 px, line height 1.5, headings 24/20/17/15/14/14 px, code 13 px,
-  a centered column of at most 960 px (ADR 0083). A drawn Mermaid diagram shows "Expand" at
+- Docs preview (ADR 0021, 0117): body 15 px, line height 1.65, headings 32/22/17/15/15/15 px with no rule (h2 `space::XXL` above, h3 `space::XL`, h4 `space::L`), code 13 px at 1.6, block gap 16, a centered column of at most 720 px (ADR 0083); paragraph and list text `text_muted` in dark themes and `text` in light, bold and headings `text`. A drawn Mermaid diagram shows "Expand" at
   its bottom-right on hover: a dialog of 90% of the window shows it as wide as fits, up to 2x
   its natural size (a tall one scrolls); Esc or Close closes it.
 - Terminal font defaults: JetBrains Mono → Cascadia Code → Cascadia Mono → Consolas (Windows),
