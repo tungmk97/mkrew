@@ -1796,6 +1796,7 @@ impl Shell {
             let tool = tsp::is_tool(node);
             (p.doc.children(&node.id))
                 .filter(|child| head_child.is_none_or(|head| head.id != child.id))
+                .filter(|child| !bool_prop(child, "hidden"))
                 .map(|child| {
                     let el = self.tsp_node(p, child, cx);
                     if tool && matches!(child.kind.as_str(), "ansi" | "rows") {
@@ -1844,7 +1845,6 @@ impl Shell {
                     .gap(px(space::S))
                     .min_w_0()
                     .pl(px(space::L))
-                    .italic()
                     .children(body),
             )
         } else {
@@ -1954,7 +1954,11 @@ impl Shell {
         let head_color = if user {
             theme.text_subtle
         } else {
-            str_prop(node, "tone").map_or(theme.text, |tone| tsp::tone_color(tone, theme))
+            match str_prop(node, "tone") {
+                // A tool title is `text` unless it failed; other heads keep omp's tone.
+                Some(tone) if !tool || tone == "error" => tsp::tone_color(tone, theme),
+                _ => theme.text,
+            }
         };
         let group = SharedString::from(format!("tsp-hg-{}-{}", p.session, node.id));
         let mut row = div()
@@ -1967,7 +1971,7 @@ impl Shell {
         }
         if tool {
             row = row
-                .min_h(px(theme::TSP_HEAD_HEIGHT))
+                .min_h(theme::rems_px(theme::TSP_HEAD_HEIGHT))
                 .mx(px(-space::XS))
                 .px(px(space::XS))
                 .rounded(px(theme::radius::SMALL));
@@ -1995,6 +1999,10 @@ impl Shell {
             };
         }
         let row = match child {
+            // A tool title is MEDIUM (Tern); the child keeps its own color.
+            Some(child) if tool => {
+                row.child(div().font_weight(FontWeight(weight::MEDIUM)).child(child))
+            }
             Some(child) => row.child(child),
             None if tool => row.child(styled_runs_w(
                 head,
@@ -2044,8 +2052,9 @@ impl Shell {
     fn tsp_md(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
         // A thinking body is `text_subtle`: paragraphs take `theme.text`, so give them that tier.
         // ponytail: one Theme clone per painted thinking body; a Flavor variant if it shows up in a profile.
+        let thought = parent_is(p, node, tsp::is_thinking);
         let thought_theme;
-        let theme = if parent_is(p, node, tsp::is_thinking) {
+        let theme = if thought {
             thought_theme = Theme {
                 text: p.theme.text_subtle,
                 ..p.theme.clone()
@@ -2087,6 +2096,7 @@ impl Shell {
             theme::doc::CHAT_LINE_HEIGHT
         };
         let el = div()
+            .when(thought && kind == "md", |el| el.italic())
             .flex()
             .flex_col()
             .gap(px(space::M))
@@ -2134,10 +2144,20 @@ impl Shell {
     #[inline(never)]
     fn tsp_plain(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
         let theme = p.theme;
-        let base = str_prop(node, "tone").map_or(theme.text, |tone| tsp::tone_color(tone, theme));
+        let thought = parent_is(p, node, tsp::is_thinking);
+        // A thinking body is `text_subtle` and italic (here and in `tsp_md`, never on its code cards).
+        let base = str_prop(node, "tone").map_or(
+            if thought {
+                theme.text_subtle
+            } else {
+                theme.text
+            },
+            |tone| tsp::tone_color(tone, theme),
+        );
         let runs = tsp::node_spans(&node.props, theme);
         let mut el = div()
             .min_w_0()
+            .when(thought, |el| el.italic())
             .child(styled_runs(&runs, base, false, theme));
         if node.props.get("wrap").and_then(Value::as_str) == Some("none") {
             el = el.whitespace_nowrap();
@@ -3056,7 +3076,7 @@ fn thinking_head_el(
         .flex()
         .items_center()
         .gap(px(space::XS))
-        .min_h(px(theme::TSP_HEAD_HEIGHT))
+        .min_h(theme::rems_px(theme::TSP_HEAD_HEIGHT))
         .text_size(font_size::BODY)
         .italic()
         .child(
@@ -3991,7 +4011,7 @@ impl Shell {
             .items_center()
             .gap(px(space::S))
             .min_w_0()
-            .min_h(px(theme::TSP_HEAD_HEIGHT))
+            .min_h(theme::rems_px(theme::TSP_HEAD_HEIGHT))
             .text_size(font_size::META)
             .child(
                 div()

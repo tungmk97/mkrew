@@ -1258,7 +1258,7 @@ fn code_card(
                 .pl(px(space::M))
                 .pr(px(right))
                 .when(chat, |el| {
-                    el.h(px(theme::CODE_HEAD_HEIGHT))
+                    el.h(theme::rems_px(theme::CODE_HEAD_HEIGHT))
                         .border_b_1()
                         .border_color(rgb(theme.divider))
                 })

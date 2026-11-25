@@ -4494,3 +4494,8 @@ _Decisions the agent made on its own. Override them here if you disagree._
 - [x] (T0.9 / T0.8) Perceived latency and idle cost: type in
   `cargo run --release -p spike-term -- --stats` (read `key_p50` lines) and judge the idle CPU
   (~3.5 % of one core, GPUI vsync floor) and flood CPU (~0.8 core at 165 Hz) in the ADR. — ok
+
+## Tern polish, Part D (composer)
+
+- [ ] (Task 14) To verify: Chat composer card on `composer_fill` (dark one step lighter than the pane, light white) with the meter labels and track on the card's top edge, `space::L` above the pane bottom; omp dock: meter with a warning tone, card as wide as the transcript among several panes, meter labels clear the status row.
+- [ ] (Part C review) To verify: a fenced code card inside an omp thinking body is italic (the italic sits on the md node, not only on its text runs).
