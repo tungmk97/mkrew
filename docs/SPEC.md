@@ -1409,6 +1409,7 @@ Only edit this file. When done, for EACH comment run:
   (all of them when the root is listed). Updates live when agents create/delete/rename files.
 - **File pane** (ADR 0108, replaces the Editor view): an open file is a leaf of a terminal tab's split tree.
   It is a tab in the title bar's tab area (file-type icon, file name, `●` while unsaved, × to close) or a pane inside the tab in front, inside the same frame, stripe and dim as a terminal pane (§14).
+  The header is a breadcrumb (folders META `text_subtle` with `›` in `subtle`, the name BODY MEDIUM `text`), `Ln, Col` (terminal font META `text_subtle`), the Markdown mode switch, then icon buttons with tooltips and keys: Review in Docs, Save, Find, Open in Zed, close.
   There is no Editor view, no Editor chip and no file tab strip.
   A workspace has at most one pane per file across all its tabs and windows: opening a file that is open focuses its pane (its tab and window come to the front) and jumps to the line.
   A single click on a file in the tree, or Enter on it, opens the workspace's **preview tab** (italic title), which the next single click replaces while it is clean; a double click, Alt+Enter, an edit, Pin or a drag (a move of the pane) keeps it.
@@ -1423,7 +1424,7 @@ Only edit this file. When done, for EACH comment run:
   click places the caret, Shift+click / drag select; arrows (Ctrl = by word), Home/End
   (Ctrl = file), PgUp/PgDn, Backspace/Delete (Ctrl = word), Enter keeps the indent, Tab, Ctrl+A,
   Ctrl+Z / Ctrl+Y undo/redo, Ctrl+C/X/V. Line endings and the final newline are kept. Unsaved
-  changes show `●` before the path; Ctrl+S or "Save" writes the file (`fs.write`). Files > 2 MB
+  changes show a dot on the Save button; Ctrl+S or Save writes the file (`fs.write`). Files > 2 MB
   or binary: a read-only notice and "Open in Zed". A scroll bar on the right shows where the
   view is (only when the file is taller than the view): drag its thumb, or press the track to
   jump there.

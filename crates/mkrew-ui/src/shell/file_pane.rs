@@ -3,9 +3,10 @@
 use crate::*;
 
 impl Shell {
-    /// The pane of an open file (SPEC §12A): the header (path with `●` while unsaved,
-    /// `Ln, Col`, Markdown modes, Save, Find, Open in Zed, close), the find bar, then the
-    /// editor, the preview or the split, or why it is not shown. Lives in `pane_frame`.
+    /// The pane of an open file (SPEC §12A): the header (a breadcrumb, `Ln, Col`, Markdown
+    /// modes, icon buttons Review, Save with a dot while unsaved, Find, Open in Zed, close),
+    /// the find bar, then the editor, the preview or the split, or why it is not shown.
+    /// Lives in `pane_frame`.
     pub(crate) fn render_file_pane(
         &self,
         project_id: Ulid,
@@ -85,22 +86,6 @@ impl Shell {
                 cx,
             )
         });
-        let zed_button = |id: &'static str, primary: bool| {
-            button(
-                id,
-                icon_text(Icon::ExternalLink, "Open in Zed", button_fg(theme, primary)),
-                theme,
-                primary,
-            )
-            .flex_none()
-            .tooltip(tooltip(theme, &zed_tip, zed_keys.clone()))
-            .on_click({
-                let path = path.clone();
-                cx.listener(move |shell, _, _, cx| {
-                    shell.open_file_in_zed(project_id, &path, cx);
-                })
-            })
-        };
         let markdown = doc.is_markdown();
         let worktree = worktree_target::label(
             path.task,
@@ -109,6 +94,16 @@ impl Shell {
             self.board.is_loaded(),
         );
         let review_path = path.path.clone();
+        let (folders, name) = crumbs(&path.path);
+        // A quiet icon button with its tooltip and keys.
+        let tool = |id: &'static str, icon: Icon, tip: &str, keys: String| {
+            icon_button(id, icon, theme).tooltip(tooltip(theme, tip, keys))
+        };
+        let save_tip = if dirty {
+            "Save this file (it has unsaved changes)"
+        } else {
+            "Save this file"
+        };
         let header = div()
             .flex_none()
             .flex()
@@ -127,11 +122,34 @@ impl Shell {
                     .child(
                         div()
                             .min_w_0()
-                            .truncate()
-                            .text_size(font_size::CARD_TITLE)
-                            .font_weight(FontWeight(weight::SEMIBOLD))
-                            .text_color(rgb(theme.text))
-                            .child(format!("{}{}", if dirty { "● " } else { "" }, path.path)),
+                            .flex()
+                            .items_center()
+                            .gap(px(space::XS))
+                            // The folders are cut on their left side first, the name last.
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .flex()
+                                    .items_center()
+                                    .justify_end()
+                                    .gap(px(space::XS))
+                                    .children(folders.flat_map(|segment| {
+                                        [
+                                            crumb(segment.to_owned(), theme.text_subtle),
+                                            crumb("›", theme.subtle),
+                                        ]
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(font_size::BODY)
+                                    .font_weight(FontWeight(weight::MEDIUM))
+                                    .text_color(rgb(theme.text))
+                                    .child(name.to_owned()),
+                            ),
                     )
                     // A worktree's file says which worktree: it looks like the project's otherwise.
                     // `flex_1` (basis 0): a long title is cut first, the path only when it alone does not fit.
@@ -141,7 +159,7 @@ impl Shell {
                             .min_w_0()
                             .truncate()
                             .text_size(font_size::META)
-                            .text_color(rgb(theme.text_muted))
+                            .text_color(rgb(theme.text_subtle))
                             .child(worktree)
                     })),
             )
@@ -151,7 +169,7 @@ impl Shell {
                     .flex()
                     .items_center()
                     .justify_end()
-                    .gap(px(space::S))
+                    .gap(px(space::XS))
                     .min_w_0()
                     .overflow_hidden()
                     .children(doc.shown().filter(|_| editable).and_then(|shown| {
@@ -159,11 +177,14 @@ impl Shell {
                         // The caret is always inside the text (the editor clamps it).
                         let line = shown.editor.lines().get(at.line)?;
                         let col = editor::display_col(line, at.col);
+                        // The terminal font: its digits are all as wide (tabular).
                         Some(
                             div()
                                 .flex_none()
+                                .mr(px(space::S))
+                                .font_family(theme.terminal_font_family.clone())
                                 .text_size(font_size::META)
-                                .text_color(rgb(theme.text_muted))
+                                .text_color(rgb(theme.text_subtle))
                                 .child(format!("Ln {}, Col {}", at.line + 1, col + 1)),
                         )
                     }))
@@ -173,18 +194,12 @@ impl Shell {
                         markdown && path.task.is_none() && self.features.docs,
                         |el| {
                             el.child(
-                                button(
+                                tool(
                                     "file-review",
-                                    icon_text(
-                                        Icon::FileText,
-                                        "Review in Docs",
-                                        button_fg(theme, false),
-                                    ),
-                                    theme,
-                                    false,
+                                    Icon::FileText,
+                                    "Review in Docs: review and comment on this file",
+                                    String::new(),
                                 )
-                                .flex_none()
-                                .tooltip(tooltip(theme, "Review and comment on this file", ""))
                                 .on_click(cx.listener(
                                     move |shell, _, window, cx| {
                                         shell.review_in_docs(
@@ -200,18 +215,25 @@ impl Shell {
                     )
                     .when(editable, |el| {
                         el.child(
-                            button(
+                            tool(
                                 "file-save",
-                                icon_text(Icon::Save, "Save", button_fg(theme, dirty)),
-                                theme,
-                                dirty,
-                            )
-                            .flex_none()
-                            .tooltip(tooltip(
-                                theme,
-                                "Save this file",
+                                Icon::Save,
+                                save_tip,
                                 self.keymap.label(Command::SaveFile),
-                            ))
+                            )
+                            .relative()
+                            // Unsaved: a dot on the icon's top right corner.
+                            .when(dirty, |el| {
+                                el.child(
+                                    div()
+                                        .absolute()
+                                        .top(px(space::XS))
+                                        .right(px(space::XS))
+                                        .size(px(theme::FILE_CHANGES_DOT_SIZE))
+                                        .rounded_full()
+                                        .bg(rgb(theme.accent)),
+                                )
+                            })
                             .on_click({
                                 let path = path.clone();
                                 cx.listener(move |shell, _, window, cx| {
@@ -221,23 +243,26 @@ impl Shell {
                         )
                     })
                     .child(
-                        button(
+                        tool(
                             "file-find",
-                            icon_text(Icon::Search, "Find", button_fg(theme, false)),
-                            theme,
-                            false,
-                        )
-                        .flex_none()
-                        .tooltip(tooltip(
-                            theme,
+                            Icon::Search,
                             "Find in this file",
                             self.keymap.label(Command::Find),
-                        ))
+                        )
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.open_file_find(false, window, cx)
                         })),
                     )
-                    .child(zed_button("file-zed", false))
+                    .child(
+                        tool("file-zed", Icon::ExternalLink, &zed_tip, zed_keys.clone()).on_click(
+                            {
+                                let path = path.clone();
+                                cx.listener(move |shell, _, _, cx| {
+                                    shell.open_file_in_zed(project_id, &path, cx);
+                                })
+                            },
+                        ),
+                    )
                     .child(
                         icon_button("file-close", Icon::X, theme)
                             .tooltip(tooltip(
@@ -503,7 +528,22 @@ impl Shell {
                     ),
                 )
                 .flex_1()
-                .child(zed_button("file-zed-notice", true))
+                .child(
+                    button(
+                        "file-zed-notice",
+                        icon_text(Icon::ExternalLink, "Open in Zed", button_fg(theme, true)),
+                        theme,
+                        true,
+                    )
+                    .flex_none()
+                    .tooltip(tooltip(theme, &zed_tip, zed_keys.clone()))
+                    .on_click({
+                        let path = path.clone();
+                        cx.listener(move |shell, _, _, cx| {
+                            shell.open_file_in_zed(project_id, &path, cx)
+                        })
+                    }),
+                )
                 .into_any_element()
             }
             documents::Content::Shown(_) if doc.previewing() => {
@@ -733,5 +773,49 @@ impl Shell {
                 theme,
             ))
             .into_any_element()
+    }
+}
+
+/// A file's path (`/` separated, relative to its folder) as the header's breadcrumb: its
+/// folder segments, then its name.
+fn crumbs(path: &str) -> (impl Iterator<Item = &str>, &str) {
+    let (folders, name) = path.rsplit_once('/').unwrap_or(("", path));
+    (
+        folders.split('/').filter(|segment| !segment.is_empty()),
+        name,
+    )
+}
+
+/// One crumb or its `›`: META, never shrinks.
+fn crumb(text: impl Into<SharedString>, color: u32) -> gpui::Div {
+    div()
+        .flex_none()
+        .text_size(font_size::META)
+        .text_color(rgb(color))
+        .child(text.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::crumbs;
+
+    #[test]
+    fn a_path_splits_into_its_folders_and_its_name() {
+        let (folders, name) = crumbs("docs/superpowers/plans/x.md");
+        assert_eq!(
+            folders.collect::<Vec<_>>(),
+            ["docs", "superpowers", "plans"]
+        );
+        assert_eq!(name, "x.md");
+        let (folders, name) = crumbs("README.md");
+        assert_eq!(folders.count(), 0, "a root file has no crumbs");
+        assert_eq!(name, "README.md");
+        let (folders, name) = crumbs("a//b.rs");
+        assert_eq!(
+            folders.collect::<Vec<_>>(),
+            ["a"],
+            "empty segments are dropped"
+        );
+        assert_eq!(name, "b.rs");
     }
 }
