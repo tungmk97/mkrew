@@ -835,13 +835,21 @@ impl TempIndex {
     }
 
     /// Copies `index` (a missing one, e.g. a fresh repo, stays missing: git starts empty).
+    /// The copy keeps the original's mtime: git decides whether a file is "racily clean" (same
+    /// size, same mtime second as the index entry, so its content must be re-read) by comparing
+    /// the entry with the index file's mtime. A fresh mtime hides an edit made in the second the
+    /// entry was recorded, and the snapshot would miss it.
     fn copy_of(index: &Path) -> io::Result<Self> {
         let temp = Self::next_to(index);
-        match std::fs::copy(index, &temp.0) {
-            Ok(_) => Ok(temp),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(temp),
-            Err(e) => Err(e),
-        }
+        let mut from = match std::fs::File::open(index) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(temp),
+            Err(e) => return Err(e),
+        };
+        let mut to = std::fs::File::create(&temp.0)?;
+        io::copy(&mut from, &mut to)?;
+        to.set_modified(from.metadata()?.modified()?)?;
+        Ok(temp)
     }
 }
 
@@ -1110,6 +1118,29 @@ mod tests {
             .output()
             .unwrap();
         assert!(output.status.success(), "git commit {args:?} failed");
+    }
+
+    #[test]
+    fn an_index_copy_keeps_the_mtime_git_judges_racy_entries_by() {
+        let dir = tempfile::tempdir().unwrap();
+        let index = dir.path().join("index");
+        std::fs::write(&index, b"index").unwrap();
+        let then = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&index)
+            .unwrap()
+            .set_modified(then)
+            .unwrap();
+        let copy = TempIndex::copy_of(&index).unwrap();
+        assert_eq!(std::fs::read(&copy.0).unwrap(), b"index");
+        assert_eq!(
+            std::fs::metadata(&copy.0).unwrap().modified().unwrap(),
+            then
+        );
+        // A missing index stays missing.
+        let none = TempIndex::copy_of(&dir.path().join("none")).unwrap();
+        assert!(!none.0.exists());
     }
 
     #[test]
