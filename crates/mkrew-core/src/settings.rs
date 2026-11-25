@@ -409,6 +409,72 @@ impl MdMode {
     }
 }
 
+/// `[ui] window_mode` (ADR 0113): one window with every workspace in the sidebar, or one
+/// window per workspace.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowMode {
+    #[default]
+    Single,
+    PerWorkspace,
+}
+
+impl WindowMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            WindowMode::Single => "single",
+            WindowMode::PerWorkspace => "per_workspace",
+        }
+    }
+}
+
+/// `[ui] open_workspace` (ADR 0113): what opening a workspace without a window does while
+/// `window_mode` is `per_workspace`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenWorkspace {
+    #[default]
+    Ask,
+    NewWindow,
+    Replace,
+}
+
+impl OpenWorkspace {
+    pub fn name(self) -> &'static str {
+        match self {
+            OpenWorkspace::Ask => "ask",
+            OpenWorkspace::NewWindow => "new_window",
+            OpenWorkspace::Replace => "replace",
+        }
+    }
+}
+
+/// `[ui] panel_side` (ADR 0113): the Files / Session / Git panel sits right or left of the
+/// panes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PanelSide {
+    #[default]
+    Right,
+    Left,
+}
+
+impl PanelSide {
+    pub fn name(self) -> &'static str {
+        match self {
+            PanelSide::Right => "right",
+            PanelSide::Left => "left",
+        }
+    }
+
+    pub fn other(self) -> Self {
+        match self {
+            PanelSide::Right => PanelSide::Left,
+            PanelSide::Left => PanelSide::Right,
+        }
+    }
+}
+
 /// `[ui] md_split` default: the source's share of the Split view, in percent.
 pub const MD_SPLIT_DEFAULT: u8 = 50;
 
@@ -462,6 +528,12 @@ pub struct UiSettings {
     /// `[ui] close_to_tray` (SPEC §20J): the window's ✕ hides Mkrew instead of quitting the UI
     /// (to the tray icon on Windows, the whole app on macOS). The agents run in the daemon either way.
     pub close_to_tray: bool,
+    /// `[ui] window_mode` (ADR 0113).
+    pub window_mode: WindowMode,
+    /// `[ui] open_workspace` (ADR 0113).
+    pub open_workspace: OpenWorkspace,
+    /// `[ui] panel_side` (ADR 0113).
+    pub panel_side: PanelSide,
     /// `[ui] board_all_workspaces` (SPEC §10): the Board shows every workspace's tasks, not only
     /// the active workspace's. The Board's `This workspace | All workspaces` switch writes it.
     pub board_all_workspaces: bool,
@@ -496,6 +568,9 @@ impl Default for UiSettings {
             reading_width: true,
             chat_default: false,
             close_to_tray: true,
+            window_mode: WindowMode::Single,
+            open_workspace: OpenWorkspace::Ask,
+            panel_side: PanelSide::Right,
             board_all_workspaces: false,
             md_mode: MdMode::Preview,
             md_split: MD_SPLIT_DEFAULT,
@@ -662,6 +737,9 @@ pub fn template() -> &'static str {
      # Diff wrap: long lines wrap (true) or are cut at the pane edge (false); the Wrap toggle writes it.\n\
      # Reading width: agent panes start narrow (about 120-140 columns, centered) or full width.\n\
      # Close to tray (Windows): the window's ✕ hides it to the tray icon; false quits the UI.\n\
+     # Windows: single (one window, workspaces in the sidebar) or per_workspace (a window each).\n\
+     # Open workspace (per_workspace): ask, new_window or replace the current window's workspace.\n\
+     # Panel side: the Files / Session / Git panel on the right or the left of the panes.\n\
      # Markdown files open in preview, split (source | preview) or source; switching writes it.\n\
      # Markdown split: the source's share in percent (20-80); dragging the divider writes it.\n\
      [ui]\n\
@@ -679,6 +757,9 @@ pub fn template() -> &'static str {
      # reading_width = true\n\
      # chat_default = false\n\
      # close_to_tray = true\n\
+     # window_mode = \"single\"\n\
+     # open_workspace = \"ask\"\n\
+     # panel_side = \"right\"\n\
      # board_all_workspaces = false\n\
      # md_mode = \"preview\"\n\
      # md_split = 50\n\
@@ -1399,6 +1480,50 @@ push = true
             write_ui_value(&path, "sidebar", &format!("\"{}\"", mode.name())).unwrap();
             assert_eq!(load(&path).unwrap().ui.sidebar, mode);
         }
+    }
+
+    #[test]
+    fn window_keys_parse_default_and_round_trip_through_the_file() {
+        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
+        let defaults = ui("");
+        assert_eq!(defaults.window_mode, WindowMode::Single);
+        assert_eq!(defaults.open_workspace, OpenWorkspace::Ask);
+        assert_eq!(defaults.panel_side, PanelSide::Right);
+        assert_eq!(
+            ui("[ui]\nwindow_mode = \"per_workspace\"").window_mode,
+            WindowMode::PerWorkspace
+        );
+        assert_eq!(
+            ui("[ui]\nopen_workspace = \"new_window\"").open_workspace,
+            OpenWorkspace::NewWindow
+        );
+        assert_eq!(
+            ui("[ui]\npanel_side = \"left\"").panel_side,
+            PanelSide::Left
+        );
+        assert!(parse_err("[ui]\nwindow_mode = \"tabs\"").contains("unknown variant `tabs`"));
+        assert!(parse_err("[ui]\nopen_workspace = \"never\"").contains("unknown variant"));
+        assert!(parse_err("[ui]\npanel_side = \"top\"").contains("unknown variant"));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, template()).unwrap();
+        for mode in [WindowMode::PerWorkspace, WindowMode::Single] {
+            write_ui_value(&path, "window_mode", &format!("\"{}\"", mode.name())).unwrap();
+            assert_eq!(load(&path).unwrap().ui.window_mode, mode);
+        }
+        for pref in [
+            OpenWorkspace::NewWindow,
+            OpenWorkspace::Replace,
+            OpenWorkspace::Ask,
+        ] {
+            write_ui_value(&path, "open_workspace", &format!("\"{}\"", pref.name())).unwrap();
+            assert_eq!(load(&path).unwrap().ui.open_workspace, pref);
+        }
+        for side in [PanelSide::Left, PanelSide::Right] {
+            write_ui_value(&path, "panel_side", &format!("\"{}\"", side.name())).unwrap();
+            assert_eq!(load(&path).unwrap().ui.panel_side, side);
+        }
+        assert_eq!(PanelSide::Left.other(), PanelSide::Right);
     }
 
     #[test]

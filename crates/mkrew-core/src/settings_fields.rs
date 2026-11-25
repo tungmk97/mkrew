@@ -130,6 +130,33 @@ pub const SETTINGS: &[Setting] = &[
     ),
     row(
         General,
+        "Windows",
+        "ui",
+        "window_mode",
+        Choice(&["single", "per_workspace"]),
+        "Windows",
+        "Single: one window, every workspace in the sidebar. Per workspace: each workspace has its own window.",
+    ),
+    row(
+        General,
+        "Windows",
+        "ui",
+        "open_workspace",
+        Choice(&["ask", "new_window", "replace"]),
+        "Open workspace",
+        "With a window per workspace: ask each time, open a new window, or replace the workspace of the current one.",
+    ),
+    row(
+        General,
+        "Layout",
+        "ui",
+        "panel_side",
+        Choice(&["right", "left"]),
+        "Panel side",
+        "Where the Files / Session / Git panel sits next to the panes.",
+    ),
+    row(
+        General,
         "Workspace",
         "composer",
         "file_ref",
@@ -558,6 +585,21 @@ mod tests {
         let s = setting("ui.chat_default");
         assert_eq!(s.current(&Settings::default()), "false");
         assert_eq!(s.page, Page::General);
+    }
+
+    #[test]
+    fn window_settings_are_visible_choices_with_their_defaults() {
+        let mode = setting("ui.window_mode");
+        assert_eq!(mode.kind, Kind::Choice(&["single", "per_workspace"]));
+        assert_eq!(mode.current(&Settings::default()), "single");
+        assert_eq!(mode.page, Page::General);
+        assert!(!mode.hidden);
+        let open = setting("ui.open_workspace");
+        assert_eq!(open.kind, Kind::Choice(&["ask", "new_window", "replace"]));
+        assert_eq!(open.current(&Settings::default()), "ask");
+        let side = setting("ui.panel_side");
+        assert_eq!(side.kind, Kind::Choice(&["right", "left"]));
+        assert_eq!(side.current(&Settings::default()), "right");
     }
 
     #[test]
