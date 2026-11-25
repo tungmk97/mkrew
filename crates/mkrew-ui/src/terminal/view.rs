@@ -901,7 +901,8 @@ impl TerminalPane {
                 .track_focus(&self.find_focus)
                 .on_key_down(cx.listener(Self::find_key_down))
                 .on_mouse_down(MouseButton::Left, cx.listener(Self::find_mouse_down))
-                // The 1 px `glass_hi` line inside the top edge of a raised panel.
+                // The 1 px `glass_hi` line inside the top edge of a raised panel. It repeats
+                // `shell::widgets::top_highlight`: the terminal is in the lib crate, the shell in the bin.
                 .child(
                     div()
                         .absolute()

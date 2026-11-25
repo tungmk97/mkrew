@@ -810,15 +810,17 @@ impl Shell {
             .child(header)
             // A later `task.list` failed: the cards may be stale.
             .children(self.board_error.clone().map(|error| {
-                notice(theme.text, format!("✕ Cannot reload the tasks: {error}"))
-                    .px(px(space::L))
-                    .pt(px(space::S))
+                div().px(px(space::L)).pt(px(space::S)).child(error_note(
+                    format!("Cannot reload the tasks: {error}"),
+                    theme,
+                ))
             }))
             .children(self.card_error.as_ref().and_then(|(project, error)| {
                 scope.contains(*project).then(|| {
-                    notice(theme.text, format!("✕ {error}"))
+                    div()
                         .px(px(space::L))
                         .pt(px(space::S))
+                        .child(error_note(error.clone(), theme))
                 })
             }))
             .child(

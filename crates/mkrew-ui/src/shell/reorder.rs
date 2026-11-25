@@ -322,7 +322,7 @@ impl Render for DragChip {
                     .rounded(px(radius::MEDIUM))
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(rgb(self.accent))
-                    .bg(rgb(theme.surface_raised))
+                    .bg(gpui::rgba(theme.fill))
                     .shadow_md()
                     .font_family(theme.ui_font_family.clone())
                     .text_size(font_size::BODY)

@@ -155,10 +155,14 @@ impl Icon {
                 && name.as_bytes()[name.len() - suffix.len()..]
                     .eq_ignore_ascii_case(suffix.as_bytes())
         };
-        let env = name.len() >= 4 && name.as_bytes()[..4].eq_ignore_ascii_case(b".env");
+        // `.env` and `.env.*` (`.envrc` is a tool config, not a secret).
+        let env = name.eq_ignore_ascii_case(".env")
+            || (name.len() > 5 && name.as_bytes()[..5].eq_ignore_ascii_case(b".env."));
         if env || ext_in(&["lock"]) || ends("-lock.json") || ends("-lock.yaml") {
             Icon::Lock
-        } else if matches!(name, ".gitignore" | ".gitattributes" | ".editorconfig")
+        } else if [".gitignore", ".gitattributes", ".editorconfig"]
+            .iter()
+            .any(|dotfile| name.eq_ignore_ascii_case(dotfile))
             || (name.starts_with('.') && ends("rc"))
             || name.contains(".config.")
         {
@@ -316,6 +320,11 @@ mod tests {
             ("Cargo.lock", Icon::Lock),
             (".env", Icon::Lock),
             (".env.local", Icon::Lock),
+            (".ENV", Icon::Lock),
+            (".Env.Local", Icon::Lock),
+            (".envrc", Icon::Settings),
+            (".GitIgnore", Icon::Settings),
+            (".EditorConfig", Icon::Settings),
             ("Cargo.toml", Icon::FileCog),
             ("ci.yml", Icon::FileCog),
             (".gitignore", Icon::Settings),

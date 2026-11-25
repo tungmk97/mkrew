@@ -13,7 +13,8 @@ pub enum Look {
     Row,
     /// A chip or pill: hover fill `layer[0]`, label to `text`.
     Chip,
-    /// An icon-only control: hover fill `layer[0]`, icon to `text`.
+    /// An icon-only control: hover fill `layer[0]`. An svg draws its own color (it does not
+    /// inherit the label's), so the icon keeps the color its caller gave it.
     Icon,
     /// An element on a raised surface or inside a hovered row (menu rows, toasts, row actions, the
     /// find bar): hover fill `layer[0]` stacked over what is behind it, the label unchanged.

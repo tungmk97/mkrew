@@ -431,13 +431,17 @@ pub(crate) fn file_row(
         .child(icon_svg(icon, theme::TREE_ICON_SIZE, icon_color))
         .child(
             div()
+                .id(SharedString::from(format!("file-name-{}", entry.path)))
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                // Inherits the row's color (so hover can lift it); a changed name keeps its tint.
-                .when_some(marker, |el, (color, _)| el.text_color(rgb(color)))
+                // Inherits the row's color (so hover can lift it); a changed name keeps its tint
+                // and says its git status like the dot does.
+                .when_some(marker, |el, (color, what)| {
+                    el.text_color(rgb(color)).tooltip(tooltip(theme, what, ""))
+                })
                 .when(opened, |el| el.font_weight(FontWeight(weight::MEDIUM)))
                 .child(entry.name.clone()),
         )

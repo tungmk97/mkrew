@@ -556,9 +556,10 @@ impl Shell {
         panel
             .child(header)
             .children(docs.zed_error.clone().map(|error| {
-                notice(theme.text, format!("✕ {error}"))
+                div()
                     .px(px(space::L))
                     .pb(px(space::S))
+                    .child(error_note(error, theme))
             }))
             .child(
                 div()

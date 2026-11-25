@@ -679,7 +679,7 @@ impl Shell {
                             el.child(loading_dots(now, rgb(theme.text_muted)))
                         }),
                 )
-                .children(error.map(|error| notice(theme.text, format!("✕ {error}"))))
+                .children(error.map(|error| error_note(error, theme)))
                 .into_any_element();
         }
         match view.map_or(&Load::NotLoaded, |v| &v.load) {
@@ -721,7 +721,7 @@ impl Shell {
                 let error_under = |key: &str| {
                     row_error
                         .filter(|(failed, _)| failed.as_str() == key)
-                        .map(|(_, reason)| notice(theme.text, format!("✕ {reason}")))
+                        .map(|(_, reason)| error_note(reason.clone(), theme))
                 };
                 let no_match = || {
                     message(

@@ -144,14 +144,16 @@ impl Shell {
         panel
             .child(toolbar)
             .children(view.zed_error.clone().map(|error| {
-                notice(theme.text, format!("✕ {error}"))
+                div()
                     .px(px(space::L))
                     .py(px(space::S))
+                    .child(error_note(error, theme))
             }))
             .children(view.stage_error.clone().map(|error| {
-                notice(theme.text, format!("✕ Staging failed: {error}"))
+                div()
                     .px(px(space::L))
                     .py(px(space::S))
+                    .child(error_note(format!("Staging failed: {error}"), theme))
             }))
             .child(
                 div()

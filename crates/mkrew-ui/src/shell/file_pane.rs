@@ -125,20 +125,20 @@ impl Shell {
                             .flex()
                             .items_center()
                             .gap(px(space::XS))
-                            // The folders are cut on their left side first, the name last.
+                            // The folders and their `›` are one text cut with an ellipsis on its
+                            // right, so the `›` before the name goes first and never stands alone.
                             .child(
                                 div()
                                     .min_w_0()
                                     .overflow_hidden()
-                                    .flex()
-                                    .items_center()
-                                    .justify_end()
-                                    .gap(px(space::XS))
-                                    .children(folders.flat_map(|segment| {
-                                        [
-                                            crumb(segment.to_owned(), theme.text_subtle),
-                                            crumb("›", theme.subtle),
-                                        ]
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(font_size::META)
+                                    .text_color(rgb(theme.text_subtle))
+                                    .child(folders.fold(String::new(), |mut text, segment| {
+                                        text.push_str(segment);
+                                        text.push_str(" › ");
+                                        text
                                     })),
                             )
                             .child(
@@ -614,17 +614,19 @@ impl Shell {
             .children(find_bar)
             .children(disk_banner)
             .children(view.zed_error.clone().map(|error| {
-                notice(theme.text, format!("✕ {error}"))
+                div()
                     .px(px(space::L))
                     .pb(px(space::S))
+                    .child(error_note(error, theme))
             }))
             .children(
                 doc.shown()
                     .and_then(|shown| shown.save_error.clone())
                     .map(|error| {
-                        notice(theme.text, format!("✕ {error}"))
+                        div()
                             .px(px(space::L))
                             .pb(px(space::S))
+                            .child(error_note(error, theme))
                     }),
             )
             .child(body)
@@ -778,13 +780,14 @@ impl Shell {
     }
 }
 
-/// A file's path (`/` separated, relative to its folder) as the header's breadcrumb: its
+/// A file's path (`/` or `\` separated, relative to its folder) as the header's breadcrumb: its
 /// folder segments (a leading `/` is kept as a root crumb), then its name.
 fn crumbs(path: &str) -> (impl Iterator<Item = &str>, &str) {
-    let (folders, name) = path.rsplit_once('/').unwrap_or(("", path));
+    const SEPARATORS: [char; 2] = ['/', '\\'];
+    let (folders, name) = path.rsplit_once(SEPARATORS).unwrap_or(("", path));
     (
         folders
-            .split('/')
+            .split(SEPARATORS)
             .enumerate()
             .filter_map(move |(at, segment)| match (segment.is_empty(), at) {
                 (false, _) => Some(segment),
@@ -793,15 +796,6 @@ fn crumbs(path: &str) -> (impl Iterator<Item = &str>, &str) {
             }),
         name,
     )
-}
-
-/// One crumb or its `›`: META, never shrinks.
-fn crumb(text: impl Into<SharedString>, color: u32) -> gpui::Div {
-    div()
-        .flex_none()
-        .text_size(font_size::META)
-        .text_color(rgb(color))
-        .child(text.into())
 }
 
 #[cfg(test)]
@@ -835,6 +829,9 @@ mod tests {
             ["/", "home", "u"],
             "a Unix absolute path keeps its root"
         );
+        assert_eq!(name, "a.md");
+        let (folders, name) = crumbs(r"C:\n\a.md");
+        assert_eq!(folders.collect::<Vec<_>>(), ["C:", "n"]);
         assert_eq!(name, "a.md");
     }
 }

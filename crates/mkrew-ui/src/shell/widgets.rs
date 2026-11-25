@@ -2002,12 +2002,14 @@ pub(crate) fn tooltip(
     }
 }
 
-/// The theme tokens a tooltip or drag preview draws with: these closures are built for every
-/// hoverable element on every frame, so they carry this instead of a whole [`Theme`].
+/// The theme tokens a drag preview (a card's title, a reorder chip) draws with: these closures are
+/// built for every draggable element on every frame, so they carry this instead of a whole
+/// [`Theme`]. `ring` and `fill` are the 1 px `layer[1]` ring and the glass fill of a
+/// [`pop_surface`] (as RGBA).
 #[derive(Clone)]
 pub(crate) struct PopupStyle {
-    pub(crate) border: u32,
-    pub(crate) surface_raised: u32,
+    pub(crate) ring: u32,
+    pub(crate) fill: u32,
     pub(crate) text: u32,
     pub(crate) ui_font_family: SharedString,
 }
@@ -2015,8 +2017,8 @@ pub(crate) struct PopupStyle {
 impl PopupStyle {
     pub(crate) fn of(theme: &Theme) -> Self {
         Self {
-            border: theme.border,
-            surface_raised: theme.surface_raised,
+            ring: theme.layer[1],
+            fill: theme.glass,
             text: theme.text,
             ui_font_family: theme.ui_font_family.clone(),
         }
