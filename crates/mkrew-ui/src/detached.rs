@@ -14,13 +14,13 @@ use crate::keymap::Command;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WindowKey(pub u64);
 
-/// A Space window (ADR 0113): a top-level window with a workspace, local to this UI process
+/// A Space window (ADR 0115): a top-level window with a workspace, local to this UI process
 /// (never reused within it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SpaceKey(pub u64);
 
 /// The window a tab, a render or an input belongs to: a Space window (a workspace's window,
-/// ADR 0113) or a detached one.
+/// ADR 0115) or a detached one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HostId {
     Space(SpaceKey),
@@ -422,7 +422,7 @@ pub fn merge_saved(mut live: Vec<SavedWindow>, pending: &[SavedWindow]) -> Vec<S
     live
 }
 
-/// One saved Space window (ADR 0113).
+/// One saved Space window (ADR 0115).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedSpace {
     /// `Ulid::nil()` when not known (read from the legacy `main-window.json`).

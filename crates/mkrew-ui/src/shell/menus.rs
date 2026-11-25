@@ -367,7 +367,7 @@ impl Shell {
 
     /// The split button's menu (SPEC §10): Split right, Split down, Equalize panes, then the
     /// layouts, each with its thumbnail and shortcut, then in a Space window the window mode
-    /// switch (ADR 0113). A layout holding fewer panes than the tab has is greyed (its tooltip
+    /// switch (ADR 0115). A layout holding fewer panes than the tab has is greyed (its tooltip
     /// says why).
     pub(crate) fn layout_menu_rows(&self, menu: &LayoutMenu) -> Rows {
         let panes = (self.tabs.values())

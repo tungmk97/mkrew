@@ -1,4 +1,4 @@
-//! A Space window's content (ADR 0113): the title bar, the sidebar, the main area and what
+//! A Space window's content (ADR 0115): the title bar, the sidebar, the main area and what
 //! opens over them, for the workspace that window shows. `SpaceWindow` draws it.
 
 use crate::*;
@@ -34,7 +34,7 @@ impl Shell {
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
         self.sync_traffic_lights(host, window, cx.global::<theme::Fonts>().ui_size);
         // The shared dialogs draw in one Space window: the one used last when one opened
-        // (mode 2 has several; ADR 0113).
+        // (mode 2 has several; ADR 0115).
         if !self.modal_open() {
             self.modal_host = None;
         } else if self.modal_host.is_none() {
@@ -77,7 +77,7 @@ impl Shell {
         if viewed_changed {
             self.sync_attention(cx);
         }
-        // Mode 2 (ADR 0113): no sidebar; the workspace's color across the top and its name in
+        // Mode 2 (ADR 0115): no sidebar; the workspace's color across the top and its name in
         // the OS title, so its taskbar button and Alt+Tab say which workspace it is.
         let per_workspace = self.window_mode == WindowMode::PerWorkspace;
         let shown = (self.workspace_of(host))

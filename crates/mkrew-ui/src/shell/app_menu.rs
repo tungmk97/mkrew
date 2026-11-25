@@ -8,7 +8,7 @@ use mkrew_ui::app_menu::{
 use crate::*;
 
 /// The one `Shell`: the actions that work on it whatever window has the keyboard run in its
-/// primary Space window (ADR 0113).
+/// primary Space window (ADR 0115).
 pub(crate) struct ShellHandle(pub Entity<Shell>);
 
 impl gpui::Global for ShellHandle {}

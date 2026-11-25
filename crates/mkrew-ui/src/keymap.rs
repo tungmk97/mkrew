@@ -246,13 +246,13 @@ pub enum Command {
     MoveTabRight,
     /// Move the active terminal tab into a new window of its own (spec 2026-11-10, ADR 0096).
     MoveTabToNewWindow,
-    /// Move the Files / Session / Git panel to the other side of the panes (ADR 0113), saved
+    /// Move the Files / Session / Git panel to the other side of the panes (ADR 0115), saved
     /// as `[ui] panel_side`.
     TogglePanelSide,
-    /// Open each picked workspace in its own window (ADR 0113): `[ui] window_mode` becomes
+    /// Open each picked workspace in its own window (ADR 0115): `[ui] window_mode` becomes
     /// `per_workspace`. Palette, Settings and the Split menu; no default key.
     SplitWindows,
-    /// Combine the workspace windows into the one this runs in (ADR 0113): `[ui] window_mode`
+    /// Combine the workspace windows into the one this runs in (ADR 0115): `[ui] window_mode`
     /// becomes `single`. No default key.
     CombineWindows,
     /// Git only: wrap long diff lines or cut them at the edge (the Wrap button).

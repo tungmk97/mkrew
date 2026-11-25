@@ -203,7 +203,7 @@ impl Shell {
             cx.propagate();
             return;
         }
-        // ADR 0113: no sidebar in a window per workspace.
+        // ADR 0115: no sidebar in a window per workspace.
         if self.window_mode == WindowMode::PerWorkspace
             && matches!(
                 *command,

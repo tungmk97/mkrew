@@ -1,4 +1,4 @@
-//! The root view of a Space window (ADR 0113): `Shell` draws it (`render_space`) and handles
+//! The root view of a Space window (ADR 0115): `Shell` draws it (`render_space`) and handles
 //! its input, as for a detached window (`DetachedWindow`).
 
 use crate::*;

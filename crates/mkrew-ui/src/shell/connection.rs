@@ -55,7 +55,7 @@ impl Shell {
         let prompts_dir = paths.prompts_dir();
         let themes_dir = paths.themes_dir();
         let config_dir = paths.config_dir.clone();
-        // The first Space window (ADR 0113): the window this Shell is created in.
+        // The first Space window (ADR 0115): the window this Shell is created in.
         let first_space = window.window_handle();
         let first = HostId::Space(SpaceKey(0));
         let (page_events, page_inbox) = async_channel::unbounded();
@@ -247,7 +247,7 @@ impl Shell {
         let legacy_main_path = paths
             .data_dir
             .join(detached::main_file((!local).then_some(id.as_str())));
-        // Mode 2 (ADR 0113): the saved Space windows open after the first listing, the first
+        // Mode 2 (ADR 0115): the saved Space windows open after the first listing, the first
         // window showing the workspace of the one used last.
         let saved_spaces: Vec<detached::SavedSpace> = if ui.window_mode == WindowMode::PerWorkspace
         {
@@ -1078,7 +1078,7 @@ impl Shell {
                     self.board_all = settings.ui.board_all_workspaces;
                     self.panel_side = settings.ui.panel_side;
                     self.open_pref = settings.ui.open_workspace;
-                    // A hand edit of `window_mode` (ADR 0113): to `per_workspace` the open
+                    // A hand edit of `window_mode` (ADR 0115): to `per_workspace` the open
                     // windows become the windows of their workspaces (no picker); to `single`
                     // they combine into the one used last.
                     if settings.ui.window_mode != self.window_mode {

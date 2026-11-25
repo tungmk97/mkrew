@@ -3,8 +3,8 @@
 - Date: 2026-11-25
 - Status: design approved in chat by the user (2026-11-25), section by section; this file waits for the user's review.
 - Branch and worktree: `feat/window-modes` in `.worktrees/window-modes`, from `master` at `164d885`.
-- ADR: `docs/decisions/0113-window-modes.md`.
-  `master` ends at 0112 (omp surface full width) and no unmerged branch holds a higher number, so this one takes 0113.
+- ADR: `docs/decisions/0115-window-modes.md`.
+  `master` took 0113 (omp composer local editing) and 0114 (pane render performance) while this branch was open, so this one takes 0115.
   Re-check the number when this branch merges; take the next free one if it moved.
 - Protocol: no change.
 - Migration: none (UI and settings only).
@@ -311,7 +311,7 @@ HUMAN_CHECKS: dragging windows across screens, Alt+Tab and taskbar grouping, mac
 
 ## 9. Docs
 
-- ADR 0113 "Window modes" (amends ADR 0096).
+- ADR 0115 "Window modes" (amends ADR 0096).
 - SPEC §10: a "Window modes" section after "Detached windows"; "main window" wording replaced by "Space window" where the rule changed.
 - SPEC §20.0: the three `[ui]` keys.
 - `docs/PROGRESS.md` notes and `docs/HUMAN_CHECKS.md` "2026-11-25 Window modes".

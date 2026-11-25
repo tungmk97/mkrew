@@ -268,7 +268,7 @@ impl Shell {
     /// left (Space window) the machine chip, the sidebar toggle and the workspace switcher; the
     /// tab area (the terminal, file and Diff tabs, the `+` row); a drag area; on the right the
     /// voice status (only while the sidebar is hidden), the "need you" chip (a Space window in
-    /// mode 2, ADR 0113), the limits chip (Space windows, only at 80% or more; it shows
+    /// mode 2, ADR 0115), the limits chip (Space windows, only at 80% or more; it shows
     /// without a workspace too), the Run pill, the update button, the Board and Docs icons,
     /// Split (while Terminals shows in a Space window, always in a detached one) and the panel
     /// toggle; on Windows minimize, maximize, close. A detached window (`host` is not a Space

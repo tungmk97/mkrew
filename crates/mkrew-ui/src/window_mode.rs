@@ -1,4 +1,4 @@
-//! Window modes (ADR 0113): the pure decisions behind one window per workspace. Which window
+//! Window modes (ADR 0115): the pure decisions behind one window per workspace. Which window
 //! keeps which workspace on a split, which windows close on a combine, where opening a
 //! workspace goes, the "Open workspaces in windows" picker and the "need you" chip. Pure and
 //! tested headlessly; `shell/window_mode.rs` draws and runs them.

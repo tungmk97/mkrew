@@ -54,7 +54,7 @@ impl Needs {
             .collect()
     }
 
-    /// What `self` and `other` both keep watched (one window per workspace, ADR 0113).
+    /// What `self` and `other` both keep watched (one window per workspace, ADR 0115).
     pub fn union(mut self, other: Needs) -> Needs {
         self.0.extend(other.0);
         self

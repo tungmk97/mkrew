@@ -243,7 +243,7 @@ impl Shell {
         .on_click(cx.listener(|shell, _, window, cx| shell.toggle_inspector(window, cx)))
     }
 
-    /// Moves the panel to the other side and saves `[ui] panel_side` (ADR 0113).
+    /// Moves the panel to the other side and saves `[ui] panel_side` (ADR 0115).
     pub(crate) fn toggle_panel_side(&mut self, cx: &mut Context<'_, Self>) {
         self.panel_side = self.panel_side.other();
         let value = format!("\"{}\"", self.panel_side.name());

@@ -117,7 +117,7 @@ pub struct Context {
     pub idle_removable: usize,
     /// Some workspace is expanded in the sidebar (`Sidebar::any_expanded`).
     pub workspaces_open: bool,
-    /// A window per workspace (ADR 0113): no sidebar, so its commands are not listed.
+    /// A window per workspace (ADR 0115): no sidebar, so its commands are not listed.
     pub per_workspace: bool,
 }
 

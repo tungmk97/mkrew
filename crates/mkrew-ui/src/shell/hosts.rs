@@ -1,5 +1,5 @@
 //! Which window code runs for, and the per-window state (spec 2026-11-10 §4.2, §4.3; Space
-//! windows: ADR 0113).
+//! windows: ADR 0115).
 
 use crate::*;
 
@@ -507,7 +507,7 @@ impl Shell {
         }
     }
 
-    /// Writes `windows.json` (spec §6.1, ADR 0113): the Space windows (the one used last at the
+    /// Writes `windows.json` (spec §6.1, ADR 0115): the Space windows (the one used last at the
     /// end; `Ulid::nil()` for one showing no workspace) and the live detached windows, plus the
     /// saved ones a pending restore has not opened yet, so neither is lost. Not before the file
     /// was read (an app that never got that far must not erase it). A failed write is a toast

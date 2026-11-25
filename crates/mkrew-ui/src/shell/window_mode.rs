@@ -1,4 +1,4 @@
-//! Space windows (ADR 0113): open, close and restore them. Each shows one workspace through
+//! Space windows (ADR 0115): open, close and restore them. Each shows one workspace through
 //! `Shell::render_space`; mode 1 has one, mode 2 one per open workspace.
 
 use crate::shell::hosts::HostUi;
@@ -222,7 +222,7 @@ impl Shell {
         self.last_window_should_close(window, cx)
     }
 
-    /// The saved Space windows of `window_mode = per_workspace` (ADR 0113), but the last one,
+    /// The saved Space windows of `window_mode = per_workspace` (ADR 0115), but the last one,
     /// whose workspace the open first window shows: each opens with its workspace while that
     /// is listed.
     pub(crate) fn restore_spaces(&mut self, cx: &mut Context<'_, Self>) {
@@ -379,7 +379,7 @@ impl Shell {
         });
     }
 
-    /// A Space window draws the sidebar: mode 1 only (ADR 0113), unless hidden.
+    /// A Space window draws the sidebar: mode 1 only (ADR 0115), unless hidden.
     pub(crate) fn sidebar_drawn(&self) -> bool {
         self.window_mode == WindowMode::Single && !self.sidebar_layout.hidden()
     }
@@ -953,7 +953,7 @@ impl Shell {
         Self::modal_shade("split-picker-shade", panel, cx)
     }
 
-    /// The title bar chip of a Space window in mode 2 (ADR 0113): sessions of the other
+    /// The title bar chip of a Space window in mode 2 (ADR 0115): sessions of the other
     /// workspaces that need the user, `● N need you · <place>`; it never shrinks (the tab area
     /// gives way first). A click lists them. `None` while no other workspace needs the user.
     pub(crate) fn render_need_you_chip(

@@ -594,7 +594,7 @@ pub fn reduce_motion() -> bool {
     reduce_from(read.is_ok(), animations_on.as_bool())
 }
 
-/// The Windows-only extras of the Space windows (ADR 0113): taskbar badge, flash, tray.
+/// The Windows-only extras of the Space windows (ADR 0115): taskbar badge, flash, tray.
 pub struct Os {
     /// Every open Space window (`attach` / `detach`).
     hwnds: Vec<HWND>,

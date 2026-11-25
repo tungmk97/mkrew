@@ -280,7 +280,7 @@ fn main() {
         // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
         cx.set_prompt_builder(shell::confirm_prompt::build);
         // The place the window was left (a machine window has its own files): the Space window
-        // used last (ADR 0113), else the legacy main window frame.
+        // used last (ADR 0115), else the legacy main window frame.
         let instance = opening.target.is_machine().then_some(opening.id.as_str());
         let layout = detached::load_layout(
             &paths.data_dir.join(detached::windows_file(instance)),
@@ -616,7 +616,7 @@ struct Shell {
     run_menu: Option<Ulid>,
     /// The title bar's workspace dropdown is open.
     workspace_switcher: bool,
-    /// The title bar's "need you" chip menu is open (ADR 0113), in `menu_host`'s window.
+    /// The title bar's "need you" chip menu is open (ADR 0115), in `menu_host`'s window.
     need_you_menu: bool,
     /// The tab area's `+ ▾` dropdown is open.
     new_menu: bool,
@@ -736,17 +736,17 @@ struct Shell {
     composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
-    /// The panel's side of the panes, from `[ui] panel_side` (ADR 0113).
+    /// The panel's side of the panes, from `[ui] panel_side` (ADR 0115).
     panel_side: PanelSide,
-    /// `[ui] window_mode` (ADR 0113): one window, or one per workspace.
+    /// `[ui] window_mode` (ADR 0115): one window, or one per workspace.
     window_mode: WindowMode,
-    /// `[ui] open_workspace` (ADR 0113): where opening a workspace goes in mode 2.
+    /// `[ui] open_workspace` (ADR 0115): where opening a workspace goes in mode 2.
     open_pref: OpenWorkspace,
-    /// The open "Open <workspace>" question of mode 2 (ADR 0113).
+    /// The open "Open <workspace>" question of mode 2 (ADR 0115).
     open_ask: Option<shell::window_mode::OpenAsk>,
     /// The Space window the open dialog draws in (set by its first frame).
     modal_host: Option<HostId>,
-    /// The open "Open workspaces in windows" picker (ADR 0113); drawn in `palette_host`.
+    /// The open "Open workspaces in windows" picker (ADR 0115); drawn in `palette_host`.
     split_picker: Option<mkrew_ui::window_mode::WorkspacePicker>,
     /// The transcripts being read, one per session (ADR 0104): the session panel's Thread
     /// section and every pane in Chat mode share them.
@@ -916,7 +916,7 @@ struct Shell {
     toasts: Toasts,
     /// Which terminal tab is in which detached window (ADR 0096).
     detached: Detached,
-    /// The Space windows (ADR 0113) and their keys, both ways; mode 1 has one.
+    /// The Space windows (ADR 0115) and their keys, both ways; mode 1 has one.
     spaces: HashMap<gpui::AnyWindowHandle, SpaceKey>,
     space_handles: HashMap<SpaceKey, gpui::AnyWindowHandle>,
     /// The key of the next Space window (never reused).

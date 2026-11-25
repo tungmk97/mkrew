@@ -21,6 +21,19 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-25 Window modes (ADR 0115, spec docs/superpowers/specs/2026-11-25-window-modes-design.md)
+
+Screenshots: `docs/screenshots/window-modes-<view>-<dark|light>.png` (ask, window, picker, confirm, combined, need-you).
+
+- [ ] **Mode 1 is unchanged:** after the update the app opens as before (same window place, sidebar, workspace); `main-window.json` is read once and `windows.json` becomes version 2.
+- [ ] **Taskbar and Alt+Tab (Windows):** in a window per workspace each window has its own taskbar button and Alt+Tab entry named `<workspace> - Mkrew`; the Needs-you badge shows on every button; the flash stops when any Mkrew window gets the focus.
+- [ ] **Several screens:** windows dragged to other screens come back there after a restart; unplug a screen and restart: its windows come back on a connected one.
+- [ ] **Ctrl+click and Ctrl+Enter** (the smoke harness sends no modifier clicks): with a saved choice they take the other one; with "ask" they open a new window without asking.
+- [ ] **Close to tray with several windows:** ✕ of the last Space window hides every window (detached ones too); the tray's Open and a second launch show all of them again.
+- [ ] **macOS (needs a Mac):** the app menu (Quit, Check for updates, Settings) works from any window; a Dock click while hidden shows every window; full screen per window; Cmd+` cycles the windows.
+- [ ] **Linux:** the title bar is unchanged (OS title bar plus Mkrew's bar under it); the OS title of a mode 2 window is `<workspace> - Mkrew`.
+- [ ] **Look (dark + light):** the screenshots above; the workspace stripe on top of a mode 2 window in a few workspace colors; the "need you" chip and its menu next to the limits chip.
+
 ### To verify - 2026-11-24 Browser pane (ADR 0111, spec docs/superpowers/specs/2026-11-24-browser-pane-design.md)
 
 Screenshots: `docs/screenshots/browser-pane-<view>-<dark|light>.png`.

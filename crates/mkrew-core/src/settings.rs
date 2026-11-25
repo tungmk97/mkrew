@@ -409,7 +409,7 @@ impl MdMode {
     }
 }
 
-/// `[ui] window_mode` (ADR 0113): one window with every workspace in the sidebar, or one
+/// `[ui] window_mode` (ADR 0115): one window with every workspace in the sidebar, or one
 /// window per workspace.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -428,7 +428,7 @@ impl WindowMode {
     }
 }
 
-/// `[ui] open_workspace` (ADR 0113): what opening a workspace without a window does while
+/// `[ui] open_workspace` (ADR 0115): what opening a workspace without a window does while
 /// `window_mode` is `per_workspace`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -449,7 +449,7 @@ impl OpenWorkspace {
     }
 }
 
-/// `[ui] panel_side` (ADR 0113): the Files / Session / Git panel sits right or left of the
+/// `[ui] panel_side` (ADR 0115): the Files / Session / Git panel sits right or left of the
 /// panes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -528,11 +528,11 @@ pub struct UiSettings {
     /// `[ui] close_to_tray` (SPEC §20J): the window's ✕ hides Mkrew instead of quitting the UI
     /// (to the tray icon on Windows, the whole app on macOS). The agents run in the daemon either way.
     pub close_to_tray: bool,
-    /// `[ui] window_mode` (ADR 0113).
+    /// `[ui] window_mode` (ADR 0115).
     pub window_mode: WindowMode,
-    /// `[ui] open_workspace` (ADR 0113).
+    /// `[ui] open_workspace` (ADR 0115).
     pub open_workspace: OpenWorkspace,
-    /// `[ui] panel_side` (ADR 0113).
+    /// `[ui] panel_side` (ADR 0115).
     pub panel_side: PanelSide,
     /// `[ui] board_all_workspaces` (SPEC §10): the Board shows every workspace's tasks, not only
     /// the active workspace's. The Board's `This workspace | All workspaces` switch writes it.

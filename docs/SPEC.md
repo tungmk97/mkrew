@@ -836,7 +836,7 @@ records the agent as author). `mk attach` makes Mkrew usable without the UI, inc
 
 ## §10 UI: layout, workspaces & terminals
 
-The main window, plus any number of detached windows holding terminal tabs (ADR 0096).
+One Space window with the sidebar (or one Space window per workspace, see "Window modes", ADR 0115), plus any number of detached windows holding terminal tabs (ADR 0096).
 A title bar on top spans both columns (Windows and macOS draw it; Linux keeps the OS
 title bar and shows the same bar under it, without window controls; ADR 0034):
 
@@ -950,7 +950,7 @@ Its tab row is `[Files│Session│Git]`; files and the diff open as tabs and pa
     While a session starts the row shows the starting spinner (loading dots) instead.
     Every item is a `Look::Icon` button with a focus ring.
     Alt+Shift+A and Alt+Shift+S add a pane to the current tab instead.
-  - **Right group:** the voice status while the sidebar is hidden, the limits chip (main window, only at 80% or more, see "Limits chip"), the Run pill, the update button (only when an update is known), the toggles of the focused agent pane (below), Board (`SquareKanban`), Docs (`BookOpen`, only with `[features] docs`), Split ▾ (`◫`: Split right, Split down, Equalize panes, layouts, as before; in the main window only while Terminals show, a detached window always has it) and the right panel toggle (`◨`, ADR 0038, ADR 0081).
+  - **Right group:** the voice status while the sidebar is hidden, the "need you" chip (a window per workspace only, see "Window modes"), the limits chip (Space windows, only at 80% or more, see "Limits chip"), the Run pill, the update button (only when an update is known), the toggles of the focused agent pane (below), Board (`SquareKanban`), Docs (`BookOpen`, only with `[features] docs`), Split ▾ (`◫`: Split right, Split down, Equalize panes, layouts, then "Open each workspace in its own window…" or "Combine into one window"; in a Space window only while Terminals show, a detached window always has it) and the right panel toggle (`◨`, ADR 0038, ADR 0081).
     Board and Docs show in the accent color while their view is shown.
   - **Pane toggles** (ADR 0106; only while an agent pane has the focus and its terminals are on screen; they act on that pane): Terminal | Chat (`MessageSquare`, only for a pane that can chat, accent while Chat shows, Ctrl+Alt+T and the palette "Agent: Toggle chat view"; new agent panes follow `[ui] chat_default`), Reading width (`AlignCenter`, accent while on, the palette "Pane: Reading width (on / off)") and, only with `[features] share`, Share (`Share2`, accent while following; its menu has "Follow in Zed").
   - History (palette "Global: History…"), the theme toggle (Ctrl+Shift+J, palette, Settings > Appearance), Phone access (palette "Global: Phone access…"), the branch chip and repository menu (the Git panel, Ctrl+Shift+4) and the logo are not in the bar.
@@ -1187,7 +1187,7 @@ Its tab row is `[Files│Session│Git]`; files and the diff open as tabs and pa
   A window whose reset time passed counts as unknown until a new report.
 - A click opens Settings at the Integrations page.
 - The chip is inert while a dialog is open and while the window is reconnecting.
-- Only the main window has it; detached windows have none.
+- Every Space window has it; detached windows have none.
 - Sources are unchanged: Codex from its transcript at a turn end (§20E.3), Claude from `mk statusline` (`limits.report`).
 - `[ui] widget_bar` and `[ui] widgets_hidden` are retired keys (§20.0).
 
@@ -1195,11 +1195,45 @@ Its tab row is `[Files│Session│Git]`; files and the diff open as tabs and pa
 
 - A terminal tab moves into a window of its own by dragging its chip outside every Mkrew window (the new window opens at the pointer), with `Shift+F4`, or from the tab menu and the palette.
 - A detached window draws the same title bar (ADR 0106): its tabs as chips with the workspace name in front, Move all back, Split ▾ and the window controls; it has no workspace switcher, Board, Docs, Run pill or limits chip; it has the `+` row (a note goes to the window's workspace). Below it are the tab's panes.
-- Tabs move between windows by dragging their chip onto another window (onto its strip: at the gap under the pointer) or with the tab menu's Move to main window / Move to window: `<tab> - <workspace>` (named by the tab that window shows).
-- Its keys act on its own tab only: tab and pane commands of §13, the palette (its commands only: also Window: Close and Window: Move all tabs back), the context menu, the composer. The `/` and `@` pickers and the prompt picker open in the window of their composer. Turns… opens in the main window. Settings (Ctrl+, or ⌘,) opens in the main window on every OS (not over another dialog, not while reconnecting).
+- Tabs move between windows by dragging their chip onto another window (onto its strip: at the gap under the pointer) or with the tab menu's Move back / Move to window: `<tab> - <workspace>` (named by the tab that window shows).
+  Move back and "Move all back" go to the Space window showing the tab's workspace; in a window per workspace, when no window shows it, a new one opens for it (ADR 0115).
+- Its keys act on its own tab only: tab and pane commands of §13, the palette (its commands only: also Window: Close and Window: Move all tabs back), the context menu, the composer. The `/` and `@` pickers and the prompt picker open in the window of their composer. Turns… opens in the Space window used last. Settings (Ctrl+, or ⌘,) opens in the Space window used last on every OS (not over another dialog, not while reconnecting).
 - Closing a detached window (✕ or Window: Close) closes its tabs (one confirmation for running agents); quitting Mkrew keeps them and reopens the windows on the next start (`<data>/windows.json`).
-- A hidden or minimized detached window detaches its panes like the main window.
+- A hidden or minimized detached window detaches its panes like a Space window.
 - File and diff tabs tear off like terminal tabs (ADR 0108): a detached window draws file and diff panes from the workspace's store, one pane per file across all windows; opening a file that is open in another window focuses it there and raises that window.
+
+### Window modes (ADR 0115)
+
+- `[ui] window_mode` picks how workspaces map to windows: `single` (default) is one Space window with the sidebar listing every workspace; `per_workspace` gives each opened workspace its own Space window, at most one per workspace.
+- Mode 1 looks and behaves as before.
+- Mode 2 has no sidebar: `◧` is hidden and the sidebar commands (Toggle sidebar, Toggle compact sidebar, Collapse / Expand all workspaces, Focus sidebar filter) are not in the palette and do nothing.
+  The tabs and the palette's Sessions scope list the sessions, the Run pill holds RUN, the "need you" chip and Ctrl+Shift+I replace the Inbox footer.
+- A mode 2 window shows its workspace in the OS title (`<workspace> - Mkrew`, so the taskbar and Alt+Tab name it) and a 3 px stripe of the workspace color along the top (none without a color).
+- The switcher lists every workspace; one that has a window ends with `◳`.
+- **Mode 1 to mode 2:** the palette "Window: Open each workspace in its own window…", the Settings row Windows, or the same row of the Split ▾ menu (mode 1, two or more workspaces).
+  The picker "Open workspaces in windows" lists every workspace with a checkbox (avatar, name, working and needs-you counts); the shown one is ticked.
+  Typing filters; ↑ / ↓ move the highlight into the list, where Space ticks; Alt+A ticks every shown row (or unticks them all); a click ticks; Enter confirms; Esc cancels and nothing changes.
+  The button says `Switch` with one ticked and `Open N windows` with more; with none it is disabled.
+  With two or more, a confirmation step says which workspace stays in this window and which open in new ones, with [Back] and [Open N windows].
+  The kept workspace is the shown one when ticked, else the first ticked; new windows open in list order at the asking window's size, each 32 px right and down from the previous, and the asking window keeps the keyboard.
+  With zero or one workspace the mode changes at once.
+- **Opening a workspace in mode 2** (the switcher, Alt+1…9, the palette, the end of Add workspace, and every jump to a session: Ctrl+Shift+I, a notification, the tray, the "need you" chip, the palette's Sessions scope): a workspace that has a window is focused (and the session with it); otherwise `[ui] open_workspace` decides.
+  `new_window` opens one, `replace` shows it in the asking window (the old workspace's agents keep running), `ask` (default) asks "Open `<workspace>`" with [New window] (default) and [This window] and "Don't ask again", anchored under the switcher or centered for a key or the palette.
+  Ctrl+click or Ctrl+Enter takes the other choice than the saved one (with `ask`: a new window without asking).
+  A session that lives in a detached window comes forward there.
+- **Mode 2 to mode 1:** the palette "Window: Combine into one window", the Settings row or the Split ▾ menu.
+  The window the user is in becomes the single window with the sidebar and keeps its workspace; every other Space window closes without a question (sessions and tabs live in the daemon); detached windows stay; a toast says "Combined N windows" when some closed.
+- Changing `window_mode` in Settings runs these flows (`per_workspace` opens the picker and saves only when it is confirmed); a hand edit of `settings.toml` switches without a picker (to `per_workspace` every window becomes its workspace's window; to `single` they combine into the one used last).
+- **"Need you" chip** (mode 2): while sessions of other workspaces need the user (§20J), the title bar shows `● N need you · <workspace>` (or `· M workspaces`) in the needs-input color.
+  A click lists them, `<workspace> · <title> · <state>` with the workspace avatar, newest first; picking one shows the session where it lives.
+  It never shrinks: the tab area gives way first.
+- **Closing:** in mode 2 a Space window's ✕ closes that window only; the agents keep running and its detached windows stay.
+  Closing the last Space window hides every window to the tray with `[ui] close_to_tray`, else Mkrew saves and quits; detached windows alone never keep the app running.
+  A workspace that is removed or archived closes its window, except the last one, which shows the empty state.
+- `[ui] panel_side` (`right` default, `left`; both modes) puts the Files / Session / Git panel on that side of the panes; its resize edge and the toggle icon follow; the palette "Panel: Move to the other side" switches it.
+- `<data>/windows.json` version 2 keeps the Space windows (`spaces`: workspace, bounds, maximized, full screen; the one used last at the end, which gets the keyboard at start) and the detached windows.
+  Mode 1 opens its one window where the window used last was, showing the workspace it showed before modes existed (the one with the newest live session); mode 2 restores every entry whose workspace is listed, the one used last in front.
+  A version 1 file reads `main-window.json` once as the single Space window.
 
 ---
 
@@ -1472,7 +1506,7 @@ A workspace has at most one Diff pane, across all its tabs and windows; it shows
 A click or Enter on a file of the Git list opens the Diff pane after the active tab, or focuses it where it is open; ↑ / ↓ in the list move it; `Ctrl+Shift+7` and the palette's "View: Diff" open or focus it.
 The pane's ✕ or the tab's × closes it; `Esc` in the list unselects the picked lines and does not close it.
 With nothing changed the pane shows the Diff empty state and stays.
-A Diff pane in a detached window and one in the main window never share scroll or layout state.
+A Diff pane in a detached window and one in a Space window never share scroll or layout state.
 
 All git actions are user-initiated; Mkrew never commits or switches branches by itself.
 The daemon shells out to `git` (porcelain v2, `-z` output) behind a `GitBackend` trait, so a
@@ -1632,6 +1666,8 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Tabs | Move the active tab one place left / right inside its pinned or unpinned group | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn |
 | Tabs | New note: creates a note file in the notes folder (§20.0 `[notes]`) and opens it in a new tab (ADR 0108) | Ctrl+Alt+N |
 | Tabs | Move to new window | Shift+F4 |
+| Window | Open each workspace in its own window… / Combine into one window (ADR 0115) | command palette only |
+| Panel | Move the Files / Session / Git panel to the other side (`[ui] panel_side`) | command palette only |
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
@@ -2409,7 +2445,10 @@ diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header to
 inspector_width = 300       # §10; px, the right panel's width (dragging its edge writes it; kept 240–560)
 right_panel = "hidden"      # §10; "files" | "session" | "git" | "hidden"; the right panel's toggle and tabs write it
 sidebar_width = 280         # §10; px, the workspace sidebar's width (dragging its edge writes it; kept 200–480)
-close_to_tray = true        # §20J, §20L; Windows: ✕ hides the window to the tray icon; macOS: ✕ hides the app (false: ✕ quits the UI)
+close_to_tray = true        # §20J, §20L; Windows: ✕ of the last Space window hides every window to the tray icon; macOS: ✕ hides the app (false: ✕ quits the UI)
+window_mode = "single"      # §10 Window modes; "single" (one window, sidebar) | "per_workspace" (a window per workspace, no sidebar)
+open_workspace = "ask"      # §10 Window modes; per_workspace only: opening a workspace without a window "ask" | "new_window" | "replace"
+panel_side = "right"        # §10; "right" | "left": the Files / Session / Git panel's side of the panes
 board_all_workspaces = false # §10; the Board shows every workspace's tasks; its `This workspace | All workspaces` switch writes it
 md_mode = "preview"         # §12A; preview | split | source: how the next .md file opens; switching a file's mode writes it
 md_split = 50               # §12A; the source's share of the Markdown Split view, percent (kept 20-80); dragging the divider writes it
@@ -2926,7 +2965,7 @@ speech to text, this is the second user-configured use of the network, and only 
 Notice who needs you with the window minimized, hidden or behind others. "Needs you" is the
 sidebar chip's count (§10, ADR 0036): needs input, plus finished and not yet viewed.
 
-1. **Taskbar badge (Windows).** The main window's taskbar button shows an overlay icon with that
+1. **Taskbar badge (Windows).** Every Space window's taskbar button shows an overlay icon with that
    count (`ITaskbarList3::SetOverlayIcon`; amber, `9+` from 10; description "3 need you");
    cleared at 0. macOS: the Dock icon's badge shows the same count (`99+` from 100, §20L). Linux: nothing.
 2. **Flash (Windows).** When a session enters `needs_input` while the window is not focused, the
@@ -3014,7 +3053,7 @@ macOS only unless a line says "every OS".
    The Dock badge and bounce keep working while hidden.
    `false`, or a machine window: the red button asks about unsaved changes and quits.
 4. **Window place (every OS).**
-   The main window's restore rect, maximized and full screen state are kept in `<data>/main-window.json` (a machine window: `main-window-<key>.json`) and restored at the next start; a place on a monitor that is gone moves to the primary display; the size is never below 1100 x 560; a missing or broken file opens the window centered at 1200 x 760 as before.
+   Each Space window's restore rect, maximized and full screen state are kept in `<data>/windows.json` (`spaces`, ADR 0115; a machine window: `windows-<key>.json`) and restored at the next start; a place on a monitor that is gone moves to the primary display; the size is never below 1100 x 560; a missing or broken file opens one window centered at 1200 x 760 as before.
    A detached window keeps full screen too (`fullscreen` in `windows.json`; absent = false).
    New and restored windows are kept inside a display's visible area (menu bar and Dock excluded).
 5. **Traffic lights.**
