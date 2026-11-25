@@ -801,7 +801,7 @@ impl Shell {
             self.settings_write_failed("the window mode", error, cx);
         }
         self.windows_dirty = true;
-        // Every Space window draws again: sidebar, stripe and title follow the mode.
+        // Every Space window draws again: sidebar and title follow the mode.
         cx.notify();
     }
 

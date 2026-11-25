@@ -1297,11 +1297,13 @@ fn text(
     chat: bool,
 ) -> StyledText {
     let (text, styled) = inline(runs);
-    let mono: Vec<(Range<usize>, SharedString)> = styled
+    let code: Vec<Range<usize>> = styled
         .iter()
         .filter(|(_, style, _)| style.code)
-        .map(|(range, _, _)| (range.clone(), theme.terminal_font_family.clone()))
+        .map(|(range, _, _)| range.clone())
         .collect();
+    let glyphs = icon_glyphs(&text);
+    let fonts = font_overrides(&code, &glyphs, theme);
     let accent = Hsla::from(rgb(theme.accent));
     let muted = Hsla::from(rgb(theme.text_muted));
     // Chat: `text` on a faint fill, not accent colored.
@@ -1357,10 +1359,56 @@ fn text(
         ];
         highlights.extend(parts.into_iter().filter(|(part, _)| !part.is_empty()));
     }
+    // A glyph gets a run of its own, so its font override applies to it alone.
+    let highlights = if glyphs.is_empty() {
+        highlights
+    } else {
+        let alone = glyphs
+            .iter()
+            .map(|g| (g.clone(), HighlightStyle::default()));
+        gpui::combine_highlights(highlights, alone).collect()
+    };
     let highlights = with_selection(highlights, selected, &text, bg);
     StyledText::new(text)
         .with_highlights(highlights)
-        .with_font_family_overrides(mono)
+        .with_font_family_overrides(fonts)
+}
+
+/// The byte range of each private-use glyph (a Nerd Font icon: omp writes one before an image's
+/// `#n` in a prompt) in `text`.
+fn icon_glyphs(text: &str) -> Vec<Range<usize>> {
+    text.char_indices()
+        .filter(|(_, c)| crate::tsp::is_icon_glyph(*c))
+        .map(|(at, c)| at..at + c.len_utf8())
+        .collect()
+}
+
+/// The font overrides of a text: `code` spans in the terminal font, each of `glyphs` (one
+/// character each) in the bundled icon font, sorted and apart as gpui wants them. On Windows
+/// gpui applies only the first run's font fallbacks to a line, so a glyph after other text
+/// must name the font that has it.
+fn font_overrides(
+    code: &[Range<usize>],
+    glyphs: &[Range<usize>],
+    theme: &Theme,
+) -> Vec<(Range<usize>, SharedString)> {
+    let icon = SharedString::from(theme::ICON_FONT);
+    let mut out: Vec<(Range<usize>, SharedString)> =
+        glyphs.iter().map(|g| (g.clone(), icon.clone())).collect();
+    for range in code {
+        let mut at = range.start;
+        for g in glyphs.iter().filter(|g| range.contains(&g.start)) {
+            if at < g.start {
+                out.push((at..g.start, theme.terminal_font_family.clone()));
+            }
+            at = g.end;
+        }
+        if at < range.end {
+            out.push((at..range.end, theme.terminal_font_family.clone()));
+        }
+    }
+    out.sort_by_key(|(range, _)| range.start);
+    out
 }
 
 /// Called with a clicked source line (1-based) and whether Shift was held.
@@ -1653,6 +1701,34 @@ mod tests {
             style,
             link: link.map(Into::into),
         }
+    }
+
+    #[test]
+    fn icon_glyphs_get_the_icon_font_and_cut_a_code_span_around_them() {
+        let theme = Theme::dark();
+        // "`ab` <icon> `x<icon>y`": a glyph in plain text and one inside a code span.
+        let text = "ab \u{f03d8} x\u{e711}y";
+        let glyphs = icon_glyphs(text);
+        assert_eq!(glyphs, [3..7, 9..12]);
+        let code = [0..2, 8..13];
+        let fonts: Vec<(Range<usize>, String)> = font_overrides(&code, &glyphs, &theme)
+            .into_iter()
+            .map(|(range, family)| (range, family.to_string()))
+            .collect();
+        let (icon, mono) = (
+            theme::ICON_FONT.to_owned(),
+            theme.terminal_font_family.to_string(),
+        );
+        assert_eq!(
+            fonts,
+            [
+                (0..2, mono.clone()),
+                (3..7, icon.clone()),
+                (8..9, mono.clone()),
+                (9..12, icon),
+                (12..13, mono)
+            ]
+        );
     }
 
     #[test]
