@@ -643,6 +643,7 @@ impl Shell {
         let panel = dialog_frame(
             panel,
             DialogHead {
+                wrap: false,
                 icon: Icon::GitBranch,
                 tone: if dialog.kind == Kind::Remove {
                     DialogTone::Danger
@@ -804,6 +805,7 @@ impl Shell {
         let panel = dialog_frame(
             panel,
             DialogHead {
+                wrap: false,
                 icon: Icon::GitCompare,
                 tone: DialogTone::Normal,
                 title: "Compare agents".into(),

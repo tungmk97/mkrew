@@ -319,6 +319,7 @@ impl Shell {
         let panel = dialog_frame(
             panel,
             DialogHead {
+                wrap: false,
                 icon: Icon::Sparkles,
                 tone: DialogTone::Normal,
                 title: "Ask AI".into(),

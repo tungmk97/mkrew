@@ -650,6 +650,7 @@ impl Shell {
         let panel = dialog_frame(
             panel,
             DialogHead {
+                wrap: false,
                 icon: Icon::History,
                 tone: DialogTone::Normal,
                 title: format!("Turns of {}", dialog.agent).into(),
@@ -848,6 +849,7 @@ impl Shell {
                 .track_focus(&self.dialog_focus)
                 .on_key_down(cx.listener(Self::history_key_down)),
             DialogHead {
+                wrap: false,
                 icon: Icon::History,
                 tone: DialogTone::Normal,
                 title: format!("History · {}", dialog.workspace).into(),

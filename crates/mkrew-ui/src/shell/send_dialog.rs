@@ -480,6 +480,7 @@ impl Shell {
             dialog_frame(
                 panel,
                 DialogHead {
+                    wrap: false,
                     icon: Icon::Send,
                     tone: DialogTone::Normal,
                     title: match (selection, dialog.file_path.as_str()) {
@@ -562,6 +563,7 @@ impl Shell {
             dialog_frame(
                 panel,
                 DialogHead {
+                    wrap: false,
                     icon: Icon::FileDiff,
                     tone: DialogTone::Normal,
                     title: format!("Changes · {}", changes.file_path).into(),

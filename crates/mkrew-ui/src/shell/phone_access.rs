@@ -361,6 +361,7 @@ impl Shell {
         let panel = dialog_frame(
             panel,
             DialogHead {
+                wrap: false,
                 icon: Icon::Smartphone,
                 tone: DialogTone::Normal,
                 title: "Phone access".into(),

@@ -2040,7 +2040,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   The Machines rows and Add card use `space::S` / `space::M`, `radius::MEDIUM` and `surface-raised`; a broken-file error shows `status-exited` ✕ and `text`.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
 - Focused pane: a 1 px stripe of `pane-focus-stripe` at its top edge when its tab has two or more panes (needs-input and a pane color win); unfocused panes dimmed ~5%.
-- Focus ring (ADR 0085, amended by ADR 0117): a dialog control that has the keyboard shows a 1 px accent border and a 3 px halo of the accent at 18 % (`focus_halo`), only while it was reached with the keyboard (`focus_visible`), in both themes; an accent-filled button shows a 1 px `focus-ring` (the text color) border instead, which reads on the fill.
+- Focus ring (ADR 0085, amended by ADR 0117): a dialog control that has the keyboard shows a 1 px accent border, only while it was reached with the keyboard (`focus_visible`), in both themes; an accent-filled button shows a 1 px `focus-ring` (the text color) border instead, which reads on the fill. A text field, a search box, an open dropdown and the focused button of a confirm prompt add a 3 px ring of the accent at 18 % outside the border (`focus_ring`, an absolute child that never paints the interior).
   A click never shows it.
 - Derived tokens (accent mixed into `bg`): `pane-focus-stripe` #49518D / #A4AAE7 (also the focus border of cards, comments and inputs);
   `terminal-selection-bg` #3A406B / #CFD2F0 (selected terminal text is drawn in `text`).

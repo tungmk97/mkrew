@@ -611,6 +611,7 @@ impl Shell {
                         cx.listener(Self::open_ask_key_down),
                     ),
                 DialogHead {
+                    wrap: false,
                     icon: Icon::ExternalLink,
                     tone: DialogTone::Normal,
                     title: format!("Open {}", self.workspace_name(ask.project)).into(),
@@ -952,6 +953,7 @@ impl Shell {
                 .relative()
                 .child(self.typing(&self.dialog_focus, Self::split_picker_key_down, cx)),
             DialogHead {
+                wrap: false,
                 icon: Icon::Columns2,
                 tone: DialogTone::Normal,
                 title: "Open workspaces in windows".into(),

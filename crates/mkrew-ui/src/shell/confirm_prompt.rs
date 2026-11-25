@@ -110,18 +110,17 @@ impl Render for ConfirmPrompt {
                     button(id, label, &theme, false)
                 };
                 // Every button keeps a 1 px border, so the keyboard ring never shifts the row:
-                // the ring is the accent plus its halo, or `focus_ring` plus the halo on the accent fill.
+                // the ring is the accent border and `focus_ring`, or `focus_ring` on the accent fill.
                 let frame = if ix == self.selected {
-                    let ringed = frame.border(px(theme::BORDER_WIDTH));
-                    if filled {
-                        ringed
-                            .border_color(rgb(theme.focus_ring))
-                            .shadow(focus_halo(theme.accent))
-                    } else {
-                        ringed
-                            .border_color(rgb(theme.accent))
-                            .shadow(focus_halo(theme.accent))
-                    }
+                    frame
+                        .relative()
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(rgb(if filled {
+                            theme.focus_ring
+                        } else {
+                            theme.accent
+                        }))
+                        .child(focus_ring(theme.accent, theme::radius::MEDIUM))
                 } else if secondary || (ix == 0 && critical) {
                     frame
                 } else {
@@ -153,6 +152,7 @@ impl Render for ConfirmPrompt {
                 },
                 title: self.message.clone(),
                 sub: None,
+                wrap: true,
             },
             None,
             body,

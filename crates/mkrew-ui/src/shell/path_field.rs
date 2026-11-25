@@ -175,6 +175,7 @@ impl Shell {
                 .relative()
                 .child(self.typing(&self.dialog_focus, Self::plan_path_key_down, cx)),
             DialogHead {
+                wrap: false,
                 icon: Icon::Link,
                 tone: DialogTone::Normal,
                 title: "Link plan".into(),

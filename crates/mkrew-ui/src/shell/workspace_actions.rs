@@ -1086,6 +1086,7 @@ impl Shell {
                 .relative()
                 .child(self.typing(&self.dialog_focus, Self::add_workspace_key_down, cx)),
             DialogHead {
+                wrap: false,
                 icon: Icon::FolderPlus,
                 tone: DialogTone::Normal,
                 title: "Add workspace".into(),

@@ -81,6 +81,7 @@ impl Shell {
                 tone: DialogTone::Normal,
                 title: "Diagram".into(),
                 sub: None,
+                wrap: false,
             },
             Some(dialog_close("diagram-close", theme).on_click(cx.listener(
                 |shell, _, window, cx| {

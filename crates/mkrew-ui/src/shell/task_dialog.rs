@@ -296,7 +296,7 @@ impl Shell {
         let agents = match &dialog.agents {
             Agents::Loading => vec![label("Loading agents…").into_any_element()],
             Agents::Failed(error) => vec![
-                notice(theme.text, format!("✕ Cannot list the agents: {error}")).into_any_element(),
+                error_note(format!("Cannot list the agents: {error}"), theme).into_any_element(),
             ],
             Agents::Loaded(profiles) => {
                 let choices = dialog.agent_choices(profiles, default_agent);
@@ -615,6 +615,7 @@ impl Shell {
             dialog_frame(
                 panel,
                 DialogHead {
+                    wrap: false,
                     icon: if editing { Icon::Pencil } else { Icon::Plus },
                     tone: DialogTone::Normal,
                     title: (if editing { "Edit task" } else { "New task" }).into(),

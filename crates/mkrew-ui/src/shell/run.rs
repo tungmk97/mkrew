@@ -1026,6 +1026,7 @@ impl Shell {
                 .relative()
                 .child(self.typing(&self.dialog_focus, Self::run_setup_key_down, cx)),
             DialogHead {
+                wrap: false,
                 icon: Icon::Play,
                 tone: DialogTone::Normal,
                 title: title.into(),
@@ -1215,6 +1216,7 @@ impl Shell {
                     cx.listener(Self::run_setup_key_down),
                 ),
             DialogHead {
+                wrap: false,
                 icon: Icon::FolderOpen,
                 tone: DialogTone::Normal,
                 title: if folder {

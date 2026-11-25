@@ -146,21 +146,24 @@ pub(crate) fn button(
 }
 
 /// The keyboard focus halo (ADR 0085, amended by ADR 0117): a ring of the accent at
-/// `FOCUS_HALO_ALPHA` just outside the box, drawn with the 1 px accent border.
-// ponytail: one small Vec per focus stop per frame, because gpui's `shadow` takes a Vec; cache it
-// on the theme if a profile ever shows it.
-pub(crate) fn focus_halo(accent: u32) -> Vec<gpui::BoxShadow> {
-    vec![
-        gpui::BoxShadow::new(
-            px(0.0),
-            px(0.0),
-            gpui::Hsla::from(gpui::rgba(theme::with_alpha(
-                accent,
-                theme::FOCUS_HALO_ALPHA,
-            ))),
-        )
-        .spread_radius(px(theme::FOCUS_HALO_SPREAD)),
-    ]
+/// `FOCUS_HALO_ALPHA`, `FOCUS_HALO_SPREAD` wide, just outside the 1 px border of the box it is
+/// a child of (`radius` is that box's corner radius). It is an absolute child of a `.relative()`
+/// parent, so it never paints the interior (a spread shadow would, under a see-through fill).
+pub(crate) fn focus_ring(accent: u32, radius: f32) -> gpui::Div {
+    // An absolute child is placed from inside the parent's border.
+    let out = px(-(theme::FOCUS_HALO_SPREAD + theme::BORDER_WIDTH));
+    div()
+        .absolute()
+        .top(out)
+        .bottom(out)
+        .left(out)
+        .right(out)
+        .rounded(px(radius + theme::FOCUS_HALO_SPREAD))
+        .border(px(theme::FOCUS_HALO_SPREAD))
+        .border_color(gpui::rgba(theme::with_alpha(
+            accent,
+            theme::FOCUS_HALO_ALPHA,
+        )))
 }
 
 /// The ring of a danger button, an error note and a destructive dialog's icon tile.
@@ -428,15 +431,18 @@ pub(crate) fn danger_button(
 /// the focus handle of an element that has a tab index in its element state, so a control needs
 /// no field on `Shell`. Every control here is a `Stateful<Div>` ([`button`], [`secondary_button`],
 /// [`quiet_button`], [`danger_button`], [`icon_button`], [`segment`], chips, check rows).
+/// A style refinement cannot add an outer ring (that needs a child, and gpui has no group focus
+/// style), so these show the accent border only; fields, search boxes and the confirm prompt,
+/// which know they are focused, draw [`focus_ring`] as well.
 pub(crate) trait DialogControl: Sized {
-    /// A Tab stop that shows the accent border and halo while the keyboard has it. It keeps a
-    /// 1 px border, transparent at rest, so the ring shifts nothing. Enter / Space click it (gpui).
+    /// A Tab stop that shows the accent border while the keyboard has it. It keeps a 1 px
+    /// border, transparent at rest, so the ring shifts nothing. Enter / Space click it (gpui).
     fn focus_stop(self, theme: &Theme) -> Self;
     /// [`DialogControl::focus_stop`] for a control that already draws its own 1 px border (a
-    /// secondary button, a chip): only the ring color and the halo change.
+    /// secondary button, a chip): only the ring color changes.
     fn focusable_bordered(self, theme: &Theme) -> Self;
-    /// [`DialogControl::focus_stop`] for a button filled with the accent: the ring is `focus_ring`
-    /// (the text color), which reads on the fill; no halo.
+    /// [`DialogControl::focus_stop`] for a button filled with the accent: the border is
+    /// `focus_ring` (the text color), which reads on the fill.
     fn focus_stop_filled(self, theme: &Theme) -> Self;
     /// ← / → on a focused chip move the keyboard to its neighbour in a row of `len`; the
     /// ends keep it.
@@ -461,17 +467,17 @@ impl DialogControl for gpui::Stateful<gpui::Div> {
     }
 
     fn focusable_bordered(self, theme: &Theme) -> Self {
-        let accent = theme.accent;
+        let accent = rgb(theme.accent);
         self.tab_index(0)
-            .focus_visible(move |style| style.border_color(rgb(accent)).shadow(focus_halo(accent)))
+            .focus_visible(move |style| style.border_color(accent))
     }
 
     fn focus_stop_filled(self, theme: &Theme) -> Self {
-        let (ring, accent) = (rgb(theme.focus_ring), theme.accent);
+        let ring = rgb(theme.focus_ring);
         self.border(px(theme::BORDER_WIDTH))
             .border_color(gpui::transparent_black())
             .tab_index(0)
-            .focus_visible(move |style| style.border_color(ring).shadow(focus_halo(accent)))
+            .focus_visible(move |style| style.border_color(ring))
     }
 
     fn chip_arrows(self, index: usize, len: usize) -> Self {
@@ -944,6 +950,7 @@ pub(crate) fn search_box(
     theme: &Theme,
 ) -> gpui::Div {
     div()
+        .relative()
         .flex()
         .items_center()
         .gap(px(space::S))
@@ -957,7 +964,9 @@ pub(crate) fn search_box(
             gpui::rgba(theme.layer[1])
         })
         .bg(gpui::rgba(theme.layer[0]))
-        .when(focused, |el| el.shadow(focus_halo(theme.accent)))
+        .when(focused, |el| {
+            el.child(focus_ring(theme.accent, radius::MEDIUM))
+        })
         .child(icon_svg(
             Icon::Search,
             theme::ICON_SIZE_SMALL,
@@ -1147,7 +1156,9 @@ fn field_frame(id: &'static str, focused: bool, theme: &Theme) -> gpui::Stateful
             gpui::rgba(theme.layer[1])
         })
         .bg(gpui::rgba(theme.layer[0]))
-        .when(focused, |el| el.shadow(focus_halo(theme.accent)))
+        .when(focused, |el| {
+            el.child(focus_ring(theme.accent, radius::MEDIUM))
+        })
         .text_size(font_size::BODY)
         .text_color(rgb(theme.text))
         .cursor(CursorStyle::IBeam)
@@ -1335,6 +1346,7 @@ pub(crate) fn dropdown_trigger(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
+        .relative()
         .w_full()
         .flex()
         .items_center()
@@ -1350,7 +1362,9 @@ pub(crate) fn dropdown_trigger(
             gpui::rgba(theme.layer[1])
         })
         .bg(gpui::rgba(theme.layer[0]))
-        .when(open, |el| el.shadow(focus_halo(theme.accent)))
+        .when(open, |el| {
+            el.child(focus_ring(theme.accent, radius::MEDIUM))
+        })
         .text_size(font_size::BODY)
         .text_color(rgb(theme.text))
         .map(|el| {
@@ -1463,12 +1477,14 @@ pub(crate) enum DialogTone {
     Danger,
 }
 
-/// The head of a dialog: a 32 px icon tile, the title, an optional one-line sub.
+/// The head of a dialog: a 32 px icon tile, the title, an optional one-line sub. A `wrap` title
+/// breaks over lines (a question naming a file); otherwise it is cut to one line.
 pub(crate) struct DialogHead {
     pub(crate) icon: Icon,
     pub(crate) tone: DialogTone,
     pub(crate) title: SharedString,
     pub(crate) sub: Option<SharedString>,
+    pub(crate) wrap: bool,
 }
 
 /// The close button of a dialog head: 26 px, a 14 px X in `text_subtle`. Not a Tab stop (Esc
@@ -1622,7 +1638,8 @@ pub(crate) fn dialog_frame(
                 .flex_col()
                 .child(
                     div()
-                        .truncate()
+                        .when(head.wrap, |el| el.whitespace_normal())
+                        .when(!head.wrap, |el| el.truncate())
                         .text_size(font_size::CARD_TITLE)
                         .font_weight(FontWeight(weight::SEMIBOLD))
                         .text_color(rgb(theme.text))

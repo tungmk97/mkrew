@@ -427,6 +427,7 @@ impl Shell {
                     cx.listener(Self::undo_dialog_key_down),
                 ),
             DialogHead {
+                wrap: false,
                 icon: Icon::Undo2,
                 tone: DialogTone::Danger,
                 title: dialog.heading().into(),
@@ -617,6 +618,7 @@ impl Shell {
                 .relative()
                 .child(self.typing(&self.dialog_focus, Self::broadcast_key_down, cx)),
             DialogHead {
+                wrap: false,
                 icon: Icon::Send,
                 tone: DialogTone::Normal,
                 title: "Broadcast to agents".into(),

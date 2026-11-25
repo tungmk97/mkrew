@@ -315,6 +315,7 @@ impl Shell {
         let panel = dialog_frame(
             panel,
             DialogHead {
+                wrap: false,
                 icon: Icon::Server,
                 tone: DialogTone::Normal,
                 title: "Ports".into(),

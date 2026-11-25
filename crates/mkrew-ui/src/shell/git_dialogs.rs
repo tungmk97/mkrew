@@ -389,6 +389,7 @@ impl Shell {
                     cx.listener(Self::git_discard_key_down),
                 ),
             DialogHead {
+                wrap: false,
                 icon: Icon::Trash2,
                 tone: DialogTone::Danger,
                 title: dialog.title().into(),
@@ -487,6 +488,7 @@ impl Shell {
                 .relative()
                 .child(self.typing(&self.dialog_focus, Self::git_base_key_down, cx)),
             DialogHead {
+                wrap: false,
                 icon: Icon::GitBranch,
                 tone: DialogTone::Normal,
                 title: "Base branch".into(),
