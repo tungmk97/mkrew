@@ -42,3 +42,19 @@ links, inline images, per-depth bullet glyphs, horizontal scrolling of code (lon
     debug. Measure the UI memory against the 150 MB budget in the manual check.
   - Blocks that do not parse or use an unsupported diagram type show their source with the
     reason.
+
+## CSV and TSV tables (addendum, 2026-11-25)
+
+- **Context:** Agents answer with data as ```` ```csv ```` blocks in Chat; the user wants to read them as tables, as Mermaid blocks are read as diagrams.
+- **Decision:** ```` ```csv ```` (`,`) and ```` ```tsv ```` (tab) blocks are read by a small RFC 4180 reader in `markdown.rs` (`markdown::delimited`), in `Shown::from_text` next to the diagrams (`Shown.tables`), and drawn by the preview as a table on the code card.
+  The card label says `csv · N rows`; Copy copies the source.
+  The first record is the head, short records are padded, all-number columns are right-aligned, and each column starts as wide as its longest line (4 to 40 characters, `theme::doc::COLUMN_CHAR` pixels each) and all shrink together on a narrow card, so a small table stays compact on the left.
+  At most 200 body rows are drawn, then "N more rows".
+  The cells are selectable text pieces like a Markdown table's (`preview_select` copies them tab-separated).
+- **Alternatives rejected:**
+  - The `csv` crate: a new dependency for about 40 lines of reading.
+  - Equal column widths (the Markdown table look): an id column took a third of the card and a short table spread over the whole card.
+  - A virtual list for long tables: agents print short tables; the cap keeps a pasted file cheap.
+- **Consequences:**
+  - A block with an unclosed quote or no rows shows its source with the reason, like a diagram that cannot be drawn.
+  - Semicolon-separated files are not detected; they show as one column.

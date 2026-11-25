@@ -669,6 +669,11 @@ pub mod doc {
     pub const MARKER_WIDTH: f32 = 20.0;
     /// The accent dot before an unnumbered list item (ADR 0105).
     pub const BULLET_SIZE: f32 = 6.0;
+    /// Width given to one character of a ```csv column (a little over the average glyph at
+    /// `BODY`, so a column's longest text does not wrap while there is room): a column starts
+    /// as wide as its longest text and the columns shrink together when the card is narrower
+    /// (ADR 0021 addendum).
+    pub const COLUMN_CHAR: f32 = 9.0;
 }
 
 /// Width of the peek popover next to a session row (§20A.1).

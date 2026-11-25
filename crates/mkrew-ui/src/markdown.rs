@@ -702,6 +702,144 @@ pub fn front_matter_rows(text: &str) -> Vec<(Option<&str>, &str)> {
         .collect()
 }
 
+/// A ```` ```csv ```` or ```` ```tsv ```` block read as a table: its first record is the head,
+/// short records are padded to the widest one, a column whose body cells are all numbers is
+/// right-aligned, and each column is as wide as its longest text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delimited {
+    pub aligns: Vec<Align>,
+    /// Each column's longest drawn line in characters, within [`COLUMN_CHARS`], so an id
+    /// column stays narrow beside a note column.
+    pub widths: Vec<u16>,
+    pub head: Row,
+    pub rows: Vec<Row>,
+    /// Body records past [`DELIMITED_ROWS`], not drawn.
+    pub more: usize,
+}
+
+/// The bounds of a [`Delimited`] column width: an empty column still has room for its head, a
+/// long one wraps instead of squeezing the others.
+pub const COLUMN_CHARS: (u16, u16) = (4, 40);
+
+/// Body rows of a [`Delimited`] table that are drawn.
+// ponytail: a fixed cap so a huge pasted CSV stays a cheap layout; a virtual list if agents
+// ever need to show more inline.
+pub const DELIMITED_ROWS: usize = 200;
+
+/// The field separator of a fenced block's language: `csv` is `,`, `tsv` is a tab.
+pub fn delimiter(lang: &str) -> Option<char> {
+    if lang.eq_ignore_ascii_case("csv") {
+        Some(',')
+    } else if lang.eq_ignore_ascii_case("tsv") {
+        Some('\t')
+    } else {
+        None
+    }
+}
+
+/// Reads `text` (RFC 4180: quoted fields hold separators, newlines and `""` for a quote) as a
+/// table. Blank lines are skipped; `lines` is the block's, given to every row.
+pub fn delimited(text: &str, sep: char, lines: Lines) -> Result<Delimited, String> {
+    let mut records = records(text, sep)?;
+    if records.is_empty() {
+        return Err("it has no rows".into());
+    }
+    let width = records.iter().map(Vec::len).max().unwrap_or(0);
+    for record in &mut records {
+        record.resize(width, String::new());
+    }
+    let number = |cell: &str| {
+        let cell = cell.trim().trim_end_matches('%').replace(',', "");
+        cell.parse::<f64>().is_ok()
+    };
+    let body = &records[1..];
+    let aligns = (0..width)
+        .map(|column| {
+            let mut cells = body.iter().map(|record| &record[column]);
+            let numeric = cells.clone().any(|cell| !cell.trim().is_empty())
+                && cells.all(|cell| cell.trim().is_empty() || number(cell));
+            if numeric {
+                Align::Right
+            } else {
+                Align::Default
+            }
+        })
+        .collect();
+    let more = body.len().saturating_sub(DELIMITED_ROWS);
+    records.truncate(1 + DELIMITED_ROWS);
+    let widths = (0..width)
+        .map(|column| {
+            let longest = (records.iter())
+                .flat_map(|record| record[column].trim().lines())
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or(0);
+            let (low, high) = COLUMN_CHARS;
+            u16::try_from(longest).unwrap_or(high).clamp(low, high)
+        })
+        .collect();
+    let mut rows = records.into_iter().map(|record| Row {
+        cells: (record.iter())
+            .map(|cell| {
+                vec![Run {
+                    text: cell.trim().to_owned(),
+                    style: Style::default(),
+                    link: None,
+                }]
+            })
+            .collect(),
+        lines,
+    });
+    let head = rows.next().ok_or("it has no rows")?;
+    Ok(Delimited {
+        aligns,
+        widths,
+        head,
+        rows: rows.collect(),
+        more,
+    })
+}
+
+/// The records of `text`, each a list of fields; a blank line is no record.
+fn records(text: &str, sep: char) -> Result<Vec<Vec<String>>, String> {
+    let mut records = Vec::new();
+    let mut record = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if quoted {
+            match c {
+                '"' if chars.next_if_eq(&'"').is_some() => field.push('"'),
+                '"' => quoted = false,
+                _ => field.push(c),
+            }
+            continue;
+        }
+        match c {
+            '"' if field.trim().is_empty() => {
+                field.clear();
+                quoted = true;
+            }
+            '\n' => {
+                record.push(std::mem::take(&mut field));
+                records.push(std::mem::take(&mut record));
+            }
+            c if c == sep => record.push(std::mem::take(&mut field)),
+            _ => field.push(c),
+        }
+    }
+    if quoted {
+        return Err("a quoted field is not closed".into());
+    }
+    if !field.is_empty() || !record.is_empty() {
+        record.push(field);
+        records.push(record);
+    }
+    records.retain(|record| record.iter().any(|field| !field.trim().is_empty()));
+    Ok(records)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1044,5 +1182,57 @@ fn main() {}
     fn a_path_pill_keeps_its_line_suffix() {
         let pill = path_pill("src/a.rs:12").unwrap();
         assert_eq!((pill.path, pill.suffix), ("src/a.rs", ":12"));
+    }
+
+    fn cells(row: &Row) -> Vec<&str> {
+        row.cells.iter().map(|cell| cell[0].text.as_str()).collect()
+    }
+
+    #[test]
+    fn csv_reads_quotes_escapes_and_newlines_in_fields() {
+        let lines = Lines { start: 1, end: 6 };
+        let text =
+            "name, note ,size\n\"Doe, J\",\"say \"\"hi\"\"\",1,200\n\n\"two\nlines\",x\nshort";
+        let table = delimited(text, ',', lines).unwrap();
+        assert_eq!(cells(&table.head), ["name", "note", "size", ""]);
+        assert_eq!(
+            table.rows.iter().map(cells).collect::<Vec<_>>(),
+            [
+                vec!["Doe, J", "say \"hi\"", "1", "200"],
+                vec!["two\nlines", "x", "", ""],
+                vec!["short", "", "", ""],
+            ],
+            "blank line skipped, short rows padded"
+        );
+        assert_eq!(table.head.lines, lines);
+        assert!(delimited("a,\"open\n", ',', lines).is_err());
+        assert!(delimited("\n  \n", ',', lines).is_err());
+    }
+
+    #[test]
+    fn csv_number_columns_align_right_and_long_tables_are_cut() {
+        let lines = Lines { start: 1, end: 1 };
+        let table = delimited("id\tname\tshare\n1\ta\t12.5%\n\tb\t\"1,234\"", '\t', lines).unwrap();
+        assert_eq!(table.aligns, [Align::Right, Align::Default, Align::Right]);
+        assert_eq!(
+            delimited("a\n", ',', lines).unwrap().aligns,
+            [Align::Default]
+        );
+        let wide = format!("id,title,note\n1,Gadget,{}", "x".repeat(60));
+        assert_eq!(
+            delimited(&wide, ',', lines).unwrap().widths,
+            [4, 6, 40],
+            "widths follow the text, within bounds"
+        );
+        let long = std::iter::once("n".to_owned())
+            .chain((0..DELIMITED_ROWS + 5).map(|n| n.to_string()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let table = delimited(&long, ',', lines).unwrap();
+        assert_eq!((table.rows.len(), table.more), (DELIMITED_ROWS, 5));
+        assert_eq!(
+            (delimiter("CSV"), delimiter("tsv"), delimiter("text")),
+            (Some(','), Some('\t'), None)
+        );
     }
 }
