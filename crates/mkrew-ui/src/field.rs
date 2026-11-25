@@ -50,18 +50,94 @@ pub fn caret_text(
     focused: bool,
     theme: &Theme,
 ) -> (AnyElement, Option<TextLayout>) {
+    field_text(text, cursor, selection, false, placeholder, focused, theme)
+}
+
+/// [`caret_text`] for a commit message: its first line (the summary) is semibold.
+pub fn summary_text(
+    text: &str,
+    cursor: usize,
+    selection: Option<Range<usize>>,
+    placeholder: impl IntoElement,
+    focused: bool,
+    theme: &Theme,
+) -> (AnyElement, Option<TextLayout>) {
+    field_text(text, cursor, selection, true, placeholder, focused, theme)
+}
+
+fn field_text(
+    text: &str,
+    cursor: usize,
+    selection: Option<Range<usize>>,
+    summary: bool,
+    placeholder: impl IntoElement,
+    focused: bool,
+    theme: &Theme,
+) -> (AnyElement, Option<TextLayout>) {
     if text.is_empty() {
         return (empty_field(placeholder, focused, theme), None);
     }
-    let lit = HighlightStyle {
-        background_color: Some(selection_bg(theme)),
-        ..HighlightStyle::default()
-    };
+    let lit = selection_bg(theme);
     let selection = selection.filter(|s| !s.is_empty());
     let show_caret = focused && selection.is_none();
-    let styled = StyledText::new(text.to_owned()).with_highlights(selection.map(|s| (s, lit)));
+    let highlights = if summary {
+        summary_highlights(text, selection, lit)
+    } else {
+        selection
+            .map(|s| {
+                (
+                    s,
+                    HighlightStyle {
+                        background_color: Some(lit),
+                        ..HighlightStyle::default()
+                    },
+                )
+            })
+            .into_iter()
+            .collect()
+    };
+    let styled = StyledText::new(text.to_owned()).with_highlights(highlights);
     let (shown, layout) = caret_over(styled, cursor.min(text.len()), show_caret, theme);
     (shown, Some(layout))
+}
+
+/// The highlights of a commit message: the first line semibold, the bytes of `selection` on
+/// `lit`. Sorted and not overlapping, as `StyledText::with_highlights` needs, so a selection cuts
+/// the summary's range instead of overlapping it; the body has none.
+pub fn summary_highlights(
+    text: &str,
+    selection: Option<Range<usize>>,
+    lit: Hsla,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let end = text.len();
+    let eol = text.find('\n').unwrap_or(end);
+    let selection = selection.filter(|s| !s.is_empty()).unwrap_or(0..0);
+    let mut cuts = [
+        0,
+        eol,
+        selection.start.min(end),
+        selection.end.min(end),
+        end,
+    ];
+    cuts.sort_unstable();
+    cuts.windows(2)
+        .filter(|cut| cut[0] < cut[1])
+        .filter_map(|cut| {
+            let part = cut[0]..cut[1];
+            let bold = part.end <= eol;
+            let selected = selection.start <= part.start && part.end <= selection.end;
+            (bold || selected).then(|| {
+                (
+                    part,
+                    HighlightStyle {
+                        font_weight: bold.then_some(gpui::FontWeight(theme::weight::SEMIBOLD)),
+                        background_color: selected.then_some(lit),
+                        ..HighlightStyle::default()
+                    },
+                )
+            })
+        })
+        .collect()
 }
 
 /// An empty field: the caret while `focused`, then the faint `placeholder` (t4, `subtle`).
@@ -188,4 +264,46 @@ pub fn caret_mouse<V: 'static, E: InteractiveElement>(
                 });
             }
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ranges(text: &str, selection: Option<Range<usize>>) -> Vec<(Range<usize>, bool, bool)> {
+        let lit = Hsla::from(gpui::rgb(0x112233));
+        summary_highlights(text, selection, lit)
+            .into_iter()
+            .map(|(range, style)| {
+                (
+                    range,
+                    style.font_weight.is_some(),
+                    style.background_color.is_some(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_first_line_is_semibold_and_the_body_plain() {
+        assert_eq!(ranges("feat: x\n\nbody", None), vec![(0..7, true, false)]);
+        assert_eq!(ranges("abc", None), vec![(0..3, true, false)]);
+        assert!(ranges("", None).is_empty());
+    }
+
+    #[test]
+    fn a_selection_cuts_the_summary_instead_of_overlapping_it() {
+        assert_eq!(
+            ranges("feat: x\n\nbody", Some(3..10)),
+            vec![
+                (0..3, true, false),
+                (3..7, true, true),
+                (7..10, false, true)
+            ]
+        );
+        assert_eq!(
+            ranges("abc", Some(1..2)),
+            vec![(0..1, true, false), (1..2, true, true), (2..3, true, false)]
+        );
+    }
 }

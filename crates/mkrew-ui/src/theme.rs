@@ -734,9 +734,11 @@ pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
 
 /// One row of the Git changed-file list (uniform list: every row has this box; ADR 0110).
 pub const GIT_FILE_ROW_HEIGHT: f32 = 28.0;
-/// The box of the change letter (M, A, D …) of a Git file row: the letter is colored, the box
-/// has no fill (ADR 0110); it keeps the names in one column.
-pub const GIT_BADGE_SIZE: f32 = 18.0;
+/// The box of the change letter (M, A, D ...) of a Git file row: a 16 px chip with a tint of
+/// the letter's hue (an outline for `?`); it keeps the names in one column.
+pub const GIT_BADGE_SIZE: f32 = 16.0;
+/// The ring of an untracked file's chip: `status_done` at 35 %.
+pub const STATUS_RING_ALPHA: f32 = 0.35;
 
 /// The History's lane graph (SPEC §12B): one lane's width, a commit's dot, a line's width.
 pub const GIT_GRAPH_LANE_WIDTH: f32 = 12.0;
@@ -2707,8 +2709,6 @@ pub const TAB_STRIP_HEIGHT: f32 = 44.0;
 pub const PANEL_TAB_HEIGHT: f32 = 28.0;
 /// The Git view's repository tabs (multi-repo workspaces): a tab strip.
 pub const GIT_REPO_STRIP_HEIGHT: f32 = 42.0;
-/// The Git view's Working / Vs. base / History tabs: underlined text tabs (ADR 0110).
-pub const GIT_SECTION_TAB_HEIGHT: f32 = 36.0;
 pub const WORKSPACE_ROW_HEIGHT: f32 = 30.0;
 pub const SESSION_ROW_HEIGHT: f32 = 30.0;
 /// The sidebar's filter field (spec §8): one step lower than a dialog input

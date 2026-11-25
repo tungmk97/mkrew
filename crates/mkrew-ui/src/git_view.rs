@@ -29,6 +29,7 @@ use crate::git_viewed::ViewedSet;
 use crate::highlight::{self, Spans};
 use crate::pick::Unit;
 use crate::text_box::Input;
+use crate::theme::{self, Theme};
 
 /// The group a changed file is listed in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -2182,6 +2183,54 @@ pub fn changed_ranges(old: &str, new: &str) -> Option<(Range<usize>, Range<usize
 /// "+3 −1" style counts of a changed file; `None` = binary or not counted.
 pub fn counts(file: &ChangedFile) -> Option<(u32, u32)> {
     Some((file.added?, file.removed?))
+}
+
+/// How a changed file's status chip looks (the Git list and the diff toolbar): the letter in
+/// `color`, the hue whose tint fills the chip (none for an untracked file) and the RGBA ring an
+/// untracked file gets instead. R and C take the accent; `?` is an outline of `status_done`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChangeChip {
+    pub letter: &'static str,
+    pub color: u32,
+    pub fill: Option<u32>,
+    pub ring: Option<u32>,
+    pub meaning: &'static str,
+}
+
+pub fn change_chip(kind: ChangeKind, theme: &Theme) -> ChangeChip {
+    let tinted = |letter, color, meaning| ChangeChip {
+        letter,
+        color,
+        fill: Some(color),
+        ring: None,
+        meaning,
+    };
+    let accent = |letter, meaning| ChangeChip {
+        letter,
+        color: theme.accent_text,
+        fill: Some(theme.accent),
+        ring: None,
+        meaning,
+    };
+    match kind {
+        ChangeKind::Added => tinted("A", theme.diff_add_text, "Added"),
+        ChangeKind::Modified => tinted("M", theme.git_modified, "Modified"),
+        ChangeKind::Deleted => tinted("D", theme.diff_del_text, "Deleted"),
+        ChangeKind::Renamed => accent("R", "Renamed"),
+        ChangeKind::Copied => accent("C", "Copied"),
+        ChangeKind::TypeChanged => tinted("T", theme.git_modified, "File type changed"),
+        ChangeKind::Untracked => ChangeChip {
+            letter: "?",
+            color: theme.success_text,
+            fill: None,
+            ring: Some(theme::with_alpha(
+                theme.status_done,
+                theme::STATUS_RING_ALPHA,
+            )),
+            meaning: "Untracked",
+        },
+        ChangeKind::Conflicted => tinted("!", theme.diff_del_text, "Conflicted"),
+    }
 }
 
 /// The branch card's upstream line: "origin/main · 2 commits ahead", "… · up to date",

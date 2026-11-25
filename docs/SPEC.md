@@ -1517,8 +1517,8 @@ Only edit this file. When done, for EACH comment run:
 
 ## §12B UI: Git (right panel tab and Diff pane)
 
-The Git tab of the right panel holds, top to bottom (ADR 0110): the Working / Vs. base / History tabs (underlined text tabs under the repository tabs), the filter row (field, `Viewed N/M`, "Changed by"), the list, the commit box and a footer with the branch, its upstream, Fetch and Push; as wide as the panel (240-560 px; the filter row wraps).
-Group headers are sentence case with a muted count (`Staged 0`); the empty Staged hint is a muted line; a file row is 28 px with its change letter colored and unfilled.
+The Git tab of the right panel holds, top to bottom (ADR 0110): the Working / Vs. base / History tabs (a compact segmented control under the repository tabs), the filter row (field, `Viewed N/M`, "Changed by"), the list, the commit box and a footer with the branch, its upstream, Fetch and Push; as wide as the panel (240-560 px; the filter row wraps).
+Group headers are sentence case with the count in a `well` chip (`Staged 0`); the empty Staged hint is a muted line; a file row is 28 px with a 16 px status chip (a tint of the letter's hue, an outline for `?`), the selected one the accent tint plus bar.
 The Diff pane (ADR 0108) holds the toolbar (file, Unified / Split, Wrap, Viewed, Open in Zed, Discard, Stage file, `…`, ✕), unified / split, hunks, the comment margin and Send to agent.
 It is a leaf of a tab's split tree like a file: a tab of its own in the title bar (diff icon, `Diff`) or a pane next to terminals and files.
 A workspace has at most one Diff pane, across all its tabs and windows; it shows the diff of the Git list's selected file.
@@ -1922,7 +1922,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
 - Radius 5 (area chips, key hints), 6 (chips, segments, tree rows), 8 (buttons, inputs, rows),
   9 (segmented container), 10 (cards), 12 (dialogs, palette), 16 (the composer card, `radius::PANEL`), 999 (pills); 4 for old badges.
-- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the right panel tab row 44 with 28 px icon tabs (the shown one: `accent-bg` fill, `accent-text` icon), Git repo strip 42, Git section tabs 36, Files tree rows 24, Git file rows 28 (px at 13 px body; ADR 0110).
+- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the right panel tab row 44 with 28 px icon tabs (the shown one: `accent-bg` fill, `accent-text` icon), Git repo strip 42, Git section segmented control (META size) in a 40 px strip, Files tree rows 24, Git file rows 28 with a 16 px status chip (px at 13 px body; ADR 0110).
 - Tab chip (Tern look, ADR 0106, ADR 0116): height `TAB_CHIP_HEIGHT` (26), radius 8 (`radius::MEDIUM`), no border, META text at regular weight; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
   A chip shows one icon, its focused pane's, in `text_subtle` (`text_muted` when active), never a brand color; a working or needs-input tab colors that icon `status_working` / `status_needs_input` instead of adding a glyph, and its tooltip names the state.
   No rule separates pinned tabs from the others.

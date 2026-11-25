@@ -254,23 +254,9 @@ impl Shell {
             Some((folder, name)) => (Some(folder), name),
             None => (None, selected.path.as_str()),
         };
-        // The file's status letter, like its row in the list (kept from before the restyle).
+        // The file's status chip, like its row in the list.
         let badge = position.map(|(_, _, kind)| {
-            let (letter, color, meaning) = change_letter(kind, theme);
-            div()
-                .id("git-diff-status")
-                .flex_none()
-                .size(theme::rems_px(theme::GIT_BADGE_SIZE))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(radius::TAG))
-                .bg(theme.tint(color))
-                .text_size(font_size::OVERLINE)
-                .font_weight(FontWeight(weight::SEMIBOLD))
-                .text_color(rgb(color))
-                .tooltip(tooltip(theme, meaning, ""))
-                .child(letter)
+            status_chip("git-diff-status", git_view::change_chip(kind, theme), theme)
         });
         let path = div()
             .id("git-diff-path")

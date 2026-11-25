@@ -2201,3 +2201,41 @@ fn the_hunk_sentence_names_the_staged_changes_that_stay() {
     assert!(sentence.contains("This hunk of “b.rs”"));
     assert!(!sentence.contains("staged"));
 }
+
+#[test]
+fn status_chips_are_tinted_by_kind_and_only_an_untracked_file_has_a_ring() {
+    let theme = Theme::dark();
+    let kinds = [
+        ChangeKind::Added,
+        ChangeKind::Modified,
+        ChangeKind::Deleted,
+        ChangeKind::Renamed,
+        ChangeKind::Copied,
+        ChangeKind::TypeChanged,
+        ChangeKind::Untracked,
+        ChangeKind::Conflicted,
+    ];
+    let letters: HashSet<_> = kinds
+        .iter()
+        .map(|k| change_chip(*k, &theme).letter)
+        .collect();
+    assert_eq!(letters.len(), kinds.len(), "every kind has its own letter");
+    for kind in kinds {
+        let chip = change_chip(kind, &theme);
+        if kind == ChangeKind::Untracked {
+            assert_eq!(chip.fill, None, "an untracked chip is an outline");
+            assert_eq!(
+                chip.ring,
+                Some(theme::with_alpha(
+                    theme.status_done,
+                    theme::STATUS_RING_ALPHA
+                ))
+            );
+        } else {
+            assert!(chip.fill.is_some() && chip.ring.is_none(), "{kind:?}");
+        }
+    }
+    for kind in [ChangeKind::Renamed, ChangeKind::Copied] {
+        assert_eq!(change_chip(kind, &theme).fill, Some(theme.accent));
+    }
+}
