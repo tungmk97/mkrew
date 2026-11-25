@@ -774,6 +774,8 @@ pub const GIT_HUNK_HEADER_HEIGHT: f32 = 24.0;
 pub const GIT_HUNK_BUTTON_HEIGHT: f32 = 18.0;
 pub const HUNK_BAR_WIDTH: f32 = 3.0;
 pub const HUNK_RING_ALPHA: f32 = 0.18;
+/// How far the top line of a primary button goes from the accent toward `on_accent`.
+pub const ACCENT_HIGHLIGHT_MIX: f32 = 0.35;
 
 /// The diff rule (spec §10): a changed row is `DIFF_ROW_MIX` of its hue over the diff ground
 /// (`surface`); its gutter is a step on (`DIFF_GUTTER_MIX` more of the hue); the line numbers are
@@ -1068,7 +1070,7 @@ pub struct Theme {
     pub glass_border: u32,
     /// Highlight line, RGBA: a 1 px line just inside the top edge of raised and floating
     /// panels (`widgets::top_highlight`): white at 5 % (dark) / 100 % (light); set by
-    /// [`Theme::with_glass`]. Replaces the accent wash of `glass_tint` (ADR 0117).
+    /// [`Theme::with_glass`]. Replaces the old accent wash (ADR 0117).
     pub glass_hi: u32,
     /// Tern's l1..l4 alpha ladder, RGBA: the ink (white in dark themes, `0x181A2C` in light
     /// ones; the foreground in a derived dark theme) at 7/10/15/24 % (dark) or 6/9/14/22 %

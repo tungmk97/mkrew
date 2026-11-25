@@ -136,7 +136,7 @@ pub(crate) fn button(
                 .bg(rgb(theme.accent))
                 .text_color(rgb(button_fg(theme, true)))
                 .font_weight(FontWeight(weight::MEDIUM))
-                .child(top_highlight(theme, radius::MEDIUM)),
+                .child(accent_highlight(theme, radius::MEDIUM)),
             true,
             theme,
         )
@@ -967,6 +967,8 @@ pub(crate) fn search_box(
             field
                 .flex_1()
                 .min_w_0()
+                .flex()
+                .items_center()
                 .p_0()
                 .border_0()
                 .bg(gpui::transparent_black()),
@@ -1412,13 +1414,25 @@ pub(crate) fn list_row(
 /// 0117), inset by the panel's corner `radius` so it does not touch the curve. The parent
 /// must be `.relative()`; add it as the first child so the panel's content paints over it.
 pub(crate) fn top_highlight(theme: &Theme, radius: f32) -> gpui::Div {
+    top_line(gpui::rgba(theme.glass_hi).into(), radius)
+}
+
+/// [`top_highlight`] for a button filled with `accent`: `glass_hi` is white at 100 % in the
+/// light themes, which would draw a white line on the accent, so this is a step from the accent
+/// toward its text color.
+pub(crate) fn accent_highlight(theme: &Theme, radius: f32) -> gpui::Div {
+    let line = theme::mix(theme.accent, theme.on_accent, theme::ACCENT_HIGHLIGHT_MIX);
+    top_line(rgb(line).into(), radius)
+}
+
+fn top_line(color: gpui::Hsla, radius: f32) -> gpui::Div {
     div()
         .absolute()
         .top_0()
         .left(px(radius))
         .right(px(radius))
         .h(px(theme::BORDER_WIDTH))
-        .bg(gpui::rgba(theme.glass_hi))
+        .bg(color)
 }
 
 /// The one frame of every floating panel (palette, Settings, dialogs; ADR 0097, ADR 0117): the

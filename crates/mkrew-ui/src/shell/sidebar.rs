@@ -492,10 +492,25 @@ impl Shell {
                     } else {
                         theme.text_subtle
                     };
+                    // The segments share the row by their content; at a large font the labels
+                    // give way with an ellipsis and the counts stay.
                     segment(id, self.sidebar.chip() == which, theme)
-                        .flex_1()
-                        .child(label)
-                        .child(div().text_color(rgb(count_color)).child(count.to_string()))
+                        .flex_auto()
+                        .min_w_0()
+                        .px(px(space::S))
+                        .child(
+                            div()
+                                .min_w(px(space::XL))
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_color(rgb(count_color))
+                                .child(count.to_string()),
+                        )
                         .on_click(cx.listener(move |shell, _, _, cx| {
                             shell.sidebar.set_chip(which);
                             cx.notify();
