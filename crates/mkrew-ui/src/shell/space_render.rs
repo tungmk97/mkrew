@@ -83,15 +83,11 @@ impl Shell {
         if viewed_changed {
             self.sync_attention(cx);
         }
-        // Mode 2 (ADR 0115): no sidebar; the workspace's color across the top and its name in
-        // the OS title, so its taskbar button and Alt+Tab say which workspace it is.
+        // Mode 2 (ADR 0115): no sidebar; the workspace's name in the OS title, so its taskbar
+        // button and Alt+Tab say which workspace it is.
         let per_workspace = self.window_mode == WindowMode::PerWorkspace;
         let shown = (self.workspace_of(host))
             .and_then(|id| self.sidebar.projects().iter().find(|p| p.id == id));
-        let stripe = shown
-            .filter(|_| per_workspace)
-            .and_then(|project| project.color.as_deref())
-            .and_then(|color| theme.workspace_color(color));
         let title = match shown {
             Some(project) if per_workspace => format!("{} - Mkrew", project.name),
             _ => "Mkrew".to_owned(),
@@ -385,16 +381,6 @@ impl Shell {
                             .filter(|_| self.toast_host() == host),
                     ),
             )
-            // Over the title bar: painted last.
-            .children(stripe.map(|color| {
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(theme::WORKSPACE_STRIPE_WIDTH))
-                    .bg(rgb(color))
-            }))
             .into_any_element()
     }
 }

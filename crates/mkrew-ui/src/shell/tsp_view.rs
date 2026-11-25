@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::{
-    Anchor, AnyElement, Bounds, ClickEvent, Div, FontStyle, FontWeight, StrikethroughStyle,
-    StyledText, TextRun, anchored, deferred,
+    Anchor, AnyElement, Bounds, ClickEvent, Div, FontStyle, FontWeight, ObjectFit,
+    StrikethroughStyle, StyledImage, StyledText, TextRun, anchored, deferred,
 };
 use mkrew_core::tsp::doc::{Document, Node};
 use mkrew_protocol::{
@@ -1056,12 +1056,17 @@ fn push_runs(
     typo: bool,
     theme: &Theme,
 ) {
-    // Private-use glyphs (omp's icons) are drawn in the terminal font, which carries them.
+    // Private-use glyphs (omp's icons) are cut into runs of their own and drawn in the bundled
+    // icon font itself: on Windows gpui applies only the first run's font fallbacks to a whole
+    // line, so a glyph after UI text (omp's placeholder `“<icon> title”`) would be a box.
     let runs = tsp::with_icon_glyphs(runs);
     let ui_font = gpui::font(theme.ui_font_family.clone());
     let mono_font = terminal_font(theme);
+    let icon_font = gpui::font(theme::ICON_FONT);
     for (part, style) in runs.iter().filter(|(part, _)| !part.is_empty()) {
-        let mut font = if style.mono || all_mono {
+        let mut font = if part.chars().all(tsp::is_icon_glyph) {
+            icon_font.clone()
+        } else if style.mono || all_mono {
             mono_font.clone()
         } else {
             ui_font.clone()
@@ -2832,20 +2837,14 @@ impl Shell {
     /// An inline image from the blob bytes the daemon sent; nothing for a built-in or missing one.
     fn tsp_image(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
         let theme = p.theme;
-        let blob = str_prop(node, "blob").and_then(|id| p.mirror.blob(id));
-        let image = blob.and_then(|blob| {
-            let mut cache = p.ui.images.borrow_mut();
-            if let Some(image) = cache.get(&blob.id) {
-                return Some(image.clone());
-            }
-            let image = Arc::new(gpui::Image::from_bytes(
-                image_format(&blob.mime)?,
-                blob.data.clone(),
-            ));
-            cache.insert(blob.id.clone(), image.clone());
-            Some(image)
-        });
-        let el = match (image, str_prop(node, "alt")) {
+        // The images of a sent prompt (`row role=omp.user.images`) are thumbnails, as in the
+        // composer; their click still opens the file.
+        let in_prompt = (node.parent.as_deref())
+            .and_then(|id| p.doc.get(id))
+            .and_then(tsp::role_of)
+            == Some("omp.user.images");
+        let el = match (self.tsp_image_data(p, node), str_prop(node, "alt")) {
+            (Some(image), _) if in_prompt => div().child(thumbnail(image, theme)),
             (Some(image), _) => div()
                 .max_w(px(theme::TSP_IMAGE_MAX_WIDTH))
                 .child(gpui::img(image)),
@@ -2855,6 +2854,21 @@ impl Shell {
             _ => div(),
         };
         self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+
+    /// The decoded image of an `image` node's blob, cached per blob.
+    fn tsp_image_data(&self, p: &Paint<'_>, node: &Node) -> Option<Arc<gpui::Image>> {
+        let blob = str_prop(node, "blob").and_then(|id| p.mirror.blob(id))?;
+        let mut cache = p.ui.images.borrow_mut();
+        if let Some(image) = cache.get(&blob.id) {
+            return Some(image.clone());
+        }
+        let image = Arc::new(gpui::Image::from_bytes(
+            image_format(&blob.mime)?,
+            blob.data.clone(),
+        ));
+        cache.insert(blob.id.clone(), image.clone());
+        Some(image)
     }
 
     /// Any kind the pane does not draw (`agent chart diff math prefs`, unknown ones): its first
@@ -2871,6 +2885,24 @@ impl Shell {
             .children(self.tsp_children(p, node, cx));
         self.tsp_decorate(el, p, node, Look::Text, false, cx)
     }
+}
+
+/// A pasted image as a small square tile (the composer's attachments, a sent prompt's images):
+/// cropped to fill, rounded, with a faint border.
+fn thumbnail(image: Arc<gpui::Image>, theme: &Theme) -> Div {
+    div()
+        .flex_none()
+        .size(px(theme::TSP_THUMB_SIZE))
+        .rounded(px(theme::radius::MEDIUM))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.border))
+        .overflow_hidden()
+        .child(
+            gpui::img(image)
+                .size_full()
+                .rounded(px(theme::radius::MEDIUM))
+                .object_fit(ObjectFit::Cover),
+        )
 }
 
 /// The head of an `omp.thinking*` section, or of a run of them: META italic `text_subtle`
@@ -3411,7 +3443,11 @@ impl Shell {
         let card = composer_card_frame(theme)
             .children(focus)
             .when(!chips.is_empty(), |el| {
-                el.child(div().flex().flex_wrap().gap(px(space::S)).children(chips))
+                el.child(
+                    (div().flex().flex_wrap().items_center())
+                        .gap(px(space::S))
+                        .children(chips),
+                )
             })
             .child(field)
             .child(self.tsp_dock_bar(p, m, width, cx));
@@ -3425,9 +3461,9 @@ impl Shell {
             .into_any_element()
     }
 
-    /// An attachment of the composer (`card role=omp.composer.chip`, head `#n`): a small accent
-    /// chip like omp's own, whose click shows what it holds (the image, the pasted text) in a
-    /// panel above it. Esc or a click outside closes it.
+    /// An attachment of the composer (`card role=omp.composer.chip`, head `#n`): a thumbnail of
+    /// a pasted image, else a small accent chip like omp's own; its click shows what it holds
+    /// (the image, the pasted text) in a panel above it. Esc or a click outside closes it.
     fn tsp_attachment(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
         let theme = p.theme;
         let label: String = (node.props.get("head"))
@@ -3438,25 +3474,33 @@ impl Shell {
             .collect();
         let open = p.ui.chip_open.as_deref() == Some(node.id.as_str());
         let (session, id) = (p.session, node.id.clone());
-        let chip = div()
-            .id(SharedString::from(format!(
-                "tsp-attach-{}-{}",
-                p.session, node.id
-            )))
-            .flex()
-            .items_center()
-            .px(px(space::S))
-            .h(theme::rems_px(theme::PILL_HEIGHT))
-            .rounded(px(theme::radius::PILL))
-            .bg(rgb(theme.accent_bg))
-            .text_size(font_size::META)
-            .font_weight(FontWeight(weight::SEMIBOLD))
-            .text_color(rgb(theme.accent_text))
-            .child(if label.trim().is_empty() {
-                "#".to_owned()
-            } else {
-                label
-            })
+        let key = SharedString::from(format!("tsp-attach-{}-{}", p.session, node.id));
+        let image = (p.doc.children(&node.id))
+            .find(|child| child.kind == "image")
+            .and_then(|child| self.tsp_image_data(p, child));
+        let chip = div().id(key.clone());
+        let chip = match image {
+            Some(image) => chip.group(key.clone()).child(
+                thumbnail(image, theme)
+                    .group_hover(key, |s| s.border_color(rgb(theme.text_subtle))),
+            ),
+            None => chip
+                .flex()
+                .items_center()
+                .px(px(space::S))
+                .h(theme::rems_px(theme::PILL_HEIGHT))
+                .rounded(px(theme::radius::PILL))
+                .bg(rgb(theme.accent_bg))
+                .text_size(font_size::META)
+                .font_weight(FontWeight(weight::SEMIBOLD))
+                .text_color(rgb(theme.accent_text))
+                .child(if label.trim().is_empty() {
+                    "#".to_owned()
+                } else {
+                    label
+                }),
+        };
+        let chip = chip
             .pressable_unless(open, Look::Chip, theme)
             .when(p.tips(), |el| {
                 el.tooltip(tooltip(theme, "Preview the attachment", ""))
