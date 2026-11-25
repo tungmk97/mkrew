@@ -995,6 +995,9 @@ impl Shell {
                         shell.load_plans(window, cx);
                         shell.load_limits(window, cx);
                         shell.status = Status::Connected;
+                        // A new connection lists everything again: each window shows its
+                        // workspace as if it just switched to it (tabs, Git, Files reload).
+                        let reconnected = kept.is_some();
                         let kept =
                             mkrew_ui::connect::reconnect_workspace(kept, shell.sidebar.projects());
                         // Each Space window keeps its workspace while it is listed, else
@@ -1007,12 +1010,19 @@ impl Shell {
                             let shown = (current.filter(listed))
                                 .or(kept)
                                 .or_else(|| shell.initial_workspace());
-                            if host == here {
-                                shell.show_in_space(host, shown, window, cx);
-                            } else {
-                                shell.in_window(host, cx, move |shell, window, cx| {
+                            let show =
+                                move |shell: &mut Shell,
+                                      window: &mut Window,
+                                      cx: &mut Context<'_, Shell>| {
+                                    if reconnected {
+                                        shell.hosts.entry(host).or_default().workspace = None;
+                                    }
                                     shell.show_in_space(host, shown, window, cx);
-                                });
+                                };
+                            if host == here {
+                                show(shell, window, cx);
+                            } else {
+                                shell.in_window(host, cx, show);
                             }
                         }
                         // After the default workspace, so the pane a toast asked for wins.
