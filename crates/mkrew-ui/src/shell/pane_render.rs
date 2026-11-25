@@ -806,21 +806,17 @@ impl Shell {
         let paths = self.conflicts.for_session(session);
         if !paths.is_empty() {
             badges.push(
-                conflict_badge(
-                    format!("pane-{session}"),
-                    &paths,
+                badge_look(
+                    conflict_badge(
+                        format!("pane-{session}"),
+                        &paths,
+                        theme,
+                        move |shell| shell.conflicts.dismiss_session(session),
+                        cx,
+                    )
+                    .max_w(px(theme::PANE_BADGE_MAX_WIDTH)),
                     theme,
-                    move |shell| shell.conflicts.dismiss_session(session),
-                    cx,
                 )
-                .flex_none()
-                .max_w(px(theme::PANE_BADGE_MAX_WIDTH))
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::MEDIUM))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(theme.border))
-                .bg(rgb(theme.surface_raised))
                 .into_any_element(),
             );
         }

@@ -861,19 +861,21 @@ impl TerminalPane {
             focused,
             theme,
         );
+        let failed = matches!(find.status(), FindStatus::NoMatch | FindStatus::Invalid);
         let status = match find.status() {
             FindStatus::Invalid => format!("✕ {}", find.status().label()),
             status => status.label().to_owned(),
         };
+        // A 24 px icon button: the bar's only one.
         let close = div()
             .id("find-close")
+            .flex_none()
+            .size(px(space::XL))
             .flex()
             .items_center()
-            .px(px(space::XS))
-            .rounded(px(radius::SMALL))
-            .text_size(font_size::META)
-            .text_color(rgb(theme.text_muted))
-            .pressable(Look::Raised, true, theme)
+            .justify_center()
+            .rounded(px(radius::CHIP))
+            .pressable(Look::Icon, true, theme)
             .on_press(
                 true,
                 cx.listener(|pane, _, window, cx| pane.close_find(window, cx)),
@@ -887,41 +889,72 @@ impl TerminalPane {
                 .flex()
                 .items_center()
                 .gap(px(space::S))
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::MEDIUM))
+                .p(px(space::XS))
+                .rounded(px(radius::LARGE))
                 .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(if focused {
-                    theme.pane_focus_stripe
-                } else {
-                    theme.border
-                }))
-                .bg(rgb(theme.surface_raised))
-                .shadow_sm()
+                .border_color(gpui::rgba(theme.layer[1]))
+                .bg(gpui::rgba(theme.glass))
+                .shadow(theme::shadow_pop(theme))
                 .font_family(theme.ui_font_family.clone())
                 .text_size(font_size::BODY)
                 .cursor(CursorStyle::IBeam)
                 .track_focus(&self.find_focus)
                 .on_key_down(cx.listener(Self::find_key_down))
                 .on_mouse_down(MouseButton::Left, cx.listener(Self::find_mouse_down))
-                .child(caret_mouse(
-                    div()
-                        .w(px(theme::FIND_INPUT_WIDTH))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .child(query),
-                    &cx.entity(),
-                    layout,
-                    |pane: &mut Self, caret| {
-                        if let Some(find) = pane.find.as_mut() {
-                            find.click(caret.at, caret.extend, caret.clicks);
-                        }
-                    },
-                ))
+                // The 1 px `glass_hi` line inside the top edge of a raised panel.
                 .child(
                     div()
+                        .absolute()
+                        .top_0()
+                        .left(px(radius::LARGE))
+                        .right(px(radius::LARGE))
+                        .h(px(theme::BORDER_WIDTH))
+                        .bg(gpui::rgba(theme.glass_hi)),
+                )
+                // The query: a `well` with `radius::MEDIUM` in the terminal font; the accent
+                // border is the keyboard focus.
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .h(px(theme::FIND_INPUT_HEIGHT))
+                        .px(px(space::S))
+                        .rounded(px(radius::MEDIUM))
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(if focused {
+                            rgb(theme.accent).into()
+                        } else {
+                            gpui::transparent_black()
+                        })
+                        .bg(rgb(theme.well))
+                        .font_family(theme.terminal_font_family.clone())
+                        .child(caret_mouse(
+                            div()
+                                .w(px(theme::FIND_INPUT_WIDTH))
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(query),
+                            &cx.entity(),
+                            layout,
+                            |pane: &mut Self, caret| {
+                                if let Some(find) = pane.find.as_mut() {
+                                    find.click(caret.at, caret.extend, caret.clicks);
+                                }
+                            },
+                        )),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .min_w(px(theme::FIND_COUNT_MIN_WIDTH))
+                        .text_right()
+                        .font_family(theme.terminal_font_family.clone())
                         .text_size(font_size::META)
-                        .text_color(rgb(theme.text_muted))
+                        .text_color(rgb(if failed {
+                            theme.danger_text
+                        } else {
+                            theme.text_muted
+                        }))
                         .child(status),
                 )
                 .child(close)

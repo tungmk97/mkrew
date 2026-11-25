@@ -1938,12 +1938,13 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   File and diff panes use the same layout, stripe and dim as terminal panes.
   The divider between two panes drags to resize them and shows a grip only on hover.
   A pane in a split tab has a drag handle at the centre of its top edge (ADR 0110): while the pointer is over the pane a `PANE_GRIP_BAR_WIDTH` × `PANE_GRIP_BAR_HEIGHT` (32 × 4) muted bar shows; over the handle it becomes a `PANE_GRIP_WIDTH` × `PANE_GRIP_HEIGHT` (40 × 20) `surface_raised` chip with a `grip-horizontal` icon (two rows of three dots), and dragging it moves the pane. Only the handle takes the mouse.
-  Floating badges (`pane_badges`: `surface_raised` fill, 1 px `border`, radius 8, META text) sit in its top-right corner `space::S` from the edges, at most `PANE_BADGE_MAX_WIDTH` wide.
+  Floating badges (`pane_badges`: `surface_raised` fill, 1 px `layer[1]` ring, pill radius, META text) sit in its top-right corner `space::S` from the edges, at most `PANE_BADGE_MAX_WIDTH` wide.
   The title bar uses `pane-gap` instead of `chrome`; the sidebar and the right panel keep their colors.
   The `+` row (§10) is a row of 32 px `Look::Icon` buttons: the `+` button, then the default agent's logo, `square-terminal`, `notebook-pen` and `chevron-down`, `space::XS` apart, growing in 150 ms ease-out (shown at once with reduce motion).
   The title bar's pane toggles are 32 px icon buttons, accent while on.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
   buttons (`CONTROL_HEIGHT` 32), 32 px icon button, panel icon tab, underlined tab, search box, status pill, tinted chip, overline, key hint (18 px tall, `layer` fill and ring); the switch is 36 x 22 with a white knob; a segmented control is a `layer[0]` track whose selected segment is a lifted `surface_raised` chip with a ring.
+  The terminal find bar is a glass panel (`radius::LARGE`, `layer[1]` ring, `shadow_pop`) with a `well` query field in the terminal font, a 72 px right-aligned match count (`danger_text` with no match) and a 24 px close button.
 - UI font = Geist (OFL, bundled in `font/geist/` and registered at startup, ADR 0116) unless
   `[ui] font_family` is set. Sizes 11 overline, 12 meta, 13 body, 15 card
   title, 20 view title at the default `[ui] font_size = 13`; other sizes keep their ratio to body

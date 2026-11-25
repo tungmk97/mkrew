@@ -366,6 +366,10 @@ pub const LAYOUT_THUMB_HEIGHT: f32 = 16.0;
 
 /// Width of the query field in a terminal's find bar.
 pub const FIND_INPUT_WIDTH: f32 = 200.0;
+/// The find bar's query well height, and the least width its match count takes (right-aligned,
+/// so the bar does not jump as the count changes).
+pub const FIND_INPUT_HEIGHT: f32 = 28.0;
+pub const FIND_COUNT_MIN_WIDTH: f32 = 72.0;
 
 /// Width of the Files editor's caret.
 pub const CARET_WIDTH: f32 = 2.0;

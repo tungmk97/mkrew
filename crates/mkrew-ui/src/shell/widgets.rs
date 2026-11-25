@@ -1783,24 +1783,29 @@ pub(crate) fn conflict_badge(
         )
 }
 
-/// A floating badge over a pane (`pane_badges`): a raised, bordered pill with muted META text,
-/// so it reads over any terminal output. Not a button.
+/// A floating badge over a pane (`pane_badges`): a pill on `surface_raised` with a `layer[1]`
+/// ring and muted META text, so it reads over any terminal output. Not a button.
 pub(crate) fn badge_frame(theme: &Theme) -> gpui::Div {
-    div()
-        .flex_none()
+    badge_look(div(), theme)
         .flex()
         .items_center()
         .gap(px(space::S))
-        .px(px(space::S))
-        .py(px(space::XS))
-        .rounded(px(radius::MEDIUM))
-        .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.border))
-        .bg(rgb(theme.surface_raised))
         .font_family(theme.ui_font_family.clone())
         .text_size(font_size::META)
         .text_color(rgb(theme.text_muted))
         .whitespace_nowrap()
+}
+
+/// The pill every floating pane badge shares (also the conflict badge, which is a button row
+/// and so cannot start from [`badge_frame`]).
+pub(crate) fn badge_look<E: Styled>(el: E, theme: &Theme) -> E {
+    el.flex_none()
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::PILL))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::rgba(theme.layer[1]))
+        .bg(rgb(theme.surface_raised))
 }
 
 /// A session's status mark (SPEC §11): one still dot in the state's color while working, else
