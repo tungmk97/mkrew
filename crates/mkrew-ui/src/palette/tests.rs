@@ -1369,10 +1369,12 @@ fn theme_entries_list_every_theme_with_its_appearance_and_mark_the_current() {
     assert_eq!(entries[0].action, Action::Theme(0));
     assert_eq!(entries[0].title, "Mkrew Dark");
     assert_eq!(entries[0].shortcut, "Dark");
-    assert_eq!(entries[2].title, "Dracula");
-    assert_eq!(entries[2].shortcut, "✓ Dark");
-    assert_eq!(entries[12].title, "Mkrew Light");
-    assert_eq!(entries[13].shortcut, "Light");
+    assert_eq!(entries[1].title, "Tern Dark");
+    assert_eq!(entries[3].title, "Dracula");
+    assert_eq!(entries[3].shortcut, "✓ Dark");
+    assert_eq!(entries[13].title, "Mkrew Light");
+    assert_eq!(entries[14].title, "Tern Light");
+    assert_eq!(entries[14].shortcut, "Light");
 }
 
 #[test]

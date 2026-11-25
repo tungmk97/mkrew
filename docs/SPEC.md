@@ -1888,6 +1888,25 @@ Restyle of 2026-10-24 (ADR 0074), retuned to Tern's grounds and tiers by ADR 011
 
 Hover is l1, pressed l2, rings l2, strong rings and scrollbar thumbs l3, check box borders l4 (ADR 0117). Text tiers: t1 content, t2 names and labels, t3 meta, t4 placeholders, line numbers and chevrons (`theme::problems` rule "meta text" keeps t3 at 4.5:1).
 
+Tern Dark / Tern Light (ADR 0117) are the table above with these overrides (everything else, and `with_glass`, as Mkrew):
+
+| Token | Tern Dark | Tern Light |
+| --- | --- | --- |
+| `accent` | #5A8CFF | #2F63F0 |
+| `accent-text` | #9DBCFF | #2448C4 |
+| `accent-bg` | #1A2133 | #DEE6F9 |
+| `on-accent` | #08080A | #FFFFFF |
+| `selected-ring` | #354E89 | #95ADF5 |
+| `pane-focus-stripe` | #3B6CFF | #3B6CFF |
+| `status-working` | #5A8CFF | #2F63F0 |
+| `status-needs-input` | #F5A524 | #8B570D |
+| `status-done` | #3ECF8E | #167A4D |
+| `status-exited` | #FF6166 | #BF3038 |
+| `warning-bg` / `success-bg` / `danger-bg` | #2F2415 / #162A23 / #311A1E | #F6EBD9 / #DEF0E7 / #F8E2E2 |
+| `run-pill-bg` / `-border` / `-text` | #152621 / #1F523D / #3ECF8E | #E3F2EA / #B4E0CB / #167A4D |
+| `success-text` / `danger-text` | #3ECF8E / #FF6166 | Mkrew Light's |
+| `terminal-selection-bg` / `terminal-match-bg` | #27375E / #5D4621 | #D6E0FC / #F8DCAB |
+
 Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
@@ -2043,9 +2062,10 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Theme: System (follows the OS live), Light or Dark - `[ui] theme`, cycled by Ctrl+Shift+J and the palette
   (ADR 0027).
   Each slot shows a theme (ADR 0078, ADR 0101): `[ui] light_theme` (default Mkrew Light) and `[ui] dark_theme` (default Mkrew Dark).
-  There are 22 built-in themes.
-  Dark: Mkrew Dark, One Dark, Dracula, Catppuccin Mocha, Tokyo Night, Gruvbox Dark, Nord, Solarized Dark, GitHub Dark, Rosé Pine, Kanagawa, Everforest Dark.
-  Light: Mkrew Light, One Light, GitHub Light, Catppuccin Latte, Solarized Light, Gruvbox Light, Rosé Pine Dawn, Everforest Light, Ayu Light, Tokyo Night Day.
+  There are 24 built-in themes.
+  Dark: Mkrew Dark, Tern Dark, One Dark, Dracula, Catppuccin Mocha, Tokyo Night, Gruvbox Dark, Nord, Solarized Dark, GitHub Dark, Rosé Pine, Kanagawa, Everforest Dark.
+  Light: Mkrew Light, Tern Light, One Light, GitHub Light, Catppuccin Latte, Solarized Light, Gruvbox Light, Rosé Pine Dawn, Everforest Light, Ayu Light, Tokyo Night Day.
+  Tern Dark / Tern Light (ADR 0117) are Mkrew's grounds and text with Tern's blue accent (`#5A8CFF` / `#2F63F0`), status and ANSI colors.
   A file `<config>/mkrew/themes/*.toml` adds one (`name`, `dark` and the fields of the built-in palette, all required; the folder is polled with `settings.toml`, so a saved file shows up within a second).
   A file whose name is a built-in's name, or an earlier file's name, is an error; the comparison ignores ASCII case.
   An invalid file shows its error on a card and never breaks the app; a file with poor contrast loads with a "Low contrast" badge.

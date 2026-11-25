@@ -1568,11 +1568,11 @@ mod tests {
         to_gallery(&mut d, &keymap);
         assert_eq!(previewing(&d).as_deref(), Some("Mkrew Dark"), "no delay");
         d.key(&key("right"), None, &keymap);
-        assert_eq!(previewing(&d).as_deref(), Some("One Dark"));
+        assert_eq!(previewing(&d).as_deref(), Some("Tern Dark"));
         assert_eq!(
             d.key(&key("enter"), None, &keymap),
             Effect::KeepTheme {
-                name: "One Dark".into(),
+                name: "Tern Dark".into(),
                 dark: true
             }
         );
@@ -1581,7 +1581,7 @@ mod tests {
         assert_eq!(
             d.key(&typed(" "), None, &keymap),
             Effect::KeepTheme {
-                name: "Dracula".into(),
+                name: "One Dark".into(),
                 dark: true
             },
             "Space acts like Enter"

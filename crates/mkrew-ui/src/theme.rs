@@ -1353,6 +1353,72 @@ impl Theme {
         .with_glass()
     }
 
+    /// Tern Dark (ADR 0117): the retuned Mkrew Dark with Tern's blue accent, status, selection
+    /// and ANSI colors.
+    pub fn tern_dark() -> Self {
+        Self {
+            accent: 0x5A8CFF,
+            accent_text: 0x9DBCFF,
+            accent_bg: 0x1A2133,
+            on_accent: 0x08080A,
+            selected_ring: 0x354E89,
+            pane_focus_stripe: 0x3B6CFF,
+            status_working: 0x5A8CFF,
+            status_needs_input: 0xF5A524,
+            status_done: 0x3ECF8E,
+            status_exited: 0xFF6166,
+            warning_bg: 0x2F2415,
+            success_bg: 0x162A23,
+            danger_bg: 0x311A1E,
+            run_pill_bg: 0x152621,
+            run_pill_border: 0x1F523D,
+            run_pill_text: 0x3ECF8E,
+            success_text: 0x3ECF8E,
+            danger_text: 0xFF6166,
+            terminal_selection_bg: 0x27375E,
+            terminal_match_bg: 0x5D4621,
+            ansi: [
+                0x50525A, 0xFF6166, 0x3ECF8E, 0xF5B13D, 0x5B8DFF, 0xB98CFF, 0x35C7E6, 0xC9CAD0,
+                0x7A7C85, 0xFF8A8E, 0x6FE3B0, 0xFFD27A, 0x8FB6FF, 0xD2B3FF, 0x7FDCF0, 0xF7F7F8,
+            ],
+            name: "Tern Dark".into(),
+            ..Self::dark()
+        }
+        .with_glass()
+    }
+
+    /// Tern Light (ADR 0117). Tern's `#d98a0b` warn fails 4.5:1, so needs-input keeps Mkrew
+    /// Light's `8B570D`; success / danger text keep Mkrew Light's.
+    pub fn tern_light() -> Self {
+        Self {
+            accent: 0x2F63F0,
+            accent_text: 0x2448C4,
+            accent_bg: 0xDEE6F9,
+            on_accent: 0xFFFFFF,
+            selected_ring: 0x95ADF5,
+            pane_focus_stripe: 0x3B6CFF,
+            status_working: 0x2F63F0,
+            status_needs_input: 0x8B570D,
+            status_done: 0x167A4D,
+            status_exited: 0xBF3038,
+            warning_bg: 0xF6EBD9,
+            success_bg: 0xDEF0E7,
+            danger_bg: 0xF8E2E2,
+            run_pill_bg: 0xE3F2EA,
+            run_pill_border: 0xB4E0CB,
+            run_pill_text: 0x167A4D,
+            terminal_selection_bg: 0xD6E0FC,
+            terminal_match_bg: 0xF8DCAB,
+            ansi: [
+                0x1F2126, 0xCF3A3F, 0x1D8A5A, 0xA86A00, 0x2F5FE0, 0x8A4FD8, 0x0F7F93, 0x6F727B,
+                0x80838C, 0xE5484D, 0x2FAE74, 0xC98A0B, 0x3D6FFF, 0xA86AF4, 0x16A3C4, 0x9EA1A8,
+            ],
+            name: "Tern Light".into(),
+            ..Self::light()
+        }
+        .with_glass()
+    }
+
     fn shared() -> Self {
         Self {
             bg: 0,
@@ -1714,7 +1780,10 @@ impl Theme {
             .map(|c| base.avatar_colors(c, pane_gap).1);
         let letter = readable(p.fg, if p.dark { 0xFFFFFF } else { 0x000000 }, &fills, 4.5);
         let text = |color| readable(color, p.fg, &grounds, 4.5);
-        let on_accent = if contrast(p.bg, p.accent) >= contrast(p.fg, p.accent) {
+        // The accent reads on the grounds the "code" rule checks (Tern's blue on a derived raised
+        // fill is 4.40:1); a palette whose accent already does keeps it.
+        let accent = readable(p.accent, p.fg, &[p.bg, p.surface, surface_raised], 4.5);
+        let on_accent = if contrast(p.bg, accent) >= contrast(p.fg, accent) {
             p.bg
         } else {
             p.fg
@@ -1751,7 +1820,7 @@ impl Theme {
             text_subtle: readable(mix(p.muted, p.bg, 0.25), p.fg, &meta_grounds, 4.5),
             text_disabled: text(p.muted),
             subtle: mix(p.muted, p.bg, 0.45),
-            accent: p.accent,
+            accent,
             accent_text: text(p.accent),
             info: p.blue,
             info_soft: p.blue,
@@ -1804,28 +1873,43 @@ impl Theme {
     }
 }
 
-/// One built-in theme (ADR 0078). The Mkrew ones have no palette: they are `Theme::dark()` /
-/// `Theme::light()` exactly.
+/// How a built-in theme is made (ADR 0078, ADR 0117).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recipe {
+    /// `Theme::dark()` / `Theme::light()`: written token by token.
+    Mkrew,
+    /// `Theme::tern_dark()` / `Theme::tern_light()`: Mkrew with Tern's accent family.
+    Tern,
+    /// Derived from a palette by [`Theme::from_palette`].
+    Palette(Palette),
+}
+
+/// One built-in theme (ADR 0078).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThemeEntry {
     pub name: &'static str,
     pub dark: bool,
-    palette: Option<Palette>,
+    recipe: Recipe,
 }
 
 impl ThemeEntry {
     pub fn build(&self) -> Theme {
-        match (&self.palette, self.dark) {
-            (Some(palette), _) => Theme::from_palette(self.name, palette),
-            (None, true) => Theme::dark(),
-            (None, false) => Theme::light(),
+        match (&self.recipe, self.dark) {
+            (Recipe::Palette(palette), _) => Theme::from_palette(self.name, palette),
+            (Recipe::Mkrew, true) => Theme::dark(),
+            (Recipe::Mkrew, false) => Theme::light(),
+            (Recipe::Tern, true) => Theme::tern_dark(),
+            (Recipe::Tern, false) => Theme::tern_light(),
         }
     }
 
-    /// The palette the theme is derived from; `None` for the two Mkrew themes, which are
+    /// The palette the theme is derived from; `None` for the Mkrew and Tern themes, which are
     /// written token by token.
     pub fn palette(&self) -> Option<&Palette> {
-        self.palette.as_ref()
+        match &self.recipe {
+            Recipe::Palette(palette) => Some(palette),
+            Recipe::Mkrew | Recipe::Tern => None,
+        }
     }
 }
 
@@ -1833,7 +1917,7 @@ const fn dark_entry(name: &'static str, palette: Palette) -> ThemeEntry {
     ThemeEntry {
         name,
         dark: true,
-        palette: Some(palette),
+        recipe: Recipe::Palette(palette),
     }
 }
 
@@ -1841,7 +1925,7 @@ const fn light_entry(name: &'static str, palette: Palette) -> ThemeEntry {
     ThemeEntry {
         name,
         dark: false,
-        palette: Some(palette),
+        recipe: Recipe::Palette(palette),
     }
 }
 
@@ -1850,7 +1934,12 @@ pub const THEMES: &[ThemeEntry] = &[
     ThemeEntry {
         name: "Mkrew Dark",
         dark: true,
-        palette: None,
+        recipe: Recipe::Mkrew,
+    },
+    ThemeEntry {
+        name: "Tern Dark",
+        dark: true,
+        recipe: Recipe::Tern,
     },
     dark_entry(
         "One Dark",
@@ -2122,7 +2211,12 @@ pub const THEMES: &[ThemeEntry] = &[
     ThemeEntry {
         name: "Mkrew Light",
         dark: false,
-        palette: None,
+        recipe: Recipe::Mkrew,
+    },
+    ThemeEntry {
+        name: "Tern Light",
+        dark: false,
+        recipe: Recipe::Tern,
     },
     light_entry(
         "One Light",
@@ -2803,7 +2897,8 @@ mod tests {
         // Light: the frame is darker than the panel, which is darker than the card.
         assert!(darker(light.pane_gap, light.bg) && darker(light.bg, light.surface));
         // Blue is at most 4 over red and green on every ground (Tern's grounds are +3, `232327` +4).
-        for t in [&dark, &light] {
+        let (tern_dark, tern_light) = (Theme::tern_dark(), Theme::tern_light());
+        for t in [&dark, &light, &tern_dark, &tern_light] {
             for g in [
                 t.pane_gap,
                 t.bg,
@@ -3138,18 +3233,18 @@ mod tests {
     }
 
     #[test]
-    fn there_are_22_built_in_themes_grouped_dark_then_light() {
-        assert_eq!(THEMES.len(), 22);
-        assert_eq!(THEMES.iter().filter(|e| e.dark).count(), 12);
+    fn there_are_24_built_in_themes_grouped_dark_then_light() {
+        assert_eq!(THEMES.len(), 24);
+        assert_eq!(THEMES.iter().filter(|e| e.dark).count(), 13);
         assert!(
-            THEMES.iter().take(12).all(|e| e.dark),
+            THEMES.iter().take(13).all(|e| e.dark),
             "picker order: dark first"
         );
-        assert!(THEMES.iter().skip(12).all(|e| !e.dark));
+        assert!(THEMES.iter().skip(13).all(|e| !e.dark));
         let mut names: Vec<&str> = THEMES.iter().map(|e| e.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 22, "names are unique");
+        assert_eq!(names.len(), 24, "names are unique");
     }
 
     #[test]
@@ -3174,6 +3269,55 @@ mod tests {
     }
 
     #[test]
+    fn the_tern_entries_build_the_tern_constructors() {
+        let build = |name: &str| {
+            THEMES
+                .iter()
+                .find(|e| e.name == name)
+                .map(ThemeEntry::build)
+        };
+        assert_eq!(build("Tern Dark"), Some(Theme::tern_dark()));
+        assert_eq!(build("Tern Light"), Some(Theme::tern_light()));
+        assert_eq!(build("Mkrew Dark"), Some(Theme::dark()));
+        for name in ["Mkrew Dark", "Tern Dark", "Mkrew Light", "Tern Light"] {
+            let entry = THEMES.iter().find(|e| e.name == name).unwrap();
+            assert!(
+                entry.palette().is_none(),
+                "{name} is written token by token"
+            );
+        }
+        assert!(palette_of("One Dark").dark);
+        assert_eq!(THEMES[1].name, "Tern Dark");
+        assert_eq!(THEMES[14].name, "Tern Light");
+    }
+
+    #[test]
+    fn tern_changes_only_the_accent_family_and_status_colors() {
+        for (tern, mkrew) in [
+            (Theme::tern_dark(), Theme::dark()),
+            (Theme::tern_light(), Theme::light()),
+        ] {
+            let grounds = |t: &Theme| {
+                (
+                    t.bg,
+                    t.surface,
+                    t.surface_raised,
+                    t.pane_gap,
+                    t.text,
+                    t.text_muted,
+                    t.text_subtle,
+                    t.layer,
+                    t.code_bg,
+                )
+            };
+            assert_eq!(grounds(&tern), grounds(&mkrew), "{}", tern.name);
+            assert_ne!(tern.accent, mkrew.accent, "{}", tern.name);
+            assert_ne!(tern.ansi, mkrew.ansi, "{}", tern.name);
+            assert_eq!(tern.dark, mkrew.dark);
+        }
+    }
+
+    #[test]
     fn mix_blends_per_channel() {
         assert_eq!(mix(0x000000, 0xFFFFFF, 0.5), 0x808080);
         assert_eq!(mix(0x102030, 0x102030, 0.7), 0x102030);
@@ -3183,7 +3327,7 @@ mod tests {
 
     #[test]
     fn derived_themes_keep_the_fixed_tokens() {
-        for entry in THEMES.iter().filter(|e| e.palette.is_some()) {
+        for entry in THEMES.iter().filter(|e| e.palette().is_some()) {
             let theme = entry.build();
             let base = if entry.dark {
                 Theme::dark()
@@ -3236,6 +3380,8 @@ mod tests {
     fn the_mkrew_themes_never_change() {
         insta::assert_snapshot!("mkrew_dark", golden(&Theme::dark()));
         insta::assert_snapshot!("mkrew_light", golden(&Theme::light()));
+        insta::assert_snapshot!("tern_dark", golden(&Theme::tern_dark()));
+        insta::assert_snapshot!("tern_light", golden(&Theme::tern_light()));
     }
 
     #[test]

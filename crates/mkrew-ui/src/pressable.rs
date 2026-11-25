@@ -4,7 +4,7 @@
 use gpui::prelude::*;
 use gpui::{App, ClickEvent, Div, Stateful, Window, rgb};
 
-use crate::theme::{Theme, opacity};
+use crate::theme::{Theme, opacity, raised_border};
 
 /// How a pressable element looks at rest, hovered and pressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,7 +16,7 @@ pub enum Look {
     /// An icon-only control: hover fill `theme.hover`, icon to full text color.
     Icon,
     /// An element that sits on `surface_raised` (menu rows, toasts, cards, the find bar): hover
-    /// fill `theme.border`, one step above its rest fill.
+    /// fill `raised_border` (`layer[1]` over the raised fill), one step above its rest fill.
     Raised,
     /// A text link: no fill, hover underline and full text color.
     Text,
@@ -53,7 +53,7 @@ pub fn press_style(look: Look, enabled: bool, theme: &Theme) -> PressStyle {
     let (hover_bg, hover_fg, underline_on_hover) = match look {
         Look::Row => (Some(theme.hover), None, false),
         Look::Chip | Look::Icon => (Some(theme.hover), Some(theme.text), false),
-        Look::Raised => (Some(theme.border), None, false),
+        Look::Raised => (Some(raised_border(theme)), None, false),
         Look::Text => (None, Some(theme.text), true),
     };
     PressStyle {
@@ -163,7 +163,10 @@ mod tests {
                 (Some(t.hover), Some(t.text))
             );
             let raised = press_style(Look::Raised, true, &t);
-            assert_eq!((raised.hover_bg, raised.hover_fg), (Some(t.border), None));
+            assert_eq!(
+                (raised.hover_bg, raised.hover_fg),
+                (Some(raised_border(&t)), None)
+            );
             let text = press_style(Look::Text, true, &t);
             assert_eq!((text.hover_bg, text.hover_fg), (None, Some(t.text)));
             assert!(text.underline_on_hover);
