@@ -426,6 +426,9 @@ pub struct Mirror {
     /// Surfaces closed without keep: a late frame for one is ignored, not a gap. Ids are tiny and
     /// omp numbers them, so the set is not bounded.
     closed: HashSet<String>,
+    /// The rows (direct children of `main`) of the last applied frame's surface that its ops
+    /// named, before and after they ran (ADR 0114); taken by the page list.
+    dirty_rows: HashSet<String>,
 }
 
 /// Revisions are unique across mirrors (a snapshot builds a new one): a counter, never hashing.
@@ -525,6 +528,7 @@ impl Mirror {
     /// is ignored; the next one applies; any other is a [`MirrorResult::Gap`] (ask for a new
     /// snapshot, nothing is applied).
     pub fn apply(&mut self, update: &TspUpdate) -> MirrorResult {
+        self.dirty_rows.clear();
         match &update.change {
             TspChange::Frame { seq, ops, blobs } => {
                 let Some((meta, doc)) = self.surfaces.get_mut(&update.surface) else {
@@ -542,7 +546,12 @@ impl Mirror {
                     return MirrorResult::Gap;
                 }
                 // A failing op was already skipped by the daemon; the rest still run here too.
+                // The page list hears which rows changed: a `del` or `move` is found where the
+                // node was, everything else where it is now.
+                let mut dirty = rows_named(doc, ops);
                 doc.apply(ops);
+                dirty.extend(rows_named(doc, ops));
+                self.dirty_rows = dirty;
                 meta.seq = *seq;
                 let revs = self.node_revs.entry(update.surface.clone()).or_default();
                 for id in touched_ids(ops) {
@@ -575,6 +584,11 @@ impl Mirror {
             }
         }
         MirrorResult::Applied
+    }
+
+    /// The rows the last applied frame dirtied (see [`rows_named`]); empty after this call.
+    pub fn take_dirty_rows(&mut self) -> HashSet<String> {
+        std::mem::take(&mut self.dirty_rows)
     }
 
     /// A number that changes whenever node `id` of `surface` is added or its props or text are
@@ -757,16 +771,101 @@ pub fn retry_wait(failures: u32) -> std::time::Duration {
     std::time::Duration::from_secs(secs)
 }
 
-/// Index among `main`'s children of the row that holds `id`: what a `reveal` op scrolls to.
-pub fn reveal_index(doc: &Document, id: &str) -> Option<usize> {
+/// The direct child of `main` that is `id` or holds it; `None` for `main` itself and for nodes
+/// outside it (the dock, a layer).
+pub fn row_of(doc: &Document, id: &str) -> Option<String> {
     let mut at = doc.get(id)?;
     loop {
         let parent = at.parent.as_deref()?;
         if parent == "main" {
-            return doc.children("main").position(|row| row.id == at.id);
+            return Some(at.id.clone());
         }
         at = doc.get(parent)?;
     }
+}
+
+/// Index among `main`'s children of the row that holds `id`: what a `reveal` op scrolls to.
+pub fn reveal_index(doc: &Document, id: &str) -> Option<usize> {
+    let row = row_of(doc, id)?;
+    doc.children("main").position(|node| node.id == row)
+}
+
+/// The rows holding the nodes `ops` name in `doc`: each op's node, and the parent an `add` or a
+/// `move` names. `reveal`, `scroll` and `focus` only point at a node and change nothing drawn.
+pub fn rows_named(doc: &Document, ops: &[Value]) -> HashSet<String> {
+    let mut rows = HashSet::new();
+    for op in ops {
+        let Some(args) = op.as_array() else { continue };
+        let named: &[usize] = match args.first().and_then(Value::as_str) {
+            Some("add" | "move") => &[1, 2],
+            Some("set" | "text" | "splice" | "del" | "settle") => &[1],
+            _ => &[],
+        };
+        for &at in named {
+            if let Some(row) = (args.get(at).and_then(Value::as_str)).and_then(|id| row_of(doc, id))
+            {
+                rows.insert(row);
+            }
+        }
+    }
+    rows
+}
+
+/// The rows holding an `image` node that names one of `blobs`: an image that just arrived
+/// changes its row's height.
+pub fn image_rows(doc: &Document, blobs: &[TspBlob]) -> HashSet<String> {
+    let wanted: HashSet<&str> = blobs.iter().map(|blob| blob.id.as_str()).collect();
+    let mut rows = HashSet::new();
+    for row in doc.children("main") {
+        let mut stack = vec![row];
+        while let Some(node) = stack.pop() {
+            let blob = node.props.get("blob").and_then(Value::as_str);
+            if node.kind == "image" && blob.is_some_and(|id| wanted.contains(id)) {
+                rows.insert(row.id.clone());
+                break;
+            }
+            stack.extend(doc.children(&node.id));
+        }
+    }
+    rows
+}
+
+/// What the page list must hear when `main`'s rows go from `old` to `new` (ADR 0114).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowChange {
+    /// Rows `range` of the old list became `count` new rows.
+    Splice {
+        range: std::ops::Range<usize>,
+        count: usize,
+    },
+    /// Row `.0` (numbered as in the new list) changed its content: measure it again.
+    Remeasure(usize),
+}
+
+/// The common prefix and suffix of `old` and `new` stay; the middle is one splice. A kept row in
+/// `dirty` is remeasured. Apply the changes in order.
+pub fn row_changes(old: &[String], new: &[String], dirty: &HashSet<String>) -> Vec<RowChange> {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let room = old.len().min(new.len()) - prefix;
+    let suffix = (old.iter().rev())
+        .zip(new.iter().rev())
+        .take(room)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut changes = Vec::new();
+    let (old_end, new_end) = (old.len() - suffix, new.len() - suffix);
+    if old_end > prefix || new_end > prefix {
+        changes.push(RowChange::Splice {
+            range: prefix..old_end,
+            count: new_end - prefix,
+        });
+    }
+    for (ix, id) in new.iter().enumerate() {
+        if (ix < prefix || ix >= new_end) && dirty.contains(id) {
+            changes.push(RowChange::Remeasure(ix));
+        }
+    }
+    changes
 }
 
 /// Where a `card` or `section` gets its header (reference 4, row 3): a string or spans, or the
@@ -2118,6 +2217,166 @@ mod tests {
 
     fn add_x() -> Vec<serde_json::Value> {
         vec![json!(["add", "x", "main", null, {"id": "x", "k": "text", "p": {"text": "hi"}}])]
+    }
+
+    /// `main` with rows `a` (holding `a1`) and `b` (holding `b1`), and a dock holding `d1`.
+    fn two_rows() -> Vec<serde_json::Value> {
+        let mut ops = main_added();
+        ops.push(
+            json!(["add", "a", "main", null, {"id": "a", "k": "col", "c": [
+                {"id": "a1", "k": "text", "p": {"text": "x"}}
+            ]}]),
+        );
+        ops.push(
+            json!(["add", "b", "main", null, {"id": "b", "k": "col", "c": [
+                {"id": "b1", "k": "text", "p": {"text": "y"}}
+            ]}]),
+        );
+        ops.push(
+            json!(["add", "dock", "s:1", null, {"id": "dock", "k": "col", "c": [
+                {"id": "d1", "k": "text", "p": {"text": "z"}}
+            ]}]),
+        );
+        ops
+    }
+
+    /// The rows one frame of `ops` dirties in a mirror of [`two_rows`].
+    fn dirtied(ops: Vec<serde_json::Value>) -> Vec<String> {
+        let d = doc(two_rows());
+        let mut m = mirror(vec![surface("s:1", "inline", 0, &d)]);
+        assert_eq!(m.apply(&frame("s:1", 1, ops)), MirrorResult::Applied);
+        let mut rows: Vec<String> = m.take_dirty_rows().into_iter().collect();
+        rows.sort();
+        assert!(m.take_dirty_rows().is_empty(), "taking clears them");
+        rows
+    }
+
+    #[test]
+    fn a_frame_dirties_the_rows_its_ops_name_before_and_after() {
+        assert_eq!(dirtied(vec![json!(["set", "a1", {"text": "w"}])]), ["a"]);
+        assert_eq!(
+            dirtied(vec![
+                json!(["add", "b2", "b", null, {"id": "b2", "k": "text"}])
+            ]),
+            ["b"]
+        );
+        assert_eq!(
+            dirtied(vec![
+                json!(["add", "c", "main", null, {"id": "c", "k": "text"}])
+            ]),
+            ["c"],
+            "a new row names itself; `main` names no row"
+        );
+        assert_eq!(dirtied(vec![json!(["move", "a1", "b", null])]), ["a", "b"]);
+        assert_eq!(
+            dirtied(vec![json!(["del", "a1"])]),
+            ["a"],
+            "found before the delete"
+        );
+        assert_eq!(dirtied(vec![json!(["del", "a"])]), ["a"]);
+        assert_eq!(
+            dirtied(vec![json!(["set", "d1", {"text": "w"}])]),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            dirtied(vec![json!(["set", "main", {}])]),
+            Vec::<String>::new()
+        );
+        assert_eq!(dirtied(vec![json!(["reveal", "a1"])]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn row_changes_splice_the_middle_and_remeasure_kept_dirty_rows() {
+        let ids = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let set = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<HashSet<_>>();
+        use RowChange::{Remeasure, Splice};
+        let none = HashSet::new();
+        assert_eq!(row_changes(&ids(&["a", "b"]), &ids(&["a", "b"]), &none), []);
+        assert_eq!(
+            row_changes(&ids(&["a", "b"]), &ids(&["a", "b", "c"]), &none),
+            [Splice {
+                range: 2..2,
+                count: 1
+            }]
+        );
+        assert_eq!(
+            row_changes(&ids(&["a", "b", "c"]), &ids(&["a", "x", "b", "c"]), &none),
+            [Splice {
+                range: 1..1,
+                count: 1
+            }]
+        );
+        assert_eq!(
+            row_changes(&ids(&["a", "b", "c"]), &ids(&["b", "c"]), &none),
+            [Splice {
+                range: 0..1,
+                count: 0
+            }]
+        );
+        assert_eq!(
+            row_changes(&ids(&["a", "b", "c"]), &ids(&["a", "y", "c"]), &none),
+            [Splice {
+                range: 1..2,
+                count: 1
+            }]
+        );
+        assert_eq!(
+            row_changes(&ids(&["a", "b"]), &ids(&["c"]), &none),
+            [Splice {
+                range: 0..2,
+                count: 1
+            }]
+        );
+        assert_eq!(
+            row_changes(
+                &ids(&["a", "b", "c"]),
+                &ids(&["a", "b", "c", "d"]),
+                &set(&["a", "c", "d"])
+            ),
+            [
+                Splice {
+                    range: 3..3,
+                    count: 1
+                },
+                Remeasure(0),
+                Remeasure(2)
+            ],
+            "a new row is measured anyway"
+        );
+        assert_eq!(
+            row_changes(&ids(&["a", "b"]), &ids(&["a"]), &set(&["b"])),
+            [Splice {
+                range: 1..2,
+                count: 0
+            }],
+            "a dirty row that left is not remeasured"
+        );
+    }
+
+    #[test]
+    fn image_rows_are_the_rows_holding_an_image_of_the_new_blobs() {
+        let mut ops = main_added();
+        ops.push(
+            json!(["add", "a", "main", null, {"id": "a", "k": "col", "c": [
+                {"id": "a1", "k": "image", "p": {"blob": "p1"}}
+            ]}]),
+        );
+        ops.push(json!(["add", "b", "main", null, {"id": "b", "k": "image", "p": {"blob": "p2"}}]));
+        let d = doc(ops);
+        let blob = |id: &str| TspBlob {
+            id: id.into(),
+            mime: "image/png".into(),
+            data: Vec::new(),
+        };
+        assert_eq!(
+            image_rows(&d, &[blob("p1")]),
+            HashSet::from(["a".to_owned()])
+        );
+        assert_eq!(
+            image_rows(&d, &[blob("p2")]),
+            HashSet::from(["b".to_owned()])
+        );
+        assert!(image_rows(&d, &[blob("p9")]).is_empty());
     }
 
     #[test]
