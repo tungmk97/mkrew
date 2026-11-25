@@ -103,6 +103,15 @@ impl Shell {
             .keys(self.keymap.label(Command::NewShellTab))
             .row(),
         );
+        if mkrew_ui::browser::available().is_ok() {
+            rows.push(
+                MenuItem::new(
+                    "Browser",
+                    act(|shell, window, cx| shell.new_browser(None, window, cx)),
+                )
+                .row(),
+            );
+        }
         rows.push(
             MenuItem::new(
                 "Empty tab",

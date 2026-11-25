@@ -346,7 +346,9 @@ impl Shell {
             return;
         };
         match markdown::link_target(&from, &action.dest) {
-            Some(LinkTarget::Web(url)) => cx.open_url(&url),
+            Some(LinkTarget::Web(url)) => {
+                self.open_web(url, action.session.map(PaneKey::Session), window, cx)
+            }
             Some(LinkTarget::Anchor(anchor)) => {
                 let heading = (page.as_ref()).and_then(|(page, shown)| {
                     Some((page, markdown::heading_for(&shown.blocks, &anchor)?))

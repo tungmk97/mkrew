@@ -152,6 +152,12 @@ pub const ICON_SIZE: f32 = 16.0;
 /// A Lucide icon among body / meta text: text buttons, row actions, row chevrons, window
 /// controls.
 pub const ICON_SIZE_SMALL: f32 = 14.0;
+/// The font's ascent is taller than its descent, so one-line UI text sits about 1.5 px below
+/// the middle of its box. A control that must read as centered (the tab name, the address
+/// field) lifts its text by this much: bottom padding of twice it under `items_center`.
+pub const TEXT_LIFT: f32 = 1.5;
+/// A pane icon in a tab chip: a step under [`ICON_SIZE_SMALL`], so it sits with the name.
+pub const TAB_ICON_SIZE: f32 = 12.0;
 /// The pin before the time of a pinned session row.
 pub const PIN_ICON_SIZE: f32 = 13.0;
 /// Inset of a segmented control around its segments.
@@ -2470,8 +2476,8 @@ pub const PANE_BADGE_MAX_WIDTH: f32 = 320.0;
 /// Longest tab title before it truncates.
 pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
 /// Narrowest a terminal tab chip gets: the chips shrink to this before the tab area scrolls.
-/// An inactive chip shows the status icon, one pane icon (14 px each), about five title letters
-/// and the ×.
+/// An inactive chip shows the status icon, one pane icon (`TAB_ICON_SIZE` each), about five
+/// title letters and the ×.
 pub const TAB_MIN_WIDTH: f32 = 120.0;
 /// Reading width of an agent pane: the terminal is at most this wide (≈ 120–140 columns at
 /// the default font) and centered, so the program wraps there (the PTY gets fewer columns).

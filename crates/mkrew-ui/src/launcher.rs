@@ -136,13 +136,15 @@ impl Launcher {
     }
 
     fn spawn(&mut self, name: &str) {
-        let child = Process::new(&self.exe)
+        let mut command = Process::new(&self.exe);
+        command
             .arg("--machine")
             .arg(name)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn();
+            .stderr(Stdio::null());
+        crate::browser::strip_own_env(&mut command);
+        let child = command.spawn();
         let mut child = match child {
             Ok(child) => child,
             Err(error) => {

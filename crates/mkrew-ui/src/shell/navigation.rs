@@ -190,7 +190,7 @@ impl Shell {
         })
     }
 
-    /// Ctrl+Click on a terminal link: a URL opens in the browser, a file as a file tab.
+    /// Ctrl+Click on a terminal link: a URL opens in a browser pane (ADR 0111), a file as a file tab.
     pub(crate) fn open_terminal_link(
         &mut self,
         session: Ulid,
@@ -199,7 +199,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         match link {
-            OpenLink::Url(url) => cx.open_url(url),
+            OpenLink::Url(url) => {
+                self.open_web(url.clone(), Some(PaneKey::Session(session)), window, cx)
+            }
             OpenLink::File { path, line } => {
                 let Some((project_id, target, _)) = self.link_scope(session) else {
                     return;
@@ -346,6 +348,8 @@ impl Shell {
             },
             file_pane: self.focused_file(window).is_some(),
             file_tree: self.file_tree_shown(),
+            web_pane: self.focused_web(window).is_some(),
+            browser: mkrew_ui::browser::available().is_ok(),
             terminal: terminal.is_some(),
             discard,
             git: self.git_shown(),

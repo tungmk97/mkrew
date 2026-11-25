@@ -64,6 +64,11 @@ impl Shell {
         let label = file
             .as_deref()
             .or_else(|| diff_label(tab))
+            .or_else(|| {
+                web_label(tab)
+                    .and_then(|id| self.browsers.get(&id))
+                    .map(|b| b.page.label())
+            })
             .or_else(|| session_label(tab, self.sidebar.sessions()))
             .unwrap_or(&tab.title);
         Some(format!("{label} - {name}"))

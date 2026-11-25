@@ -1411,8 +1411,8 @@ fn a_report_replaces_an_older_different_one_only() {
 }
 
 #[test]
-fn the_omp_surface_protocol_is_version_61() {
-    assert_eq!(crate::PROTOCOL_VERSION, 61);
+fn the_browser_pane_protocol_is_version_62() {
+    assert_eq!(crate::PROTOCOL_VERSION, 62);
 }
 
 /// ADR 0105: the recap travels with the transcript reply; a reply without it (an older

@@ -61,7 +61,12 @@ impl Shell {
         };
         let agents = self.pane_agents_of(project);
         let shell_name = project.and_then(|id| self.default_shell_name(id));
-        let items = plus_row_items(default_agent(&agents), shell_name.as_deref(), main);
+        let items = plus_row_items(
+            default_agent(&agents),
+            shell_name.as_deref(),
+            main,
+            mkrew_ui::browser::available().is_ok(),
+        );
         // `+` is tab stop 0, the items follow: ← / → stop at the ends of the row.
         let stops = items.len() + 1;
         // The menu opens below the row, outside it: the pointer is then off the row, which
@@ -182,6 +187,9 @@ impl Shell {
             }
             RowItem::Note => {
                 icon_svg(Icon::NotebookPen, theme::ICON_SIZE, theme.text_muted).into_any_element()
+            }
+            RowItem::Browser => {
+                icon_svg(Icon::Globe, theme::ICON_SIZE, theme.text_muted).into_any_element()
             }
             RowItem::More => icon_svg(Icon::ChevronDown, theme::ICON_SIZE_SMALL, theme.text_muted)
                 .into_any_element(),
@@ -316,6 +324,7 @@ impl Shell {
                 self.spawn_pane(SessionKind::Shell, None, at, window, cx);
             }
             (NewKind::Note, at) => self.new_note(at, window, cx),
+            (NewKind::Browser, at) => self.new_browser(at, window, cx),
         }
     }
 

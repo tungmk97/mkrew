@@ -13,6 +13,8 @@ fn context(view: View) -> Context {
         view,
         workspaces: 2,
         tabs: 2,
+        web_pane: false,
+        browser: true,
         file_pane: false,
         file_tree: false,
         terminal: false,
@@ -55,6 +57,14 @@ fn context(view: View) -> Context {
         idle_removable: 0,
         workspaces_open: true,
     }
+}
+
+#[test]
+fn split_browser_is_listed_only_where_pages_show() {
+    let mut context = context(View::Terminals);
+    assert!(commands(&context).contains(&Command::SplitBrowser));
+    context.browser = false;
+    assert!(!commands(&context).contains(&Command::SplitBrowser));
 }
 
 /// The Terminals view with the Diff pane focused and Git on screen: the Git keys and the diff
@@ -382,10 +392,41 @@ fn availability_follows_the_view() {
         off_panes.contains(&Command::ToggleInspector),
         "shows the terminals"
     );
+    // A browser pane's commands need the browser pane focused.
+    assert!(!terminals.contains(&Command::BrowserReload));
+    let web = commands(&Context {
+        web_pane: true,
+        ..context(View::Terminals)
+    });
+    for command in [
+        Command::BrowserAddress,
+        Command::BrowserBack,
+        Command::BrowserForward,
+        Command::BrowserReload,
+        Command::BrowserOpenExternal,
+    ] {
+        assert!(web.contains(&command), "{command:?}");
+    }
+    // Without a web view in Mkrew only "Open in system browser" stays (it needs no page).
+    let no_view = commands(&Context {
+        web_pane: true,
+        browser: false,
+        ..context(View::Terminals)
+    });
+    assert!(no_view.contains(&Command::BrowserOpenExternal));
+    for command in [
+        Command::BrowserAddress,
+        Command::BrowserBack,
+        Command::BrowserForward,
+        Command::BrowserReload,
+    ] {
+        assert!(!no_view.contains(&command), "{command:?}");
+    }
     // Like the buttons: from any view (they show Terminals first), once a tab exists.
     for command in [
         Command::SplitAgent,
         Command::SplitShell,
+        Command::SplitBrowser,
         Command::Layout(Preset::Columns2),
     ] {
         assert!(terminals.contains(&command), "{command:?}");

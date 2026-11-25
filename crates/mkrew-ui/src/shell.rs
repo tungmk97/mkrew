@@ -45,6 +45,7 @@ pub(crate) mod app_menu;
 mod ask_dialog;
 mod attention;
 pub(crate) mod board;
+pub(crate) mod browser;
 pub(crate) mod chat_view;
 mod composer;
 mod connection;

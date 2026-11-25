@@ -194,6 +194,24 @@ mod tests {
         json!({"split": axis, "ratio": 0.5, "children": [first, second]})
     }
 
+    fn web(id: Ulid) -> Value {
+        json!({"web": "https://x.dev", "id": id.to_string()})
+    }
+
+    #[test]
+    fn web_leaves_are_kept_like_file_leaves() {
+        let [a, page] = [Ulid::new(), Ulid::new()];
+        assert!(layout_sessions(&web(page)).is_empty());
+        assert_eq!(layout_sessions(&split("vertical", leaf(a), web(page))), [a]);
+        // The session goes, the browser pane stays and its tab with it.
+        assert_eq!(
+            without_session(&split("vertical", leaf(a), web(page)), a),
+            Some(web(page))
+        );
+        // A web leaf whose id is the session's id is still a web leaf.
+        assert_eq!(without_session(&web(a), a), None);
+    }
+
     #[test]
     fn layout_sessions_skips_file_and_diff_leaves() {
         let [a, b] = [Ulid::new(), Ulid::new()];

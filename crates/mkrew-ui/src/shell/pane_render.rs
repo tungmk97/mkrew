@@ -46,6 +46,11 @@ impl Shell {
                         let file = file_label(tab, self.documents.get(&project_id));
                         let label = (file.as_ref().map(|file| file.name.as_str()))
                             .or_else(|| diff_label(tab))
+                            .or_else(|| {
+                                web_label(tab)
+                                    .and_then(|id| self.browsers.get(&id))
+                                    .map(|b| b.page.label())
+                            })
                             .or_else(|| session_label(tab, self.sidebar.sessions()));
                         let item = DraggedItem {
                             list: ReorderList::Tabs(project_id, tab.pinned),
@@ -205,6 +210,11 @@ impl Shell {
         let file = file_label(tab, self.documents.get(&project_id));
         let label = (file.as_ref().map(|file| file.name.as_str()))
             .or_else(|| diff_label(tab))
+            .or_else(|| {
+                web_label(tab)
+                    .and_then(|id| self.browsers.get(&id))
+                    .map(|b| b.page.label())
+            })
             .or_else(|| session_label(tab, self.sidebar.sessions()));
         // A double-click renames that pane while the tab keeps its default name, else the tab.
         let rename_pane = double_click_renames(tab, self.sidebar.sessions());
@@ -218,9 +228,9 @@ impl Shell {
                 TabStatus::Working => (Icon::Hourglass, theme.status_working),
                 TabStatus::NeedsInput => (Icon::Bell, theme.status_needs_input),
             };
-            icon_svg(glyph, theme::ICON_SIZE_SMALL, color)
+            icon_svg(glyph, theme::TAB_ICON_SIZE, color)
         });
-        // Every icon is `ICON_SIZE_SMALL`: a brand logo in its brand color, an agent without
+        // Every icon is `TAB_ICON_SIZE`: a brand logo in its brand color, an agent without
         // a logo as its glyph, shell and run panes in `text_muted`.
         let pane_icons: Vec<gpui::AnyElement> = icons
             .panes
@@ -228,29 +238,31 @@ impl Shell {
             .map(|pane| match pane {
                 PaneIcon::Agent(profile) => match self.agent_badge(profile) {
                     sidebar::Badge::Logo(logo) => {
-                        icons::logo_svg(logo, theme::ICON_SIZE_SMALL, theme.brand_color(logo))
+                        icons::logo_svg(logo, theme::TAB_ICON_SIZE, theme.brand_color(logo))
                             .into_any_element()
                     }
                     sidebar::Badge::Text(text) => div()
                         .flex_none()
+                        .pb(px(theme::TEXT_LIFT * 2.0))
                         .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child(text)
                         .into_any_element(),
                 },
-                PaneIcon::Shell => icon_svg(
-                    Icon::SquareTerminal,
-                    theme::ICON_SIZE_SMALL,
-                    theme.text_muted,
-                )
-                .into_any_element(),
-                PaneIcon::Run => icon_svg(Icon::Play, theme::ICON_SIZE_SMALL, theme.text_muted)
-                    .into_any_element(),
-                PaneIcon::File(_) => icon_svg(Icon::File, theme::ICON_SIZE_SMALL, theme.text_muted)
-                    .into_any_element(),
-                PaneIcon::Diff => {
-                    icon_svg(Icon::FileDiff, theme::ICON_SIZE_SMALL, theme.text_muted)
+                PaneIcon::Shell => {
+                    icon_svg(Icon::SquareTerminal, theme::TAB_ICON_SIZE, theme.text_muted)
                         .into_any_element()
+                }
+                PaneIcon::Run => {
+                    icon_svg(Icon::Play, theme::TAB_ICON_SIZE, theme.text_muted).into_any_element()
+                }
+                PaneIcon::File(_) => {
+                    icon_svg(Icon::File, theme::TAB_ICON_SIZE, theme.text_muted).into_any_element()
+                }
+                PaneIcon::Diff => icon_svg(Icon::FileDiff, theme::TAB_ICON_SIZE, theme.text_muted)
+                    .into_any_element(),
+                PaneIcon::Web => {
+                    icon_svg(Icon::Globe, theme::TAB_ICON_SIZE, theme.text_muted).into_any_element()
                 }
             })
             .collect();
@@ -317,6 +329,7 @@ impl Shell {
             .children((icons.more > 0).then(|| {
                 div()
                     .flex_none()
+                    .pb(px(theme::TEXT_LIFT * 2.0))
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .child(format!("+{}", icons.more))
@@ -328,6 +341,7 @@ impl Shell {
             .children(prefix.map(|name| {
                 div()
                     .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
+                    .pb(px(theme::TEXT_LIFT * 2.0))
                     .truncate()
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
@@ -335,8 +349,11 @@ impl Shell {
             }))
             .child(
                 div()
+                    .flex_1()
                     .min_w_0()
                     .max_w(px(theme::TAB_TITLE_MAX_WIDTH))
+                    // See `TEXT_LIFT`: the name reads centered in the chip.
+                    .pb(px(theme::TEXT_LIFT * 2.0))
                     .truncate()
                     .when(file.as_ref().is_some_and(|file| file.preview), |el| {
                         el.italic()
@@ -346,7 +363,7 @@ impl Shell {
             .child(
                 row_action(
                     SharedString::from(format!("tab-close-{tab_id}")),
-                    icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
+                    icon_svg(Icon::X, theme::TAB_ICON_SIZE, theme.text_muted),
                     theme,
                 )
                 // Always on the active tab, on hover for the others.
@@ -394,6 +411,7 @@ impl Shell {
             .min_w(px(theme::TAB_RENAME_MIN_WIDTH))
             .h(theme::rems_px(theme::CONTROL_HEIGHT))
             .px(px(space::S))
+            .pb(px(theme::TEXT_LIFT * 2.0))
             .rounded(px(radius::MEDIUM))
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.pane_focus_stripe))
@@ -606,6 +624,9 @@ impl Shell {
             }
             PaneKey::File(path) => self.render_file_pane(project_id, path, window, theme, cx),
             PaneKey::Diff => self.render_diff_pane(project_id, theme, window, cx),
+            PaneKey::Web(id) => {
+                self.render_web_pane(project_id, *id, is_focused, theme, window, cx)
+            }
         };
         // Reading width caps the terminal grid (and the Chat list); a surface keeps its own
         // 760 px column (`chat_column`), so the cap would only narrow its scroll area.
@@ -613,6 +634,10 @@ impl Shell {
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));
         let stripe = status::pane_stripe(theme, info.map(|s| s.state), color, several, is_focused);
+        let key_web_focus = match &key {
+            PaneKey::Web(id) => self.browsers.get(id).map(|browser| &browser.focus),
+            _ => None,
+        };
         let frame = div()
             .relative()
             .size_full()
@@ -624,7 +649,11 @@ impl Shell {
             // The file pane's own keys (Ctrl+S, Ctrl+F, ...), not the root's.
             .when(matches!(key, PaneKey::File(_)), |el| {
                 el.key_context(EDITOR_CONTEXT)
-            });
+            })
+            .when(matches!(key, PaneKey::Web(_)), |el| {
+                el.key_context(BROWSER_CONTEXT)
+            })
+            .when_some(key_web_focus, |el, focus| el.track_focus(focus));
         let frame = self.pane_drop_target(frame, project_id, &key, cx);
         frame
             .on_mouse_down(MouseButton::Left, {
@@ -833,7 +862,7 @@ impl Shell {
     /// and, among `several` panes, it holds the drag handle at its centre (ADR 0110): a slim bar
     /// while the pointer is over the pane (hover group `pane_hover_group`), a chip with a six-dot
     /// grip while it is over the handle, and dragging the handle moves the pane onto another. A
-    /// file or diff pane has the handle but no anchor.
+    /// file, diff or browser pane has the handle but no anchor.
     /// Only the handle has a hitbox; the rest of the edge passes the mouse to the pane. The
     /// handle blocks the mouse (not the wheel): gpui hit-tests every hitbox until one blocks, so
     /// without it the terminal under it would also get the mouse down and start a selection.

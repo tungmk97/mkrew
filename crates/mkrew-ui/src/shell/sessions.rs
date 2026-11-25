@@ -330,6 +330,8 @@ impl Shell {
         }
         if self.view() != View::Terminals {
             match *command {
+                // No page can show here: nothing happens, the view stays.
+                Command::SplitBrowser if mkrew_ui::browser::available().is_err() => return,
                 // Opening or picking a tab or pane shows the terminals.
                 Command::NewShellTab
                 | Command::NewAgentTab
@@ -341,6 +343,7 @@ impl Shell {
                 | Command::SplitDown
                 | Command::SplitAgent
                 | Command::SplitShell
+                | Command::SplitBrowser
                 | Command::Layout(_) => self.show_view(View::Terminals, window, cx),
                 // The rest act on panes that are not on screen.
                 Command::RenameTab
@@ -353,6 +356,11 @@ impl Shell {
                 | Command::MoveTabLeft
                 | Command::MoveTabRight
                 | Command::ToggleChat
+                | Command::BrowserAddress
+                | Command::BrowserBack
+                | Command::BrowserForward
+                | Command::BrowserReload
+                | Command::BrowserOpenExternal
                 | Command::ClosePane => return,
                 _ => {}
             }
@@ -399,6 +407,12 @@ impl Shell {
             // Exactly the + Agent / + Shell buttons.
             Command::SplitAgent => self.new_pane(SessionKind::Agent, Axis::Vertical, window, cx),
             Command::SplitShell => self.new_pane(SessionKind::Shell, Axis::Vertical, window, cx),
+            Command::SplitBrowser => self.split_browser(window, cx),
+            Command::BrowserAddress
+            | Command::BrowserBack
+            | Command::BrowserForward
+            | Command::BrowserReload
+            | Command::BrowserOpenExternal => self.browser_command(*command, window, cx),
             Command::Layout(preset) => self.apply_layout(preset, window, cx),
             Command::Focus(direction) => self.move_focus(direction, window, cx),
             Command::Resize(direction) => {

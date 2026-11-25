@@ -57,6 +57,8 @@ pub enum PaneKey {
     Session(Ulid),
     File(FileKey),
     Diff,
+    /// A browser pane (ADR 0111), by its leaf's own id: two panes may show one URL.
+    Web(Ulid),
 }
 
 impl PaneKey {
@@ -64,7 +66,7 @@ impl PaneKey {
     pub fn session(&self) -> Option<Ulid> {
         match self {
             PaneKey::Session(id) => Some(*id),
-            PaneKey::File(_) | PaneKey::Diff => None,
+            PaneKey::File(_) | PaneKey::Diff | PaneKey::Web(_) => None,
         }
     }
 }
@@ -97,6 +99,9 @@ pub enum Leaf {
     },
     /// The workspace's diff. `diff` is always `true` on the wire.
     Diff { diff: bool },
+    /// A browser pane (ADR 0111): `web` is the page it shows (`""` before the first load),
+    /// `id` names the pane.
+    Web { web: String, id: Ulid },
 }
 
 impl Leaf {
@@ -125,11 +130,20 @@ impl Leaf {
         Leaf::Diff { diff: true }
     }
 
+    /// A new browser pane on `url` (`""`: the address field waits for one).
+    pub fn web(url: impl Into<String>) -> Leaf {
+        Leaf::Web {
+            web: url.into(),
+            id: Ulid::new(),
+        }
+    }
+
     pub fn key(&self) -> PaneKey {
         match self {
             Leaf::Session { session, .. } => PaneKey::Session(*session),
             Leaf::File { file, task, .. } => PaneKey::File(FileKey::new(file.clone(), *task)),
             Leaf::Diff { .. } => PaneKey::Diff,
+            Leaf::Web { id, .. } => PaneKey::Web(*id),
         }
     }
 
@@ -141,6 +155,7 @@ impl Leaf {
                 *file == key.path && *task == key.task
             }
             (Leaf::Diff { .. }, PaneKey::Diff) => true,
+            (Leaf::Web { id, .. }, PaneKey::Web(key)) => id == key,
             _ => false,
         }
     }
@@ -494,7 +509,7 @@ impl Node {
     pub fn chat_of(&self, session: Ulid) -> Option<bool> {
         match self.leaf_of(&PaneKey::Session(session))? {
             Leaf::Session { chat, .. } => *chat,
-            Leaf::File { .. } | Leaf::Diff { .. } => None,
+            Leaf::File { .. } | Leaf::Diff { .. } | Leaf::Web { .. } => None,
         }
     }
 
@@ -1400,6 +1415,50 @@ mod tests {
             serde_json::to_value(Leaf::diff()).unwrap(),
             json!({"diff": true})
         );
+    }
+
+    #[test]
+    fn a_web_leaf_round_trips_and_has_its_id_as_key() {
+        let id = Ulid::new();
+        let stored = json!({"web": "https://example.com/", "id": id.to_string()});
+        let leaf: Leaf = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(leaf.key(), PaneKey::Web(id));
+        assert!(leaf.has_key(&PaneKey::Web(id)));
+        assert!(!leaf.has_key(&PaneKey::Web(Ulid::new())));
+        assert_eq!(serde_json::to_value(&leaf).unwrap(), stored);
+        // Not loaded yet: an empty URL.
+        let empty = json!({"web": "", "id": id.to_string()});
+        let node = Node::from_json(&empty).unwrap().expect("a layout");
+        assert_eq!(Node::to_json(Some(&node)), empty);
+        assert_eq!(PaneKey::Web(id).session(), None);
+        // A fresh leaf gets a fresh id.
+        assert_ne!(Leaf::web("a").key(), Leaf::web("a").key());
+    }
+
+    #[test]
+    fn broken_web_leaves_are_dropped_and_the_same_id_twice_is_refused() {
+        let [a] = ids();
+        let load = |value: serde_json::Value| Node::from_json(&value).unwrap();
+        for bad in [
+            json!({"web": 3, "id": Ulid::new().to_string()}),
+            json!({"web": "https://x.dev"}),
+            json!({"web": "https://x.dev", "id": "bad"}),
+        ] {
+            assert_eq!(
+                load(halves_json("vertical", pane_json(a), bad)),
+                Some(Node::pane(a))
+            );
+        }
+        let id = Ulid::new().to_string();
+        let twice = halves_json(
+            "vertical",
+            json!({"web": "https://a.dev", "id": id}),
+            json!({"web": "https://b.dev", "id": id}),
+        );
+        assert!(matches!(
+            Node::from_json(&twice),
+            Err(LayoutError::Duplicate(PaneKey::Web(_)))
+        ));
     }
 
     #[test]

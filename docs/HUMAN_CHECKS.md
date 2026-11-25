@@ -21,6 +21,24 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-24 Browser pane (ADR 0111, spec docs/superpowers/specs/2026-11-24-browser-pane-design.md)
+
+Screenshots: `docs/screenshots/browser-pane-<view>-<dark|light>.png`.
+
+- [ ] **Restart the daemon first** (protocol 62; a window from before it shows a version mismatch).
+- [ ] **macOS (needs a Mac, nothing here has run on macOS):** open a browser pane from a link in Chat and from `+`; `Cmd+L` focuses the address; `Cmd+Alt+B` splits an empty browser; moving the tab to a detached window rebuilds the page on the same URL (history is lost, as designed); dark and light.
+- [ ] **Windows without the WebView2 Runtime:** exactly one toast "Web pages open in your browser: ..." per run, links open in the system browser, `+` has no Browser item, and a browser pane restored from a layout shows the reason and "Open in system browser".
+- [ ] **Look (dark + light, Windows):** the toolbar (back, forward, reload, address, open in system browser, close), the empty state "Type an address or paste a link", and the title card (page title and URL) while the palette, a menu or a drag is open.
+- [ ] **With a real keyboard (key injection could not drive a focused page):**
+  - With the page focused, `Alt+Shift+B` and the palette key (`Ctrl+Shift+P`) reach Mkrew; text keys and `Ctrl+C` / `Ctrl+V` stay in the page.
+  - A lone Alt tap in the page, then a letter: the letter types in the page and the window does not enter the Windows system menu.
+  - A click into the page while the address field is being edited: the field ends the edit and the page has the keyboard.
+  - A page that autofocuses an input, next to a focused terminal: the keyboard stays where the user put it.
+  - Move back from a detached window, and Move all back: the page rebuilds in the main window and takes keys.
+  - Drag the `+` globe onto a pane edge, and drag a browser pane by its grip onto another pane's edges.
+  - In a tab with several panes the pane grip (40 x 20 px, top centre) overlaps the top of the address field: the field is still easy to click and the grip still drags.
+  - A click or key in the first ~400 ms of a page build can be dropped (the build pumps messages inside GPUI's borrow; accepted, ADR 0111); nothing hangs.
+
 ### To verify - 2026-11-23 Tern panes (ADR 0108, plan docs/superpowers/plans/2026-11-23-tern-panes.md)
 
 Screenshots: `docs/screenshots/tern-panes-<view>-<dark|light>.png`.

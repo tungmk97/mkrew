@@ -11,6 +11,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         self.ensure_diff_views();
+        self.prepare_browsers(HostId::Detached(key), window, cx);
         let theme = cx.theme().clone();
         let host = HostId::Detached(key);
         // A menu closed behind the keyboard's back, or a dialog control that vanished while
@@ -176,6 +177,11 @@ impl Shell {
                     index,
                     title: (file.as_ref().map(|file| file.name.as_str()))
                         .or_else(|| diff_label(tab))
+                        .or_else(|| {
+                            web_label(tab)
+                                .and_then(|id| self.browsers.get(&id))
+                                .map(|b| b.page.label())
+                        })
                         .or_else(|| session_label(tab, sessions))
                         .unwrap_or(&tab.title)
                         .to_owned()

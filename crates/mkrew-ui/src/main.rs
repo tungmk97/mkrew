@@ -80,8 +80,8 @@ use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::inspector::{self, PanelTab};
 use mkrew_ui::jira_board::{JiraView, Load, Source};
 use mkrew_ui::keymap::{
-    self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, EDITOR_CONTEXT,
-    FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Os, Run,
+    self as keymap, BOARD_CONTEXT, BROWSER_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT,
+    EDITOR_CONTEXT, FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Os, Run,
 };
 use mkrew_ui::launch::Launch;
 use mkrew_ui::launcher::Launcher;
@@ -111,9 +111,9 @@ use mkrew_ui::split::{Axis, Direction, Divider, Edge, FileKey, Leaf, PaneKey, Pr
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{
-    AreaItem, FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, area_items, diff_label,
+    AreaItem, FIRST_TAB_TITLE, PaneIcon, Tab, TabStatus, Tabs, WebPlace, area_items, diff_label,
     double_click_renames, file_label, newest_unplaced, on_screen, rename_params, scroll_index,
-    session_label, tab_icons,
+    session_label, tab_icons, web_label, web_place,
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
@@ -178,6 +178,25 @@ pub(crate) const CUSTOM_TITLE_BAR: bool = cfg!(any(target_os = "windows", target
 pub(crate) const DRAWN_CONTROLS: bool = cfg!(target_os = "windows");
 
 fn main() {
+    // gpui-pre-windows 0.3.7 draws through a topmost DirectComposition visual
+    // (directx_renderer.rs:1017), which covers child HWNDs such as the WebView2 page of a
+    // browser pane (ADR 0111). Mkrew uses no transparent or blurred window background, so the
+    // HWND swap chain path loses nothing it needs. A user's own setting wins.
+    // Without the WebView2 Runtime no page shows, so DirectComposition stays on.
+    #[cfg(windows)]
+    if std::env::var_os(mkrew_ui::browser::DISABLE_DCOMP_ENV).is_none()
+        && mkrew_ui::browser::available().is_ok()
+    {
+        #[allow(unsafe_code)]
+        // SAFETY: no thread of Mkrew exists yet (`available` only reads the registry and the
+        // WebView2 install, and caches the answer), so nothing reads or writes the environment
+        // concurrently.
+        unsafe {
+            std::env::set_var(mkrew_ui::browser::DISABLE_DCOMP_ENV, "1");
+        }
+        // Children (the daemon, Zed, the updater, machine windows) get it removed again: `browser::strip_own_env`.
+        mkrew_ui::browser::DCOMP_SET_BY_MKREW.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let launched = Instant::now();
     let filter = EnvFilter::try_from_env("MKREW_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
@@ -766,6 +785,15 @@ struct Shell {
     comment_focus: FocusHandle,
     /// The open files of every workspace (SPEC §12A, ADR 0108); one store per workspace.
     documents: HashMap<Ulid, Documents>,
+    /// Browser panes' page state, by leaf id (ADR 0111); follows the layouts (`sync_browsers`).
+    browsers: HashMap<Ulid, shell::browser::Browser>,
+    /// The "pages open in your browser" toast was shown this run (ADR 0111).
+    browser_fallback_told: bool,
+    /// A new browser pane whose address field takes the keyboard once its page state exists
+    /// and it is shown (`prepare_browsers`).
+    browser_to_focus: Option<Ulid>,
+    /// Page events of every browser pane (`wry` callbacks), read by one task (`page_event`).
+    page_events: async_channel::Sender<(Ulid, mkrew_ui::browser::PageEvent)>,
     /// The view state of each open file pane, keyed like the store.
     doc_views: HashMap<(Ulid, FileKey), DocView>,
     /// The Files view of every workspace it was shown for.
@@ -957,6 +985,7 @@ struct Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.ensure_diff_views();
+        self.prepare_browsers(HostId::Main, window, cx);
         let theme = cx.theme().clone();
         // A menu closed behind the keyboard's back (workspace switched, dialog opened, daemon
         // event) must not leave it on the hidden menu: give it back to the pane. A menu whose

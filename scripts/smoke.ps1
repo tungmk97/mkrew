@@ -110,6 +110,8 @@ function Get-Frame([IntPtr]$h) {
 
 # Another window can take the foreground between commands; never send input or a screen copy to it.
 function Set-Front([IntPtr]$h) {
+    # Skip when already in front: an Alt tap leaves the window in the Win32 menu mode (SC_KEYMENU), which eats the next keys.
+    if ([SmokeWin]::GetForegroundWindow() -eq $h) { return }
     # Windows refuses SetForegroundWindow from a background process unless a key was just pressed: tap Alt (0x12; 2 = key up).
     [SmokeWin]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
     [SmokeWin]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)

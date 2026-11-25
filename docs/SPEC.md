@@ -346,8 +346,8 @@ v2 migrations 0008 (M11) and 0009 (M13) are listed in §20; `0010_session_interr
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
 is the first child's share; every split has exactly two children; `null` = a tab without panes.
-Leaves are sessions, files or the diff (ADR 0108): `{"session": "<ulid>", "chat": true}` (`chat` optional), `{"file": "src/a.rs", "task": "<ulid>", "md": "split", "preview": true}` (`task`, `md` and `preview` optional; the path is relative to the folder the file is of, with `/`, or absolute for a note in an absolute notes folder; `task` = the task worktree the file is of, absent = the project folder, which is what a layout of protocol 58 or 60 means) and `{"diff": true}`.
-A key (a session, a file's path with its `task`, the diff) appears at most once in a tab, and a file or the diff at most once per workspace; the same path in the project folder and in a worktree are two files.
+Leaves are sessions, files, the diff or web pages (ADR 0108, 0111): `{"session": "<ulid>", "chat": true}` (`chat` optional), `{"file": "src/a.rs", "task": "<ulid>", "md": "split", "preview": true}` (`task`, `md` and `preview` optional; the path is relative to the folder the file is of, with `/`, or absolute for a note in an absolute notes folder; `task` = the task worktree the file is of, absent = the project folder, which is what a layout of protocol 58 or 60 means), `{"diff": true}` and `{"web": "https://example.com/", "id": "<ulid>"}` (a browser pane, ADR 0111; `""` before its first page; `id` is required, so two panes can show the same URL).
+A key (a session, a file's path with its `task`, the diff, a web page's `id`) appears at most once in a tab, and a file or the diff at most once per workspace; the same path in the project folder and in a worktree are two files.
 The daemon reads only the leaves with a `session` key (`cut`, `layout_sessions`) and keeps the others as they are; a leaf the UI cannot parse is dropped with a warning and the rest of the tab loads.
 
 ```json
@@ -612,7 +612,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `tsp.snapshot` | `session_id` | `{state, surfaces, blobs, reason?}` (ADR 0107): `state` is the session's `tsp`; `surfaces` = `[{id, mode, role?, title?, read_only, seq, root}]` (`mode` `inline` or `screen`, `seq` the last applied frame of omp, `root` the node tree `{id, k, p?, c?}`; at most 3 surfaces); `blobs` = `[{id, mime, data}]` (`data` base64) of the images an `image` node still names, at most 4 MiB; `reason?` is why the session fell back, for the toast. A session that is not TSP, or has no open surface, answers its `state` with empty lists; a session that is not live is answered as `session.attach` answers it. A reply that would pass the 16 MiB frame limit is sent without its blobs (an image then draws its alt text); if it is still too large the call fails with `internal` ("snapshot too large") and the connection stays open |
 | `tsp.event` | `session_id`, `surface`, `event` | `null`: `event` is an object whose `ev` is one of `action`, `toggle`, `select`, `activate`, `focus`, `theme`; the daemon adds `sf` (the surface) and writes it to the agent's input as a TSP message. Another `ev` is `invalid_request`. A `theme` event (`{ev:"theme", dark}`) also becomes the `dark` of the next hello |
 | `tab.pin` | `tab_id`, `pinned` | TerminalTab, also broadcast as `tab.updated`; `position` is left alone, so unpinning puts the tab back |
-| `tab.set_layout` | `tab_id`, `layout` | ok (the daemon stores the JSON as given and validates nothing; leaves are sessions, files or the diff, §5; `cut` and `layout_sessions` read only session leaves) |
+| `tab.set_layout` | `tab_id`, `layout` | ok (the daemon stores the JSON as given and validates nothing; leaves are sessions, files, the diff or web pages, §5; `cut` and `layout_sessions` read only session leaves) |
 | `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`omp`/`copilot`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
 | `agent.profiles` | – | AgentProfile[] (each with `installed`: its program, or the OS shell for a shell without `command`, is found on PATH) + parse errors |
 | `slash.list` | `profile_id`, `project_id`, `worktree_task_id?` | `cli?` (absent when the profile's CLI is unknown, then `items` is empty), `items[]` (`name` without `/`, `description`, `argument_hint?`, `source`: `built_in`, `project`, `user`, `managed`, `{"plugin": name}` or `profile`; `group?` on the omp `skill:` row), `errors[]` (files that could not be read); the `/` commands of the profile's agent CLI in the project folder, or the task's worktree, read on the daemon's machine |
@@ -724,6 +724,8 @@ Protocol 58 (ADR 0106): event `machine.stats` and `MachineStats` removed; `agent
 Protocol 60 (ADR 0108): a tab layout's leaves can be files (`{"file": "..."}`) and the diff (`{"diff": true}`) as well as sessions; request `fs.new_note`; `fs.read` and `fs.write` accept an absolute path inside the daemon's notes folder.
 
 Protocol 61 (ADR 0107): requests `tsp.snapshot` and `tsp.event`, event `tsp.update`, and `Session.tsp` (`off`, `waiting`, `live`, `fallback`; daemon memory only, like `terminal_title`).
+
+Protocol 62 (ADR 0111): a tab layout's leaves can be browser panes (`{"web": "<url>", "id": "<ulid>"}`); an older UI would drop the leaf and write the layout back without it.
 
 Protocol 41: `session.move` and `Session.position`.
 
@@ -1113,7 +1115,7 @@ Its tab row is `[Files│Session│Git]`; files and the diff open as tabs and pa
   opened, a file is shown selected in its folder.
 - **Terminal links:** while Ctrl (Cmd on macOS) is held over a terminal pane (agents and
   shells) the link under the pointer is underlined and the pointer is a hand; Ctrl+Click
-  (Cmd+Click) opens it. Links are `http://` / `https://` URLs (opened in the browser) and file
+  (Cmd+Click) opens it. Links are `http://` / `https://` URLs (opened in a browser pane, §20M) and file
   paths, relative (`./src/a.rs`, `crates/x/main.rs`) or absolute (`/home/u/a.rs`,
   `C:\x\a.rs`), with an optional `:line` or `:line:col`. A path is a link only if it names an
   existing file inside the pane's folder (the project folder, or the worktree of the pane's
@@ -1410,8 +1412,8 @@ Only edit this file. When done, for EACH comment run:
   every edit (one build at a time per file; an edit made meanwhile is built once it lands). Find
   and "Open at a line" switch Preview to Source and keep Split. A click on a task box ticks or
   unticks it in the source (one undo step, unsaved; refused with a toast while the page is of an
-  older text). The preview's links are clickable (Editor and Docs, ADR 0092): `http`, `https`
-  and `mailto` open in the browser, `#heading` scrolls to that heading (GitHub anchors), a
+  older text). The preview's links are clickable (Editor and Docs, ADR 0092): `http` and `https`
+  open in a browser pane (§20M), `mailto` opens in the mail app, `#heading` scrolls to that heading (GitHub anchors), a
   relative path opens that file of the folder in a file pane (`/path` from the folder root,
   `#L12` at a line); other schemes and paths leaving the folder open nothing (a toast says so).
   GitHub alerts (`> [!NOTE]` / `TIP` / `IMPORTANT` / `WARNING` / `CAUTION`) show a colored bar
@@ -1640,6 +1642,9 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Panes | Toggle Terminal / Chat of the focused agent pane (ADR 0104; works while its composer has the keys) | Ctrl+Alt+T |
 | Panes | Close pane (asks if agent running) | Ctrl+Shift+X |
 | Panes | Rename pane (also: double-click a tab that keeps its default name) | F2 |
+| Panes | New browser pane (split right, empty, address field focused; global, also while a page has the keyboard; not offered where the browser is unavailable, §20M) | Alt+Shift+B |
+| Browser pane | Focus the address field (selects all; Esc gives the keyboard back to the page) | Ctrl+L |
+| Browser pane | Back, Forward, Reload, Open in system browser | command palette only |
 | Terminal | Copy / paste | Ctrl+Shift+C (or Ctrl+C while text is selected) / Ctrl+V or Ctrl+Shift+V |
 | Terminal / Editor / Docs | Find in scrollback / in the opened file / filter the Docs list | Ctrl+Shift+F |
 | Terminal | Page up / down | Shift+PgUp / Shift+PgDn |
@@ -1688,6 +1693,7 @@ Shortcut text on macOS uses ⌃ ⌥ ⇧ ⌘ in Apple's order with no separator (
 | Add workspace / switch to workspace 1-9 / focus the sidebar | ⇧⌘K / ⌘1-9 / ⌘0 |
 | New shell tab / new agent tab / rename tab / close tab | ⌘T / ⇧⌘A / ⇧⌘R / ⇧⌘W |
 | Split right / split down / split with agent / split with shell | ⌘D / ⇧⌘D / ⌥⌘A / ⌥⌘S |
+| New browser pane / focus address (browser pane) | ⌥⌘B / ⌘L |
 | Layouts 1-5 / equalize panes | ⌥⌘1-5 / ⌥⌘0 |
 | Focus pane ← → ↑ ↓ / resize pane | ⌥⌘ arrows / ⌥⇧⌘ arrows |
 | Zoom pane / close pane / rename pane | ⇧⌘M / ⇧⌘X / ⌥⌘R |
@@ -3035,3 +3041,58 @@ macOS only unless a line says "every OS".
     Single instance (LaunchServices reuses a running bundle; a terminal launch shares the daemon), a Dock menu, raising a running machine window from the launcher, and a veto of Dock Quit / log-out.
     To verify on a Mac: AppKit lists the open windows in the Window menu by itself (gpui registers our Window menu as the system windows menu), and View shows exactly one Enter Full Screen; if AppKit adds its own next to ours, ours is dropped on macOS.
     Each `mkrew --machine` window is its own process with its own Dock icon (ADR 0089).
+
+### §20M Browser pane (outside the milestones, ADR 0111)
+
+A web page as a fourth kind of pane, next to sessions, files and the diff (§5, §10).
+Windows and macOS show the page with the OS web view; Linux and machines without it use the system browser.
+
+1. **Opening.**
+   A web link (`http` or `https`) in a Chat message, a Markdown preview, a Docs page, a terminal (Ctrl+Click, Cmd+Click on macOS) or link hints opens in a browser pane; `mailto` and other schemes go to the OS as before.
+   If the tab shown in the window has a browser pane, the link loads there (the first one in tree order) and focuses it; a zoomed neighbour is unzoomed first.
+   Otherwise the link splits right of the pane it came from (the tab's focused pane when it is not known).
+   A link in a view with no tab (Docs) opens a new tab and brings Terminals to the front.
+   Hovering `+` shows a Browser item (Agent, Shell, Note, Browser, `▾`): a click opens a new tab with an empty browser and its address field focused, a drag splits a pane at the drop edge; the `▾` menu has a "Browser" row.
+   `Alt+Shift+B` (`⌥⌘B`) splits right with an empty browser; its palette label is "Panes: New browser pane".
+2. **Look.**
+   A browser pane has the frame of every pane (stripe, dim, grip, divider, drop overlay); the dim covers the toolbar only, because GPUI cannot paint above the native page.
+   Its tab chip shows the globe and the page title, else the URL, else "New browser".
+   The toolbar is one row: back, forward, reload (stop while loading), the address field, Open in system browser, close.
+   Back and forward are enabled whenever the pane has a page and disabled when it has none; the platform's history is not queried.
+   A 2 px accent line under the toolbar shows while the page loads, without animation.
+   An empty pane shows "Type an address or paste a link" below the toolbar.
+   Load errors (no server, no DNS) are the platform's own error page.
+3. **Address field.**
+   Enter loads the typed text, Esc restores the URL and gives the keyboard back to the page, `Ctrl+L` (`⌘L`) focuses it and selects all.
+   Empty: nothing loads.
+   A scheme (`https:`, `http:`, `file:`, `about:`): kept as typed.
+   `localhost`, an IPv4 or bracketed IPv6 address, with or without a port and a path: `http://` in front.
+   No space and a dot in the host part: `https://` in front.
+   Anything else: a Google search of the text.
+4. **Pages.**
+   The leaf's `web` field follows the page and is saved when a load finishes, so a restart brings the pane back on its last page; back / forward history is not kept across a restart, cookies and logins are.
+   A page that asks for a new window loads in the same pane.
+   Windows keeps its data in `<data>/mkrew/WebView2` (shared by all panes, apart from the system browser); macOS uses the app's default data store.
+   F12 opens the platform inspector; on Windows the page follows Mkrew's theme (`prefers-color-scheme`), on macOS it follows the app appearance.
+   Downloads, permission prompts and file pickers are the platform's.
+5. **Native view.**
+   The view is a native child of the window (`wry` 0.57) below the toolbar; it paints above GPUI, so Mkrew hides it with every overlay: palette, dialog, menu, the `+` menu, a peek popover and any drag (the title card, the page's title and URL, shows in its place), with a tab or view change, a zoomed neighbour and while it is off screen.
+   Moving a browser pane to another window (tear-off, Move back, a drag, a closing detached window) rebuilds the page there on the same URL, so back / forward history is lost; `wry` 0.57 `reparent` keeps the first parent's keyboard target, and macOS would need `unsafe`.
+   On Windows `GPUI_DISABLE_DIRECT_COMPOSITION=1` is set at the start of `main()` unless the user set it or the WebView2 Runtime is missing, because gpui-pre-windows 0.3.7 draws through a topmost DirectComposition visual that covers child windows; it is removed from the environment of the daemon, Zed, the updater and machine windows.
+   The first build of a page pumps messages inside GPUI's borrow, so a click or key in the first ~400 ms may be dropped (accepted).
+6. **Keys.**
+   A click in the page gives it the keyboard and focuses its pane in Mkrew (stripe, tab chip and the palette's pane commands follow).
+   An initialization script gives back every combo with Ctrl, Alt or Cmd (and F-keys) of a global binding or of the browser context (`Ctrl+L`); `Ctrl+` / `Cmd+` A, C, V, X, Y and Z, every key without a modifier and a lone Alt stay in the page.
+   So `Alt+←` / `Alt+→` move pane focus, not page history; the page's history is the toolbar, the mouse buttons and the palette.
+   F5, Ctrl+R, F12 and zoom keys work in the page; on macOS Cmd+R and Cmd+0 are Mkrew's own bindings, so the page gives them back.
+   When focus moves to another pane or an overlay opens, the keyboard goes back to Mkrew.
+   The key list follows the keymap (ADR 0073).
+   A page is not trusted: only a page on screen in the active window can claim focus or post keys, and a key reaches only global and browser-context commands (a page can fake those, never a Git, Board, editor or terminal command).
+7. **Where it is not available.**
+   Linux and Windows without the WebView2 Runtime use the system browser: links call the OS, with one toast per run ("Web pages open in your browser: <reason>").
+   The `+` row has no Browser item, `Alt+Shift+B` does nothing and the palette lists no "Panes: New browser pane", "Browser: Focus address", "Back", "Forward" or "Reload" (only "Open in system browser" stays on a browser pane).
+   A browser pane already in a layout (written on another machine, or restored) stays and shows the reason and an "Open in system browser" button.
+   If building a view fails on a machine that has the Runtime, the pane shows the error and the button; the next link or Enter in the address field tries again.
+   A `localhost` page is the UI machine's localhost, not a remote daemon's.
+8. **Not done.**
+   Picture in picture cards, agents reading or driving the page, an element picker, screenshots into the composer, a browser on Linux, port forwarding of a remote machine, back / forward history across a restart, a setting that sends links to the system browser, find in page, bookmarks, a tab strip inside the pane and a download panel.

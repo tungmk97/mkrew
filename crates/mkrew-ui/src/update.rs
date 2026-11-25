@@ -328,6 +328,7 @@ pub fn apply(kind: &InstallKind, file: &Path) -> Result<()> {
         InstallKind::Inno { per_user } => {
             let mut command = std::process::Command::new(file);
             command.args(installer_args(*per_user));
+            crate::browser::strip_own_env(&mut command);
             #[cfg(windows)]
             {
                 use std::os::windows::process::CommandExt;
