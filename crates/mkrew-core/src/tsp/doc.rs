@@ -1,7 +1,10 @@
 //! The TSP document (spec 6.3): the node tree frames of ops build, applied the way omp's own
 //! reference document does (`packages/tui/src/native/apply.ts`, reference section 3.2).
 //!
-//! A failing op is skipped and reported; the rest of its frame still runs.
+//! A failing op is skipped and reported; the rest of its frame still runs. Any node kind is
+//! accepted: omp sends kinds newer than the hello's list (omp 19's `button` and `menu`), and one
+//! unknown kind must not drop a subtree; the UI draws a kind it does not know generically
+//! (ADR 0118).
 
 use std::collections::{HashMap, HashSet};
 
@@ -21,57 +24,12 @@ pub const MAX_TEXT: usize = 1024 * 1024;
 /// Id of the synthetic first row of `main` once old rows were evicted.
 pub const TRIM_ID: &str = "mkrew.trimmed";
 const TRIM_TEXT: &str = "Earlier messages were trimmed";
+/// omp 19.1.1's `TSP_TEXT_KINDS`: the kinds `text` and `splice` ops edit.
 pub const TEXT_KINDS: &[&str] = &[
-    "text", "md", "code", "ansi", "math", "editor", "input", "shimmer",
+    "text", "md", "code", "ansi", "math", "editor", "input", "shimmer", "doc",
 ];
 /// Deepest allowed nesting below the root; a deeper `add` or `move` fails.
 pub const MAX_DEPTH: usize = 64;
-/// The 43 kinds omp 18.13.2 can send (reference section 4); `add` of any other kind fails.
-const KINDS: &[&str] = &[
-    "col",
-    "row",
-    "card",
-    "section",
-    "rule",
-    "spacer",
-    "text",
-    "md",
-    "code",
-    "diff",
-    "ansi",
-    "math",
-    "image",
-    "media",
-    "kv",
-    "table",
-    "tree",
-    "badge",
-    "kbd",
-    "icon",
-    "spinner",
-    "shimmer",
-    "elapsed",
-    "progress",
-    "rate",
-    "list",
-    "item",
-    "tabs",
-    "editor",
-    "input",
-    "status",
-    "seg",
-    "overlay",
-    "toast",
-    "rows",
-    "picker",
-    "prefs",
-    "tool",
-    "checklist",
-    "agent",
-    "chart",
-    "meter",
-    "effort",
-];
 /// Stands in for a missing op argument.
 static NULL: Value = Value::Null;
 
@@ -306,9 +264,6 @@ impl Document {
         }
         if node.id.is_empty() {
             return Err("node without id".to_owned());
-        }
-        if !KINDS.contains(&node.k.as_str()) {
-            return Err(format!("unknown kind {}", node.k));
         }
         if self.nodes.contains_key(&node.id) || !seen.insert(node.id.clone()) {
             return Err(format!("duplicate id {}", node.id));
@@ -758,13 +713,38 @@ mod tests {
                 json!(["add", "x", "main", null, {"id": "z", "k": "col"}]),
                 "does not match",
             ),
-            (leaf("x", "main", "blink"), "unknown kind blink"),
         ];
         for (op, needle) in cases {
             let error = fails(&mut doc, op);
             assert!(error.contains(needle), "{error} should contain {needle}");
         }
         assert!(doc.get("x").is_none() && doc.get("y").is_none());
+    }
+
+    #[test]
+    fn a_kind_omp_added_later_enters_the_tree_and_later_ops_reach_it() {
+        // omp 19 sends `button` and `menu` whatever the hello says; one unknown kind used to drop
+        // the whole subtree, and every later op naming it failed.
+        let mut doc = seeded();
+        let applied = doc.apply(&[
+            json!(["add", "fh", "main", null, {"id": "fh", "k": "card",
+                "c": [{"id": "fh.pill", "k": "button", "p": {"text": "Yes"}}]}]),
+            json!(["add", "next", "main", "fh", {"id": "next", "k": "text"}]),
+            json!(["set", "fh.pill", {"on": true}]),
+        ]);
+        assert!(applied.errors.is_empty(), "{:?}", applied.errors);
+        assert_eq!(doc.get("fh.pill").map(|n| n.kind.as_str()), Some("button"));
+        assert_eq!(ids(&doc, "main"), ["next", "fh"]);
+    }
+
+    #[test]
+    fn text_ops_reach_a_doc_node() {
+        let mut doc = seeded();
+        doc.apply(&[json!(["add", "d", "main", null,
+            {"id": "d", "k": "doc", "p": {"text": "# a"}}])]);
+        let applied = doc.apply(&[json!(["text", "d", "append", "b"])]);
+        assert!(applied.errors.is_empty(), "{:?}", applied.errors);
+        assert_eq!(doc.text("d"), Some("# ab"));
     }
 
     #[test]

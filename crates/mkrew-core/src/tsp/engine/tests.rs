@@ -325,6 +325,32 @@ fn a_frame_with_a_bad_op_forwards_the_good_ops_then_reports_and_acks() {
 }
 
 #[test]
+fn failing_frames_report_each_to_omp_but_warn_once_per_surface() {
+    let (mut e, t) = live();
+    e.on_output(t, &frame_bytes(SF, 1, json!([main_op()])));
+    let (mut warns, mut errors) = (0, 0);
+    for seq in 2..=4 {
+        let steps = e.on_output(t, &frame_bytes(SF, seq, json!([["del", "nope"]])));
+        warns += steps.iter().filter(|s| matches!(s, Step::Warn(_))).count();
+        errors += (reply_bodies(&steps).iter())
+            .filter(|b| b["ev"] == "error")
+            .count();
+    }
+    assert_eq!(
+        (errors, warns),
+        (3, 1),
+        "omp hears every frame, the log only the first"
+    );
+    // Opened again: a new document, so its first failure is logged again.
+    e.on_output(t, &open_bytes());
+    let steps = e.on_output(t, &frame_bytes(SF, 1, json!([["del", "nope"]])));
+    assert_eq!(
+        steps.iter().filter(|s| matches!(s, Step::Warn(_))).count(),
+        1
+    );
+}
+
+#[test]
 fn a_frame_for_an_unknown_surface_is_skipped_with_a_warning_but_acked() {
     let (mut e, t) = live();
     let steps = e.on_output(t, &frame_bytes("s:9", 3, json!([main_op()])));
