@@ -38,6 +38,8 @@ pub enum DockRole {
     Hud,
     HudSeg,
     HudTodo,
+    /// `overlay role=omp.autocomplete`: the completion list under the editor's caret.
+    Completion,
 }
 
 pub fn dock_role(role: &str) -> Option<DockRole> {
@@ -65,6 +67,7 @@ pub fn dock_role(role: &str) -> Option<DockRole> {
         "omp.hud" => DockRole::Hud,
         "omp.hud.seg" => DockRole::HudSeg,
         "omp.hud.todo" => DockRole::HudTodo,
+        "omp.autocomplete" => DockRole::Completion,
         _ => return None,
     })
 }
@@ -95,6 +98,20 @@ fn find<'a>(doc: &'a Document, from: &str, want: DockRole) -> Option<&'a Node> {
 fn child<'a>(doc: &'a Document, parent: &str, want: DockRole) -> Option<&'a Node> {
     doc.children(parent)
         .find(|node| !hidden(node) && dock_role_of(node) == Some(want))
+}
+
+/// The composer's `editor` node (`omp.editor` > `omp.composer.line` > `editor`): the field Mkrew
+/// edits itself (ADR 0113). `None` while omp shows another dock (the ask card).
+pub fn composer_editor(doc: &Document) -> Option<&Node> {
+    let editor = find(doc, "dock", DockRole::Editor)?;
+    let line = child(doc, &editor.id, DockRole::Line)?;
+    doc.children(&line.id)
+        .find(|node| node.kind == "editor" && !hidden(node))
+}
+
+/// omp shows its completion list (slash commands, `@` files, skills): ↑ ↓ Tab Enter Esc are its.
+pub fn completing(doc: &Document) -> bool {
+    find(doc, "dock", DockRole::Completion).is_some()
 }
 
 /// The text of a text-like node, trimmed.
@@ -326,9 +343,7 @@ pub fn dock_model(doc: &Document, theme: &Theme) -> Option<DockModel> {
     let editor = find(doc, "dock", DockRole::Editor)?;
     let line = child(doc, &editor.id, DockRole::Line)?;
     let bar = child(doc, &editor.id, DockRole::Bar)?;
-    let field = doc
-        .children(&line.id)
-        .find(|node| node.kind == "editor" && !hidden(node))?;
+    let field = composer_editor(doc)?;
 
     let mut path = vec![editor.id.clone()];
     let mut at = editor;

@@ -65,6 +65,32 @@ pub(crate) struct TspUi {
     reveal_pending: Cell<bool>,
     /// The scroll of each growing `list` (a picker's items scroll inside their card).
     lists: RefCell<HashMap<String, ListState>>,
+    /// The composer field Mkrew edits itself (ADR 0113); `None` while omp edits its own (another
+    /// focus, a modal, vim mode, a read-only surface).
+    editor: Option<tsp::LocalEditor>,
+    /// The attachment chip (`#n`) whose preview is open, and where that chip was painted.
+    chip_open: Option<String>,
+    chip_at: Rc<Cell<Bounds<Pixels>>>,
+}
+
+/// Keeps the composer field Mkrew edits in step with omp's editor of the shown surface, for as
+/// long as omp has a composer (keys reach it only while `tsp::local_editor_node` says so).
+fn sync_editor(mirror: Option<&Mirror>, editor: &mut Option<tsp::LocalEditor>) {
+    let node = mirror
+        .and_then(Mirror::shown)
+        .filter(|(meta, _)| !meta.read_only)
+        .and_then(|(_, doc)| tsp::composer_editor(doc));
+    let Some(node) = node else {
+        *editor = None;
+        return;
+    };
+    let cursor = (node.props.get("cursor").and_then(Value::as_u64))
+        .and_then(|units| usize::try_from(units).ok());
+    let text = str_prop(node, "text").unwrap_or("");
+    let field = editor.get_or_insert_with(tsp::LocalEditor::default);
+    if field.sync(&node.id, text, cursor) {
+        tracing::debug!(node = %node.id, len = text.len(), "omp changed the composer text");
+    }
 }
 
 /// One growing list's scroll and the item it last scrolled to.
@@ -105,6 +131,9 @@ impl TspUi {
             todo_toggled: HashSet::new(),
             reveal_pending: Cell::new(false),
             lists: RefCell::new(HashMap::new()),
+            editor: None,
+            chip_open: None,
+            chip_at: Rc::new(Cell::new(Bounds::default())),
         }
     }
 
@@ -178,6 +207,7 @@ impl Shell {
                 match reply {
                     Ok(snapshot) => {
                         ui.mirror = Some(Mirror::from_snapshot(snapshot));
+                        sync_editor(ui.mirror.as_ref(), &mut ui.editor);
                         ui.prune();
                         ui.failures = 0;
                         ui.retry_at = None;
@@ -217,6 +247,12 @@ impl Shell {
                 self.toast_info(text, cx);
             }
             return;
+        }
+        sync_editor(ui.mirror.as_ref(), &mut ui.editor);
+        if (ui.chip_open.as_deref())
+            .is_some_and(|id| !ui.mirror.as_ref().is_some_and(|m| m.has_node(id)))
+        {
+            ui.chip_open = None;
         }
         if tsp::removes_nodes(&update.change) {
             ui.prune();
@@ -489,7 +525,8 @@ impl Shell {
     }
 
     /// The pane's keys go to its `TerminalPane` (hidden but alive), exactly like a terminal pane,
-    /// except Ctrl+C with a selection (copies) and Esc with a selection (clears it).
+    /// except Ctrl+C with a selection (copies), Esc with a selection or a popover (clears it),
+    /// and the keys of the composer field Mkrew edits itself (`tsp_compose_key`).
     pub(crate) fn tsp_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -509,11 +546,13 @@ impl Shell {
             return;
         }
         let escape = !event.keystroke.modifiers.modified() && event.keystroke.key == "escape";
-        let popover = (self.tsps.get(&session)).is_some_and(|ui| ui.todo_open.is_some());
+        let popover = (self.tsps.get(&session))
+            .is_some_and(|ui| ui.todo_open.is_some() || ui.chip_open.is_some());
         if tsp::escape_clears(popover, escape) {
             cx.stop_propagation();
             if let Some(ui) = self.tsps.get_mut(&session) {
                 ui.todo_open = None;
+                ui.chip_open = None;
             }
             cx.notify();
             return;
@@ -526,10 +565,91 @@ impl Shell {
             cx.notify();
             return;
         }
+        if self.tsp_compose_key(session, event, cx) {
+            return;
+        }
         let Some(pane) = self.panes.get(&session).cloned() else {
             return;
         };
         pane.update(cx, |pane, cx| pane.key_down(event, window, cx));
+    }
+
+    /// A key in the composer field Mkrew edits (ADR 0113): typing, caret moves, the selection,
+    /// the clipboard and undo stay in the field, and omp gets the change as one `edit`. `false`
+    /// for a key omp takes through the PTY (Enter, Tab, Esc, its completion list and history,
+    /// its shortcuts, an image paste), after the field's caret went to omp so the key acts there.
+    fn tsp_compose_key(
+        &mut self,
+        session: Ulid,
+        event: &KeyDownEvent,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        if self.is_exited(session) {
+            return false;
+        }
+        let Some(ui) = self.tsps.get(&session) else {
+            return false;
+        };
+        let (Some(field), Some((_, doc))) = (
+            ui.editor.as_ref(),
+            ui.mirror.as_ref().and_then(Mirror::shown),
+        ) else {
+            return false;
+        };
+        // omp edits its own field while its focus is elsewhere, a modal is open or vim mode is on.
+        if tsp::local_editor_node(doc).is_none_or(|node| node.id != field.node) {
+            return false;
+        }
+        let key = tsp::compose_key_in(doc, &event.keystroke, &field.input);
+        // An image on the clipboard goes to omp, which makes it an attachment (`#n`).
+        let pasted = (key == tsp::ComposeKey::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let Some(field) = (self.tsps.get_mut(&session)).and_then(|ui| ui.editor.as_mut()) else {
+            return false;
+        };
+        let local = match key {
+            tsp::ComposeKey::Pty => false,
+            tsp::ComposeKey::Paste => pasted.is_some_and(|text| {
+                field
+                    .input
+                    .insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
+                true
+            }),
+            tsp::ComposeKey::Copy | tsp::ComposeKey::Cut => {
+                if let Some(text) = field.input.selected_text() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
+                }
+                if key == tsp::ComposeKey::Cut {
+                    field.input.cut();
+                }
+                true
+            }
+            tsp::ComposeKey::Edit(DialogKey::Insert(text)) => {
+                field.input.insert(&text);
+                true
+            }
+            tsp::ComposeKey::Edit(key) => {
+                field.input.edit(&key);
+                true
+            }
+        };
+        if let Some(edit) = field.edit() {
+            self.tsp_emit(session, edit, cx);
+        }
+        if local {
+            cx.stop_propagation();
+            cx.notify();
+        }
+        local
+    }
+
+    /// A press or drag in the composer field Mkrew edits: the caret goes to byte `at` (omp gets
+    /// it with the next edit or key).
+    fn tsp_caret(&mut self, session: Ulid, caret: mkrew_ui::field::Caret) {
+        if let Some(field) = (self.tsps.get_mut(&session)).and_then(|ui| ui.editor.as_mut()) {
+            field.input.click(caret.at, caret.extend, caret.clicks);
+        }
     }
 
     /// The selected text as shown; `None` for no, an empty or a stale selection.
@@ -689,6 +809,9 @@ struct Paint<'a> {
     /// The node's height is bounded by the pane (the overlay layer, a `screen` surface): columns
     /// and rows clip, so a growing list scrolls inside instead of the page growing.
     bounded: bool,
+    /// The pane shares its height with others and has no keyboard: the composer is its field
+    /// alone (the status row, the meter, the chips and the bar come back with the keyboard).
+    compact: bool,
 }
 
 impl Paint<'_> {
@@ -757,24 +880,37 @@ fn styled_runs_w(
     regular: f32,
     theme: &Theme,
 ) -> StyledText {
-    styled_runs_wavy(runs, base, all_mono, regular, false, theme)
+    let (mut text, mut text_runs) = (String::new(), Vec::new());
+    push_runs(
+        &mut text,
+        &mut text_runs,
+        runs,
+        base,
+        all_mono,
+        regular,
+        false,
+        theme,
+    );
+    StyledText::new(text).with_runs(text_runs)
 }
 
-/// [`styled_runs_w`] with a wavy `danger_text` underline under every run when `typo`.
-fn styled_runs_wavy(
+/// Appends `runs` to `text` and its `text_runs` (see [`styled_runs`]), with a wavy `danger_text`
+/// underline under every run when `typo`.
+#[allow(clippy::too_many_arguments)]
+fn push_runs(
+    text: &mut String,
+    text_runs: &mut Vec<TextRun>,
     runs: &[(String, SpanStyle)],
     base: u32,
     all_mono: bool,
     regular: f32,
     typo: bool,
     theme: &Theme,
-) -> StyledText {
+) {
     // Private-use glyphs (omp's icons) are drawn in the terminal font, which carries them.
     let runs = tsp::with_icon_glyphs(runs);
     let ui_font = gpui::font(theme.ui_font_family.clone());
     let mono_font = terminal_font(theme);
-    let mut text = String::new();
-    let mut text_runs = Vec::new();
     for (part, style) in runs.iter().filter(|(part, _)| !part.is_empty()) {
         let mut font = if style.mono || all_mono {
             mono_font.clone()
@@ -805,7 +941,6 @@ fn styled_runs_wavy(
         });
         text.push_str(part);
     }
-    StyledText::new(text).with_runs(text_runs)
 }
 
 fn image_format(mime: &str) -> Option<gpui::ImageFormat> {
@@ -841,13 +976,15 @@ impl Shell {
     }
 
     /// The pane of an omp session in TSP mode: the surface, the starting state, or (exited) the
-    /// last document read-only. `several`: other panes are shown beside it, so the transcript
-    /// spans the pane (`tsp::column_max`).
+    /// last document read-only. `stacked`: the pane shares the tab's height with another, so its
+    /// composer is compact while the pane has no keyboard. `several`: other panes are shown
+    /// beside it, so the transcript spans the pane (`tsp::column_max`).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_tsp(
         &self,
         session: Ulid,
         is_focused: bool,
+        stacked: bool,
         width: f32,
         several: bool,
         now: i64,
@@ -903,6 +1040,7 @@ impl Shell {
             modal: doc.children("layer").any(|n| !bool_prop(n, "hidden")),
             in_layer: false,
             bounded: false,
+            compact: stacked && !is_focused,
         };
         let layer_paint = Paint {
             in_layer: true,
@@ -922,10 +1060,11 @@ impl Shell {
         if !ui.reveal_pending.replace(false) && at_end {
             ui.scroll.scroll_to_bottom();
         }
-        // Each row of `main` is a direct child of the scroll box (after the spacer), so `reveal`
-        // can scroll to it. The spacer keeps the first row clear of the pane's 8 px drag strip
-        // (`PANE_GRIP_HEIGHT`), the 2 px color line and the badges, like the Chat list's
-        // `py(space::L)`.
+        // Each row of `main` is a direct child of the scroll box (between the spacers), so
+        // `reveal` can scroll to it. The top spacer keeps the first row clear of the pane's 8 px
+        // drag strip (`PANE_GRIP_HEIGHT`), the 2 px color line and the badges, like the Chat
+        // list's `py(space::L)`; the bottom one parts the last message from the status row and
+        // the meter.
         // Alone, the transcript is in the Chat column; among several panes it spans the pane like
         // Tern (`tsp::column_max`). The dock below keeps the Chat column.
         let max = tsp::column_max(several);
@@ -941,6 +1080,7 @@ impl Shell {
                 .chain((doc.children("main")).map(|node| {
                     page_column(self.tsp_node(&paint, node, cx), max, false).into_any_element()
                 }))
+                .chain(std::iter::once(div().h(px(space::L)).into_any_element()))
                 .collect()
         };
         // The dock as the Chat composer when omp sent its composer roles. With the ask card or a
@@ -2198,7 +2338,10 @@ impl Shell {
         self.tsp_editor(p, node, EditorLook::Plain, cx)
     }
 
-    /// An `editor` or `input`: omp's text with the caret, its decorations and its placeholder.
+    /// An `editor` or `input`: its text as one wrapping run of text (the `prompt` lead, the
+    /// decorations, the selection, the caret, the ghost), or the placeholder. The composer field
+    /// Mkrew edits itself (ADR 0113) shows that field's text, caret and selection; omp's
+    /// decorations only while omp has the same text.
     fn tsp_editor(
         &self,
         p: &Paint<'_>,
@@ -2207,110 +2350,164 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let theme = p.theme;
-        let text = str_prop(node, "text").unwrap_or("");
-        let caret_at = (node.props.get("cursor").and_then(Value::as_u64))
-            .map(|units| tsp::byte_at_utf16(text, units as usize));
+        let session = p.session;
+        let omp_text = str_prop(node, "text").unwrap_or("");
+        let local = (matches!(look, EditorLook::Composer { .. }) && !self.is_exited(session))
+            .then_some(p.ui.editor.as_ref())
+            .flatten()
+            .filter(|field| field.node == node.id);
         // omp says which editable node has the focus (`focus` op); until it does, the pane's
         // only editor is the one.
-        let has_focus = p.focused && p.doc.focus().is_none_or(|id| id == node.id);
-        let caret = || div().w(px(theme::BORDER_WIDTH)).bg(rgb(theme.text));
-        let part = |s: &str, color: u32| {
-            div().min_w_0().child(styled_runs(
-                &[(s.to_owned(), SpanStyle::default())],
-                color,
-                false,
-                theme,
-            ))
+        let has_focus =
+            p.focused && (local.is_some() || p.doc.focus().is_none_or(|id| id == node.id));
+        let (text, cursor, selection) = match local {
+            Some(field) => (
+                field.input.as_str(),
+                field.input.cursor(),
+                field.input.selection(),
+            ),
+            None => {
+                let cursor = (node.props.get("cursor").and_then(Value::as_u64))
+                    .map_or(omp_text.len(), |units| {
+                        tsp::byte_at_utf16(omp_text, units as usize)
+                    });
+                (omp_text, cursor, None)
+            }
         };
-        let piece = |s: &str, decor: tsp::Decor| {
-            div().min_w_0().child(styled_runs_wavy(
-                &[(s.to_owned(), decor.style)],
-                theme.text,
-                false,
-                weight::REGULAR,
-                decor.typo,
-                theme,
-            ))
-        };
-        let line_height = theme::rems_px(space::L + space::XS);
-        // The prompt starts the first line, before the caret and the text.
-        let mut lead = (node.props.get("prompt"))
+        let lead = (node.props.get("prompt"))
             .map(|v| tsp::spans_of(v, theme))
-            .filter(|runs| !runs.is_empty())
-            .map(|runs| {
-                div()
-                    .flex_none()
-                    .whitespace_nowrap()
-                    .child(styled_runs(&runs, theme.text_muted, false, theme))
-                    .into_any_element()
-            });
-        // 10b: rows stay `Div`s until the end, so the composer's ghost can follow the caret.
-        let mut lines: Vec<Div> = Vec::new();
-        if text.is_empty() {
+            .unwrap_or_default();
+        let lead_text: String = lead.iter().map(|(t, _)| t.as_str()).collect();
+        let (shown, layout, map) = if text.is_empty() {
             let placeholder = (node.props.get("placeholder"))
                 .map(|v| tsp::spans_of(v, theme))
                 .unwrap_or_default();
-            let mut row = div().flex().items_center().min_h(line_height);
-            row = row.children(lead.take());
-            if has_focus {
-                row = row.child(caret());
-            }
-            lines.push(match look {
+            let placeholder = match look {
                 EditorLook::Plain => {
-                    row.child(styled_runs(&placeholder, theme.text_dim, false, theme))
+                    div().child(styled_runs(&placeholder, theme.text_dim, false, theme))
                 }
-                EditorLook::Composer { .. } => row.child(placeholder_row(
+                EditorLook::Composer { .. } => placeholder_row(
                     styled_runs(&placeholder, theme.text_muted, false, theme),
                     theme,
-                )),
-            });
+                ),
+            };
+            let empty = div()
+                .flex()
+                .items_center()
+                .when(!lead.is_empty(), |row| {
+                    row.child(styled_runs(&lead, theme.text_muted, false, theme))
+                })
+                .child(mkrew_ui::field::empty_field(placeholder, has_focus, theme));
+            (empty.into_any_element(), None, tsp::ShownMap::default())
         } else {
-            // Decorations (mention colors, hidden markers, typos) cut the text into pieces.
-            let pieces = tsp::decor_pieces(text, array_prop(node, "decor"), theme);
-            let caret_at = caret_at.filter(|_| has_focus);
-            let mut start = 0;
-            for line in text.split('\n') {
-                let end = start + line.len();
-                let mut row = div().flex().items_center().min_h(line_height);
-                row = row.children(lead.take());
-                for atom in tsp::line_atoms(&pieces, start..end, caret_at) {
-                    row = match atom {
-                        tsp::Atom::Caret => row.child(caret()),
-                        tsp::Atom::Text(range, decor) => row.child(piece(&text[range], decor)),
-                    };
-                }
-                lines.push(row);
-                start = end + 1;
+            // omp's decorations (skills, mentions, hidden markers, typos) are for omp's text.
+            let decor = if text == omp_text {
+                array_prop(node, "decor")
+            } else {
+                &[]
+            };
+            let pieces = tsp::decor_pieces(text, decor, theme);
+            let view = tsp::EditorView::new(&lead_text, text, &pieces);
+            let map = view.map().clone();
+            let (mut drawn, mut runs) = (String::new(), Vec::new());
+            push_runs(
+                &mut drawn,
+                &mut runs,
+                &lead,
+                theme.text_muted,
+                false,
+                weight::REGULAR,
+                false,
+                theme,
+            );
+            for (range, decor) in &view.pieces {
+                let part = [(view.shown[range.clone()].to_owned(), decor.style)];
+                push_runs(
+                    &mut drawn,
+                    &mut runs,
+                    &part,
+                    theme.text,
+                    false,
+                    weight::REGULAR,
+                    decor.typo,
+                    theme,
+                );
             }
-        }
-        // Inline suggestion: after the caret on the last line (composer), else under the text.
-        let (under, inline) = match look {
-            EditorLook::Plain => (
-                str_prop(node, "ghost").filter(|g| !g.is_empty() && !text.is_empty()),
-                None,
-            ),
-            EditorLook::Composer { ghost } => (None, ghost),
+            if let Some(selection) = &selection {
+                let range = map.to_shown(selection.start)..map.to_shown(selection.end);
+                runs = mkrew_ui::field::highlight_runs(
+                    runs,
+                    range,
+                    mkrew_ui::field::selection_bg(theme),
+                );
+            }
+            // The composer's ghost follows the caret at the end, once omp has the same text.
+            let ghost = match look {
+                EditorLook::Composer { ghost } => {
+                    ghost.filter(|_| text == omp_text && cursor == text.len())
+                }
+                EditorLook::Plain => None,
+            };
+            if let Some(ghost) = ghost {
+                let part = [(ghost.to_owned(), SpanStyle::default())];
+                push_runs(
+                    &mut drawn,
+                    &mut runs,
+                    &part,
+                    theme.text_subtle,
+                    false,
+                    weight::REGULAR,
+                    false,
+                    theme,
+                );
+            }
+            let styled = StyledText::new(drawn).with_runs(runs);
+            let caret = has_focus && selection.is_none();
+            let (shown, layout) =
+                mkrew_ui::field::caret_over(styled, map.to_shown(cursor), caret, theme);
+            (shown, Some(layout), map)
         };
-        if let Some(ghost) = inline
-            && let Some(last) = lines.pop()
-        {
-            lines.push(last.child(part(ghost, theme.text_subtle)));
-        }
-        let session = p.session;
+        // Plain editors: omp's suggestion under the text.
+        let under = match look {
+            EditorLook::Plain => {
+                str_prop(node, "ghost").filter(|g| !g.is_empty() && !text.is_empty())
+            }
+            EditorLook::Composer { .. } => None,
+        };
         let id = node.id.clone();
         // A text field: exempt from the press look, so a plain mouse-down sends the focus.
         let el = div()
             .flex()
             .flex_col()
             .min_w_0()
-            .children(lines)
-            .children(under.map(|g| part(g, theme.text_dim)))
+            .child(shown)
+            .children(under.map(|g| {
+                styled_runs(
+                    &[(g.to_owned(), SpanStyle::default())],
+                    theme.text_dim,
+                    false,
+                    theme,
+                )
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |shell, _, _, cx| {
                     shell.tsp_click(session, &id, false, cx);
                 }),
             );
+        let el = if local.is_some() {
+            mkrew_ui::field::caret_mouse(
+                el,
+                &cx.entity(),
+                layout,
+                move |shell: &mut Shell, caret| {
+                    let at = map.to_text(caret.at);
+                    shell.tsp_caret(session, mkrew_ui::field::Caret { at, ..caret });
+                },
+            )
+        } else {
+            el
+        };
         let el = if tsp::grows(node) || matches!(look, EditorLook::Composer { .. }) {
             el.flex_1()
         } else {
@@ -2794,7 +2991,7 @@ impl Shell {
     }
 
     /// The status row (when it has anything), the context meter and the card: the Chat composer
-    /// with omp's content.
+    /// with omp's content. Compact (`Paint::compact`): the card with the field only.
     fn tsp_composer(
         &self,
         p: &Paint<'_>,
@@ -2804,24 +3001,6 @@ impl Shell {
     ) -> AnyElement {
         let theme = p.theme;
         let doc = p.doc;
-        let status = self.tsp_dock_status(p, &m.status, cx);
-        let meter = m.context.as_ref().map(|c| {
-            let marks = c.marks.iter().map(|k| (k.at, k.title.clone())).collect();
-            let bar = meter_bar(
-                c.fraction.unwrap_or(0.0),
-                tsp::tone_color(c.tone, theme),
-                c.label.clone(),
-                c.total.clone(),
-                marks,
-                theme,
-            );
-            self.tsp_chip(p, &c.id, Look::Text, bar, cx)
-        });
-        let focus = m.focus.as_ref().map(|f| self.tsp_dock_focus(p, f, cx));
-        let chips: Vec<AnyElement> = (m.chips.iter())
-            .filter_map(|id| doc.get(id))
-            .map(|node| self.tsp_node(p, node, cx))
-            .collect();
         let line: Vec<AnyElement> = doc
             .children(&m.line)
             .map(|node| {
@@ -2846,6 +3025,33 @@ impl Shell {
             .text_size(font_size::BODY)
             .text_color(rgb(theme.text))
             .children(line);
+        if p.compact {
+            return composer_card_frame(theme).child(field).into_any_element();
+        }
+        let status = self.tsp_dock_status(p, &m.status, cx);
+        // What the agent works on, before the window size on the meter's row.
+        let title = (self.sidebar.sessions().iter())
+            .find(|s| s.id == p.session)
+            .and_then(mkrew_ui::history::title)
+            .map(str::to_owned);
+        let meter = m.context.as_ref().map(|c| {
+            let marks = c.marks.iter().map(|k| (k.at, k.title.clone())).collect();
+            let bar = meter_bar(
+                c.fraction.unwrap_or(0.0),
+                tsp::tone_color(c.tone, theme),
+                c.label.clone(),
+                title,
+                c.total.clone(),
+                marks,
+                theme,
+            );
+            self.tsp_chip(p, &c.id, Look::Text, bar, cx)
+        });
+        let focus = m.focus.as_ref().map(|f| self.tsp_dock_focus(p, f, cx));
+        let chips: Vec<AnyElement> = (m.chips.iter())
+            .filter_map(|id| doc.get(id))
+            .map(|node| self.tsp_attachment(p, node, cx))
+            .collect();
         let card = composer_card_frame(theme)
             .children(focus)
             .when(!chips.is_empty(), |el| {
@@ -2856,9 +3062,101 @@ impl Shell {
         div()
             .flex()
             .flex_col()
+            .gap(px(space::S))
             .children(status)
             .children(meter)
             .child(card)
+            .into_any_element()
+    }
+
+    /// An attachment of the composer (`card role=omp.composer.chip`, head `#n`): a small accent
+    /// chip like omp's own, whose click shows what it holds (the image, the pasted text) in a
+    /// panel above it. Esc or a click outside closes it.
+    fn tsp_attachment(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let label: String = (node.props.get("head"))
+            .map(|head| tsp::spans_of(head, theme))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect();
+        let open = p.ui.chip_open.as_deref() == Some(node.id.as_str());
+        let (session, id) = (p.session, node.id.clone());
+        let chip = div()
+            .id(SharedString::from(format!(
+                "tsp-attach-{}-{}",
+                p.session, node.id
+            )))
+            .flex()
+            .items_center()
+            .px(px(space::S))
+            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .rounded(px(theme::radius::PILL))
+            .bg(rgb(theme.accent_bg))
+            .text_size(font_size::META)
+            .font_weight(FontWeight(weight::SEMIBOLD))
+            .text_color(rgb(theme.accent_text))
+            .child(if label.trim().is_empty() {
+                "#".to_owned()
+            } else {
+                label
+            })
+            .pressable_unless(open, Look::Chip, theme)
+            .when(p.tips(), |el| {
+                el.tooltip(tooltip(theme, "Preview the attachment", ""))
+            })
+            .on_press(
+                true,
+                cx.listener(move |shell, _, _, cx| {
+                    if let Some(ui) = shell.tsps.get_mut(&session) {
+                        ui.chip_open = match ui.chip_open {
+                            Some(_) => None,
+                            None => Some(id.clone()),
+                        };
+                    }
+                    cx.notify();
+                }),
+            );
+        if !open {
+            return chip.into_any_element();
+        }
+        // Where the open chip is painted: a press on it is not "outside" the panel.
+        let chip_at = p.ui.chip_at.clone();
+        let bounds = canvas(
+            {
+                let chip_at = chip_at.clone();
+                move |bounds, _, _| chip_at.set(bounds)
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+        let panel = floating_panel(
+            SharedString::from(format!("tsp-attach-panel-{session}")),
+            theme,
+        )
+        .bg(rgb(theme.surface_raised))
+        .max_w(px(theme::TSP_POPOVER_WIDTH))
+        .p(px(space::M))
+        .on_mouse_down_out(cx.listener(move |shell, event: &MouseDownEvent, _, cx| {
+            if !chip_at.get().contains(&event.position)
+                && let Some(ui) = shell.tsps.get_mut(&session)
+            {
+                ui.chip_open = None;
+                cx.notify();
+            }
+        }))
+        .children(self.tsp_children(p, node, cx));
+        div()
+            .relative()
+            .child(chip)
+            .child(bounds)
+            .child(deferred(
+                anchored()
+                    .anchor(Anchor::BottomLeft)
+                    .snap_to_window_with_margin(px(space::S))
+                    .child(panel),
+            ))
             .into_any_element()
     }
 

@@ -1239,10 +1239,14 @@ impl Shell {
                 } else {
                     theme.accent
                 };
+                let title = page
+                    .and_then(|page| page.meta.title.as_deref())
+                    .or_else(|| info.and_then(mkrew_ui::history::title));
                 meter_bar(
                     meter.fraction,
                     fill,
                     format!("{}%", meter.percent),
+                    title.map(str::to_owned),
                     meter.window_label,
                     Vec::new(),
                     theme,
@@ -1493,12 +1497,14 @@ pub(super) fn composer_card_frame(theme: &Theme) -> gpui::Div {
 }
 
 /// The thin context meter over the card: a `CONTEXT_METER_HEIGHT` track filled to `fraction` in
-/// `fill`, `left` and `right` under it in `META` muted. `marks` (position 0..1, tooltip) are
-/// small ticks on the track (omp's auto-compact point); Chat has none.
+/// `fill`, `left` and `right` under it in `META` muted, the conversation's `title` (what the
+/// agent works on) just before `right`, truncated. `marks` (position 0..1, tooltip) are small
+/// ticks on the track (omp's auto-compact point); Chat has none.
 pub(super) fn meter_bar(
     fraction: f32,
     fill: u32,
     left: String,
+    title: Option<String>,
     right: String,
     marks: Vec<(f32, String)>,
     theme: &Theme,
@@ -1549,11 +1555,26 @@ pub(super) fn meter_bar(
         .child(
             div()
                 .flex()
-                .justify_between()
+                .items_center()
+                .gap(px(space::S))
                 .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
-                .child(left)
-                .child(right),
+                .child(div().flex_none().child(left))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .justify_end()
+                        .children(title.map(|title| {
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(rgb(theme.text_subtle))
+                                .child(title)
+                        })),
+                )
+                .child(div().flex_none().child(right)),
         )
 }
 

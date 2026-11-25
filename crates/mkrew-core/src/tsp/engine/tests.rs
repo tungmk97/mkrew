@@ -452,7 +452,7 @@ fn events_outside_the_p1_list_are_rejected_and_sf_is_always_the_callers() {
         )
     );
     for bad in [
-        json!({"ev": "edit", "id": "x"}),
+        json!({"ev": "undo", "id": "x"}),
         json!({"ev": "bogus"}),
         json!({"id": "x"}),
         json!("action"),

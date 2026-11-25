@@ -74,8 +74,10 @@ pub const P1_KINDS: &[&str] = &[
     "checklist",
 ];
 
-/// The events a client may send in P1 (spec 7.4).
-pub const P1_EVENTS: &[&str] = &["action", "toggle", "select", "activate", "focus", "theme"];
+/// The events a client may send (spec 7.4); `edit` is the composer Mkrew edits itself (ADR 0113).
+pub const P1_EVENTS: &[&str] = &[
+    "action", "toggle", "select", "activate", "focus", "theme", "edit",
+];
 
 /// Largest body the engine writes; the hello's `apc` field tells omp the same number.
 const APC_LIMIT: usize = 65_536;

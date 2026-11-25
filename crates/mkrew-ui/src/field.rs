@@ -8,8 +8,9 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, Entity, HighlightStyle, MouseButton, MouseDownEvent,
-    MouseMoveEvent, Pixels, Point, StyledText, TextLayout, canvas, div, fill, px, rgb, size,
+    AnyElement, App, Bounds, ClipboardItem, Entity, HighlightStyle, Hsla, MouseButton,
+    MouseDownEvent, MouseMoveEvent, Pixels, Point, StyledText, TextLayout, TextRun, canvas, div,
+    fill, px, rgb, size,
 };
 
 use crate::preview::closest_byte;
@@ -50,29 +51,50 @@ pub fn caret_text(
     theme: &Theme,
 ) -> (AnyElement, Option<TextLayout>) {
     if text.is_empty() {
-        let caret = div()
-            .flex_none()
-            .w(px(theme::BORDER_WIDTH))
-            .h(font_size::BODY)
-            .bg(rgb(theme.text));
-        let empty = div()
-            .flex()
-            .items_center()
-            .when(focused, |row| row.child(caret))
-            .child(div().text_color(rgb(theme.text_subtle)).child(placeholder));
-        return (empty.into_any_element(), None);
+        return (empty_field(placeholder, focused, theme), None);
     }
     let lit = HighlightStyle {
-        background_color: Some(rgb(theme.terminal_selection_bg).into()),
+        background_color: Some(selection_bg(theme)),
         ..HighlightStyle::default()
     };
     let selection = selection.filter(|s| !s.is_empty());
     let show_caret = focused && selection.is_none();
     let styled = StyledText::new(text.to_owned()).with_highlights(selection.map(|s| (s, lit)));
+    let (shown, layout) = caret_over(styled, cursor.min(text.len()), show_caret, theme);
+    (shown, Some(layout))
+}
+
+/// An empty field: the caret while `focused`, then the muted `placeholder`.
+pub fn empty_field(placeholder: impl IntoElement, focused: bool, theme: &Theme) -> AnyElement {
+    let caret = div()
+        .flex_none()
+        .w(px(theme::BORDER_WIDTH))
+        .h(font_size::BODY)
+        .bg(rgb(theme.text));
+    div()
+        .flex()
+        .items_center()
+        .when(focused, |row| row.child(caret))
+        .child(div().text_color(rgb(theme.text_subtle)).child(placeholder))
+        .into_any_element()
+}
+
+/// The background of selected text in a field.
+pub fn selection_bg(theme: &Theme) -> Hsla {
+    rgb(theme.terminal_selection_bg).into()
+}
+
+/// `styled` with the caret drawn at byte `cursor` when `show`; the layout maps pointer positions
+/// to bytes once painted.
+pub fn caret_over(
+    styled: StyledText,
+    cursor: usize,
+    show: bool,
+    theme: &Theme,
+) -> (AnyElement, TextLayout) {
     let layout = styled.layout().clone();
     let (caret_layout, caret_color) = (layout.clone(), rgb(theme.text));
-    let cursor = cursor.min(text.len());
-    let shown = div().relative().child(styled).when(show_caret, |el| {
+    let shown = div().relative().child(styled).when(show, |el| {
         // Painted after the text's prepaint, so its layout knows where the caret byte sits. It
         // paints at the layout's window position, so it takes no room: a full-size layer would
         // sit below the text and add its height to a scrolling field's content, scrolling the
@@ -91,7 +113,33 @@ pub fn caret_text(
             .size_0(),
         )
     });
-    (shown.into_any_element(), Some(layout))
+    (shown.into_any_element(), layout)
+}
+
+/// `runs` with the bytes of `range` on `bg` (runs cut at its ends): a selection over text that
+/// has its own runs (colors, fonts).
+pub fn highlight_runs(runs: Vec<TextRun>, range: Range<usize>, bg: Hsla) -> Vec<TextRun> {
+    let mut out = Vec::with_capacity(runs.len() + 2);
+    let mut start = 0;
+    for run in runs {
+        let end = start + run.len;
+        let cuts = [
+            start,
+            range.start.clamp(start, end),
+            range.end.clamp(start, end),
+            end,
+        ];
+        for cut in cuts.windows(2).filter(|cut| cut[0] < cut[1]) {
+            let mut part = run.clone();
+            part.len = cut[1] - cut[0];
+            if range.start <= cut[0] && cut[1] <= range.end {
+                part.background_color = Some(bg);
+            }
+            out.push(part);
+        }
+        start = end;
+    }
+    out
 }
 
 /// Makes `field` put the caret under the pointer: a press calls `on_caret` with the byte
