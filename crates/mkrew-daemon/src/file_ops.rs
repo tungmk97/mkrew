@@ -68,8 +68,6 @@ const NOTE_TRIES: u32 = 1000;
 /// next number (`create` never overwrites). Returns the note relative to `root` when it is
 /// inside it, else as an absolute `/`-separated path. An error carries its [`ErrorKind`] and a
 /// message for the user that names the folder.
-// ponytail: "inside the root" is a lexical prefix test; a root and a folder spelled differently
-// (8.3 names, another case on Windows) answer absolute, which `fs.read` / `fs.write` accept too.
 pub(crate) fn new_note(
     root: &Path,
     folder: &NotesFolder,
@@ -113,15 +111,22 @@ pub(crate) fn new_note(
     ))
 }
 
-/// `made` (relative to the folder `new_note` used) as the client sees it.
+/// `made` (relative to the folder `new_note` used) as the client sees it. The root is the
+/// project's canonical path (on-disk case, no 8.3 names, no `..`), the folder is spelled as the
+/// user typed it, so both are canonicalized before the prefix test (the folder exists now).
 fn answer(root: &Path, folder: &NotesFolder, made: &str) -> String {
     let NotesFolder::Absolute(path) = folder else {
         return made.to_owned();
     };
-    match path.strip_prefix(root) {
-        Ok(inside) if inside.as_os_str().is_empty() => made.to_owned(),
-        Ok(inside) => format!("{}/{made}", inside.to_string_lossy().replace('\\', "/")),
-        Err(_) => format!("{}/{made}", path.to_string_lossy().replace('\\', "/")),
+    let canonical = |path: &Path| dunce::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    let inside = canonical(path)
+        .strip_prefix(canonical(root))
+        .map(Path::to_path_buf)
+        .ok();
+    match inside {
+        Some(inside) if inside.as_os_str().is_empty() => made.to_owned(),
+        Some(inside) => format!("{}/{made}", inside.to_string_lossy().replace('\\', "/")),
+        None => format!("{}/{made}", path.to_string_lossy().replace('\\', "/")),
     }
 }
 
@@ -264,6 +269,19 @@ mod tests {
             again,
             format!("{}/note-20261123-090507-2.md", slash(&outside))
         );
+    }
+
+    #[test]
+    fn new_note_answers_relative_for_a_folder_spelled_differently_from_the_root() {
+        // The project's root is canonical, the user's folder is not: `..` here, 8.3 names or
+        // another case on Windows.
+        let base = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(base.path()).unwrap();
+        fs::create_dir(root.join("docs")).unwrap();
+        let folder = NotesFolder::Absolute(root.join("docs").join("..").join("notes"));
+        let made = new_note(&root, &folder, at()).unwrap();
+        assert_eq!(made, "notes/note-20261123-090507.md");
+        assert!(root.join("notes/note-20261123-090507.md").is_file());
     }
 
     #[test]
