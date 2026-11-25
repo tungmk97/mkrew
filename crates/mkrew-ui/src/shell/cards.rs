@@ -188,7 +188,6 @@ pub(crate) fn task_card(
     let conflict_paths = cards.conflicts.for_task(task_id);
     let selected = cards.selected == Some(task_id);
     let group = SharedString::from(format!("card-{task_id}"));
-    let edit_hover = theme.border;
     let preview_style = PopupStyle::of(theme);
     let workspace = (cards.workspaces)
         .and_then(|projects| projects.iter().find(|p| p.id == card.project_id))
@@ -418,7 +417,6 @@ pub(crate) fn task_card(
                         "card-undo",
                         icon_text(Icon::Undo2, "Undo", theme.text_muted),
                         theme,
-                        edit_hover,
                     )
                     .opacity(opacity::HIDDEN)
                     .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
@@ -437,7 +435,6 @@ pub(crate) fn task_card(
                         "card-changes",
                         icon_text(Icon::FileDiff, "Changes", theme.text_muted),
                         theme,
-                        edit_hover,
                     )
                     .opacity(opacity::HIDDEN)
                     .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
@@ -468,7 +465,7 @@ pub(crate) fn task_card(
                         ),
                     ]
                     .map(|(id, text, tip, what)| {
-                        quiet_button(id, text, theme, edit_hover)
+                        quiet_button(id, text, theme)
                             .opacity(opacity::HIDDEN)
                             .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
                             .tooltip(tooltip(theme, tip, ""))
@@ -505,7 +502,6 @@ pub(crate) fn task_card(
                             "card-compare",
                             icon_text(Icon::GitCompare, "Compare", theme.text_muted),
                             theme,
-                            edit_hover,
                         )
                     };
                     compare
@@ -557,7 +553,6 @@ pub(crate) fn run_with_button(
         "card-run-with",
         icon_text(Icon::Play, "Run with…", theme.text_muted),
         theme,
-        theme.border,
     )
     .when(menu.is_none(), |el| {
         el.opacity(opacity::HIDDEN)
@@ -615,7 +610,6 @@ pub(crate) fn fan_out_button(
         "card-fan-out",
         icon_text(Icon::Users, "Several agents…", theme.text_muted),
         theme,
-        theme.border,
     )
     .when(menu.is_none(), |el| {
         el.opacity(opacity::HIDDEN)
@@ -778,7 +772,7 @@ pub(crate) fn card_action(
     let action_button = if primary {
         button(id, label, theme, true)
     } else {
-        quiet_button(id, label, theme, theme.border)
+        quiet_button(id, label, theme)
     };
     action_button
         .tooltip(tooltip(theme, tip, keys))

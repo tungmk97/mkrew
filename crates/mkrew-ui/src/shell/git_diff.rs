@@ -359,7 +359,7 @@ impl Shell {
                 )
                 // A toggle: lit (the segmented control's selected fill) while lines wrap.
                 .child(
-                    quiet_button("git-diff-wrap", "Wrap", theme, theme.hover)
+                    quiet_button("git-diff-wrap", "Wrap", theme)
                         .when(wrap, |el| {
                             el.bg(rgb(theme.selected)).text_color(rgb(theme.text))
                         })
@@ -423,7 +423,6 @@ impl Shell {
                     .child(viewed_box(on, theme))
                     .child("Viewed"),
                 theme,
-                theme.hover,
             )
             .flex_none()
             .tooltip(tooltip(
@@ -703,7 +702,6 @@ impl Shell {
     ) -> gpui::Div {
         let keys = self.keymap.label(Command::AddComment);
         let comments = self.git.get(&project_id).map(|view| &view.comments);
-        let hover = theme.hover;
         div()
             .flex()
             .flex_wrap()
@@ -741,7 +739,7 @@ impl Shell {
             .child(self.send_comments_button(project_id, CommentContext::Diff, comments, theme, cx))
             .child(div().flex_1())
             .child(
-                quiet_button("git-pick-clear", "Clear (Esc)", theme, hover)
+                quiet_button("git-pick-clear", "Clear (Esc)", theme)
                     .flex_none()
                     .tooltip(tooltip(theme, "Unselect the lines", "Esc"))
                     .on_click(cx.listener(move |shell, _, _, cx| {

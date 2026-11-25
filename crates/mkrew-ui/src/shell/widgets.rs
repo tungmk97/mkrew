@@ -12,7 +12,9 @@ fn filled_press(
 ) -> gpui::Stateful<gpui::Div> {
     let style = PressStyle {
         hover_bg: None,
+        pressed_bg: None,
         hover_fg: None,
+        active_opacity: if enabled { opacity::ACTIVE } else { 1.0 },
         ..press_style(Look::Chip, enabled, theme)
     };
     apply_press(el, style).when(enabled, |el| {
@@ -133,7 +135,7 @@ pub(crate) fn button(
             theme,
         )
     } else {
-        quiet_button(id, label, theme, theme.hover)
+        quiet_button(id, label, theme)
     }
 }
 
@@ -166,7 +168,7 @@ pub(crate) fn pill_button(
     } else {
         pill.bg(rgb(theme.surface_raised))
             .text_color(rgb(theme.text))
-            .pressable(Look::Raised, true, theme)
+            .pressable_on(Look::Raised, theme.surface_raised, theme)
     }
 }
 
@@ -213,8 +215,10 @@ pub(crate) fn round_button(
 ) -> gpui::Stateful<gpui::Div> {
     let inverted = theme.surface_raised;
     let style = PressStyle {
-        hover_bg: Some(theme.text),
+        hover_bg: Some(gpui::rgb(theme.text)),
+        pressed_bg: None,
         hover_fg: None,
+        active_opacity: if enabled { opacity::ACTIVE } else { 1.0 },
         ..press_style(Look::Chip, enabled, theme)
     };
     let glyph = icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.text).when(enabled, |svg| {
@@ -241,8 +245,10 @@ pub(crate) fn round_button(
 /// Attach the handler with `.on_press(true, ..)`.
 pub(crate) fn round_stop_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     let style = PressStyle {
-        hover_bg: Some(theme.text_muted),
+        hover_bg: Some(gpui::rgb(theme.text_muted)),
+        pressed_bg: None,
         hover_fg: None,
+        active_opacity: opacity::ACTIVE,
         ..press_style(Look::Chip, true, theme)
     };
     apply_press(
@@ -302,22 +308,15 @@ pub(crate) fn secondary_button(
         .pressable(Look::Row, true, theme)
 }
 
-/// A ghost [`button`] whose hover shows `hover` (e.g. one step above a raised card) and the
-/// full text color.
+/// A ghost [`button`]: muted label, the `Look::Icon` hover (a layer step, the label to `text`).
 pub(crate) fn quiet_button(
     id: &'static str,
     label: impl IntoElement,
     theme: &Theme,
-    hover: u32,
 ) -> gpui::Stateful<gpui::Div> {
-    let style = PressStyle {
-        hover_bg: Some(hover),
-        ..press_style(Look::Icon, true, theme)
-    };
-    apply_press(
-        button_frame(id, label).text_color(rgb(theme.text_muted)),
-        style,
-    )
+    button_frame(id, label)
+        .text_color(rgb(theme.text_muted))
+        .pressable(Look::Icon, true, theme)
 }
 
 /// A [`button`] that cannot be used right now: faded, no hover, no click.
@@ -358,8 +357,10 @@ pub(crate) fn danger_button(
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let style = PressStyle {
-        hover_bg: Some(theme.danger_bg),
+        hover_bg: Some(gpui::rgb(theme.danger_bg)),
+        pressed_bg: None,
         hover_fg: None,
+        active_opacity: opacity::ACTIVE,
         ..press_style(Look::Row, true, theme)
     };
     apply_press(

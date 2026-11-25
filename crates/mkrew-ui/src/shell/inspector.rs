@@ -574,17 +574,14 @@ impl Shell {
             div()
                 .flex()
                 .gap(px(space::S))
-                .child(
-                    quiet_button("plan-change", "Change…", theme, theme.hover).on_click(
-                        cx.listener(move |shell, _, window, cx| shell.pick_plan(id, window, cx)),
-                    ),
-                )
+                .child(quiet_button("plan-change", "Change…", theme).on_click(
+                    cx.listener(move |shell, _, window, cx| shell.pick_plan(id, window, cx)),
+                ))
                 .child(
                     quiet_button(
                         "plan-unlink",
                         icon_text(Icon::Unlink, "Unlink", theme.text_muted),
                         theme,
-                        theme.hover,
                     )
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.link_plan(id, None, window, cx);

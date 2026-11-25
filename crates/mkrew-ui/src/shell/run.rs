@@ -626,7 +626,7 @@ impl Shell {
                 .gap(px(space::XS))
                 .child(div().flex_1().min_w_0().child(field))
                 .child(
-                    quiet_button(id, "Browse…", theme, theme.surface_raised)
+                    quiet_button(id, "Browse…", theme)
                         .focus_stop(theme)
                         .tooltip(tooltip(theme, hint, ""))
                         .on_click(cx.listener(move |shell, _, window, cx| {
@@ -729,7 +729,6 @@ impl Shell {
                     id,
                     icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.text_muted),
                     theme,
-                    theme.surface_raised,
                 )
                 .tooltip(tooltip(theme, tip, ""));
                 // A folded card shows its buttons on hover only: not Tab stops.
@@ -1180,7 +1179,6 @@ impl Shell {
                 "run-picker-up",
                 icon_text(Icon::ArrowUp, "Up", theme.text_muted),
                 theme,
-                theme.surface_raised,
             )
             .focus_stop(theme)
             .tooltip(tooltip(theme, "The folder above", ""))

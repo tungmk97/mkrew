@@ -877,7 +877,6 @@ impl Shell {
                 "git-commit-generate",
                 icon_text(Icon::Sparkles, "Generate", theme.accent_text),
                 theme,
-                theme.hover,
             )
             .text_color(rgb(theme.accent_text))
             .on_click(cx.listener(move |shell, _, window, cx| {

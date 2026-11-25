@@ -1005,7 +1005,7 @@ impl Shell {
             .bg(rgb(theme.warning_bg))
             .text_size(font_size::META)
             .text_color(rgb(theme.status_needs_input))
-            .pressable(Look::Chip, true, theme)
+            .pressable_on(Look::Chip, theme.warning_bg, theme)
             // Not while its menu is open: the tooltip would cover the rows.
             .when(!open, |el| {
                 el.tooltip(tooltip(

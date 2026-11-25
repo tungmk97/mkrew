@@ -702,7 +702,7 @@ impl Shell {
         let columns = compare.columns.iter().map(|column| {
             let task_id = column.task_id;
             let git = if column.checkpoint.is_some() && column.has_worktree {
-                quiet_button("compare-git", "Git view", theme, theme.border)
+                quiet_button("compare-git", "Git view", theme)
                     .focus_stop(theme)
                     .tooltip(tooltip(
                         theme,
@@ -723,7 +723,7 @@ impl Shell {
             };
             // Quiet: up to five columns would otherwise show five accent buttons.
             let pick = if column.has_worktree {
-                quiet_button("compare-pick", "Pick", theme, theme.border)
+                quiet_button("compare-pick", "Pick", theme)
                     .focus_stop(theme)
                     .tooltip(tooltip(
                         theme,

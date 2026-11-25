@@ -1019,7 +1019,7 @@ impl Shell {
                 .gap(px(space::S))
                 .child(meta_line(theme, target.into()).min_w_0().truncate())
                 .child(
-                    quiet_button("add-workspace-browse", "Browse…", theme, theme.hover)
+                    quiet_button("add-workspace-browse", "Browse…", theme)
                         .focus_stop(theme)
                         .tooltip(tooltip(theme, "Choose where the clone goes", ""))
                         .on_click(cx.listener(|shell, _, window, cx| {

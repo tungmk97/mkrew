@@ -107,11 +107,12 @@ impl Source {
 pub type Drag = Rc<Cell<Option<f32>>>;
 
 /// The bar over the right edge of its `relative` parent. It draws only when the content is
-/// taller than the view: a thumb in `subtle`, or `text_muted` while held. Dragging the thumb
+/// taller than the view: a thumb in `layer[2]` (a step stronger than the hover fill), or
+/// `text_subtle` while held. Dragging the thumb
 /// scrolls; pressing the track jumps the thumb's middle there. The wheel still scrolls the
 /// view below, and presses on the bar never reach it (no caret move, no selection).
 pub fn bar(source: Source, drag: Drag, theme: &Theme) -> Div {
-    let (idle, held) = (theme.subtle, theme.text_muted);
+    let (idle, held) = (gpui::rgba(theme.layer[2]), rgb(theme.text_subtle));
     let measured = source.clone();
     div()
         .absolute()
@@ -140,7 +141,7 @@ pub fn bar(source: Source, drag: Drag, theme: &Theme) -> Div {
                         size(px(theme::SCROLLBAR_THUMB_WIDTH), px(height)),
                     );
                     let color = if drag.get().is_some() { held } else { idle };
-                    window.paint_quad(fill(shape, rgb(color)).corner_radii(px(radius::SMALL)));
+                    window.paint_quad(fill(shape, color).corner_radii(px(radius::SMALL)));
                     let origin = bounds.top();
                     window.on_mouse_event({
                         let (source, drag) = (source.clone(), Rc::clone(&drag));

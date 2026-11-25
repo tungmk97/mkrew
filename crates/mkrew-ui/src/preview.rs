@@ -1271,7 +1271,7 @@ fn diagram_view(diagram: &Diagram, start: u32, theme: &Theme) -> gpui::Div {
                 .text_color(rgb(theme.text_muted))
                 .opacity(theme::opacity::HIDDEN)
                 .group_hover(group, |style| style.opacity(theme::opacity::FULL))
-                .pressable(Look::Raised, true, theme)
+                .pressable_on(Look::Raised, theme.surface_raised, theme)
                 .child(icons::icon_svg(
                     Icon::Maximize2,
                     theme::ICON_SIZE_SMALL,

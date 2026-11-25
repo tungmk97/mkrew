@@ -446,7 +446,6 @@ impl Shell {
                                 theme.text_muted,
                             )),
                         theme,
-                        theme.hover,
                     )
                     .max_w(px(theme::GIT_CHANGED_BY_MAX_WIDTH))
                     .truncate()

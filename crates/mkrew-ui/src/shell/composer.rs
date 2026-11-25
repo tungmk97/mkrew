@@ -815,7 +815,6 @@ impl Shell {
         session: Ulid,
         draft: &Draft,
         is_focused: bool,
-        hover: u32,
         compact: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -827,7 +826,7 @@ impl Shell {
             let improve = if rewriting {
                 disabled_button("composer-enhance", sparkles, theme, false)
             } else {
-                quiet_button("composer-enhance", sparkles, theme, hover).on_click(cx.listener(
+                quiet_button("composer-enhance", sparkles, theme).on_click(cx.listener(
                     move |shell, _, window, cx| {
                         shell.enhance_prompt(composer::Target::Composer(session), window, cx)
                     },
@@ -854,7 +853,6 @@ impl Shell {
                     icon_text(Icon::Library, "Prompts…", theme.text_muted).into_any_element()
                 },
                 theme,
-                hover,
             )
             .flex_none()
             .tooltip(tooltip(
@@ -1026,15 +1024,7 @@ impl Shell {
         });
         let status = self.composer_status(draft, focused, true, theme);
         let queued = self.composer_queue_rows(session, theme, cx);
-        let tools = self.composer_tools(
-            session,
-            draft,
-            is_focused,
-            theme.surface_raised,
-            false,
-            theme,
-            cx,
-        );
+        let tools = self.composer_tools(session, draft, is_focused, false, theme, cx);
         let panel =
             div()
                 .flex_none()
@@ -1148,7 +1138,7 @@ impl Shell {
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
                 .font_family(theme.ui_font_family.clone())
-                .pressable(Look::Raised, true, theme)
+                .pressable_on(Look::Raised, theme.surface_raised, theme)
                 .on_press(
                     true,
                     cx.listener(move |shell, _, window, cx| {
@@ -1405,13 +1395,7 @@ impl Shell {
                                 tools_fit
                                     .then(|| {
                                         self.composer_tools(
-                                            session,
-                                            draft,
-                                            is_focused,
-                                            theme.border,
-                                            true,
-                                            theme,
-                                            cx,
+                                            session, draft, is_focused, true, theme, cx,
                                         )
                                     })
                                     .into_iter()

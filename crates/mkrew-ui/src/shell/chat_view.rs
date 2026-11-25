@@ -1049,7 +1049,7 @@ fn chat_question(
                 .rounded(px(radius::CHIP))
                 .bg(rgb(theme.surface_raised))
                 .text_color(rgb(theme.text))
-                .pressable(Look::Raised, true, theme)
+                .pressable_on(Look::Raised, theme.surface_raised, theme)
                 .on_press(
                     true,
                     cx.listener(move |shell, _, window, cx| {

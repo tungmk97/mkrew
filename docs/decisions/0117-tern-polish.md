@@ -23,6 +23,7 @@ Measured from Tern's CSS (six gap reports):
 - **New contrast rules:** "meta text" (`text_subtle` 4.5:1 on bg, surface, card, terminal_bg, surface_raised, composer_fill), "accent text" (`accent_text` on `accent_bg`), "glass lift" (dark glass is lighter than `bg`), "menu pick" (`accent_bg` differs from the glass fill; replaces the unsatisfiable spec wording "`selected` differs from `surface_raised`").
 - **Derived themes** (`from_palette`, theme files) get the layers, `code_bg`, `composer_fill`, a real t2/t3/t4 split and `sidebar = pane_gap`.
 - **Tern Dark / Tern Light** are built-ins: the retuned Mkrew theme with Tern's blue accent, status, selection and ANSI colors. `ThemeEntry` takes a `Recipe` (`Mkrew`, `Tern`, `Palette(Palette)`); defaults stay Mkrew Dark / Light.
+- **Pressables** hover to `layer[0]` and press to `layer[0]+layer[1]`; an element with its own fill flattens the layers over it (`pressable_on`); `quiet_button` has no hover argument.
 - Components (shared controls, chat, composer, files, chrome, settings, git) follow in the same change; see the spec.
 
 ## Consequences

@@ -209,42 +209,32 @@ impl Shell {
                     )
                     .child(
                         div().flex_none().child(
-                            quiet_button(
-                                "theme-new-from-current",
-                                "New theme from current",
-                                theme,
-                                theme.hover,
-                            )
-                            .focus_stop(theme)
-                            .tooltip(tooltip(
-                                theme,
-                                "Save the theme shown as a file and edit it",
-                                "",
-                            ))
-                            .on_press(
-                                true,
-                                cx.listener(|shell, _, _, cx| shell.new_theme_from_current(cx)),
-                            ),
+                            quiet_button("theme-new-from-current", "New theme from current", theme)
+                                .focus_stop(theme)
+                                .tooltip(tooltip(
+                                    theme,
+                                    "Save the theme shown as a file and edit it",
+                                    "",
+                                ))
+                                .on_press(
+                                    true,
+                                    cx.listener(|shell, _, _, cx| shell.new_theme_from_current(cx)),
+                                ),
                         ),
                     )
                     .child(
                         div().flex_none().child(
-                            quiet_button(
-                                "theme-open-folder",
-                                "Open themes folder",
-                                theme,
-                                theme.hover,
-                            )
-                            .focus_stop(theme)
-                            .tooltip(tooltip(
-                                theme,
-                                "Show the themes folder in the file manager",
-                                "",
-                            ))
-                            .on_press(
-                                true,
-                                cx.listener(|shell, _, _, cx| shell.open_themes_folder(cx)),
-                            ),
+                            quiet_button("theme-open-folder", "Open themes folder", theme)
+                                .focus_stop(theme)
+                                .tooltip(tooltip(
+                                    theme,
+                                    "Show the themes folder in the file manager",
+                                    "",
+                                ))
+                                .on_press(
+                                    true,
+                                    cx.listener(|shell, _, _, cx| shell.open_themes_folder(cx)),
+                                ),
                         ),
                     ),
             )
