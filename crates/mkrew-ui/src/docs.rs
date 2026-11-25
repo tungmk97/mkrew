@@ -59,6 +59,8 @@ pub struct Shown {
     pub code: HashMap<u32, Code>,
     /// Every ```mermaid block drawn (or why not), by its first source line (ADR 0021).
     pub diagrams: HashMap<u32, Result<Diagram, String>>,
+    /// Every ```csv / ```tsv block read as a table (or why not), by its first source line.
+    pub tables: HashMap<u32, Result<markdown::Delimited, String>>,
 }
 
 impl Shown {
@@ -75,14 +77,16 @@ impl Shown {
         let blocks = markdown::parse(text);
         let mut code = HashMap::new();
         let mut diagrams = HashMap::new();
+        let mut tables = HashMap::new();
         markdown::walk(&blocks, &mut |block| {
             if let BlockKind::Code { lang, text } = &block.kind {
-                code.insert(block.lines.start, highlight::fenced(lang.as_deref(), text));
-                if lang
-                    .as_deref()
-                    .is_some_and(|lang| lang.eq_ignore_ascii_case("mermaid"))
-                {
-                    diagrams.insert(block.lines.start, diagram::render(text));
+                let start = block.lines.start;
+                code.insert(start, highlight::fenced(lang.as_deref(), text));
+                let lang = lang.as_deref().unwrap_or("");
+                if lang.eq_ignore_ascii_case("mermaid") {
+                    diagrams.insert(start, diagram::render(text));
+                } else if let Some(sep) = markdown::delimiter(lang) {
+                    tables.insert(start, markdown::delimited(text, sep, block.lines));
                 }
             }
         });
@@ -92,6 +96,7 @@ impl Shown {
             blocks,
             code,
             diagrams,
+            tables,
         }
     }
 
@@ -432,6 +437,17 @@ mod tests {
             shown.code.contains_key(&1),
             "the source stays for a failed drawing"
         );
+    }
+
+    #[test]
+    fn csv_and_tsv_blocks_are_tables_and_other_code_is_not() {
+        let doc =
+            "```csv\na,b\n1,2\n```\n\n```TSV\nx\n```\n\n```csv\n\"open\n```\n\n```sh\nls\n```\n";
+        let shown = shown("a.md", doc, "h");
+        assert!(matches!(&shown.tables[&1], Ok(table) if table.rows.len() == 1));
+        assert!(shown.tables[&6].is_ok());
+        assert!(shown.tables[&10].is_err(), "an unclosed quote is an error");
+        assert!(!shown.tables.contains_key(&14));
     }
 
     fn changed(project_id: Ulid, path: &str, hash: Option<&str>) -> Event {

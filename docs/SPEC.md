@@ -1250,7 +1250,7 @@ The tooltip gives the status in words, the time and the turns, so color is never
   A Claude subagent started in the background stays in the tray until its `<task-notification>` arrives.
   Codex tool output is read in the shapes current Codex writes: a JSON string with `metadata.exit_code`, or text with an `Exit code: N` or `Process exited with code N` line before `Output:`.
   The tool and thinking row toggles, the "earlier turns" link and "Answer in terminal" are Tab stops (Enter or Space presses them); PageUp, PageDown, Home, End and the arrows scroll the list, and Esc ends a selection, else returns to the composer.
-  ADR 0105 gives the page a centered column of 760 px with `space::XL` side padding: the prompt is a right-aligned bubble, the agent's text has accent headings and bullet dots, inline code and file paths are pills (a path in a Chat message opens the file in a file pane at its `:line`), code blocks are cards with a language label and a Copy button, and thinking and tool calls between two texts are one activity row ("Thought for 4s · 3 commands, 2 reads", "Working…" while it runs) that opens to the thinking text and the tool rows.
+  ADR 0105 gives the page a centered column of 760 px with `space::XL` side padding: the prompt is a right-aligned bubble, the agent's text has accent headings and bullet dots, inline code and file paths are pills (a path in a Chat message opens the file in a file pane at its `:line`), code blocks are cards with a language label and a Copy button (```` ```mermaid ```` blocks are diagrams with Expand, ```` ```csv ```` and ```` ```tsv ```` blocks are tables, §12), and thinking and tool calls between two texts are one activity row ("Thought for 4s · 3 commands, 2 reads", "Working…" while it runs) that opens to the thinking text and the tool rows.
   An omp turn ends with omp's recap line when it is not older than the turn's prompt and the agent is not working.
   The composer is a floating card in the same column (§20B).
   In a narrow card Send is never clipped: the chip cell shrinks and clips, and the Prompts and sparkle tools drop whole when the row has no room for them (ADR 0107).
@@ -1320,6 +1320,10 @@ Off unless `[features] docs = true` (§20.0, ADR 0046): no Docs rail tab, comman
   highlighted by their fence language (syntect, as in the Editor); the text uses the doc
   typography of §14 (ADR 0021). ```` ```mermaid ```` blocks are drawn as diagrams (pure Rust
   renderer, theme colors); a block that cannot be drawn shows its source and the reason.
+  ```` ```csv ```` and ```` ```tsv ```` blocks are drawn as tables on the code card (label `csv · N rows`, Copy copies the source; ADR 0021 addendum).
+  The first record is the head; quoted fields may hold separators, quotes (`""`) and line breaks; short records are padded; a column whose body cells are all numbers is right-aligned; each column's width follows its longest text (4 to 40 characters).
+  At most 200 rows are drawn, then "N more rows"; a block that cannot be read (an unclosed quote, no rows) shows its source and the reason.
+  Diagrams and tables are drawn wherever this renderer is used: Docs, the Files preview, Chat messages (§11) and omp's native surface.
 - **Comments:** pick lines (click a preview block or a source line, Shift+click extends; Shift+↓ / Shift+↑ pick the first line or block in view, then grow or shrink the pick by one line or block, scrolled into view; Esc clears it; a text field keeps its own Shift+↑/↓, ADR 0085) →
   "Add comment". Anchored by line range + quoted text (the picked source lines). Threads with
   replies, resolve, reopen. Listed in the right margin in anchor order; clicking a thread's

@@ -26,7 +26,9 @@ use crate::diagram::Diagram;
 use crate::docs::{Shown, gutter};
 use crate::highlight::{Code, Token};
 use crate::icons::{self, Icon};
-use crate::markdown::{Alert, Align, Block, BlockKind, Item, Row, Run, Style, path_pill};
+use crate::markdown::{
+    Alert, Align, Block, BlockKind, Delimited, Item, Row, Run, Style, path_pill,
+};
 use crate::pressable::{Look, Pressable};
 use crate::preview_select;
 use crate::scrollbar::{self, Source};
@@ -770,19 +772,19 @@ fn block_in(
         }
         BlockKind::Code { lang, text } => {
             let start = block.lines.start;
+            // The Files preview (selectable) has ✎ at each block's top-right corner; a Chat
+            // message is selectable too but has none.
+            let beside_edit = pick.is_some() && ctx.flavor == Flavor::Doc;
             let source = || {
                 let body = match shown.code.get(&start) {
                     Some(highlighted) => code_lines(highlighted, pick, theme),
                     None => plain_lines(text, theme),
                 };
-                // The Files preview (selectable) has ✎ at each block's top-right corner; a
-                // Chat message is selectable too but has none.
-                let beside_edit = pick.is_some() && ctx.flavor == Flavor::Doc;
                 code_card(lang.as_deref(), body, text, beside_edit, theme)
             };
-            match shown.diagrams.get(&start) {
-                Some(Ok(diagram)) => diagram_view(diagram, start, theme).into_any_element(),
-                Some(Err(error)) => div()
+            // A drawing or table that failed: why, over the source.
+            let failed = |why: String| {
+                div()
                     .flex()
                     .flex_col()
                     .gap(px(space::XS))
@@ -790,46 +792,56 @@ fn block_in(
                         div()
                             .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
-                            .child(format!("Cannot draw this diagram: {error}")),
+                            .child(why),
                     )
                     .child(source())
-                    .into_any_element(),
-                None => source().into_any_element(),
+                    .into_any_element()
+            };
+            match (shown.diagrams.get(&start), shown.tables.get(&start)) {
+                (Some(Ok(diagram)), _) => diagram_view(diagram, start, theme).into_any_element(),
+                (Some(Err(error)), _) => failed(format!("Cannot draw this diagram: {error}")),
+                (None, Some(Ok(table))) => {
+                    let label = format!(
+                        "{} · {}",
+                        lang.as_deref().unwrap_or("csv"),
+                        row_count(table.rows.len() + table.more)
+                    );
+                    let body = delimited_table(table, pick, ctx, theme);
+                    code_card(Some(&label), body, text, beside_edit, theme).into_any_element()
+                }
+                (None, Some(Err(error))) => failed(format!("Cannot read this table: {error}")),
+                (None, None) => source().into_any_element(),
             }
         }
         BlockKind::Html(html) => code(html, theme.text_muted, theme).into_any_element(),
         BlockKind::FrontMatter(text) => front_matter(text, theme).into_any_element(),
-        BlockKind::Table { aligns, head, rows } if chat_flavor(ctx) => div()
-            .flex()
-            .flex_col()
-            .child(
-                table_row(head, aligns, pick, ctx, theme.text_muted, theme)
-                    .border_b_1()
-                    .border_color(rgb(theme.divider)),
-            )
-            .children(rows.iter().enumerate().map(|(i, row)| {
-                table_row(row, aligns, pick, ctx, theme.text, theme)
-                    .when(i > 0, |el| el.border_t_1().border_color(rgb(theme.divider)))
-            }))
-            .into_any_element(),
-        BlockKind::Table { aligns, head, rows } => div()
-            .flex()
-            .flex_col()
-            .rounded(px(radius::MEDIUM))
-            .border_1()
-            .border_color(rgb(theme.border))
-            .overflow_hidden()
-            .child(
-                table_row(head, aligns, pick, ctx, theme.text, theme)
-                    .bg(rgb(theme.surface_raised))
-                    .font_weight(FontWeight(weight::SEMIBOLD)),
-            )
-            .children(rows.iter().map(|row| {
-                table_row(row, aligns, pick, ctx, theme.text, theme)
-                    .border_t_1()
-                    .border_color(rgb(theme.border))
-            }))
-            .into_any_element(),
+        BlockKind::Table { aligns, head, rows } => {
+            let cols = Cols {
+                aligns,
+                widths: &[],
+            };
+            if chat_flavor(ctx) {
+                return Some(lined_table(cols, head, rows, pick, ctx, theme).into_any_element());
+            }
+            div()
+                .flex()
+                .flex_col()
+                .rounded(px(radius::MEDIUM))
+                .border_1()
+                .border_color(rgb(theme.border))
+                .overflow_hidden()
+                .child(
+                    table_row(head, cols, pick, ctx, false, theme.text, theme)
+                        .bg(rgb(theme.surface_raised))
+                        .font_weight(FontWeight(weight::SEMIBOLD)),
+                )
+                .children(rows.iter().map(|row| {
+                    table_row(row, cols, pick, ctx, false, theme.text, theme)
+                        .border_t_1()
+                        .border_color(rgb(theme.border))
+                }))
+                .into_any_element()
+        }
         BlockKind::Rule => div()
             .my(px(space::S))
             .h(px(theme::BORDER_WIDTH))
@@ -929,13 +941,71 @@ fn chat_flavor(ctx: Ctx) -> bool {
     matches!(ctx.flavor, Flavor::Chat { .. })
 }
 
-/// A table row. Chat cells (Tern look) have no side padding on the first column so it lines
-/// up with the paragraphs, and `space::M` after each cell; Doc cells pad both sides.
-fn table_row(
-    row: &Row,
-    aligns: &[Align],
+/// A table's columns: their alignments and, for a ```csv table, their widths in characters
+/// (empty: equal widths).
+#[derive(Clone, Copy)]
+struct Cols<'a> {
+    aligns: &'a [Align],
+    widths: &'a [u16],
+}
+
+/// A table without a frame (Tern look): a muted head over a divider, dividers between rows.
+fn lined_table(
+    cols: Cols<'_>,
+    head: &Row,
+    rows: &[Row],
     pick: Option<&Pick>,
     ctx: Ctx,
+    theme: &Theme,
+) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .child(
+            table_row(head, cols, pick, ctx, true, theme.text_muted, theme)
+                .border_b_1()
+                .border_color(rgb(theme.divider)),
+        )
+        .children(rows.iter().enumerate().map(|(i, row)| {
+            table_row(row, cols, pick, ctx, true, theme.text, theme)
+                .when(i > 0, |el| el.border_t_1().border_color(rgb(theme.divider)))
+        }))
+}
+
+/// "1 row", "3 rows".
+fn row_count(count: usize) -> String {
+    match count {
+        1 => "1 row".to_owned(),
+        n => format!("{n} rows"),
+    }
+}
+
+/// A ```csv / ```tsv block's table (the body of its code card), and how many rows were cut.
+fn delimited_table(table: &Delimited, pick: Option<&Pick>, ctx: Ctx, theme: &Theme) -> gpui::Div {
+    let cols = Cols {
+        aligns: &table.aligns,
+        widths: &table.widths,
+    };
+    lined_table(cols, &table.head, &table.rows, pick, ctx, theme).when(table.more > 0, |el| {
+        el.child(
+            div()
+                .pt(px(space::S))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .child(format!("{} more", row_count(table.more))),
+        )
+    })
+}
+
+/// A table row. Tight cells (Chat, and tables on a card) have no side padding on the first
+/// column so it lines up with the text around it, and `space::M` after each cell; other Doc
+/// cells pad both sides.
+fn table_row(
+    row: &Row,
+    cols: Cols<'_>,
+    pick: Option<&Pick>,
+    ctx: Ctx,
+    tight: bool,
     color: u32,
     theme: &Theme,
 ) -> gpui::Div {
@@ -943,15 +1013,27 @@ fn table_row(
     div()
         .flex()
         .children(row.cells.iter().enumerate().map(|(column, cell)| {
-            let align = aligns.get(column).copied().unwrap_or(Align::Default);
+            let align = cols.aligns.get(column).copied().unwrap_or(Align::Default);
+            let pad = if tight && column == 0 {
+                space::M
+            } else {
+                2.0 * space::M
+            };
             div()
-                .flex_1()
+                // A ```csv column starts at its text's width (plus padding) and shrinks with
+                // the others; Markdown table columns share the width equally.
+                .map(|el| match cols.widths.get(column) {
+                    Some(chars) => el
+                        .flex_shrink(1.0)
+                        .flex_basis(px(f32::from(*chars) * theme::doc::COLUMN_CHAR + pad)),
+                    None => el.flex_1(),
+                })
                 .min_w_0()
-                .when(chat, |el| {
+                .when(tight, |el| {
                     el.pr(px(space::M))
                         .when(column > 0, |el| el.pl(px(space::M)))
                 })
-                .when(!chat, |el| el.px(px(space::M)))
+                .when(!tight, |el| el.px(px(space::M)))
                 .py(px(space::S))
                 .text_color(rgb(color))
                 .map(|el| match align {

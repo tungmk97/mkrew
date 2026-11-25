@@ -6,7 +6,7 @@
 use std::ops::Range;
 
 use crate::docs::Shown;
-use crate::markdown::{Block, BlockKind, Item, Lines};
+use crate::markdown::{Block, BlockKind, Item, Lines, Row};
 use crate::preview::inline;
 use crate::text_box;
 
@@ -117,6 +117,9 @@ fn push_block(flat: &mut Flat, block: &Block, shown: &Shown) {
             if matches!(shown.diagrams.get(&first), Some(Ok(_))) {
                 return;
             }
+            if let Some(Ok(table)) = shown.tables.get(&first) {
+                return push_rows(flat, &table.head, &table.rows);
+            }
             if let Some(code) = shown.code.get(&first) {
                 // The same lines `preview::code_block` draws.
                 for (index, (line, _)) in code.lines.iter().zip(&code.spans).enumerate() {
@@ -127,20 +130,23 @@ fn push_block(flat: &mut Flat, block: &Block, shown: &Shown) {
                 }
             }
         }
-        BlockKind::Table { head, rows, .. } => {
-            for (index, row) in std::iter::once(head).chain(rows).enumerate() {
-                if index > 0 {
-                    flat.text.push('\n');
-                }
-                for (column, cell) in row.cells.iter().enumerate() {
-                    if column > 0 {
-                        flat.text.push('\t');
-                    }
-                    flat.piece(&inline(cell).0);
-                }
-            }
-        }
+        BlockKind::Table { head, rows, .. } => push_rows(flat, head, rows),
         BlockKind::Rule | BlockKind::Html(_) | BlockKind::FrontMatter(_) => {}
+    }
+}
+
+/// Table rows one per line, cells separated by a tab.
+fn push_rows(flat: &mut Flat, head: &Row, rows: &[Row]) {
+    for (index, row) in std::iter::once(head).chain(rows).enumerate() {
+        if index > 0 {
+            flat.text.push('\n');
+        }
+        for (column, cell) in row.cells.iter().enumerate() {
+            if column > 0 {
+                flat.text.push('\t');
+            }
+            flat.piece(&inline(cell).0);
+        }
     }
 }
 
@@ -385,6 +391,13 @@ mod tests {
         );
         assert_eq!(piece_count(&page.blocks[1], &page), 0);
         assert_eq!(all(&page), "a\nb");
+    }
+
+    #[test]
+    fn csv_tables_copy_their_cells_and_a_broken_one_its_source() {
+        let page = shown("```csv\nname,qty\n\"a, b\",2\n```\n\n```csv\n\"open\n```\n");
+        assert_eq!(piece_count(&page.blocks[0], &page), 4);
+        assert_eq!(all(&page), "name\tqty\na, b\t2\n\"open");
     }
 
     #[test]
