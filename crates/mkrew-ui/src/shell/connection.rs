@@ -195,14 +195,16 @@ impl Shell {
                         shell.notification_clicked(session, project, window, cx);
                     }
                     let sessions = shell.sidebar.sessions();
-                    let board_due = shell.workspace.is_some_and(|project_id| {
-                        shell.view() == View::Board
-                            && (shell.board).redraw_due(
-                                shell.board_scope(project_id),
-                                sessions,
-                                last,
-                                now,
-                            )
+                    let board_due = shell.spaces_shown().any(|(key, project)| {
+                        project.is_some_and(|project_id| {
+                            shell.view(HostId::Space(key)) == View::Board
+                                && (shell.board).redraw_due(
+                                    shell.board_scope(project_id),
+                                    sessions,
+                                    last,
+                                    now,
+                                )
+                        })
                     });
                     // The recording meter has its own faster redraw (`toggle_voice`).
                     let transcribing = matches!(shell.voice, voice::State::Transcribing);
@@ -327,7 +329,6 @@ impl Shell {
             sidebar: Sidebar::default(),
             refreshing: false,
             refresh_again: false,
-            workspace: None,
             tabs: HashMap::new(),
             loading_tabs: HashSet::new(),
             early_tab_events: Vec::new(),
@@ -779,7 +780,7 @@ impl Shell {
                             .into(),
                     );
                 }
-                match shell.workspace {
+                match shell.workspace_in(window) {
                     // The last screen stays, input off, until the new connection's lists
                     // arrive (`refresh`); only what acts on the daemon closes now.
                     Some(shown) => {
@@ -861,7 +862,6 @@ impl Shell {
     /// Clears everything bound to the lost connection: the new connection's lists are about to
     /// replace it (or, with nothing shown, at once).
     fn reset_connection_state(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.workspace = None;
         self.tabs.clear();
         self.loading_tabs.clear();
         self.early_tab_events.clear();
@@ -1000,20 +1000,24 @@ impl Shell {
                         shell.load_plans(window, cx);
                         shell.load_limits(window, cx);
                         shell.status = Status::Connected;
-                        let current = shell
-                            .workspace
-                            .filter(|id| shell.sidebar.projects().iter().any(|p| p.id == *id));
                         let kept =
                             mkrew_ui::connect::reconnect_workspace(kept, shell.sidebar.projects());
-                        match current.or(kept).or_else(|| shell.initial_workspace()) {
-                            Some(project_id) => {
-                                // A new session (e.g. spawned by `mk`) fills an empty tab.
-                                shell.fill_empty_tab(project_id, window, cx);
-                                shell.activate_workspace(project_id, window, cx);
-                            }
-                            None => {
-                                shell.workspace = None;
-                                shell.sync_panes(window, cx);
+                        // Each Space window keeps its workspace while it is listed, else
+                        // shows the kept one, the default one, or the empty state.
+                        let here = shell.host_of(window);
+                        for (key, current) in shell.spaces_shown() {
+                            let host = HostId::Space(key);
+                            let listed =
+                                |id: &Ulid| shell.sidebar.projects().iter().any(|p| p.id == *id);
+                            let shown = (current.filter(listed))
+                                .or(kept)
+                                .or_else(|| shell.initial_workspace());
+                            if host == here {
+                                shell.show_in_space(host, shown, window, cx);
+                            } else {
+                                shell.in_window(host, cx, move |shell, window, cx| {
+                                    shell.show_in_space(host, shown, window, cx);
+                                });
                             }
                         }
                         // After the default workspace, so the pane a toast asked for wins.
@@ -1090,8 +1094,8 @@ impl Shell {
                     self.jira_layout = settings.jira.layout;
                     // A hand edit of `[jira] mine` searches the shown list again.
                     if self.apply_jira_mine(settings.jira.mine)
-                        && self.jira_side_shown()
-                        && let Some(project_id) = self.workspace
+                        && self.jira_side_shown(self.space_host(window))
+                        && let Some(project_id) = self.workspace_in(window)
                     {
                         self.load_jira(project_id, window, cx);
                     }
@@ -1220,21 +1224,23 @@ impl Shell {
 
     /// What the window draws now, for [`redraw::event_needs_redraw`].
     pub(crate) fn shown(&self, window: &Window) -> redraw::Shown {
-        let view = self.view();
-        let panes = (self.hosted_sessions(window.is_visible()).into_iter())
+        let view = self.view(self.space_host(window));
+        let panes = (self.hosted_sessions().into_iter())
             .map(|(_, session)| session)
             .collect();
         redraw::Shown {
-            workspace: self.workspace,
+            workspace: self.workspace_in(window),
             view,
             panes,
             focused: self.focused_session(window),
-            panel: self.panel_shown().then(|| self.panel_tab()),
-            panel_session: self.panel_session(),
+            panel: self
+                .panel_shown(self.space_host(window))
+                .then(|| self.panel_tab()),
+            panel_session: self.panel_session(self.space_host(window)),
             sidebar: self.sidebar_layout.mode(),
             modal: self.modal_open(),
-            all_board: self.all_board_shown(),
-            diff: self.diff_on_screen(),
+            all_board: self.all_board_shown(self.space_host(window)),
+            diff: self.diff_on_screen(self.space_host(window)),
         }
     }
 
@@ -1373,7 +1379,7 @@ impl Shell {
                     self.git_event(event, window, cx);
                     if let Event::GitChanged(changed) = event
                         && changed.worktree_task_id.is_none()
-                        && self.workspace == Some(changed.project_id)
+                        && self.on_screen_workspaces().contains(&changed.project_id)
                     {
                         self.load_git_summary(changed.project_id, window, cx);
                     }

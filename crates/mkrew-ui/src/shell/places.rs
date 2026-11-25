@@ -33,8 +33,8 @@ impl Shell {
         }
         // Terminals show the panes: Board, Docs and the Diff give way.
         self.views.insert(project_id, View::Terminals);
-        if self.workspace != Some(project_id) {
-            self.activate_workspace(project_id, window, cx);
+        if self.workspace_in(window) != Some(project_id) {
+            self.activate_workspace(self.space_host(window), project_id, window, cx);
         }
         self.place_leaf(project_id, leaf, place, window, cx);
         // Shown already: the line applies now; otherwise after the read.
@@ -129,7 +129,7 @@ impl Shell {
         };
         self.focus_pane_key(project_id, key);
         match self.terminal_host(project_id, tab_id) {
-            host @ HostId::Detached(window_key) => {
+            Some(host @ HostId::Detached(window_key)) => {
                 let dock = DockTab::Terminal {
                     project: project_id,
                     tab_id,
@@ -146,7 +146,7 @@ impl Shell {
                     cx.notify();
                 });
             }
-            HostId::Space(_) => {
+            Some(HostId::Space(_)) | None => {
                 if let Some(tabs) = self.tabs.get_mut(&project_id) {
                     tabs.activate(tab_id);
                 }

@@ -389,7 +389,7 @@ impl Shell {
         let toggle_keys = SharedString::from(self.keymap.label(Command::GitToggleMode));
         let history_keys = SharedString::from(self.keymap.label(Command::GitToggleHistory));
         let shown = view.section();
-        let working = match self.git_working_count(view, status) {
+        let working = match self.git_working_count(project_id, view, status) {
             Some(count) => format!("Working {count}"),
             None => "Working".to_owned(),
         };
@@ -441,7 +441,12 @@ impl Shell {
 
     /// The changed files of the working tree for the Working tab: from the shown status in
     /// Working changes, else from the title bar summary of the shown repository.
-    fn git_working_count(&self, view: &GitView, status: Option<&GitStatus>) -> Option<usize> {
+    fn git_working_count(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        status: Option<&GitStatus>,
+    ) -> Option<usize> {
         if view.section() == git_view::Section::Working {
             return status.map(|status| RepoSummary::of("", status).changed());
         }
@@ -449,7 +454,7 @@ impl Shell {
             return None;
         }
         let repo = view.repo.as_deref().unwrap_or("");
-        self.git_summary()?
+        self.git_summary(project_id)?
             .repos
             .iter()
             .find(|summary| summary.repo == repo)
@@ -641,7 +646,7 @@ impl Shell {
         };
         // Another repository of the workspace (never while a task worktree is shown).
         let dirty = self
-            .git_summary()
+            .git_summary(project_id)
             .filter(|_| view.worktree_task_id.is_none())
             .and_then(|summary| {
                 let shown = view.repo.as_deref().unwrap_or("");

@@ -299,8 +299,8 @@ impl Shell {
         }
         let target = (self.files.get(&project_id)).and_then(|view| view.worktree_task_id);
         if changed.worktree_task_id == target
-            && self.workspace == Some(project_id)
-            && self.file_tree_shown()
+            && (self.space_of(project_id))
+                .is_some_and(|key| self.file_tree_shown(HostId::Space(key)))
             && let Some(view) = self.files.get_mut(&project_id)
         {
             let requests = view.apply(event);
@@ -346,7 +346,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let (Some(key), Some(project_id)) = (files_view::key(&event.keystroke), self.workspace)
+        let (Some(key), Some(project_id)) =
+            (files_view::key(&event.keystroke), self.workspace_in(window))
         else {
             return;
         };
@@ -821,8 +822,8 @@ impl Shell {
         if window.has_active_prompt() {
             return true;
         }
-        if self.workspace != Some(project_id) {
-            self.activate_workspace(project_id, window, cx);
+        if self.workspace_in(window) != Some(project_id) {
+            self.activate_workspace(self.space_host(window), project_id, window, cx);
         }
         // `leave_documents` shows the file's pane, so a refused save is visible.
         self.leave_documents(project_id, files, then, window, cx);
@@ -1056,18 +1057,19 @@ impl Shell {
             .map(|view| view.project_id)
             .collect();
         // Hidden views read again when shown.
-        let shown = self.workspace;
         for project_id in files {
             self.files
                 .insert(project_id, new_files_view(project_id, None));
             // The worktree is gone (as before); the tree starts over.
-            if shown == Some(project_id) && self.files_on_screen() {
+            if (self.space_of(project_id))
+                .is_some_and(|key| self.files_on_screen(HostId::Space(key)))
+            {
                 self.refresh_files(project_id, window, cx);
             }
         }
         for project_id in git {
             self.retarget_git(project_id, None, None);
-            if shown == Some(project_id) && self.git_shown() {
+            if (self.space_of(project_id)).is_some_and(|key| self.git_shown(HostId::Space(key))) {
                 self.refresh_git(project_id, window, cx);
             }
         }

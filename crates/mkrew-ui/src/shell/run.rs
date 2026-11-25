@@ -67,7 +67,12 @@ impl Shell {
                             shell.views.insert(project_id, View::Terminals);
                             shell.run_reveal = run.tab_id;
                             shell.reveal_run_tab(project_id, window, cx);
-                            shell.activate_workspace(project_id, window, cx);
+                            shell.activate_workspace(
+                                shell.space_host(window),
+                                project_id,
+                                window,
+                                cx,
+                            );
                         }
                     }
                     Err(error) => {
@@ -97,7 +102,7 @@ impl Shell {
         });
         self.views.insert(project_id, View::Terminals);
         self.reveal_run_tab(project_id, window, cx);
-        self.activate_workspace(project_id, window, cx);
+        self.activate_workspace(self.space_host(window), project_id, window, cx);
     }
 
     /// Activates the tab in `run_reveal` once `project_id`'s tabs hold it.

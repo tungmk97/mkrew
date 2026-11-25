@@ -284,13 +284,13 @@ impl Shell {
         // in a detached one.
         let window_key = self.detached_key(window);
         let workspace = match window_key {
-            None => self.workspace,
+            None => self.workspace_in(window),
             Some(_) => self.tab_scope(window).map(|(project, _)| project),
         };
         let view = if window_key.is_some() {
             View::Terminals
         } else {
-            self.view()
+            self.view(self.space_host(window))
         };
         let terminal = self.focused_session(window).filter(|session| {
             self.panes
@@ -304,17 +304,17 @@ impl Shell {
                     .as_ref()
                     .is_some_and(|target| view.discard(target).is_some())
             });
-        let worktree_task = self
-            .selected_card
-            .is_some_and(|id| self.on_board(id) && self.board.manages_worktree(id));
+        let worktree_task = self.selected_card.is_some_and(|id| {
+            self.on_board(self.space_host(window), id) && self.board.manages_worktree(id)
+        });
         let task_changes = self.selected_card.is_some_and(|id| {
-            self.on_board(id)
+            self.on_board(self.space_host(window), id)
                 && self.board.task(id).is_some_and(|task| {
                     task.status == TaskStatus::Review && task.checkpoint.is_some()
                 })
         });
         let fan_out = self.selected_card.is_some_and(|id| {
-            self.on_board(id)
+            self.on_board(self.space_host(window), id)
                 && self.board.can_fan_out(id, self.sidebar.sessions())
                 && !self.starting.contains(&id)
         });
@@ -347,12 +347,12 @@ impl Shell {
                 (None, None) => 0,
             },
             file_pane: self.focused_file(window).is_some(),
-            file_tree: self.file_tree_shown(),
+            file_tree: self.file_tree_shown(self.space_host(window)),
             web_pane: self.focused_web(window).is_some(),
             browser: mkrew_ui::browser::available().is_ok(),
             terminal: terminal.is_some(),
             discard,
-            git: self.git_shown(),
+            git: self.git_shown(self.space_host(window)),
             diff_pane: self.focused_diff(window).is_some(),
             worktree_task,
             task_changes,
@@ -388,7 +388,7 @@ impl Shell {
             }),
             composer_open: focused.is_some_and(|id| self.composers.shown(id).is_some()),
             approve_card: workspace.is_some_and(|id| {
-                !self.jira_side_shown()
+                !self.jira_side_shown(self.space_host(window))
                     && (self.board)
                         .approve_target(self.selected_card, self.board_scope(id))
                         .is_some()
@@ -397,7 +397,7 @@ impl Shell {
                 .and_then(|id| self.git.get(&id))
                 .is_some_and(|view| view.section() == git_view::Section::Base),
             git_repos: workspace.is_some_and(|id| self.git_repos_listed(id)),
-            jira: self.jira_side_shown(),
+            jira: self.jira_side_shown(self.space_host(window)),
             last_error: self.toasts.last_error().is_some(),
             toast: !self.toasts.items().is_empty(),
             update_ready: self.update.is_some() && !self.updating,
@@ -423,7 +423,7 @@ impl Shell {
         entries.extend(palette::agent_entries(
             &self.keymap,
             &context,
-            &self.pane_agents(),
+            &self.pane_agents(self.space_host(window)),
         ));
         entries.extend(palette::machine_entries(&context, &self.machine_names()));
         if workspace.is_some() {
@@ -792,16 +792,18 @@ impl Shell {
                 _ => {}
             }
         }
-        let workspace = self.workspace;
+        let workspace = self.workspace_in(window);
         match action {
             palette::Action::Run(command) => {
-                if self.git_shown()
+                if self.git_shown(self.space_host(window))
                     && command.context().is_some_and(|context| {
                         context == GIT_CONTEXT || context == COMMENTS_CONTEXT
                     })
                 {
                     window.focus(&self.git_focus, cx);
-                } else if self.file_tree_shown() && command.context() == Some(FILE_TREE_CONTEXT) {
+                } else if self.file_tree_shown(self.space_host(window))
+                    && command.context() == Some(FILE_TREE_CONTEXT)
+                {
                     window.focus(&self.files_focus, cx);
                 }
                 // Deferred; gpui-pre captures the focus just restored now and resolves it in
@@ -868,10 +870,10 @@ impl Shell {
                             Extra::MergeBack => worktree_dialog::Kind::Merge,
                             _ => worktree_dialog::Kind::Remove,
                         };
-                        if let Some(task_id) = self
-                            .selected_card
-                            .filter(|&id| self.board.manages_worktree(id) && self.on_board(id))
-                        {
+                        if let Some(task_id) = self.selected_card.filter(|&id| {
+                            self.board.manages_worktree(id)
+                                && self.on_board(self.space_host(window), id)
+                        }) {
                             self.open_worktree_dialog(kind, task_id, window, cx);
                         }
                     }
@@ -1034,7 +1036,7 @@ impl Shell {
                 }
             }
             palette::Action::GoTo(palette::Target::Workspace(project_id)) => {
-                self.activate_workspace(project_id, window, cx);
+                self.activate_workspace(self.space_host(window), project_id, window, cx);
             }
             palette::Action::GoTo(palette::Target::Session(session_id)) => {
                 self.open_session(session_id, window, cx);
@@ -1044,7 +1046,7 @@ impl Shell {
                 task_id,
             }) => {
                 if workspace != Some(project_id) {
-                    self.activate_workspace(project_id, window, cx);
+                    self.activate_workspace(self.space_host(window), project_id, window, cx);
                 }
                 self.selected_card = Some(task_id);
                 self.show_view(View::Board, window, cx);
@@ -1163,13 +1165,13 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        if self.workspace != Some(source.project_id) {
-            self.activate_workspace(source.project_id, window, cx);
+        if self.workspace_in(window) != Some(source.project_id) {
+            self.activate_workspace(self.space_host(window), source.project_id, window, cx);
         }
         // ponytail: a task worktree's own changes are not in the title bar summary, so no
         // question is asked there; git refuses a switch that would overwrite a change.
         let known = if source.worktree_task_id.is_none() {
-            self.repo_changes(repo.as_deref())
+            self.repo_changes(source.project_id, repo.as_deref())
         } else {
             Some(0)
         };
@@ -1245,8 +1247,8 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let project_id = source.project_id;
-        if self.workspace != Some(project_id) {
-            self.activate_workspace(project_id, window, cx);
+        if self.workspace_in(window) != Some(project_id) {
+            self.activate_workspace(self.space_host(window), project_id, window, cx);
         }
         self.retarget_git(project_id, source.worktree_task_id, repo);
         let requests = self.git_view(project_id).show_commit(sha);

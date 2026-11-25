@@ -6,19 +6,25 @@ impl Shell {
     /// `ToggleInspector` / the title bar's `◨`: hides or shows the right panel (its tab is
     /// kept); from a view without it, shows Terminals with the panel open.
     pub(crate) fn toggle_inspector(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if self.workspace.is_none() {
+        if self.workspace_in(window).is_none() {
             return;
         }
         let mode_before = self.right_panel.mode();
-        let (tree_before, git_before) = if self.panel_view() {
-            let before = (self.files_on_screen(), self.git_shown());
+        let (tree_before, git_before) = if self.panel_view(self.space_host(window)) {
+            let before = (
+                self.files_on_screen(self.space_host(window)),
+                self.git_shown(self.space_host(window)),
+            );
             self.right_panel.open = !self.right_panel.open;
             before
         } else {
             self.right_panel.open = true;
             self.show_view(View::Terminals, window, cx);
             // `show_view` refreshed the tree / Git list if it came on screen.
-            (self.files_on_screen(), self.git_shown())
+            (
+                self.files_on_screen(self.space_host(window)),
+                self.git_shown(self.space_host(window)),
+            )
         };
         self.panel_changed(tree_before, git_before, mode_before, window, cx);
     }
@@ -31,8 +37,8 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let (tree_before, git_before, mode_before) = (
-            self.files_on_screen(),
-            self.git_shown(),
+            self.files_on_screen(self.space_host(window)),
+            self.git_shown(self.space_host(window)),
             self.right_panel.mode(),
         );
         self.right_panel.show(tab);
@@ -42,10 +48,10 @@ impl Shell {
     /// Ctrl+Shift+3: the right panel on the file tree, which gets the keyboard; from a view
     /// without the panel, Terminals first.
     pub(crate) fn show_file_tree(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
-        if !self.panel_view() {
+        if !self.panel_view(self.space_host(window)) {
             self.show_view(View::Terminals, window, cx);
         }
         self.show_panel_tab(PanelTab::Files, window, cx);
@@ -58,15 +64,17 @@ impl Shell {
     /// Ctrl+Shift+4: the right panel on the Git tab, whose list gets the keyboard; from a
     /// view without the panel, Terminals first.
     pub(crate) fn show_git_panel(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
-        if !self.panel_view() {
+        if !self.panel_view(self.space_host(window)) {
             self.show_view(View::Terminals, window, cx);
         }
         self.show_panel_tab(PanelTab::Git, window, cx);
         // Without loaded tabs the Terminals view draws no panel: nothing to focus.
-        if self.view() != View::Terminals || self.tabs.contains_key(&project_id) {
+        if self.view(self.space_host(window)) != View::Terminals
+            || self.tabs.contains_key(&project_id)
+        {
             window.focus(&self.git_focus, cx);
         }
     }
@@ -86,21 +94,21 @@ impl Shell {
             // The grip is gone: no mouse-up will end a drag in progress.
             self.end_inspector_drag(cx);
         }
-        if self.file_tree_shown() {
-            if !tree_before && let Some(project_id) = self.workspace {
+        if self.file_tree_shown(self.space_host(window)) {
+            if !tree_before && let Some(project_id) = self.workspace_in(window) {
                 self.refresh_files(project_id, window, cx);
             }
         } else if self.files_focus.is_focused(window) {
             self.focus_center(window, cx);
         }
-        if self.git_shown()
+        if self.git_shown(self.space_host(window))
             && !git_before
-            && let Some(project_id) = self.workspace
+            && let Some(project_id) = self.workspace_in(window)
         {
             self.refresh_git(project_id, window, cx);
         }
         // The Git tab went away under the keyboard: its list, filter field or commit box.
-        if !self.git_panel_shown()
+        if !self.git_panel_shown(self.space_host(window))
             && [
                 &self.git_focus,
                 &self.git_filter_focus,
@@ -138,15 +146,17 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let sideways = matches!(direction, Direction::Left | Direction::Right);
-        let in_panel = (self.file_tree_shown() && self.files_focus.is_focused(window))
-            || (self.git_panel_shown() && self.git_focus.is_focused(window));
+        let in_panel = (self.file_tree_shown(self.space_host(window))
+            && self.files_focus.is_focused(window))
+            || (self.git_panel_shown(self.space_host(window)) && self.git_focus.is_focused(window));
         if sideways && in_panel {
             if direction == Direction::Left {
                 self.focus_center(window, cx);
             }
             return;
         }
-        if (self.detached_key(window).is_some() || self.view() == View::Terminals)
+        if (self.detached_key(window).is_some()
+            || self.view(self.space_host(window)) == View::Terminals)
             && self
                 .with_tab(window, |tabs| tabs.focus_neighbour(direction))
                 .unwrap_or(false)
@@ -161,11 +171,13 @@ impl Shell {
             Direction::Left if !self.sidebar_layout.hidden() => self.focus_sidebar(window, cx),
             Direction::Right => {
                 // Without loaded tabs the Terminals view draws no panel.
-                let drawn = self.view() != View::Terminals
-                    || self.workspace.is_some_and(|id| self.tabs.contains_key(&id));
-                if drawn && self.file_tree_shown() {
+                let drawn = self.view(self.space_host(window)) != View::Terminals
+                    || self
+                        .workspace_in(window)
+                        .is_some_and(|id| self.tabs.contains_key(&id));
+                if drawn && self.file_tree_shown(self.space_host(window)) {
                     window.focus(&self.files_focus, cx);
-                } else if drawn && self.git_panel_shown() {
+                } else if drawn && self.git_panel_shown(self.space_host(window)) {
                     window.focus(&self.git_focus, cx);
                 }
             }
@@ -195,10 +207,11 @@ impl Shell {
     /// while the panel is open.
     pub(crate) fn inspector_toggle(
         &self,
+        host: HostId,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let open = self.panel_shown();
+        let open = self.panel_shown(host);
         let glyph = match self.panel_side {
             PanelSide::Right => Icon::PanelRight,
             PanelSide::Left => Icon::PanelLeft,
@@ -310,7 +323,7 @@ impl Shell {
                 cx.listener(|shell, _, _, cx| shell.end_inspector_drag(cx)),
             );
         let tab = self.panel_tab();
-        let changed = self.git_summary().map_or(0, GitSummary::changed);
+        let changed = self.git_summary(project_id).map_or(0, GitSummary::changed);
         // The tab row has the height of the title bar's tab chips and the sidebar's filter
         // row on its left: same height, same bottom divider. Icon tabs on the left, Tern style
         // (ADR 0110); the title is in the tooltip.
@@ -361,7 +374,7 @@ impl Shell {
             PanelTab::Files => self.render_file_tree(project_id, theme, window, cx),
             PanelTab::Session => {
                 let session = self
-                    .panel_session()
+                    .panel_session(self.space_host(window))
                     .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
                 let thread = session.and_then(|s| self.render_thread_section(s, theme, cx));
                 let cards = div()
@@ -443,7 +456,7 @@ impl Shell {
             .iter()
             .find(|p| p.id == project_id)
             .map_or("workspace", |p| p.name.as_str());
-        let lines = inspector::changes_card(self.git_summary(), workspace)?;
+        let lines = inspector::changes_card(self.git_summary(project_id), workspace)?;
         let card = inspector_card(theme, "Changes");
         if lines.is_empty() {
             return Some(card.child(meta_line(theme, "Working tree clean".into())));

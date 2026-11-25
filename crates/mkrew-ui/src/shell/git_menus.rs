@@ -70,7 +70,9 @@ impl Shell {
             .filter(|(_, (repo, _))| fits || *repo == view.repo)
             .map(|(at, (repo, label))| {
                 let active = view.repo == repo;
-                let dirty = self.repo_changes(repo.as_deref()).is_some_and(|n| n > 0);
+                let dirty = self
+                    .repo_changes(project_id, repo.as_deref())
+                    .is_some_and(|n| n > 0);
                 let tip = match &repo {
                     Some(repo) => format!("The git repository in {repo}/"),
                     None => "The workspace folder's git repository".to_owned(),
@@ -123,9 +125,9 @@ impl Shell {
 
     /// Changed files of repository `repo` (`None` = the workspace folder's) from the title
     /// bar summary; `None` until it loaded.
-    pub(crate) fn repo_changes(&self, repo: Option<&str>) -> Option<usize> {
+    pub(crate) fn repo_changes(&self, project_id: Ulid, repo: Option<&str>) -> Option<usize> {
         let repo = repo.unwrap_or("");
-        self.git_summary()?
+        self.git_summary(project_id)?
             .repos
             .iter()
             .find(|summary| summary.repo == repo)
@@ -144,7 +146,7 @@ impl Shell {
             .into_iter()
             .filter(|(_, label)| palette::fuzzy(&self.git_repo_query, label).is_some())
             .map(|(repo, label)| {
-                let summary = self.git_summary().and_then(|summary| {
+                let summary = self.git_summary(project_id).and_then(|summary| {
                     let name = repo.as_deref().unwrap_or("");
                     summary.repos.iter().find(|summary| summary.repo == name)
                 });
@@ -230,7 +232,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
+        let (Some(project_id), Some(key)) =
+            (self.workspace_in(window), palette::key(&event.keystroke))
+        else {
             return;
         };
         let paste = (key == palette::Key::Paste)
@@ -365,7 +369,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
+        let (Some(project_id), Some(key)) =
+            (self.workspace_in(window), palette::key(&event.keystroke))
+        else {
             return;
         };
         let paste = (key == palette::Key::Paste)

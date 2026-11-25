@@ -28,7 +28,9 @@ impl Shell {
                 let id = project.id;
                 MenuItem::new(
                     project.name.clone(),
-                    act(move |shell, window, cx| shell.activate_workspace(id, window, cx)),
+                    act(move |shell, window, cx| {
+                        shell.activate_workspace(shell.space_host(window), id, window, cx)
+                    }),
                 )
                 .lead(Lead::Avatar {
                     name: project.name.clone(),
@@ -53,9 +55,9 @@ impl Shell {
     /// with the agent tab shortcut), the plain "Agent" row while none is listed, "Shell" and
     /// "Empty tab". Every row opens a new tab and shows Terminals; a new pane in the current
     /// tab comes from Split.
-    pub(crate) fn new_menu_rows(&self) -> Rows {
+    pub(crate) fn new_menu_rows(&self, host: HostId) -> Rows {
         let mut rows: Rows = Vec::new();
-        for agent in self.pane_agents() {
+        for agent in self.pane_agents(host) {
             let profile = agent.id.clone();
             let item = MenuItem::new(
                 agent.name.clone(),
@@ -180,7 +182,10 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         // The last screen stays while a lost connection is down (`reconnecting`).
-        let Some(project_id) = self.workspace.filter(|_| self.shows_workspaces()) else {
+        let Some(project_id) = self
+            .workspace_in(window)
+            .filter(|_| self.shows_workspaces())
+        else {
             let (sentence, detail) = self.status_line();
             return message(theme, Some("Mkrew"), sentence, detail)
                 .children(self.status_action(theme, cx))
@@ -188,10 +193,10 @@ impl Shell {
                 .h_full()
                 .into_any_element();
         };
-        let view = self.view();
+        let view = self.view(self.space_host(window));
         let main = div().flex_1().min_w_0().h_full().flex().flex_col();
         let panel = self
-            .panel_shown()
+            .panel_shown(self.space_host(window))
             .then(|| self.render_right_panel(project_id, now, theme, window, cx));
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
@@ -272,8 +277,10 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let main = host.space().is_some();
-        let workspace = self.workspace.filter(|_| main && self.shows_workspaces());
-        let view = self.view();
+        let workspace = self
+            .workspace_in(window)
+            .filter(|_| main && self.shows_workspaces());
+        let view = self.view(self.space_host(window));
         // An open dialog keeps the mouse too: the bar's controls are inert, only the drag area
         // and the window controls stay live (they never touch the app's state).
         let modal = self.modal_open() || self.reconnecting();
@@ -423,7 +430,7 @@ impl Shell {
             );
         }
         if workspace.is_some() {
-            right.push(self.inspector_toggle(theme, cx).into_any_element());
+            right.push(self.inspector_toggle(host, theme, cx).into_any_element());
         }
         let has_right = !right.is_empty();
         let right = div()

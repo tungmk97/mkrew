@@ -354,8 +354,8 @@ impl Shell {
             return;
         };
         let project_id = dialog.project_id;
-        if self.workspace != Some(project_id) {
-            self.activate_workspace(project_id, window, cx);
+        if self.workspace_in(window) != Some(project_id) {
+            self.activate_workspace(self.space_host(window), project_id, window, cx);
         }
         self.retarget_git(project_id, Some(dialog.task_id), None);
         self.open_git(project_id, window, cx);

@@ -71,8 +71,11 @@ impl Shell {
             self.toggle_compact_sidebar(window, cx);
         }
         let rows = self.sidebar.view(&self.viewed).rows;
-        self.sidebar
-            .browse_from(&rows, self.focused_session(window), self.workspace);
+        self.sidebar.browse_from(
+            &rows,
+            self.focused_session(window),
+            self.workspace_in(window),
+        );
         window.focus(&self.filter_focus, cx);
         cx.notify();
     }

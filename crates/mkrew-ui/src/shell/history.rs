@@ -243,7 +243,7 @@ impl Shell {
         // The Git view shows the active workspace's changes.
         let session = sessions
             .iter()
-            .find(|s| s.id == dialog.session_id && Some(s.project_id) == self.workspace);
+            .find(|s| s.id == dialog.session_id && Some(s.project_id) == self.workspace_in(window));
         let since = tree.zip(session).map(|(tree, session)| {
             let since = Since::turn(session, sessions, n, tree);
             (session.project_id, session.task_id, since)
@@ -471,7 +471,7 @@ impl Shell {
                         } else {
                             shell.reveal = Some(resumed.session_id);
                         }
-                        shell.activate_workspace(project_id, window, cx);
+                        shell.activate_workspace(shell.space_host(window), project_id, window, cx);
                     }
                     Err(error) => {
                         tracing::warn!(%session_id, "session.resume failed: {error:#}");

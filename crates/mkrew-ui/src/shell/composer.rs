@@ -1187,7 +1187,7 @@ impl Shell {
         let stats = chat::composer_stats(
             page,
             self.usages.get(session),
-            self.git_summary(),
+            (self.project_of(session)).and_then(|project| self.git_summary(project)),
             at_root,
             working,
             now,

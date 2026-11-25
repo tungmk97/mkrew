@@ -53,6 +53,12 @@ impl Needs {
             })
             .collect()
     }
+
+    /// What `self` and `other` both keep watched (one window per workspace, ADR 0113).
+    pub fn union(mut self, other: Needs) -> Needs {
+        self.0.extend(other.0);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +137,18 @@ mod tests {
         );
         let closed = Needs::of(Some(b), None, None, [(b, t2)]);
         assert_eq!(b_shown.released(&closed), [release(a, Some(t1))]);
+    }
+
+    #[test]
+    fn union_keeps_both_projects_and_their_worktrees() {
+        let (a, b, task) = (Ulid::new(), Ulid::new(), Ulid::new());
+        let both =
+            Needs::of(Some(a), Some(task), None, []).union(Needs::of(Some(b), None, None, []));
+        assert_eq!(both.released(&Needs::default()).len(), 3);
+        assert!(
+            Needs::of(Some(a), None, None, [])
+                .released(&both)
+                .is_empty()
+        );
     }
 }

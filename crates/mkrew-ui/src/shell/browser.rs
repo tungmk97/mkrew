@@ -240,7 +240,7 @@ impl Shell {
         }
         let Some(project_id) = (at.as_ref().map(|(project, ..)| *project))
             .or_else(|| self.tab_scope(window).map(|(project, _)| project))
-            .or(self.workspace)
+            .or(self.workspace_in(window))
         else {
             return;
         };
@@ -256,8 +256,8 @@ impl Shell {
                     });
                 }
                 self.views.insert(project_id, View::Terminals);
-                if self.workspace != Some(project_id) {
-                    self.activate_workspace(project_id, window, cx);
+                if self.workspace_in(window) != Some(project_id) {
+                    self.activate_workspace(self.space_host(window), project_id, window, cx);
                 }
                 documents::Place::NewTab
             }
@@ -299,7 +299,10 @@ impl Shell {
             return cx.open_url(&url);
         }
         let scope = self.tab_scope(window);
-        let Some(project_id) = scope.map(|(project, _)| project).or(self.workspace) else {
+        let Some(project_id) = scope
+            .map(|(project, _)| project)
+            .or(self.workspace_in(window))
+        else {
             return cx.open_url(&url);
         };
         let tab = scope.and_then(|(project, tab_id)| self.tabs.get(&project)?.tab(tab_id));
@@ -316,8 +319,8 @@ impl Shell {
             WebPlace::NewTab => {
                 // Terminals show the panes: Board and Docs give way (as a file from Docs).
                 self.views.insert(project_id, View::Terminals);
-                if self.workspace != Some(project_id) {
-                    self.activate_workspace(project_id, window, cx);
+                if self.workspace_in(window) != Some(project_id) {
+                    self.activate_workspace(self.space_host(window), project_id, window, cx);
                 }
                 self.place_leaf(
                     project_id,

@@ -36,13 +36,15 @@ pub(crate) fn at_bottom(scroll: &ScrollHandle) -> bool {
 }
 
 impl Shell {
-    /// Starts, keeps or stops the readings to match what is shown (status tick): the panel's
-    /// session, and the Chat panes. No work unless something shows a session with a native id.
+    /// Starts, keeps or stops the readings to match what is shown (status tick): the session
+    /// of the primary Space window's panel (one Thread section at a time), and the Chat panes.
+    /// No work unless something shows a session with a native id.
     pub(crate) fn sync_thread(&mut self, cx: &mut Context<'_, Self>) {
+        let host = self.primary_host();
         let session = self
-            .panel_session()
+            .panel_session(host)
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
-        let wanted = self.panel_shown() && self.panel_tab() == PanelTab::Session;
+        let wanted = self.panel_shown(host) && self.panel_tab() == PanelTab::Session;
         let panel = inspector::wanted_thread(wanted, session);
         let panes = self.chat_panes();
         let chats = panes

@@ -72,7 +72,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(project_id), Some(key)) = (self.workspace, palette::key(&event.keystroke)) else {
+        let (Some(project_id), Some(key)) =
+            (self.workspace_in(window), palette::key(&event.keystroke))
+        else {
             return;
         };
         let paste = (key == palette::Key::Paste)
@@ -156,7 +158,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let shown = self.workspace.filter(|_| self.view() == View::Docs);
+        let shown = self
+            .workspace_in(window)
+            .filter(|_| self.view(self.space_host(window)) == View::Docs);
         let reactions: Vec<_> = self
             .docs
             .values_mut()
@@ -274,10 +278,8 @@ impl Shell {
                         filter_focused,
                         theme,
                         cx,
-                        |shell, caret| {
-                            if let Some(docs) =
-                                shell.workspace.and_then(|id| shell.docs.get_mut(&id))
-                            {
+                        move |shell, caret| {
+                            if let Some(docs) = shell.docs.get_mut(&project_id) {
                                 docs.filter.click(caret.at, caret.extend, caret.clicks);
                             }
                         },

@@ -55,7 +55,7 @@ impl Shell {
         }
         let main = host.space().is_some();
         let project = if main {
-            self.workspace
+            self.workspace_in(window)
         } else {
             self.tab_scope(window).map(|(project, _)| project)
         };
@@ -126,7 +126,7 @@ impl Shell {
             render_menu(
                 self.menu_state(),
                 "new-tab-panel",
-                self.new_menu_rows(),
+                self.new_menu_rows(host),
                 None,
                 Place::Dropdown,
                 theme,
@@ -358,7 +358,7 @@ impl Shell {
         // The workspace of the pane dropped on, else of this window's tab, else the shown one.
         let Some(project_id) = (at.as_ref().map(|(project, ..)| *project))
             .or_else(|| self.tab_scope(window).map(|(project, _)| project))
-            .or(self.workspace)
+            .or(self.workspace_in(window))
         else {
             return;
         };
@@ -417,8 +417,8 @@ impl Shell {
         if main {
             // Terminals show the panes: Board, Docs and the Diff give way.
             self.views.insert(project_id, View::Terminals);
-            if self.workspace != Some(project_id) {
-                self.activate_workspace(project_id, window, cx);
+            if self.workspace_in(window) != Some(project_id) {
+                self.activate_workspace(self.space_host(window), project_id, window, cx);
             }
         }
         self.place_leaf(project_id, leaf, place, window, cx);

@@ -82,7 +82,9 @@ impl Shell {
         }
         self.sync_panes(window, cx);
         // The Git tab is still on screen: the keyboard stays in its list.
-        if self.workspace == Some(project_id) && self.git_panel_shown() {
+        if self.workspace_in(window) == Some(project_id)
+            && self.git_panel_shown(self.space_host(window))
+        {
             window.focus(&self.git_focus, cx);
         }
         cx.notify();
@@ -98,7 +100,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let git_before = self.git_shown();
+        let git_before = self.git_shown(self.space_host(window));
         self.open_diff(project_id, documents::Place::NewTab, window, cx);
         self.show_panel_tab(PanelTab::Git, window, cx);
         if git_before {
@@ -182,11 +184,11 @@ impl Shell {
         .detach();
     }
 
-    /// The summary of the shown workspace (None until loaded, and for other workspaces).
-    pub(crate) fn git_summary(&self) -> Option<&GitSummary> {
+    /// The summary of `project` (None until loaded, and for workspaces no window shows).
+    pub(crate) fn git_summary(&self, project: Ulid) -> Option<&GitSummary> {
         self.git_summary
             .as_ref()
-            .filter(|(id, _)| Some(*id) == self.workspace)
+            .filter(|(id, _)| *id == project)
             .map(|(_, summary)| summary)
     }
 
@@ -213,7 +215,7 @@ impl Shell {
             let _ = this.update_in(cx, |shell, window, cx| {
                 shell.git_summary_busy = false;
                 let again = std::mem::take(&mut shell.git_summary_again);
-                let shown = shell.workspace;
+                let shown = shell.workspace_in(window);
                 match loaded {
                     // An answer for a workspace that is no longer shown is dropped.
                     Ok(summary) if shown == Some(project_id) => {
@@ -392,7 +394,9 @@ impl Shell {
                 // Which of the listed files are still marked as viewed (no-op in the History).
                 shell.load_git_viewed(project_id, window, cx);
                 // Everything committed: the box is gone, the list takes the keyboard back.
-                if shell.git_commit_focus.is_focused(window) && !shell.git_commit_shown() {
+                if shell.git_commit_focus.is_focused(window)
+                    && !shell.git_commit_shown(shell.space_host(window))
+                {
                     window.focus(&shell.git_focus, cx);
                 }
             });
@@ -484,7 +488,7 @@ impl Shell {
                 }
                 let mode = shell.diff_mode;
                 let mut reveal = None;
-                let on_screen = shell.workspace == Some(project_id);
+                let on_screen = shell.on_screen_workspaces().contains(&project_id);
                 let again = shell.git_at(project_id, &at).and_then(|view| {
                     let again = view.diff_loaded(&target, loaded);
                     // A cross-file `n` / `p` picked its hunk: scroll to it (not on a refresh).
@@ -509,7 +513,7 @@ impl Shell {
         .detach();
     }
 
-    /// Follows `git.changed` while the active workspace's Git is on screen (the panel's tab or
+    /// Follows `git.changed` while a shown workspace's Git is on screen (the panel's tab or
     /// the diff); hidden ones refresh when shown.
     pub(crate) fn git_event(
         &mut self,
@@ -517,14 +521,16 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace.filter(|_| self.git_shown()) else {
-            return;
-        };
-        let Some(view) = self.git.get_mut(&project_id) else {
-            return;
-        };
-        let requests = view.apply(event);
-        self.git_requests(project_id, requests, window, cx);
+        let shown: Vec<Ulid> = (self.spaces_shown())
+            .filter_map(|(key, project)| project.filter(|_| self.git_shown(HostId::Space(key))))
+            .collect();
+        for project_id in shown {
+            let Some(view) = self.git.get_mut(&project_id) else {
+                continue;
+            };
+            let requests = view.apply(event);
+            self.git_requests(project_id, requests, window, cx);
+        }
     }
 
     /// A click on a changed file: the diff leaf shows it.
@@ -556,7 +562,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
-            if let Some(project_id) = self.workspace
+            if let Some(project_id) = self.workspace_in(window)
                 && self
                     .git
                     .get(&project_id)
@@ -572,7 +578,7 @@ impl Shell {
         }
         if event.keystroke.key == "enter"
             && !event.keystroke.modifiers.modified()
-            && let Some(project_id) = self.workspace
+            && let Some(project_id) = self.workspace_in(window)
             && self
                 .git
                 .get(&project_id)
@@ -596,7 +602,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         if let git_view::Key::Stage(stage) = key {
@@ -653,7 +659,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         if let Some(change) = self.git_view(project_id).stage_all_key(stage) {
@@ -665,7 +671,7 @@ impl Shell {
     /// of the selected file (nothing for a file that cannot be discarded: `open_git_discard`
     /// checks).
     pub(crate) fn git_discard_selected(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         let Some(view) = self.git.get(&project_id) else {
@@ -777,7 +783,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
@@ -802,10 +808,10 @@ impl Shell {
     }
 
     /// Whether the panel's Git tab is shown with its commit box.
-    pub(crate) fn git_commit_shown(&self) -> bool {
-        self.git_panel_shown()
+    pub(crate) fn git_commit_shown(&self, host: HostId) -> bool {
+        self.git_panel_shown(host)
             && self
-                .workspace
+                .workspace_of(host)
                 .and_then(|id| self.git.get(&id))
                 .is_some_and(GitView::commit_box_shown)
     }

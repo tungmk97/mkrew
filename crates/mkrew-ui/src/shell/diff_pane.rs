@@ -31,17 +31,17 @@ impl DiffViewState {
 }
 
 impl Shell {
-    /// A Diff leaf of the active workspace is drawn: in the main window's tab in front, or in
+    /// A Diff leaf of `host`'s workspace is drawn: in that Space window's tab in front, or in
     /// the tab a visible detached window shows.
-    pub(crate) fn diff_on_screen(&self) -> bool {
-        let Some(project_id) = self.workspace else {
+    pub(crate) fn diff_on_screen(&self, host: HostId) -> bool {
+        let Some(project_id) = self.workspace_of(host) else {
             return false;
         };
         let Some(tabs) = self.tabs.get(&project_id) else {
             return false;
         };
         let holds = |tab: &Tab| tab.shown().contains(&PaneKey::Diff);
-        let in_front = self.view() == View::Terminals && tabs.active().is_some_and(holds);
+        let in_front = self.view(host) == View::Terminals && tabs.active().is_some_and(holds);
         in_front
             || (self.detached.visible_tabs().into_iter()).any(
                 |DockTab::Terminal { project, tab_id }| {
@@ -88,7 +88,7 @@ impl Shell {
             });
             return;
         }
-        if self.view() != View::Terminals {
+        if self.view(self.space_host(window)) != View::Terminals {
             self.show_view(View::Terminals, window, cx);
         }
         self.place_leaf(project_id, Leaf::diff(), place, window, cx);
@@ -107,7 +107,7 @@ impl Shell {
         // A Diff leaf of another workspace (torn off to a window while the main window shows
         // a different one): Git and its keys belong to the active workspace only, so this
         // pane never acts on the wrong one.
-        if self.workspace != Some(project_id) {
+        if self.workspace_in(window) != Some(project_id) {
             return message(
                 theme,
                 None,
@@ -119,7 +119,12 @@ impl Shell {
                 button("diff-switch-workspace", "Switch to workspace", theme, true).on_click(
                     cx.listener(move |shell, _, window, cx| {
                         shell.in_main_window(window, cx, move |shell, window, cx| {
-                            shell.activate_workspace(project_id, window, cx);
+                            shell.activate_workspace(
+                                shell.space_host(window),
+                                project_id,
+                                window,
+                                cx,
+                            );
                         });
                     }),
                 ),
@@ -134,7 +139,7 @@ impl Shell {
         let card = self
             .render_git_diff(project_id, view, theme, window, cx)
             .key_context(GIT_CONTEXT);
-        let card = if self.git_panel_shown() {
+        let card = if self.git_panel_shown(self.space_host(window)) {
             card
         } else {
             card.track_focus(&self.git_focus)

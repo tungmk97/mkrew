@@ -9,9 +9,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let order = self.shown_workspaces();
-        if let Some(project_id) = sidebar::workspace_at_offset(&order, self.workspace, offset) {
-            self.activate_workspace(project_id, window, cx);
+        let order = self.shown_workspaces(self.space_host(window));
+        if let Some(project_id) =
+            sidebar::workspace_at_offset(&order, self.workspace_in(window), offset)
+        {
+            self.activate_workspace(self.space_host(window), project_id, window, cx);
         }
     }
 
@@ -23,7 +25,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project) = self.workspace else {
+        let Some(project) = self.workspace_in(window) else {
             return;
         };
         let detached = &self.detached;
@@ -42,7 +44,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(project_id) = self.workspace
+        if let Some(project_id) = self.workspace_in(window)
             && self.tabs.contains_key(&project_id)
         {
             self.create_tab(project_id, Some((kind, None)), window, cx);
@@ -57,7 +59,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(project_id) = self.workspace
+        if let Some(project_id) = self.workspace_in(window)
             && self.tabs.contains_key(&project_id)
         {
             self.show_view(View::Terminals, window, cx);
@@ -202,16 +204,15 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let host = (self.terminal_project(tab_id)).map_or(self.primary_host(), |project| {
-            self.terminal_host(project, tab_id)
-        });
+        let host =
+            (self.terminal_project(tab_id)).and_then(|project| self.terminal_host(project, tab_id));
         match host {
-            HostId::Space(_) => {
-                if let Some(tabs) = self.active_tabs_mut() {
+            Some(HostId::Space(_)) | None => {
+                if let Some(tabs) = self.active_tabs_mut(window) {
                     tabs.activate(tab_id);
                 }
             }
-            HostId::Detached(key) => {
+            Some(HostId::Detached(key)) => {
                 let at = (self.detached.tabs_of(key).iter()).position(
                     |tab| matches!(tab, DockTab::Terminal { tab_id: id, .. } if *id == tab_id),
                 );
@@ -638,7 +639,7 @@ impl Shell {
                 match target {
                     Some(sidebar::Target::Session(id)) => self.open_session(id, window, cx),
                     Some(sidebar::Target::Workspace(id)) => {
-                        self.activate_workspace(id, window, cx);
+                        self.activate_workspace(self.space_host(window), id, window, cx);
                     }
                     None => self.focus_pane(window, cx),
                 }
@@ -777,7 +778,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.tab_menu = None;
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         // Only the tabs of the same window: those in another one are not on this strip.
@@ -787,7 +788,7 @@ impl Shell {
             })
             .map(|target| (project_id, target))
             .collect();
-        if let Some(tabs) = self.active_tabs_mut() {
+        if let Some(tabs) = self.active_tabs_mut(window) {
             tabs.activate(tab_id);
         }
         self.sync_panes(window, cx);
@@ -876,7 +877,8 @@ impl Shell {
             self.save_layout(project_id, write, window, cx);
             // A tab in a detached window closes too, whichever workspace the main window shows.
             if let Some(tab_id) = emptied
-                && (self.workspace == Some(project_id) || self.is_detached_tab(project_id, tab_id))
+                && (self.workspace_in(window) == Some(project_id)
+                    || self.is_detached_tab(project_id, tab_id))
             {
                 self.close_tab(project_id, tab_id, window, cx);
             }

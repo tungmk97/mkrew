@@ -313,14 +313,14 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace else {
+        let Some(project_id) = self.workspace_in(window) else {
             return;
         };
         let shown_target = self.files.get(&project_id).and_then(|v| v.worktree_task_id);
         // The file a page's link is in (the focused file pane or the Docs file), the folder it is
         // in, its page and blocks.
         let file = self.focused_doc(window).map(|(_, file)| file);
-        let (from, target, page) = match (action.on_page, self.view()) {
+        let (from, target, page) = match (action.on_page, self.view(self.space_host(window))) {
             (true, View::Terminals) if file.is_some() => {
                 let doc = file.as_ref().and_then(|file| self.doc(project_id, file));
                 let view = file

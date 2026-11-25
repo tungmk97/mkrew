@@ -8,7 +8,8 @@ impl Shell {
     /// the first line of the current hunk), or grows / shrinks the pick one line or block, then
     /// scrolls the moved end into view. A text field never gets here: `run` hands the key to it.
     pub(crate) fn pick_step(&mut self, down: bool, window: &Window, cx: &mut Context<'_, Self>) {
-        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context(window))
+        let (Some(project_id), Some(context)) =
+            (self.workspace_in(window), self.comment_context(window))
         else {
             return;
         };
@@ -99,13 +100,13 @@ impl Shell {
     ) {
         let plain_escape = event.keystroke.key == "escape" && !event.keystroke.modifiers.modified();
         if !plain_escape
-            || self.view() != View::Docs
+            || self.view(self.space_host(window)) != View::Docs
             || self.modal_open()
             || !self.focus_handle.is_focused(window)
         {
             return;
         }
-        let picked = (self.workspace)
+        let picked = (self.workspace_in(window))
             .and_then(|project_id| self.docs.get_mut(&project_id))
             .map(|docs| &mut docs.comments)
             .filter(|comments| comments.selection.is_some());

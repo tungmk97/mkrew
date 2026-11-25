@@ -21,7 +21,7 @@ impl Shell {
             cx.displays().iter().map(|d| d.visible_bounds()).collect();
         let bounds = mkrew_ui::window_place::new_window_bounds(at, size, near, &displays);
         let DockTab::Terminal { project, tab_id } = tab;
-        let from = self.terminal_host(project, tab_id);
+        let from = self.terminal_host(project, tab_id).unwrap_or(source);
         let emptied = self.detached.move_tab(tab, None, None);
         let key = self.detached.open(tab);
         self.after_move(emptied, cx);
@@ -183,7 +183,7 @@ impl Shell {
             // The strip shows the shown workspace's tabs: a drop between its chips lands
             // there; a tab of another workspace keeps its place.
             let params = index
-                .filter(|_| self.workspace == Some(project))
+                .filter(|_| self.workspace_in(window) == Some(project))
                 .and_then(|at| {
                     let tabs = self.tabs.get(&project)?;
                     let anchor = (tabs.tabs().iter())
@@ -212,7 +212,7 @@ impl Shell {
         self.in_window(to, cx, move |shell, window, cx| {
             shell.rehost_tab(tab, window, cx);
             if to.space().is_some() {
-                shell.activate_workspace(project, window, cx);
+                shell.activate_workspace(shell.space_host(window), project, window, cx);
             }
             shell.sync_panes(window, cx);
             window.activate_window();

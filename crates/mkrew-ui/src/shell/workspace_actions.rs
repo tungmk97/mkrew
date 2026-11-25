@@ -9,16 +9,18 @@ impl Shell {
             return;
         }
         let machine = self.machine_name().map(str::to_owned);
-        self.add_workspace = Some(CloneDialog::new(self.clone_parent(), machine));
+        self.add_workspace = Some(CloneDialog::new(
+            self.clone_parent(self.workspace_in(window)),
+            machine,
+        ));
         window.focus(&self.dialog_focus, cx);
         cx.notify();
     }
 
-    /// Where a clone goes by default: next to the active workspace, else the home folder.
-    fn clone_parent(&self) -> String {
-        let active = self
-            .workspace
-            .and_then(|id| self.sidebar.projects().iter().find(|p| p.id == id));
+    /// Where a clone goes by default: next to `shown` (the workspace of the asking window),
+    /// else the home folder.
+    fn clone_parent(&self, shown: Option<Ulid>) -> String {
+        let active = shown.and_then(|id| self.sidebar.projects().iter().find(|p| p.id == id));
         let beside =
             active.and_then(|p| Path::new(&p.path).parent().map(|d| d.display().to_string()));
         // This computer's home folder says nothing about the other computer's.
@@ -181,7 +183,7 @@ impl Shell {
                             shell.close_add_workspace(window, cx);
                         }
                         shell.sidebar.add_project(project);
-                        shell.activate_workspace(project_id, window, cx);
+                        shell.activate_workspace(shell.space_host(window), project_id, window, cx);
                     }
                     Err(error) => match shell.add_workspace.as_mut() {
                         Some(dialog) => dialog.error = Some(format!("{error:#}")),
@@ -253,7 +255,7 @@ impl Shell {
             (Some(project), _) if mine => {
                 self.close_add_workspace(window, cx);
                 self.sidebar.add_project(project.clone());
-                self.activate_workspace(project.id, window, cx);
+                self.activate_workspace(self.space_host(window), project.id, window, cx);
             }
             (Some(_), _) => {}
             (None, error) => {
@@ -714,14 +716,12 @@ impl Shell {
             return false;
         }
         self.diff_mode = mode;
-        let hunk_row = self
-            .workspace
-            .and_then(|project_id| self.git.get(&project_id))
-            .and_then(|view| match (&view.diff, view.hunk) {
-                (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk, mode),
-                _ => None,
-            });
-        if let Some(project_id) = self.workspace {
+        for project_id in self.on_screen_workspaces() {
+            let hunk_row =
+                (self.git.get(&project_id)).and_then(|view| match (&view.diff, view.hunk) {
+                    (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk, mode),
+                    _ => None,
+                });
             self.scroll_diff_to(project_id, hunk_row.unwrap_or(0));
         }
         true

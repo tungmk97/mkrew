@@ -13,7 +13,7 @@ impl Shell {
             .sidebar
             .projects()
             .iter()
-            .find(|project| Some(project.id) == self.workspace)
+            .find(|project| Some(project.id) == self.workspace_in(window))
             .and_then(|project| project.default_agent.clone());
         self.ask = Some(Ask::new(default_agent, self.ask_web));
         self.dialog_serial += 1;

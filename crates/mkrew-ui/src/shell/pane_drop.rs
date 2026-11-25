@@ -558,7 +558,7 @@ impl Shell {
             .drag_over::<DraggedPath>(move |style, _, _, _| style.bg(tint))
             .drag_over::<DraggedNew>(move |style, _, _, _| style.bg(tint))
             .on_drop(cx.listener(|shell, pane: &DraggedPane, window, cx| {
-                if shell.workspace == Some(pane.project_id) && !shell.modal_open() {
+                if shell.workspace_in(window) == Some(pane.project_id) && !shell.modal_open() {
                     shell.pane_to_new_tab(pane.project_id, &pane.key, window, cx);
                 }
             }))
@@ -566,7 +566,7 @@ impl Shell {
                 shell.drop_new_on_strip(item, window, cx);
             }))
             .on_drop(cx.listener(|shell, path: &DraggedPath, window, cx| {
-                if shell.workspace == Some(path.project_id) && !shell.modal_open() {
+                if shell.workspace_in(window) == Some(path.project_id) && !shell.modal_open() {
                     let leaf = Leaf::of_file(path.file());
                     shell.drop_leaf(path.project_id, None, leaf, window, cx);
                 }

@@ -54,15 +54,15 @@ impl Shell {
         }
     }
 
-    /// The All workspaces board is on screen (not its Jira side).
-    pub(crate) fn all_board_shown(&self) -> bool {
-        self.board_all && self.view() == View::Board && !self.jira_side_shown()
+    /// The All workspaces board is on screen in `host` (not its Jira side).
+    pub(crate) fn all_board_shown(&self, host: HostId) -> bool {
+        self.board_all && self.view(host) == View::Board && !self.jira_side_shown(host)
     }
 
-    /// Whether `task_id`'s card is on the shown workspace's Board (the selection may be
-    /// another workspace's).
-    pub(crate) fn on_board(&self, task_id: Ulid) -> bool {
-        self.workspace
+    /// Whether `task_id`'s card is on the Board of the workspace `host` shows (the selection
+    /// may be another workspace's).
+    pub(crate) fn on_board(&self, host: HostId, task_id: Ulid) -> bool {
+        self.workspace_of(host)
             .zip(self.board.task(task_id))
             .is_some_and(|(id, task)| self.board_scope(id).contains(task.project_id))
     }
@@ -213,8 +213,8 @@ impl Shell {
         // A worktree task's checkpoint is its worktree's HEAD: compared there.
         let target = task.worktree_path.is_some().then_some(task_id);
         // A card of the All workspaces board: its own workspace shows the changes.
-        if self.workspace != Some(project_id) {
-            self.activate_workspace(project_id, window, cx);
+        if self.workspace_in(window) != Some(project_id) {
+            self.activate_workspace(self.space_host(window), project_id, window, cx);
         }
         self.retarget_git(project_id, target, None);
         self.show_git_since(project_id, since, window, cx);
@@ -550,10 +550,15 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace.filter(|_| self.view() == View::Board) else {
+        let Some(project_id) = self
+            .workspace_in(window)
+            .filter(|_| self.view(self.space_host(window)) == View::Board)
+        else {
             return;
         };
-        let selected = self.selected_card.filter(|&id| self.on_board(id));
+        let selected = self
+            .selected_card
+            .filter(|&id| self.on_board(self.space_host(window), id));
         match key {
             board::CardKey::Up
             | board::CardKey::Down

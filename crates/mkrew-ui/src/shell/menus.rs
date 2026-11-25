@@ -537,11 +537,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.workspace == Some(project_id) {
+        if self.workspace_in(window) == Some(project_id) {
             self.sidebar.toggle(project_id);
             cx.notify();
         } else {
-            self.activate_workspace(project_id, window, cx);
+            self.activate_workspace(self.space_host(window), project_id, window, cx);
         }
     }
 }

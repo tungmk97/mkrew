@@ -29,6 +29,8 @@ pub(crate) struct HostUi {
     /// The window is shown (not minimized or hidden): its panes stay attached. Space windows
     /// only; detached ones keep it in `Detached`.
     pub(crate) visible: bool,
+    /// The workspace a Space window shows (`None`: the empty state).
+    pub(crate) workspace: Option<Ulid>,
 }
 
 impl Shell {
@@ -42,11 +44,59 @@ impl Shell {
         HostId::Space(space.unwrap_or_else(|| self.primary_or_first()))
     }
 
+    /// The workspace a window shows: a Space window's, or a detached window's shown tab's.
+    pub(crate) fn workspace_of(&self, host: HostId) -> Option<Ulid> {
+        match host {
+            HostId::Space(_) => self.hosts.get(&host)?.workspace,
+            HostId::Detached(key) => self.detached.active(key).map(|tab| tab.project()),
+        }
+    }
+
+    /// The Space window that serves `window`: itself, or for a detached window the Space
+    /// window of its shown tab's workspace, else the primary one. Workspace-wide actions and
+    /// views (`view`, the panel, Git, the Board) run there.
+    pub(crate) fn space_host(&self, window: &Window) -> HostId {
+        match self.host_of(window) {
+            host @ HostId::Space(_) => host,
+            HostId::Detached(key) => (self.detached.active(key))
+                .and_then(|tab| self.space_of(tab.project()))
+                .map_or_else(|| self.primary_host(), HostId::Space),
+        }
+    }
+
+    /// The workspace of the Space window that serves `window` ([`Self::space_host`]).
+    pub(crate) fn workspace_in(&self, window: &Window) -> Option<Ulid> {
+        self.workspace_of(self.space_host(window))
+    }
+
+    /// Every Space window (opened or being opened) with its workspace, by key.
+    pub(crate) fn spaces_shown(&self) -> impl Iterator<Item = (SpaceKey, Option<Ulid>)> + use<> {
+        let mut spaces: Vec<(SpaceKey, Option<Ulid>)> = (self.hosts.iter())
+            .filter_map(|(host, ui)| Some((host.space()?, ui.workspace)))
+            .collect();
+        spaces.sort_by_key(|(key, _)| *key);
+        spaces.into_iter()
+    }
+
+    /// The Space window showing `project` (one at most in either mode).
+    pub(crate) fn space_of(&self, project: Ulid) -> Option<SpaceKey> {
+        self.spaces_shown()
+            .find_map(|(key, shown)| (shown == Some(project)).then_some(key))
+    }
+
+    /// The workspaces some Space window shows.
+    pub(crate) fn on_screen_workspaces(&self) -> Vec<Ulid> {
+        let mut shown: Vec<Ulid> = self.spaces_shown().filter_map(|(_, shown)| shown).collect();
+        shown.sort();
+        shown.dedup();
+        shown
+    }
+
     /// The Space window used last: where Settings, Turns… and app menu actions open.
     pub(crate) fn primary(&self) -> Option<SpaceKey> {
         (self.activation.iter())
             .find_map(|host| host.space())
-            .or_else(|| self.space_handles.keys().min().copied())
+            .or_else(|| self.spaces_shown().next().map(|(key, _)| key))
     }
 
     /// [`Self::primary`]; a Shell has a Space window from `main()` until it quits, and
@@ -74,13 +124,13 @@ impl Shell {
         (self.tabs.iter()).find_map(|(project, tabs)| tabs.tab(tab_id).map(|_| *project))
     }
 
-    /// Where a terminal tab is shown: its detached window, else the Space window (mode 1 has
-    /// one).
-    pub(crate) fn terminal_host(&self, project: Ulid, tab_id: Ulid) -> HostId {
+    /// Where a terminal tab is shown: its detached window, else the Space window of its
+    /// workspace (none while no Space window shows that workspace).
+    pub(crate) fn terminal_host(&self, project: Ulid, tab_id: Ulid) -> Option<HostId> {
         let tab = DockTab::Terminal { project, tab_id };
         match self.detached.window_of(&tab) {
-            Some(key) => HostId::Detached(key),
-            None => self.primary_host(),
+            Some(key) => Some(HostId::Detached(key)),
+            None => self.space_of(project).map(HostId::Space),
         }
     }
 
@@ -116,12 +166,11 @@ impl Shell {
         Some(format!("{label} - {name}"))
     }
 
-    /// The window that shows the tab holding `session` (the primary one if it is in no tab).
+    /// The window that shows the tab holding `session` (the primary one if no window does).
     pub(crate) fn session_host(&self, session: Ulid) -> HostId {
         self.tab_of_session(session)
-            .map_or(self.primary_host(), |(project, tab_id)| {
-                self.terminal_host(project, tab_id)
-            })
+            .and_then(|(project, tab_id)| self.terminal_host(project, tab_id))
+            .unwrap_or_else(|| self.primary_host())
     }
 
     /// Whether a tab of `project` is shown in the same window as `tab_id`: the tabs that
@@ -131,12 +180,13 @@ impl Shell {
         move |other| self.terminal_host(project, other) == host
     }
 
-    /// The terminal tab `window` shows: the main window's shown workspace and active tab, or
+    /// The terminal tab `window` shows: a Space window's shown workspace and active tab, or
     /// the detached window's active tab.
     pub(crate) fn tab_scope(&self, window: &Window) -> Option<(Ulid, Ulid)> {
         match self.host_of(window) {
-            HostId::Space(_) => {
-                let project = self.workspace.filter(|_| self.view() == View::Terminals)?;
+            host @ HostId::Space(_) => {
+                let project =
+                    (self.workspace_of(host)).filter(|_| self.view(host) == View::Terminals)?;
                 Some((project, self.tabs.get(&project)?.active()?.id))
             }
             HostId::Detached(key) => match self.detached.active(key)? {
@@ -155,7 +205,7 @@ impl Shell {
     ) -> Option<R> {
         match self.host_of(window) {
             HostId::Space(_) => {
-                let project = self.workspace?;
+                let project = self.workspace_in(window)?;
                 Some(f(self.tabs.get_mut(&project)?))
             }
             HostId::Detached(_) => {
@@ -192,7 +242,7 @@ impl Shell {
     pub(crate) fn focused_diff(&self, window: &Window) -> Option<Ulid> {
         let (project, tab_id) = self.tab_scope(window)?;
         let tab = self.tabs.get(&project)?.tab(tab_id)?;
-        (tab.focused() == Some(&PaneKey::Diff) && self.workspace == Some(project))
+        (tab.focused() == Some(&PaneKey::Diff) && self.workspace_in(window) == Some(project))
             .then_some(project)
     }
 

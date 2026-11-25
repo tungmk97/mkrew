@@ -136,19 +136,18 @@ impl Shell {
         )
     }
 
-    /// One toast when the shown workspace's running sessions cross
+    /// One toast when a shown workspace's running sessions cross
     /// `lifecycle::RUNNING_WARN_ABOVE` upward; not again until the count is back at or below it.
     pub(crate) fn warn_running_sessions(&mut self, cx: &mut Context<'_, Self>) {
-        let Some(project_id) = self.workspace else {
-            return;
-        };
-        let alert = lifecycle::running_alert(
-            self.sidebar.sessions(),
-            project_id,
-            &mut self.running_warned,
-        );
-        if let Some(text) = alert {
-            self.toast_info(text, cx);
+        for project_id in self.on_screen_workspaces() {
+            let alert = lifecycle::running_alert(
+                self.sidebar.sessions(),
+                project_id,
+                &mut self.running_warned,
+            );
+            if let Some(text) = alert {
+                self.toast_info(text, cx);
+            }
         }
     }
 }

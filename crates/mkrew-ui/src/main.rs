@@ -483,8 +483,6 @@ struct Shell {
     refreshing: bool,
     /// Another refresh was asked for while one was in flight.
     refresh_again: bool,
-    /// The workspace whose tabs are on screen.
-    workspace: Option<Ulid>,
     /// Tabs per workspace, loaded when the workspace is first shown.
     tabs: HashMap<Ulid, Tabs>,
     /// Workspaces whose `tab.list` (or first `tab.create`) is in flight.
@@ -1049,10 +1047,12 @@ impl Render for Shell {
             .flex_col()
             .bg(rgb(theme.bg))
             .track_focus(&self.focus_handle)
-            .when(self.view() == View::Board, |el| {
+            .when(self.view(self.space_host(window)) == View::Board, |el| {
                 el.key_context(BOARD_CONTEXT)
             })
-            .when(self.view() == View::Docs, |el| el.key_context(DOCS_CONTEXT))
+            .when(self.view(self.space_host(window)) == View::Docs, |el| {
+                el.key_context(DOCS_CONTEXT)
+            })
             .on_action(cx.listener(Self::run))
             .on_action(cx.listener(Self::expand_diagram))
             .on_action(cx.listener(Self::open_preview_link))
@@ -1227,7 +1227,7 @@ impl Render for Shell {
                         self.tab_menu
                             .as_ref()
                             .filter(|_| {
-                                self.view() == View::Terminals
+                                self.view(self.space_host(window)) == View::Terminals
                                     && !self.modal_open()
                                     && self.menu_host == host
                             })
@@ -1237,7 +1237,7 @@ impl Render for Shell {
                         self.layout_menu
                             .as_ref()
                             .filter(|_| {
-                                self.view() == View::Terminals
+                                self.view(self.space_host(window)) == View::Terminals
                                     && !self.modal_open()
                                     && self.menu_host == host
                             })
@@ -1247,7 +1247,7 @@ impl Render for Shell {
                         self.pane_menu
                             .as_ref()
                             .filter(|_| {
-                                self.view() == View::Terminals
+                                self.view(self.space_host(window)) == View::Terminals
                                     && !self.modal_open()
                                     && self.menu_host == host
                             })
@@ -1257,7 +1257,7 @@ impl Render for Shell {
                         self.share_menu
                             .as_ref()
                             .filter(|_| {
-                                self.view() == View::Terminals
+                                self.view(self.space_host(window)) == View::Terminals
                                     && !self.modal_open()
                                     && self.menu_host == host
                             })
@@ -1266,8 +1266,8 @@ impl Render for Shell {
                     .children(
                         (self.file_menu.as_ref())
                             .filter(|menu| {
-                                self.workspace == Some(menu.project_id)
-                                    && self.file_tree_shown()
+                                self.workspace_in(window) == Some(menu.project_id)
+                                    && self.file_tree_shown(self.space_host(window))
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_menu(menu, &theme, cx)),
@@ -1275,7 +1275,10 @@ impl Render for Shell {
                     .children(
                         self.card_menu
                             .as_ref()
-                            .filter(|_| self.view() == View::Board && !self.modal_open())
+                            .filter(|_| {
+                                self.view(self.space_host(window)) == View::Board
+                                    && !self.modal_open()
+                            })
                             .map(|menu| self.render_card_menu(menu, &theme, cx)),
                     )
                     .children(

@@ -15,7 +15,7 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let view = self.view();
+        let view = self.view(self.space_host(window));
         let active = tabs.active().map(|tab| tab.id);
         // `place` counts the tabs of other windows too: it is the reorder index.
         let drawn: Vec<(usize, &Tab)> = tabs
@@ -63,7 +63,7 @@ impl Shell {
                             title: label.unwrap_or(&tab.title).to_owned().into(),
                         };
                         let select = move |shell: &mut Shell| {
-                            if let Some(tabs) = shell.active_tabs_mut() {
+                            if let Some(tabs) = shell.tabs.get_mut(&project_id) {
                                 tabs.activate(tab_id);
                             }
                         };
@@ -1158,7 +1158,7 @@ pub(crate) fn drop_catcher(
                                 }
                             }
                             DropTarget::Strip => {
-                                if let Some(project_id) = shell.workspace {
+                                if let Some(project_id) = shell.workspace_in(window) {
                                     shell.drop_os_files(project_id, &paths, window, cx);
                                 }
                             }
