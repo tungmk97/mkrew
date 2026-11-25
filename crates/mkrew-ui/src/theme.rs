@@ -402,6 +402,10 @@ pub const TSP_POPOVER_WIDTH: f32 = 420.0;
 /// Tallest share of the pane's list area the todo popover takes; it scrolls past that.
 pub const TSP_POPOVER_MAX_FRACTION: f32 = 0.6;
 
+/// How far past the visible part the omp page list lays out rows (px), so a wheel turn shows
+/// rows that are already measured (ADR 0114).
+pub const TSP_LIST_OVERDRAW: f32 = 600.0;
+
 /// Shortest height the popover is capped at, before the list has been laid out.
 pub const TSP_POPOVER_MIN_HEIGHT: f32 = 120.0;
 

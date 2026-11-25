@@ -36,7 +36,6 @@ use crate::*;
 pub(crate) struct TspUi {
     /// `None` until the first `tsp.snapshot` reply.
     pub(crate) mirror: Option<Mirror>,
-    scroll: ScrollHandle,
     /// Markdown and code parsed once per text (the preview parse is slow).
     md: RefCell<TextCache<docs::Shown>>,
     images: RefCell<HashMap<String, Arc<gpui::Image>>>,
@@ -61,8 +60,14 @@ pub(crate) struct TspUi {
     todo_chip: Rc<Cell<Bounds<Pixels>>>,
     /// Phase headers the user clicked: (checklist node id, phase id). Flips the phase's default.
     todo_toggled: HashSet<(String, String)>,
-    /// A `reveal` just moved the list: the next frame must not follow the end over it.
-    reveal_pending: Cell<bool>,
+    /// The page list (ADR 0114): only the rows on screen (and `TSP_LIST_OVERDRAW` around them)
+    /// are laid out. Item 0 and item `n + 1` are spacers; item `i + 1` is row `i` of `main`.
+    rows: gpui::ListState,
+    /// The ids of `main`'s children the list was last told about, and their surface.
+    row_ids: Vec<String>,
+    rows_surface: Option<String>,
+    /// The theme and fonts the rows were measured with: a change measures them again.
+    measured: RefCell<Option<(Theme, theme::Fonts)>>,
     /// The scroll of each growing `list` (a picker's items scroll inside their card).
     lists: RefCell<HashMap<String, ListState>>,
     /// The composer field Mkrew edits itself (ADR 0113); `None` while omp edits its own (another
@@ -109,11 +114,17 @@ fn list_handle(lists: &RefCell<HashMap<String, ListState>>, id: &str) -> ScrollH
     state.handle.clone()
 }
 
+/// An empty page list (its two spacers) that follows the end.
+fn new_rows() -> gpui::ListState {
+    let rows = gpui::ListState::new(2, gpui::ListAlignment::Top, px(theme::TSP_LIST_OVERDRAW));
+    rows.set_follow_mode(gpui::FollowMode::Tail);
+    rows
+}
+
 impl TspUi {
     pub(crate) fn new() -> Self {
         Self {
             mirror: None,
-            scroll: ScrollHandle::new(),
             md: RefCell::new(TextCache::default()),
             images: RefCell::new(HashMap::new()),
             elapsed_seen: RefCell::new(HashMap::new()),
@@ -129,7 +140,10 @@ impl TspUi {
             todo_open: None,
             todo_chip: Rc::new(Cell::new(Bounds::default())),
             todo_toggled: HashSet::new(),
-            reveal_pending: Cell::new(false),
+            rows: new_rows(),
+            row_ids: Vec::new(),
+            rows_surface: None,
+            measured: RefCell::new(None),
             lists: RefCell::new(HashMap::new()),
             editor: None,
             chip_open: None,
@@ -137,13 +151,54 @@ impl TspUi {
         }
     }
 
-    /// Scrolls the list a page (the height it shows) up or down.
+    /// Scrolls the page list a page (the height it shows) up or down.
     fn page(&self, up: bool) {
-        let offset = self.scroll.offset();
-        let page = f32::from(self.scroll.bounds().size.height);
-        let max = f32::from(self.scroll.max_offset().y);
-        let y = tsp::paged_offset(f32::from(offset.y), page, max, up);
-        self.scroll.set_offset(point(offset.x, px(y)));
+        let height = self.rows.viewport_bounds().size.height;
+        self.rows.scroll_by(if up { -height } else { height });
+    }
+
+    /// Back to the end of the page, following it again.
+    fn follow_end(&self) {
+        self.rows.set_follow_mode(gpui::FollowMode::Tail);
+    }
+
+    /// The page list index of the row holding node `id` of the shown surface.
+    fn row_index(&self, id: &str) -> Option<usize> {
+        let (_, doc) = self.mirror.as_ref()?.shown()?;
+        let row = tsp::row_of(doc, id)?;
+        let at = self.row_ids.iter().position(|known| *known == row)?;
+        Some(at + 1)
+    }
+
+    /// Tells the page list what the mirror's last change did to `main` (ADR 0114). `surface`:
+    /// the surface a frame, open or close was for; `None` after a snapshot. A snapshot or a
+    /// different shown surface resets the list; a change of the shown surface splices and
+    /// remeasures; a change of a hidden surface leaves it.
+    fn sync_rows(&mut self, surface: Option<&str>, dirty: &HashSet<String>) {
+        let Some((meta, doc)) = self.mirror.as_ref().and_then(Mirror::shown) else {
+            self.row_ids.clear();
+            self.rows_surface = None;
+            self.rows.reset(2);
+            return;
+        };
+        let new: Vec<String> = doc.children("main").map(|node| node.id.clone()).collect();
+        let shown = meta.id.clone();
+        if surface.is_none() || self.rows_surface.as_deref() != Some(shown.as_str()) {
+            self.rows.reset(new.len() + 2);
+        } else if surface == Some(shown.as_str()) {
+            for change in tsp::row_changes(&self.row_ids, &new, dirty) {
+                match change {
+                    tsp::RowChange::Splice { range, count } => {
+                        self.rows.splice(range.start + 1..range.end + 1, count);
+                    }
+                    tsp::RowChange::Remeasure(ix) => self.rows.remeasure_items(ix + 1..ix + 2),
+                }
+            }
+        } else {
+            return;
+        }
+        self.rows_surface = Some(shown);
+        self.row_ids = new;
     }
 
     /// Drops the cache entries of nodes and blobs the mirror no longer has (after a frame that
@@ -209,6 +264,7 @@ impl Shell {
                         ui.mirror = Some(Mirror::from_snapshot(snapshot));
                         sync_editor(ui.mirror.as_ref(), &mut ui.editor);
                         ui.prune();
+                        ui.sync_rows(None, &HashSet::new());
                         ui.failures = 0;
                         ui.retry_at = None;
                     }
@@ -248,6 +304,15 @@ impl Shell {
             }
             return;
         }
+        let mut dirty = (ui.mirror.as_mut())
+            .map(Mirror::take_dirty_rows)
+            .unwrap_or_default();
+        if let TspChange::Frame { blobs, .. } = &update.change
+            && !blobs.is_empty()
+            && let Some((_, doc)) = (ui.mirror.as_ref()).and_then(|m| m.surface(&update.surface))
+        {
+            dirty.extend(tsp::image_rows(doc, blobs));
+        }
         sync_editor(ui.mirror.as_ref(), &mut ui.editor);
         if (ui.chip_open.as_deref())
             .is_some_and(|id| !ui.mirror.as_ref().is_some_and(|m| m.has_node(id)))
@@ -257,6 +322,7 @@ impl Shell {
         if tsp::removes_nodes(&update.change) {
             ui.prune();
         }
+        ui.sync_rows(Some(&update.surface), &dirty);
         let TspChange::Frame { ops, .. } = &update.change else {
             return;
         };
@@ -285,14 +351,13 @@ impl Shell {
         if let Some((list, ix)) = in_list {
             list_handle(&ui.lists, &list).scroll_to_item(ix);
         } else if let Some(ix) = reveal {
-            // Index 0 of the list is the spacer under the pane's drag strip.
-            ui.scroll.scroll_to_item(ix + 1);
-            // The list may be at its end: the next frame must not follow it back down.
-            ui.reveal_pending.set(true);
+            // Item 0 of the page list is the spacer under the pane's drag strip.
+            ui.rows.pause_following_tail();
+            ui.rows.scroll_to_reveal_item(ix + 1);
         }
         match tsp::scroll_in(ops) {
-            Some(ListScroll::Top) => ui.scroll.set_offset(Point::default()),
-            Some(ListScroll::Bottom) => ui.scroll.scroll_to_bottom(),
+            Some(ListScroll::Top) => ui.rows.scroll_to(gpui::ListOffset::default()),
+            Some(ListScroll::Bottom) => ui.follow_end(),
             Some(ListScroll::Page { up }) => ui.page(up),
             None => {}
         }
@@ -787,6 +852,9 @@ impl Shell {
         if !ui.todo_toggled.remove(&key) {
             ui.todo_toggled.insert(key);
         }
+        if let Some(ix) = ui.row_index(node) {
+            ui.rows.remeasure_items(ix..ix + 1);
+        }
         cx.notify();
     }
 }
@@ -1028,6 +1096,15 @@ impl Shell {
                 .child(self.typing(&handle, Self::tsp_key_down, cx))
                 .into_any_element();
         };
+        // The rows were measured with another theme or font: measure them again (ADR 0114).
+        let measuring = (theme.clone(), cx.global::<theme::Fonts>().clone());
+        if ui.measured.borrow().as_ref() != Some(&measuring) {
+            ui.rows.remeasure();
+            ui.measured.replace(Some(measuring));
+        }
+        // Text hit areas are recorded again by the rows painted in this frame; a row scrolled
+        // out must not keep its old ones.
+        ui.hits.borrow_mut().clear();
         let paint = Paint {
             session,
             doc,
@@ -1054,21 +1131,14 @@ impl Shell {
             bounded: true,
             ..paint
         };
-        // Follow the end while the user is at it, except in the frame after a `reveal` moved the
-        // list: that scroll is applied while this frame paints.
-        let at_end = super::thread_panel::at_bottom(&ui.scroll);
-        if !ui.reveal_pending.replace(false) && at_end {
-            ui.scroll.scroll_to_bottom();
-        }
-        // Each row of `main` is a direct child of the scroll box (between the spacers), so
-        // `reveal` can scroll to it. The top spacer keeps the first row clear of the pane's 8 px
-        // drag strip (`PANE_GRIP_HEIGHT`), the 2 px color line and the badges, like the Chat
-        // list's `py(space::L)`; the bottom one parts the last message from the status row and
-        // the meter.
+        // The page is a list (ADR 0114): only the rows on screen are laid out. The top spacer
+        // keeps the first row clear of the pane's 8 px drag strip (`PANE_GRIP_HEIGHT`), the 2 px
+        // color line and the badges, like the Chat list's `py(space::L)`; the bottom one parts
+        // the last message from the status row and the meter.
         // Alone, the transcript is in the Chat column; among several panes it spans the pane like
         // Tern (`tsp::column_max`). The dock below keeps the Chat column.
         let max = tsp::column_max(several);
-        let rows: Vec<AnyElement> = if screen {
+        let screen_rows: Vec<AnyElement> = if screen {
             (doc.children("main"))
                 .map(|node| {
                     page_column(self.tsp_node(&screen_paint, node, cx), max, true)
@@ -1076,12 +1146,7 @@ impl Shell {
                 })
                 .collect()
         } else {
-            std::iter::once(div().h(px(space::L)).into_any_element())
-                .chain((doc.children("main")).map(|node| {
-                    page_column(self.tsp_node(&paint, node, cx), max, false).into_any_element()
-                }))
-                .chain(std::iter::once(div().h(px(space::L)).into_any_element()))
-                .collect()
+            Vec::new()
         };
         // The dock as the Chat composer when omp sent its composer roles. With the ask card or a
         // note editor where the editor stood, the status row stays Tern's and the card sits where
@@ -1108,19 +1173,10 @@ impl Shell {
                 .relative()
                 .flex_1()
                 .min_h_0()
-                .child(
-                    div()
+                .child({
+                    let main = div()
                         .id(SharedString::from(format!("tsp-main-{session}")))
                         .size_full()
-                        .when(screen, |el| {
-                            el.flex()
-                                .flex_col()
-                                .pt(px(space::L))
-                                .pb(px(space::M))
-                                .overflow_hidden()
-                        })
-                        .when(!screen, |el| el.overflow_y_scroll())
-                        .track_scroll(&ui.scroll)
                         // A drag extends the selection; a press off any text clears it.
                         .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
                             if event.dragging() {
@@ -1132,10 +1188,46 @@ impl Shell {
                             cx.listener(move |shell, _: &MouseDownEvent, _, cx| {
                                 shell.tsp_clear_selection(session, cx);
                             }),
+                        );
+                    if screen {
+                        main.flex()
+                            .flex_col()
+                            .pt(px(space::L))
+                            .pb(px(space::M))
+                            .overflow_hidden()
+                            .children(screen_rows)
+                    } else {
+                        let shell = cx.entity().downgrade();
+                        let count = ui.row_ids.len();
+                        let row_theme = theme.clone();
+                        let compact = paint.compact;
+                        main.child(
+                            gpui::list(ui.rows.clone(), move |ix, _, cx| {
+                                // The spacers keep the first row clear of the drag strip and
+                                // part the last one from the dock.
+                                if ix == 0 || ix > count {
+                                    return div().h(px(space::L)).into_any_element();
+                                }
+                                shell
+                                    .update(cx, |shell, cx| {
+                                        shell.tsp_page_row(
+                                            session,
+                                            ix - 1,
+                                            is_focused,
+                                            compact,
+                                            max,
+                                            now,
+                                            &row_theme,
+                                            cx,
+                                        )
+                                    })
+                                    .unwrap_or_else(|_| div().into_any_element())
+                            })
+                            .size_full(),
                         )
-                        .children(rows),
-                )
-                .when(!at_end && !screen, |el| {
+                    }
+                })
+                .when(!ui.rows.is_following_tail() && !screen, |el| {
                     el.child(
                         div()
                             .absolute()
@@ -1154,7 +1246,7 @@ impl Shell {
                                             true,
                                             cx.listener(move |shell, _, _, cx| {
                                                 if let Some(ui) = shell.tsps.get(&session) {
-                                                    ui.scroll.scroll_to_bottom();
+                                                    ui.follow_end();
                                                 }
                                                 cx.notify();
                                             }),
@@ -1198,6 +1290,44 @@ impl Shell {
         // Platform text input (IME, Unikey) feeds the same key path.
         .child(self.typing(&handle, Self::tsp_key_down, cx))
         .into_any_element()
+    }
+
+    /// Row `index` of the shown surface's `main`, in its column: one item of the page list.
+    #[allow(clippy::too_many_arguments)]
+    fn tsp_page_row(
+        &self,
+        session: Ulid,
+        index: usize,
+        focused: bool,
+        compact: bool,
+        max: Option<f32>,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let shown = (self.tsps.get(&session))
+            .and_then(|ui| (ui.mirror.as_ref()).and_then(|m| m.shown().map(|s| (ui, m, s))));
+        let Some((ui, mirror, (meta, doc))) = shown else {
+            return div().into_any_element();
+        };
+        let Some(node) = ui.row_ids.get(index).and_then(|id| doc.get(id)) else {
+            return div().into_any_element();
+        };
+        let paint = Paint {
+            session,
+            doc,
+            mirror,
+            shown_id: &meta.id,
+            ui,
+            now,
+            theme,
+            focused,
+            modal: doc.children("layer").any(|n| !bool_prop(n, "hidden")),
+            in_layer: false,
+            bounded: false,
+            compact,
+        };
+        page_column(self.tsp_node(&paint, node, cx), max, false).into_any_element()
     }
 
     /// A child of `layer`: an `overlay` is a modal card placed by its `anchor` and `size`; any other
@@ -2836,8 +2966,8 @@ impl Shell {
             .child(chip)
             .child(chip_bounds)
             .when(open, |el| {
-                let height =
-                    f32::from(p.ui.scroll.bounds().size.height) * theme::TSP_POPOVER_MAX_FRACTION;
+                let height = f32::from(p.ui.rows.viewport_bounds().size.height)
+                    * theme::TSP_POPOVER_MAX_FRACTION;
                 let panel = floating_panel(
                     SharedString::from(format!("tsp-todo-panel-{}", p.session)),
                     theme,

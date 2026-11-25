@@ -1022,13 +1022,6 @@ pub fn scroll_in(ops: &[Value]) -> Option<ListScroll> {
     })
 }
 
-/// The scroll offset (negative: the list moved up) after a page up or down of `page` px, kept in
-/// `-max..=0`.
-pub fn paged_offset(offset: f32, page: f32, max: f32, up: bool) -> f32 {
-    let moved = if up { offset + page } else { offset - page };
-    moved.clamp(-max.max(0.0), 0.0)
-}
-
 /// The widest the transcript of an omp surface is: the Chat column (`CHAT_COLUMN_WIDTH`,
 /// centered) when its pane is the only one shown, `None` (as wide as the pane, like Tern) among
 /// `several` (ADR 0112).
@@ -2875,19 +2868,6 @@ mod tests {
             ]),
             Some(ListScroll::Bottom),
             "the last one wins"
-        );
-    }
-
-    #[test]
-    fn a_page_moves_the_list_and_stops_at_both_ends() {
-        assert_eq!(paged_offset(0.0, 300.0, 1000.0, false), -300.0);
-        assert_eq!(paged_offset(-300.0, 300.0, 1000.0, true), 0.0);
-        assert_eq!(paged_offset(-100.0, 300.0, 1000.0, true), 0.0, "top");
-        assert_eq!(paged_offset(-900.0, 300.0, 1000.0, false), -1000.0, "end");
-        assert_eq!(
-            paged_offset(0.0, 300.0, 0.0, false),
-            0.0,
-            "nothing to scroll"
         );
     }
 
