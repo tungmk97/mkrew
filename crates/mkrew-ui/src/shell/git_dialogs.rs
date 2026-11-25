@@ -417,49 +417,13 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let error_row = |error: String| {
-            div()
-                .flex()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                .child(div().text_color(rgb(theme.text)).child(error))
-        };
+        let error_row = |error: String| error_note(error, theme);
         let use_label = if dialog.busy {
             "Saving…"
         } else {
             "Use this base"
         };
-        let panel = floating_panel("git-base-dialog", theme)
-            .w(px(theme::DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .dialog_root(
-                &self.dialog_focus,
-                true,
-                cx.listener(Self::dialog_guard),
-                cx.listener(Self::git_base_key_down),
-            )
-            .relative()
-            .child(self.typing(&self.dialog_focus, Self::git_base_key_down, cx))
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Base branch"),
-            )
-            .child(
-                div()
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    .child(
-                        "“Against base” shows everything on this branch since it left the base.",
-                    ),
-            )
+        let body = dialog_body()
             .when(!dialog.current.is_empty(), |el| {
                 el.child(meta_line(theme, dialog.current.clone().into()))
             })
@@ -476,48 +440,69 @@ impl Shell {
                     }
                 },
             ))
-            .children(dialog.error.clone().map(error_row))
+            .children(dialog.error.clone().map(error_row));
+        let foot = dialog_foot(theme)
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(space::S))
-                    .pt(px(space::S))
-                    .child(
-                        button("git-base-cancel", "Cancel", theme, false)
-                            .focus_stop(theme)
-                            .tooltip(tooltip(theme, "Keep the current base", "Esc"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.close_git_base(window, cx);
-                            })),
-                    )
-                    // Both look disabled while a save is in flight.
-                    .child(if dialog.busy {
-                        disabled_button("git-base-auto", "Auto-detect", theme, false)
-                    } else {
-                        button("git-base-auto", "Auto-detect", theme, false)
-                            .focus_stop(theme)
-                            .tooltip(tooltip(
-                                theme,
-                                "Use origin/HEAD, else main, else master",
-                                "",
-                            ))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.set_git_base(true, window, cx);
-                            }))
-                    })
-                    .child(if dialog.busy {
-                        disabled_button("git-base-use", use_label, theme, true)
-                    } else {
-                        button("git-base-use", use_label, theme, true)
-                            .focus_stop_filled(theme)
-                            .tooltip(tooltip(theme, "Compare with the typed ref", "Enter"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.set_git_base(false, window, cx);
-                            }))
-                    }),
-            );
+                button("git-base-cancel", "Cancel", theme, false)
+                    .focus_stop(theme)
+                    .tooltip(tooltip(theme, "Keep the current base", "Esc"))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.close_git_base(window, cx);
+                    })),
+            )
+            // Both look disabled while a save is in flight.
+            .child(if dialog.busy {
+                disabled_button("git-base-auto", "Auto-detect", theme, false)
+            } else {
+                button("git-base-auto", "Auto-detect", theme, false)
+                    .focus_stop(theme)
+                    .tooltip(tooltip(
+                        theme,
+                        "Use origin/HEAD, else main, else master",
+                        "",
+                    ))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.set_git_base(true, window, cx);
+                    }))
+            })
+            .child(if dialog.busy {
+                disabled_button("git-base-use", use_label, theme, true)
+            } else {
+                primary_button("git-base-use", use_label, Some("↵".to_owned()), theme)
+                    .focus_stop_filled(theme)
+                    .tooltip(tooltip(theme, "Compare with the typed ref", "Enter"))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.set_git_base(false, window, cx);
+                    }))
+            });
+        let panel = dialog_frame(
+            floating_panel("git-base-dialog", theme)
+                .w(px(theme::DIALOG_WIDTH))
+                .dialog_root(
+                    &self.dialog_focus,
+                    true,
+                    cx.listener(Self::dialog_guard),
+                    cx.listener(Self::git_base_key_down),
+                )
+                .relative()
+                .child(self.typing(&self.dialog_focus, Self::git_base_key_down, cx)),
+            DialogHead {
+                icon: Icon::GitBranch,
+                tone: DialogTone::Normal,
+                title: "Base branch".into(),
+                sub: Some(
+                    "“Against base” shows everything on this branch since it left the base.".into(),
+                ),
+            },
+            Some(dialog_close("git-base-close", theme).on_click(cx.listener(
+                |shell, _, window, cx| {
+                    shell.close_git_base(window, cx);
+                },
+            ))),
+            Some(body),
+            Some(foot),
+            theme,
+        );
         Self::modal_shade("git-base-shade", panel, cx)
     }
 }

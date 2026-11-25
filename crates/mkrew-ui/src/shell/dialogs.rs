@@ -517,12 +517,7 @@ impl Shell {
                 .children(result)
         });
         let send_label = if busy { "Sending…" } else { "Send" };
-        let footer = div()
-            .flex()
-            .items_center()
-            .justify_end()
-            .gap(px(space::S))
-            .pt(px(space::S));
+        let footer = dialog_foot(theme);
         let footer = if dialog.rows.is_empty() {
             footer
                 .child(
@@ -553,7 +548,7 @@ impl Shell {
                         })),
                 )
                 .child(if dialog.can_send() {
-                    button("broadcast-send", send_label, theme, true)
+                    primary_button("broadcast-send", send_label, Some("↵".to_owned()), theme)
                         .focus_stop_filled(theme)
                         .tooltip(tooltip(theme, "Send to the checked sessions", "Enter"))
                         .on_click(cx.listener(|shell, _, window, cx| {
@@ -567,39 +562,16 @@ impl Shell {
                     ))
                 })
         };
-        let panel = floating_panel("broadcast-dialog", theme)
-            .w(px(theme::DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .dialog_root(
-                &self.dialog_focus,
-                !dialog.rows.is_empty(),
-                cx.listener(Self::dialog_guard),
-                cx.listener(Self::broadcast_key_down),
-            )
-            .relative()
-            .child(self.typing(&self.dialog_focus, Self::broadcast_key_down, cx))
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Broadcast to agents"),
-            )
-            .child(
-                div()
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    .child(if dialog.rows.is_empty() {
-                        "No live agent sessions in this workspace."
-                    } else {
-                        "Sends the text, then Enter, to every checked session. A working agent \
-                         gets it when its turn ends."
-                    }),
-            )
+        let body = dialog_body()
+            .child(dialog_text(
+                if dialog.rows.is_empty() {
+                    "No live agent sessions in this workspace."
+                } else {
+                    "Sends the text, then Enter, to every checked session. A working agent \
+                     gets it when its turn ends."
+                },
+                theme,
+            ))
             .when(!dialog.rows.is_empty(), |el| {
                 el.child(
                     div()
@@ -612,10 +584,12 @@ impl Shell {
                         .children(rows),
                 )
                 .child(
-                    div()
-                        .text_size(font_size::META)
-                        .text_color(rgb(theme.text_muted))
-                        .child("↑↓ pick a session · Space checks it · Tab to the buttons · Enter sends"),
+                    meta_line(
+                        theme,
+                        "↑↓ pick a session · Space checks it · Tab to the buttons · Enter sends"
+                            .into(),
+                    )
+                    .text_color(rgb(theme.text_subtle)),
                 )
                 .child(caret_field(
                     "broadcast-text",
@@ -630,8 +604,35 @@ impl Shell {
                         }
                     },
                 ))
-            })
-            .child(footer);
+            });
+        let panel = dialog_frame(
+            floating_panel("broadcast-dialog", theme)
+                .w(px(theme::DIALOG_WIDTH))
+                .dialog_root(
+                    &self.dialog_focus,
+                    !dialog.rows.is_empty(),
+                    cx.listener(Self::dialog_guard),
+                    cx.listener(Self::broadcast_key_down),
+                )
+                .relative()
+                .child(self.typing(&self.dialog_focus, Self::broadcast_key_down, cx)),
+            DialogHead {
+                icon: Icon::Send,
+                tone: DialogTone::Normal,
+                title: "Broadcast to agents".into(),
+                sub: None,
+            },
+            Some(
+                dialog_close("broadcast-close-x", theme).on_click(cx.listener(
+                    |shell, _, window, cx| {
+                        shell.close_broadcast(window, cx);
+                    },
+                )),
+            ),
+            Some(body),
+            Some(footer),
+            theme,
+        );
         Self::modal_shade("broadcast-shade", panel, cx)
     }
 }

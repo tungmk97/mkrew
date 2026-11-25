@@ -314,26 +314,9 @@ impl Shell {
         page
     }
 
-    /// A page's error line (the Machines page's broken file, the Prompts page's failed write): a
-    /// red ✕ and the text on a raised row.
+    /// A page's error line (the Machines page's broken file, the Prompts page's failed write).
     pub(crate) fn error_line(&self, text: String, theme: &Theme) -> gpui::AnyElement {
-        div()
-            .flex()
-            .items_center()
-            .gap(px(space::S))
-            .p(px(space::S))
-            .rounded(px(radius::MEDIUM))
-            .bg(rgb(theme.surface_raised))
-            .text_size(font_size::META)
-            .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_color(rgb(theme.text))
-                    .child(text),
-            )
-            .into_any_element()
+        error_note(text, theme).into_any_element()
     }
 
     /// One machine: name, host (and `mk`), state with its dot, Open and Remove.

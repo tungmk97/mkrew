@@ -946,14 +946,7 @@ impl Shell {
         let workspace = (self.sidebar.projects().iter())
             .find(|project| project.id == setup.project_id)
             .map(|project| project.name.clone());
-        let error_row = |error: String| {
-            div()
-                .flex()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                .child(div().text_color(rgb(theme.text)).child(error))
-        };
+        let error_row = |error: String| error_note(error, theme);
         let autostart = check(
             "run-autostart",
             "Start with the daemon",
@@ -971,59 +964,7 @@ impl Shell {
             }),
         );
         let max_height = (window.viewport_size().height - px(space::XXL * 2.0)).max(px(0.0));
-        let panel = floating_panel("run-setup", theme)
-            .w(px(theme::RUN_SETUP_WIDTH))
-            .max_h(max_height)
-            .flex()
-            .flex_col()
-            .gap(px(space::L))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .dialog_root(
-                &self.dialog_focus,
-                true,
-                cx.listener(Self::dialog_guard),
-                cx.listener(Self::run_setup_key_down),
-            )
-            .relative()
-            .child(self.typing(&self.dialog_focus, Self::run_setup_key_down, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(space::XS))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(space::S))
-                            .child(icon_svg(Icon::Play, theme::ICON_SIZE, theme.accent))
-                            .child(
-                                div()
-                                    .text_size(font_size::CARD_TITLE)
-                                    .font_weight(FontWeight(weight::SEMIBOLD))
-                                    .text_color(rgb(theme.text))
-                                    .child("Run setup"),
-                            )
-                            .children(workspace.map(|name| {
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(font_size::BODY)
-                                    .text_color(rgb(theme.text_muted))
-                                    .child(format!("· {name}"))
-                            })),
-                    )
-                    .child(
-                        div()
-                            .text_size(font_size::META)
-                            .text_color(rgb(theme.text_muted))
-                            .child(
-                                "Each command runs in its own pane of the “run” tab, in a shell \
-                                 started in its folder.",
-                            ),
-                    ),
-            )
+        let body = dialog_body()
             .child(
                 div()
                     .relative()
@@ -1037,40 +978,72 @@ impl Shell {
                         theme,
                     )),
             )
-            .children(setup.error.clone().map(error_row))
+            .children(setup.error.clone().map(error_row));
+        let foot = dialog_foot(theme)
+            .child(autostart)
+            .child(div().flex_1())
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .pt(px(space::M))
-                    .border_t(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.divider))
-                    .child(autostart)
-                    .child(div().flex_1())
-                    .child(
-                        button("run-cancel", "Cancel", theme, false)
-                            .focus_stop(theme)
-                            .tooltip(tooltip(theme, "Keep the current commands", "Esc"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.close_run_setup(window, cx);
-                            })),
-                    )
-                    .child(if setup.busy {
-                        disabled_button("run-save", "Saving…", theme, true)
-                    } else {
-                        button("run-save", "Save", theme, true)
-                            .focus_stop_filled(theme)
-                            .tooltip(tooltip(
-                                theme,
-                                "Save the run commands",
-                                mkrew_ui::os_text!("Ctrl+Enter", "⌘↩"),
-                            ))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.save_run_setup(window, cx);
-                            }))
-                    }),
-            );
+                button("run-cancel", "Cancel", theme, false)
+                    .focus_stop(theme)
+                    .tooltip(tooltip(theme, "Keep the current commands", "Esc"))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.close_run_setup(window, cx);
+                    })),
+            )
+            .child(if setup.busy {
+                disabled_button("run-save", "Saving…", theme, true)
+            } else {
+                primary_button(
+                    "run-save",
+                    "Save",
+                    Some(mkrew_ui::os_text!("Ctrl+Enter", "⌘↩").to_owned()),
+                    theme,
+                )
+                .focus_stop_filled(theme)
+                .tooltip(tooltip(
+                    theme,
+                    "Save the run commands",
+                    mkrew_ui::os_text!("Ctrl+Enter", "⌘↩"),
+                ))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.save_run_setup(window, cx);
+                }))
+            });
+        let title = match workspace {
+            Some(name) => format!("Run setup · {name}"),
+            None => "Run setup".to_owned(),
+        };
+        let panel = dialog_frame(
+            floating_panel("run-setup", theme)
+                .w(px(theme::RUN_SETUP_WIDTH))
+                .max_h(max_height)
+                .dialog_root(
+                    &self.dialog_focus,
+                    true,
+                    cx.listener(Self::dialog_guard),
+                    cx.listener(Self::run_setup_key_down),
+                )
+                .relative()
+                .child(self.typing(&self.dialog_focus, Self::run_setup_key_down, cx)),
+            DialogHead {
+                icon: Icon::Play,
+                tone: DialogTone::Normal,
+                title: title.into(),
+                sub: Some(
+                    "Each command runs in its own pane of the “run” tab, in a shell started \
+                     in its folder."
+                        .into(),
+                ),
+            },
+            Some(dialog_close("run-setup-close", theme).on_click(cx.listener(
+                |shell, _, window, cx| {
+                    shell.close_run_setup(window, cx);
+                },
+            ))),
+            Some(body),
+            Some(foot),
+            theme,
+        );
         Self::modal_shade("run-setup-shade", panel, cx)
     }
 
@@ -1100,7 +1073,10 @@ impl Shell {
             .track_scroll(&self.run_picker_scroll);
         list = match &picker.entries {
             None => list.child(note("Loading…".into())),
-            Some(Err(error)) => list.child(note(format!("✕ Cannot list the folder: {error}"))),
+            Some(Err(error)) => list.child(error_note(
+                format!("Cannot list the folder: {error}"),
+                theme,
+            )),
             Some(Ok(entries)) if entries.is_empty() => list.child(note(
                 if folder {
                     "No folders here."
@@ -1111,60 +1087,61 @@ impl Shell {
             )),
             Some(Ok(entries)) => list.children(entries.iter().enumerate().map(|(index, entry)| {
                 let (path, is_dir) = (entry.path.clone(), entry.is_dir);
-                div()
-                    .id(("run-picker-entry", index))
-                    .flex()
-                    .items_center()
-                    .gap(px(space::XS))
-                    .px(px(space::S))
-                    .py(px(space::XS))
-                    .rounded(px(radius::SMALL))
-                    .text_size(font_size::BODY)
-                    .when(picker.cursor == Some(index), |el| {
-                        el.bg(rgb(theme.surface_raised))
-                    })
-                    .pressable_unless(picker.cursor == Some(index), Look::Row, theme)
-                    .child(
-                        div()
-                            .flex_none()
-                            .w(theme::rems_px(theme::ICON_SIZE_SMALL))
-                            .when(is_dir, |el| {
-                                el.child(icon_svg(
-                                    Icon::ChevronRight,
-                                    theme::ICON_SIZE_SMALL,
-                                    theme.text_muted,
-                                ))
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_color(rgb(if entry.ignored {
-                                theme.text_muted
-                            } else {
-                                theme.text
-                            }))
-                            .child(entry.name.clone()),
-                    )
-                    .on_press(
-                        true,
-                        cx.listener(move |shell, _, window, cx| {
-                            let Some(setup) = shell.run_setup.as_mut() else {
-                                return;
-                            };
-                            if is_dir {
-                                let dir = setup.browse(path.clone());
-                                shell.list_run_picker(dir, window, cx);
-                            } else {
-                                setup.pick(Some(&path));
-                                cx.notify();
-                            }
+                with_pick(
+                    div()
+                        .id(("run-picker-entry", index))
+                        .flex()
+                        .items_center()
+                        .gap(px(space::XS))
+                        .px(px(space::S))
+                        .py(px(space::XS))
+                        .rounded(px(radius::SMALL))
+                        .text_size(font_size::BODY),
+                    picker.cursor == Some(index),
+                    theme,
+                )
+                .pressable_unless(picker.cursor == Some(index), Look::Row, theme)
+                .child(
+                    div()
+                        .flex_none()
+                        .w(theme::rems_px(theme::ICON_SIZE_SMALL))
+                        .when(is_dir, |el| {
+                            el.child(icon_svg(
+                                Icon::ChevronRight,
+                                theme::ICON_SIZE_SMALL,
+                                theme.text_muted,
+                            ))
                         }),
-                    )
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .text_color(rgb(if entry.ignored {
+                            theme.text_muted
+                        } else {
+                            theme.text
+                        }))
+                        .child(entry.name.clone()),
+                )
+                .on_press(
+                    true,
+                    cx.listener(move |shell, _, window, cx| {
+                        let Some(setup) = shell.run_setup.as_mut() else {
+                            return;
+                        };
+                        if is_dir {
+                            let dir = setup.browse(path.clone());
+                            shell.list_run_picker(dir, window, cx);
+                        } else {
+                            setup.pick(Some(&path));
+                            cx.notify();
+                        }
+                    }),
+                )
             })),
         };
         let up = if picker.at_root() {
@@ -1192,90 +1169,74 @@ impl Shell {
         } else {
             picker.dir.clone()
         };
-        let panel = floating_panel("run-picker", theme)
-            .w(px(theme::RUN_SETUP_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .dialog_root(
-                &self.dialog_focus,
-                false,
-                cx.listener(Self::dialog_guard),
-                cx.listener(Self::run_setup_key_down),
-            )
+        let hint = if folder {
+            "↑↓ choose · → open · ← up · Enter takes the folder under the cursor, else this folder · Esc back"
+        } else {
+            "↑↓ choose · → open · ← up · Enter picks the file or opens the folder · Esc back"
+        };
+        let foot = dialog_foot(theme)
+            .child(dialog_hint(hint, theme))
             .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(if folder {
-                        "Choose the folder"
-                    } else {
-                        "Choose the env file"
-                    }),
+                button("run-picker-cancel", "Cancel", theme, false)
+                    .focus_stop(theme)
+                    .tooltip(tooltip(theme, "Back to Run setup", "Esc"))
+                    .on_click(cx.listener(|shell, _, _, cx| {
+                        if let Some(setup) = shell.run_setup.as_mut() {
+                            setup.picker = None;
+                        }
+                        cx.notify();
+                    })),
             )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_size(font_size::BODY)
-                            .text_color(rgb(theme.text_muted))
-                            .child(location),
+            .when(folder, |row| {
+                row.child(
+                    primary_button(
+                        "run-picker-use",
+                        "Use this folder",
+                        Some("↵".to_owned()),
+                        theme,
                     )
-                    .child(up),
-            )
-            .child(list)
-            .child(
-                div()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child(if folder {
-                        "↑↓ choose · → open · ← up · Enter takes the folder under the cursor, else this folder · Esc back"
-                    } else {
-                        "↑↓ choose · → open · ← up · Enter picks the file or opens the folder · Esc back"
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(space::S))
-                    .pt(px(space::S))
-                    .child(
-                        button("run-picker-cancel", "Cancel", theme, false)
-                            .focus_stop(theme)
-                            .tooltip(tooltip(theme, "Back to Run setup", "Esc"))
-                            .on_click(cx.listener(|shell, _, _, cx| {
-                                if let Some(setup) = shell.run_setup.as_mut() {
-                                    setup.picker = None;
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .when(folder, |row| {
-                        row.child(
-                            button("run-picker-use", "Use this folder", theme, true).focus_stop_filled(theme)
-                                .tooltip(tooltip(theme, "Run the command in this folder", "Enter"))
-                                .on_click(cx.listener(|shell, _, _, cx| {
-                                    if let Some(setup) = shell.run_setup.as_mut() {
-                                        setup.pick(None);
-                                    }
-                                    cx.notify();
-                                })),
-                        )
-                    }),
-            );
+                    .focus_stop_filled(theme)
+                    .tooltip(tooltip(theme, "Run the command in this folder", "Enter"))
+                    .on_click(cx.listener(|shell, _, _, cx| {
+                        if let Some(setup) = shell.run_setup.as_mut() {
+                            setup.pick(None);
+                        }
+                        cx.notify();
+                    })),
+                )
+            });
+        let panel = dialog_frame(
+            floating_panel("run-picker", theme)
+                .w(px(theme::RUN_SETUP_WIDTH))
+                .dialog_root(
+                    &self.dialog_focus,
+                    false,
+                    cx.listener(Self::dialog_guard),
+                    cx.listener(Self::run_setup_key_down),
+                ),
+            DialogHead {
+                icon: Icon::FolderOpen,
+                tone: DialogTone::Normal,
+                title: if folder {
+                    "Choose the folder"
+                } else {
+                    "Choose the env file"
+                }
+                .into(),
+                sub: Some(location.into()),
+            },
+            Some(
+                dialog_close("run-picker-close", theme).on_click(cx.listener(|shell, _, _, cx| {
+                    if let Some(setup) = shell.run_setup.as_mut() {
+                        setup.picker = None;
+                    }
+                    cx.notify();
+                })),
+            ),
+            Some(dialog_body().child(div().flex().child(up)).child(list)),
+            Some(foot),
+            theme,
+        );
         Self::modal_shade("run-setup-shade", panel, cx)
     }
 }

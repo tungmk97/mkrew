@@ -934,14 +934,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let busy = dialog.cloning.is_some();
-        let error_row = |error: String| {
-            div()
-                .flex()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                .child(div().text_color(rgb(theme.text)).child(error))
-        };
+        let error_row = |error: String| error_note(error, theme);
         let machine = dialog.machine.as_deref();
         let target = match (dialog.target(), machine) {
             (Some(target), _) => format!("Clones into {target}"),
@@ -1027,54 +1020,26 @@ impl Shell {
                         })),
                 ),
         };
-        let panel = floating_panel("add-workspace-dialog", theme)
-            .w(px(theme::DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .dialog_root(
-                &self.dialog_focus,
-                true,
-                cx.listener(Self::dialog_guard),
-                cx.listener(Self::add_workspace_key_down),
-            )
-            .relative()
-            .child(self.typing(&self.dialog_focus, Self::add_workspace_key_down, cx))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(font_size::CARD_TITLE)
-                            .font_weight(FontWeight(weight::SEMIBOLD))
-                            .text_color(rgb(theme.text))
-                            .child("Add workspace"),
-                    )
-                    // A machine window types the folder (below) instead.
-                    .children(machine.is_none().then(|| {
-                        secondary_button(
-                            "add-workspace-folder",
-                            icon_text(Icon::FolderPlus, "Open a folder…", theme.text_dim),
-                            theme,
-                        )
-                        .focusable_bordered(theme)
-                        .tooltip(tooltip(theme, "Add a folder on this computer", ""))
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.pick_workspace_folder(false, window, cx);
-                        }))
-                    })),
-            )
+        let body = dialog_body()
+            // A machine window types the folder (below) instead.
+            .children(machine.is_none().then(|| {
+                secondary_button(
+                    "add-workspace-folder",
+                    icon_text(Icon::FolderPlus, "Open a folder…", theme.text_dim),
+                    theme,
+                )
+                .self_start()
+                .focusable_bordered(theme)
+                .tooltip(tooltip(theme, "Add a folder on this computer", ""))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.pick_workspace_folder(false, window, cx);
+                }))
+            }))
             .children(folder_block)
-            .child(
-                div()
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    .child("Or clone a Git repository (GitHub, GitLab, …):"),
-            )
+            .child(dialog_text(
+                "Or clone a Git repository (GitHub, GitLab, …):",
+                theme,
+            ))
             .child(caret_field(
                 "add-workspace-url",
                 &dialog.url,
@@ -1089,33 +1054,54 @@ impl Shell {
                 },
             ))
             .child(parent_block)
-            .children(dialog.error.clone().map(error_row))
+            .children(dialog.error.clone().map(error_row));
+        let foot = dialog_foot(theme)
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(space::S))
-                    .pt(px(space::S))
-                    .child(
-                        button("add-workspace-cancel", "Cancel", theme, false)
-                            .focus_stop(theme)
-                            .tooltip(tooltip(theme, "Close (a running clone goes on)", "Esc"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.close_add_workspace(window, cx);
-                            })),
-                    )
-                    .child(if busy {
-                        disabled_button("add-workspace-clone", "Cloning…", theme, true)
-                    } else {
-                        button("add-workspace-clone", "Clone", theme, true)
-                            .focus_stop_filled(theme)
-                            .tooltip(tooltip(theme, "Clone and add as a workspace", "Enter"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.clone_workspace(window, cx);
-                            }))
-                    }),
-            );
+                button("add-workspace-cancel", "Cancel", theme, false)
+                    .focus_stop(theme)
+                    .tooltip(tooltip(theme, "Close (a running clone goes on)", "Esc"))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.close_add_workspace(window, cx);
+                    })),
+            )
+            .child(if busy {
+                disabled_button("add-workspace-clone", "Cloning…", theme, true)
+            } else {
+                primary_button("add-workspace-clone", "Clone", Some("↵".to_owned()), theme)
+                    .focus_stop_filled(theme)
+                    .tooltip(tooltip(theme, "Clone and add as a workspace", "Enter"))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.clone_workspace(window, cx);
+                    }))
+            });
+        let panel = dialog_frame(
+            floating_panel("add-workspace-dialog", theme)
+                .w(px(theme::DIALOG_WIDTH))
+                .dialog_root(
+                    &self.dialog_focus,
+                    true,
+                    cx.listener(Self::dialog_guard),
+                    cx.listener(Self::add_workspace_key_down),
+                )
+                .relative()
+                .child(self.typing(&self.dialog_focus, Self::add_workspace_key_down, cx)),
+            DialogHead {
+                icon: Icon::FolderPlus,
+                tone: DialogTone::Normal,
+                title: "Add workspace".into(),
+                sub: None,
+            },
+            Some(
+                dialog_close("add-workspace-close", theme).on_click(cx.listener(
+                    |shell, _, window, cx| {
+                        shell.close_add_workspace(window, cx);
+                    },
+                )),
+            ),
+            Some(body),
+            Some(foot),
+            theme,
+        );
         Self::modal_shade("add-workspace-shade", panel, cx)
     }
 }

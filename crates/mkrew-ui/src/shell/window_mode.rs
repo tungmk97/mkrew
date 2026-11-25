@@ -583,10 +583,7 @@ impl Shell {
                     .child(if ask.remember { "✓" } else { "" }),
             )
             .child(div().flex_1().child("Don't ask again"));
-        let buttons = div()
-            .flex()
-            .justify_end()
-            .gap(px(space::S))
+        let buttons = dialog_foot(theme)
             .child(
                 button("open-ask-this", "This window", theme, false)
                     .focus_stop(theme)
@@ -596,35 +593,36 @@ impl Shell {
                     })),
             )
             .child(
-                button("open-ask-new", "New window", theme, true)
+                primary_button("open-ask-new", "New window", Some("↵".to_owned()), theme)
                     .focus_stop_filled(theme)
                     .tooltip(tooltip(theme, "Open it in a window of its own", "Enter"))
                     .on_click(cx.listener(|shell, _, window, cx| {
                         shell.answer_open_ask(Choice::NewWindow, window, cx);
                     })),
             );
-        let panel = floating_panel("open-ask", theme)
-            .w(px(theme::CONFIRM_DIALOG_WIDTH))
-            .p(px(space::L))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .font_family(theme.ui_font_family.clone())
-            .dialog_root(
-                &self.dialog_focus,
-                false,
-                cx.listener(Self::dialog_guard),
-                cx.listener(Self::open_ask_key_down),
-            )
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(format!("Open {}", self.workspace_name(ask.project))),
-            )
-            .child(check)
-            .child(buttons);
+        let panel =
+            dialog_frame(
+                floating_panel("open-ask", theme)
+                    .w(px(theme::CONFIRM_DIALOG_WIDTH))
+                    .dialog_root(
+                        &self.dialog_focus,
+                        false,
+                        cx.listener(Self::dialog_guard),
+                        cx.listener(Self::open_ask_key_down),
+                    ),
+                DialogHead {
+                    icon: Icon::ExternalLink,
+                    tone: DialogTone::Normal,
+                    title: format!("Open {}", self.workspace_name(ask.project)).into(),
+                    sub: None,
+                },
+                Some(dialog_close("open-ask-close", theme).on_click(
+                    cx.listener(|shell, _, window, cx| shell.cancel_open_ask(window, cx)),
+                )),
+                Some(dialog_body().child(check)),
+                Some(buttons),
+                theme,
+            );
         match ask.at {
             Some(at) => div()
                 .id("open-ask-layer")
@@ -914,7 +912,7 @@ impl Shell {
         };
         let label = picker.button_label();
         let primary = if picker.can_confirm() {
-            button("split-open", label, theme, true)
+            primary_button("split-open", label, Some("↵".to_owned()), theme)
                 .focus_stop_filled(theme)
                 .tooltip(tooltip(theme, "Open the ticked workspaces", "Enter"))
                 .on_click(
@@ -942,39 +940,30 @@ impl Shell {
                 .tooltip(tooltip(theme, "Stay in one window", "Esc"))
                 .on_click(cx.listener(|shell, _, window, cx| shell.close_split_picker(window, cx)))
         };
-        let panel = floating_panel("split-picker", theme)
-            .w(px(theme::DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .dialog_root(
-                &self.dialog_focus,
-                true,
-                cx.listener(Self::dialog_guard),
-                cx.listener(Self::split_picker_key_down),
-            )
-            .relative()
-            .child(self.typing(&self.dialog_focus, Self::split_picker_key_down, cx))
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Open workspaces in windows"),
-            )
-            .child(body)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(space::S))
-                    .pt(px(space::S))
-                    .child(secondary)
-                    .child(primary),
-            );
+        let panel = dialog_frame(
+            floating_panel("split-picker", theme)
+                .w(px(theme::DIALOG_WIDTH))
+                .dialog_root(
+                    &self.dialog_focus,
+                    true,
+                    cx.listener(Self::dialog_guard),
+                    cx.listener(Self::split_picker_key_down),
+                )
+                .relative()
+                .child(self.typing(&self.dialog_focus, Self::split_picker_key_down, cx)),
+            DialogHead {
+                icon: Icon::Columns2,
+                tone: DialogTone::Normal,
+                title: "Open workspaces in windows".into(),
+                sub: None,
+            },
+            Some(dialog_close("split-close", theme).on_click(
+                cx.listener(|shell, _, window, cx| shell.close_split_picker(window, cx)),
+            )),
+            Some(dialog_body().child(body)),
+            Some(dialog_foot(theme).child(secondary).child(primary)),
+            theme,
+        );
         Self::modal_shade("split-picker-shade", panel, cx)
     }
 

@@ -124,40 +124,8 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let error_row = |error: String| {
-            div()
-                .flex()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                .child(div().text_color(rgb(theme.text)).child(error))
-        };
-        let panel = floating_panel("plan-path-dialog", theme)
-            .w(px(theme::DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .dialog_root(
-                &self.dialog_focus,
-                true,
-                cx.listener(Self::dialog_guard),
-                cx.listener(Self::plan_path_key_down),
-            )
-            .relative()
-            .child(self.typing(&self.dialog_focus, Self::plan_path_key_down, cx))
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Link plan"),
-            )
-            .child(meta_line(
-                theme,
-                format!("Plan file on {}", dialog.machine).into(),
-            ))
+        let error_row = |error: String| error_note(error, theme);
+        let body = dialog_body()
             .child(caret_field(
                 "plan-path-field",
                 &dialog.path,
@@ -171,37 +139,56 @@ impl Shell {
                     }
                 },
             ))
-            .children(dialog.error.clone().map(error_row))
+            .children(dialog.error.clone().map(error_row));
+        let foot = dialog_foot(theme)
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(space::S))
-                    .pt(px(space::S))
-                    .child(
-                        button("plan-path-cancel", "Cancel", theme, false)
-                            .focus_stop(theme)
-                            .tooltip(tooltip(theme, "Keep the plan as it is", "Esc"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.close_plan_path(window, cx);
-                            })),
-                    )
-                    .child(if dialog.busy {
-                        disabled_button("plan-path-link", "Linking…", theme, true)
-                    } else {
-                        button("plan-path-link", "Link", theme, true)
-                            .focus_stop_filled(theme)
-                            .tooltip(tooltip(
-                                theme,
-                                "Link the file as this session's plan",
-                                "Enter",
-                            ))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.link_typed_plan(window, cx);
-                            }))
-                    }),
-            );
+                button("plan-path-cancel", "Cancel", theme, false)
+                    .focus_stop(theme)
+                    .tooltip(tooltip(theme, "Keep the plan as it is", "Esc"))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.close_plan_path(window, cx);
+                    })),
+            )
+            .child(if dialog.busy {
+                disabled_button("plan-path-link", "Linking…", theme, true)
+            } else {
+                primary_button("plan-path-link", "Link", Some("↵".to_owned()), theme)
+                    .focus_stop_filled(theme)
+                    .tooltip(tooltip(
+                        theme,
+                        "Link the file as this session's plan",
+                        "Enter",
+                    ))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.link_typed_plan(window, cx);
+                    }))
+            });
+        let panel = dialog_frame(
+            floating_panel("plan-path-dialog", theme)
+                .w(px(theme::DIALOG_WIDTH))
+                .dialog_root(
+                    &self.dialog_focus,
+                    true,
+                    cx.listener(Self::dialog_guard),
+                    cx.listener(Self::plan_path_key_down),
+                )
+                .relative()
+                .child(self.typing(&self.dialog_focus, Self::plan_path_key_down, cx)),
+            DialogHead {
+                icon: Icon::Link,
+                tone: DialogTone::Normal,
+                title: "Link plan".into(),
+                sub: Some(format!("Plan file on {}", dialog.machine).into()),
+            },
+            Some(dialog_close("plan-path-close", theme).on_click(cx.listener(
+                |shell, _, window, cx| {
+                    shell.close_plan_path(window, cx);
+                },
+            ))),
+            Some(body),
+            Some(foot),
+            theme,
+        );
         Self::modal_shade("plan-path-shade", panel, cx)
     }
 }
