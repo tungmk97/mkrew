@@ -66,8 +66,9 @@ pub(crate) struct TspUi {
     /// The ids of `main`'s children the list was last told about, and their surface.
     row_ids: Vec<String>,
     rows_surface: Option<String>,
-    /// The theme and fonts the rows were measured with: a change measures them again.
-    measured: RefCell<Option<(Theme, theme::Fonts)>>,
+    /// The theme, fonts and column cap the rows were measured with: a change measures them
+    /// again (the list itself only notices a new pane width).
+    measured: RefCell<Option<(Theme, theme::Fonts, Option<f32>)>>,
     /// The scroll of each growing `list` (a picker's items scroll inside their card).
     lists: RefCell<HashMap<String, ListState>>,
     /// The composer field Mkrew edits itself (ADR 0113); `None` while omp edits its own (another
@@ -171,9 +172,9 @@ impl TspUi {
     }
 
     /// Tells the page list what the mirror's last change did to `main` (ADR 0114). `surface`:
-    /// the surface a frame, open or close was for; `None` after a snapshot. A snapshot or a
-    /// different shown surface resets the list; a change of the shown surface splices and
-    /// remeasures; a change of a hidden surface leaves it.
+    /// the surface a frame, open or close was for; `None` after a snapshot or when the shown
+    /// surface opened again. A reset or a different shown surface resets the list; a change of
+    /// the shown surface splices and remeasures; a change of a hidden surface leaves it.
     fn sync_rows(&mut self, surface: Option<&str>, dirty: &HashSet<String>) {
         let Some((meta, doc)) = self.mirror.as_ref().and_then(Mirror::shown) else {
             self.row_ids.clear();
@@ -183,8 +184,25 @@ impl TspUi {
         };
         let new: Vec<String> = doc.children("main").map(|node| node.id.clone()).collect();
         let shown = meta.id.clone();
-        if surface.is_none() || self.rows_surface.as_deref() != Some(shown.as_str()) {
+        let same = self.rows_surface.as_deref() == Some(shown.as_str());
+        if surface.is_none() || !same {
+            // A reset forgets the scroll: a reader of the same surface keeps the row at the top
+            // of the page; anyone else follows the end.
+            let top = self.rows.logical_scroll_top();
+            let kept = (same && !self.rows.is_following_tail())
+                .then(|| top.item_ix.checked_sub(1))
+                .flatten()
+                .and_then(|row| self.row_ids.get(row))
+                .and_then(|id| new.iter().position(|known| known == id));
             self.rows.reset(new.len() + 2);
+            match kept {
+                Some(row) => self.rows.scroll_to(gpui::ListOffset {
+                    item_ix: row + 1,
+                    offset_in_item: top.offset_in_item,
+                }),
+                None if !(same && top.item_ix == 0) => self.follow_end(),
+                None => {}
+            }
         } else if surface == Some(shown.as_str()) {
             for change in tsp::row_changes(&self.row_ids, &new, dirty) {
                 match change {
@@ -199,6 +217,24 @@ impl TspUi {
         }
         self.rows_surface = Some(shown);
         self.row_ids = new;
+    }
+
+    /// Scrolls the page list so its `item` shows. Known heights (the item is laid out or above
+    /// the top) reveal it exactly; an item not measured yet would count as 0 px there, so it is
+    /// put at the top instead, unless the list follows the end: then it was just added at the
+    /// end, and following shows it.
+    fn reveal_item(&self, item: usize) {
+        let known = self.rows.bounds_for_item(item).is_some()
+            || self.rows.item_is_above_viewport(item) == Some(true);
+        if known {
+            self.rows.pause_following_tail();
+            self.rows.scroll_to_reveal_item(item);
+        } else if !self.rows.is_following_tail() {
+            self.rows.scroll_to(gpui::ListOffset {
+                item_ix: item,
+                offset_in_item: px(0.),
+            });
+        }
     }
 
     /// Drops the cache entries of nodes and blobs the mirror no longer has (after a frame that
@@ -322,7 +358,12 @@ impl Shell {
         if tsp::removes_nodes(&update.change) {
             ui.prune();
         }
-        ui.sync_rows(Some(&update.surface), &dirty);
+        // omp opening the shown surface again replaces its rows, ids kept: a reset.
+        let shown = (ui.mirror.as_ref())
+            .and_then(Mirror::shown)
+            .is_some_and(|(meta, _)| meta.id == update.surface);
+        let reopened = shown && matches!(update.change, TspChange::Open { .. });
+        ui.sync_rows((!reopened).then_some(update.surface.as_str()), &dirty);
         let TspChange::Frame { ops, .. } = &update.change else {
             return;
         };
@@ -350,12 +391,12 @@ impl Shell {
         });
         if let Some((list, ix)) = in_list {
             list_handle(&ui.lists, &list).scroll_to_item(ix);
-        } else if let Some(ix) = reveal {
+        } else if let Some(ix) = reveal.filter(|_| shown) {
             // Item 0 of the page list is the spacer under the pane's drag strip.
-            ui.rows.pause_following_tail();
-            ui.rows.scroll_to_reveal_item(ix + 1);
+            ui.reveal_item(ix + 1);
         }
-        match tsp::scroll_in(ops) {
+        // The page list is the shown surface's: a hidden surface's scroll leaves it.
+        match tsp::scroll_in(ops).filter(|_| shown) {
             Some(ListScroll::Top) => ui.rows.scroll_to(gpui::ListOffset::default()),
             Some(ListScroll::Bottom) => ui.follow_end(),
             Some(ListScroll::Page { up }) => ui.page(up),
@@ -1096,11 +1137,16 @@ impl Shell {
                 .child(self.typing(&handle, Self::tsp_key_down, cx))
                 .into_any_element();
         };
-        // The rows were measured with another theme or font: measure them again (ADR 0114).
-        let measuring = (theme.clone(), cx.global::<theme::Fonts>().clone());
-        if ui.measured.borrow().as_ref() != Some(&measuring) {
+        // The rows were measured with another theme, font or column cap: measure them again
+        // (ADR 0114).
+        let fonts = cx.global::<theme::Fonts>();
+        let max = tsp::column_max(several);
+        let stale = (ui.measured.borrow().as_ref())
+            .is_none_or(|(t, f, m)| t != theme || f != fonts || *m != max);
+        if stale {
             ui.rows.remeasure();
-            ui.measured.replace(Some(measuring));
+            ui.measured
+                .replace(Some((theme.clone(), fonts.clone(), max)));
         }
         // Text hit areas are recorded again by the rows painted in this frame; a row scrolled
         // out must not keep its old ones.
@@ -1137,7 +1183,6 @@ impl Shell {
         // the last message from the status row and the meter.
         // Alone, the transcript is in the Chat column; among several panes it spans the pane like
         // Tern (`tsp::column_max`). The dock below keeps the Chat column.
-        let max = tsp::column_max(several);
         let screen_rows: Vec<AnyElement> = if screen {
             (doc.children("main"))
                 .map(|node| {
@@ -1226,6 +1271,24 @@ impl Shell {
                             .size_full(),
                         )
                     }
+                })
+                .when(!screen, |el| {
+                    // The list follows the end again only while it lays out (the user scrolled
+                    // back to the bottom); the button below was drawn before that: draw again.
+                    let rows = ui.rows.clone();
+                    let following = rows.is_following_tail();
+                    el.child(
+                        canvas(
+                            move |_, window, _| {
+                                if rows.is_following_tail() != following {
+                                    window.request_animation_frame();
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_0(),
+                    )
                 })
                 .when(!ui.rows.is_following_tail() && !screen, |el| {
                     el.child(

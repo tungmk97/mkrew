@@ -399,7 +399,9 @@ impl Shell {
                             let open = cx.update(|cx| {
                                 cx.windows().iter().any(|w| w.window_id() == window_id)
                             });
-                            let built = if open {
+                            // A window closed meanwhile builds nothing and records no error:
+                            // its moved page is built again in the window that shows it.
+                            let built = open.then(|| {
                                 NativeView::build(
                                     &parent,
                                     id,
@@ -409,9 +411,7 @@ impl Shell {
                                     Some(&data_dir),
                                     events,
                                 )
-                            } else {
-                                Err("the window closed".to_owned())
-                            };
+                            });
                             let _ = this.update(cx, |shell, cx| {
                                 shell.page_built(id, host, &url, built, keys, cx);
                             });
@@ -450,15 +450,15 @@ impl Shell {
         }
     }
 
-    /// The page of browser pane `id`, built for `host` on `url` (`prepare_browsers`), arrives.
-    /// A pane closed or moved to another window meanwhile drops it (the next render builds
-    /// the moved one in its new window).
+    /// The page of browser pane `id`, built for `host` on `url` (`prepare_browsers`), arrives
+    /// (`None`: its window closed first). A pane closed or moved to another window meanwhile
+    /// drops it (the next render builds the moved one in its new window).
     fn page_built(
         &mut self,
         id: Ulid,
         host: HostId,
         url: &str,
-        built: Result<NativeView, String>,
+        built: Option<Result<NativeView, String>>,
         keys: Vec<String>,
         cx: &mut Context<'_, Self>,
     ) {
@@ -466,7 +466,9 @@ impl Shell {
             return;
         };
         browser.building = false;
-        if browser.host == Some(host) {
+        if browser.host == Some(host)
+            && let Some(built) = built
+        {
             match built {
                 Ok(native) => {
                     // The address changed while the page was built.

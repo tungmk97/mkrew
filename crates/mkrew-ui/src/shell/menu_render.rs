@@ -587,6 +587,15 @@ impl MenuAnchors {
         self.0.borrow_mut().remove(&key);
     }
 
+    /// Forgets the pane anchors of sessions `drawn` rejects (no pane view draws them any more,
+    /// so a keyboard menu falls back to the switcher instead of a place left long ago).
+    pub(crate) fn retain_panes(&self, drawn: impl Fn(Ulid) -> bool) {
+        (self.0.borrow_mut()).retain(|(_, key), _| match key {
+            Anchor::Pane(session) => drawn(*session),
+            _ => true,
+        });
+    }
+
     fn bottom_left(&self, window: gpui::WindowId, key: &Anchor) -> Option<Point<Pixels>> {
         let anchors = self.0.borrow();
         anchors.get(&(window, key.clone())).map(Bounds::bottom_left)

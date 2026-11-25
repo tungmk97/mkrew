@@ -663,7 +663,8 @@ impl Shell {
                     self.render_chat(*id, is_focused, now, theme, cx)
                 } else {
                     match self.panes.get(id) {
-                        // Cached: output renders the grid alone, and a pane render reuses it.
+                        // Cached: output renders this pane and the window root, not the
+                        // other panes; a render of this pane for another reason reuses it.
                         Some(pane) => pane
                             .clone()
                             .cached(gpui::StyleRefinement::default().size_full())

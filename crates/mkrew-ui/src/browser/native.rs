@@ -33,9 +33,10 @@ impl Parent {
 
 impl HasWindowHandle for Parent {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
-        // SAFETY: read from a live GPUI window; `Shell::prepare_browsers` builds a page only
-        // after checking, in the same synchronous step, that the window is still open, and
-        // `build_as_child` uses the handle only during that call.
+        // SAFETY: the handle must be valid while `build_as_child` runs. It was read from a
+        // live GPUI window, and `Shell::prepare_browsers` checks that window is still open in
+        // the same synchronous step, right before the build. What wry keeps of the parent
+        // afterwards (focus, bounds) is what it kept when it was given the window itself.
         #[allow(unsafe_code)]
         Ok(unsafe { WindowHandle::borrow_raw(self.0) })
     }

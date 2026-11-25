@@ -341,7 +341,8 @@ impl Shell {
         if changed {
             self.sync_watches(cx);
         }
-        // A pane view lives while its tab, in its window, still holds its leaf.
+        // A pane view lives while its tab, in its window, draws its leaf (a zoom drops the
+        // others' views; they are made again when the zoom ends).
         let live: HashSet<super::pane_view::PaneSlot> = (self.tabs.iter())
             .flat_map(|(project_id, tabs)| {
                 tabs.tabs().iter().flat_map(move |tab| {
@@ -360,6 +361,11 @@ impl Shell {
         self.pane_views
             .get_mut()
             .retain(|slot, _| live.contains(slot));
+        let drawn: HashSet<Ulid> = (self.pane_views.get_mut().keys())
+            .filter_map(|slot| slot.key.session())
+            .collect();
+        cx.global::<MenuAnchors>()
+            .retain_panes(|session| drawn.contains(&session));
         self.focus_pane(window, cx);
     }
 

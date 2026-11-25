@@ -219,7 +219,7 @@ pub fn row_changes(old: &[String], new: &[String], dirty: &HashSet<String>) -> V
 | `crates/mkrew-ui/src/shell/tsp_view.rs` | `TspUi` list state, `sync_rows`, `tsp_row`, scrolling, `hits` clearing |
 | `crates/mkrew-ui/src/theme.rs` | `TSP_LIST_OVERDRAW` |
 | `crates/mkrew-ui/tests/measure.rs` | the new measurement (section 7) |
-| `docs/decisions/0114-pane-render-perf.md`, `docs/SPEC.md` (§10, §15), `docs/PROGRESS.md`, `docs/HUMAN_CHECKS.md` | records |
+| `docs/decisions/0114-pane-render-perf.md`, `docs/SPEC.md` (§11, §15), `docs/PROGRESS.md`, `docs/HUMAN_CHECKS.md` | records |
 
 ## 7. Testing
 
