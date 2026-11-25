@@ -14,6 +14,11 @@ use crate::keymap::Command;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WindowKey(pub u64);
 
+/// A Space window (ADR 0113): a top-level window with a workspace, local to this UI process
+/// (never reused within it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SpaceKey(pub u64);
+
 /// The window a tab, a render or an input belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HostId {
