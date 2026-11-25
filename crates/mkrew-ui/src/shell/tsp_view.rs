@@ -189,17 +189,19 @@ impl TspUi {
             self.rows.reset(2);
             return;
         };
-        // A frame that named no row and left `main` alone (the dock, the hud, the working row):
-        // nothing to splice, remeasure or regroup, and no ids to collect (ADR 0118).
-        if surface == Some(meta.id.as_str())
-            && self.rows_surface.as_deref() == Some(meta.id.as_str())
-            && tsp::rows_unchanged(doc, &self.row_ids, dirty)
+        let shown = meta.id.clone();
+        let same = self.rows_surface.as_deref() == Some(shown.as_str());
+        // A frame of a hidden surface leaves the list; a frame that named no row and left `main`
+        // alone (the dock, the hud, the working row) has nothing to splice, remeasure or regroup.
+        // Neither collects the ids (ADR 0118).
+        if same
+            && surface.is_some_and(|surface| {
+                surface != shown || tsp::rows_unchanged(doc, &self.row_ids, dirty)
+            })
         {
             return;
         }
         let new: Vec<String> = doc.children("main").map(|node| node.id.clone()).collect();
-        let shown = meta.id.clone();
-        let same = self.rows_surface.as_deref() == Some(shown.as_str());
         if surface.is_none() || !same {
             // A reset forgets the scroll: a reader of the same surface keeps the row at the top
             // of the page; anyone else follows the end.
@@ -218,7 +220,7 @@ impl TspUi {
                 None if !(same && top.item_ix == 0) => self.follow_end(),
                 None => {}
             }
-        } else if surface == Some(shown.as_str()) {
+        } else {
             for change in tsp::row_changes(&self.row_ids, &new, dirty) {
                 match change {
                     tsp::RowChange::Splice { range, count } => {
@@ -227,8 +229,6 @@ impl TspUi {
                     tsp::RowChange::Remeasure(ix) => self.rows.remeasure_items(ix + 1..ix + 2),
                 }
             }
-        } else {
-            return;
         }
         self.rows_surface = Some(shown);
         self.row_ids = new;

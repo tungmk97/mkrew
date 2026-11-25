@@ -99,6 +99,8 @@ pub enum Step {
     State(TspState),
     /// A `warn` log line; after a fall back it is also the reason shown to the user.
     Warn(String),
+    /// A `debug` log line (the failing frames of a surface after its first, ADR 0118).
+    Debug(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -519,13 +521,15 @@ impl Engine {
         if !errors.is_empty() {
             let msg = format!("frame {seq}: {}", errors.join("; "));
             push_reply(steps, b'e', &json!({"ev": "error", "msg": msg}));
-            if let Some(surface) = self.surfaces.get_mut(id)
-                && !surface.warned
-            {
-                surface.warned = true;
-                steps.push(Step::Warn(format!(
-                    "tsp {id}: {msg} (later failing frames of this surface are not logged)"
-                )));
+            let msg = format!("tsp {id}: {msg}");
+            match self.surfaces.get_mut(id) {
+                Some(surface) if !surface.warned => {
+                    surface.warned = true;
+                    steps.push(Step::Warn(format!(
+                        "{msg} (later failing frames of this surface are logged at debug)"
+                    )));
+                }
+                _ => steps.push(Step::Debug(msg)),
             }
         }
         if !gone.is_empty() {

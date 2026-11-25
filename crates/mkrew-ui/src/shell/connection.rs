@@ -177,14 +177,9 @@ impl Shell {
                     if window.is_visible() && (due || status::redraw_due(sessions, last, now)) {
                         cx.notify();
                     } else {
-                        // A pane's own spinner, elapsed or dots: that pane only (ADR 0118); the
-                        // peek popover draws a moving surface outside its pane.
+                        // A pane's own spinner, elapsed or dots: that pane only (ADR 0118).
                         let mut moving = shell.tsp_animating();
                         moving.extend(shell.chat_animating());
-                        let peeked = (shell.peek.as_ref()).map(|peek| peek.session_id);
-                        if moving.iter().any(|session| Some(*session) == peeked) {
-                            cx.notify();
-                        }
                         for session in moving {
                             shell.notify_session_panes(session, cx);
                         }
@@ -1424,14 +1419,10 @@ impl Shell {
                 }
                 if let Event::TspUpdate(update) = event {
                     self.tsp_update(update, cx);
-                    // Only the session's panes draw its surface (ADR 0118); the peek popover is
-                    // the one place outside a pane that does.
+                    // Only the session's panes draw its surface (ADR 0118); peek shows a notice
+                    // for an omp session, never the surface.
                     if self.event_shown(event, &mut shown_now, window) {
                         self.notify_session_panes(update.session_id, cx);
-                    }
-                    if (self.peek.as_ref()).is_some_and(|peek| peek.session_id == update.session_id)
-                    {
-                        cx.notify();
                     }
                 }
                 if let Event::ProjectCloned(done) = event {
