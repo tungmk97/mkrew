@@ -33,6 +33,7 @@ Measured from Tern's CSS (six gap reports):
 - **Dialogs:** every dialog is a `dialog_frame` (icon tile head, body, foot band, primary with `kbd`); `error_note` replaces the `✕` rows; `DIALOG_WIDTH` 560; floating panels are `radius::PANEL`; selected rows use `with_pick`.
 - **Settings:** 960x720 with a 232 px well navigation (an icon per page, groups in sentence case), a page head (`VIEW_TITLE` plus a one-sentence lead) inside the scroll, a 740 px content column, sentence-case section titles and 56 px rows.
 - **Transcript rhythm (omp pane).** 16 px below every top-level row that draws something (`TSP_ROW_GAP`), at least 8 px inside an assistant turn, thinking rows 24 px high in BODY italic `text_subtle`, the working row 24 px in the text column.
+- **Prompt bubble.** Tern's right-aligned bubble (`prompt_bubble`) in the omp pane and the Chat view; omp's head row moves under it on hover.
 - Components (shared controls, chat, composer, files, chrome, settings, git) follow in the same change; see the spec.
 
 ## Consequences

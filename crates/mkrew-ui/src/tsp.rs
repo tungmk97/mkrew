@@ -895,6 +895,11 @@ pub fn is_thinking(node: &Node) -> bool {
     role_of(node).is_some_and(|role| role.starts_with("omp.thinking"))
 }
 
+/// The user's prompt: `card` with role `omp.user`.
+pub fn is_user_prompt(node: &Node) -> bool {
+    role_of(node) == Some("omp.user")
+}
+
 /// How row `node` of `main` counts for a run of thoughts.
 pub fn row_kind(doc: &Document, node: &Node) -> RowKind {
     let hidden = |n: &Node| n.props.get("hidden").and_then(Value::as_bool) == Some(true);

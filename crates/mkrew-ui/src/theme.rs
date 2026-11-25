@@ -518,6 +518,10 @@ pub const TSP_THUMB_SIZE: f32 = 56.0;
 /// Widest share of the Chat page a prompt card takes (it sits at the right).
 pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
 
+/// Widest a prompt bubble is, whatever the pane (Tern's 540 px; the bubble is also at most
+/// `CHAT_PROMPT_MAX_FRACTION` of the column).
+pub const CHAT_PROMPT_MAX_WIDTH: f32 = 540.0;
+
 /// How far one arrow key scrolls the chat list, in px.
 pub const CHAT_SCROLL_STEP: f32 = 48.0;
 

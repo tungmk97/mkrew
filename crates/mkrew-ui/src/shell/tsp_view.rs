@@ -25,7 +25,7 @@ use mkrew_ui::tsp::{
 use mkrew_ui::{docs, preview};
 use serde_json::{Value, json};
 
-use super::chat_view::{chat_column, page_column};
+use super::chat_view::{chat_column, page_column, prompt_bubble};
 use super::composer::{
     composer_card_frame, composer_room, meter_bar, model_pill, permission_chip, placeholder_row,
     quiet_chip,
@@ -1809,6 +1809,9 @@ impl Shell {
     ) -> AnyElement {
         let theme = p.theme;
         let card = node.kind == "card";
+        if card && !p.in_layer && tsp::is_user_prompt(node) {
+            return self.tsp_user_prompt(p, node, head_el, body, cx);
+        }
         let mut el = div().flex().flex_col().gap(px(space::S)).min_w_0();
         if p.bounded {
             // The pane (or the overlay container) bounds this card: its list or body scrolls.
@@ -1836,6 +1839,27 @@ impl Shell {
             el.children(body)
         };
         self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+
+    /// The prompt card of the user: Tern's right-aligned bubble; its head row (copy, rewind,
+    /// time) leaves the bubble and shows under it while the row is hovered.
+    fn tsp_user_prompt(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        head_el: Option<AnyElement>,
+        body: Vec<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let group = SharedString::from(format!("tsp-user-{}-{}", p.session, node.id));
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .min_w_0()
+            .children(body);
+        let bubble = prompt_bubble(body, head_el.map(|head| (group, head)), p.theme);
+        self.tsp_decorate(bubble, p, node, Look::Text, false, cx)
     }
 
     /// The head of a card or section: its `head` spans or its head child; `None` without one.
@@ -1913,14 +1937,21 @@ impl Shell {
         let theme = p.theme;
         let collapsible = bool_prop(node, "collapsible");
         let collapsed = bool_prop(node, "collapsed");
-        let head_color =
-            str_prop(node, "tone").map_or(theme.text, |tone| tsp::tone_color(tone, theme));
+        let user = tsp::is_user_prompt(node);
+        let head_color = if user {
+            theme.text_subtle
+        } else {
+            str_prop(node, "tone").map_or(theme.text, |tone| tsp::tone_color(tone, theme))
+        };
         let group = SharedString::from(format!("tsp-hg-{}-{}", p.session, node.id));
         let mut row = div()
             .flex()
             .items_center()
             .gap(px(space::S))
             .group(group.clone());
+        if user {
+            row = row.justify_end();
+        }
         if collapsible {
             let chevron = if collapsed {
                 Icon::ChevronRight
@@ -1942,7 +1973,7 @@ impl Shell {
             Some(child) => row.child(child),
             None => row.child(
                 div()
-                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .when(!user, |el| el.font_weight(FontWeight(weight::SEMIBOLD)))
                     .child(styled_runs(head, head_color, false, theme)),
             ),
         };
