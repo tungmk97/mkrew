@@ -1420,7 +1420,7 @@ impl Shell {
                     )
                     .child(send),
             );
-        let card = Self::composer_drops(card, session, radius::COMPOSER, theme, cx);
+        let card = Self::composer_drops(card, session, radius::PANEL, theme, cx);
         super::chat_view::chat_column(div().flex().flex_col().children(meter).child(card))
             .pb(px(space::M))
             .into_any_element()
@@ -1456,11 +1456,11 @@ pub(super) fn composer_card_frame(theme: &Theme) -> gpui::Div {
         .pb(px(space::S))
         .pl(px(space::L))
         .pr(px(space::M))
-        .rounded(px(radius::COMPOSER))
+        .rounded(px(radius::PANEL))
         .bg(rgb(theme.surface_raised))
         .border(px(theme::BORDER_WIDTH))
         .border_color(gpui::rgba(theme.glass_border))
-        .shadow(theme::shadow_float(theme))
+        .shadow(theme::shadow_composer(theme))
         .font_family(theme.ui_font_family.clone())
 }
 

@@ -3200,6 +3200,7 @@ impl Shell {
                 )
                 // An opaque fill: a popover with text must be readable over the page.
                 .bg(rgb(theme.surface_raised))
+                .shadow(theme::shadow_pop(theme))
                 .w(px(theme::TSP_POPOVER_WIDTH))
                 .max_h(px(height.max(theme::TSP_POPOVER_MIN_HEIGHT)))
                 .p(px(space::M))
@@ -3491,6 +3492,7 @@ impl Shell {
             theme,
         )
         .bg(rgb(theme.surface_raised))
+        .shadow(theme::shadow_pop(theme))
         .max_w(px(theme::TSP_POPOVER_WIDTH))
         .p(px(space::M))
         .on_mouse_down_out(cx.listener(move |shell, event: &MouseDownEvent, _, cx| {

@@ -274,7 +274,7 @@ pub(crate) fn float_button(
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     round_neutral(id, glyph, theme)
-        .shadow(theme::shadow_float(theme))
+        .shadow(theme::shadow_pop(theme))
         .block_mouse_except_scroll()
         .pressable(Look::Raised, true, theme)
 }
@@ -1192,15 +1192,28 @@ pub(crate) fn list_row(
         .pressable_unless(selected, Look::Row, theme)
 }
 
-/// The one frame of every floating panel (palette, Settings, dialogs; ADR 0097): the glass
-/// fill, the accent tint gradient over the top `GLASS_TINT_HEIGHT` px, a 1 px glass border,
-/// the float shadow, `radius::LARGE`, and it swallows the mouse. Callers set size, layout and
-/// content; the gradient is the first child, so their children paint over it.
+/// A 1 px line of `glass_hi` just inside the top edge of a raised or floating panel (ADR
+/// 0117), inset by the panel's corner `radius` so it does not touch the curve. The parent
+/// must be `.relative()`; add it as the first child so the panel's content paints over it.
+pub(crate) fn top_highlight(theme: &Theme, radius: f32) -> gpui::Div {
+    div()
+        .absolute()
+        .top_0()
+        .left(px(radius))
+        .right(px(radius))
+        .h(px(theme::BORDER_WIDTH))
+        .bg(gpui::rgba(theme.glass_hi))
+}
+
+/// The one frame of every floating panel (palette, Settings, dialogs; ADR 0097, ADR 0117): the
+/// glass fill, a 1 px glass border, the `glass_hi` top line, the modal shadow, `radius::LARGE`,
+/// and it swallows the mouse. Popovers (`tsp_view`) override the shadow with `shadow_pop`.
+/// Callers set size, layout and content; the highlight is the first child, so their children
+/// paint over it.
 pub(crate) fn floating_panel(
     id: impl Into<gpui::ElementId>,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    let (top, bottom) = theme::glass_gradient(theme);
     div()
         .id(id)
         .relative()
@@ -1208,22 +1221,9 @@ pub(crate) fn floating_panel(
         .border(px(theme::BORDER_WIDTH))
         .border_color(gpui::rgba(theme.glass_border))
         .bg(gpui::rgba(theme.glass))
-        .shadow(theme::shadow_float(theme))
+        .shadow(theme::shadow_modal(theme))
         .occlude()
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .h(px(theme::GLASS_TINT_HEIGHT))
-                .rounded_t(px(radius::LARGE))
-                .bg(gpui::linear_gradient(
-                    theme::GLASS_TINT_ANGLE,
-                    gpui::linear_color_stop(gpui::rgba(top), theme::GLASS_TINT_FROM),
-                    gpui::linear_color_stop(gpui::rgba(bottom), theme::GLASS_TINT_TO),
-                )),
-        )
+        .child(top_highlight(theme, radius::LARGE))
 }
 
 /// A floating panel's entrance: it fades in and rises `PANEL_RISE` over `motion::FAST`,

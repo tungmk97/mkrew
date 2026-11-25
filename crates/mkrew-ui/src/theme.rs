@@ -41,8 +41,8 @@ pub mod radius {
     pub const CARD: f32 = 10.0;
     /// Dialogs, palette, empty-state tile.
     pub const LARGE: f32 = 12.0;
-    /// The prompt composer card (Tern's `--r-panel`, ADR 0116).
-    pub const COMPOSER: f32 = 16.0;
+    /// The composer card and other panels (Tern's `--r-panel`, ADR 0116, ADR 0117).
+    pub const PANEL: f32 = 16.0;
     /// Pills: fully round ends.
     pub const PILL: f32 = 999.0;
 }
@@ -624,13 +624,7 @@ pub const WORKSPACE_SWATCH_SIZE: f32 = space::L;
 /// Ring around a workspace menu color choice.
 pub const WORKSPACE_SWATCH_BORDER: f32 = 2.0;
 
-/// Floating panels (ADR 0097): how far the accent tint gradient reaches down from the top,
-/// its direction (180 = top to bottom in gpui) and color stops, and how far a panel rises
-/// while it fades in (gpui has no element scale).
-pub const GLASS_TINT_HEIGHT: f32 = 120.0;
-pub const GLASS_TINT_ANGLE: f32 = 180.0;
-pub const GLASS_TINT_FROM: f32 = 0.0;
-pub const GLASS_TINT_TO: f32 = 1.0;
+/// How far a floating panel rises while it fades in (gpui has no element scale).
 pub const PANEL_RISE: f32 = space::XS;
 /// Max height of the composer's prompt and slash pickers (they scroll past that).
 pub const PICKER_LIST_HEIGHT: f32 = 360.0;
@@ -944,17 +938,14 @@ pub struct Theme {
     pub run_pill_text: u32,
     /// Alpha of a workspace color tint (avatars, [`Theme::tint`]).
     pub tint_alpha: u8,
-    /// The shade behind a modal dialog, RGBA: black at 24 % (dark) or 16 % (light), set by
-    /// [`Theme::with_glass`].
+    /// The shade behind a modal dialog, RGBA: black at 55 % (dark) or the page frame at 50 %
+    /// (light: a milky veil), set by [`Theme::with_glass`].
     pub scrim: u32,
-    /// Fill of every floating panel, RGBA: `surface` at 0.96 (dark) / 0.97 (light) or more, as
-    /// much as body text needs to keep 4.5:1 over a light or dark page behind it.
+    /// Fill of every floating panel, RGBA: `surface_raised` (dark) / `surface` (light) at 0.96 /
+    /// 0.97 or more, as much as body text needs to keep 4.5:1 over a light or dark page behind it.
     pub glass: u32,
-    /// 1 px inner border of a floating panel, RGBA: white (dark) or black (light) at 8 %.
+    /// 1 px inner border of a floating panel, RGBA: `layer[1]`.
     pub glass_border: u32,
-    /// Top of the vertical gradient over the first `GLASS_TINT_HEIGHT` px of a floating panel,
-    /// RGBA: `accent` at 5 % (dark) / 4 % (light).
-    pub glass_tint: u32,
     /// Highlight line, RGBA: a 1 px line just inside the top edge of raised and floating
     /// panels (`widgets::top_highlight`): white at 5 % (dark) / 100 % (light); set by
     /// [`Theme::with_glass`]. Replaces the accent wash of `glass_tint` (ADR 0117).
@@ -1392,11 +1383,10 @@ impl Theme {
             run_pill_border: 0,
             run_pill_text: 0,
             tint_alpha: 0,
-            // Glass and scrim are derived from `surface` / `accent` by `with_glass`.
+            // Glass and scrim are derived from the fills by `with_glass`.
             scrim: 0,
             glass: 0,
             glass_border: 0,
-            glass_tint: 0,
             glass_hi: 0,
             layer: [0; 4],
             code_bg: 0,
@@ -1555,11 +1545,14 @@ fn layers(ink: u32, dark: bool) -> [u32; 4] {
     alphas.map(|alpha| with_alpha(ink, alpha))
 }
 
-/// The 1 px border of a control that sits on `surface_raised` (the Chat composer's model pill
-/// and round buttons). `control_border` is a shade of `surface`, so on the raised card it
-/// vanishes; this one is `text_muted` blended 30 % into the raised fill, visible in both themes.
+/// The 1 px border of a control that sits on `surface_raised` (the Chat composer's chips):
+/// `layer[1]` flattened over the raised fill, so it is the same step on every theme.
 pub fn raised_border(theme: &Theme) -> u32 {
-    mix(theme.surface_raised, theme.text_muted, 0.3)
+    mix(
+        theme.surface_raised,
+        theme.layer[1] >> 8,
+        (theme.layer[1] & 0xFF) as f32 / 255.0,
+    )
 }
 
 /// `alpha` as the 8-bit value an RGBA color stores (so tests and `with_glass` agree).
@@ -1567,26 +1560,47 @@ fn quantize(alpha: f32) -> f32 {
     (alpha.clamp(0.0, 1.0) * 255.0).round() / 255.0
 }
 
-/// The color a floating panel shows at its top over `backdrop`: `surface` at `alpha`, then the
-/// accent tint at `tint`.
-pub fn glass_over(surface: u32, accent: u32, alpha: f32, tint: f32, backdrop: u32) -> u32 {
-    mix(mix(backdrop, surface, alpha), accent, tint)
+/// The color a floating panel shows over `backdrop`: its `fill` at `alpha`.
+pub fn glass_over(fill: u32, alpha: f32, backdrop: u32) -> u32 {
+    mix(backdrop, fill, alpha)
 }
 
-/// The tint gradient of a floating panel: its top color and the same color with no alpha.
-pub fn glass_gradient(theme: &Theme) -> (u32, u32) {
-    (theme.glass_tint, theme.glass_tint & 0xFFFF_FF00)
+fn black(alpha: f32) -> gpui::Hsla {
+    gpui::Hsla::from(gpui::rgba(with_alpha(0x000000, alpha)))
 }
 
-/// The shadow of a floating panel (palette, Settings, dialogs): two layers, half as strong in
-/// light themes.
-pub fn shadow_float(theme: &Theme) -> Vec<gpui::BoxShadow> {
-    let strength = if theme.dark { 1.0 } else { 0.5 };
-    let black = |alpha: f32| gpui::Hsla::from(gpui::rgba(with_alpha(0x000000, alpha * strength)));
-    vec![
-        gpui::BoxShadow::new(gpui::px(0.0), gpui::px(8.0), black(0.35)).blur_radius(gpui::px(24.0)),
-        gpui::BoxShadow::new(gpui::px(0.0), gpui::px(2.0), black(0.20)).blur_radius(gpui::px(6.0)),
-    ]
+/// One shadow layer: `0 y blur spread` black at `alpha` (CSS order).
+fn shadow(y: f32, blur: f32, spread: f32, alpha: f32) -> gpui::BoxShadow {
+    gpui::BoxShadow::new(gpui::px(0.0), gpui::px(y), black(alpha))
+        .blur_radius(gpui::px(blur))
+        .spread_radius(gpui::px(spread))
+}
+
+/// Menus, tooltips, the peek, toasts and the find bar (ADR 0117): `0 18 50 -12` black 30 %.
+pub fn shadow_pop(_theme: &Theme) -> Vec<gpui::BoxShadow> {
+    vec![shadow(18.0, 50.0, -12.0, 0.30)]
+}
+
+/// Dialogs, the palette and Settings: dark `0 28 72 -16` black 78 %; light `0 24 64 -18`
+/// black 32 % plus a `0 2 6 -2` black 6 % contact layer.
+pub fn shadow_modal(theme: &Theme) -> Vec<gpui::BoxShadow> {
+    if theme.dark {
+        vec![shadow(28.0, 72.0, -16.0, 0.78)]
+    } else {
+        vec![
+            shadow(24.0, 64.0, -18.0, 0.32),
+            shadow(2.0, 6.0, -2.0, 0.06),
+        ]
+    }
+}
+
+/// The composer card: dark `0 12 30 -16` black 60 %; light `0 18 50 -14` black 28 %.
+pub fn shadow_composer(theme: &Theme) -> Vec<gpui::BoxShadow> {
+    if theme.dark {
+        vec![shadow(12.0, 30.0, -16.0, 0.60)]
+    } else {
+        vec![shadow(18.0, 50.0, -14.0, 0.28)]
+    }
 }
 
 /// `color` blended toward `toward` in 5 % steps until it reads at `min` on every ground.
@@ -1608,37 +1622,32 @@ fn fill(bg: u32, hue: u32, t: f32, fg: u32) -> u32 {
 }
 
 impl Theme {
-    /// Sets `scrim`, `glass`, `glass_border`, `glass_tint` and `glass_hi` from `surface` and
-    /// `accent`.
-    /// The fill alpha starts at the spec value and grows by 2 % until `text` keeps 4.5:1 on the
-    /// panel over both `bg` and `text` behind it (the worst light and dark pages).
+    /// Sets `scrim`, `glass`, `glass_border` and `glass_hi` from the fills and `layer`. The
+    /// fill alpha starts at the spec value and grows by 2 % until `text` keeps 4.5:1 on the
+    /// panel over both `bg` and `text` behind it (the worst light and dark pages). Needs
+    /// `layer`, `pane_gap`, `surface` and `surface_raised` set.
     fn with_glass(self) -> Self {
-        let (base, edge, tint, scrim) = if self.dark {
-            (0.96, 0xFFFFFF, 0.05, 0.24)
+        let (fill, base, scrim, hi) = if self.dark {
+            (self.surface_raised, 0.96, with_alpha(0x000000, 0.55), 0.05)
         } else {
-            (0.97, 0x000000, 0.04, 0.16)
+            (self.surface, 0.97, with_alpha(self.pane_gap, 0.50), 1.0)
         };
-        let tint = quantize(tint);
         let worst = |alpha: f32| {
             [self.bg, self.text]
                 .into_iter()
-                .map(|backdrop| {
-                    let fill = glass_over(self.surface, self.accent, alpha, tint, backdrop);
-                    contrast(self.text, fill)
-                })
+                .map(|backdrop| contrast(self.text, glass_over(fill, alpha, backdrop)))
                 .fold(f32::MAX, f32::min)
         };
         let mut alpha = quantize(base);
-        // Ends: at alpha 1.0 the fill is `surface` plus the tint, which text reads on.
+        // Ends: at alpha 1.0 the fill is the panel color itself, which text reads on.
         while worst(alpha) < 4.5 && alpha < 1.0 {
             alpha = quantize(alpha + 0.02);
         }
         Self {
-            scrim: with_alpha(0x000000, scrim),
-            glass: with_alpha(self.surface, alpha),
-            glass_border: with_alpha(edge, 0.08),
-            glass_tint: with_alpha(self.accent, tint),
-            glass_hi: with_alpha(0xFFFFFF, if self.dark { 0.05 } else { 1.0 }),
+            scrim,
+            glass: with_alpha(fill, alpha),
+            glass_border: self.layer[1],
+            glass_hi: with_alpha(0xFFFFFF, hi),
             ..self
         }
     }
@@ -2519,12 +2528,15 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
     }
     // The selected panel icon and the picked row's label sit on `accent_bg`.
     check("accent text", t.accent_text, t.accent_bg, 4.5);
-    // Decoded exactly as `with_glass` quantized them; the page behind is a light or a dark one.
+    // Decoded exactly as `with_glass` quantized it; the page behind is a light or a dark one.
     let alpha = (t.glass & 0xFF) as f32 / 255.0;
-    let tint = (t.glass_tint & 0xFF) as f32 / 255.0;
     for backdrop in [t.bg, t.text] {
-        let fill = glass_over(t.surface, t.accent, alpha, tint, backdrop);
-        check("text on glass", t.text, fill, 4.5);
+        check(
+            "text on glass",
+            t.text,
+            glass_over(t.glass >> 8, alpha, backdrop),
+            4.5,
+        );
     }
     check("on accent", t.on_accent, t.accent, 3.0);
     // The close button's red hover under its cross.
@@ -2619,6 +2631,42 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
             check("brand logo", t.brand_color(*logo), ground, 3.0);
         }
     }
+    found.extend(floating_problems(t));
+    found
+}
+
+/// Rules on the lift of a floating panel and of a picked row (ADR 0117).
+fn floating_problems(t: &Theme) -> Vec<Problem> {
+    let alpha = (t.glass & 0xFF) as f32 / 255.0;
+    let flat = glass_over(t.glass >> 8, alpha, t.bg);
+    let mut found = Vec::new();
+    // A floating panel is lighter than the page it covers in dark themes.
+    if t.dark && contrast(flat, 0x000000) <= contrast(t.bg, 0x000000) {
+        found.push(Problem {
+            rule: "glass lift",
+            detail: format!(
+                "the panel {flat:06X} is not lighter than the page {:06X}",
+                t.bg
+            ),
+        });
+    }
+    // A picked menu row (`accent_bg` fill plus bar) must show on the panel: some channel
+    // differs by at least 3. (`selected` equals `surface_raised` in dark themes, so it
+    // cannot carry the pick.)
+    let step = [16, 8, 0]
+        .into_iter()
+        .map(|s| (((t.accent_bg >> s) & 0xFF) as i32 - ((flat >> s) & 0xFF) as i32).abs())
+        .max()
+        .unwrap_or(0);
+    if step < 3 {
+        found.push(Problem {
+            rule: "menu pick",
+            detail: format!(
+                "accent_bg {:06X} is not apart from the panel {flat:06X}",
+                t.accent_bg
+            ),
+        });
+    }
     found
 }
 
@@ -2644,19 +2692,10 @@ mod tests {
                 .max()
                 .unwrap();
             assert!(
-                gap >= 32,
+                gap >= 16,
                 "dark={}: border {border:06x} too faint ({gap})",
                 theme.dark
             );
-            // The old token is the failure this guards against.
-            let old = [16, 8, 0]
-                .into_iter()
-                .map(|s| {
-                    (channel(theme.control_border, s) - channel(theme.surface_raised, s)).abs()
-                })
-                .max()
-                .unwrap();
-            assert!(old < 32, "control_border became visible; use it instead");
         }
     }
 
@@ -2950,6 +2989,20 @@ mod tests {
                     ..t.clone()
                 },
             ),
+            (
+                "glass lift",
+                Theme {
+                    glass: with_alpha(t.bg, 1.0),
+                    ..t.clone()
+                },
+            ),
+            (
+                "menu pick",
+                Theme {
+                    accent_bg: t.surface_raised,
+                    ..t.clone()
+                },
+            ),
             ("workspace colors", {
                 let mut colors = t.workspace_colors;
                 colors[0] = t.bg;
@@ -3018,12 +3071,15 @@ mod tests {
     }
 
     #[test]
-    fn glass_is_derived_from_surface_and_accent_in_every_theme() {
+    fn glass_is_the_raised_fill_in_dark_and_the_surface_in_light() {
         for theme in all_themes() {
-            assert_eq!(theme.glass >> 8, theme.surface, "{}", theme.name);
-            assert_eq!(theme.glass_tint >> 8, theme.accent, "{}", theme.name);
-            let edge = if theme.dark { 0xFFFFFF } else { 0x000000 };
-            assert_eq!(theme.glass_border, with_alpha(edge, 0.08), "{}", theme.name);
+            let fill = if theme.dark {
+                theme.surface_raised
+            } else {
+                theme.surface
+            };
+            assert_eq!(theme.glass >> 8, fill, "{}", theme.name);
+            assert_eq!(theme.glass_border, theme.layer[1], "{}", theme.name);
             // The base alphas of the spec; the contrast rule may only raise the fill.
             let floor = if theme.dark { 0.96_f32 } else { 0.97_f32 };
             assert!(
@@ -3035,34 +3091,32 @@ mod tests {
     }
 
     #[test]
-    fn the_scrim_is_lighter_than_before_and_lighter_in_light_themes() {
+    fn the_scrim_is_black_in_dark_and_a_milky_page_veil_in_light() {
         let (dark, light) = (Theme::dark(), Theme::light());
-        assert_eq!(dark.scrim, with_alpha(0x000000, 0.24));
-        assert_eq!(light.scrim, with_alpha(0x000000, 0.16));
-        assert!(dark.scrim & 0xFF < 0x59 && light.scrim & 0xFF < dark.scrim & 0xFF);
+        assert_eq!(dark.scrim, with_alpha(0x000000, 0.55));
+        assert_eq!(light.scrim, with_alpha(light.pane_gap, 0.50));
     }
 
     #[test]
-    fn the_tint_gradient_fades_to_the_same_color_with_no_alpha() {
-        for theme in all_themes() {
-            let (top, bottom) = glass_gradient(&theme);
-            assert_eq!(top, theme.glass_tint);
-            assert_eq!(bottom & 0xFF, 0);
-            assert_eq!(bottom >> 8, top >> 8);
-        }
+    fn the_shadows_differ_by_role_and_a_light_modal_has_a_contact_layer() {
+        let (dark, light) = (Theme::dark(), Theme::light());
+        let (d, l) = (shadow_modal(&dark), shadow_modal(&light));
+        assert_eq!((d.len(), l.len()), (1, 2));
+        assert!(
+            d[0].color.a > l[0].color.a,
+            "a dark modal is the deeper one"
+        );
+        assert_eq!(shadow_pop(&dark), shadow_pop(&light));
+        assert_ne!(shadow_composer(&dark), shadow_composer(&light));
+        assert_eq!(shadow_pop(&dark).len(), 1);
     }
 
     #[test]
-    fn the_float_shadow_has_two_layers_and_half_the_alpha_in_light_themes() {
-        let (dark, light) = (shadow_float(&Theme::dark()), shadow_float(&Theme::light()));
-        assert_eq!(dark.len(), 2);
-        assert_eq!(light.len(), 2);
-        assert_eq!(dark[0].offset.y, gpui::px(8.0));
-        assert_eq!(dark[0].blur_radius, gpui::px(24.0));
-        assert_eq!(dark[1].offset.y, gpui::px(2.0));
-        assert_eq!(dark[1].blur_radius, gpui::px(6.0));
-        for (d, l) in dark.iter().zip(&light) {
-            assert!((d.color.a / 2.0 - l.color.a).abs() < 0.01);
+    fn the_flattened_glass_fill_is_lighter_than_the_page_in_dark_themes() {
+        for theme in all_themes().into_iter().filter(|t| t.dark) {
+            let alpha = (theme.glass & 0xFF) as f32 / 255.0;
+            let flat = glass_over(theme.glass >> 8, alpha, theme.bg);
+            assert!(darker(theme.bg, flat), "{}", theme.name);
         }
     }
 
@@ -3472,6 +3526,7 @@ mod tests {
             [radius::SMALL, radius::MEDIUM, radius::LARGE],
             [4.0, 8.0, 12.0]
         );
+        assert_eq!(radius::PANEL, 16.0);
         assert!(motion::FAST >= Duration::from_millis(120));
         assert!(motion::SLOW <= Duration::from_millis(180));
     }

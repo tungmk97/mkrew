@@ -31,10 +31,9 @@ Theme {
     run_pill_border: 11853512,
     run_pill_text: 1993530,
     tint_alpha: 31,
-    scrim: 41,
+    scrim: 4025478272,
     glass: 4294967287,
-    glass_border: 20,
-    glass_tint: 1414713354,
+    glass_border: 404368407,
     glass_hi: 4294967295,
     layer: [
         404368399,
