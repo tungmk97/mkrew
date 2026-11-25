@@ -1149,7 +1149,7 @@ impl Shell {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_color(rgb(theme.text_subtle))
+                        .text_color(rgb(theme.subtle))
                         .child(placeholder),
                 )
                 .child(icon_svg(
@@ -1274,7 +1274,7 @@ impl Shell {
                 .min_w_0()
                 .max_w(theme::rems_px(theme::COMPOSER_BRANCH_MAX_WIDTH))
                 .font_family(mono.clone())
-                .child(glyph(Icon::GitBranch, theme.text_subtle))
+                .child(glyph(Icon::GitBranch, theme.subtle))
                 .child(div().min_w_0().truncate().child(name))
         });
         // The status line replaces the stats and the end clock while it shows.
@@ -1303,7 +1303,7 @@ impl Shell {
             None => {
                 let context = stats.context.map(|(used, _)| {
                     quiet(div())
-                        .child(glyph(Icon::Database, theme.text_subtle))
+                        .child(glyph(Icon::Database, theme.subtle))
                         .child(chat::format_k(used))
                 });
                 let rate = stats
@@ -1311,7 +1311,7 @@ impl Shell {
                     .map(|rate| quiet(div()).child(format!("{rate} tok/s")));
                 let elapsed = stats.elapsed_ms.map(|ms| {
                     quiet(div())
-                        .child(glyph(Icon::Clock, theme.text_subtle))
+                        .child(glyph(Icon::Clock, theme.subtle))
                         .child(chat::format_elapsed(ms))
                 });
                 let ended = stats.ended_clock.clone().filter(|_| shown.clock);
@@ -1320,20 +1320,20 @@ impl Shell {
                     .items_center()
                     .min_w_0()
                     .overflow_hidden()
-                    .gap(px(space::S))
+                    .gap(px(space::XS))
                     .font_family(mono.clone())
                     .when(shown.stats, |el| {
                         el.children(context).children(rate).children(elapsed)
                     })
                     .children(ended.map(|time| {
                         quiet(div())
-                            .child(glyph(Icon::Clock, theme.text_subtle))
+                            .child(glyph(Icon::Clock, theme.subtle))
                             .child(time)
                     }))
                     .into_any_element()
             }
         };
-        let send = round_button("composer-send", Icon::CornerDownLeft, can_send, theme)
+        let send = send_key_chip("composer-send", can_send, theme)
             .tooltip(tooltip(theme, composer::send_tip(), ""))
             .on_press(
                 can_send,
@@ -1407,14 +1407,11 @@ impl Shell {
     }
 }
 
-/// The Chat field's placeholder: `content` in `text_subtle`, no icon and no italics (Tern look).
-/// `caret_text` draws the caret before it. An omp dock passes styled runs (its placeholder holds
-/// a private-use glyph that needs the terminal font).
+/// The Chat field's placeholder: `content` in `subtle` (the t4 tier), no icon and no italics
+/// (Tern look). `caret_text` draws the caret before it. An omp dock passes styled runs (its
+/// placeholder holds a private-use glyph that needs the terminal font).
 pub(super) fn placeholder_row(content: impl IntoElement, theme: &Theme) -> gpui::Div {
-    div()
-        .min_w_0()
-        .text_color(rgb(theme.text_subtle))
-        .child(content)
+    div().min_w_0().text_color(rgb(theme.subtle)).child(content)
 }
 
 /// Room for the bar of a composer card, in 13 px rems like the `COMPOSER_*` widths: the text
@@ -1545,14 +1542,16 @@ pub(super) fn meter_bar(
         )
 }
 
-/// A quiet chip: `META` `text_subtle` text, icon and text with `space::XS` between, never
-/// shrinking.
+/// A quiet chip (a fact, the usage, the effort): OVERLINE `text_subtle`, icon and text with
+/// `space::XS` between, `px(XS)` of its own, never shrinking.
 pub(super) fn quiet_chip(el: gpui::Div, theme: &Theme) -> gpui::Div {
     el.flex()
         .flex_none()
         .items_center()
         .gap(px(space::XS))
-        .text_size(font_size::META)
+        .px(px(space::XS))
+        .rounded(px(radius::CHIP))
+        .text_size(font_size::OVERLINE)
         .text_color(rgb(theme.text_subtle))
 }
 
@@ -1568,9 +1567,10 @@ pub(super) fn permission_chip(text: String, theme: &Theme) -> gpui::Div {
         .child(text)
 }
 
-/// The model pill (Tern): a `COMPOSER_PILL_HEIGHT` ring in `border`, no fill, the name in `text`
-/// at MEDIUM, the optional `lead` (the omp dock's effort glyph) before it and a chevron after.
-/// Callers add the tooltip and `.on_press(..)`.
+/// The model pill (Tern): `COMPOSER_PILL_HEIGHT` tall, `radius::MEDIUM`, a `layer[0]` fill with
+/// no ring (hover `layer[1]`), the name in `text` at MEDIUM, the optional `lead` (the omp dock's
+/// effort glyph) before it and a `text_subtle` chevron after. Callers add the tooltip and
+/// `.on_press(..)`.
 pub(super) fn model_pill(
     id: impl Into<gpui::ElementId>,
     lead: Option<gpui::AnyElement>,
@@ -1578,28 +1578,30 @@ pub(super) fn model_pill(
     enabled: bool,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(space::XS))
-        .h(theme::rems_px(theme::COMPOSER_PILL_HEIGHT))
-        .px(px(space::S))
-        .rounded(px(radius::PILL))
-        .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.border))
-        .text_size(font_size::META)
-        .font_weight(FontWeight(weight::MEDIUM))
-        .text_color(rgb(theme.text))
-        .pressable(Look::Chip, enabled, theme)
-        .children(lead)
-        .child(name)
-        .child(icon_svg(
-            Icon::ChevronDown,
-            theme::MODEL_CHEVRON_SIZE,
-            theme.text_muted,
-        ))
+    lift_press(
+        div()
+            .id(id)
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(space::XS))
+            .h(theme::rems_px(theme::COMPOSER_PILL_HEIGHT))
+            .px(px(space::S))
+            .rounded(px(radius::MEDIUM))
+            .bg(gpui::rgba(theme.layer[0]))
+            .text_size(font_size::META)
+            .font_weight(FontWeight(weight::MEDIUM))
+            .text_color(rgb(theme.text))
+            .children(lead)
+            .child(name)
+            .child(icon_svg(
+                Icon::ChevronDown,
+                theme::MODEL_CHEVRON_SIZE,
+                theme.text_subtle,
+            )),
+        enabled,
+        theme,
+    )
 }
 
 #[cfg(test)]

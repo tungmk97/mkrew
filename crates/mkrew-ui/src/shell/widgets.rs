@@ -211,6 +211,89 @@ pub(crate) fn button_fg(theme: &Theme, primary: bool) -> u32 {
     }
 }
 
+/// Press feel for a control that is itself filled with `layer[0]` (the model pill, the Send
+/// chip): the plain looks hover to `layer[0]`, which would not show on it, so this one hovers
+/// to `layer[1]`. `enabled` false dims it with no hover and no pointer.
+pub(crate) fn lift_press(
+    el: gpui::Stateful<gpui::Div>,
+    enabled: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let hover = gpui::rgba(theme.layer[1]);
+    el.when(enabled, |el| {
+        el.cursor_pointer()
+            .hover(move |style| style.bg(hover))
+            .active(|style| style.opacity(opacity::ACTIVE))
+    })
+    .when(!enabled, |el| el.opacity(opacity::DISABLED))
+}
+
+/// The composer's Send as a key chip (Tern): `COMPOSER_PILL_HEIGHT` tall, at least
+/// `SEND_CHIP_MIN_WIDTH` wide, `radius::MEDIUM`, a `layer[0]` fill with a `layer[1]` ring and a
+/// `SEND_GLYPH_SIZE` return glyph in `text_subtle` that turns `text` on hover (an svg does not
+/// inherit its parent's color: through the id group). Dimmed with no hover while `enabled` is
+/// false. Attach the handler with `.on_press(enabled, ..)`.
+pub(crate) fn send_key_chip(
+    id: &'static str,
+    enabled: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let lit = theme.text;
+    let glyph = icon_svg(
+        Icon::CornerDownLeft,
+        theme::SEND_GLYPH_SIZE,
+        theme.text_subtle,
+    )
+    .when(enabled, |svg| {
+        svg.group_hover(id, move |style| style.text_color(rgb(lit)))
+    });
+    lift_press(
+        div()
+            .id(id)
+            .group(id)
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .h(theme::rems_px(theme::COMPOSER_PILL_HEIGHT))
+            .min_w(theme::rems_px(theme::SEND_CHIP_MIN_WIDTH))
+            .rounded(px(radius::MEDIUM))
+            .bg(gpui::rgba(theme.layer[0]))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(gpui::rgba(theme.layer[1]))
+            .child(glyph),
+        enabled,
+        theme,
+    )
+}
+
+/// The Stop button of an omp pane's dock (Tern): a text button "Stop", `COMPOSER_PILL_HEIGHT`
+/// tall, `px(M)`, `radius::MEDIUM`, META SEMIBOLD `danger_text` on `status_exited` at 8 % with a
+/// 22 % ring; hover 14 %. Attach the tooltip (with its key) and `.on_press(true, ..)`.
+pub(crate) fn stop_text_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    let tint = |alpha: f32| gpui::rgba(theme::with_alpha(theme.status_exited, alpha));
+    let hover = tint(theme::STOP_HOVER_ALPHA);
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .h(theme::rems_px(theme::COMPOSER_PILL_HEIGHT))
+        .px(px(space::M))
+        .rounded(px(radius::MEDIUM))
+        .bg(tint(theme::STOP_FILL_ALPHA))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(tint(theme::STOP_RING_ALPHA))
+        .text_size(font_size::META)
+        .font_weight(FontWeight(weight::SEMIBOLD))
+        .text_color(rgb(theme.danger_text))
+        .cursor_pointer()
+        .hover(move |style| style.bg(hover))
+        .active(|style| style.opacity(opacity::ACTIVE))
+        .child("Stop")
+}
+
 /// The frame of the round icon buttons: a [`theme::SEND_BUTTON_SIZE`] circle holding `glyph`.
 fn round_frame(id: &'static str, glyph: Icon, color: u32) -> gpui::Stateful<gpui::Div> {
     div()
@@ -230,74 +313,6 @@ fn round_neutral(id: &'static str, glyph: Icon, theme: &Theme) -> gpui::Stateful
         .bg(rgb(theme.surface_raised))
         .border(px(theme::BORDER_WIDTH))
         .border_color(rgb(theme::raised_border(theme)))
-}
-
-/// The composer's round send button (Tern): a `border` fill and a `text` glyph, the same with or
-/// without text to send; hover inverts it (`text` fill, `surface_raised` glyph through the id
-/// group: an svg does not inherit its parent's hover color); never accent. `enabled` false
-/// dims it, with no hover and no pointer. Attach the handler with `.on_press(enabled, ..)`.
-pub(crate) fn round_button(
-    id: &'static str,
-    glyph: Icon,
-    enabled: bool,
-    theme: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    let inverted = theme.surface_raised;
-    let style = PressStyle {
-        hover_bg: Some(gpui::rgb(theme.text)),
-        pressed_bg: None,
-        hover_fg: None,
-        active_opacity: if enabled { opacity::ACTIVE } else { 1.0 },
-        ..press_style(Look::Chip, enabled, theme)
-    };
-    let glyph = icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.text).when(enabled, |svg| {
-        svg.group_hover(id, move |style| style.text_color(rgb(inverted)))
-    });
-    apply_press(
-        div()
-            .id(id)
-            .group(id)
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(theme::SEND_BUTTON_SIZE))
-            .rounded(px(radius::PILL))
-            .bg(rgb(theme.border))
-            .child(glyph),
-        style,
-    )
-}
-
-/// The round stop button of an omp pane's dock (Tern): a `text` circle with a
-/// [`theme::STOP_GLYPH_SIZE`] square in `surface_raised`; hover turns the circle `text_muted`.
-/// Attach the handler with `.on_press(true, ..)`.
-pub(crate) fn round_stop_button(id: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
-    let style = PressStyle {
-        hover_bg: Some(gpui::rgb(theme.text_muted)),
-        pressed_bg: None,
-        hover_fg: None,
-        active_opacity: opacity::ACTIVE,
-        ..press_style(Look::Chip, true, theme)
-    };
-    apply_press(
-        div()
-            .id(id)
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(theme::SEND_BUTTON_SIZE))
-            .rounded(px(radius::PILL))
-            .bg(rgb(theme.text))
-            .child(
-                div()
-                    .size(px(theme::STOP_GLYPH_SIZE))
-                    .rounded(px(radius::SMALL))
-                    .bg(rgb(theme.surface_raised)),
-            ),
-        style,
-    )
 }
 
 /// A small floating round button (the Chat page's scroll to the end): the neutral look with a

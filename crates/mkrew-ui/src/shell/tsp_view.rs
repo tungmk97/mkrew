@@ -2825,10 +2825,9 @@ impl Shell {
                 EditorLook::Plain => {
                     div().child(styled_runs(&placeholder, theme.text_dim, false, theme))
                 }
-                EditorLook::Composer { .. } => placeholder_row(
-                    styled_runs(&placeholder, theme.text_muted, false, theme),
-                    theme,
-                ),
+                EditorLook::Composer { .. } => {
+                    placeholder_row(styled_runs(&placeholder, theme.subtle, false, theme), theme)
+                }
             };
             let empty = div()
                 .flex()
@@ -3621,6 +3620,7 @@ impl Shell {
         let image = (p.doc.children(&node.id))
             .find(|child| child.kind == "image")
             .and_then(|child| self.tsp_image_data(p, child));
+        let filled = image.is_none();
         let chip = div().id(key.clone());
         let chip = match image {
             Some(image) => chip.group(key.clone()).child(
@@ -3643,23 +3643,29 @@ impl Shell {
                     label
                 }),
         };
-        let chip = chip
-            .pressable_unless(open, Look::Chip, theme)
-            .when(p.tips(), |el| {
-                el.tooltip(tooltip(theme, "Preview the attachment", ""))
-            })
-            .on_press(
-                true,
-                cx.listener(move |shell, _, _, cx| {
-                    if let Some(ui) = shell.tsps.get_mut(&session) {
-                        ui.chip_open = match ui.chip_open {
-                            Some(_) => None,
-                            None => Some(id.clone()),
-                        };
-                    }
-                    cx.notify();
-                }),
-            );
+        // The text chip has its own `accent_bg` fill: its hover must not erase it.
+        let chip = (if open {
+            chip.cursor_pointer()
+        } else if filled {
+            chip.pressable_on(Look::Chip, theme.accent_bg, theme)
+        } else {
+            chip.pressable(Look::Chip, true, theme)
+        })
+        .when(p.tips(), |el| {
+            el.tooltip(tooltip(theme, "Preview the attachment", ""))
+        })
+        .on_press(
+            true,
+            cx.listener(move |shell, _, _, cx| {
+                if let Some(ui) = shell.tsps.get_mut(&session) {
+                    ui.chip_open = match ui.chip_open {
+                        Some(_) => None,
+                        None => Some(id.clone()),
+                    };
+                }
+                cx.notify();
+            }),
+        );
         if !open {
             return chip.into_any_element();
         }
@@ -3742,7 +3748,7 @@ impl Shell {
                             .min_w_0()
                             .overflow_hidden()
                             .items_center()
-                            .gap(px(space::S))
+                            .gap(px(space::XS))
                             .font_family(theme.terminal_font_family.clone())
                             .children(facts)
                             .into_any_element(),
@@ -3875,7 +3881,11 @@ impl Shell {
             body => {
                 let mut el = quiet_chip(div(), theme).text_color(rgb(fact.color));
                 if let Some(icon) = fact.icon {
-                    el = el.child(icon_svg(icon, theme::ICON_SIZE_SMALL, fact.color));
+                    el = el.child(icon_svg(
+                        icon,
+                        theme::ICON_SIZE_SMALL,
+                        tsp::fact_icon_color(fact.color, theme),
+                    ));
                 }
                 match body {
                     tsp::FactBody::Text(_) if !fact.runs.is_empty() => {
@@ -3891,7 +3901,7 @@ impl Shell {
         self.tsp_chip(p, &fact.id, Look::Chip, el, cx)
     }
 
-    /// The round Send (enabled with text, `submit`) or Stop (`interrupt`) button, the same size,
+    /// The Send key chip (enabled with text, `submit`) or the Stop text button (`interrupt`),
     /// at the end of the bar.
     fn tsp_dock_primary(
         &self,
@@ -3912,8 +3922,8 @@ impl Shell {
         match &m.bar.primary {
             tsp::Primary::Stop(id) => {
                 let (tip, id) = (title(id, "Stop"), id.clone());
-                round_stop_button("tsp-stop", theme)
-                    .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "")))
+                stop_text_button("tsp-stop", theme)
+                    .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "Esc")))
                     .on_press(
                         !exited,
                         cx.listener(move |shell, _, _, cx| {
@@ -3928,7 +3938,7 @@ impl Shell {
                     .as_deref()
                     .map_or_else(|| "Send".to_owned(), |id| title(id, "Send"));
                 let id = id.clone().unwrap_or_default();
-                round_button("tsp-send", Icon::CornerDownLeft, can, theme)
+                send_key_chip("tsp-send", can, theme)
                     .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "")))
                     .on_press(
                         can,
@@ -3970,7 +3980,8 @@ impl Shell {
                 .items_center()
                 .gap(px(space::M))
                 .min_w_0()
-                .pb(px(space::XS))
+                .h(theme::rems_px(theme::TSP_STATUS_ROW_HEIGHT))
+                .px(px(space::M))
                 .child(
                     div()
                         .flex_1()
@@ -3988,7 +3999,7 @@ impl Shell {
     }
 
     /// The working row: loading dots, the elapsed time, a divider and the label. Its own Stop is
-    /// not drawn: the card's round Stop is the one.
+    /// not drawn: the card's Stop is the one.
     fn tsp_dock_working(
         &self,
         p: &Paint<'_>,
@@ -4024,7 +4035,7 @@ impl Shell {
                     .flex_none()
                     .w(px(theme::BORDER_WIDTH))
                     .h(theme::rems_px(space::M))
-                    .bg(rgb(theme.divider)),
+                    .bg(rgb(theme.subtle)),
             )
             .child(
                 div()
@@ -4057,7 +4068,7 @@ impl Shell {
             .flex_none()
             .items_center()
             .gap(px(space::XS))
-            .h_full()
+            .h(theme::rems_px(theme::TSP_HUD_SEGMENT_HEIGHT))
             .px(px(space::S))
             .rounded(px(theme::radius::PILL))
             .children(
@@ -4068,7 +4079,7 @@ impl Shell {
         self.tsp_chip(p, &pill.id, Look::Chip, el, cx)
     }
 
-    /// The hud row as Tern draws it: ONE pill with a `border` ring and no fill, its segments
+    /// The hud row as Tern draws it: ONE pill with a `layer[1]` ring and no fill, its segments
     /// split by a thin divider.
     fn tsp_dock_pills(
         &self,
@@ -4085,7 +4096,7 @@ impl Shell {
                         .flex_none()
                         .w(px(theme::BORDER_WIDTH))
                         .h(theme::rems_px(space::M))
-                        .bg(rgb(theme.border))
+                        .bg(gpui::rgba(theme.layer[1]))
                         .into_any_element(),
                 );
             }
@@ -4095,12 +4106,14 @@ impl Shell {
             .flex()
             .flex_none()
             .items_center()
-            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .h(theme::rems_px(theme::COMPOSER_PILL_HEIGHT))
+            .px(px(theme::TSP_HUD_PAD))
             .rounded(px(theme::radius::PILL))
             .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
+            .border_color(gpui::rgba(theme.layer[1]))
             .font_family(theme.terminal_font_family.clone())
             .text_size(font_size::META)
+            .font_weight(FontWeight(weight::MEDIUM))
             .text_color(rgb(theme.text_muted))
             .children(segs)
             .into_any_element()

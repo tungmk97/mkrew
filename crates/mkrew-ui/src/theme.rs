@@ -227,11 +227,16 @@ pub const ORBIT_STEPS: i64 = 8;
 /// A tab chip in the title bar (Tern: 26 px, ADR 0116).
 pub const TAB_CHIP_HEIGHT: f32 = 26.0;
 
-/// The square inside the composer's round Stop button.
-pub const STOP_GLYPH_SIZE: f32 = 10.0;
-
-/// The composer's model pill (Tern: 28 px, a ring and no fill).
-pub const COMPOSER_PILL_HEIGHT: f32 = 28.0;
+/// The composer bar's controls (Tern: 24 px): the model pill, the Send chip, the Stop button
+/// and the omp hud pill are all this tall.
+pub const COMPOSER_PILL_HEIGHT: f32 = 24.0;
+/// The Send key chip is at least this wide; its return glyph is [`SEND_GLYPH_SIZE`].
+pub const SEND_CHIP_MIN_WIDTH: f32 = 28.0;
+pub const SEND_GLYPH_SIZE: f32 = 12.0;
+/// The Stop text button: `status_exited` at these alphas as fill, ring and hover fill.
+pub const STOP_FILL_ALPHA: f32 = 0.08;
+pub const STOP_RING_ALPHA: f32 = 0.22;
+pub const STOP_HOVER_ALPHA: f32 = 0.14;
 
 /// Font family list of Mermaid diagram text (an SVG font-family value; the first installed
 /// one is used).
@@ -530,25 +535,30 @@ pub const COMPOSER_QUEUE_MAX_HEIGHT: f32 = 88.0;
 /// gap after each included), to decide which ones a narrow pane drops (ADR 0105). Every part
 /// of the row except the stats cell is `flex_none`, so these must not under-estimate:
 /// padding, border, icon and gap tokens plus the text of the longest usual value.
-/// The model pill: 2 x `space::S` padding, 1 px borders, `opus 5.5` / `sonnet 4.5`, a gap and
-/// the chevron.
-pub const COMPOSER_CHIP_MODEL_WIDTH: f32 = 108.0;
+/// The model pill: 2 x `space::S` padding, no border, `opus 5.5` / `sonnet 4.5`, a gap and the
+/// chevron, and the gap after it.
+pub const COMPOSER_CHIP_MODEL_WIDTH: f32 = 106.0;
 /// `medium`, `xhigh`.
 pub const COMPOSER_CHIP_EFFORT_WIDTH: f32 = 56.0;
 /// The lightning icon and `on-request`.
 pub const COMPOSER_CHIP_PERMISSION_WIDTH: f32 = 92.0;
 /// The branch chip never grows past this (icon and name; the name truncates).
 pub const COMPOSER_BRANCH_MAX_WIDTH: f32 = 160.0;
-/// One character of the terminal font at `META` size.
-pub const COMPOSER_MONO_CHAR_WIDTH: f32 = 7.2;
-/// Context tokens, `tok/s` and the elapsed time with their icons and gaps.
-pub const COMPOSER_CHIP_STATS_WIDTH: f32 = 190.0;
-/// The clock time of the last turn's end (icon and `09:44:27`).
-pub const COMPOSER_CHIP_CLOCK_WIDTH: f32 = 68.0;
+/// One character of the terminal font at `OVERLINE` (11 px) size.
+pub const COMPOSER_MONO_CHAR_WIDTH: f32 = 6.6;
+/// Context tokens (`74K`), `102 tok/s` and a short elapsed time: each with its icon, its own
+/// `px(XS)` padding ([`COMPOSER_FACT_CHROME_WIDTH`]) and the `space::XS` gap between them
+/// (about 165 to 185 px measured; the cell shrinks past that, it never clips a button).
+pub const COMPOSER_CHIP_STATS_WIDTH: f32 = 184.0;
+/// The clock time of the last turn's end (icon, `09:44:27` and the chip's padding).
+pub const COMPOSER_CHIP_CLOCK_WIDTH: f32 = 72.0;
 /// The ✦ button (2 x `space::M` padding and an icon) and its gap.
 pub const COMPOSER_ENHANCE_WIDTH: f32 = 46.0;
-/// Prompts (icon only: the same button) and the send button, with their gaps.
-pub const COMPOSER_FIXED_WIDTH: f32 = 82.0;
+/// Prompts (icon only: the same button as ✦) and the Send chip, with their gaps.
+pub const COMPOSER_FIXED_WIDTH: f32 = COMPOSER_ENHANCE_WIDTH + SEND_CHIP_MIN_WIDTH + space::S;
+/// What one fact of a bar takes besides its icon and its text: `px(XS)` on both sides and the
+/// `space::XS` gap to the next one.
+pub const COMPOSER_FACT_CHROME_WIDTH: f32 = 3.0 * space::XS;
 /// The composer's round send and stop buttons (Tern: 32 px).
 pub const SEND_BUTTON_SIZE: f32 = 32.0;
 /// The chevron of the composer's model pill (a chevron step, like the tree's).
@@ -574,10 +584,18 @@ pub const CONTEXT_MARK_HIT_WIDTH: f32 = space::M;
 pub const CONTEXT_MARK_HIT_HEIGHT: f32 = CONTEXT_METER_HEIGHT + space::S;
 
 /// Room reckoned for the bar of an omp dock (px at 13 px UI size, like the `COMPOSER_*` ones):
-/// the round send or stop button and its gap.
-pub const TSP_BAR_FIXED_WIDTH: f32 = SEND_BUTTON_SIZE + space::S;
-/// The model pill without its name: padding, border, chevron, gaps and the gap after it.
-pub const TSP_MODEL_CHROME_WIDTH: f32 = 48.0;
+/// the Stop button (the wider of Send and Stop) and its gap.
+pub const TSP_BAR_FIXED_WIDTH: f32 = STOP_BUTTON_WIDTH + space::S;
+/// The Stop button: `px(M)` both sides and `Stop` (four UI characters at `META`).
+pub const STOP_BUTTON_WIDTH: f32 = 2.0 * space::M + 4.0 * TSP_UI_CHAR_WIDTH;
+/// The model pill without its name: padding, chevron, gaps and the gap after it (no border).
+pub const TSP_MODEL_CHROME_WIDTH: f32 = 46.0;
+/// The omp status row (working row, hud) is this tall (Tern: 26).
+pub const TSP_STATUS_ROW_HEIGHT: f32 = 26.0;
+/// A segment of the hud pill (Tern: 20) and the pill's inner padding (2 px: a stated exception
+/// to the 4 px grid, spec 6).
+pub const TSP_HUD_SEGMENT_HEIGHT: f32 = 20.0;
+pub const TSP_HUD_PAD: f32 = 2.0;
 /// The model name never truncates below this many characters.
 pub const TSP_MODEL_MIN_CHARS: usize = 6;
 /// The effort glyph that leads the model pill (omp's four bars) and the gap after it.

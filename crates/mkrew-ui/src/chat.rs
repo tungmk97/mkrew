@@ -723,8 +723,10 @@ pub fn branch_width(branch: &BranchChip) -> f32 {
         } else {
             0
         };
-    let natural =
-        theme::ICON_SIZE_SMALL + theme::space::XS + chars as f32 * theme::COMPOSER_MONO_CHAR_WIDTH;
+    let natural = theme::ICON_SIZE_SMALL
+        + theme::space::XS
+        + chars as f32 * theme::COMPOSER_MONO_CHAR_WIDTH
+        + 2.0 * theme::space::XS;
     natural.min(theme::COMPOSER_BRANCH_MAX_WIDTH) + theme::space::S
 }
 
@@ -1577,6 +1579,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_branch_chip_is_reckoned_with_its_own_padding() {
+        // `a *1` is four characters in the terminal font; the chip pads both sides by `space::XS`.
+        let want = theme::ICON_SIZE_SMALL
+            + theme::space::XS
+            + 4.0 * theme::COMPOSER_MONO_CHAR_WIDTH
+            + 2.0 * theme::space::XS
+            + theme::space::S;
+        assert!((branch_width(&branch_chip("a")) - want).abs() < 0.01);
     }
 
     #[test]
