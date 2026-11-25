@@ -23,7 +23,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 ### To verify - 2026-11-26 Tern polish (ADR 0117, spec docs/superpowers/specs/2026-11-25-tern-polish-design.md)
 
-Screenshots: `docs/screenshots/tern-polish-<view>-<mkrew-dark|mkrew-light|tern-dark|tern-light>.png` (split, files, menu, dialog, settings, git) and `tern-polish-split-font18-mkrew-dark.png`, taken in the smoke sandbox with a fake agent. Everything the sandbox cannot show is below; check each item in dark and light.
+Screenshots: `docs/screenshots/tern-polish-<view>-<mkrew-dark|mkrew-light|tern-dark|tern-light>.png` (split, files, menu, dialog, settings, git; the dialog shots have the Title field focused, ring outside the field), `tern-polish-split-font18-mkrew-dark.png` and `tern-polish-confirm-mkrew-dark.png` (a long file name wraps in the title), taken in the smoke sandbox with a fake agent. Everything the sandbox cannot show is below; check each item in dark and light.
 
 **Seen in the smoke screenshots (look again on your own screen):**
 
