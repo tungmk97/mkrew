@@ -563,8 +563,6 @@ impl Shell {
                 )
                 .into_any_element()
         } else {
-            // The session list keeps its pre-restyle look (out of the restyle's scope).
-            let theme = theme.classic();
             let filtering = self.sidebar.filtering();
             let mut list = Vec::new();
             let mut agents = Vec::new();
@@ -806,8 +804,6 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
-        // The rail is the session list folded: it keeps the pre-restyle look too.
-        let theme = theme.classic();
         let shown = self.focused_session(window);
         let header = div()
             .flex_none()

@@ -1082,9 +1082,6 @@ pub struct Theme {
     pub dim_blend: f32,
     /// Opacity of the overlay that dims unfocused panes among several (20 %, ADR 0109).
     pub unfocused_pane_dim: f32,
-    /// The palette from before the restyle, kept for the sidebar's session list (projects,
-    /// session rows, RUN), which the restyle leaves as it was. `None` on that palette itself.
-    pub classic: Option<std::sync::Arc<Theme>>,
 }
 
 impl gpui::Global for Theme {}
@@ -1133,10 +1130,6 @@ impl Theme {
         self.ui_font_family = fonts.ui_family.clone();
         self.terminal_font_family = fonts.terminal_family.clone();
         self.terminal_font_size = fonts.terminal_size;
-        if let Some(classic) = self.classic.take() {
-            let classic = Theme::clone(&classic).with_fonts(fonts);
-            self.classic = Some(std::sync::Arc::new(classic));
-        }
         self
     }
 
@@ -1163,13 +1156,8 @@ impl Theme {
         }
     }
 
-    /// The pre-restyle palette for the sidebar's session list (see [`Theme::classic`]).
-    pub fn classic(&self) -> &Theme {
-        self.classic.as_deref().unwrap_or(self)
-    }
-
     pub fn dark() -> Self {
-        let theme = Self {
+        Self {
             bg: 0x0F0F12,
             surface: 0x161619,
             surface_raised: 0x232327,
@@ -1271,15 +1259,11 @@ impl Theme {
             name: "Mkrew Dark".into(),
             ..Self::shared()
         }
-        .with_glass();
-        Self {
-            classic: Some(std::sync::Arc::new(Self::classic_dark(&theme))),
-            ..theme
-        }
+        .with_glass()
     }
 
     pub fn light() -> Self {
-        let theme = Self {
+        Self {
             bg: 0xFBFBFA,
             surface: 0xFFFFFF,
             surface_raised: 0xF4F4F2,
@@ -1375,158 +1359,7 @@ impl Theme {
             name: "Mkrew Light".into(),
             ..Self::shared()
         }
-        .with_glass();
-        Self {
-            classic: Some(std::sync::Arc::new(Self::classic_light(&theme))),
-            ..theme
-        }
-    }
-
-    /// The pre-restyle dark palette over `base` (it keeps `base`'s fonts and new tokens).
-    fn classic_dark(base: &Self) -> Self {
-        Self {
-            bg: 0x141519,
-            surface: 0x1F2127,
-            surface_raised: 0x2C2E37,
-            sidebar: 0x191A1F,
-            chrome: 0x15161A,
-            card: 0x1A1B20,
-            tab_active: 0x262A3D,
-            hover: 0x22242B,
-            selected: 0x262A3D,
-            selected_ring: 0x3D4380,
-            border: 0x2A2C33,
-            divider: 0x24262D,
-            text: 0xE4E5E9,
-            text_dim: 0xB4B7C0,
-            text_muted: 0xA0A3AD,
-            subtle: 0x5D616C,
-            accent: 0x8B91FF,
-            accent_text: 0x9A9FFF,
-            accent_bg: 0x252848,
-            // The dark accent is light: dark text keeps ≥ 3:1 on it (white would not).
-            on_accent: 0x141519,
-            on_accent_divider: 0x0000_0040,
-            warning_bg: 0x3A3020,
-            success_bg: 0x1D3A31,
-            danger_bg: 0x3A2327,
-            run_pill_bg: 0x18241D,
-            run_pill_border: 0x2A4434,
-            run_pill_text: 0xC9EED8,
-            tint_alpha: 0x2E,
-            pane_focus_stripe: 0x4A528E,
-            focus_ring: 0xE4E5E9,
-            terminal_selection_bg: 0x353B60,
-            terminal_match_bg: 0x3F3524,
-            terminal_match_current_bg: 0x7A5A1F,
-            status_working: 0x8B91FF,
-            status_needs_input: 0xF0B866,
-            status_done: 0x5FD28F,
-            status_exited: 0xF08A80,
-            status_idle: 0x8A8D97,
-            diff_add_bg: 0x1E3A2B,
-            diff_add_text: 0x7DD3A0,
-            diff_del_bg: 0x3D2226,
-            diff_del_text: 0xF2A0A4,
-            diff_mod_bg: 0x3A3320,
-            diff_mod_text: 0xE6C77A,
-            diff_hunk_header: 0x2C2E37,
-            diff_add_gutter: 0x24503A,
-            diff_del_gutter: 0x56292F,
-            diff_mod_gutter: 0x4D4326,
-            git_modified: 0x8FB3FF,
-            git_untracked: 0xF0B866,
-            syntax_keyword: 0xC28CF0,
-            syntax_string: 0x7DD3A0,
-            syntax_number: 0xF0C674,
-            syntax_type: 0x8BE0EC,
-            syntax_function: 0xA3AFFF,
-            ansi: [
-                0x25262C, 0xE5676B, 0x4CB782, 0xE3A63E, 0x7C8CFF, 0xC28CF0, 0x5EC4D6, 0xC9CBD1,
-                0x6E7079, 0xF2A0A4, 0x7DD3A0, 0xF0C674, 0xA3AFFF, 0xD8B4FE, 0x8BE0EC, 0xF5F6F8,
-            ],
-            workspace_colors: [
-                0xF87171, 0xFB923C, 0xFACC15, 0xA3E635, 0x4ADE80, 0x2DD4BF, 0x60A5FA, 0xC084FC,
-                0xF472B6,
-            ],
-            dark: true,
-            classic: None,
-            ..base.clone()
-        }
-    }
-
-    /// The pre-restyle light palette over `base`.
-    fn classic_light(base: &Self) -> Self {
-        Self {
-            bg: 0xFFFFFF,
-            surface: 0xF6F7F9,
-            surface_raised: 0xEEF0F3,
-            sidebar: 0xF4F5F7,
-            chrome: 0xFFFFFF,
-            card: 0xFFFFFF,
-            tab_active: 0xE9EAFF,
-            hover: 0xEEF0F3,
-            selected: 0xE9EAFF,
-            selected_ring: 0xA7ADEA,
-            border: 0xE3E5EA,
-            divider: 0xECEEF1,
-            text: 0x1B1D22,
-            text_dim: 0x474B55,
-            text_muted: 0x5F6473,
-            subtle: 0xA0A4AF,
-            accent: 0x4F5BD5,
-            accent_text: 0x4A52D9,
-            accent_bg: 0xECEEFF,
-            on_accent: 0xFFFFFF,
-            on_accent_divider: 0xFFFF_FF59,
-            warning_bg: 0xFDF3E1,
-            success_bg: 0xE1F5EC,
-            danger_bg: 0xFDECEC,
-            run_pill_bg: 0xE1F5EC,
-            run_pill_border: 0xB4DEC8,
-            run_pill_text: 0x1E6B3A,
-            tint_alpha: 0x24,
-            pane_focus_stripe: 0xA7ADEA,
-            focus_ring: 0x1B1D22,
-            terminal_selection_bg: 0xCACEF2,
-            terminal_match_bg: 0xF6EBCF,
-            terminal_match_current_bg: 0xE9C46A,
-            status_working: 0x4F5BD5,
-            status_needs_input: 0xB7791F,
-            status_done: 0x2F855A,
-            status_exited: 0xC53030,
-            status_idle: 0x9A9CA6,
-            diff_add_bg: 0xE6F4EA,
-            diff_add_text: 0x1E6B3A,
-            diff_del_bg: 0xFDEEEE,
-            diff_del_text: 0xA61B1B,
-            diff_mod_bg: 0xFFF6DB,
-            diff_mod_text: 0x7A5200,
-            diff_hunk_header: 0xF6F7F9,
-            diff_add_gutter: 0xC9E8D2,
-            diff_del_gutter: 0xF7D4D4,
-            diff_mod_gutter: 0xF8E6AE,
-            git_modified: 0x1D4ED8,
-            git_untracked: 0x975A16,
-            // Darker than the ANSI entries so code stays ≥ 4.5:1 on white.
-            syntax_keyword: 0x8A3FB8,
-            syntax_string: 0x276749,
-            syntax_number: 0x975A16,
-            syntax_type: 0x17707F,
-            syntax_function: 0x3B47B8,
-            ansi: [
-                // "White" stays readable on the light background (≥ 3:1).
-                0x1D1E22, 0xC53030, 0x2F855A, 0xB7791F, 0x4F5BD5, 0x9B4DCA, 0x1F8A9E, 0x8A8C94,
-                0x6B6D76, 0xE5676B, 0x38A169, 0xD69E2E, 0x3B47B8, 0xB37FEB, 0x31A3B8, 0x55575F,
-            ],
-            workspace_colors: [
-                0xDC2626, 0xD9560B, 0xA16207, 0x4D7C0F, 0x15803D, 0x0F766E, 0x2563EB, 0x9333EA,
-                0xDB2777,
-            ],
-            dark: false,
-            classic: None,
-            ..base.clone()
-        }
+        .with_glass()
     }
 
     fn shared() -> Self {
@@ -1634,7 +1467,6 @@ impl Theme {
             terminal_cursor_width: 2.0,
             dim_blend: 0.6,
             unfocused_pane_dim: 0.2,
-            classic: None,
         }
     }
 
@@ -1812,8 +1644,7 @@ impl Theme {
     }
 
     /// A built-in theme from its palette (ADR 0078; token table in the spec). Status, workspace
-    /// and QR colors, fonts and sizes stay the Mkrew base's. (The classic sidebar palette goes
-    /// in the next commit.)
+    /// and QR colors, fonts and sizes stay the Mkrew base's.
     pub fn from_palette(name: impl Into<SharedString>, p: &Palette) -> Self {
         let base = if p.dark { Self::dark() } else { Self::light() };
         let tint = |hue, t| mix(p.bg, hue, t);
@@ -2751,11 +2582,6 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
     ] {
         check("diff lines", fg, bg, 4.5);
     }
-    // The sidebar's session list keeps Mkrew's classic palette on this theme's sidebar.
-    let classic = t.classic();
-    for fg in [classic.text, classic.text_muted] {
-        check("sidebar text", fg, t.sidebar, 4.5);
-    }
     // Where a swatch or avatar sits: the dialogs, the menu, the sidebar and its row fills.
     // WCAG 1.4.11: graphical objects >= 3:1.
     for color in t.workspace_colors {
@@ -3110,14 +2936,6 @@ mod tests {
                     ..t.clone()
                 },
             ),
-            // A built-in Mkrew theme is its own classic palette.
-            (
-                "sidebar text",
-                Theme {
-                    sidebar: t.text,
-                    ..t.clone()
-                },
-            ),
             (
                 "meta text",
                 Theme {
@@ -3331,8 +3149,18 @@ mod tests {
                 )
             };
             assert_eq!(fixed(&theme), fixed(&base), "{}", entry.name);
-            assert_eq!(theme.classic(), base.classic(), "{}", entry.name);
         }
+    }
+
+    #[test]
+    fn body_text_is_checked_on_the_sidebar_itself() {
+        let t = Theme::dark();
+        let broken = Theme {
+            text_muted: t.sidebar,
+            ..t.clone()
+        };
+        let rules: Vec<&str> = problems(&broken).iter().map(|p| p.rule).collect();
+        assert!(rules.contains(&"body text"), "{rules:?}");
     }
 
     /// Debug dump of every token, minus fields that are not colors and may differ by platform or

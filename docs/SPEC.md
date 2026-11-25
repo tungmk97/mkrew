@@ -1831,8 +1831,7 @@ The terminal is the hero; everything else steps back.
 
 **Design tokens** — all in `crates/mkrew-ui/src/theme.rs`. No hard-coded values in components.
 
-Restyle of 2026-10-24 (ADR 0074). The sidebar session list and compact rail keep the palette from
-before it (`Theme::classic`).
+Restyle of 2026-10-24 (ADR 0074), retuned to Tern's grounds and tiers by ADR 0117; the sidebar session list and rail use these tokens too.
 
 | Token | Dark | Light |
 | --- | --- | --- |
