@@ -1926,7 +1926,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Pane (ADR 0106, ADR 0108, ADR 0109): no header and no border.
   Panes fill the tab area edge to edge with square corners: no gap between them and none at the area's edge, so they touch the sidebar, the right panel and the title bar.
   Two panes meet at a 1 px `divider` line, the same line that sets the sidebar and the right panel apart.
-  One `PANE_ACCENT_WIDTH` (2 px) stripe runs along the pane's full top edge.
+  A stripe runs along the pane's full top edge: 2 px (`PANE_ACCENT_WIDTH`) for needs input and a pane color, 1 px (`BORDER_WIDTH`) for the focus.
   Its color, first match wins: `status-needs-input` while a session pane needs input, the pane's own color, `pane-focus-stripe` while the pane is focused and its tab has two or more panes, else no stripe.
   A lone pane has no stripe unless it needs input or has a color.
   A pane that is not focused, in a tab with two or more panes, is dimmed by 20 % (`unfocused_pane_dim`).
@@ -2033,7 +2033,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   Banner: `warning-bg` #322B23 / #F4EDE2 fill, a `BORDER_WIDTH` bottom edge in `divider`, `space::M` x `space::S` padding, `META` text in `text` (the detail line in `text-muted`), **Try now** a primary button.
   The Machines rows and Add card use `space::S` / `space::M`, `radius::MEDIUM` and `surface-raised`; a broken-file error shows `status-exited` ✕ and `text`.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
-- Focused pane: a 2 px stripe of `pane-focus-stripe` at its top edge when its tab has two or more panes (needs-input and a pane color win); unfocused panes dimmed ~5%.
+- Focused pane: a 1 px stripe of `pane-focus-stripe` at its top edge when its tab has two or more panes (needs-input and a pane color win); unfocused panes dimmed ~5%.
 - Focus ring (ADR 0085, amended by ADR 0117): a dialog control that has the keyboard shows a 1 px accent border and a 3 px halo of the accent at 18 % (`focus_halo`), only while it was reached with the keyboard (`focus_visible`), in both themes; an accent-filled button shows a 1 px `focus-ring` (the text color) border instead, which reads on the fill.
   A click never shows it.
 - Derived tokens (accent mixed into `bg`): `pane-focus-stripe` #49518D / #A4AAE7 (also the focus border of cards, comments and inputs);

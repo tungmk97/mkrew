@@ -48,6 +48,7 @@ Measured from Tern's CSS (six gap reports):
 - Theme files keep loading (palette-only); derived themes change look because their tiers and layers are now derived.
 - Mkrew Light `git_modified` / `git_untracked` move to `#8F5410` (4.5:1 on the new `selected`).
 - No setting migration: `THEME_NAMES` only grows.
+- The focus stripe among several panes is 1 px; needs input and a session colour stay 2 px.
 
 ## Alternatives
 

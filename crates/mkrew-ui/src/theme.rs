@@ -296,8 +296,9 @@ pub mod opacity {
 /// meet it.
 pub const PANE_GAP_MIN_CONTRAST: f32 = 1.06;
 
-/// Thickness of the stripe along the top edge of a pane (needs input, session color or focus
-/// among several, ADR 0108) and of an underlined tab (the Git panel's repo and section tabs).
+/// Thickness of the stripe along the top edge of a pane that needs input or has a session
+/// color (ADR 0108), and of an underlined tab (the Git panel's repo and section tabs). The
+/// focus stripe among several panes is the thinner [`BORDER_WIDTH`] (ADR 0117).
 pub const PANE_ACCENT_WIDTH: f32 = 2.0;
 /// The drag handle at the top centre of a pane in a split tab (ADR 0110): while the pointer is
 /// over the pane a slim bar shows; over the handle it becomes a chip with a six-dot grip, and
