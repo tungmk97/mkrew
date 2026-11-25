@@ -326,6 +326,7 @@ mod tests {
                 let hover = flatten(t.layer[0], ground);
                 let pressed = flatten(t.layer[1], hover);
                 assert_ne!(hover, ground, "{} hover is invisible on {name}", t.name);
+                assert_ne!(hover, t.accent_bg, "{} hover is the picked fill", t.name);
                 assert_ne!(pressed, hover, "{} press is invisible on {name}", t.name);
             }
         }

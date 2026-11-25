@@ -540,13 +540,7 @@ impl Shell {
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
                     .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(if picked {
-                        gpui::Hsla::from(rgb(theme.pane_focus_stripe))
-                    } else {
-                        gpui::transparent_black()
-                    }),
+                    .text_color(rgb(theme.text)),
                 picked,
                 theme,
             )

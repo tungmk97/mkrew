@@ -455,11 +455,11 @@ impl DialogControl for gpui::Stateful<gpui::Div> {
     }
 
     fn focus_stop_filled(self, theme: &Theme) -> Self {
-        let ring = rgb(theme.focus_ring);
+        let (ring, accent) = (rgb(theme.focus_ring), theme.accent);
         self.border(px(theme::BORDER_WIDTH))
             .border_color(gpui::transparent_black())
             .tab_index(0)
-            .focus_visible(move |style| style.border_color(ring))
+            .focus_visible(move |style| style.border_color(ring).shadow(focus_halo(accent)))
     }
 
     fn chip_arrows(self, index: usize, len: usize) -> Self {
@@ -1238,7 +1238,9 @@ pub(crate) fn menu_item(
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     with_pick(
-        menu_row_frame(id, theme).pressable_unless(picked, Look::Row, theme),
+        menu_row_frame(id, theme)
+            .when(picked, |el| el.text_color(rgb(theme.text)))
+            .pressable_unless(picked, Look::Row, theme),
         picked,
         theme,
     )
@@ -1298,10 +1300,7 @@ pub(crate) fn toggle(
                     .size(knob)
                     .rounded_full()
                     .bg(rgb(theme::SWITCH_KNOB))
-                    .shadow(vec![
-                        gpui::BoxShadow::new(px(0.0), px(1.0), gpui::hsla(0.0, 0.0, 0.0, 0.25))
-                            .blur_radius(px(3.0)),
-                    ]),
+                    .shadow(theme::shadow_knob()),
             ),
         enabled,
         theme,
@@ -1339,7 +1338,6 @@ pub(crate) fn dropdown_trigger(
         .map(|el| {
             let style = PressStyle {
                 hover_bg: None,
-                pressed_bg: None,
                 hover_border: (!open).then(|| gpui::rgba(theme.layer[2])),
                 ..press_style(Look::Row, enabled, theme)
             };

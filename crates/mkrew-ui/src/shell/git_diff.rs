@@ -359,22 +359,31 @@ impl Shell {
                 )
                 // A toggle: lit (the segmented control's selected fill) while lines wrap.
                 .child(
-                    quiet_button("git-diff-wrap", "Wrap", theme)
-                        .when(wrap, |el| {
-                            el.bg(rgb(theme.selected)).text_color(rgb(theme.text))
-                        })
-                        .tooltip(tooltip(
-                            theme,
-                            if wrap {
-                                "Long lines wrap (click to cut them at the edge)"
-                            } else {
-                                "Long lines are cut at the edge (click to wrap them)"
-                            },
-                            self.keymap.label(Command::GitToggleWrap),
-                        ))
-                        .on_click(cx.listener(move |shell, _, _, cx| {
-                            shell.set_diff_wrap(!wrap, cx);
-                        })),
+                    {
+                        let button =
+                            button_frame("git-diff-wrap", "Wrap").text_color(rgb(theme.text_muted));
+                        if wrap {
+                            // Lit: the hover keeps the fill, one step lighter.
+                            button
+                                .bg(rgb(theme.selected))
+                                .text_color(rgb(theme.text))
+                                .pressable_on(Look::Icon, theme.selected, theme)
+                        } else {
+                            button.pressable(Look::Icon, true, theme)
+                        }
+                    }
+                    .tooltip(tooltip(
+                        theme,
+                        if wrap {
+                            "Long lines wrap (click to cut them at the edge)"
+                        } else {
+                            "Long lines are cut at the edge (click to wrap them)"
+                        },
+                        self.keymap.label(Command::GitToggleWrap),
+                    ))
+                    .on_click(cx.listener(move |shell, _, _, cx| {
+                        shell.set_diff_wrap(!wrap, cx);
+                    })),
                 )
         });
         let discard = view.discard(selected).map(|_| {

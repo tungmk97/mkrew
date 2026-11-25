@@ -168,8 +168,6 @@ pub const PIN_ICON_SIZE: f32 = TAB_ICON_SIZE;
 pub const SEGMENT_PADDING: f32 = 2.0;
 /// The thin vertical rule before the window controls.
 pub const TITLE_RULE_HEIGHT: f32 = 18.0;
-/// The bottom edge of a key hint (a key cap look).
-pub const KBD_BOTTOM_BORDER: f32 = 1.0;
 /// A key hint's fixed height and least width.
 pub const KBD_HEIGHT: f32 = 18.0;
 pub const KBD_MIN_WIDTH: f32 = 18.0;
@@ -1698,6 +1696,11 @@ fn shadow(y: f32, blur: f32, spread: f32, alpha: f32) -> gpui::BoxShadow {
 /// Menus, tooltips, the peek, toasts and the find bar (ADR 0117): `0 18 50 -12` black 30 %.
 pub fn shadow_pop(_theme: &Theme) -> Vec<gpui::BoxShadow> {
     vec![shadow(18.0, 50.0, -12.0, 0.30)]
+}
+
+/// The switch knob's drop shadow: `0 1 3` black 25 %.
+pub fn shadow_knob() -> Vec<gpui::BoxShadow> {
+    vec![shadow(1.0, 3.0, 0.0, 0.25)]
 }
 
 /// Dialogs, the palette and Settings: dark `0 28 72 -16` black 78 %; light `0 24 64 -18`

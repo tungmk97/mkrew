@@ -1192,7 +1192,7 @@ impl Shell {
                     primary_button(
                         "run-picker-use",
                         "Use this folder",
-                        Some("↵".to_owned()),
+                        picker.cursor.is_none().then(|| "↵".to_owned()),
                         theme,
                     )
                     .focus_stop_filled(theme)

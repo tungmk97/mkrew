@@ -2103,7 +2103,7 @@ Only `widgets.rs` and `pressable.rs` call `.hover(` and `.active(` or set `.curs
 `group_hover(..)`, which reveals hidden row actions, is allowed anywhere.
 The looks are `Row` (list and menu rows), `Chip` (pills, tabs, small labelled controls), `Icon` (icon-only controls), `Text` (links) and `Raised` (a control on a raised surface or inside a row that is itself hovered: menu, toast, card, find bar, code block, a row action).
 Board cards use `card_press`: the border lights on hover and the fill stays, so the chips inside a card keep a visible hover.
-Hover fills are `theme.layer[0]` (translucent) and a press stacks `layer[1]` on it; a hover fill is never the selected fill.
+Hover fills are `theme.layer[0]` (translucent) and a press stacks `layer[1]` on it; a hover fill is never the picked fill (`accent_bg`).
 An element that paints its own fill uses `.pressable_on(look, rest_fill, theme)`, which flattens the layers over that fill (gpui's hover style replaces `bg`, so the fill would vanish).
 `quiet_button(id, label, theme)` has no hover argument.
 A selected or active element that is still clickable keeps the pointer only (`pressable_unless(picked, look, theme)`).

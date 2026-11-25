@@ -347,14 +347,7 @@ impl Shell {
                         .px(px(space::S))
                         .py(px(space::XS))
                         .rounded(px(radius::SMALL))
-                        .text_size(font_size::BODY)
-                        // The pick has a focus-colored ring: it is the picked row, so it does not hover.
-                        .border(px(theme::BORDER_WIDTH))
-                        .border_color(if picked {
-                            gpui::Hsla::from(rgb(theme.pane_focus_stripe))
-                        } else {
-                            gpui::transparent_black()
-                        }),
+                        .text_size(font_size::BODY),
                     picked,
                     theme,
                 )
