@@ -99,6 +99,8 @@ pub enum Step {
     State(TspState),
     /// A `warn` log line; after a fall back it is also the reason shown to the user.
     Warn(String),
+    /// A `debug` log line (the failing frames of a surface after its first, ADR 0118).
+    Debug(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -125,6 +127,8 @@ struct Surface {
     doc: Document,
     /// Order of opening, to find the oldest.
     opened: u64,
+    /// A failing frame was logged; later ones only reach omp (ADR 0118).
+    warned: bool,
 }
 
 pub struct Engine {
@@ -441,8 +445,15 @@ impl Engine {
         }));
         self.next_open += 1;
         let opened = self.next_open;
-        self.surfaces
-            .insert(meta.id.clone(), Surface { meta, doc, opened });
+        self.surfaces.insert(
+            meta.id.clone(),
+            Surface {
+                meta,
+                doc,
+                opened,
+                warned: false,
+            },
+        );
         if self.state == TspState::Waiting {
             self.state = TspState::Live;
             steps.push(Step::State(TspState::Live));
@@ -505,11 +516,21 @@ impl Engine {
                 blobs,
             },
         }));
-        // One `error` event per frame, however many ops failed (a late frame naming evicted ids stays one event).
+        // One `error` event per frame, however many ops failed (a late frame naming evicted ids
+        // stays one event); the log gets only the first failing frame of the surface (ADR 0118).
         if !errors.is_empty() {
             let msg = format!("frame {seq}: {}", errors.join("; "));
             push_reply(steps, b'e', &json!({"ev": "error", "msg": msg}));
-            steps.push(Step::Warn(format!("tsp {id}: {msg}")));
+            let msg = format!("tsp {id}: {msg}");
+            match self.surfaces.get_mut(id) {
+                Some(surface) if !surface.warned => {
+                    surface.warned = true;
+                    steps.push(Step::Warn(format!(
+                        "{msg} (later failing frames of this surface are logged at debug)"
+                    )));
+                }
+                _ => steps.push(Step::Debug(msg)),
+            }
         }
         if !gone.is_empty() {
             push_reply(steps, b'e', &json!({"ev": "gone", "sf": id, "ids": gone}));

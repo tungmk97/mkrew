@@ -49,6 +49,17 @@ Screenshots: `docs/screenshots/tern-polish-<view>-<mkrew-dark|mkrew-light|tern-d
 - [ ] **Terminal find bar and pane badges:** `Ctrl+Shift+F`: glass panel with a ring and the top highlight, a `well` query field (accent border while typing), the match count right-aligned in the terminal font and `danger_text` when nothing matches or the pattern is invalid, a 24 px close button; the pane badges (Pane zoomed, queued, copy mode, conflicts) are pills with a `layer[1]` ring.
 - [ ] **Chat view with a fake agent:** not shot, a fake agent has no Chat view; check the Chat items above with Claude or Codex.
 
+### To verify - 2026-11-25 idle UI cost and omp 19 kinds (ADR 0118, spec docs/superpowers/specs/2026-11-25-idle-perf-design.md)
+
+Assumed without asking (the user was away): `button` and `menu` draw with the generic look (their label, clickable) until a design pass; omp 19's ask card roles (`omp.ask.card*`, `omp.ask.fold*`) draw generically too; the PTY output of omp panes is still parsed (idle omp writes nothing to it).
+
+- [ ] **Idle CPU:** with your usual omp sessions open (per-workspace windows), nobody typing, Task Manager shows `mkrew.exe` well under 15% of one core (0.10.1 used 25-42%); with one omp working it stays low.
+- [ ] **Daemon log quiet:** after a day with omp 19, `%APPDATA%\mkrew\logs\daemon.<date>.log` has no `unknown kind` lines and at most one `tsp s:1: frame ...` warning per omp session.
+- [ ] **omp 19 ask card:** an omp question shows in the pane (its pills as clickable labels); clicking a pill answers it.
+- [ ] **omp 19 jobs panel:** a background job's panel (`/jobs` or the jobs pill) shows its output and its source menu label.
+- [ ] **Panes still update:** a working omp pane updates live in the main window, in a second workspace window and in a detached window; its tab mark and the working row move.
+- [ ] **Animation still moves:** a running tool's orbit mark, a visible todo HUD and the working row's dots still step every half second; a Chat pane of a working Claude session still counts its elapsed time.
+
 ### To verify - 2026-11-25 UI typography and quiet chrome (ADR 0116, spec docs/superpowers/specs/2026-11-25-ui-typography-design.md)
 
 Screenshots: `docs/screenshots/ui-typography-<fake|split>-<dark|light>.png` (a fake agent alone; the fake agent beside an idle omp pane).

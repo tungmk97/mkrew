@@ -1414,6 +1414,9 @@ impl Actor {
                 TspStep::Warn(message) => {
                     tracing::warn!(id = %self.session.id, "tsp: {message}");
                 }
+                TspStep::Debug(message) => {
+                    tracing::debug!(id = %self.session.id, "tsp: {message}");
+                }
             }
         }
     }

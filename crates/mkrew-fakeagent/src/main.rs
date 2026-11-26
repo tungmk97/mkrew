@@ -9,6 +9,8 @@
 //! raw console input, a hello query, a wait of up to 10 s for the terminal's hello reply, then
 //! every `out` line of the fixture as an APC message. `--record <file>` receives every byte read
 //! from stdin (the terminal's reply, acks and events). `--hello-delay-ms <n>` prints a line and waits `n` ms before the hello.
+//! `--tsp-tick-ms <n>` then sends a frame every `n` ms that sets a prop on `dock`, the way a
+//! working omp redraws its hud (a stand-in for the measurements of ADR 0118).
 
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
@@ -22,7 +24,7 @@ use anyhow::{Context, Result, bail};
 use mkrew_core::tsp::wire;
 use mkrew_fakeagent::{DEFAULT_SCENARIO, SCENARIO_ENV, load, run};
 
-const USAGE: &str = "usage: mkrew-fakeagent [--scenario <file|name>] [--resume <id>] [--listen] [--tsp <fixture.jsonl> [--record <file>] [--hello-delay-ms <n>]] [<prompt>]";
+const USAGE: &str = "usage: mkrew-fakeagent [--scenario <file|name>] [--resume <id>] [--listen] [--tsp <fixture.jsonl> [--record <file>] [--hello-delay-ms <n>] [--tsp-tick-ms <n>]] [<prompt>]";
 
 /// What `--tsp` sends first; omp sends this (then a DA1 query) when it starts.
 const TSP_HELLO: &[u8] =
@@ -54,6 +56,7 @@ fn real_main() -> Result<i32> {
             Path::new(fixture),
             args.record.as_deref().map(Path::new),
             args.hello_delay,
+            args.tick,
         );
     }
     let spec = match args.scenario {
@@ -89,7 +92,12 @@ fn listen() -> Result<i32> {
 
 /// `--tsp`: prints the hello query, records what the terminal writes back, and once the
 /// hello reply is in, replays the fixture's `out` messages; never returns.
-fn tsp(fixture: &Path, record: Option<&Path>, hello_delay: Option<Duration>) -> Result<i32> {
+fn tsp(
+    fixture: &Path,
+    record: Option<&Path>,
+    hello_delay: Option<Duration>,
+    tick: Option<Duration>,
+) -> Result<i32> {
     let text = std::fs::read_to_string(fixture)
         .with_context(|| format!("read fixture {}", fixture.display()))?;
     let messages = fixture_messages(&text)?;
@@ -149,6 +157,23 @@ fn tsp(fixture: &Path, record: Option<&Path>, hello_delay: Option<Duration>) -> 
         out.write_all(b"fake tsp: no reply\r\n")?;
     }
     out.flush()?;
+    if let (true, Some(tick)) = (replied, tick) {
+        // The fixture's last frame of `s:1` set the seq; omp counts on from there.
+        let mut seq = (text.lines())
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|record| record["verb"] == "f" && record["body"]["sf"] == "s:1")
+            .filter_map(|record| record["body"]["s"].as_u64())
+            .max()
+            .unwrap_or(0);
+        loop {
+            thread::sleep(tick);
+            seq += 1;
+            let body =
+                serde_json::json!({"sf": "s:1", "s": seq, "ops": [["set", "dock", {"tick": seq}]]});
+            out.write_all(&wire::encode(b'f', &body, wire::MAX_MESSAGE)?)?;
+            out.flush()?;
+        }
+    }
     drop(out);
     loop {
         thread::park();
@@ -231,6 +256,8 @@ struct Args {
     record: Option<String>,
     /// `--hello-delay-ms <n>` (with `--tsp`): a line of text, then a pause before the hello.
     hello_delay: Option<Duration>,
+    /// `--tsp-tick-ms <n>` (with `--tsp`): a `dock` frame every `n` ms after the fixture.
+    tick: Option<Duration>,
 }
 
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args> {
@@ -261,6 +288,12 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args> {
                 Some(ms) => parsed.hello_delay = Some(Duration::from_millis(ms)),
                 None => bail!("--hello-delay-ms needs a number\n{USAGE}"),
             }
+        } else if arg == "--tsp-tick-ms" {
+            let ms = args.next().and_then(|v| v.parse::<u64>().ok());
+            match ms {
+                Some(ms) => parsed.tick = Some(Duration::from_millis(ms)),
+                None => bail!("--tsp-tick-ms needs a number\n{USAGE}"),
+            }
         } else if arg == "--record" {
             match args.next() {
                 Some(value) => parsed.record = Some(value),
@@ -272,8 +305,10 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args> {
             parsed.prompt = Some(arg);
         }
     }
-    if (parsed.record.is_some() || parsed.hello_delay.is_some()) && parsed.tsp.is_none() {
-        bail!("--record and --hello-delay-ms need --tsp\n{USAGE}");
+    let needs_tsp =
+        parsed.record.is_some() || parsed.hello_delay.is_some() || parsed.tick.is_some();
+    if needs_tsp && parsed.tsp.is_none() {
+        bail!("--record, --hello-delay-ms and --tsp-tick-ms need --tsp\n{USAGE}");
     }
     Ok(parsed)
 }

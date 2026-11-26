@@ -115,6 +115,26 @@ fn long_tsp_fixture(rows: usize) -> String {
     lines.iter().map(|line| format!("{line}\n")).collect()
 }
 
+/// [`long_tsp_fixture`] plus what a working omp keeps in its dock: a todo reminder it hides
+/// (a `checklist` with an active item, `hidden`), as omp 19 does (ADR 0118).
+fn working_tsp_fixture(rows: usize) -> String {
+    let mut text = long_tsp_fixture(rows);
+    let frames = text
+        .lines()
+        .filter(|line| line.contains("\"verb\":\"f\""))
+        .count();
+    let todo = json!({"dir": "out", "verb": "f", "body": {"sf": "s:1", "s": frames + 1, "ops": [
+        ["add", "todo", "dock", null, {"id": "todo", "k": "checklist", "p": {
+            "mode": "reminder", "hidden": true, "role": "omp.notice.todo",
+            "phases": [{"id": "p0", "title": "", "items": [
+                {"id": "p0.0", "text": "Present plan and get approval", "status": "active"}
+            ]}]
+        }}]
+    ]}});
+    text.push_str(&format!("{todo}\n"));
+    text
+}
+
 /// Stops the spawned daemon and the window even when an assertion fails.
 struct StopOnDrop(Paths, Option<Child>);
 
@@ -413,5 +433,84 @@ fn ui_cpu_with_a_long_omp_transcript_beside_a_printing_pane() {
     eprintln!(
         "measure: long omp transcript ({TSP_ROWS} rows) beside a printing pane: ui \
          {ui_cpu:.1}% of a core over {IDLE_WINDOW:?} ({verdict}, budget 15%, ADR 0114)"
+    );
+}
+
+/// Six omp panes as seen on 2026-11-25 (ADR 0118): one working omp sending 13 frames a second,
+/// two sending 3 a second, three idle; each keeps a hidden todo reminder in its dock.
+#[test]
+#[ignore = "opens a real window; run by scripts/measure.*"]
+fn ui_cpu_with_six_omp_panes_two_working() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths(dir.path());
+    let fixture = dir.path().join("working.tsp.jsonl");
+    std::fs::write(&fixture, working_tsp_fixture(300)).unwrap();
+    let quoted = |path: &Path| format!("'{}'", path.display());
+    for (profile, tick) in [
+        ("ompfast", Some(75)),
+        ("ompslow", Some(330)),
+        ("ompidle", None),
+    ] {
+        let tick = tick.map_or(String::new(), |ms| format!(", '--tsp-tick-ms', '{ms}'"));
+        let args = format!("['--tsp', {}{tick}]", quoted(&fixture));
+        write_fake_profile_as(&paths, profile, &args, "tsp = true");
+    }
+    let mut stop = StopOnDrop(paths.clone(), None);
+    let project_dir = dir.path().join("proj");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let mut launcher =
+        DaemonLauncher::new(paths.clone(), sibling_exe("mkrew-daemon")).without_notifications();
+    let connection = connect_or_spawn(&mut launcher, TIMEOUT, POLL).unwrap();
+    let project: Project = block_on(connection.call(Request::ProjectAdd(ProjectAddParams {
+        path: project_dir.to_string_lossy().into_owned(),
+        name: None,
+    })))
+    .unwrap();
+    let tab: TerminalTab = block_on(connection.call(Request::TabCreate(TabCreateParams {
+        project_id: project.id,
+        title: "Agents".into(),
+        position: None,
+    })))
+    .unwrap();
+    let mut sessions = Vec::new();
+    for profile in [
+        "ompfast", "ompslow", "ompslow", "ompidle", "ompidle", "ompidle",
+    ] {
+        let mut params =
+            lifecycle::spawn_params(project.id, Some(tab.id), SessionKind::Agent, None);
+        params.agent_profile = Some(profile.into());
+        let spawned: SessionSpawnResult =
+            block_on(connection.call(Request::SessionSpawn(params))).unwrap();
+        sessions.push(spawned.session_id);
+    }
+    block_on(
+        connection.call::<serde_json::Value>(Request::TabSetLayout(TabSetLayoutParams {
+            tab_id: tab.id,
+            layout: six_pane_layout(&sessions),
+        })),
+    )
+    .unwrap();
+
+    let launched = Instant::now();
+    let (window, lines) = launch(
+        Command::new(env!("CARGO_BIN_EXE_mkrew"))
+            .env(ENV_DATA_DIR, &paths.data_dir)
+            .env(ENV_CONFIG_DIR, &paths.config_dir)
+            .env(ENV_SOCKET, &paths.socket)
+            .env("MKREW_LOG", "info")
+            .env("NO_COLOR", "1"),
+    );
+    let window_pid = window.id();
+    stop.1 = Some(window);
+    wait_for(&lines, "first connected frame", launched);
+    std::thread::sleep(SETTLE * 2);
+    let mut ui = Probe::new(window_pid);
+    std::thread::sleep(IDLE_WINDOW);
+    let (_, ui_cpu) = ui.sample();
+    let verdict = if ui_cpu < 15.0 { "ok" } else { "OVER BUDGET" };
+    eprintln!(
+        "measure: six omp panes, one at 13 frames/s and two at 3/s: ui {ui_cpu:.1}% of a core \
+         over {IDLE_WINDOW:?} ({verdict}, budget 15%, ADR 0118)"
     );
 }

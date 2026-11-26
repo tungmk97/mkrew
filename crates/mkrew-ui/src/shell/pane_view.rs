@@ -15,8 +15,8 @@ pub(crate) struct PaneSlot {
     pub(crate) key: PaneKey,
 }
 
-// ponytail: every Shell notify renders every pane view; notify only the pane of the session
-// that changed if a profile shows Shell notifies dominate.
+// A `Shell` notify renders every pane view; a change only one session's panes draw (an omp
+// frame, a pane's own animation) goes to `Shell::notify_session_panes` instead (ADR 0118).
 pub(crate) struct PaneView {
     shell: WeakEntity<Shell>,
     slot: PaneSlot,

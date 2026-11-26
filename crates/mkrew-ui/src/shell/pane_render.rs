@@ -473,6 +473,19 @@ impl Shell {
         .into_any_element()
     }
 
+    /// Renders again every pane that draws `session`, in any window (ADR 0118): its window root
+    /// renders with it, other panes and other windows reuse their last frame. For changes only
+    /// the pane draws (an omp frame, a pane's own animation); anything else notifies `Shell`.
+    pub(crate) fn notify_session_panes(&self, session: Ulid, cx: &mut Context<'_, Self>) {
+        let views: Vec<_> = (self.pane_views.borrow().iter())
+            .filter(|(slot, _)| slot.key.session() == Some(session))
+            .map(|(_, view)| view.clone())
+            .collect();
+        for view in views {
+            view.update(cx, |_, cx| cx.notify());
+        }
+    }
+
     /// The tab's split tree: each pane, a cached `PaneView`, placed at its fraction of the area
     /// (`None`: the empty state). `content` gets the size of the area.
     #[allow(clippy::too_many_arguments)]

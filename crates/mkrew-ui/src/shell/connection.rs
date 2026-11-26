@@ -172,14 +172,17 @@ impl Shell {
                     // The recording meter has its own faster redraw (`toggle_voice`).
                     let transcribing = matches!(shell.voice, voice::State::Transcribing);
                     let jira_busy = shell.jira.values().any(JiraView::busy);
-                    let due = board_due
-                        || shell.starting_pane.is_some()
-                        || transcribing
-                        || jira_busy
-                        || shell.chat_animating()
-                        || shell.tsp_animating();
+                    let due =
+                        board_due || shell.starting_pane.is_some() || transcribing || jira_busy;
                     if window.is_visible() && (due || status::redraw_due(sessions, last, now)) {
                         cx.notify();
+                    } else {
+                        // A pane's own spinner, elapsed or dots: that pane only (ADR 0118).
+                        let mut moving = shell.tsp_animating();
+                        moving.extend(shell.chat_animating());
+                        for session in moving {
+                            shell.notify_session_panes(session, cx);
+                        }
                     }
                 });
                 last = now;
@@ -1416,8 +1419,10 @@ impl Shell {
                 }
                 if let Event::TspUpdate(update) = event {
                     self.tsp_update(update, cx);
+                    // Only the session's panes draw its surface (ADR 0118); peek shows a notice
+                    // for an omp session, never the surface.
                     if self.event_shown(event, &mut shown_now, window) {
-                        cx.notify();
+                        self.notify_session_panes(update.session_id, cx);
                     }
                 }
                 if let Event::ProjectCloned(done) = event {

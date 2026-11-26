@@ -189,9 +189,19 @@ impl TspUi {
             self.rows.reset(2);
             return;
         };
-        let new: Vec<String> = doc.children("main").map(|node| node.id.clone()).collect();
         let shown = meta.id.clone();
         let same = self.rows_surface.as_deref() == Some(shown.as_str());
+        // A frame of a hidden surface leaves the list; a frame that named no row and left `main`
+        // alone (the dock, the hud, the working row) has nothing to splice, remeasure or regroup.
+        // Neither collects the ids (ADR 0118).
+        if same
+            && surface.is_some_and(|surface| {
+                surface != shown || tsp::rows_unchanged(doc, &self.row_ids, dirty)
+            })
+        {
+            return;
+        }
+        let new: Vec<String> = doc.children("main").map(|node| node.id.clone()).collect();
         if surface.is_none() || !same {
             // A reset forgets the scroll: a reader of the same surface keeps the row at the top
             // of the page; anyone else follows the end.
@@ -210,7 +220,7 @@ impl TspUi {
                 None if !(same && top.item_ix == 0) => self.follow_end(),
                 None => {}
             }
-        } else if surface == Some(shown.as_str()) {
+        } else {
             for change in tsp::row_changes(&self.row_ids, &new, dirty) {
                 match change {
                     tsp::RowChange::Splice { range, count } => {
@@ -219,8 +229,6 @@ impl TspUi {
                     tsp::RowChange::Remeasure(ix) => self.rows.remeasure_items(ix + 1..ix + 2),
                 }
             }
-        } else {
-            return;
         }
         self.rows_surface = Some(shown);
         self.row_ids = new;
@@ -593,29 +601,32 @@ impl Shell {
         }
     }
 
-    /// Something on screen changes with time (the starting dots, a spinner, a running elapsed,
-    /// a bar without an amount): the status tick redraws (ADR 0086). Only panes on screen
-    /// count.
-    pub(crate) fn tsp_animating(&self) -> bool {
+    /// The panes on screen whose content changes with time (the starting dots, a spinner, a
+    /// running elapsed, a bar without an amount): the status tick renders them again (ADR 0086,
+    /// ADR 0118).
+    pub(crate) fn tsp_animating(&self) -> Vec<Ulid> {
         let sessions = self.sidebar.sessions();
         if !sessions
             .iter()
             .any(|s| matches!(s.tsp, TspState::Waiting | TspState::Live))
         {
-            return false;
+            return Vec::new();
         }
-        let visible = self.visible_sessions();
-        sessions
-            .iter()
-            .filter(|s| visible.contains(&s.id))
-            .any(|s| match self.tsp_pane_view(s) {
-                PaneView::Starting => true,
-                PaneView::Surface => (self.tsps.get(&s.id))
-                    .and_then(|ui| ui.mirror.as_ref())
-                    .and_then(Mirror::shown)
-                    .is_some_and(|(_, doc)| tsp::animating(doc)),
-                _ => false,
+        (self.visible_sessions().into_iter())
+            .filter(|id| {
+                sessions
+                    .iter()
+                    .find(|s| s.id == *id)
+                    .is_some_and(|s| match self.tsp_pane_view(s) {
+                        PaneView::Starting => true,
+                        PaneView::Surface => (self.tsps.get(&s.id))
+                            .and_then(|ui| ui.mirror.as_ref())
+                            .and_then(Mirror::shown)
+                            .is_some_and(|(_, doc)| tsp::animating(doc)),
+                        _ => false,
+                    })
             })
+            .collect()
     }
 
     /// Mkrew's terminal commands in a pane that shows a surface. The pane's `TerminalPane` is out

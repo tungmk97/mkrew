@@ -1,7 +1,7 @@
 # 0107 - omp native surface: Tern Surface Protocol in the daemon, drawn by Mkrew
 
 - Date: 2026-11-23
-- Status: accepted (follows ADR 0108, protocol 60 -> 61; amends SPEC sections 6, 7, 11, 14, 16 and 17; for an omp pane with TSP it replaces the Terminal and Chat views of ADR 0104 and 0105; amends ADR 0105 for a narrow Chat composer, see Consequences)
+- Status: accepted (follows ADR 0108, protocol 60 -> 61; amends SPEC sections 6, 7, 11, 14, 16 and 17; for an omp pane with TSP it replaces the Terminal and Chat views of ADR 0104 and 0105; amends ADR 0105 for a narrow Chat composer, see Consequences; amended by ADR 0118: any node kind enters the document, one log line per surface for failing frames)
 - Milestone: none (human request 2026-11-23, spec `docs/superpowers/specs/2026-11-23-omp-tsp-surface-design.md`, plan `docs/superpowers/plans/2026-11-23-omp-tsp-surface.md`)
 
 ## Context
