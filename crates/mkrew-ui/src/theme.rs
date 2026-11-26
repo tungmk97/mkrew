@@ -523,6 +523,64 @@ pub const TSP_IMAGE_MAX_WIDTH: f32 = 256.0;
 /// Side of a pasted image's square thumbnail (the composer's attachments, a sent prompt's images).
 pub const TSP_THUMB_SIZE: f32 = 56.0;
 
+/// omp's `picker` sheet in a TSP pane (ADR 0119), sized after Tern's (`.pk-*`). Heights are
+/// at the 13 px UI size (`rems_px`).
+pub mod picker {
+    /// An `lg` sheet: the pane less the layer's padding, at most this.
+    pub const LG_MAX_WIDTH: f32 = 1120.0;
+    pub const LG_MAX_HEIGHT: f32 = 760.0;
+    /// An `md` sheet, and a sheet rising from the composer.
+    pub const MD_MAX_WIDTH: f32 = 680.0;
+    pub const MD_MAX_HEIGHT: f32 = 540.0;
+    pub const COMPOSER_MAX_WIDTH: f32 = 820.0;
+    pub const COMPOSER_MAX_HEIGHT: f32 = 380.0;
+    /// The head row (icon, title, search, count, esc); a `_SNUG` twin is the `snug` density's.
+    pub const HEAD_HEIGHT: f32 = 56.0;
+    pub const HEAD_HEIGHT_SNUG: f32 = 46.0;
+    /// The search row of a sheet whose search leads the list.
+    pub const SEARCH_ROW_HEIGHT: f32 = 44.0;
+    pub const SEARCH_ROW_HEIGHT_SNUG: f32 = 40.0;
+    pub const TABS_HEIGHT: f32 = 42.0;
+    pub const COLUMN_HEADS_HEIGHT: f32 = 28.0;
+    pub const ROW_HEIGHT: f32 = 36.0;
+    pub const ROW_HEIGHT_SNUG: f32 = 30.0;
+    pub const CARD_HEIGHT: f32 = 54.0;
+    pub const GROUP_HEIGHT: f32 = 32.0;
+    pub const GROUP_HEIGHT_SNUG: f32 = 26.0;
+    /// The scope column, and its icon-only rail.
+    pub const SCOPES_WIDTH: f32 = 220.0;
+    pub const SCOPE_ROW_HEIGHT: f32 = 30.0;
+    pub const RAIL_WIDTH: f32 = 52.0;
+    pub const RAIL_BUTTON: f32 = 34.0;
+    pub const RAIL_BUTTON_SNUG: f32 = 30.0;
+    /// The preview beside the list, and the most the one below it takes.
+    pub const PREVIEW_WIDTH: f32 = 340.0;
+    pub const PREVIEW_BELOW_MAX_HEIGHT: f32 = 160.0;
+    pub const BAR_HEIGHT: f32 = 48.0;
+    pub const BUTTON_HEIGHT: f32 = 28.0;
+    pub const LEVEL_HEIGHT: f32 = 44.0;
+    pub const LEVEL_HEIGHT_SNUG: f32 = 38.0;
+    pub const LEVEL_TRACK_HEIGHT: f32 = 24.0;
+    pub const STRIP_HEIGHT: f32 = 48.0;
+    /// A mark (provider logo or initials); cards draw it larger.
+    pub const MARK_SIZE: f32 = 18.0;
+    pub const CARD_MARK_SIZE: f32 = 22.0;
+    /// One step of a tree row's indent.
+    pub const TREE_INDENT: f32 = 14.0;
+    /// A `bar` fact: a meter this wide and tall.
+    pub const METER_WIDTH: f32 = 36.0;
+    pub const METER_HEIGHT: f32 = 4.0;
+    /// A fact column is at least this wide (its head, widest fact or `min` widen it).
+    pub const FACT_MIN_WIDTH: f32 = 48.0;
+    /// One character of a fact (META in the code font), for the column widths.
+    pub const FACT_CHAR_WIDTH: f32 = 7.5;
+    /// The room a row keeps for its lead and label before fact columns are hidden.
+    pub const LABEL_MIN_WIDTH: f32 = 200.0;
+    /// The caret of the search text.
+    pub const CARET_WIDTH: f32 = 1.5;
+    pub const CARET_HEIGHT: f32 = 16.0;
+}
+
 /// Widest share of the Chat page a prompt card takes (it sits at the right).
 pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
 

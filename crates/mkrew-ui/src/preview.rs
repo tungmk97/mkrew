@@ -703,21 +703,21 @@ fn block_in(
                 .text_size(px(size))
                 .line_height(relative(theme::doc::HEADING_LINE_HEIGHT))
                 .font_weight(FontWeight(weight::SEMIBOLD))
-                .text_color(rgb(theme.text))
+                .text_color(rgb(theme.accent))
                 .child(selectable(pick, links(runs, ctx), |sel, bg| {
                     text(runs, theme, sel, bg, false)
                 }))
                 .into_any_element()
         }
         BlockKind::Heading { level, runs } => {
-            // Chat headings: `text`, no rule, `XS` above (plus the block gap), the block gap below.
+            // Chat headings: `accent`, no rule, `XS` above (plus the block gap), the block gap below.
             let (size, line_height) = heading_metrics(*level);
             div()
                 .pt(px(space::XS))
                 .text_size(px(size))
                 .line_height(relative(line_height))
                 .font_weight(FontWeight(weight::SEMIBOLD))
-                .text_color(rgb(theme.text))
+                .text_color(rgb(theme.accent))
                 .child(selectable(pick, links(runs, ctx), |sel, bg| {
                     text(runs, theme, sel, bg, true)
                 }))
@@ -956,9 +956,9 @@ fn list_item(
                 .size(px(theme::doc::BULLET_SIZE))
                 .rounded(px(radius::PILL));
             if chat && ctx.nested {
-                dot.border_1().border_color(rgb(theme.text_subtle))
+                dot.border_1().border_color(rgb(theme.accent))
             } else {
-                dot.bg(rgb(theme.text_subtle))
+                dot.bg(rgb(theme.accent))
             }
             .into_any_element()
         }

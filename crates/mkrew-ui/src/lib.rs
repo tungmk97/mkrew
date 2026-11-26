@@ -108,6 +108,7 @@ pub mod theme_file;
 pub mod thread_view;
 pub mod toast;
 pub mod tsp;
+pub mod tsp_picker;
 pub mod turn;
 pub mod turns_dialog;
 pub mod undo_dialog;

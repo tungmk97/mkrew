@@ -355,12 +355,23 @@ impl Document {
             return Err("set props must be an object".to_owned());
         };
         self.edit(id, |node| {
+            let picker = node.kind == "picker";
             for (key, value) in props {
+                if picker && matches!(key.as_str(), "itemsAdd" | "itemsDel") {
+                    continue;
+                }
                 if value.is_null() {
                     node.props.remove(key);
                 } else {
                     node.props.insert(key.clone(), value.clone());
                 }
+            }
+            if picker {
+                patch_items(
+                    &mut node.props,
+                    props.get("itemsAdd"),
+                    props.get("itemsDel"),
+                );
             }
             Ok(())
         })
@@ -564,6 +575,40 @@ impl Document {
     }
 }
 
+/// A picker's `items` is sent once and patched by id (omp 19 `TspPickerProps`, ADR 0119):
+/// `itemsAdd` replaces the item of the same id or appends it, `itemsDel` drops ids. The patches
+/// are not kept as props, so the next `set` does not apply them again.
+fn patch_items(props: &mut Map<String, Value>, add: Option<&Value>, del: Option<&Value>) {
+    let add = add.and_then(Value::as_array).filter(|a| !a.is_empty());
+    let del = del.and_then(Value::as_array).filter(|d| !d.is_empty());
+    if add.is_none() && del.is_none() {
+        return;
+    }
+    fn id(item: &Value) -> Option<&str> {
+        item.get("id").and_then(Value::as_str)
+    }
+    let entry = props
+        .entry("items")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if !entry.is_array() {
+        *entry = Value::Array(Vec::new());
+    }
+    let Value::Array(items) = entry else {
+        return;
+    };
+    if let Some(del) = del {
+        let gone: HashSet<&str> = del.iter().filter_map(Value::as_str).collect();
+        items.retain(|item| !id(item).is_some_and(|id| gone.contains(id)));
+    }
+    for item in add.into_iter().flatten() {
+        let at = id(item).and_then(|new| items.iter().position(|old| id(old) == Some(new)));
+        match at {
+            Some(at) => items[at] = item.clone(),
+            None => items.push(item.clone()),
+        }
+    }
+}
+
 /// Bytes the document counts for a node: the JSON length of every string value in its props, at
 /// any depth (text, spans, table cells, `kv` items, labels, diff hunks), escapes included: an
 /// ESC-dense `ansi` text is 6 bytes per character in the snapshot.
@@ -735,6 +780,45 @@ mod tests {
         assert!(applied.errors.is_empty(), "{:?}", applied.errors);
         assert_eq!(doc.get("fh.pill").map(|n| n.kind.as_str()), Some("button"));
         assert_eq!(ids(&doc, "main"), ["next", "fh"]);
+    }
+
+    #[test]
+    fn picker_item_patches_fold_into_items_and_are_not_kept() {
+        let mut doc = seeded();
+        let items = |doc: &Document| -> Vec<(String, String)> {
+            let node = doc.get("pk").expect("the picker");
+            (node.props["items"].as_array().expect("items").iter())
+                .map(|i| {
+                    (
+                        i["id"].as_str().unwrap().into(),
+                        i["label"].as_str().unwrap().into(),
+                    )
+                })
+                .collect()
+        };
+        let applied = doc.apply(&[
+            json!(["add", "pk", "main", null, {"id": "pk", "k": "picker",
+                "p": {"items": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}]}}]),
+            json!(["set", "pk", {"itemsAdd": [{"id": "b", "label": "B2"}, {"id": "c", "label": "C"}],
+                "itemsDel": ["a"], "selected": "c"}]),
+        ]);
+        assert!(applied.errors.is_empty(), "{:?}", applied.errors);
+        assert_eq!(
+            items(&doc),
+            [("b".into(), "B2".into()), ("c".into(), "C".into())]
+        );
+        let node = doc.get("pk").unwrap();
+        assert!(!node.props.contains_key("itemsAdd") && !node.props.contains_key("itemsDel"));
+        assert_eq!(node.props["selected"], "c");
+        // A later `set` without patches leaves the items alone.
+        doc.apply(&[json!(["set", "pk", {"query": "x"}])]);
+        assert_eq!(items(&doc).len(), 2);
+        // Any other kind keeps the props as given.
+        doc.apply(&[
+            json!(["add", "l", "main", null, {"id": "l", "k": "list"}]),
+            json!(["set", "l", {"itemsAdd": [1]}]),
+        ]);
+        assert!(doc.get("l").unwrap().props.contains_key("itemsAdd"));
     }
 
     #[test]

@@ -25,6 +25,8 @@ use mkrew_ui::tsp::{
 use mkrew_ui::{docs, preview};
 use serde_json::{Value, json};
 
+mod picker;
+
 use super::chat_view::{page_column, prompt_bubble};
 use super::composer::{
     composer_card_frame, composer_room, meter_bar, model_pill, permission_chip, placeholder_row,
@@ -75,6 +77,8 @@ pub(crate) struct TspUi {
     measured: RefCell<Option<(Theme, theme::Fonts, Option<f32>)>>,
     /// The scroll of each growing `list` (a picker's items scroll inside their card).
     lists: RefCell<HashMap<String, ListState>>,
+    /// Each `picker` sheet's list (ADR 0119), by node id.
+    pickers: RefCell<HashMap<String, picker::PickerList>>,
     /// The composer field Mkrew edits itself (ADR 0113); `None` while omp edits its own (another
     /// focus, a modal, vim mode, a read-only surface).
     editor: Option<tsp::LocalEditor>,
@@ -152,6 +156,7 @@ impl TspUi {
             rows_surface: None,
             measured: RefCell::new(None),
             lists: RefCell::new(HashMap::new()),
+            pickers: RefCell::new(HashMap::new()),
             editor: None,
             chip_open: None,
             chip_at: Rc::new(Cell::new(Bounds::default())),
@@ -281,6 +286,7 @@ impl TspUi {
         tsp::retain_known(self.elapsed_seen.get_mut(), known);
         tsp::retain_known(self.hits.get_mut(), known);
         tsp::retain_known(self.lists.get_mut(), known);
+        tsp::retain_known(self.pickers.get_mut(), known);
         self.thought_open.retain(|id| known(id));
         tsp::retain_known(self.images.get_mut(), |id| mirror.blob(id).is_some());
     }
@@ -972,6 +978,9 @@ struct Paint<'a> {
     /// The pane shares its height with others and has no keyboard: the composer is its field
     /// alone (the status row, the meter, the chips and the bar come back with the keyboard).
     compact: bool,
+    /// The pane's width in px (a picker hides fact columns that do not fit); unbounded for a
+    /// row of the page list, which is laid out without it.
+    width: f32,
 }
 
 impl Paint<'_> {
@@ -1220,6 +1229,7 @@ impl Shell {
             in_layer: false,
             bounded: false,
             compact: stacked && !is_focused,
+            width,
         };
         let layer_paint = Paint {
             in_layer: true,
@@ -1452,6 +1462,7 @@ impl Shell {
             in_layer: false,
             bounded: false,
             compact,
+            width: f32::INFINITY,
         };
         let plan = ui.thoughts.get(&node.id);
         let el = match plan {
@@ -1610,6 +1621,7 @@ impl Shell {
                 self.tsp_live(p, node, cx)
             }
             "editor" | "input" | "image" => self.tsp_input(p, node, cx),
+            "picker" => self.tsp_picker(p, node, cx),
             _ => self.tsp_generic(p, node, cx),
         }
     }
