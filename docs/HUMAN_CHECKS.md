@@ -21,6 +21,17 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-26 omp picker and Markdown accent (ADR 0119, spec docs/superpowers/specs/2026-11-26-tsp-picker-design.md)
+
+Screenshots: `docs/screenshots/tsp-picker-<model|model-filter|agents>-dark.png`, taken in the smoke sandbox with a real omp 19.2.1.
+Decided here: omp 19 sends no theme palette over TSP, so headings and bullets are Mkrew's `accent`, not omp's amber as in Tern (Tern keeps its own copy of omp's themes); the sheet has no animation (ADR 0086).
+
+- [ ] **Model switcher:** click the model pill: the sheet rises from the composer with the provider rail, Recent / All groups, the current model checked and selected, chips, Int / t/s / Ctx / $/M columns lined up with their heads, and the Thinking slider; typing filters (omp's), a click selects a row, a click on the selected row (or a double click) switches the model, a step of the slider sets the thinking level, Esc clears the search and then closes.
+- [ ] **/agents:** the list with the Source scopes, the selected agent's preview at the right (description, facts, system prompt), the action bar (Configure, Toggle, Model, New agent, Reload, Close) with keycaps; a narrow pane hides the Source column first.
+- [ ] **Other sheets:** `/resume` (cards), the session tree, `/copy` (timeline), history search, the agent hub (hud agents pill) and logout each open as a sheet and can be used with the mouse; a delete asks in the red confirm bar.
+- [ ] **Light theme:** the same sheets in light read well (rail, selection, chips, slider).
+- [ ] **Markdown color:** headings and list bullets are the accent in an omp pane, the Chat view of Claude and Codex, and the Docs preview.
+
 ### To verify - 2026-11-26 Tern polish (ADR 0117, spec docs/superpowers/specs/2026-11-25-tern-polish-design.md)
 
 Screenshots: `docs/screenshots/tern-polish-<view>-<mkrew-dark|mkrew-light|tern-dark|tern-light>.png` (split, files, menu, dialog, settings, git; the dialog shots have the Title field focused, ring outside the field), `tern-polish-split-font18-mkrew-dark.png` and `tern-polish-confirm-mkrew-dark.png` (a long file name wraps in the title), taken in the smoke sandbox with a fake agent. Everything the sandbox cannot show is below; check each item in dark and light.

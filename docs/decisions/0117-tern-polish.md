@@ -1,7 +1,7 @@
 # 0117 - Tern polish: neutral grounds, four text tiers, layers and Tern themes
 
 - Date: 2026-11-25
-- Status: accepted (amends ADR 0116: composer pill ring -> fill, round Send/Stop -> key chip and Stop text button, Markdown line height 1.5 -> chat 1.6 / docs 1.65; ADR 0105: accent bullet -> `text_subtle`, accent headings -> `text`; ADR 0097: glass tint wash -> `glass_hi` line; ADR 0085: focus ring -> accent plus halo; ADR 0078: built-in list gains Tern Dark / Tern Light, `ThemeEntry` takes a recipe)
+- Status: accepted (amends ADR 0116: composer pill ring -> fill, round Send/Stop -> key chip and Stop text button, Markdown line height 1.5 -> chat 1.6 / docs 1.65; ADR 0105: accent bullet -> `text_subtle`, accent headings -> `text`; ADR 0097: glass tint wash -> `glass_hi` line; ADR 0085: focus ring -> accent plus halo; ADR 0078: built-in list gains Tern Dark / Tern Light, `ThemeEntry` takes a recipe; amended by ADR 0119: Markdown headings and bullets are `accent` again)
 - Milestone: none (human request 2026-11-25; spec `docs/superpowers/specs/2026-11-25-tern-polish-design.md`)
 
 ## Context
