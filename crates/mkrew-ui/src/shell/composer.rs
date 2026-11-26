@@ -529,25 +529,22 @@ impl Shell {
         // One frame for every row: the pick has a focus-colored ring, so it stays visible under
         // hover.
         let frame = |id: gpui::ElementId, picked: bool| {
-            div()
-                .id(id)
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap(px(space::M))
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::SMALL))
-                .text_size(font_size::BODY)
-                .text_color(rgb(theme.text))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(if picked {
-                    gpui::Hsla::from(rgb(theme.pane_focus_stripe))
-                } else {
-                    gpui::transparent_black()
-                })
-                .when(picked, |el| el.bg(rgb(theme.surface_raised)))
-                .pressable_unless(picked, Look::Row, theme)
+            with_pick(
+                div()
+                    .id(id)
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::M))
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .text_size(font_size::BODY)
+                    .text_color(rgb(theme.text)),
+                picked,
+                theme,
+            )
+            .pressable_unless(picked, Look::Row, theme)
         };
         let mut rows: Vec<gpui::AnyElement> = picker
             .library
@@ -815,7 +812,6 @@ impl Shell {
         session: Ulid,
         draft: &Draft,
         is_focused: bool,
-        hover: u32,
         compact: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -827,7 +823,7 @@ impl Shell {
             let improve = if rewriting {
                 disabled_button("composer-enhance", sparkles, theme, false)
             } else {
-                quiet_button("composer-enhance", sparkles, theme, hover).on_click(cx.listener(
+                quiet_button("composer-enhance", sparkles, theme).on_click(cx.listener(
                     move |shell, _, window, cx| {
                         shell.enhance_prompt(composer::Target::Composer(session), window, cx)
                     },
@@ -854,7 +850,6 @@ impl Shell {
                     icon_text(Icon::Library, "Prompts…", theme.text_muted).into_any_element()
                 },
                 theme,
-                hover,
             )
             .flex_none()
             .tooltip(tooltip(
@@ -1026,15 +1021,7 @@ impl Shell {
         });
         let status = self.composer_status(draft, focused, true, theme);
         let queued = self.composer_queue_rows(session, theme, cx);
-        let tools = self.composer_tools(
-            session,
-            draft,
-            is_focused,
-            theme.surface_raised,
-            false,
-            theme,
-            cx,
-        );
+        let tools = self.composer_tools(session, draft, is_focused, false, theme, cx);
         let panel =
             div()
                 .flex_none()
@@ -1108,7 +1095,7 @@ impl Shell {
     /// The Chat composer (ADR 0105): in the page's centered column, `space::M` above the pane's
     /// bottom edge, a thin context meter over a floating card (the queue, the field, then the
     /// chip row: model, effort, permission, branch, stats or the status line, ✦, Prompts…, and
-    /// the round send button). Collapsed to a one-line pill while the pane has no keyboard, the
+    /// the send key chip). Collapsed to a one-line pill while the pane has no keyboard, the
     /// draft is empty and nothing is queued or failed.
     #[allow(clippy::too_many_arguments)]
     fn composer_card(
@@ -1142,13 +1129,13 @@ impl Shell {
                 .px(px(space::L))
                 .py(px(space::S))
                 .rounded(px(radius::PILL))
-                .bg(rgb(theme.surface_raised))
+                .bg(rgb(theme.composer_fill))
                 .border(px(theme::BORDER_WIDTH))
-                .border_color(gpui::rgba(theme.glass_border))
+                .border_color(gpui::rgba(theme.layer[1]))
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
                 .font_family(theme.ui_font_family.clone())
-                .pressable(Look::Raised, true, theme)
+                .pressable_on(Look::Raised, theme.composer_fill, theme)
                 .on_press(
                     true,
                     cx.listener(move |shell, _, window, cx| {
@@ -1162,7 +1149,7 @@ impl Shell {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_color(rgb(theme.text_subtle))
+                        .text_color(rgb(theme.subtle))
                         .child(placeholder),
                 )
                 .child(icon_svg(
@@ -1172,7 +1159,7 @@ impl Shell {
                 ));
             let pill = Self::composer_drops(pill, session, radius::PILL, theme, cx);
             return super::chat_view::chat_column(pill)
-                .pb(px(space::M))
+                .pb(px(space::L))
                 .into_any_element();
         }
         let working = info.is_some_and(|s| s.state == SessionState::Working);
@@ -1229,21 +1216,19 @@ impl Shell {
             .context
             .and_then(|(used, window)| chat::context_meter(used, window?))
             .map(|meter| {
-                let fill = if meter.warning {
-                    theme.status_needs_input
-                } else {
-                    theme.text_muted
-                };
                 meter_bar(
                     meter.fraction,
-                    fill,
+                    meter.warning.then_some(theme.status_needs_input),
                     format!("{}%", meter.percent),
                     meter.window_label,
                     Vec::new(),
                     theme,
                 )
             });
-        let room = composer_room(width, cx);
+        let room = composer_room(
+            width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * theme::CHAT_COLUMN_PADDING,
+            cx,
+        );
         let ctx = chat::FitCtx {
             typing: is_focused && !draft.busy && !blank,
             branch: stats.branch.as_ref().map_or(0.0, chat::branch_width),
@@ -1289,7 +1274,7 @@ impl Shell {
                 .min_w_0()
                 .max_w(theme::rems_px(theme::COMPOSER_BRANCH_MAX_WIDTH))
                 .font_family(mono.clone())
-                .child(glyph(Icon::GitBranch, theme.text_subtle))
+                .child(glyph(Icon::GitBranch, theme.subtle))
                 .child(div().min_w_0().truncate().child(name))
         });
         // The status line replaces the stats and the end clock while it shows.
@@ -1318,7 +1303,7 @@ impl Shell {
             None => {
                 let context = stats.context.map(|(used, _)| {
                     quiet(div())
-                        .child(glyph(Icon::Database, theme.text_subtle))
+                        .child(glyph(Icon::Database, theme.subtle))
                         .child(chat::format_k(used))
                 });
                 let rate = stats
@@ -1326,7 +1311,7 @@ impl Shell {
                     .map(|rate| quiet(div()).child(format!("{rate} tok/s")));
                 let elapsed = stats.elapsed_ms.map(|ms| {
                     quiet(div())
-                        .child(glyph(Icon::Clock, theme.text_subtle))
+                        .child(glyph(Icon::Clock, theme.subtle))
                         .child(chat::format_elapsed(ms))
                 });
                 let ended = stats.ended_clock.clone().filter(|_| shown.clock);
@@ -1335,20 +1320,20 @@ impl Shell {
                     .items_center()
                     .min_w_0()
                     .overflow_hidden()
-                    .gap(px(space::S))
+                    .gap(px(space::XS))
                     .font_family(mono.clone())
                     .when(shown.stats, |el| {
                         el.children(context).children(rate).children(elapsed)
                     })
                     .children(ended.map(|time| {
                         quiet(div())
-                            .child(glyph(Icon::Clock, theme.text_subtle))
+                            .child(glyph(Icon::Clock, theme.subtle))
                             .child(time)
                     }))
                     .into_any_element()
             }
         };
-        let send = round_button("composer-send", Icon::CornerDownLeft, can_send, theme)
+        let send = send_key_chip("composer-send", can_send, theme)
             .tooltip(tooltip(theme, composer::send_tip(), ""))
             .on_press(
                 can_send,
@@ -1356,7 +1341,12 @@ impl Shell {
                     shell.send_composer(session, window, cx);
                 }),
             );
+        let rise = meter.is_some();
         let card = composer_card_frame(theme)
+            .children(meter)
+            .when(rise, |el| {
+                el.mt(theme::rems_px(theme::CONTEXT_METER_RISE - space::S))
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |shell, _, window, cx| {
@@ -1405,13 +1395,7 @@ impl Shell {
                                 tools_fit
                                     .then(|| {
                                         self.composer_tools(
-                                            session,
-                                            draft,
-                                            is_focused,
-                                            theme.border,
-                                            true,
-                                            theme,
-                                            cx,
+                                            session, draft, is_focused, true, theme, cx,
                                         )
                                     })
                                     .into_iter()
@@ -1420,65 +1404,74 @@ impl Shell {
                     )
                     .child(send),
             );
-        let card = Self::composer_drops(card, session, radius::COMPOSER, theme, cx);
-        super::chat_view::chat_column(div().flex().flex_col().children(meter).child(card))
-            .pb(px(space::M))
+        let card = Self::composer_drops(card, session, radius::PANEL, theme, cx);
+        super::chat_view::chat_column(card)
+            .pb(px(space::L))
             .into_any_element()
     }
 }
 
-/// The Chat field's placeholder: `content` in `text_subtle`, no icon and no italics (Tern look).
-/// `caret_text` draws the caret before it. An omp dock passes styled runs (its placeholder holds
-/// a private-use glyph that needs the terminal font).
+/// The Chat field's placeholder: `content` in `subtle` (the t4 tier), no icon and no italics
+/// (Tern look). `caret_text` draws the caret before it. An omp dock passes styled runs (its
+/// placeholder holds a private-use glyph that needs the terminal font).
 pub(super) fn placeholder_row(content: impl IntoElement, theme: &Theme) -> gpui::Div {
-    div()
-        .min_w_0()
-        .text_color(rgb(theme.text_subtle))
-        .child(content)
+    div().min_w_0().text_color(rgb(theme.subtle)).child(content)
 }
 
-/// Room for the chips of a composer card: the pane's width, capped by the column, less the page
-/// padding and the card's own padding. The chip widths are in rems (`theme::rems_px`, designed
-/// at 13 px), so the room is measured in the same unit.
-pub(super) fn composer_room(width: f32, cx: &gpui::App) -> f32 {
-    (width.min(theme::CHAT_COLUMN_WIDTH) - 2.0 * space::XL - (space::L + space::M))
-        / (cx.global::<theme::Fonts>().ui_size / 13.0)
+/// Room for the bar of a composer card, in 13 px rems like the `COMPOSER_*` widths: the text
+/// `column` (px, page padding already off: `tsp::column_px`, or the Chat column less its padding)
+/// less the card's own padding and its two 1 px rings.
+pub(super) fn composer_room(column: f32, cx: &gpui::App) -> f32 {
+    room_in(column, cx.global::<theme::Fonts>().ui_size)
 }
 
-/// The floating card of a composer: Chat's, and an omp pane's dock (spec 7.8). Callers add the
-/// children and the press handler.
+fn room_in(column: f32, ui_size: f32) -> f32 {
+    (column - 2.0 * (space::M + theme::BORDER_WIDTH)) / (ui_size / 13.0)
+}
+
+/// The card of a composer: Chat's, and an omp pane's dock (spec 6). `composer_fill`, a 1 px
+/// `layer[1]` ring, the `glass_hi` line along the top, `shadow_composer`. `relative()` because the
+/// context meter is its absolute child. Callers add the children and the press handler.
 pub(super) fn composer_card_frame(theme: &Theme) -> gpui::Div {
     div()
+        .relative()
         .flex()
         .flex_col()
         .gap(px(space::S))
         .pt(px(space::M))
         .pb(px(space::S))
-        .pl(px(space::L))
-        .pr(px(space::M))
-        .rounded(px(radius::COMPOSER))
-        .bg(rgb(theme.surface_raised))
+        .px(px(space::M))
+        .rounded(px(radius::PANEL))
+        .bg(rgb(theme.composer_fill))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(gpui::rgba(theme.glass_border))
-        .shadow(theme::shadow_float(theme))
+        .border_color(gpui::rgba(theme.layer[1]))
+        .shadow(theme::shadow_composer(theme))
         .font_family(theme.ui_font_family.clone())
+        .child(top_highlight(theme, radius::PANEL))
 }
 
 /// Group name of a context meter: its marks show while the meter is hovered.
 const METER_GROUP: &str = "context-meter";
 
-/// The thin context meter over the card: a `CONTEXT_METER_HEIGHT` track filled to `fraction` in
-/// `fill`, with `left` (centered on the end of the fill) and `right` above it in `META`
-/// `text_subtle`. `marks` (position 0..1, tooltip) are ticks on the track (omp's auto-compact
-/// point) that show only while the meter is hovered; Chat has none.
+/// The context meter on the card's top edge: an absolute box `CONTEXT_METER_RISE` above the card,
+/// `space::L` in from both sides. `left` (centered on the end of the fill) and `right` sit in the
+/// label row (OVERLINE, mono, MEDIUM, `text_subtle`), the `CONTEXT_METER_HEIGHT` track right under
+/// it. The rail is `text` at 9 %; the fill is `text` at 42 %, or `fill` (a tone color) when given.
+/// `marks` (position 0..1, tooltip) are ticks on the track (omp's auto-compact point) that show
+/// only while the meter is hovered; Chat has none.
 pub(super) fn meter_bar(
     fraction: f32,
-    fill: u32,
+    fill: Option<u32>,
     left: String,
     right: String,
     marks: Vec<(f32, String)>,
     theme: &Theme,
 ) -> gpui::Div {
+    let rail = gpui::rgba(theme::with_alpha(theme.text, theme::METER_RAIL_ALPHA));
+    let fill = gpui::rgba(match fill {
+        Some(tone) => theme::with_alpha(tone, 1.0),
+        None => theme::with_alpha(theme.text, theme::METER_FILL_ALPHA),
+    });
     let mark = theme.text_muted;
     let ticks = marks.into_iter().enumerate().map(|(i, (at, title))| {
         div()
@@ -1503,17 +1496,24 @@ pub(super) fn meter_bar(
     });
     div()
         .group(METER_GROUP)
-        .flex()
-        .flex_col()
-        .gap(px(space::XS))
-        .px(px(space::S))
-        .pb(px(space::XS))
+        .absolute()
+        .top(theme::rems_px(-theme::CONTEXT_METER_RISE))
+        .left(px(space::L))
+        .right(px(space::L))
+        .h(theme::rems_px(theme::CONTEXT_METER_BOX_HEIGHT))
         .child(
             div()
-                .relative()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(theme::rems_px(theme::CONTEXT_LABEL_HEIGHT))
+                .line_height(theme::rems_px(theme::CONTEXT_LABEL_HEIGHT))
                 .flex()
                 .justify_end()
-                .text_size(font_size::META)
+                .font_family(theme.terminal_font_family.clone())
+                .text_size(font_size::OVERLINE)
+                .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text_subtle))
                 .child(
                     div()
@@ -1529,30 +1529,34 @@ pub(super) fn meter_bar(
         )
         .child(
             div()
-                .relative()
+                .absolute()
+                .top(theme::rems_px(theme::CONTEXT_LABEL_HEIGHT))
+                .left_0()
+                .right_0()
                 .h(px(theme::CONTEXT_METER_HEIGHT))
-                .w_full()
                 .rounded(px(radius::PILL))
-                .bg(rgb(theme.divider))
+                .bg(rail)
                 .child(
                     div()
                         .h_full()
                         .w(relative(fraction))
                         .rounded(px(radius::PILL))
-                        .bg(rgb(fill)),
+                        .bg(fill),
                 )
                 .children(ticks),
         )
 }
 
-/// A quiet chip: `META` `text_subtle` text, icon and text with `space::XS` between, never
-/// shrinking.
+/// A quiet chip (a fact, the usage, the effort): OVERLINE `text_subtle`, icon and text with
+/// `space::XS` between, `px(XS)` of its own, never shrinking.
 pub(super) fn quiet_chip(el: gpui::Div, theme: &Theme) -> gpui::Div {
     el.flex()
         .flex_none()
         .items_center()
         .gap(px(space::XS))
-        .text_size(font_size::META)
+        .px(px(space::XS))
+        .rounded(px(radius::CHIP))
+        .text_size(font_size::OVERLINE)
         .text_color(rgb(theme.text_subtle))
 }
 
@@ -1568,9 +1572,10 @@ pub(super) fn permission_chip(text: String, theme: &Theme) -> gpui::Div {
         .child(text)
 }
 
-/// The model pill (Tern): a `COMPOSER_PILL_HEIGHT` ring in `border`, no fill, the name in `text`
-/// at MEDIUM, the optional `lead` (the omp dock's effort glyph) before it and a chevron after.
-/// Callers add the tooltip and `.on_press(..)`.
+/// The model pill (Tern): `COMPOSER_PILL_HEIGHT` tall, `radius::MEDIUM`, a `layer[0]` fill with
+/// no ring (hover `layer[1]`), the name in `text` at MEDIUM, the optional `lead` (the omp dock's
+/// effort glyph) before it and a `text_subtle` chevron after. Callers add the tooltip and
+/// `.on_press(..)`.
 pub(super) fn model_pill(
     id: impl Into<gpui::ElementId>,
     lead: Option<gpui::AnyElement>,
@@ -1578,26 +1583,54 @@ pub(super) fn model_pill(
     enabled: bool,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(space::XS))
-        .h(theme::rems_px(theme::COMPOSER_PILL_HEIGHT))
-        .px(px(space::S))
-        .rounded(px(radius::PILL))
-        .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.border))
-        .text_size(font_size::META)
-        .font_weight(FontWeight(weight::MEDIUM))
-        .text_color(rgb(theme.text))
-        .pressable(Look::Chip, enabled, theme)
-        .children(lead)
-        .child(name)
-        .child(icon_svg(
-            Icon::ChevronDown,
-            theme::MODEL_CHEVRON_SIZE,
-            theme.text_muted,
-        ))
+    lift_press(
+        div()
+            .id(id)
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(space::XS))
+            .h(theme::rems_px(theme::COMPOSER_PILL_HEIGHT))
+            .px(px(space::S))
+            .rounded(px(radius::MEDIUM))
+            .bg(gpui::rgba(theme.layer[0]))
+            .text_size(font_size::META)
+            .font_weight(FontWeight(weight::MEDIUM))
+            .text_color(rgb(theme.text))
+            .children(lead)
+            .child(name)
+            .child(icon_svg(
+                Icon::ChevronDown,
+                theme::MODEL_CHEVRON_SIZE,
+                theme.text_subtle,
+            )),
+        enabled,
+        theme,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_bar_room_is_the_text_column_less_the_cards_padding_in_13px_rems() {
+        // Chat at 900 px: the 760 column less the page padding, less the card's two sides.
+        let chat = theme::CHAT_COLUMN_WIDTH - 2.0 * theme::CHAT_COLUMN_PADDING;
+        let pad = 2.0 * (space::M + theme::BORDER_WIDTH);
+        assert_eq!(room_in(chat, 13.0), chat - pad);
+        // A 26 px UI font halves the room that is measured in 13 px rems.
+        assert_eq!(room_in(chat, 26.0), (chat - pad) / 2.0);
+        // An omp pane among several spans its pane: no cap, only the page padding off.
+        let pane = mkrew_ui::tsp::column_px(500.0, true);
+        assert_eq!(
+            room_in(pane, 13.0),
+            500.0 - 2.0 * theme::CHAT_COLUMN_PADDING - pad
+        );
+        // Alone, the column caps at the Chat width however wide the pane is.
+        assert_eq!(
+            room_in(mkrew_ui::tsp::column_px(5000.0, false), 13.0),
+            room_in(chat, 13.0)
+        );
+    }
 }

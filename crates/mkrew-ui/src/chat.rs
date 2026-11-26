@@ -723,8 +723,10 @@ pub fn branch_width(branch: &BranchChip) -> f32 {
         } else {
             0
         };
-    let natural =
-        theme::ICON_SIZE_SMALL + theme::space::XS + chars as f32 * theme::COMPOSER_MONO_CHAR_WIDTH;
+    let natural = theme::ICON_SIZE_SMALL
+        + theme::space::XS
+        + chars as f32 * theme::COMPOSER_MONO_CHAR_WIDTH
+        + 2.0 * theme::space::XS;
     natural.min(theme::COMPOSER_BRANCH_MAX_WIDTH) + theme::space::S
 }
 
@@ -1274,7 +1276,9 @@ mod tests {
     }
 
     /// The card's chip room at a 900 px pane: the 760 px column less page and card padding.
-    const ROOM_900: f32 = theme::CHAT_COLUMN_WIDTH - 2.0 * theme::space::XL - 2.0 * theme::space::M;
+    const ROOM_900: f32 = theme::CHAT_COLUMN_WIDTH
+        - 2.0 * theme::space::XL
+        - 2.0 * (theme::space::M + theme::BORDER_WIDTH);
 
     #[test]
     fn omp_and_codex_sessions_show_their_stats_at_900_px() {
@@ -1301,6 +1305,14 @@ mod tests {
                 ..FitCtx::default()
             };
             let shown = fit_chips(want, ROOM_900, ctx);
+            // With the branch chip too, the clock (the first to drop) no longer fits: its
+            // width and the cards' rings are now counted.
+            assert!(shown.stats, "{name}: dropped {shown:?}");
+            let bare = Chips {
+                branch: false,
+                ..want
+            };
+            let shown = fit_chips(bare, ROOM_900, FitCtx::default());
             assert!(shown.stats && shown.clock, "{name}: dropped {shown:?}");
             assert_eq!(stat_parts(&stats).len(), 3, "{name}: {stats:?}");
         }
@@ -1577,6 +1589,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_branch_chip_is_reckoned_with_its_own_padding() {
+        // `a *1` is four characters in the terminal font; the chip pads both sides by `space::XS`.
+        let want = theme::ICON_SIZE_SMALL
+            + theme::space::XS
+            + 4.0 * theme::COMPOSER_MONO_CHAR_WIDTH
+            + 2.0 * theme::space::XS
+            + theme::space::S;
+        assert!((branch_width(&branch_chip("a")) - want).abs() < 0.01);
     }
 
     #[test]

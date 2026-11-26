@@ -12,6 +12,17 @@ use crate::text_box::TextBox;
 /// The commit box counts its summary line against this many chars (git's usual limit).
 pub const SUMMARY_LIMIT: usize = 72;
 
+/// The length counter under the commit box: `"n / 72"` and whether the summary is past the
+/// limit; `None` while the summary is empty (nothing to count yet).
+pub fn summary_counter(summary_len: usize) -> Option<(String, bool)> {
+    (summary_len > 0).then(|| {
+        (
+            format!("{summary_len} / {SUMMARY_LIMIT}"),
+            summary_len > SUMMARY_LIMIT,
+        )
+    })
+}
+
 /// What a key press in the commit box does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -232,6 +243,20 @@ impl Remotes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_counter_hides_at_zero_and_warns_past_the_limit() {
+        assert_eq!(summary_counter(0), None);
+        assert_eq!(summary_counter(1), Some(("1 / 72".to_owned(), false)));
+        assert_eq!(
+            summary_counter(SUMMARY_LIMIT),
+            Some(("72 / 72".to_owned(), false))
+        );
+        assert_eq!(
+            summary_counter(SUMMARY_LIMIT + 1),
+            Some(("73 / 72".to_owned(), true))
+        );
+    }
 
     fn type_text(draft: &mut CommitBox, text: &str) {
         for c in text.chars() {

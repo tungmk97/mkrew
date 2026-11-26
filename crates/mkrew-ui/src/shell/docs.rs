@@ -556,9 +556,10 @@ impl Shell {
         panel
             .child(header)
             .children(docs.zed_error.clone().map(|error| {
-                notice(theme.text, format!("✕ {error}"))
+                div()
                     .px(px(space::L))
                     .pb(px(space::S))
+                    .child(error_note(error, theme))
             }))
             .child(
                 div()
@@ -673,59 +674,58 @@ pub(crate) fn doc_row(
         )
     };
     let line = |el: gpui::Div| el.overflow_hidden().text_ellipsis().whitespace_nowrap();
-    div()
-        .id(SharedString::from(format!("doc-{}", file.file_path)))
-        .flex()
-        .items_center()
-        .gap(px(space::S))
-        .px(px(space::S))
-        .py(px(space::XS))
-        .rounded(px(radius::MEDIUM))
-        .when(selected, |el| el.bg(rgb(theme.surface_raised)))
-        .pressable_unless(selected, Look::Row, theme)
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .child(line(
-                    div()
-                        .text_size(font_size::BODY)
-                        .text_color(rgb(theme.text))
-                        .when(selected, |el| el.font_weight(FontWeight(weight::MEDIUM)))
-                        .child(marked(name, &name_hits)),
-                ))
-                .children(folder.map(|folder| {
-                    line(
-                        div()
-                            .text_size(font_size::META)
-                            .text_color(rgb(theme.text_muted))
-                            .child(marked(folder, &folder_hits)),
-                    )
-                })),
-        )
-        .when(file.open_comments > 0, |el| {
-            el.child(
+    with_pick(
+        div()
+            .id(SharedString::from(format!("doc-{}", file.file_path)))
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::S))
+            .py(px(space::XS))
+            .rounded(px(radius::CHIP)),
+        selected,
+        theme,
+    )
+    .pressable_unless(selected, Look::Row, theme)
+    .child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .child(line(
                 div()
-                    .flex_none()
-                    .px(px(space::XS))
-                    .rounded(px(radius::SMALL))
-                    // Stands out on the selected row's raised background too.
-                    .bg(rgb(if selected {
-                        theme.bg
-                    } else {
-                        theme.surface_raised
-                    }))
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child(format!("{} open", file.open_comments)),
-            )
-        })
-        .on_press(
-            true,
-            cx.listener(move |shell, _, window, cx| {
-                shell.select_doc(project_id, &file_path, window, cx);
-            }),
+                    .text_size(font_size::BODY)
+                    .text_color(rgb(theme.text))
+                    .child(marked(name, &name_hits)),
+            ))
+            .children(folder.map(|folder| {
+                line(
+                    div()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_subtle))
+                        .child(marked(folder, &folder_hits)),
+                )
+            })),
+    )
+    .when(file.open_comments > 0, |el| {
+        el.child(
+            div()
+                .flex_none()
+                .px(px(space::XS))
+                .rounded(px(radius::SMALL))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.divider))
+                .bg(rgb(theme.well))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .child(format!("{} open", file.open_comments)),
         )
+    })
+    .on_press(
+        true,
+        cx.listener(move |shell, _, window, cx| {
+            shell.select_doc(project_id, &file_path, window, cx);
+        }),
+    )
 }

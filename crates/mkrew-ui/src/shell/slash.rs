@@ -278,95 +278,91 @@ impl Shell {
                         (range, style)
                     });
                 Some(
-                    div()
-                        .id(("slash-row", position))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap(px(space::M))
-                        .px(px(space::S))
-                        .py(px(space::XS))
-                        .rounded(px(radius::SMALL))
-                        .overflow_hidden()
-                        .text_size(font_size::BODY)
-                        .text_color(rgb(theme.text))
-                        // The pick has a focus-colored ring and its own fill; it does not hover.
-                        .border(px(theme::BORDER_WIDTH))
-                        .border_color(if picked {
-                            gpui::Hsla::from(rgb(theme.pane_focus_stripe))
-                        } else {
-                            gpui::transparent_black()
-                        })
-                        .when(picked, |el| el.bg(rgb(theme.surface_raised)))
-                        .pressable_unless(picked, Look::Row, theme)
-                        .on_press(
-                            true,
-                            cx.listener(move |shell, _, window, cx| {
-                                if let Some(picker) = shell.slash_picker.as_mut() {
-                                    picker.pick(position);
-                                }
-                                shell.accept_slash_pick(false, window, cx);
-                            }),
+                    with_pick(
+                        div()
+                            .id(("slash-row", position))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .gap(px(space::M))
+                            .px(px(space::S))
+                            .py(px(space::XS))
+                            .rounded(px(radius::SMALL))
+                            .overflow_hidden()
+                            .text_size(font_size::BODY)
+                            .text_color(rgb(theme.text)),
+                        picked,
+                        theme,
+                    )
+                    .pressable_unless(picked, Look::Row, theme)
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, _, window, cx| {
+                            if let Some(picker) = shell.slash_picker.as_mut() {
+                                picker.pick(position);
+                            }
+                            shell.accept_slash_pick(false, window, cx);
+                        }),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .max_w(relative(theme::SLASH_NAME_MAX_FRACTION))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .font_family(theme.terminal_font_family.clone())
+                            .child(gpui::StyledText::new(name).with_highlights(highlights)),
+                    )
+                    .children(item.argument_hint.clone().map(|hint| {
+                        div()
+                            .min_w_0()
+                            .max_w(relative(theme::SLASH_HINT_MAX_FRACTION))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(hint)
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(item.description.clone()),
+                    )
+                    .children(
+                        slash_picker::row_hint(
+                            &item.name,
+                            current_model.as_deref(),
+                            context_percent,
                         )
-                        .child(
+                        .map(|hint| {
                             div()
-                                .min_w_0()
-                                .max_w(relative(theme::SLASH_NAME_MAX_FRACTION))
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .font_family(theme.terminal_font_family.clone())
-                                .child(gpui::StyledText::new(name).with_highlights(highlights)),
-                        )
-                        .children(item.argument_hint.clone().map(|hint| {
-                            div()
-                                .min_w_0()
-                                .max_w(relative(theme::SLASH_HINT_MAX_FRACTION))
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
+                                .flex_none()
                                 .text_size(font_size::META)
                                 .text_color(rgb(theme.text_muted))
                                 .child(hint)
-                        }))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_size(font_size::META)
-                                .text_color(rgb(theme.text_muted))
-                                .child(item.description.clone()),
-                        )
-                        .children(
-                            slash_picker::row_hint(
-                                &item.name,
-                                current_model.as_deref(),
-                                context_percent,
-                            )
-                            .map(|hint| {
-                                div()
-                                    .flex_none()
-                                    .text_size(font_size::META)
-                                    .text_color(rgb(theme.text_muted))
-                                    .child(hint)
-                            }),
-                        )
-                        // The group row (omp's `skill:`) stands for skills of many sources: no chip.
-                        .children(item.group.is_none().then(|| {
-                            div()
-                                .flex_none()
-                                .px(px(space::XS))
-                                .rounded(px(radius::SMALL))
-                                .border(px(theme::BORDER_WIDTH))
-                                .border_color(rgb(theme.border))
-                                .text_size(font_size::META)
-                                .text_color(rgb(theme.text_muted))
-                                .child(slash_picker::source_label(&item.source))
-                        }))
-                        .into_any_element(),
+                        }),
+                    )
+                    // The group row (omp's `skill:`) stands for skills of many sources: no chip.
+                    .children(item.group.is_none().then(|| {
+                        div()
+                            .flex_none()
+                            .px(px(space::XS))
+                            .rounded(px(radius::SMALL))
+                            .border(px(theme::BORDER_WIDTH))
+                            .border_color(rgb(theme.border))
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(slash_picker::source_label(&item.source))
+                    }))
+                    .into_any_element(),
                 )
             })
             .collect();

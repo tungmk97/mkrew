@@ -341,7 +341,7 @@ impl Shell {
         ui.stops.borrow_mut().end();
         // A list at its end stays there when its viewport shrinks (the tray or the composer's
         // key hint appearing): `at_bottom` reads the last frame, the jump uses this frame's size.
-        // Scrolled up from the end, a round button jumps back down.
+        // Scrolled up from the end, a quiet chevron button jumps back down.
         let at_end = super::thread_panel::at_bottom(&ui.scroll);
         if at_end {
             ui.scroll.scroll_to_bottom();
@@ -402,7 +402,7 @@ impl Shell {
                                 .bottom(px(space::S))
                                 .child(chat_column(
                                     div().flex().justify_end().child(
-                                        float_button("chat-scroll-end", Icon::ArrowDown, theme)
+                                        scroll_end_button("chat-scroll-end", theme)
                                             .tooltip(tooltip(
                                                 theme,
                                                 "Scroll to the latest message",
@@ -609,7 +609,7 @@ impl Shell {
                                 .flex()
                                 .flex_col()
                                 .gap(px(space::M))
-                                .line_height(relative(theme::doc::LINE_HEIGHT))
+                                .line_height(relative(theme::doc::CHAT_LINE_HEIGHT))
                                 .children(preview::message(
                                     shown,
                                     selection,
@@ -683,17 +683,7 @@ impl Shell {
             .flex()
             .flex_col()
             .gap(px(space::M))
-            .child(
-                div().flex().justify_end().child(
-                    div()
-                        .max_w(relative(theme::CHAT_PROMPT_MAX_FRACTION))
-                        .px(px(space::M))
-                        .py(px(space::S))
-                        .rounded(px(radius::LARGE))
-                        .bg(rgb(theme.card))
-                        .child(turn.prompt.to_owned()),
-                ),
-            )
+            .child(prompt_bubble(turn.prompt.to_owned(), None, theme))
             .children(rows)
             .children(turn.plan.as_deref().map(|steps| chat_plan(steps, theme)))
             .into_any_element()
@@ -1052,7 +1042,7 @@ fn chat_question(
                 .rounded(px(radius::CHIP))
                 .bg(rgb(theme.surface_raised))
                 .text_color(rgb(theme.text))
-                .pressable(Look::Raised, true, theme)
+                .pressable_on(Look::Raised, theme.surface_raised, theme)
                 .on_press(
                     true,
                     cx.listener(move |shell, _, window, cx| {
@@ -1084,6 +1074,47 @@ fn keyboard_stop(
 /// `space::XL` at both sides.
 pub(crate) fn chat_column(el: impl IntoElement) -> gpui::Div {
     page_column(el, Some(theme::CHAT_COLUMN_WIDTH), false)
+}
+
+/// The user's prompt as Tern's bubble: at the right, at most `CHAT_PROMPT_MAX_FRACTION` of the
+/// column and `CHAT_PROMPT_MAX_WIDTH` px wide, `layer[1]` fill, radii 12/12/4/12. `head`: a
+/// group name and the row (copy, rewind, time of an omp prompt) drawn under the bubble, right
+/// aligned in META `text_subtle`, visible only while the pointer is over the prompt.
+pub(crate) fn prompt_bubble(
+    body: impl IntoElement,
+    head: Option<(gpui::SharedString, gpui::AnyElement)>,
+    theme: &Theme,
+) -> gpui::Div {
+    let bubble = div()
+        .max_w(px(theme::CHAT_PROMPT_MAX_WIDTH))
+        .px(px(space::L))
+        .py(px(space::S))
+        .rounded(px(radius::LARGE))
+        .rounded_br(px(radius::SMALL))
+        .bg(gpui::rgba(theme.layer[1]))
+        .text_size(font_size::BODY)
+        .line_height(relative(theme::UI_LINE_HEIGHT))
+        .child(body);
+    let column = div()
+        .max_w(relative(theme::CHAT_PROMPT_MAX_FRACTION))
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .items_end()
+        .child(bubble);
+    let column = match head {
+        Some((group, head)) => column.group(group.clone()).child(
+            div()
+                .pt(px(space::XS))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_subtle))
+                .opacity(theme::opacity::HIDDEN)
+                .group_hover(group, |style| style.opacity(theme::opacity::FULL))
+                .child(head),
+        ),
+        None => column,
+    };
+    div().w_full().flex().justify_end().child(column)
 }
 
 /// `el` with `space::XL` at both sides, at most `max` wide and centered (`None`: as wide as the

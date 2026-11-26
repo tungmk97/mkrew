@@ -135,7 +135,7 @@ impl Shell {
         let agents = match &dialog.agents {
             Agents::Loading => muted("Loading agents…".into()).into_any_element(),
             Agents::Failed(error) => {
-                notice(theme.text, format!("✕ Cannot list the agents: {error}")).into_any_element()
+                error_note(format!("Cannot list the agents: {error}"), theme).into_any_element()
             }
             Agents::Loaded(_) if selected.is_none() => muted(
                 "No installed agent can answer. Add a line like `ask = \"claude -p\"` to an \
@@ -223,20 +223,13 @@ impl Shell {
             },
         )
         .h(px(theme::PROMPT_FIELD_HEIGHT))
+        .py(px(space::S))
         .overflow_y_scroll()
         .track_scroll(&self.prompt_scroll);
         let answer = match &dialog.state {
             ask::State::Idle => None,
             ask::State::Waiting(_) => Some(muted("◌ Thinking…".into()).into_any_element()),
-            ask::State::Failed(error) => Some(
-                div()
-                    .flex()
-                    .gap(px(space::XS))
-                    .text_size(font_size::META)
-                    .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                    .child(div().text_color(rgb(theme.text)).child(error.clone()))
-                    .into_any_element(),
-            ),
+            ask::State::Failed(error) => Some(error_note(error.clone(), theme).into_any_element()),
             ask::State::Answered { shown, .. } => Some(
                 div()
                     .id("ask-answer")
@@ -265,19 +258,14 @@ impl Shell {
         };
         let can_ask = !dialog.waiting() && !dialog.question.is_blank() && selected.is_some();
         let ask_label = if dialog.waiting() { "Asking…" } else { "Ask" };
-        let footer = div()
-            .flex()
-            .items_center()
-            .gap(px(space::S))
-            .child(
-                div().flex_1().child(muted(
-                    mkrew_ui::os_text!(
-                        "Enter new line · Ctrl+Enter ask · Esc close",
-                        "Enter new line · ⌘↩ ask · Esc close",
-                    )
-                    .into(),
-                )),
-            )
+        let footer = dialog_foot(theme)
+            .child(dialog_hint(
+                mkrew_ui::os_text!(
+                    "Enter new line · Ctrl+Enter ask · Esc close",
+                    "Enter new line · ⌘↩ ask · Esc close",
+                ),
+                theme,
+            ))
             .children(answer_text.map(|text| {
                 button("ask-copy", "Copy answer", theme, false)
                     .focus_stop(theme)
@@ -293,14 +281,19 @@ impl Shell {
                     .on_click(cx.listener(|shell, _, window, cx| shell.close_ask(window, cx))),
             )
             .child(if can_ask {
-                button("ask-send", ask_label, theme, true)
-                    .focus_stop(theme)
-                    .tooltip(tooltip(
-                        theme,
-                        "Ask the question",
-                        mkrew_ui::os_text!("Ctrl+Enter", "⌘↩"),
-                    ))
-                    .on_click(cx.listener(|shell, _, window, cx| shell.send_ask(window, cx)))
+                primary_button(
+                    "ask-send",
+                    ask_label,
+                    Some(mkrew_ui::os_text!("Ctrl+Enter", "⌘↩").to_owned()),
+                    theme,
+                )
+                .focus_stop_filled(theme)
+                .tooltip(tooltip(
+                    theme,
+                    "Ask the question",
+                    mkrew_ui::os_text!("Ctrl+Enter", "⌘↩"),
+                ))
+                .on_click(cx.listener(|shell, _, window, cx| shell.send_ask(window, cx)))
             } else {
                 disabled_button("ask-send", ask_label, theme, true).tooltip(tooltip(
                     theme,
@@ -310,11 +303,6 @@ impl Shell {
             });
         let panel = floating_panel("ask-dialog", theme)
             .w(px(theme::ASK_DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
                 true,
@@ -322,22 +310,32 @@ impl Shell {
                 cx.listener(Self::ask_key_down),
             )
             .relative()
-            .child(self.typing(&self.dialog_focus, Self::ask_key_down, cx))
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Ask AI"),
-            )
-            .child(muted(
-                "Any question, outside your projects: the agent runs in an empty folder.".into(),
-            ))
+            .child(self.typing(&self.dialog_focus, Self::ask_key_down, cx));
+        let body = dialog_body()
             .child(agents)
             .children(web)
             .child(field)
-            .children(answer)
-            .child(footer);
+            .children(answer);
+        let panel = dialog_frame(
+            panel,
+            DialogHead {
+                wrap: false,
+                icon: Icon::Sparkles,
+                tone: DialogTone::Normal,
+                title: "Ask AI".into(),
+                sub: Some(
+                    "Any question, outside your projects: the agent runs in an empty folder."
+                        .into(),
+                ),
+            },
+            Some(
+                dialog_close("ask-close-x", theme)
+                    .on_click(cx.listener(|shell, _, window, cx| shell.close_ask(window, cx))),
+            ),
+            Some(body),
+            Some(footer),
+            theme,
+        );
         Self::modal_shade("ask-shade", panel, cx)
     }
 }

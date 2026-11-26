@@ -90,18 +90,46 @@ pub(crate) fn change_counts(added: u32, removed: u32, theme: &Theme) -> gpui::Di
         )
 }
 
-/// The change letter of a file, its color and what it means (tooltip).
-pub(crate) fn change_letter(kind: ChangeKind, theme: &Theme) -> (&'static str, u32, &'static str) {
-    match kind {
-        ChangeKind::Added => ("A", theme.diff_add_text, "Added"),
-        ChangeKind::Modified => ("M", theme.git_modified, "Modified"),
-        ChangeKind::Deleted => ("D", theme.diff_del_text, "Deleted"),
-        ChangeKind::Renamed => ("R", theme.git_modified, "Renamed"),
-        ChangeKind::Copied => ("C", theme.git_modified, "Copied"),
-        ChangeKind::TypeChanged => ("T", theme.git_modified, "File type changed"),
-        ChangeKind::Untracked => ("?", theme.git_untracked, "Untracked"),
-        ChangeKind::Conflicted => ("!", theme.diff_del_text, "Conflicted"),
-    }
+/// The status chip of a changed file: `GIT_BADGE_SIZE` square, `radius::SMALL`, the letter in the
+/// terminal font (OVERLINE, semibold) on the tint of its hue; an untracked file is an outline.
+pub(crate) fn status_chip(
+    id: impl Into<gpui::ElementId>,
+    chip: git_view::ChangeChip,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .size(theme::rems_px(theme::GIT_BADGE_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(radius::SMALL))
+        .font_family(theme.terminal_font_family.clone())
+        .text_size(font_size::OVERLINE)
+        .font_weight(FontWeight(weight::SEMIBOLD))
+        .text_color(rgb(chip.color))
+        .when_some(chip.fill, |el, hue| el.bg(theme.tint(hue)))
+        .when_some(chip.ring, |el, ring| {
+            el.border(px(theme::BORDER_WIDTH))
+                .border_color(gpui::rgba(ring))
+        })
+        .tooltip(tooltip(theme, chip.meaning, ""))
+        .child(chip.letter)
+}
+
+/// A count after a group title (Git group headers, Jira status sections): digits in the
+/// terminal font on a `well` chip.
+pub(crate) fn count_chip(count: usize, theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .px(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .bg(rgb(theme.well))
+        .font_family(theme.terminal_font_family.clone())
+        .text_size(font_size::META)
+        .text_color(rgb(theme.text_subtle))
+        .child(count.to_string())
 }
 
 /// The box every row of the changed-file list shares (uniform list: rows are sized from the
@@ -115,7 +143,7 @@ fn row_frame(id: SharedString) -> gpui::Stateful<gpui::Div> {
         .items_center()
         .gap(px(space::S))
         .px(px(space::S))
-        .rounded(px(radius::MEDIUM))
+        .rounded(px(radius::CHIP))
         .border(px(theme::BORDER_WIDTH))
         .border_color(gpui::transparent_black())
 }
@@ -124,7 +152,7 @@ fn row_frame(id: SharedString) -> gpui::Stateful<gpui::Div> {
 /// all" / "Unstage all" on hover), the empty Staged hint (a muted line), a file (colored
 /// change letter, name, folder muted, +/− counts; indented under its History commit),
 /// a History commit ([`git_commit_row`], ages at `now`) or a note under it. The selected file
-/// has the `hover` fill and an accent ring while the list has the keyboard; in the History,
+/// has the accent tint and bar (`with_pick`) and an accent ring while the list has the keyboard; in the History,
 /// `graph` is the row's column of the lane graph.
 /// A viewed file is dimmed and its box is checked.
 #[allow(clippy::too_many_arguments)]
@@ -191,7 +219,7 @@ pub(crate) fn git_file_row(
     };
     let group = target.group;
     let picked = selected == Some(&target);
-    let (letter, color, what) = change_letter(file.kind, theme);
+    let chip = git_view::change_chip(file.kind, theme);
     let (dir, name) = match file.path.rsplit_once('/') {
         Some((dir, name)) => (Some(dir.to_owned()), name.to_owned()),
         None => (None, file.path.clone()),
@@ -209,27 +237,14 @@ pub(crate) fn git_file_row(
                 .child(under_commit())
         })
         .text_size(font_size::BODY)
-        .when(picked, |el| {
-            el.bg(rgb(theme.hover))
-                .when(focused, |el| el.border_color(rgb(theme.accent)))
-        })
+        // The keyboard ring stays; the selection itself is the tint plus bar (spec §4).
+        .when(picked && focused, |el| el.border_color(rgb(theme.accent)))
+        .map(|el| with_pick(el, picked, theme))
         .pressable_unless(picked, Look::Row, theme)
         .child(
-            div()
-                .id(SharedString::from(format!("{id}-kind")))
-                .flex_none()
-                .size(theme::rems_px(theme::GIT_BADGE_SIZE))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(radius::TAG))
-                .text_size(font_size::OVERLINE)
-                .font_weight(FontWeight(weight::SEMIBOLD))
-                .text_color(rgb(color))
+            status_chip(SharedString::from(format!("{id}-kind")), chip, theme)
                 // A viewed row steps back (its content, not the ✓ box); the selected one stays readable.
-                .when(dim, |el| el.opacity(opacity::VIEWED))
-                .tooltip(tooltip(theme, what, ""))
-                .child(letter),
+                .when(dim, |el| el.opacity(opacity::VIEWED)),
         )
         .child(
             div()
@@ -245,7 +260,6 @@ pub(crate) fn git_file_row(
                         .min_w_0()
                         .truncate()
                         .text_color(rgb(theme.text))
-                        .font_weight(FontWeight(weight::MEDIUM))
                         .child(name),
                 )
                 .children(dir.map(|dir| {
@@ -337,8 +351,8 @@ pub(crate) fn git_file_row(
 }
 
 /// A Working group header, Tern style (ADR 0110): chevron, the title in sentence case and its
-/// count muted; a click folds or unfolds the group. "Stage all" / "Unstage all" shows on hover
-/// while the group lists files.
+/// count in a `well` chip; a click folds or unfolds the group. "Stage all" / "Unstage all"
+/// shows on hover while the group lists files.
 fn group_header(
     project_id: Ulid,
     group: git_view::Group,
@@ -380,16 +394,11 @@ fn group_header(
         .child(
             div()
                 .text_size(font_size::META)
-                .font_weight(FontWeight(weight::MEDIUM))
-                .text_color(rgb(theme.text_muted))
+                .font_weight(FontWeight(weight::SEMIBOLD))
+                .text_color(rgb(theme.text))
                 .child(group.title()),
         )
-        .child(
-            div()
-                .text_size(font_size::META)
-                .text_color(rgb(theme.text_subtle))
-                .child(count.to_string()),
-        )
+        .child(count_chip(count, theme))
         .child(div().flex_1())
         .children(
             git_view::Stage::of(group)
@@ -421,7 +430,7 @@ fn group_header(
 
 /// One History commit row: its lane graph column, a chevron (open on the expanded commit), the
 /// summary, then its short hash and age muted; the full message and author in the tooltip.
-/// Selected (with the accent ring while the list has the keyboard) while it is `picked`.
+/// Picked: the accent tint and bar (`with_pick`), plus an accent ring while the list has the keyboard.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn git_commit_row(
     project_id: Ulid,
@@ -448,10 +457,8 @@ pub(crate) fn git_commit_row(
     let hash = commit.hash.clone();
     row_frame(SharedString::from(format!("git-commit-{}", commit.hash)))
         .text_size(font_size::BODY)
-        .when(picked, |el| {
-            el.bg(rgb(theme.hover))
-                .when(focused, |el| el.border_color(rgb(theme.accent)))
-        })
+        .when(picked && focused, |el| el.border_color(rgb(theme.accent)))
+        .map(|el| with_pick(el, picked, theme))
         .pressable_unless(picked, Look::Row, theme)
         .tooltip(tooltip(theme, &tip, ""))
         .when_some(graph, |el, (cell, lanes)| {

@@ -146,6 +146,17 @@ pub fn gap_px(name: Option<&str>) -> f32 {
     }
 }
 
+/// The gap of a `col`: its `gap` token, and at least `space::S` inside an assistant turn
+/// (role `omp.assistant*`), where omp sends thinking, text and tool rows with no gap.
+pub fn col_gap(role: Option<&str>, gap: Option<&str>) -> f32 {
+    let gap = gap_px(gap);
+    if role.is_some_and(|role| role.starts_with("omp.assistant")) {
+        gap.max(space::S)
+    } else {
+        gap
+    }
+}
+
 /// The pen of the SGR parser.
 #[derive(Clone, Copy, Default)]
 struct Pen {
@@ -919,6 +930,16 @@ pub fn is_thinking(node: &Node) -> bool {
     role_of(node).is_some_and(|role| role.starts_with("omp.thinking"))
 }
 
+/// The user's prompt: `card` with role `omp.user`.
+pub fn is_user_prompt(node: &Node) -> bool {
+    role_of(node) == Some("omp.user")
+}
+
+/// A tool call: `card` with role `omp.tool` or `omp.tool.<name>`.
+pub fn is_tool(node: &Node) -> bool {
+    role_of(node).is_some_and(|role| role == "omp.tool" || role.starts_with("omp.tool."))
+}
+
 /// How row `node` of `main` counts for a run of thoughts.
 pub fn row_kind(doc: &Document, node: &Node) -> RowKind {
     let hidden = |n: &Node| n.props.get("hidden").and_then(Value::as_bool) == Some(true);
@@ -1011,6 +1032,17 @@ pub fn thought_plan<'a>(
     }
     close_run(&mut plan, &mut run, open);
     plan
+}
+
+/// The space below a top-level row: [`theme::TSP_ROW_GAP`] when the row draws something, none
+/// for a hidden row or a thought folded into its run's head (it draws nothing, so it must not
+/// add a gap of its own). `plan` is the row's entry of [`thought_plan`].
+pub fn row_gap(kind: RowKind, plan: Option<&RowPlan>) -> f32 {
+    if kind == RowKind::Hidden || matches!(plan, Some(RowPlan::Folded)) {
+        0.0
+    } else {
+        theme::TSP_ROW_GAP
+    }
 }
 
 /// Where a `card` or `section` gets its header (reference 4, row 3): a string or spans, or the
@@ -4426,5 +4458,64 @@ mod thought_tests {
         assert_eq!(kind("e"), Hidden);
         assert_eq!(kind("f"), Other, "a shown tool");
         assert_eq!(kind("g"), Thought(Some(1200)), "a bare section row");
+    }
+}
+
+#[cfg(test)]
+mod gap_tests {
+    use super::RowKind::{Hidden, Other, Thought};
+    use super::*;
+    use crate::theme::{TSP_ROW_GAP, space};
+    use serde_json::json;
+
+    #[test]
+    fn rows_that_draw_nothing_leave_no_gap() {
+        let kinds = [Thought(Some(1000)), Hidden, Thought(Some(1000)), Other];
+        let ids = ["r0", "r1", "r2", "r3"];
+        let plan = thought_plan(ids.iter().copied().zip(kinds), &HashSet::new());
+        let gap = |i: usize| row_gap(kinds[i], plan.get(ids[i]));
+        assert_eq!(gap(0), TSP_ROW_GAP, "the lead draws the group head");
+        assert_eq!(gap(1), 0.0, "a hidden row");
+        assert_eq!(gap(2), 0.0, "folded into the lead");
+        assert_eq!(gap(3), TSP_ROW_GAP);
+
+        let open = HashSet::from(["r0".to_owned()]);
+        let plan = thought_plan(ids.iter().copied().zip(kinds), &open);
+        assert_eq!(
+            row_gap(kinds[2], plan.get("r2")),
+            TSP_ROW_GAP,
+            "an open run draws every member"
+        );
+    }
+
+    #[test]
+    fn an_assistant_column_gets_at_least_a_small_gap() {
+        assert_eq!(col_gap(Some("omp.assistant"), None), space::S);
+        assert_eq!(col_gap(Some("omp.assistant.turn"), Some("xs")), space::S);
+        assert_eq!(
+            col_gap(Some("omp.assistant"), Some("lg")),
+            space::L,
+            "never less than asked"
+        );
+        assert_eq!(col_gap(Some("omp.tool.bash"), None), 0.0);
+        assert_eq!(col_gap(None, Some("md")), space::M);
+    }
+
+    #[test]
+    fn only_tool_roles_lose_their_box() {
+        let node = |role: &str| {
+            let mut d = Document::new("s:1");
+            let tree = json!({"id": "main", "k": "col", "c": [
+                {"id": "c", "k": "card", "p": {"role": role}},
+            ]});
+            let applied = d.apply(&[json!(["add", "main", "s:1", null, tree])]);
+            assert!(applied.errors.is_empty(), "{:?}", applied.errors);
+            is_tool(d.get("c").unwrap())
+        };
+        assert!(node("omp.tool"));
+        assert!(node("omp.tool.edit"));
+        assert!(!node("omp.toolbar"));
+        assert!(!node("omp.welcome"));
+        assert!(!node("omp.user"));
     }
 }

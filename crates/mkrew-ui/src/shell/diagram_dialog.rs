@@ -43,65 +43,55 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let panel = floating_panel("diagram-dialog", theme)
-            .w(relative(theme::HISTORY_DIALOG_FRACTION))
-            .h(relative(theme::HISTORY_DIALOG_FRACTION))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .dialog_root(
-                &self.dialog_focus,
-                false,
-                cx.listener(Self::dialog_guard),
-                cx.listener(|shell, event: &KeyDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
-                        shell.close_diagram_dialog(window, cx);
-                    }
-                }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(font_size::CARD_TITLE)
-                            .font_weight(FontWeight(weight::SEMIBOLD))
-                            .text_color(rgb(theme.text))
-                            .child("Diagram"),
-                    )
-                    .child(
-                        button("diagram-close", "Close", theme, false)
-                            .focus_stop(theme)
-                            .tooltip(tooltip(theme, "Close", "Esc"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.close_diagram_dialog(window, cx);
-                            })),
+        let body = dialog_body().child(
+            div()
+                .id("diagram-dialog-body")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(
+                    div().flex().justify_center().child(
+                        img(diagram.image(theme))
+                            .w(px(diagram.width * theme::DIAGRAM_ZOOM_MAX))
+                            .max_w_full()
+                            .when(diagram.height > 0.0, |img| {
+                                img.aspect_ratio(diagram.width / diagram.height)
+                            }),
                     ),
-            )
-            .child(
-                div()
-                    .id("diagram-dialog-body")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(
-                        div().flex().justify_center().child(
-                            img(diagram.image(theme))
-                                .w(px(diagram.width * theme::DIAGRAM_ZOOM_MAX))
-                                .max_w_full()
-                                .when(diagram.height > 0.0, |img| {
-                                    img.aspect_ratio(diagram.width / diagram.height)
-                                }),
-                        ),
-                    ),
-            );
+                ),
+        );
+        let panel = dialog_frame(
+            floating_panel("diagram-dialog", theme)
+                .w(relative(theme::HISTORY_DIALOG_FRACTION))
+                .h(relative(theme::HISTORY_DIALOG_FRACTION))
+                .dialog_root(
+                    &self.dialog_focus,
+                    false,
+                    cx.listener(Self::dialog_guard),
+                    cx.listener(|shell, event: &KeyDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified()
+                        {
+                            shell.close_diagram_dialog(window, cx);
+                        }
+                    }),
+                ),
+            DialogHead {
+                icon: Icon::Share2,
+                tone: DialogTone::Normal,
+                title: "Diagram".into(),
+                sub: None,
+                wrap: false,
+            },
+            Some(dialog_close("diagram-close", theme).on_click(cx.listener(
+                |shell, _, window, cx| {
+                    shell.close_diagram_dialog(window, cx);
+                },
+            ))),
+            Some(body),
+            None,
+            theme,
+        );
         Self::modal_shade("diagram-dialog-shade", panel, cx)
     }
 }

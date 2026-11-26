@@ -376,8 +376,8 @@ impl Shell {
             .into_any_element()
     }
 
-    /// Working N / Vs. base / History: underlined text tabs on a row with a divider under it
-    /// (N = changed files; ADR 0110).
+    /// Working N / Vs. base / History: a compact segmented control on a row with a divider under
+    /// it (N = changed files; spec §10).
     fn git_tabs(
         &self,
         project_id: Ulid,
@@ -401,42 +401,49 @@ impl Shell {
                 } else {
                     toggle_keys.clone()
                 };
-                underline_tab(id, active, theme)
-                    .text_size(font_size::BODY)
-                    .when(active, |el| el.font_weight(FontWeight(weight::MEDIUM)))
-                    .when(!active, |el| {
-                        el.on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.show_git_section(project_id, section, window, cx);
-                        }))
-                    })
+                segment(id, active, theme)
+                    .flex_1()
+                    .min_w_0()
+                    .px(px(space::S))
+                    .text_size(font_size::META)
                     .tooltip(tooltip(theme, tip, keys))
-                    .child(label)
+                    .on_press(
+                        !active,
+                        cx.listener(move |shell, _, window, cx| {
+                            shell.show_git_section(project_id, section, window, cx);
+                        }),
+                    )
+                    // Cut with an ellipsis at the narrowest panel (240 px) instead of overflowing.
+                    .child(div().min_w_0().truncate().child(label))
             };
         div()
             .flex_none()
-            .h(theme::rems_px(theme::GIT_SECTION_TAB_HEIGHT))
-            .flex()
-            .px(px(space::XS))
+            .px(px(space::M))
+            .py(px(space::S))
             .border_b(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))
-            .child(tab(
-                git_view::Section::Working,
-                "git-mode-working",
-                working,
-                "Uncommitted changes: staged, unstaged, untracked",
-            ))
-            .child(tab(
-                git_view::Section::Base,
-                "git-mode-base",
-                "Vs. base".to_owned(),
-                "Everything on this branch since it left the base",
-            ))
-            .child(tab(
-                git_view::Section::History,
-                "git-mode-history",
-                "History".to_owned(),
-                "The last 50 commits and their changes",
-            ))
+            .child(
+                segmented(theme)
+                    .w_full()
+                    .child(tab(
+                        git_view::Section::Working,
+                        "git-mode-working",
+                        working,
+                        "Uncommitted changes: staged, unstaged, untracked",
+                    ))
+                    .child(tab(
+                        git_view::Section::Base,
+                        "git-mode-base",
+                        "Vs. base".to_owned(),
+                        "Everything on this branch since it left the base",
+                    ))
+                    .child(tab(
+                        git_view::Section::History,
+                        "git-mode-history",
+                        "History".to_owned(),
+                        "The last 50 commits and their changes",
+                    )),
+            )
     }
 
     /// The changed files of the working tree for the Working tab: from the shown status in
@@ -814,7 +821,8 @@ impl Shell {
 
     /// The commit box pinned under the list (Working changes): the message (Enter breaks a
     /// line, Ctrl+Enter or Commit commits the staged changes); under it what is staged and the
-    /// summary line's length, then ✦ Generate (accent) and Commit (muted while it cannot go).
+    /// summary line's length (shown once a summary exists), then Generate and Commit (muted
+    /// while it cannot go).
     pub(crate) fn git_commit_box(
         &self,
         project_id: Ulid,
@@ -875,18 +883,42 @@ impl Shell {
         } else {
             quiet_button(
                 "git-commit-generate",
-                icon_text(Icon::Sparkles, "Generate", theme.accent_text),
+                icon_text(Icon::Sparkles, "Generate", theme.text_muted),
                 theme,
-                theme.hover,
             )
-            .text_color(rgb(theme.accent_text))
             .on_click(cx.listener(move |shell, _, window, cx| {
                 shell.generate_commit_message(project_id, window, cx)
             }))
         };
         let text = draft.text.text();
         let summary_len = text.lines().next().unwrap_or("").chars().count();
-        let too_long = summary_len > git_actions::SUMMARY_LIMIT;
+        // The message has no frame of its own: the box's top line shows the focus. Its first
+        // line (the summary) is semibold.
+        let input = draft.text.input();
+        let (shown, layout) = summary_text(
+            input.as_str(),
+            input.cursor(),
+            input.selection(),
+            div()
+                .text_color(rgb(theme.subtle))
+                .child("Summary, then a blank line and details"),
+            focused,
+            theme,
+        );
+        let message = caret_mouse(
+            div()
+                .id("git-commit-message")
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text))
+                .cursor(CursorStyle::IBeam)
+                .child(shown),
+            &cx.entity(),
+            layout,
+            move |shell: &mut Shell, caret| {
+                let text = &mut shell.git_view(project_id).commit.text;
+                text.click(caret.at, caret.extend, caret.clicks);
+            },
+        );
         div()
             .flex_none()
             .flex()
@@ -894,22 +926,13 @@ impl Shell {
             .gap(px(space::S))
             .p(px(space::M))
             .border_t(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
+            .border_color(rgb(if focused {
+                theme.accent
+            } else {
+                theme.divider
+            }))
             .child(
-                caret_field(
-                    "git-commit-message",
-                    draft.text.input(),
-                    "Summary, then a blank line and details",
-                    focused,
-                    theme,
-                    cx,
-                    move |shell, caret| {
-                        let text = &mut shell.git_view(project_id).commit.text;
-                        text.click(caret.at, caret.extend, caret.clicks);
-                    },
-                )
-                // Flat like the panel's other fields: the faint divider until it is focused.
-                .when(!focused, |el| el.border_color(rgb(theme.divider)))
+                message
                 .max_h(px(theme::GIT_COMMIT_BOX_MAX_HEIGHT))
                 .overflow_y_scroll()
                 .when(draft.busy || generating, |el| el.opacity(opacity::DISABLED))
@@ -945,17 +968,24 @@ impl Shell {
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_subtle))
                     .child(div().flex_1().min_w_0().truncate().child(summary))
-                    .child(
-                        div()
-                            .id("git-commit-length")
-                            .flex_none()
-                            .when(too_long, |el| el.text_color(rgb(theme.danger_text)))
-                            .tooltip(tooltip(
-                                theme,
-                                "Length of the summary line (keep it under 72)",
-                                "",
-                            ))
-                            .child(format!("{summary_len} / {}", git_actions::SUMMARY_LIMIT)),
+                    .children(
+                        git_actions::summary_counter(summary_len).map(|(label, over)| {
+                            div()
+                                .id("git-commit-length")
+                                .flex_none()
+                                .font_family(theme.terminal_font_family.clone())
+                                .text_color(rgb(if over {
+                                    theme.status_needs_input
+                                } else {
+                                    theme.subtle
+                                }))
+                                .tooltip(tooltip(
+                                    theme,
+                                    "Length of the summary line (keep it under 72)",
+                                    "",
+                                ))
+                                .child(label)
+                        }),
                     ),
             )
             // Wraps at the narrowest panel instead of overflowing it.

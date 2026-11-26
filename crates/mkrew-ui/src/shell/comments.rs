@@ -560,12 +560,7 @@ impl Shell {
                 comments::List::Loaded(list) => list,
             };
         let threads = comments::threads(list);
-        let margin = margin.children(
-            comments
-                .error
-                .clone()
-                .map(|error| notice(theme.text, format!("✕ {error}"))),
-        );
+        let margin = margin.children(comments.error.clone().map(|error| error_note(error, theme)));
         if threads.is_empty() && new_draft.is_none() {
             let keys = self.keymap.label(Command::AddComment);
             let hint = match comments.selection {

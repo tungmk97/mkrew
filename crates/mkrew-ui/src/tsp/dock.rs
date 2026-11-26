@@ -41,6 +41,10 @@ pub enum DockRole {
     HudTodo,
     /// `overlay role=omp.autocomplete`: the completion list under the editor's caret.
     Completion,
+    /// `col role=omp.queue`: the texts queued while omp works.
+    Queue,
+    /// `row role=omp.queue.item` of the queue: an icon, the text, a count and an edit chip.
+    QueueItem,
 }
 
 pub fn dock_role(role: &str) -> Option<DockRole> {
@@ -69,6 +73,8 @@ pub fn dock_role(role: &str) -> Option<DockRole> {
         "omp.hud.seg" => DockRole::HudSeg,
         "omp.hud.todo" => DockRole::HudTodo,
         "omp.autocomplete" => DockRole::Completion,
+        "omp.queue" => DockRole::Queue,
+        "omp.queue.item" => DockRole::QueueItem,
         _ => return None,
     })
 }
@@ -216,6 +222,25 @@ fn quiet_color(node: &Node, theme: &Theme) -> u32 {
     }
 }
 
+/// The color of the cost: `subtle` (one tier below the facts); omp's tone `warning` / `error`
+/// keep their colors.
+fn usage_color(node: &Node, theme: &Theme) -> u32 {
+    match node.props.get("tone").and_then(Value::as_str) {
+        Some(tone @ ("warning" | "error")) => tone_color(tone, theme),
+        _ => theme.subtle,
+    }
+}
+
+/// The icon of a fact: `subtle` while the fact is quiet (`text_subtle`), so the icon is a tier
+/// below its text; a color omp gave the fact (its tone) stays.
+pub fn fact_icon_color(color: u32, theme: &Theme) -> u32 {
+    if color == theme.text_subtle {
+        theme.subtle
+    } else {
+        color
+    }
+}
+
 /// `runs` without the whitespace around the whole text.
 fn trim_runs(mut runs: Vec<(String, SpanStyle)>) -> Vec<(String, SpanStyle)> {
     if let Some((text, _)) = runs.first_mut() {
@@ -231,7 +256,7 @@ fn trim_runs(mut runs: Vec<(String, SpanStyle)>) -> Vec<(String, SpanStyle)> {
 pub struct Usage {
     pub id: String,
     pub text: String,
-    /// See [`Fact::color`].
+    /// `subtle`, or the tone color (see [`usage_color`]).
     pub color: u32,
 }
 
@@ -373,7 +398,7 @@ pub fn dock_model(doc: &Document, theme: &Theme) -> Option<DockModel> {
         .collect();
     let mut bar = bar_model(doc, bar, theme);
     // omp sends Stop in the bar while it works; the working row's own Stop is not drawn (the
-    // card's round button is the one), but it stands in when the bar has none.
+    // card's Send key chip or Stop button is the one), but it stands in when the bar has none.
     if let (Primary::Send(_), Some(stop)) = (
         &bar.primary,
         status.working.as_ref().and_then(|w| w.stop.clone()),
@@ -649,7 +674,7 @@ fn bar_model(doc: &Document, bar: &Node, theme: &Theme) -> BarModel {
                     m.usage = Some(Usage {
                         id: node.id.clone(),
                         text,
-                        color: quiet_color(node, theme),
+                        color: usage_color(node, theme),
                     });
                     m.parts.push(BarPart::Usage);
                 }
@@ -782,7 +807,7 @@ fn fact_width(fact: &Fact) -> f32 {
         FactBody::Text(text) | FactBody::Rate(text) => text_room(text),
         FactBody::Elapsed(_) => theme::TSP_ELAPSED_CHARS as f32 * theme::COMPOSER_MONO_CHAR_WIDTH,
     };
-    icon + body + space::S
+    icon + body + theme::COMPOSER_FACT_CHROME_WIDTH
 }
 
 /// The room the bar takes (px at 13 px UI size), every chip `flex_none` and the stats cell
@@ -803,11 +828,9 @@ pub fn bar_width(bar: &BarModel, fit: &BarFit) -> f32 {
         .filter(|(_, shown)| **shown)
         .map(|(fact, _)| fact_width(fact))
         .sum();
-    let usage = bar
-        .usage
-        .as_ref()
-        .filter(|_| fit.usage)
-        .map_or(0.0, |u| text_room(&u.text) + space::S);
+    let usage = bar.usage.as_ref().filter(|_| fit.usage).map_or(0.0, |u| {
+        text_room(&u.text) + theme::COMPOSER_FACT_CHROME_WIDTH
+    });
     theme::TSP_BAR_FIXED_WIDTH + model + facts + usage
 }
 
@@ -1049,6 +1072,16 @@ mod tests {
         assert_eq!(dock_role("omp.working.sep"), None);
         assert_eq!(dock_role("omp.composer"), None);
         assert_eq!(dock_role(""), None);
+    }
+
+    #[test]
+    fn the_queue_roles_are_matched_whole() {
+        assert_eq!(dock_role("omp.queue"), Some(DockRole::Queue));
+        assert_eq!(dock_role("omp.queue.item"), Some(DockRole::QueueItem));
+        // The count and the edit chip of an item are drawn generically inside it.
+        assert_eq!(dock_role("omp.queue.count"), None);
+        assert_eq!(dock_role("omp.queue.edit"), None);
+        assert_eq!(dock_role("omp.queued"), None);
     }
 
     /// The dock of `real_children(true)` with the ask card where the editor col stood.
@@ -1521,11 +1554,12 @@ mod tests {
     }
 
     #[test]
-    fn facts_and_the_cost_are_subtle_unless_omp_colors_them() {
+    fn facts_are_text_subtle_and_the_cost_is_subtle_unless_omp_colors_them() {
         let t = Theme::dark();
         let m = model_of(real_children(true)).expect("composer");
         assert!(m.bar.facts.iter().all(|f| f.color == t.text_subtle));
-        assert_eq!(m.bar.usage.as_ref().map(|u| u.color), Some(t.text_subtle));
+        // The cost is one tier below the facts.
+        assert_eq!(m.bar.usage.as_ref().map(|u| u.color), Some(t.subtle));
 
         let d = doc(vec![
             json!(["add", "f", "s:1", null, {"id": "f", "k": "seg", "p": {"role": "omp.composer.fact", "tone": "warning", "spans": [{"t": "*1 ", "s": "warning"}, {"t": "?1 ", "s": "muted"}]}}]),
@@ -1554,8 +1588,21 @@ mod tests {
             ],
             "span colors stay, the whole text is trimmed"
         );
-        assert_eq!(quiet_color(d.get("u").expect("cost"), &t), t.danger_text);
+        assert_eq!(usage_color(d.get("u").expect("cost"), &t), t.danger_text);
+        assert_eq!(usage_color(d.get("n").expect("cost"), &t), t.subtle);
         assert_eq!(quiet_color(d.get("n").expect("cost"), &t), t.text_subtle);
+    }
+
+    #[test]
+    fn a_quiet_fact_has_a_quieter_icon_than_its_text_and_a_toned_one_keeps_its_color() {
+        let t = Theme::dark();
+        assert_ne!(t.subtle, t.text_subtle, "the tiers differ");
+        assert_eq!(fact_icon_color(t.text_subtle, &t), t.subtle);
+        assert_eq!(
+            fact_icon_color(t.status_needs_input, &t),
+            t.status_needs_input
+        );
+        assert_eq!(fact_icon_color(t.danger_text, &t), t.danger_text);
     }
 
     #[test]
@@ -1584,10 +1631,19 @@ mod tests {
             color: 0,
             runs: Vec::new(),
         };
+        // A fact: icon and gap, the mono text, and the chips' own padding and the gap after it.
         assert!(
-            (fact_width(&m.bar.facts[0])
-                - fact_width(&yolo)
-                - (theme::ICON_SIZE_SMALL + space::XS))
+            (fact_width(&yolo)
+                - (4.0 * theme::COMPOSER_MONO_CHAR_WIDTH + theme::COMPOSER_FACT_CHROME_WIDTH))
+                .abs()
+                < 0.01
+        );
+        let with_icon = Fact {
+            icon: Some(Icon::Clock),
+            ..yolo.clone()
+        };
+        assert!(
+            (fact_width(&with_icon) - fact_width(&yolo) - (theme::ICON_SIZE_SMALL + space::XS))
                 .abs()
                 < 0.01
         );

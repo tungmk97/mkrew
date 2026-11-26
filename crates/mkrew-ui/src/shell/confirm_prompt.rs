@@ -88,7 +88,8 @@ impl Render for ConfirmPrompt {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let critical = self.level == PromptLevel::Critical;
-        let buttons: Vec<_> = self
+        let primary_key = (self.selected == 0 && !critical).then(|| "↵".to_owned());
+        let buttons: Vec<gpui::AnyElement> = self
             .order
             .iter()
             .map(|&ix| {
@@ -97,63 +98,67 @@ impl Render for ConfirmPrompt {
                 let id = BUTTON_IDS[ix];
                 let label = answer.label().clone();
                 let secondary = ix != 0 && !answer.is_cancel();
+                let filled = ix == 0 && !critical;
                 let frame = if ix == 0 && critical {
                     danger_button(id, label, &theme)
                 } else if ix == 0 {
-                    button(id, label, &theme, true)
+                    primary_button(id, label, primary_key.clone(), &theme)
                 } else if secondary {
                     secondary_button(id, label, &theme)
                 } else {
                     // No tooltip: gpui draws none while a prompt is open.
                     button(id, label, &theme, false)
                 };
-                // Every button keeps a 1 px border, so the keyboard ring never shifts the row.
-                let ring = (ix == self.selected).then_some(if ix == 0 {
-                    theme.text
+                // Every button keeps a 1 px border, so the keyboard ring never shifts the row:
+                // the ring is the accent border and `focus_ring`, or `focus_ring` on the accent fill.
+                let frame = if ix == self.selected {
+                    frame
+                        .relative()
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(rgb(if filled {
+                            theme.focus_ring
+                        } else {
+                            theme.accent
+                        }))
+                        .child(focus_ring(theme.accent, theme::radius::MEDIUM))
+                } else if secondary || (ix == 0 && critical) {
+                    frame
                 } else {
-                    theme.accent
-                });
-                let frame = match ring {
-                    Some(color) => frame
+                    frame
                         .border(px(theme::BORDER_WIDTH))
-                        .border_color(rgb(color)),
-                    None if secondary => frame,
-                    None => frame
-                        .border(px(theme::BORDER_WIDTH))
-                        .border_color(gpui::transparent_black()),
+                        .border_color(gpui::transparent_black())
                 };
                 frame
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(PromptResponse(ix))))
                     .into_any_element()
             })
             .collect();
-        let panel = floating_panel("confirm-dialog", &theme)
-            .w(px(theme::CONFIRM_DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(self.message.clone()),
-            )
-            .children(self.detail.clone().map(|detail| {
-                div()
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text_muted))
-                    .child(detail)
-            }))
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(px(space::S))
-                    .pt(px(space::S))
-                    .children(buttons),
-            );
+        let body = self
+            .detail
+            .clone()
+            .map(|detail| dialog_body().child(dialog_text(detail, &theme)));
+        let panel = dialog_frame(
+            floating_panel("confirm-dialog", &theme).w(px(theme::CONFIRM_DIALOG_WIDTH)),
+            DialogHead {
+                icon: if critical {
+                    Icon::TriangleAlert
+                } else {
+                    Icon::CircleHelp
+                },
+                tone: if critical {
+                    DialogTone::Danger
+                } else {
+                    DialogTone::Normal
+                },
+                title: self.message.clone(),
+                sub: None,
+                wrap: true,
+            },
+            None,
+            body,
+            Some(dialog_foot(&theme).children(buttons)),
+            &theme,
+        );
         // The shade blocks the window behind it; a click on it answers nothing (Esc or a
         // button does). The window stretches this view over its whole area.
         div()

@@ -282,46 +282,21 @@ impl Shell {
         cx.notify();
     }
 
-    /// A Docs dialog: its title, a sentence, its body and the buttons, in the shared modal
-    /// frame (Esc closes it; "Send to agent" also takes ↑ / ↓ / Enter).
+    /// A Docs dialog's panel: sized, with the dialog keys (Esc closes it; "Send to agent" also
+    /// takes ↑ / ↓ / Enter).
     pub(crate) fn doc_dialog_panel(
         &self,
         id: &'static str,
         width: f32,
-        title: String,
-        sentence: String,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        floating_panel(id, theme)
-            .w(px(width))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .dialog_root(
-                &self.dialog_focus,
-                false,
-                cx.listener(Self::dialog_guard),
-                cx.listener(Self::doc_dialog_key_down),
-            )
-            .child(
-                div()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(title),
-            )
-            .child(
-                div()
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    .child(sentence),
-            )
+        floating_panel(id, theme).w(px(width)).dialog_root(
+            &self.dialog_focus,
+            false,
+            cx.listener(Self::dialog_guard),
+            cx.listener(Self::doc_dialog_key_down),
+        )
     }
 
     /// "Send to agent": the workspace's live agent sessions to pick from (the file's last
@@ -363,78 +338,69 @@ impl Shell {
                 let session_id = choice.session_id;
                 let picked = selected == Some(index);
                 let last = dialog.last_session_id == Some(session_id);
-                div()
-                    .id(SharedString::from(format!("send-{session_id}")))
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .px(px(space::S))
-                    .py(px(space::XS))
-                    .rounded(px(radius::SMALL))
-                    .text_size(font_size::BODY)
-                    // The pick has a focus-colored ring: it is the picked row, so it does not hover.
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(if picked {
-                        gpui::Hsla::from(rgb(theme.pane_focus_stripe))
-                    } else {
-                        gpui::transparent_black()
-                    })
-                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
-                    .when(dialog.busy, |el| el.pressable(Look::Row, false, theme))
-                    .when(!dialog.busy, |el| {
-                        el.pressable_unless(picked, Look::Row, theme)
-                    })
-                    .on_press(
-                        !dialog.busy,
-                        cx.listener(move |shell, _, _, cx| {
-                            if let Some(DocDialog::Send(dialog)) = shell.doc_dialog.as_mut() {
-                                dialog.pick(session_id);
-                                cx.notify();
-                            }
-                        }),
-                    )
-                    .child(status_mark(choice.state, theme))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_color(rgb(theme.text))
-                            .when(picked, |el| el.font_weight(FontWeight(weight::MEDIUM)))
-                            .child(choice.label.clone()),
-                    )
-                    .when(last, |el| {
-                        el.child(
-                            div()
-                                .flex_none()
-                                .text_size(font_size::META)
-                                .text_color(rgb(theme.text_muted))
-                                .child(dialog.last_label()),
-                        )
-                    })
-                    .child(
+                with_pick(
+                    div()
+                        .id(SharedString::from(format!("send-{session_id}")))
+                        .flex()
+                        .items_center()
+                        .gap(px(space::S))
+                        .px(px(space::S))
+                        .py(px(space::XS))
+                        .rounded(px(radius::SMALL))
+                        .text_size(font_size::BODY),
+                    picked,
+                    theme,
+                )
+                .when(dialog.busy, |el| el.pressable(Look::Row, false, theme))
+                .when(!dialog.busy, |el| {
+                    el.pressable_unless(picked, Look::Row, theme)
+                })
+                .on_press(
+                    !dialog.busy,
+                    cx.listener(move |shell, _, _, cx| {
+                        if let Some(DocDialog::Send(dialog)) = shell.doc_dialog.as_mut() {
+                            dialog.pick(session_id);
+                            cx.notify();
+                        }
+                    }),
+                )
+                .child(status_mark(choice.state, theme))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .text_color(rgb(theme.text))
+                        .when(picked, |el| el.font_weight(FontWeight(weight::MEDIUM)))
+                        .child(choice.label.clone()),
+                )
+                .when(last, |el| {
+                    el.child(
                         div()
                             .flex_none()
                             .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
-                            .child(status::text(
-                                choice.state,
-                                None,
-                                choice.state_changed_at,
-                                now,
-                            )),
+                            .child(dialog.last_label()),
                     )
-                    .into_any_element()
+                })
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .child(status::text(
+                            choice.state,
+                            None,
+                            choice.state_changed_at,
+                            now,
+                        )),
+                )
+                .into_any_element()
             })
             .collect();
-        let footer = div()
-            .flex()
-            .items_center()
-            .justify_end()
-            .gap(px(space::S))
-            .pt(px(space::S));
+        let footer = dialog_foot(theme);
         let footer = if choices.is_empty() {
             footer
                 .child(
@@ -447,7 +413,7 @@ impl Shell {
                 )
                 .child(
                     button("send-terminals", "Show terminals", theme, true)
-                        .focus_stop(theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(theme, "Start an agent there, then send", ""))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_doc_dialog(window, cx);
@@ -475,8 +441,8 @@ impl Shell {
                 .child(if dialog.busy {
                     disabled_button("send-confirm", "Sending…", theme, true)
                 } else if selection {
-                    button("send-confirm", "Open composer", theme, true)
-                        .focus_stop(theme)
+                    primary_button("send-confirm", "Open composer", Some("↵".to_owned()), theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(
                             theme,
                             "Add the selection to this session's composer",
@@ -486,27 +452,17 @@ impl Shell {
                             shell.send_selection(window, cx);
                         }))
                 } else {
-                    button("send-confirm", "Send", theme, true)
-                        .focus_stop(theme)
+                    primary_button("send-confirm", "Send", Some("↵".to_owned()), theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(theme, "Send to the selected session", "Enter"))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.send_comments(window, cx);
                         }))
                 })
         };
-        let panel = self
-            .doc_dialog_panel(
-                "send-dialog",
-                theme::DIALOG_WIDTH,
-                match (selection, dialog.file_path.as_str()) {
-                    (true, "") => "Send selection · terminal".to_owned(),
-                    (true, path) => format!("Send selection · {path}"),
-                    (false, path) => format!("Send to agent · {path}"),
-                },
-                sentence,
-                theme,
-                cx,
-            )
+        let panel = self.doc_dialog_panel("send-dialog", theme::DIALOG_WIDTH, theme, cx);
+        let body = dialog_body()
+            .child(dialog_text(sentence, theme))
             .when(!rows.is_empty(), |el| {
                 el.child(
                     div()
@@ -519,15 +475,28 @@ impl Shell {
                         .children(rows),
                 )
             })
-            .children(dialog.error.clone().map(|error| {
-                div()
-                    .flex()
-                    .gap(px(space::XS))
-                    .text_size(font_size::META)
-                    .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                    .child(div().text_color(rgb(theme.text)).child(error))
-            }))
-            .child(footer);
+            .children(dialog.error.clone().map(|error| error_note(error, theme)));
+        let panel =
+            dialog_frame(
+                panel,
+                DialogHead {
+                    wrap: false,
+                    icon: Icon::Send,
+                    tone: DialogTone::Normal,
+                    title: match (selection, dialog.file_path.as_str()) {
+                        (true, "") => "Send selection · terminal".into(),
+                        (true, path) => format!("Send selection · {path}").into(),
+                        (false, path) => format!("Send to agent · {path}").into(),
+                    },
+                    sub: None,
+                },
+                Some(dialog_close("send-close-x", theme).on_click(
+                    cx.listener(|shell, _, window, cx| shell.close_doc_dialog(window, cx)),
+                )),
+                Some(body),
+                Some(footer),
+                theme,
+            );
         Self::modal_shade("send-dialog-shade", panel, cx)
     }
 
@@ -556,15 +525,9 @@ impl Shell {
         } else {
             format!("The file as it was when the comment{anchor} was sent{sent} (−) vs now (+).")
         };
-        let panel = self
-            .doc_dialog_panel(
-                "changes-dialog",
-                theme::UNDO_DIALOG_WIDTH,
-                format!("Changes · {}", changes.file_path),
-                sentence,
-                theme,
-                cx,
-            )
+        let panel = self.doc_dialog_panel("changes-dialog", theme::UNDO_DIALOG_WIDTH, theme, cx);
+        let body = dialog_body()
+            .child(dialog_text(sentence, theme))
             .when(!changes.lines.is_empty(), |el| {
                 el.child(
                     div()
@@ -587,16 +550,31 @@ impl Shell {
                     theme,
                     format!("{} more lines are left out.", changes.hidden).into(),
                 ))
-            })
-            .child(
-                div().flex().justify_end().pt(px(space::S)).child(
-                    button("changes-close", "Close", theme, true)
-                        .focus_stop(theme)
-                        .tooltip(tooltip(theme, "Close", "Esc"))
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.close_doc_dialog(window, cx);
-                        })),
-                ),
+            });
+        let foot = dialog_foot(theme).child(
+            primary_button("changes-close", "Close", None, theme)
+                .focus_stop_filled(theme)
+                .tooltip(tooltip(theme, "Close", "Esc"))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.close_doc_dialog(window, cx);
+                })),
+        );
+        let panel =
+            dialog_frame(
+                panel,
+                DialogHead {
+                    wrap: false,
+                    icon: Icon::FileDiff,
+                    tone: DialogTone::Normal,
+                    title: format!("Changes · {}", changes.file_path).into(),
+                    sub: None,
+                },
+                Some(dialog_close("changes-close-x", theme).on_click(
+                    cx.listener(|shell, _, window, cx| shell.close_doc_dialog(window, cx)),
+                )),
+                Some(body),
+                Some(foot),
+                theme,
             );
         Self::modal_shade("changes-dialog-shade", panel, cx)
     }

@@ -679,7 +679,7 @@ impl Shell {
                             el.child(loading_dots(now, rgb(theme.text_muted)))
                         }),
                 )
-                .children(error.map(|error| notice(theme.text, format!("✕ {error}"))))
+                .children(error.map(|error| error_note(error, theme)))
                 .into_any_element();
         }
         match view.map_or(&Load::NotLoaded, |v| &v.load) {
@@ -721,7 +721,7 @@ impl Shell {
                 let error_under = |key: &str| {
                     row_error
                         .filter(|(failed, _)| failed.as_str() == key)
-                        .map(|(_, reason)| notice(theme.text, format!("✕ {reason}")))
+                        .map(|(_, reason)| error_note(reason.clone(), theme))
                 };
                 let no_match = || {
                     message(
@@ -889,58 +889,55 @@ impl Shell {
             .get(&project_id)
             .and_then(|view| view.selected.as_deref())
             == Some(row.key);
-        div()
-            .id(("jira-issue", index))
-            .flex()
-            .items_center()
-            .gap(px(space::S))
-            .h(theme::rems_px(theme::BOARD_ROW_HEIGHT))
-            .pl(px(space::S + row.depth as f32 * space::XL))
-            .pr(px(space::S))
-            .rounded(px(radius::MEDIUM))
-            // Always bordered, so selecting does not shift the content.
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(if selected {
-                rgb(theme.pane_focus_stripe).into()
-            } else {
-                gpui::transparent_black()
-            })
-            .text_color(rgb(theme.text))
-            .pressable(Look::Row, true, theme)
-            .on_press(
-                true,
-                cx.listener(move |shell, _, window, cx| {
-                    shell.open_issue(project_id, key.clone(), window, cx);
-                }),
-            )
-            .child(fold)
-            .child(kind_icon(row.kind, theme))
-            .child(key_label(row.key, theme).w(theme::rems_px(theme::BOARD_KEY_WIDTH)))
-            .children(area.map(|area| area_chip(area, theme)))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(if row.issue.is_some() {
-                        theme.text
-                    } else {
-                        theme.text_muted
-                    }))
-                    .child(title.to_owned()),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_subtle))
-                    .child(row.kind.to_owned()),
-            )
-            .children(self.linked_chip(project_id, row.key, theme))
-            .children(row.issue.map(|issue| issue_pill(&issue.status, theme)))
+        with_pick(
+            div()
+                .id(("jira-issue", index))
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .h(theme::rems_px(theme::BOARD_ROW_HEIGHT))
+                .pl(px(space::S + row.depth as f32 * space::XL))
+                .pr(px(space::S))
+                .rounded(px(radius::CHIP))
+                .text_color(rgb(theme.text)),
+            selected,
+            theme,
+        )
+        .pressable_unless(selected, Look::Row, theme)
+        .on_press(
+            true,
+            cx.listener(move |shell, _, window, cx| {
+                shell.open_issue(project_id, key.clone(), window, cx);
+            }),
+        )
+        .child(fold)
+        .child(kind_icon(row.kind, theme))
+        .child(key_label(row.key, theme).w(theme::rems_px(theme::BOARD_KEY_WIDTH)))
+        .children(area.map(|area| area_chip(area, theme)))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_size(font_size::BODY)
+                .text_color(rgb(if row.issue.is_some() {
+                    theme.text
+                } else {
+                    theme.text_muted
+                }))
+                .child(title.to_owned()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_subtle))
+                .child(row.kind.to_owned()),
+        )
+        .children(self.linked_chip(project_id, row.key, theme))
+        .children(row.issue.map(|issue| issue_pill(&issue.status, theme)))
     }
 
     /// One Kanban card: title (two lines at most), then type icon, key, area chip and the
@@ -967,14 +964,14 @@ impl Shell {
             .flex_col()
             .gap(px(space::XS))
             .p(px(space::M))
-            .rounded(px(radius::MEDIUM))
-            .bg(rgb(theme.surface_raised))
-            // Always bordered, so hovering does not shift the content.
+            .rounded(px(radius::CARD))
+            .bg(rgb(theme.card))
+            // Always ringed, so hovering and selecting do not shift the content.
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(if selected {
-                theme.pane_focus_stripe
+                theme.accent
             } else {
-                theme.surface_raised
+                theme.divider
             }))
             .map(|el| card_press(el, selected, theme))
             .on_click(cx.listener(move |shell, _, window, cx| {
@@ -1096,13 +1093,9 @@ fn section_header(section: &Section<'_>, theme: &Theme) -> gpui::Div {
         .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, color))
         .child(
             div()
-                .font_weight(FontWeight(weight::SEMIBOLD))
-                .text_color(rgb(theme.text))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text_dim))
                 .child(section.status.to_owned()),
         )
-        .child(
-            div()
-                .text_color(rgb(theme.text_subtle))
-                .child(section.issues.len().to_string()),
-        )
+        .child(count_chip(section.issues.len(), theme))
 }

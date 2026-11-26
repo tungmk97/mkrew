@@ -25,7 +25,7 @@ use mkrew_ui::tsp::{
 use mkrew_ui::{docs, preview};
 use serde_json::{Value, json};
 
-use super::chat_view::{chat_column, page_column};
+use super::chat_view::{page_column, prompt_bubble};
 use super::composer::{
     composer_card_frame, composer_room, meter_bar, model_pill, permission_chip, placeholder_row,
     quiet_chip,
@@ -1238,7 +1238,7 @@ impl Shell {
         // color line and the badges, like the Chat list's `py(space::L)`; the bottom one parts
         // the last message from the status row and the meter.
         // Alone, the transcript is in the Chat column; among several panes it spans the pane like
-        // Tern (`tsp::column_max`). The dock below keeps the Chat column.
+        // Tern (`tsp::column_max`). The dock below uses the same `max`.
         let screen_rows: Vec<AnyElement> = if screen {
             (doc.children("main"))
                 .map(|node| {
@@ -1259,7 +1259,7 @@ impl Shell {
             .flatten();
         let card_dock = dock_model.is_some() || status_dock.is_some();
         let dock: Vec<AnyElement> = match (dock_model.as_ref(), status_dock.as_ref()) {
-            (Some(m), _) => self.tsp_dock(&paint, m, width, cx),
+            (Some(m), _) => self.tsp_dock(&paint, m, tsp::column_px(width, several), cx),
             (None, Some(d)) => self.tsp_dock_card(&paint, d, cx),
             (None, None) => (doc.children("dock"))
                 .map(|node| self.tsp_node(&paint, node, cx))
@@ -1304,10 +1304,14 @@ impl Shell {
                         let compact = paint.compact;
                         main.child(
                             gpui::list(ui.rows.clone(), move |ix, _, cx| {
-                                // The spacers keep the first row clear of the drag strip and
-                                // part the last one from the dock.
-                                if ix == 0 || ix > count {
+                                // The top spacer keeps the first row clear of the drag strip;
+                                // the bottom one is what is left of the dock gap (every row
+                                // that draws something carries `TSP_ROW_GAP` below it).
+                                if ix == 0 {
                                     return div().h(px(space::L)).into_any_element();
+                                }
+                                if ix > count {
+                                    return div().h(px(space::S)).into_any_element();
                                 }
                                 shell
                                     .update(cx, |shell, cx| {
@@ -1355,7 +1359,7 @@ impl Shell {
                             .bottom(px(space::S))
                             .child(page_column(
                                 div().flex().justify_end().child(
-                                    float_button("tsp-scroll-end", Icon::ArrowDown, theme)
+                                    scroll_end_button("tsp-scroll-end", theme)
                                         .tooltip(tooltip(
                                             theme,
                                             "Scroll to the latest message",
@@ -1378,15 +1382,18 @@ impl Shell {
                 }),
         )
         .child(
-            chat_column(
+            page_column(
                 div()
                     .flex()
                     .flex_col()
                     .when(!card_dock, |el| el.pb(px(space::S)))
                     .children(dock),
+                max,
+                false,
             )
-            // Chat: the card sits `space::M` above the pane's bottom edge.
-            .when(card_dock, |el| el.pb(px(space::M))),
+            // The card sits `space::L` above the pane's bottom edge and spans the transcript
+            // column like the rows above it.
+            .when(card_dock, |el| el.pb(px(space::L))),
         )
         // The session ended: the last document stays, read-only, under the usual notice.
         .children(exited.map(|code| exited_notice(code, theme)))
@@ -1446,7 +1453,8 @@ impl Shell {
             bounded: false,
             compact,
         };
-        let el = match ui.thoughts.get(&node.id) {
+        let plan = ui.thoughts.get(&node.id);
+        let el = match plan {
             // Folded into the lead's head: the row draws nothing.
             Some(tsp::RowPlan::Folded) => return div().into_any_element(),
             Some(tsp::RowPlan::Lead { label, open }) => {
@@ -1471,7 +1479,8 @@ impl Shell {
             }
             None => self.tsp_node(&paint, node, cx),
         };
-        page_column(el, max, false).into_any_element()
+        let gap = tsp::row_gap(tsp::row_kind(doc, node), plan);
+        page_column(el, max, false).pb(px(gap)).into_any_element()
     }
 
     /// A child of `layer`: an `overlay` is a modal card placed by its `anchor` and `size`; any other
@@ -1613,6 +1622,7 @@ impl Shell {
     ) -> Vec<AnyElement> {
         p.doc
             .children(&node.id)
+            .filter(|child| !bool_prop(child, "hidden"))
             .map(|child| self.tsp_node(p, child, cx))
             .collect()
     }
@@ -1727,8 +1737,52 @@ impl Shell {
     }
     #[inline(never)]
     fn tsp_row(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        if tsp::role_of(node).and_then(tsp::dock_role) == Some(tsp::DockRole::QueueItem) {
+            return self.tsp_queue_item(p, node, cx);
+        }
         let kids = self.tsp_children(p, node, cx);
         self.tsp_row_el(p, node, kids, cx)
+    }
+
+    /// One queued text (`omp.queue.item`): a `TSP_QUEUE_ITEM_HEIGHT` pill with a `layer[0]` fill,
+    /// its icon at 14 px in `text_subtle`, the text in META `text_muted` clipped at the row's end,
+    /// then whatever omp put after it (the count, the edit chip) drawn generically.
+    #[inline(never)]
+    fn tsp_queue_item(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
+        let theme = p.theme;
+        let kids: Vec<AnyElement> = (p.doc.children(&node.id))
+            .filter(|child| !bool_prop(child, "hidden"))
+            .map(|child| match child.kind.as_str() {
+                "icon" => str_prop(child, "name")
+                    .and_then(|name| self.tsp_icon(p, name, theme.text_subtle))
+                    .map_or_else(
+                        || div().into_any_element(),
+                        |icon| div().flex_none().child(icon).into_any_element(),
+                    ),
+                "text" => div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(self.tsp_node(p, child, cx))
+                    .into_any_element(),
+                _ => self.tsp_node(p, child, cx),
+            })
+            .collect();
+        let el = div()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .min_w_0()
+            .h(theme::rems_px(theme::TSP_QUEUE_ITEM_HEIGHT))
+            .pl(px(space::M))
+            .pr(px(space::XS))
+            .rounded(px(theme::radius::PILL))
+            .bg(gpui::rgba(theme.layer[0]))
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .children(kids);
+        // `Look::Text`: the pill's own fill is `layer[0]`, which the `Chip` hover would not show on.
+        self.tsp_decorate(el, p, node, Look::Text, false, cx)
     }
 
     #[inline(never)]
@@ -1760,8 +1814,11 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let theme = p.theme;
-        let gap = px(tsp::gap_px(str_prop(node, "gap")));
+        let gap = px(tsp::col_gap(tsp::role_of(node), str_prop(node, "gap")));
         let mut el = div().flex().flex_col().gap(gap).min_w_0();
+        if tsp::role_of(node).and_then(tsp::dock_role) == Some(tsp::DockRole::Queue) {
+            el = el.gap(px(space::XS)).pb(px(space::S));
+        }
         if node.kind == "overlay" {
             el = el
                 .p(px(space::M))
@@ -1794,9 +1851,18 @@ impl Shell {
         } else if let Some(split) = split {
             self.tsp_scroll_body(p, node, split, cx)
         } else {
+            let tool = tsp::is_tool(node);
             (p.doc.children(&node.id))
                 .filter(|child| head_child.is_none_or(|head| head.id != child.id))
-                .map(|child| self.tsp_node(p, child, cx))
+                .filter(|child| !bool_prop(child, "hidden"))
+                .map(|child| {
+                    let el = self.tsp_node(p, child, cx);
+                    if tool && matches!(child.kind.as_str(), "ansi" | "rows") {
+                        tool_well(el, p.theme)
+                    } else {
+                        el
+                    }
+                })
                 .collect()
         };
         self.tsp_card_el(p, node, head_el, body, cx)
@@ -1813,19 +1879,57 @@ impl Shell {
     ) -> AnyElement {
         let theme = p.theme;
         let card = node.kind == "card";
+        if card && !p.in_layer && tsp::is_user_prompt(node) {
+            return self.tsp_user_prompt(p, node, head_el, body, cx);
+        }
         let mut el = div().flex().flex_col().gap(px(space::S)).min_w_0();
         if p.bounded {
             // The pane (or the overlay container) bounds this card: its list or body scrolls.
             el = el.overflow_hidden();
         }
-        if !p.in_layer && card {
+        // A tool row is plain rows on the page (Tern); other cards keep their raised frame.
+        if !p.in_layer && card && !tsp::is_tool(node) {
             el = el
                 .p(px(space::M))
                 .rounded(px(theme::radius::MEDIUM))
                 .bg(rgb(theme.surface_raised));
         }
-        let el = Self::tsp_flow(el, node).children(head_el).children(body);
+        let el = Self::tsp_flow(el, node).children(head_el);
+        let el = if tsp::is_thinking(node) && !body.is_empty() {
+            el.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::S))
+                    .min_w_0()
+                    .pl(px(space::L))
+                    .children(body),
+            )
+        } else {
+            el.children(body)
+        };
         self.tsp_decorate(el, p, node, Look::Text, false, cx)
+    }
+
+    /// The prompt card of the user: Tern's right-aligned bubble; its head row (copy, rewind,
+    /// time) leaves the bubble and shows under it while the row is hovered.
+    fn tsp_user_prompt(
+        &self,
+        p: &Paint<'_>,
+        node: &Node,
+        head_el: Option<AnyElement>,
+        body: Vec<AnyElement>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let group = SharedString::from(format!("tsp-user-{}-{}", p.session, node.id));
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .min_w_0()
+            .children(body);
+        let bubble = prompt_bubble(body, head_el.map(|head| (group, head)), p.theme);
+        self.tsp_decorate(bubble, p, node, Look::Text, false, cx)
     }
 
     /// The head of a card or section: its `head` spans or its head child; `None` without one.
@@ -1903,23 +2007,47 @@ impl Shell {
         let theme = p.theme;
         let collapsible = bool_prop(node, "collapsible");
         let collapsed = bool_prop(node, "collapsed");
-        let head_color =
-            str_prop(node, "tone").map_or(theme.text, |tone| tsp::tone_color(tone, theme));
+        let user = tsp::is_user_prompt(node);
+        let tool = tsp::is_tool(node);
+        let head_color = if user {
+            theme.text_subtle
+        } else {
+            match str_prop(node, "tone") {
+                // A tool title is `text` unless it failed; other heads keep omp's tone.
+                Some(tone) if !tool || tone == "error" => tsp::tone_color(tone, theme),
+                _ => theme.text,
+            }
+        };
         let group = SharedString::from(format!("tsp-hg-{}-{}", p.session, node.id));
         let mut row = div()
             .flex()
             .items_center()
             .gap(px(space::S))
             .group(group.clone());
+        if user {
+            row = row.justify_end();
+        }
+        if tool {
+            row = row
+                .min_h(theme::rems_px(theme::TSP_HEAD_HEIGHT))
+                .mx(px(-space::XS))
+                .px(px(space::XS))
+                .rounded(px(theme::radius::SMALL));
+        }
         if collapsible {
             let chevron = if collapsed {
                 Icon::ChevronRight
             } else {
                 Icon::ChevronDown
             };
-            let mark = icon_svg(chevron, theme::ICON_SIZE_SMALL, theme.text_muted);
+            let color = if tool {
+                theme.text_subtle
+            } else {
+                theme.text_muted
+            };
+            let mark = icon_svg(chevron, theme::ICON_SIZE_SMALL, color);
             // A tool card's chevron shows while its head is hovered.
-            row = if tsp::role_of(node).is_some_and(|role| role.starts_with("omp.tool.")) {
+            row = if tool {
                 row.child(
                     mark.opacity(theme::opacity::HIDDEN)
                         .group_hover(group, |style| style.opacity(theme::opacity::FULL)),
@@ -1929,10 +2057,21 @@ impl Shell {
             };
         }
         let row = match child {
+            // A tool title is MEDIUM (Tern); the child keeps its own color.
+            Some(child) if tool => {
+                row.child(div().font_weight(FontWeight(weight::MEDIUM)).child(child))
+            }
             Some(child) => row.child(child),
+            None if tool => row.child(styled_runs_w(
+                head,
+                head_color,
+                false,
+                weight::MEDIUM,
+                theme,
+            )),
             None => row.child(
                 div()
-                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .when(!user, |el| el.font_weight(FontWeight(weight::SEMIBOLD)))
                     .child(styled_runs(head, head_color, false, theme)),
             ),
         };
@@ -1944,7 +2083,7 @@ impl Shell {
             "tsp-head-{}-{}",
             p.session, node.id
         )))
-        .pressable(Look::Text, true, theme)
+        .pressable(if tool { Look::Row } else { Look::Text }, true, theme)
         .on_press(
             true,
             cx.listener(move |shell, _, _, cx| {
@@ -1969,7 +2108,19 @@ impl Shell {
 
     #[inline(never)]
     fn tsp_md(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
-        let theme = p.theme;
+        // A thinking body is `text_subtle`: paragraphs take `theme.text`, so give them that tier.
+        // ponytail: one Theme clone per painted thinking body; a Flavor variant if it shows up in a profile.
+        let thought = parent_is(p, node, tsp::is_thinking);
+        let thought_theme;
+        let theme = if thought {
+            thought_theme = Theme {
+                text: p.theme.text_subtle,
+                ..p.theme.clone()
+            };
+            &thought_theme
+        } else {
+            p.theme
+        };
         let text = str_prop(node, "text").unwrap_or("");
         // The cache keys on the node's revision; a fence is built on a miss only.
         let (kind, lang) = (node.kind.as_str(), str_prop(node, "lang"));
@@ -1996,11 +2147,18 @@ impl Shell {
             theme,
         );
         let (session, id) = (p.session, node.id.clone());
+        // The prompt bubble keeps the UI's 1.5.
+        let line_height = if parent_is(p, node, tsp::is_user_prompt) {
+            theme::UI_LINE_HEIGHT
+        } else {
+            theme::doc::CHAT_LINE_HEIGHT
+        };
         let el = div()
+            .when(thought && kind == "md", |el| el.italic())
             .flex()
             .flex_col()
             .gap(px(space::M))
-            .line_height(relative(theme::doc::LINE_HEIGHT))
+            .line_height(relative(line_height))
             .min_w_0()
             .children(blocks)
             .on_mouse_down(
@@ -2044,10 +2202,20 @@ impl Shell {
     #[inline(never)]
     fn tsp_plain(&self, p: &Paint<'_>, node: &Node, cx: &mut Context<'_, Self>) -> AnyElement {
         let theme = p.theme;
-        let base = str_prop(node, "tone").map_or(theme.text, |tone| tsp::tone_color(tone, theme));
+        let thought = parent_is(p, node, tsp::is_thinking);
+        // A thinking body is `text_subtle` and italic (here and in `tsp_md`, never on its code cards).
+        let base = str_prop(node, "tone").map_or(
+            if thought {
+                theme.text_subtle
+            } else {
+                theme.text
+            },
+            |tone| tsp::tone_color(tone, theme),
+        );
         let runs = tsp::node_spans(&node.props, theme);
         let mut el = div()
             .min_w_0()
+            .when(thought, |el| el.italic())
             .child(styled_runs(&runs, base, false, theme));
         if node.props.get("wrap").and_then(Value::as_str) == Some("none") {
             el = el.whitespace_nowrap();
@@ -2715,10 +2883,9 @@ impl Shell {
                 EditorLook::Plain => {
                     div().child(styled_runs(&placeholder, theme.text_dim, false, theme))
                 }
-                EditorLook::Composer { .. } => placeholder_row(
-                    styled_runs(&placeholder, theme.text_muted, false, theme),
-                    theme,
-                ),
+                EditorLook::Composer { .. } => {
+                    placeholder_row(styled_runs(&placeholder, theme.subtle, false, theme), theme)
+                }
             };
             let empty = div()
                 .flex()
@@ -2916,9 +3083,33 @@ fn thumbnail(image: Arc<gpui::Image>, theme: &Theme) -> Div {
         )
 }
 
-/// The head of an `omp.thinking*` section, or of a run of them: META italic `text_subtle`
-/// (`text_muted` on hover) with the chevron after the label. `collapsed`: the chevron's state, or
-/// `None` without one. The caller adds the press.
+/// Whether `node`'s parent satisfies `want` (a role test such as `tsp::is_thinking`).
+fn parent_is(p: &Paint<'_>, node: &Node, want: fn(&Node) -> bool) -> bool {
+    node.parent
+        .as_deref()
+        .and_then(|id| p.doc.get(id))
+        .is_some_and(want)
+}
+
+/// An `ansi` or `rows` body of a tool row (command output, a diff): `code_bg` with a `layer[0]`
+/// ring, `radius::MEDIUM`, 8 by 12 padding. A `code` node is a code card already.
+fn tool_well(body: AnyElement, theme: &Theme) -> AnyElement {
+    div()
+        .min_w_0()
+        .overflow_hidden()
+        .px(px(space::M))
+        .py(px(space::S))
+        .rounded(px(theme::radius::MEDIUM))
+        .bg(rgb(theme.code_bg))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::rgba(theme.layer[0]))
+        .child(body)
+        .into_any_element()
+}
+
+/// The head of an `omp.thinking*` section, or of a run of them: BODY italic `text_subtle`
+/// (`text` on hover), 24 px at least, with the chevron after the label. `collapsed`: the
+/// chevron's state, or `None` without one. The caller adds the press.
 fn thinking_head_el(
     theme: &Theme,
     key: String,
@@ -2933,9 +3124,7 @@ fn thinking_head_el(
             Icon::ChevronDown
         };
         icon_svg(icon, theme::GROUP_CHEVRON_SIZE, theme.text_subtle)
-            .group_hover(group.clone(), |style| {
-                style.text_color(rgb(theme.text_muted))
-            })
+            .group_hover(group.clone(), |style| style.text_color(rgb(theme.text)))
     });
     div()
         .id(SharedString::from(key))
@@ -2944,12 +3133,13 @@ fn thinking_head_el(
         .flex()
         .items_center()
         .gap(px(space::XS))
-        .text_size(font_size::META)
+        .min_h(theme::rems_px(theme::TSP_HEAD_HEIGHT))
+        .text_size(font_size::BODY)
         .italic()
         .child(
             div()
                 .text_color(rgb(theme.text_subtle))
-                .group_hover(group, |style| style.text_color(rgb(theme.text_muted)))
+                .group_hover(group, |style| style.text_color(rgb(theme.text)))
                 .child(label),
         )
         .children(chevron)
@@ -3243,6 +3433,7 @@ impl Shell {
                 )
                 // An opaque fill: a popover with text must be readable over the page.
                 .bg(rgb(theme.surface_raised))
+                .shadow(theme::shadow_pop(theme))
                 .w(px(theme::TSP_POPOVER_WIDTH))
                 .max_h(px(height.max(theme::TSP_POPOVER_MIN_HEIGHT)))
                 .p(px(space::M))
@@ -3296,18 +3487,19 @@ impl Shell {
 
 impl Shell {
     /// The dock of an omp pane that has the composer roles (spec 7.8): the dock's own children in
-    /// order, except that the node where the editor stands becomes the status row, the meter and
-    /// the card, and the nodes the status row took over are skipped.
+    /// order, except that the node where the editor stands becomes the status row and the card
+    /// (with the meter on it), and the nodes the status row took over are skipped. `column` is the
+    /// text column in px (page padding off).
     fn tsp_dock(
         &self,
         p: &Paint<'_>,
         m: &tsp::DockModel,
-        width: f32,
+        column: f32,
         cx: &mut Context<'_, Self>,
     ) -> Vec<AnyElement> {
         let mut out = Vec::new();
         for node in p.doc.children("dock") {
-            self.tsp_dock_node(p, m, node, width, &mut out, cx);
+            self.tsp_dock_node(p, m, node, column, &mut out, cx);
         }
         out
     }
@@ -3317,7 +3509,7 @@ impl Shell {
         p: &Paint<'_>,
         m: &tsp::DockModel,
         node: &Node,
-        width: f32,
+        column: f32,
         out: &mut Vec<AnyElement>,
         cx: &mut Context<'_, Self>,
     ) {
@@ -3325,10 +3517,10 @@ impl Shell {
             return;
         }
         if node.id == m.editor {
-            out.push(self.tsp_composer(p, m, width, cx));
+            out.push(self.tsp_composer(p, m, column, cx));
         } else if m.path.contains(&node.id) {
             for child in p.doc.children(&node.id) {
-                self.tsp_dock_node(p, m, child, width, out, cx);
+                self.tsp_dock_node(p, m, child, column, out, cx);
             }
         } else {
             out.push(self.tsp_node(p, node, cx));
@@ -3389,13 +3581,14 @@ impl Shell {
         }
     }
 
-    /// The status row (when it has anything), the context meter and the card: the Chat composer
-    /// with omp's content. Compact (`Paint::compact`): the card with the field only.
+    /// The status row (when it has anything) and the card, with the context meter on its top
+    /// edge: the Chat composer with omp's content. Compact (`Paint::compact`): the card with the
+    /// field only.
     fn tsp_composer(
         &self,
         p: &Paint<'_>,
         m: &tsp::DockModel,
-        width: f32,
+        column: f32,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let theme = p.theme;
@@ -3428,16 +3621,13 @@ impl Shell {
             return composer_card_frame(theme).child(field).into_any_element();
         }
         let status = self.tsp_dock_status(p, &m.status, cx);
-        // The fill is neutral; omp's warning and error tones past its thresholds keep theirs.
         let meter = m.context.as_ref().map(|c| {
             let marks = c.marks.iter().map(|k| (k.at, k.title.clone())).collect();
-            let fill = match c.tone {
-                "accent" => theme.text_muted,
-                tone => tsp::tone_color(tone, theme),
-            };
+            // Neutral fill; omp's warning and error tones past its thresholds keep theirs.
+            let tone = (c.tone != "accent").then(|| tsp::tone_color(c.tone, theme));
             let bar = meter_bar(
                 c.fraction.unwrap_or(0.0),
-                fill,
+                tone,
                 c.label.clone(),
                 c.total.clone(),
                 marks,
@@ -3450,7 +3640,12 @@ impl Shell {
             .filter_map(|id| doc.get(id))
             .map(|node| self.tsp_attachment(p, node, cx))
             .collect();
+        let rise = meter.is_some();
         let card = composer_card_frame(theme)
+            .children(meter)
+            .when(rise, |el| {
+                el.mt(theme::rems_px(theme::CONTEXT_METER_RISE - space::S))
+            })
             .children(focus)
             .when(!chips.is_empty(), |el| {
                 el.child(
@@ -3460,13 +3655,12 @@ impl Shell {
                 )
             })
             .child(field)
-            .child(self.tsp_dock_bar(p, m, width, cx));
+            .child(self.tsp_dock_bar(p, m, column, cx));
         div()
             .flex()
             .flex_col()
             .gap(px(space::S))
             .children(status)
-            .children(meter)
             .child(card)
             .into_any_element()
     }
@@ -3488,6 +3682,7 @@ impl Shell {
         let image = (p.doc.children(&node.id))
             .find(|child| child.kind == "image")
             .and_then(|child| self.tsp_image_data(p, child));
+        let filled = image.is_none();
         let chip = div().id(key.clone());
         let chip = match image {
             Some(image) => chip.group(key.clone()).child(
@@ -3510,23 +3705,27 @@ impl Shell {
                     label
                 }),
         };
-        let chip = chip
-            .pressable_unless(open, Look::Chip, theme)
-            .when(p.tips(), |el| {
-                el.tooltip(tooltip(theme, "Preview the attachment", ""))
-            })
-            .on_press(
-                true,
-                cx.listener(move |shell, _, _, cx| {
-                    if let Some(ui) = shell.tsps.get_mut(&session) {
-                        ui.chip_open = match ui.chip_open {
-                            Some(_) => None,
-                            None => Some(id.clone()),
-                        };
-                    }
-                    cx.notify();
-                }),
-            );
+        // The text chip has its own `accent_bg` fill: its hover must not erase it.
+        let chip = (if filled && !open {
+            chip.pressable_on(Look::Chip, theme.accent_bg, theme)
+        } else {
+            chip.pressable_unless(open, Look::Chip, theme)
+        })
+        .when(p.tips(), |el| {
+            el.tooltip(tooltip(theme, "Preview the attachment", ""))
+        })
+        .on_press(
+            true,
+            cx.listener(move |shell, _, _, cx| {
+                if let Some(ui) = shell.tsps.get_mut(&session) {
+                    ui.chip_open = match ui.chip_open {
+                        Some(_) => None,
+                        None => Some(id.clone()),
+                    };
+                }
+                cx.notify();
+            }),
+        );
         if !open {
             return chip.into_any_element();
         }
@@ -3546,6 +3745,7 @@ impl Shell {
             theme,
         )
         .bg(rgb(theme.surface_raised))
+        .shadow(theme::shadow_pop(theme))
         .max_w(px(theme::TSP_POPOVER_WIDTH))
         .p(px(space::M))
         .on_mouse_down_out(cx.listener(move |shell, event: &MouseDownEvent, _, cx| {
@@ -3576,12 +3776,12 @@ impl Shell {
         &self,
         p: &Paint<'_>,
         m: &tsp::DockModel,
-        width: f32,
+        column: f32,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let theme = p.theme;
         let exited = self.is_exited(p.session);
-        let fit = tsp::fit_bar(&m.bar, composer_room(width, cx));
+        let fit = tsp::fit_bar(&m.bar, composer_room(column, cx));
         let mut cells: Vec<AnyElement> = Vec::new();
         for part in &m.bar.parts {
             match part {
@@ -3608,7 +3808,7 @@ impl Shell {
                             .min_w_0()
                             .overflow_hidden()
                             .items_center()
-                            .gap(px(space::S))
+                            .gap(px(space::XS))
                             .font_family(theme.terminal_font_family.clone())
                             .children(facts)
                             .into_any_element(),
@@ -3625,7 +3825,7 @@ impl Shell {
                 }
             }
         }
-        // The chips share what the round button leaves; `fit_bar` decides what drops, and a low
+        // The chips share what the send chip leaves; `fit_bar` decides what drops, and a low
         // estimate clips a chip (the model name truncates), never the button.
         div()
             .flex()
@@ -3741,7 +3941,11 @@ impl Shell {
             body => {
                 let mut el = quiet_chip(div(), theme).text_color(rgb(fact.color));
                 if let Some(icon) = fact.icon {
-                    el = el.child(icon_svg(icon, theme::ICON_SIZE_SMALL, fact.color));
+                    el = el.child(icon_svg(
+                        icon,
+                        theme::ICON_SIZE_SMALL,
+                        tsp::fact_icon_color(fact.color, theme),
+                    ));
                 }
                 match body {
                     tsp::FactBody::Text(_) if !fact.runs.is_empty() => {
@@ -3757,7 +3961,7 @@ impl Shell {
         self.tsp_chip(p, &fact.id, Look::Chip, el, cx)
     }
 
-    /// The round Send (enabled with text, `submit`) or Stop (`interrupt`) button, the same size,
+    /// The Send key chip (enabled with text, `submit`) or the Stop text button (`interrupt`),
     /// at the end of the bar.
     fn tsp_dock_primary(
         &self,
@@ -3778,7 +3982,7 @@ impl Shell {
         match &m.bar.primary {
             tsp::Primary::Stop(id) => {
                 let (tip, id) = (title(id, "Stop"), id.clone());
-                round_stop_button("tsp-stop", theme)
+                stop_text_button("tsp-stop", !exited, theme)
                     .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "")))
                     .on_press(
                         !exited,
@@ -3794,7 +3998,7 @@ impl Shell {
                     .as_deref()
                     .map_or_else(|| "Send".to_owned(), |id| title(id, "Send"));
                 let id = id.clone().unwrap_or_default();
-                round_button("tsp-send", Icon::CornerDownLeft, can, theme)
+                send_key_chip("tsp-send", can, theme)
                     .when(p.tips(), |el| el.tooltip(tooltip(theme, &tip, "")))
                     .on_press(
                         can,
@@ -3807,7 +4011,7 @@ impl Shell {
         }
     }
 
-    /// The row above the meter, as Tern: on the left the working row (loading dots, elapsed time,
+    /// The row above the card and its meter, as Tern: on the left the working row (loading dots, elapsed time,
     /// a divider, the label) and any other status node; on the right the todo hud and the hud
     /// pill. `None` when there is nothing.
     fn tsp_dock_status(
@@ -3836,8 +4040,8 @@ impl Shell {
                 .items_center()
                 .gap(px(space::M))
                 .min_w_0()
-                .px(px(space::S))
-                .pb(px(space::XS))
+                .h(theme::rems_px(theme::TSP_STATUS_ROW_HEIGHT))
+                .px(px(space::M))
                 .child(
                     div()
                         .flex_1()
@@ -3855,7 +4059,7 @@ impl Shell {
     }
 
     /// The working row: loading dots, the elapsed time, a divider and the label. Its own Stop is
-    /// not drawn: the card's round Stop is the one.
+    /// not drawn: the card's Stop is the one.
     fn tsp_dock_working(
         &self,
         p: &Paint<'_>,
@@ -3878,6 +4082,7 @@ impl Shell {
             .items_center()
             .gap(px(space::S))
             .min_w_0()
+            .min_h(theme::rems_px(theme::TSP_HEAD_HEIGHT))
             .text_size(font_size::META)
             .child(
                 div()
@@ -3890,13 +4095,14 @@ impl Shell {
                     .flex_none()
                     .w(px(theme::BORDER_WIDTH))
                     .h(theme::rems_px(space::M))
-                    .bg(rgb(theme.divider)),
+                    .bg(rgb(theme.subtle)),
             )
             .child(
                 div()
                     .min_w_0()
                     .truncate()
                     .text_size(font_size::BODY)
+                    .font_weight(FontWeight(weight::MEDIUM))
                     .text_color(rgb(theme.text_muted))
                     .child(w.label.clone()),
             )
@@ -3922,7 +4128,7 @@ impl Shell {
             .flex_none()
             .items_center()
             .gap(px(space::XS))
-            .h_full()
+            .h(theme::rems_px(theme::TSP_HUD_SEGMENT_HEIGHT))
             .px(px(space::S))
             .rounded(px(theme::radius::PILL))
             .children(
@@ -3933,7 +4139,7 @@ impl Shell {
         self.tsp_chip(p, &pill.id, Look::Chip, el, cx)
     }
 
-    /// The hud row as Tern draws it: ONE pill with a `border` ring and no fill, its segments
+    /// The hud row as Tern draws it: ONE pill with a `layer[1]` ring and no fill, its segments
     /// split by a thin divider.
     fn tsp_dock_pills(
         &self,
@@ -3950,7 +4156,7 @@ impl Shell {
                         .flex_none()
                         .w(px(theme::BORDER_WIDTH))
                         .h(theme::rems_px(space::M))
-                        .bg(rgb(theme.border))
+                        .bg(gpui::rgba(theme.layer[1]))
                         .into_any_element(),
                 );
             }
@@ -3960,12 +4166,14 @@ impl Shell {
             .flex()
             .flex_none()
             .items_center()
-            .h(theme::rems_px(theme::PILL_HEIGHT))
+            .h(theme::rems_px(theme::COMPOSER_PILL_HEIGHT))
+            .px(px(theme::TSP_HUD_PAD))
             .rounded(px(theme::radius::PILL))
             .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
+            .border_color(gpui::rgba(theme.layer[1]))
             .font_family(theme.terminal_font_family.clone())
             .text_size(font_size::META)
+            .font_weight(FontWeight(weight::MEDIUM))
             .text_color(rgb(theme.text_muted))
             .children(segs)
             .into_any_element()

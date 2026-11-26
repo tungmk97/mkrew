@@ -27,21 +27,21 @@ use mkrew_core::UsageFormat;
 use mkrew_core::prompt::PromptVars;
 use mkrew_core::settings::{DiffMode, NotifySettings, OpenWorkspace, PanelSide, WindowMode};
 use mkrew_protocol::{
-    AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, ChangeKind, CommentContext,
-    CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
-    DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
-    FsContent, FsCreateParams, FsCreated, FsEntry, FsIgnoreParams, FsListParams, FsMatch,
-    FsNewNoteParams, FsWritten, GitCheckoutParams, GitCommitResult, GitMarker, GitMode, GitStatus,
-    GitStatusParams, Outcome, Project, ProjectAddParams, ProjectClonedEvent, ProjectRef,
-    ProjectUpdateParams, RemoveWorktreeResult, Request, RunStartParams, RunStarted, RunStopParams,
-    Session, SessionAttachResult, SessionFiles, SessionKillParams, SessionKind,
-    SessionLinkPlanParams, SessionListParams, SessionLogTail, SessionLogTailParams,
-    SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionReadResult,
-    SessionRef, SessionResumeParams, SessionSendParams, SessionSendResult, SessionSpawnResult,
-    SessionState, SessionTranscript, SessionTranscriptParams, SessionUnqueueParams,
-    SessionUsageEvent, SlashListResult, StateSource, TabCreateParams, TabListParams, TabPinParams,
-    TabRef, TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef,
-    TaskStatus, TerminalTab, Turn, UndoPreview, ViewedFile,
+    AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, CommentContext, CommentId,
+    CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS, DiffLineKind,
+    DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff, FsContent,
+    FsCreateParams, FsCreated, FsEntry, FsIgnoreParams, FsListParams, FsMatch, FsNewNoteParams,
+    FsWritten, GitCheckoutParams, GitCommitResult, GitMarker, GitMode, GitStatus, GitStatusParams,
+    Outcome, Project, ProjectAddParams, ProjectClonedEvent, ProjectRef, ProjectUpdateParams,
+    RemoveWorktreeResult, Request, RunStartParams, RunStarted, RunStopParams, Session,
+    SessionAttachResult, SessionFiles, SessionKillParams, SessionKind, SessionLinkPlanParams,
+    SessionListParams, SessionLogTail, SessionLogTailParams, SessionMoveParams, SessionPinParams,
+    SessionPlanEvent, SessionPortsEvent, SessionReadResult, SessionRef, SessionResumeParams,
+    SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState, SessionTranscript,
+    SessionTranscriptParams, SessionUnqueueParams, SessionUsageEvent, SlashListResult, StateSource,
+    TabCreateParams, TabListParams, TabPinParams, TabRef, TabSetLayoutParams, Task,
+    TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn,
+    UndoPreview, ViewedFile,
 };
 use mkrew_ui::ask::{self, Ask};
 use mkrew_ui::attention::{self, Tracker};
@@ -63,7 +63,7 @@ use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
 use mkrew_ui::documents::{self, Documents, MdMode, Resolution};
 use mkrew_ui::editor::{self, EditKey, Pos};
 use mkrew_ui::fanout::{self, Compare, FanOutPicker};
-use mkrew_ui::field::{Caret, caret_mouse, caret_text, copy_selection};
+use mkrew_ui::field::{Caret, caret_mouse, caret_text, copy_selection, summary_text};
 use mkrew_ui::files_view::{self, FilesView, Requests};
 use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};

@@ -527,17 +527,9 @@ impl Shell {
         let state = self.session_state(dialog.session_id);
         let list: gpui::AnyElement = match &dialog.listing {
             turns_dialog::Listing::Loading => muted("Loading the turns…".into()).into_any_element(),
-            turns_dialog::Listing::Failed(error) => div()
-                .flex()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                .child(
-                    div()
-                        .text_color(rgb(theme.text))
-                        .child(format!("Cannot list the turns: {error}")),
-                )
-                .into_any_element(),
+            turns_dialog::Listing::Failed(error) => {
+                error_note(format!("Cannot list the turns: {error}"), theme).into_any_element()
+            }
             turns_dialog::Listing::Loaded(turns) if turns.is_empty() => {
                 muted("No turns yet: they are recorded as the agent works.".into())
                     .into_any_element()
@@ -591,80 +583,86 @@ impl Shell {
                                         .tooltip(tooltip(theme, reason, ""))
                                 }
                             };
-                            div()
-                                .id(SharedString::from(format!("turn-{n}")))
-                                .flex()
-                                .items_center()
-                                .gap(px(space::S))
-                                .px(px(space::S))
-                                .py(px(space::XS))
-                                .rounded(px(radius::SMALL))
-                                .when(selected, |el| el.bg(rgb(theme.surface_raised)))
-                                .pressable_unless(selected, Look::Row, theme)
-                                .on_press(
-                                    true,
-                                    cx.listener(move |shell, _, _, cx| {
-                                        if let Some(dialog) = shell.turns_dialog.as_mut() {
-                                            dialog.selected = index;
-                                            cx.notify();
-                                        }
-                                    }),
-                                )
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_col()
-                                        .child(
-                                            div()
-                                                .text_size(font_size::BODY)
-                                                .font_weight(FontWeight(weight::MEDIUM))
-                                                .text_color(rgb(theme.text))
-                                                .child(row.title),
-                                        )
-                                        .child(
-                                            div()
-                                                .overflow_hidden()
-                                                .text_ellipsis()
-                                                .whitespace_nowrap()
-                                                .text_size(font_size::META)
-                                                .text_color(rgb(theme.text_muted))
-                                                .child(details),
-                                        ),
-                                )
-                                .child(diff.flex_none())
-                                .child(restore.flex_none())
+                            with_pick(
+                                div()
+                                    .id(SharedString::from(format!("turn-{n}")))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(space::S))
+                                    .px(px(space::S))
+                                    .py(px(space::XS))
+                                    .rounded(px(radius::CHIP)),
+                                selected,
+                                theme,
+                            )
+                            .pressable_unless(selected, Look::Row, theme)
+                            .on_press(
+                                true,
+                                cx.listener(move |shell, _, _, cx| {
+                                    if let Some(dialog) = shell.turns_dialog.as_mut() {
+                                        dialog.selected = index;
+                                        cx.notify();
+                                    }
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(font_size::BODY)
+                                            .font_weight(FontWeight(weight::MEDIUM))
+                                            .text_color(rgb(theme.text))
+                                            .child(row.title),
+                                    )
+                                    .child(
+                                        div()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .whitespace_nowrap()
+                                            .text_size(font_size::META)
+                                            .text_color(rgb(theme.text_subtle))
+                                            .child(details),
+                                    ),
+                            )
+                            .child(diff.flex_none())
+                            .child(restore.flex_none())
                         }),
                 )
                 .into_any_element(),
         };
         let panel = floating_panel("turns-dialog", theme)
             .w(px(theme::TURNS_DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::turns_dialog_key_down))
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(format!("Turns of {}", dialog.agent)),
-            )
-            .child(list)
-            .child(
-                div().flex().justify_end().pt(px(space::S)).child(
-                    button("turns-close", "Close", theme, true)
-                        .tooltip(tooltip(theme, "Close", "Esc"))
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.close_turns_dialog(window, cx);
-                        })),
-                ),
-            );
+            .on_key_down(cx.listener(Self::turns_dialog_key_down));
+        let body = dialog_body().child(list);
+        let foot = dialog_foot(theme).child(
+            primary_button("turns-close", "Close", None, theme)
+                .focus_stop_filled(theme)
+                .tooltip(tooltip(theme, "Close", "Esc"))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.close_turns_dialog(window, cx);
+                })),
+        );
+        let panel = dialog_frame(
+            panel,
+            DialogHead {
+                wrap: false,
+                icon: Icon::History,
+                tone: DialogTone::Normal,
+                title: format!("Turns of {}", dialog.agent).into(),
+                sub: None,
+            },
+            Some(dialog_close("turns-close-x", theme).on_click(
+                cx.listener(|shell, _, window, cx| shell.close_turns_dialog(window, cx)),
+            )),
+            Some(body),
+            Some(foot),
+            theme,
+        );
         Self::modal_shade("turns-dialog-shade", panel, cx)
     }
 
@@ -683,14 +681,7 @@ impl Shell {
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
-        let error_row = |error: String| {
-            div()
-                .flex()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                .child(div().text_color(rgb(theme.text)).child(error))
-        };
+        let error_row = |error: String| error_note(error, theme);
         let list: Vec<gpui::AnyElement> = match &dialog.listing {
             Listing::Loading => vec![muted("Loading the sessions…".into()).into_any_element()],
             Listing::Failed(error) => {
@@ -704,61 +695,61 @@ impl Shell {
                 .map(|session| {
                     let id = session.id;
                     let selected = dialog.selected == Some(id);
-                    div()
-                        .id(SharedString::from(format!("history-{id}")))
-                        .flex()
-                        .flex_col()
-                        .px(px(space::S))
-                        .py(px(space::XS))
-                        .rounded(px(radius::SMALL))
-                        .when(selected, |el| el.bg(rgb(theme.surface_raised)))
-                        .pressable_unless(selected, Look::Row, theme)
-                        .on_press(
-                            true,
-                            cx.listener(move |shell, _, window, cx| {
-                                shell.select_history(id, window, cx);
-                            }),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(space::XS))
-                                .text_size(font_size::BODY)
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .text_color(rgb(if history::failed(session) {
-                                            sidebar::status_color(theme, SessionState::Exited)
-                                        } else {
-                                            theme.text_muted
-                                        }))
-                                        .child(status::icon(SessionState::Exited)),
-                                )
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .overflow_hidden()
-                                        .text_ellipsis()
-                                        .whitespace_nowrap()
-                                        .text_color(rgb(theme.text))
-                                        .when(selected, |el| {
-                                            el.font_weight(FontWeight(weight::MEDIUM))
-                                        })
-                                        .child(history::label(session)),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .whitespace_nowrap()
-                                .text_size(font_size::META)
-                                .text_color(rgb(theme.text_muted))
-                                .child(history::details(session, now)),
-                        )
-                        .into_any_element()
+                    with_pick(
+                        div()
+                            .id(SharedString::from(format!("history-{id}")))
+                            .flex()
+                            .flex_col()
+                            .px(px(space::S))
+                            .py(px(space::XS))
+                            .rounded(px(radius::CHIP)),
+                        selected,
+                        theme,
+                    )
+                    .pressable_unless(selected, Look::Row, theme)
+                    .on_press(
+                        true,
+                        cx.listener(move |shell, _, window, cx| {
+                            shell.select_history(id, window, cx);
+                        }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(space::XS))
+                            .text_size(font_size::BODY)
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_color(rgb(if history::failed(session) {
+                                        sidebar::status_color(theme, SessionState::Exited)
+                                    } else {
+                                        theme.text_muted
+                                    }))
+                                    .child(status::icon(SessionState::Exited)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .text_color(rgb(theme.text))
+                                    .child(history::label(session)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_subtle))
+                            .child(history::details(session, now)),
+                    )
+                    .into_any_element()
                 })
                 .collect(),
         };
@@ -810,7 +801,7 @@ impl Shell {
             let blocked = history::resume_blocked(session)
                 .or(dialog.resuming.then_some("Starting the agent…"));
             match blocked {
-                None => button("history-resume", label, theme, true)
+                None => primary_button("history-resume", label, Some("↵".to_owned()), theme)
                     .tooltip(tooltip(
                         theme,
                         "Continue this conversation in a new pane",
@@ -823,42 +814,7 @@ impl Shell {
                     .tooltip(tooltip(theme, reason, "")),
             }
         });
-        let panel = floating_panel("history-dialog", theme)
-            .w(relative(theme::HISTORY_DIALOG_FRACTION))
-            .h(relative(theme::HISTORY_DIALOG_FRACTION))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::history_key_down))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_size(font_size::CARD_TITLE)
-                            .font_weight(FontWeight(weight::SEMIBOLD))
-                            .text_color(rgb(theme.text))
-                            .child(format!("History · {}", dialog.workspace)),
-                    )
-                    .children(resume)
-                    .child(
-                        button("history-close", "Close", theme, false)
-                            .tooltip(tooltip(theme, "Close", "Esc"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.close_history(window, cx);
-                            })),
-                    ),
-            )
+        let body = dialog_body()
             .children(dialog.resume_error.clone().map(error_row))
             .child(
                 div()
@@ -879,6 +835,35 @@ impl Shell {
                     )
                     .child(div().flex_1().min_w_0().flex().flex_col().children(log)),
             );
+        let foot = dialog_foot(theme).children(resume).child(
+            button("history-close", "Close", theme, false)
+                .tooltip(tooltip(theme, "Close", "Esc"))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.close_history(window, cx);
+                })),
+        );
+        let panel = dialog_frame(
+            floating_panel("history-dialog", theme)
+                .w(relative(theme::HISTORY_DIALOG_FRACTION))
+                .h(relative(theme::HISTORY_DIALOG_FRACTION))
+                .track_focus(&self.dialog_focus)
+                .on_key_down(cx.listener(Self::history_key_down)),
+            DialogHead {
+                wrap: false,
+                icon: Icon::History,
+                tone: DialogTone::Normal,
+                title: format!("History · {}", dialog.workspace).into(),
+                sub: None,
+            },
+            Some(dialog_close("history-close-x", theme).on_click(cx.listener(
+                |shell, _, window, cx| {
+                    shell.close_history(window, cx);
+                },
+            ))),
+            Some(body),
+            Some(foot),
+            theme,
+        );
         Self::modal_shade("history-shade", panel, cx)
     }
 }

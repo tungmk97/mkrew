@@ -1287,7 +1287,7 @@ The tooltip gives the status in words, the time and the turns, so color is never
   A Claude subagent started in the background stays in the tray until its `<task-notification>` arrives.
   Codex tool output is read in the shapes current Codex writes: a JSON string with `metadata.exit_code`, or text with an `Exit code: N` or `Process exited with code N` line before `Output:`.
   The tool and thinking row toggles, the "earlier turns" link and "Answer in terminal" are Tab stops (Enter or Space presses them); PageUp, PageDown, Home, End and the arrows scroll the list, and Esc ends a selection, else returns to the composer.
-  ADR 0105 gives the page a centered column of 760 px with `space::XL` side padding: the prompt is a right-aligned bubble, the agent's text has accent headings and bullet dots, inline code and file paths are pills (a path in a Chat message opens the file in a file pane at its `:line`), code blocks are cards with a language label and a Copy button (```` ```mermaid ```` blocks are diagrams with Expand, ```` ```csv ```` and ```` ```tsv ```` blocks are tables, §12), and thinking and tool calls between two texts are one activity row ("Thought for 4s · 3 commands, 2 reads", "Working…" while it runs) that opens to the thinking text and the tool rows.
+  ADR 0105 gives the page a centered column of 760 px with `space::XL` side padding: the prompt is a right-aligned bubble, the agent's text has `text` headings and `text_subtle` bullets, inline code and file paths are pills (a path in a Chat message opens the file in a file pane at its `:line`), code blocks are sunken cards (`code_bg`, a `layer[1]` ring) with a 32 px head holding the language and a text-only Copy (```` ```mermaid ```` blocks are diagrams with Expand, ```` ```csv ```` and ```` ```tsv ```` blocks are tables, §12), and thinking and tool calls between two texts are one activity row ("Thought for 4s · 3 commands, 2 reads", "Working…" while it runs) that opens to the thinking text and the tool rows.
   An omp turn ends with omp's recap line when it is not older than the turn's prompt and the agent is not working.
   The composer is a floating card in the same column (§20B).
   In a narrow card Send is never clipped: the chip cell shrinks and clips, and the Prompts and sparkle tools drop whole when the row has no room for them (ADR 0107).
@@ -1313,8 +1313,9 @@ The tooltip gives the status in words, the time and the turns, so color is never
   The pane by `Session.tsp`: `off` is the terminal pane with the title bar's `Terminal | Chat` toggle; `waiting` (TSP on, no surface yet) is the starting state of an agent pane; `live` is the surface; `fallback` (no hello within 10 s of the session's first output, because resumed and concurrently started omp sessions need over 2 s to send it, or an unsupported hello version, or omp closed the surface with `x {keep:false}`, or omp said hello but opened no surface within 60 s of the first output) is the terminal grid without the Chat toggle and one info toast "omp is drawing as text: <reason>"; a hello that still arrives within 60 s of the first output after the 10 s fallback is answered and the pane switches to the native surface, while later hellos and the other fallbacks are final; an exited session keeps its last document, read-only, under the existing exited notice.
   While `live` the state comes from omp's hooks only (§6); without hooks it is `unknown`.
   `mk web` shows "This omp session uses Mkrew's native view. Open it on the desktop." in place of the terminal of a live session that has not exited; an exited one shows its replay, which holds only what omp printed before the hello (the log keeps plain bytes only), so the read-only document survives only in a UI that was connected when omp exited; its state, Stop, the reply chips and the quick keys keep working.
-  The dock is drawn as Tern's composer from the pieces of the Chat composer card (§20B, ADR 0105, ADR 0116), with omp as the only source of the content: the context meter above the card (a 1 px line, `text_muted` fill, `status_needs_input` past `thresholds.warn`, `danger_text` past `bad`, the percent above the end of the fill and the total at the right, marks as ticks shown while the meter is hovered, a click sends `status.context`), the card (`surface_raised`, `radius::COMPOSER`, glass border, float shadow) holding the editor line (the placeholder in `text_subtle`, upright, no icon; omp's `ghost` text right after the caret) and the chip row: the model pill (a 1 px `border` ring with no fill, `text` at 500, chevron; omp's effort glyph leads it and the effort label is in its tooltip), quiet mono fact chips in `text_subtle` (colors omp puts in spans stay; an `accent` span such as `⚡ yolo` takes the Chat permission chip look), the rate and cost chips, and the round Send (`CornerDownLeft`, a neutral fill that turns to `text` on hover, never accent) or Stop (a `text` circle with a square) at the end of the row.
-  Above the meter, the status row has the working row (loading dots, the elapsed time in mono `text_subtle`, a divider, the label in `text_muted`; the card's Stop is the only Stop), the todo HUD, and the hud as one pill with a `border` ring and no fill whose segments (the agent and jobs pills, each an icon and a count in mono) are split by dividers.
+  The dock is drawn as Tern's composer from the pieces of the Chat composer card (§20B, ADR 0105, ADR 0116), with omp as the only source of the content: the context meter on the card's top edge (an absolute box 12 px above the card, 16 px in from both sides, a 1 px track at the foot of its 14 px box, the rail `text` at 9 %, the fill `text` at 42 %, `status_needs_input` past `thresholds.warn`, `danger_text` past `bad`, the percent above the end of the fill and the total at the right in OVERLINE mono MEDIUM `text_subtle`, marks as ticks shown while the meter is hovered, a click sends `status.context`), the card (`composer_fill`, `radius::PANEL`, a 1 px `layer[1]` ring, the `glass_hi` top line, `shadow_composer`, padding `pt(M) pb(S) px(M)`, as wide as the transcript column and `space::L` above the pane bottom) holding the editor line (the placeholder in `subtle`, upright, no icon; omp's `ghost` text right after the caret) and the chip row: the model pill (24 px, `radius::MEDIUM`, a `layer[0]` fill with no ring, hover `layer[1]`, `text` at 500, a `text_subtle` chevron; omp's effort glyph leads it and the effort label is in its tooltip), quiet mono fact chips (OVERLINE, `text_subtle`, icons in `subtle`, `px(XS)` each, 4 px apart, a `layer[0]` hover when clickable) (colors omp puts in spans stay; an `accent` span such as `⚡ yolo` takes the Chat permission chip look), the rate chip, the cost (OVERLINE mono `subtle`; omp's warning and error tones stay), and at the end of the row the Send key chip (24 px high, at least 28 wide, `radius::MEDIUM`, a `layer[0]` fill with a `layer[1]` ring, a 12 px `CornerDownLeft` in `text_subtle` that turns `text` on hover; dimmed while nothing can be sent) or the Stop text button (24 px high, `px(M)`, META SEMIBOLD `danger_text` on `status_exited` at 8 % with a 22 % ring, 14 % on hover; its tooltip shows Esc).
+  Above the card, the status row (26 px high, `space::M` at the left, 8 px above the card) has the working row (loading dots, the elapsed time in mono `text_subtle`, a `subtle` divider, the label in `text_muted` at MEDIUM; the card's Stop is the only Stop), the todo HUD, and the hud as one 24 px pill with a `layer[1]` ring and no fill (MEDIUM, 2 px inner padding) whose 20 px segments (the agent and jobs pills, each an icon and a count in mono, a `layer[0]` hover) are split by `layer[1]` dividers.
+  Texts queued while omp works (`col role=omp.queue`, items `row role=omp.queue.item`) are 26 px pills (`radius::PILL`, `layer[0]` fill, META `text_muted`, a 14 px `text_subtle` icon, 4 px apart) above the card.
   When the chip row is too narrow it drops, in this order: the facts by omp's `priority` (highest number first), the cost, and last the model name truncates (not below about six characters); the model pill never shrinks and Send or Stop is never clipped.
   A dock without omp 18.13.2's roles (`omp.editor`, `omp.composer.*`, `omp.hud*`, `omp.working*`) is drawn by the generic fallback.
   Nerd Font private-use glyphs in text (spans styled `icon`) are drawn upright in the terminal font with `TERMINAL_GLYPH_FALLBACKS`, whose first entry (Symbols Nerd Font Mono) ships with the app (ADR 0116).
@@ -1325,8 +1326,12 @@ The tooltip gives the status in words, the time and the turns, so color is never
   A click sends `select`, a double-click `activate`, a button `action`; keys still go to omp, and "Other..." opens omp's own text field.
   omp's todo (`checklist`) shows as a one-line HUD at the right of the status row above the dock (the active todo mark and the active item, else the first pending one, else "All done", then `done/total` in the terminal font, muted); a click opens the phase list in a glass panel above the row (at most 60% of the pane height, scrolling; Esc or a click outside closes it, nothing is sent to omp).
   The same phase list is the body of the todo card in the conversation (`full`) and of the todo reminder (a muted note, done phases collapsed): a header per phase with a status mark (the active todo mark while it has an active item, a `status_done` filled circle when all items are done or dropped, a muted ring otherwise), its Roman numeral, title (`text`, `text_muted` once done) and `done/count`; a click on a header folds it; items are marked active (`accent` ring and text), pending (muted ring), done (`status_done` check, muted text), dropped (muted, struck through) and blocked (`status_needs_input`, " (blocked)"), with a note as a muted second line.
-  A thinking head (`omp.thinking`) is META italic `text_subtle` with its chevron after the label.
+  A thinking head (`omp.thinking`) has its chevron after the label.
   Top-level rows that show only one collapsed thinking section, with only hidden rows between them, show as one head: "Thought for <sum of `took`>" (whole seconds, at least 1 s), or "Thought N times" when one has no `took`; a click opens the run, a click on its head closes it (ADR 0116).
+  Every top-level row that draws something has `TSP_ROW_GAP` (16 px) below it; a hidden row and a thought folded into its run's head add none. A `col` with role `omp.assistant*` has at least `space::S` between its children. A thinking head is BODY italic `text_subtle` (`text` on hover), at least 24 px high; its open body is italic `text_subtle`, indented by `space::L`. The working row is 24 px high, its label MEDIUM `text_muted`, in the text column (ADR 0117).
+  The prompt (`card` role `omp.user`) is a right-aligned bubble in both the omp pane and the Chat view: at most 80 % of the column and 540 px (`CHAT_PROMPT_MAX_WIDTH`), `py(S) px(L)`, radii 12/12/4/12, `layer[1]` fill, BODY at line height 1.5. omp's head row (copy, rewind, time) shows under the bubble, right aligned in META `text_subtle`, while the prompt is hovered.
+  Chat Markdown: line height 1.6 (`doc::CHAT_LINE_HEIGHT`), headings `text` SEMIBOLD at 1.35 on their own scale (20/17/15/14), list items `space::S` apart with a `text_subtle` dot (a nested item has a ring bullet and `text_muted` text), table cells `py(XS)` with a META MEDIUM `text_muted` head over a `border` line and `divider` lines between rows, inline code on `layer[0]`, links in `text` under a 1 px accent line at 40 %, quote bar `border` with `text_muted` text. Code lines are 13 px at 1.6 in Chat and Docs (`doc::CODE_LINE_HEIGHT`).
+  A tool call (`card` role `omp.tool*`) has no box: its head is 24 px high with `space::XS` inset and a `radius::SMALL` hover fill, the chevron (`text_subtle`) shows on hover, the title is MEDIUM; open, its `ansi` and `rows` bodies sit on `code_bg` with a `layer[0]` ring and `radius::MEDIUM`. Other cards (`omp.welcome`, overlays) keep their raised frame.
 - Pane menu (right-click a sidebar session row, or Shift+F10 with a terminal focused; a pane has no header to right-click): **Pin**, **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise), **Rename** (inline
   like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears).
   The tab menu has Rename pane, Close pane, Zoom pane, Follow in Zed, Turns… and Change color for the focused pane.
@@ -1402,12 +1407,12 @@ Only edit this file. When done, for EACH comment run:
 - **Tree** (the right panel's Files tab, ADR 0081; opens with `Ctrl+Shift+3`; its rows drag onto
   panes, §20B.5): lazily loaded per folder, respects `.gitignore` (an
   eye toggle beside the search shows ignored files; accent while they show, ADR 0110),
-  git status markers next to names (M modified, A added, D deleted, ? untracked), a small dot on
-  folders containing changes. In a workspace with child repositories (ADR 0029) the markers come
+  git status as a 6 px dot at the row end in the status color with the name tinted (modified, added or untracked, deleted; the letter M / A / D / ? is in the dot's tooltip), the same dot on folders containing changes; names `text_muted` (hover, cursor and opened rows `text`, ignored and dot files `text_subtle`), a Lucide icon by file type in `text_subtle` (`Icon::for_file`; folders `folder`), 1 px indent guides, the opened row with the selected-row tint and bar and an accent icon (ADR 0117). In a workspace with child repositories (ADR 0029) the markers come
   from the project folder's repository and from each child repository the listed folder is in
   (all of them when the root is listed). Updates live when agents create/delete/rename files.
 - **File pane** (ADR 0108, replaces the Editor view): an open file is a leaf of a terminal tab's split tree.
   It is a tab in the title bar's tab area (file-type icon, file name, `●` while unsaved, × to close) or a pane inside the tab in front, inside the same frame, stripe and dim as a terminal pane (§14).
+  The header is a breadcrumb (folders META `text_subtle` with `›` in `subtle`, the name BODY MEDIUM `text`), `Ln, Col` (terminal font META `text_subtle`), the Markdown mode switch, then icon buttons with tooltips and keys: Review in Docs, Save, Find, Open in Zed, close.
   There is no Editor view, no Editor chip and no file tab strip.
   A workspace has at most one pane per file across all its tabs and windows: opening a file that is open focuses its pane (its tab and window come to the front) and jumps to the line.
   A single click on a file in the tree, or Enter on it, opens the workspace's **preview tab** (italic title), which the next single click replaces while it is clean; a double click, Alt+Enter, an edit, Pin or a drag (a move of the pane) keeps it.
@@ -1422,7 +1427,7 @@ Only edit this file. When done, for EACH comment run:
   click places the caret, Shift+click / drag select; arrows (Ctrl = by word), Home/End
   (Ctrl = file), PgUp/PgDn, Backspace/Delete (Ctrl = word), Enter keeps the indent, Tab, Ctrl+A,
   Ctrl+Z / Ctrl+Y undo/redo, Ctrl+C/X/V. Line endings and the final newline are kept. Unsaved
-  changes show `●` before the path; Ctrl+S or "Save" writes the file (`fs.write`). Files > 2 MB
+  changes show a dot on the Save button; Ctrl+S or Save writes the file (`fs.write`). Files > 2 MB
   or binary: a read-only notice and "Open in Zed". A scroll bar on the right shows where the
   view is (only when the file is taller than the view): drag its thumb, or press the track to
   jump there.
@@ -1515,8 +1520,8 @@ Only edit this file. When done, for EACH comment run:
 
 ## §12B UI: Git (right panel tab and Diff pane)
 
-The Git tab of the right panel holds, top to bottom (ADR 0110): the Working / Vs. base / History tabs (underlined text tabs under the repository tabs), the filter row (field, `Viewed N/M`, "Changed by"), the list, the commit box and a footer with the branch, its upstream, Fetch and Push; as wide as the panel (240-560 px; the filter row wraps).
-Group headers are sentence case with a muted count (`Staged 0`); the empty Staged hint is a muted line; a file row is 28 px with its change letter colored and unfilled.
+The Git tab of the right panel holds, top to bottom (ADR 0110): the Working / Vs. base / History tabs (a compact segmented control under the repository tabs), the filter row (field, `Viewed N/M`, "Changed by"), the list, the commit box and a footer with the branch, its upstream, Fetch and Push; as wide as the panel (240-560 px; the filter row wraps).
+Group headers are sentence case with the count in a `well` chip (`Staged 0`); the empty Staged hint is a muted line; a file row is 28 px with a 16 px status chip (a tint of the letter's hue, an outline for `?`), the selected one the accent tint plus bar.
 The Diff pane (ADR 0108) holds the toolbar (file, Unified / Split, Wrap, Viewed, Open in Zed, Discard, Stage file, `…`, ✕), unified / split, hunks, the comment margin and Send to agent.
 It is a leaf of a tab's split tree like a file: a tab of its own in the title bar (diff icon, `Diff`) or a pane next to terminals and files.
 A workspace has at most one Diff pane, across all its tabs and windows; it shows the diff of the Git list's selected file.
@@ -1551,7 +1556,7 @@ Windows (tens of ms, worse with antivirus), so:
       working tree — like a pull request diff.
 - **Changed-file list** (the Git tab) with +/− counts; selecting one shows its diff.
 - **Diff viewer:** unified or split (side-by-side), hunk navigation, collapsed unchanged regions, syntax
-  highlighting. Diffs > 1 MB show a summary and "Open in Zed".
+  highlighting (12 px on 20 px lines; hunk header 24 px). Diffs > 1 MB show a summary and "Open in Zed".
 - **Diff modes:** a Unified | Split toggle in the diff header (key `d`, §13) switches between one
   column (removed lines, then added lines) and two columns (old on the left, new on the right). Split
   is one virtualized list of paired rows, so one scroll handle moves both sides. In a hunk the i-th
@@ -1604,8 +1609,9 @@ Windows (tens of ms, worse with antivirus), so:
   `code "<quote>"` instead of `passage "<quote>"`. Comments on non-Markdown files are not
   re-anchored when the code changes (backlog); `doc.list` ignores diff comments.
 - **Extra tokens:** `diff-add-bg`, `diff-add-text`, `diff-del-bg`, `diff-del-text`,
-  `diff-mod-bg`, `diff-mod-text` (a line changed in place, Split), `diff-hunk-header` (dark + light)
-  in `theme.rs`. Diff backgrounds stay very subtle.
+  `diff-mod-bg`, `diff-mod-text` (a line changed in place, Split), `diff-hunk-header` (dark + light),
+  `diff-*-gutter`, `diff-add-num`, `diff-del-num`, `hunk-bg`, `hunk-current-bg`
+  in `theme.rs`. Diff backgrounds stay very subtle: the hue (`status-done`, `status-exited`, `status-needs-input`) at 7 % over `surface`; the gutter adds 8 %; line numbers are the hue at 60 % (75 % in light themes) over the gutter; changed words 26 % / 25 % over `surface`; hunk bars are the accent at 4.5 % / 9 %. Tern Dark: add row #192321, del row #261B1E, hunk #191B23; Tern Light: add row #EFF6F3, del row #FBF1F1, hunk #F6F8FE (full values in `theme.rs`).
 
 ---
 
@@ -1835,87 +1841,118 @@ The terminal is the hero; everything else steps back.
 
 **Design tokens** — all in `crates/mkrew-ui/src/theme.rs`. No hard-coded values in components.
 
-Restyle of 2026-10-24 (ADR 0074). The sidebar session list and compact rail keep the palette from
-before it (`Theme::classic`).
+Restyle of 2026-10-24 (ADR 0074), retuned to Tern's grounds and tiers by ADR 0117; the sidebar session list and rail use these tokens too.
 
 | Token | Dark | Light |
 | --- | --- | --- |
-| `bg` (content) | #15171B | #FFFFFF |
-| `surface` (panel) | #121418 | #FAFAFB |
-| `surface-raised` | #2A2E35 | #E6E8EC |
-| `chrome` / `sidebar` | #0F1013 | #F7F7F8 |
-| `card` (raised) | #1C1F24 | #F7F8FA |
-| `hover` | #1F2227 | #EEF0F3 |
-| `row-hover` | #1A1D21 | #F4F5F7 |
-| `well` | #17191D | #F1F2F4 |
-| `selected` | #2A2E35 | #E6E8EC |
-| `border` | #23262C | #DFE1E6 |
-| `control-border` | #262A31 | #D9DCE1 |
-| `divider` | #1E2126 | #E9EBEE |
-| `terminal-bg` | #0B0C0E | #FCFCFD |
-| `pane-gap` (the frame behind and between panes, and the title bar) | #000000 | #F3F4F6 |
-| `text` | #ECEDEF | #1B1D22 |
-| `text-dim` | #D5D8DD | #3A3E46 |
-| `text-muted` | #A3A8B0 | #5A606B |
-| `text-subtle` (dimmest text) | #7D838C | #6B717C |
-| `text-disabled` | #8A9099 | #6B717C |
-| `subtle` (graphics only) | #5D616C | #A0A4AF |
+| `bg` (content) | #0F0F12 | #FBFBFA |
+| `surface` (panel) | #161619 | #FFFFFF |
+| `surface-raised` | #232327 | #F4F4F2 |
+| `chrome` (fields on the bar) | #19191B | #E3E3E2 |
+| `sidebar` | `pane-gap` | `pane-gap` |
+| `card` (raised) | #161619 | #FFFFFF |
+| `hover` / `row-hover` (l1 over `bg`) | #202023 | #EDEEEE |
+| `well` | #17171A | #F4F4F2 |
+| `selected` | #232327 | #E7E7E7 |
+| `border` (l2) | #27272A | #E7E7E7 |
+| `control-border` (l3) | #333336 | #DBDCDD |
+| `divider` (l1) | #202023 | #EDEEEE |
+| `terminal-bg` | #0F0F12 | #FBFBFA |
+| `pane-gap` (the frame behind the panes, the sidebar and the title bar) | #050506 | #EFEFEC |
+| `tab-active` | #1E1E1F | #D6D6D4 |
+| `text` (t1) | #EDEDED | #1B1C20 |
+| `text-dim` | #C7C7C7 | #383A40 |
+| `text-muted` (t2: names, labels, inactive tabs) | #A1A1A1 | #55575F |
+| `text-subtle` (t3: meta) | #8A8A92 | #6A6C74 |
+| `text-disabled` | #707077 | #8F9198 |
+| `subtle` (t4: graphics, input placeholders, counts, line numbers) | #55555C | #B3B5BB |
 | `accent` | #8E8CF5 | #5452D0 |
 | `accent-text` | #C2C1FA | #4A48C4 |
-| `accent-bg` | #26273A | #EBEBFA |
+| `accent-bg` | #212132 | #E4E3F4 |
+| `selected-ring` / `pane-focus-stripe` | #4F4E84 | #A8A7E5 |
 | `on-accent` | #0F1013 | #FFFFFF |
 | `info` / `info-text` / `info-soft` | #6AA6F2 / #8DB9F5 / #93BCF6 | #2F6FC4 / #2A62AD / #2F6FC4 |
 | `teal` | #74D6C4 | #1A7F70 |
-| `folder` | #8FA3C0 | #5F7590 |
-| `warning-bg` / `success-bg` | #322B23 / #1E302B | #F4EDE2 / #E5F0EA |
-| `danger-bg` | #342526 | #F8E8E6 |
+| `folder` | #8A8A92 | #6A6C74 |
+| `warning-bg` / `success-bg` | #2D241B / #192923 | #EBE4D9 / #DDEAE2 |
+| `danger-bg` | #2E1E1F | #F3E1DE |
 | `danger-text` / `success-text` | #EF8F82 / #6FD39B | #B4382A / #1E6B3A |
 | `status-working` | #8E8CF5 | #5452D0 |
 | `status-needs-input` (attention) | #E4A452 | #8B570D |
 | `status-done` (success) | #57C78A | #23854F |
 | `status-exited` (danger) | #EF7B6C | #C2412F |
-| `status-idle` | #7D838C | #8A8F99 |
-| `diff-add-bg` / `diff-del-bg` | #182422 / #261D20 | #E7EFEC / #F5E9E9 |
-| `diff-add-word-bg` / `diff-del-word-bg` | #254638 / #543331 | #C4DDD0 / #ECCCC8 |
+| `status-idle` | #8A8A92 | #6A6C74 |
+| `git-modified` / `git-untracked` (light only) | unchanged | #8F5410 |
+| `diff-add-bg` / `diff-del-bg` | #1B2221 / #251D1F | #F0F6F3 / #FBF2F0 |
+| `diff-add-gutter` / `diff-del-gutter` | #202F29 / #352525 | #E0EDE6 / #F6E4E1 |
+| `diff-add-num` / `diff-del-num` | #418A63 / #A55950 | #529F75 / #CF6A5C |
+| `diff-add-word-bg` / `diff-del-word-bg` | #274436 / #4C2F2E | #C6DFD1 / #F0D0CB |
+| `hunk-bg` / `hunk-current-bg` | #1B1B23 / #21212D | #F7F7FD / #F0EFFB |
 | `diff-add-text` / `diff-del-text` | #6FD39B / #EF8F82 | #1E6B3A / #A61B1B |
-| `diff-hunk-header` | #17191D | #F1F2F4 |
+| `diff-hunk-header` | #17171A | #F4F4F2 |
+| `code-bg` (sunken code) | #0C0C0D | #F8F8F6 |
+| `composer-fill` | #1D1D21 | #FFFFFF |
+| `layer` l1 / l2 / l3 / l4 (ink at 7 / 10 / 15 / 24 % dark, 6 / 9 / 14 / 22 % light) | white | #181A2C |
+| `glass-hi` | white 5 % | white 100 % |
 | `qr-dark` | #101114 | #101114 |
 | `qr-light` | #FFFFFF | #FFFFFF |
 
-`pane-gap` is darker than `terminal-bg` in dark themes when `terminal-bg` leaves room, a step darker in light themes, and always differs from `terminal-bg` by at least 1.06:1 (`theme::problems()` rule "pane gap"); a generated theme derives it with a mix from `terminal-bg` toward black or `text`.
+`pane-gap` is darker than `terminal-bg` in dark themes when `terminal-bg` leaves room, a step darker in light themes, and always differs from `terminal-bg` by at least 1.06:1 (`theme::problems()` rule "pane gap"; Tern's own default tokens measure 1.02 to 1.05, Mkrew keeps 1.06); a generated theme derives it with a mix from `terminal-bg` toward black or `text`.
+
+Hover is l1, pressed l2, rings l2, strong rings and scrollbar thumbs l3, check box borders l4 (ADR 0117). Text tiers: t1 content, t2 names and labels, t3 meta, t4 placeholders (the composer's too: `subtle`), line numbers and counts (`theme::problems` rule "meta text" keeps t3 at 4.5:1).
+
+Tern Dark / Tern Light (ADR 0117) are the table above with these overrides (everything else, and `with_glass`, as Mkrew):
+
+| Token | Tern Dark | Tern Light |
+| --- | --- | --- |
+| `accent` | #5A8CFF | #2F63F0 |
+| `accent-text` | #9DBCFF | #2448C4 |
+| `accent-bg` | #1A2133 | #DEE6F9 |
+| `on-accent` | #08080A | #FFFFFF |
+| `selected-ring` | #354E89 | #95ADF5 |
+| `pane-focus-stripe` | #3B6CFF | #3B6CFF |
+| `status-working` | #5A8CFF | #2F63F0 |
+| `status-needs-input` | #F5A524 | #8B570D |
+| `status-done` | #3ECF8E | #167A4D |
+| `status-exited` | #FF6166 | #BF3038 |
+| `warning-bg` / `success-bg` / `danger-bg` | #2F2415 / #162A23 / #311A1E | #F6EBD9 / #DEF0E7 / #F8E2E2 |
+| `run-pill-bg` / `-border` / `-text` | #152621 / #1F523D / #3ECF8E | #E3F2EA / #B4E0CB / #167A4D |
+| `success-text` / `danger-text` | #3ECF8E / #FF6166 | Mkrew Light's |
+| `terminal-selection-bg` / `terminal-match-bg` | #27375E / #5D4621 | #D6E0FC / #F8DCAB |
 
 Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
 - Radius 5 (area chips, key hints), 6 (chips, segments, tree rows), 8 (buttons, inputs, rows),
-  9 (segmented container), 10 (cards), 12 (dialogs, palette), 999 (pills); 4 for old badges.
-- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the right panel tab row 44 with 28 px icon tabs, Git repo strip 42, Git section tabs 36, Files tree rows 24, Git file rows 28 (px at 13 px body; ADR 0110).
+  9 (segmented container), 10 (cards), 12 (dialogs, palette), 16 (the composer card, `radius::PANEL`), 999 (pills); 4 for old badges.
+- Heights: controls 30, inputs 32, title bar 42 (it holds the tabs, ADR 0106), the right panel tab row 44 with 28 px icon tabs (the shown one: `accent-bg` fill, `accent-text` icon), Git repo strip 42, Git section segmented control (META size) in a 47 px strip, Files tree rows 24, Git file rows 28 with a 16 px status chip, Jira rows 32 (px at 13 px body; ADR 0110).
+- Cards (board, Jira and the session panel; ADR 0117): the `card` fill, `radius::CARD`, a 1 px `divider` ring at rest, `border` on hover and `accent` when selected. (The omp `card` node below is a different element and keeps `surface_raised`.)
 - Tab chip (Tern look, ADR 0106, ADR 0116): height `TAB_CHIP_HEIGHT` (26), radius 8 (`radius::MEDIUM`), no border, META text at regular weight; the active chip has a solid `tab_active` fill and `text` (`tab_active` always differs from `chrome`, which `theme::problems()` checks); the others are transparent with `text_muted` and a hover fill through `.pressable(Look::Chip, ..)`; the × shows on the active chip and on hover for the others.
   A chip shows one icon, its focused pane's, in `text_subtle` (`text_muted` when active), never a brand color; a working or needs-input tab colors that icon `status_working` / `status_needs_input` instead of adding a glyph, and its tooltip names the state.
   No rule separates pinned tabs from the others.
   Chips shrink to `TAB_MIN_WIDTH` (120, room for the pane icon, about five title letters and the ×) before the tab area scrolls; `TAB_TITLE_MAX_WIDTH` is the maximum.
 - Pane (ADR 0106, ADR 0108, ADR 0109): no header and no border.
   Panes fill the tab area edge to edge with square corners: no gap between them and none at the area's edge, so they touch the sidebar, the right panel and the title bar.
-  Two panes meet at a 1 px `divider` line, the same line that sets the sidebar and the right panel apart.
-  One `PANE_ACCENT_WIDTH` (2 px) stripe runs along the pane's full top edge.
+  Two panes meet at a 1 px `divider` line; the right panel keeps the same line, the sidebar has none (it sits on `pane_gap`, the title bar's ground, so the step to `bg` sets it apart, ADR 0117).
+  A stripe runs along the pane's full top edge: 2 px (`PANE_ACCENT_WIDTH`) for needs input and a pane color, 1 px (`BORDER_WIDTH`) for the focus.
   Its color, first match wins: `status-needs-input` while a session pane needs input, the pane's own color, `pane-focus-stripe` while the pane is focused and its tab has two or more panes, else no stripe.
   A lone pane has no stripe unless it needs input or has a color.
   A pane that is not focused, in a tab with two or more panes, is dimmed by 20 % (`unfocused_pane_dim`).
   File and diff panes use the same layout, stripe and dim as terminal panes.
   The divider between two panes drags to resize them and shows a grip only on hover.
   A pane in a split tab has a drag handle at the centre of its top edge (ADR 0110): while the pointer is over the pane a `PANE_GRIP_BAR_WIDTH` × `PANE_GRIP_BAR_HEIGHT` (32 × 4) muted bar shows; over the handle it becomes a `PANE_GRIP_WIDTH` × `PANE_GRIP_HEIGHT` (40 × 20) `surface_raised` chip with a `grip-horizontal` icon (two rows of three dots), and dragging it moves the pane. Only the handle takes the mouse.
-  Floating badges (`pane_badges`: `surface_raised` fill, 1 px `border`, radius 8, META text) sit in its top-right corner `space::S` from the edges, at most `PANE_BADGE_MAX_WIDTH` wide.
+  Floating badges (`pane_badges`: `surface_raised` fill, 1 px `layer[1]` ring, pill radius, META text) sit in its top-right corner `space::S` from the edges, at most `PANE_BADGE_MAX_WIDTH` wide.
   The title bar uses `pane-gap` instead of `chrome`; the sidebar and the right panel keep their colors.
-  The `+` row (§10) is a row of 30 px `Look::Icon` buttons: the `+` button, then the default agent's logo, `square-terminal`, `notebook-pen` and `chevron-down`, `space::XS` apart, growing in 150 ms ease-out (shown at once with reduce motion).
-  The title bar's pane toggles are 30 px icon buttons, accent while on.
+  The `+` row (§10) is a row of 32 px `Look::Icon` buttons: the `+` button, then the default agent's logo, `square-terminal`, `notebook-pen` and `chevron-down`, `space::XS` apart, growing in 150 ms ease-out (shown at once with reduce motion).
+  The title bar's pane toggles are 32 px icon buttons, accent while on.
 - Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
-  buttons, 30 px icon button, panel icon tab, underlined tab, search box, status pill, tinted chip, overline, key hint.
+  buttons (`CONTROL_HEIGHT` 32), 32 px icon button, panel icon tab, underlined tab, search box, status pill, tinted chip, overline, key hint (18 px tall, `layer` fill and ring); the switch is 36 x 22 with a white knob; a segmented control is a `layer[0]` track whose selected segment is a lifted `surface_raised` chip with a ring.
+  The terminal find bar is a glass panel (`radius::LARGE`, `layer[1]` ring, `shadow_pop`) with a `well` query field in the terminal font, a 72 px right-aligned match count (`danger_text` with no match) and a 24 px close button.
 - UI font = Geist (OFL, bundled in `font/geist/` and registered at startup, ADR 0116) unless
   `[ui] font_family` is set. Sizes 11 overline, 12 meta, 13 body, 15 card
   title, 20 view title at the default `[ui] font_size = 13`; other sizes keep their ratio to body
   (ADR 0024). Weights 400/500/600. All-caps only for 11/600 overlines. UI line height 1.5 (`UI_LINE_HEIGHT`, set on every window root).
-- Docs preview (ADR 0021): body 14 px, line height 1.5, headings 24/20/17/15/14/14 px, code 13 px,
-  a centered column of at most 960 px (ADR 0083). A drawn Mermaid diagram shows "Expand" at
+- Docs preview (ADR 0021, 0117): body 15 px, line height 1.65, headings 32/22/17/15/15/15 px with no rule (h2 `space::XXL` above, h3 `space::XL`, h4 `space::L`), code 13 px at 1.6, block gap 16, a centered column of at most 720 px (ADR 0083); paragraph and list text `text_muted` in dark themes and `text` in light, bold and headings `text`. A drawn Mermaid diagram shows "Expand" at
   its bottom-right on hover: a dialog of 90% of the window shows it as wide as fits, up to 2x
   its natural size (a tall one scrolls); Esc or Close closes it.
 - Terminal font defaults: JetBrains Mono → Cascadia Code → Cascadia Mono → Consolas (Windows),
@@ -1929,7 +1966,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Terminal: `terminal-bg` fill, 16 px padding on every side, line height 1.75;
   bar cursor in the text color (hollow block when the pane is unfocused; a program's DECSCUSR
   shape wins); a pane has no border; the top stripe marks needs-input, a color and the focused split pane.
-  Editor code rows keep line height 1.35 (`code_line_height`).
+  Editor code rows have line height 1.5 (`code_line_height`); the editor gutter is `text_subtle` with the caret row's number `text`, the caret row has a `row_hover` band and the caret is `accent` (ADR 0117).
 - Icons (ADR 0051): icon-only buttons, toggles, window controls, row actions and row chevrons
   draw Lucide SVG icons (`icon/lucide/`, `crates/mkrew-ui/src/icons.rs`) in a theme token color with stroke 1.5 (`ICON_STROKE`, ADR 0116),
   16 px in icon buttons, 14 px among text and 12 px for chevrons, tab and pin icons (`ICON_SIZE`, `ICON_SIZE_SMALL`, `TAB_ICON_SIZE`). The glyphs this
@@ -1953,10 +1990,10 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   panel (`qr-light`) in both themes, `PHONE_QR_SIZE` px. The dialog re-reads `daemon.status`
   and Tailscale about once a second while open (off the UI thread). A failed Start / Stop shows in the dialog. The link carries the
   access token: it is never logged and never in a tooltip.
-- Settings (Ctrl+,, palette "Global: Open settings", ADR 0073, ADR 0097): a floating glass panel (`SETTINGS_DIALOG_WIDTH` ×
-  `SETTINGS_DIALOG_HEIGHT`, never larger than the window minus a margin). The left navigation (`SETTINGS_NAV_WIDTH`) starts with a
-  search box (Ctrl+F focuses it) and lists the pages under three overlines: App (General, Appearance, Notifications, Voice, Features),
-  Integrations (Jira, Phone, Machines) and Input (Keyboard, Prompts). The right side has the page title and a close button.
+- Settings (Ctrl+,, palette "Global: Open settings", ADR 0073, ADR 0097, ADR 0117): a floating glass panel (`SETTINGS_DIALOG_WIDTH` 960 ×
+  `SETTINGS_DIALOG_HEIGHT` 720, never larger than the window minus a margin). The left navigation (`SETTINGS_NAV_WIDTH` 232, a `well` fill, full height) starts with a
+  search box (Ctrl+F focuses it) and lists the pages, each with its own icon in 30 px rows, under three sentence-case group titles: App (General, Appearance, Notifications, Voice, Features),
+  Integrations (Jira, Phone, Machines) and Input (Keyboard, Prompts); the shown page is a tint plus a bar (`with_pick`). The right side is a scroll with a page head (the title in `VIEW_TITLE` and a one-sentence lead, `Tab::lead`) in a `SETTINGS_CONTENT_MAX_WIDTH` (740) column, a floating close button top right and a footer.
   With a query, the right side lists the matching settings of every page (a muted `Page › Group` breadcrumb, the label with the
   matched characters in accent and semibold, the help line and the real control); a setting matches when `palette::fuzzy` scores its label,
   help, TOML key or page name above zero; a label match always ranks above a help-only match, then by score; pages with no match are dimmed; shortcuts are not searched.
@@ -1974,7 +2011,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   Top: the query field with a search icon, the scope's placeholder and an `esc` key cap (`search_box`).
   Below it: the scope tabs as pills (`Look::Chip`; the current one has a 1 px accent border and no fill, the others are muted and get the hover fill).
   The list is at most `PALETTE_LIST_HEIGHT` tall and scrolls.
-  It has section overlines, `list_row` rows (the selected one has the `selected` fill and a `PALETTE_SELECTED_BAR` accent bar) and a muted "+N more ›" row; matched characters are accent and semibold, `detail` is muted after the title, `age` is right-aligned, shortcuts are `kbd` key caps.
+  It has section overlines, `list_row` rows (the selected one has a `layer[0]` fill and a 2 px `PALETTE_SELECTED_BAR` accent bar inset 8 px top and bottom) and a muted "+N more ›" row; matched characters are accent and semibold, `detail` is muted after the title, `age` is right-aligned, shortcuts are `kbd` key caps.
   A scope that waits shows a muted "Loading…" and one that failed a muted error line with an `x` icon, in its own tab only.
   Footer: "↑↓ navigate · ↵ run · Tab next scope" on the left and "esc close" on the right.
   The theme picker and the `@` file picker have no tabs; the theme picker keeps its muted "Dark" / "Light" text instead of key caps.
@@ -2005,8 +2042,8 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   Banner: `warning-bg` #322B23 / #F4EDE2 fill, a `BORDER_WIDTH` bottom edge in `divider`, `space::M` x `space::S` padding, `META` text in `text` (the detail line in `text-muted`), **Try now** a primary button.
   The Machines rows and Add card use `space::S` / `space::M`, `radius::MEDIUM` and `surface-raised`; a broken-file error shows `status-exited` ✕ and `text`.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
-- Focused pane: a 2 px stripe of `pane-focus-stripe` at its top edge when its tab has two or more panes (needs-input and a pane color win); unfocused panes dimmed ~5%.
-- Focus ring (ADR 0085): a dialog control that has the keyboard shows a 1 px border in `focus-ring` (the text color) over its own border, only while it was reached with the keyboard (`focus_visible`), in both themes.
+- Focused pane: a 1 px stripe of `pane-focus-stripe` at its top edge when its tab has two or more panes (needs-input and a pane color win); unfocused panes dimmed ~5%.
+- Focus ring (ADR 0085, amended by ADR 0117): a dialog control that has the keyboard shows a 1 px accent border, only while it was reached with the keyboard (`focus_visible`), in both themes; an accent-filled button shows a 1 px `focus-ring` (the text color) border instead, which reads on the fill. A text field, a search box, an open dropdown and the focused button of a confirm prompt add a 3 px ring of the accent at 18 % outside the border (`focus_ring`, an absolute child that never paints the interior).
   A click never shows it.
 - Derived tokens (accent mixed into `bg`): `pane-focus-stripe` #49518D / #A4AAE7 (also the focus border of cards, comments and inputs);
   `terminal-selection-bg` #3A406B / #CFD2F0 (selected terminal text is drawn in `text`).
@@ -2019,7 +2056,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Update button (§20K): Lucide `circle-arrow-up` in `accent-text` in the title bar right before
   the Board icon while a newer release is known; dimmed (`opacity::DISABLED`) and not clickable
   while it downloads, with "Updating…" shown beside it.
-- In-app toasts (`crates/mkrew-ui/src/toast.rs` queue, `shell/toasts.rs` card): bottom-right over
+- In-app toasts (`crates/mkrew-ui/src/toast.rs` queue, `shell/toasts.rs` card, a `pop_surface` glass card; an error toast is ringed in `status_exited` at 40 %): bottom-right over
   the content, at most 3 (a fourth drops the oldest; the same message again restarts its toast),
   each hides after about 4 s (`TOAST_DURATION`, expired on the 500 ms status tick, so 4.0–4.5 s) or
   on its ✕; hovering a toast pauses its expiry and leaving restarts the full time. Clicking an error
@@ -2031,17 +2068,18 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   dialog's error row, the commit box, a card notice) stays there; the tab strip's errors and notices are toasts (ADR 0106).
 - Confirmations (`window.prompt`) are drawn in the window, never as the OS message box
   (`App::set_prompt_builder`, `shell/confirm_prompt.rs`): the modal shade, a `surface` card
-  (`CONFIRM_DIALOG_WIDTH`, radius 12, faint border, light shadow), the question as a card
-  title, the detail in `text-muted`, buttons on the right with Cancel leftmost and the first
+  (`CONFIRM_DIALOG_WIDTH`, a `dialog_frame` with an icon tile: `CircleHelp`, or `TriangleAlert` in the danger tint for `PromptLevel::Critical`), the question as the head title,
+  the detail in `text-muted`, buttons on the right with Cancel leftmost and the first
   answer rightmost (accent; the danger button for `PromptLevel::Critical`). Esc = Cancel,
   Enter/Space = the ringed button (default: the first answer), Tab/←/→ move the ring. A click
   on the shade does nothing. OS file/folder pickers stay native.
 - Theme: System (follows the OS live), Light or Dark - `[ui] theme`, cycled by Ctrl+Shift+J and the palette
   (ADR 0027).
   Each slot shows a theme (ADR 0078, ADR 0101): `[ui] light_theme` (default Mkrew Light) and `[ui] dark_theme` (default Mkrew Dark).
-  There are 22 built-in themes.
-  Dark: Mkrew Dark, One Dark, Dracula, Catppuccin Mocha, Tokyo Night, Gruvbox Dark, Nord, Solarized Dark, GitHub Dark, Rosé Pine, Kanagawa, Everforest Dark.
-  Light: Mkrew Light, One Light, GitHub Light, Catppuccin Latte, Solarized Light, Gruvbox Light, Rosé Pine Dawn, Everforest Light, Ayu Light, Tokyo Night Day.
+  There are 24 built-in themes.
+  Dark: Mkrew Dark, Tern Dark, One Dark, Dracula, Catppuccin Mocha, Tokyo Night, Gruvbox Dark, Nord, Solarized Dark, GitHub Dark, Rosé Pine, Kanagawa, Everforest Dark.
+  Light: Mkrew Light, Tern Light, One Light, GitHub Light, Catppuccin Latte, Solarized Light, Gruvbox Light, Rosé Pine Dawn, Everforest Light, Ayu Light, Tokyo Night Day.
+  Tern Dark / Tern Light (ADR 0117) are Mkrew's grounds and text with Tern's blue accent (`#5A8CFF` / `#2F63F0`), status and ANSI colors.
   A file `<config>/mkrew/themes/*.toml` adds one (`name`, `dark` and the fields of the built-in palette, all required; the folder is polled with `settings.toml`, so a saved file shows up within a second).
   A file whose name is a built-in's name, or an earlier file's name, is an error; the comparison ignores ASCII case.
   An invalid file shows its error on a card and never breaks the app; a file with poor contrast loads with a "Low contrast" badge.
@@ -2062,11 +2100,12 @@ exist; body text contrast ≥ 4.5:1; status never conveyed by color alone; run a
 
 **Floating panels (glass), ADR 0097.**
 The palette, Settings, every modal dialog and the confirm prompt share one frame, `widgets::floating_panel`.
-It is a translucent fill (`glass`: the surface at 0.96 alpha in dark themes and 0.97 in light ones, raised until body text keeps 4.5:1 over a light or a dark page behind it), a 1 px `glass_border`, an accent `glass_tint` gradient over the top `GLASS_TINT_HEIGHT` px, `shadow_float` and `radius::LARGE`.
+It is a translucent fill (`glass`: `surface_raised` in dark themes and `surface` in light ones at alpha 0.96 / 0.97, raised until body text keeps 4.5:1 over a light or a dark page behind it, so a dark panel is always lighter than the page), a 1 px `glass_border` (`layer[1]`), a 1 px `glass_hi` line inside its top edge (`widgets::top_highlight`; this replaces the accent wash of ADR 0097), `shadow_modal` (dialogs, palette, Settings) or `shadow_pop` (menus, tooltips, peek, toasts, the find bar) and `radius::LARGE`.
+Shadows: pop `0 18 50 -12` black 30 %; modal dark `0 28 72 -16` black 78 %, light `0 24 64 -18` black 32 % plus `0 2 6 -2` black 6 %; composer dark `0 12 30 -16` black 60 %, light `0 18 50 -14` black 28 %.
 There is no real backdrop blur (gpui-pre 0.3.7 cannot blur behind one element).
-The scrim behind a modal is black at 24 % (dark) or 16 % (light).
+The scrim behind a modal is black at 55 % (dark) or the page frame (`pane-gap`) at 50 % (light), a milky veil.
 A panel fades in and rises 4 px over `motion::FAST` and disappears at once; with the OS "Animation effects" setting off (Windows) it appears at once.
-No dialog builds its own panel frame.
+No dialog builds its own panel frame: a question-and-answer dialog is `widgets::dialog_frame` on that panel (ADR 0117): a head with a 32 px icon tile (danger tint for a destructive one), the title, an optional one-line sub and a close button, a body column (`dialog_body`, gap 16, side padding 24) and a foot band (`dialog_foot`, a divider on top, buttons right-aligned, an optional `dialog_hint` on the left); the primary button is `primary_button` (at least 84 px, with a `kbd` of the key that presses it); an error is an `error_note` (`danger_bg` fill, danger ring, CircleAlert), never a `✕` row. `DIALOG_WIDTH` is 560 and floating panels are `radius::PANEL` (16).
 
 **Pressable states, ADR 0097.**
 Every element with a click or mouse-down handler gets its hover, press and disabled look from `shell/widgets.rs` and `mkrew_ui::pressable` (`Look`, `press_style`, `Pressable`).
@@ -2075,7 +2114,9 @@ Only `widgets.rs` and `pressable.rs` call `.hover(` and `.active(` or set `.curs
 `group_hover(..)`, which reveals hidden row actions, is allowed anywhere.
 The looks are `Row` (list and menu rows), `Chip` (pills, tabs, small labelled controls), `Icon` (icon-only controls), `Text` (links) and `Raised` (a control on a raised surface or inside a row that is itself hovered: menu, toast, card, find bar, code block, a row action).
 Board cards use `card_press`: the border lights on hover and the fill stays, so the chips inside a card keep a visible hover.
-A hover fill is never the selected fill.
+Hover fills are `theme.layer[0]` (translucent) and a press stacks `layer[1]` on it; a hover fill is never the picked fill (`accent_bg`).
+An element that paints its own fill uses `.pressable_on(look, rest_fill, theme)`, which flattens the layers over that fill (gpui's hover style replaces `bg`, so the fill would vanish).
+`quiet_button(id, label, theme)` has no hover argument.
 A selected or active element that is still clickable keeps the pointer only (`pressable_unless(picked, look, theme)`).
 A disabled element is faded (`opacity::DISABLED`), has the default cursor and no hover, no press and no click.
 An element that is not clickable right now, but is not disabled, has no look at all.
@@ -2134,12 +2175,12 @@ The omp dock (§11) draws by node `role`, from the Chat composer's tokens:
 
 | Role | Drawn as |
 | --- | --- |
-| `omp.editor` | the composer card: `surface_raised`, `radius::COMPOSER`, glass border, float shadow; padding `space::M` top and right, `space::S` bottom, `space::L` left |
+| `omp.editor` | the composer card: `surface_raised`, `radius::PANEL`, glass border, `shadow_composer`; padding `space::M` top and right, `space::S` bottom, `space::L` left |
 | `omp.composer.context` (`meter`, `style` `bar`) | the context meter: a 1 px (`CONTEXT_METER_HEIGHT`) line, `text_muted` fill, `status_needs_input` past `thresholds.warn`, `danger_text` past `bad`; `label` above the end of the fill and `total` at the right in `text_muted`; marks show while hovered |
 | `omp.composer.line` | the editor line in `BODY`; placeholder upright `text_subtle`, no icon; `ghost` in `text_subtle` after the caret |
 | `omp.composer.model` | the Chat model pill (1 px `border` ring, no fill, `text` at 500, chevron) |
 | `omp.composer.effort`, `omp.composer.usage`, `omp.composer.rate`, `omp.composer.fact` | the effort glyph leads the model pill (label in its tooltip); usage, rate and facts are quiet mono chips in `text_subtle`, icons too (colors omp puts in spans stay; tone warning / error take `status_needs_input` / `danger_text`); an `accent` span takes the permission chip look |
-| `omp.composer.send`, `omp.composer.stop` | the round Send (neutral, `text` fill on hover) and Stop (a `text` circle with a square, `text_muted` on hover) |
+| `omp.composer.send`, `omp.composer.stop` | the Send key chip (24 px high, `layer[0]` fill, `layer[1]` ring, return glyph to `text` on hover) and the Stop text button (`status_exited` at 8 / 22 / 14 % for fill, ring and hover, label `danger_text` SEMIBOLD) |
 | `omp.working`, `omp.working.label`, `omp.working.stop` | the working row: dots, elapsed in mono `text_subtle`, divider, label in `text_muted`; `omp.working.stop` is the card's Stop when the bar has none |
 | `omp.hud`, `omp.hud.seg` | one pill with a `border` ring and no fill, one padded cell per segment (icon, count in mono, tooltip), a `BORDER_WIDTH` divider in `border` between cells |
 | `omp.hud.todo` | the todo HUD chip (§11) |
@@ -2587,9 +2628,9 @@ context_window = 200000        # tokens, for the % shown
    `/` opens the agent's command picker (§20B.7).
    Drafts are kept per session in UI memory (lost on UI restart, which is fine).
    In a pane in Chat mode (§11) the composer is always shown: Enter sends, Shift+Enter is a new line, Esc moves the keys to the chat list instead of hiding it (ADR 0104).
-   In Chat the composer is a floating card (ADR 0105, ADR 0116): a 1 px context meter above it (`text_muted` fill, the percent above the end of the fill and the window at the right; the warning color from `WARNING_PERCENT`; hidden without a window), the field with the session title in quotes as its placeholder (`text_subtle`, upright, no icon), and a chip row: the model as a ring pill (a click switches the pane to Terminal and types `/model` + Enter, so the agent's own picker opens), the permission chip with a lightning icon, the effort chip, the branch chip (only at the workspace root, `name *N` changed files), then the context tokens (`74K`, database icon), `102 tok/s`, the elapsed time and the local time the last turn ended (`09:44:27`, clock icons) in the terminal font, all quiet in `text_subtle`, or the status line while it shows, ✦, "Prompts…" and a round send button (a neutral fill that turns to `text` on hover, never accent; dimmed while the draft is blank or busy) whose tooltip holds the key hint.
+   In Chat the composer is a floating card (ADR 0105, ADR 0116): a context meter on its top edge (the rail and fill are `text` at 9 % and 42 %, the percent above the end of the fill and the window at the right; the warning color from `WARNING_PERCENT`; hidden without a window). The card is `composer_fill` with a 1 px `layer[1]` ring, a `glass_hi` top line and `shadow_composer`, `space::L` above the pane bottom. It holds the field with the session title in quotes as its placeholder (`subtle`, upright, no icon), and a chip row: the model as a `layer[0]` pill (a click switches the pane to Terminal and types `/model` + Enter, so the agent's own picker opens), the permission chip with a lightning icon, the effort chip, the branch chip (only at the workspace root, `name *N` changed files), then the context tokens (`74K`, database icon), `102 tok/s`, the elapsed time and the local time the last turn ended (`09:44:27`, clock icons) in the terminal font, all quiet (OVERLINE `text_subtle`, icons `subtle`), or the status line while it shows, ✦, "Prompts…" and the Send key chip (24 px, `layer[0]` fill, `layer[1]` ring, return glyph that turns `text` on hover; dimmed while the draft is blank or busy) whose tooltip holds the key hint.
    A narrow pane drops chips from the right: the end time, stats, permission, effort, branch; the model chip and the send button stay.
-   When the chat list is scrolled up, a small round down-arrow button floats above the composer at the column's right edge and scrolls to the end.
+   When the chat list is scrolled up, a quiet 28 px chevron button (no frame or shadow, a `layer[0]` hover) floats above the composer at the column's right edge and scrolls to the end; the omp transcript has the same button.
    While the pane has no keyboard and the draft, the queue and the error are empty, the card is a one-line pill with the placeholder; a click opens it.
    In the `/` picker `/model` shows the current model and `/compact` the context share.
    ✦ (shown while the composer has the keyboard and the draft is not blank) sends the draft to
@@ -2928,7 +2969,7 @@ speech to text, this is the second user-configured use of the network, and only 
    stops; no polling). The list shows once every page arrived. JQL `project in (PROJ, BILL) AND
    statusCategory != Done ORDER BY updated DESC`; `Mine` adds `AND assignee = currentUser()`
    before `statusCategory`. While it runs:
-   "Loading Jira issues…" with loading dots. A row: issue type, key, summary (one line, cut with
+   "Loading Jira issues…" with loading dots. A row (32 px, a selected one with the accent tint and bar): issue type, key, summary (one line, cut with
    `…`), status and, when a task is linked, that task's column (`Todo`, `Running`, `Review`,
    `Done`) as a chip. Nothing found: "No open issues in PROJ, BILL" (`Mine`: "No open issues
    assigned to you in PROJ, BILL"). The "Filter issues" field keeps the issues whose key or

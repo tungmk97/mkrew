@@ -617,8 +617,8 @@ impl Shell {
 
     /// One pane: the terminal, the chat, the file or the diff (or why it is not shown; at
     /// reading width, centered, for an agent pane with it on), a session's composer, a stripe
-    /// along the full top edge (`status::pane_stripe`: needs input, the session color or the
-    /// focus among several; ADR 0108). No border, no gap, square corners: panes meet at a 1 px
+    /// along the full top edge (`status::pane_stripe`: needs input and the session color 2 px,
+    /// the focus among several 1 px; ADR 0108, 0117). No border, no gap, square corners: panes meet at a 1 px
     /// divider line (`pane_divider`, ADR 0109). Among several the unfocused ones get a dim and a
     /// session pane a slim handle on the top edge that drags it. Transient signals float in the
     /// top-right corner (`pane_badges`). A file pane is the editor (`render_file_pane`).
@@ -755,8 +755,8 @@ impl Shell {
                         .top_0()
                         .left_0()
                         .right_0()
-                        .h(px(theme::PANE_ACCENT_WIDTH))
-                        .bg(rgb(stripe)),
+                        .h(px(stripe.width))
+                        .bg(rgb(stripe.color)),
                 )
             })
             .children(info.and_then(|info| self.pane_badges(info, zoomed, theme, cx)))
@@ -819,21 +819,17 @@ impl Shell {
         let paths = self.conflicts.for_session(session);
         if !paths.is_empty() {
             badges.push(
-                conflict_badge(
-                    format!("pane-{session}"),
-                    &paths,
+                badge_look(
+                    conflict_badge(
+                        format!("pane-{session}"),
+                        &paths,
+                        theme,
+                        move |shell| shell.conflicts.dismiss_session(session),
+                        cx,
+                    )
+                    .max_w(px(theme::PANE_BADGE_MAX_WIDTH)),
                     theme,
-                    move |shell| shell.conflicts.dismiss_session(session),
-                    cx,
                 )
-                .flex_none()
-                .max_w(px(theme::PANE_BADGE_MAX_WIDTH))
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::MEDIUM))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(rgb(theme.border))
-                .bg(rgb(theme.surface_raised))
                 .into_any_element(),
             );
         }

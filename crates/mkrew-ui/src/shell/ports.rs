@@ -189,68 +189,71 @@ impl Shell {
                 let go = row.clone();
                 let stop = row.clone();
                 list = list.child(
-                    div()
-                        .id(SharedString::from(format!("port-row-{index}")))
-                        .flex()
-                        .items_center()
-                        .gap(px(space::M))
-                        .px(px(space::S))
-                        .py(px(space::XS))
-                        .rounded(px(radius::SMALL))
-                        .text_size(font_size::BODY)
-                        .when(selected, |el| el.bg(rgb(theme.surface_raised)))
-                        .when(clickable, |el| {
-                            el.pressable_unless(selected, Look::Row, theme)
-                        })
-                        .on_press(
-                            clickable,
-                            cx.listener(move |shell, _, window, cx| {
-                                shell.go_to_port(&go, window, cx);
-                            }),
-                        )
-                        .child(
-                            div()
-                                .w(px(space::XXL * 2.0))
-                                .font_weight(FontWeight(weight::MEDIUM))
-                                .text_color(rgb(theme.text))
-                                .child(format!(":{}", row.port)),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(theme.text_dim))
-                                .child(ports::place(&row)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(rgb(theme.text))
-                                .child(ports::source(&row)),
-                        )
-                        .child(
-                            div()
-                                .text_size(font_size::META)
-                                .text_color(rgb(theme.text_muted))
-                                .child(format!("pid {}", row.pid)),
-                        )
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("port-stop-{index}")))
-                                .px(px(space::XS))
-                                .rounded(px(radius::SMALL))
-                                .text_color(rgb(theme.danger_text))
-                                .pressable(Look::Raised, true, theme)
-                                .tooltip(tooltip(theme, "Stop", "Delete"))
-                                .on_press(
-                                    true,
-                                    cx.listener(move |shell, _, window, cx| {
-                                        cx.stop_propagation();
-                                        shell.ask_port_stop(stop.clone(), window, cx);
-                                    }),
-                                )
-                                .child("■"),
-                        ),
+                    with_pick(
+                        div()
+                            .id(SharedString::from(format!("port-row-{index}")))
+                            .flex()
+                            .items_center()
+                            .gap(px(space::M))
+                            .px(px(space::S))
+                            .py(px(space::XS))
+                            .rounded(px(radius::SMALL))
+                            .text_size(font_size::BODY),
+                        selected,
+                        theme,
+                    )
+                    .when(clickable, |el| {
+                        el.pressable_unless(selected, Look::Row, theme)
+                    })
+                    .on_press(
+                        clickable,
+                        cx.listener(move |shell, _, window, cx| {
+                            shell.go_to_port(&go, window, cx);
+                        }),
+                    )
+                    .child(
+                        div()
+                            .w(px(space::XXL * 2.0))
+                            .font_weight(FontWeight(weight::MEDIUM))
+                            .text_color(rgb(theme.text))
+                            .child(format!(":{}", row.port)),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(theme.text_dim))
+                            .child(ports::place(&row)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(rgb(theme.text))
+                            .child(ports::source(&row)),
+                    )
+                    .child(
+                        div()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(format!("pid {}", row.pid)),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("port-stop-{index}")))
+                            .px(px(space::XS))
+                            .rounded(px(radius::SMALL))
+                            .text_color(rgb(theme.danger_text))
+                            .pressable(Look::Raised, true, theme)
+                            .tooltip(tooltip(theme, "Stop", "Delete"))
+                            .on_press(
+                                true,
+                                cx.listener(move |shell, _, window, cx| {
+                                    cx.stop_propagation();
+                                    shell.ask_port_stop(stop.clone(), window, cx);
+                                }),
+                            )
+                            .child("■"),
+                    ),
                 );
                 index += 1;
             }
@@ -266,28 +269,13 @@ impl Shell {
         let errors: Vec<_> = [&dialog.list_error, &dialog.stop_error]
             .into_iter()
             .flatten()
-            .map(|text| {
-                div()
-                    .flex()
-                    .gap(px(space::XS))
-                    .text_size(font_size::META)
-                    .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                    .child(div().text_color(rgb(theme.text)).child(text.clone()))
-            })
+            .map(|text| error_note(text.clone(), theme))
             .collect();
         let footer = match &dialog.confirm {
             Some(row) => {
                 let (port, pid) = (row.port, row.pid);
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(theme.text))
-                            .child(ports::question(row)),
-                    )
+                dialog_foot(theme)
+                    .child(dialog_hint(ports::question(row), theme).text_color(rgb(theme.text)))
                     .child(
                         button("port-cancel", "Cancel", theme, false)
                             .focus_stop(theme)
@@ -302,13 +290,13 @@ impl Shell {
                     )
                     .child(
                         danger_button("port-stop", "Stop", theme)
-                            .focus_stop(theme)
+                            .focusable_bordered(theme)
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 shell.stop_port(port, pid, window, cx);
                             })),
                     )
             }
-            None => div().flex().justify_end().child(
+            None => dialog_foot(theme).child(
                 button("ports-close", "Close", theme, false)
                     .focus_stop(theme)
                     .tooltip(tooltip(theme, "Close", "Esc"))
@@ -317,27 +305,30 @@ impl Shell {
         };
         let panel = floating_panel("ports-dialog", theme)
             .w(px(theme::PORTS_DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
                 false,
                 cx.listener(Self::dialog_guard),
                 cx.listener(Self::ports_key_down),
-            )
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Ports"),
-            )
-            .children(errors)
-            .child(body)
-            .child(footer);
+            );
+        let body = dialog_body().children(errors).child(body);
+        let panel = dialog_frame(
+            panel,
+            DialogHead {
+                wrap: false,
+                icon: Icon::Server,
+                tone: DialogTone::Normal,
+                title: "Ports".into(),
+                sub: None,
+            },
+            Some(
+                dialog_close("ports-close-x", theme)
+                    .on_click(cx.listener(|shell, _, window, cx| shell.close_ports(window, cx))),
+            ),
+            Some(body),
+            Some(footer),
+            theme,
+        );
         Self::modal_shade("ports-shade", panel, cx)
     }
 }

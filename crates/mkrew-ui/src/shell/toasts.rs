@@ -91,13 +91,27 @@ impl Shell {
             } else {
                 body.into_any_element()
             };
-            menu_panel(("toast", id), theme)
+            let group = SharedString::from(format!("toast-{id}"));
+            pop_surface(theme, radius::LARGE)
+                .id(("toast", id))
+                .group(group.clone())
+                .occlude()
                 .w(theme::rems_px(theme::TOAST_WIDTH))
+                .min_h(theme::rems_px(theme::TOAST_MIN_HEIGHT))
+                .flex()
                 .flex_row()
                 .items_center()
                 .gap(px(space::S))
-                .px(px(space::M))
+                .pl(px(space::M))
+                .pr(px(space::S))
                 .py(px(space::S))
+                // An error is ringed in its own color, not only a red icon.
+                .when(is_error, |el| {
+                    el.border_color(gpui::rgba(theme::with_alpha(
+                        theme.status_exited,
+                        theme::TOAST_ERROR_RING_ALPHA,
+                    )))
+                })
                 // Hovering pauses the countdown; leaving restarts it (toast.rs).
                 .on_hover(cx.listener(move |shell, hovered: &bool, _, cx| {
                     shell.toasts.set_hovered(id, *hovered, Instant::now());
@@ -111,9 +125,12 @@ impl Shell {
                         .flex_none()
                         .p(px(space::XS))
                         .rounded(px(radius::SMALL))
+                        // Shown while the toast is hovered.
+                        .opacity(opacity::HIDDEN)
+                        .group_hover(group, |style| style.opacity(opacity::FULL))
                         .pressable(Look::Raised, true, theme)
                         .tooltip(tooltip(theme, "Dismiss", ""))
-                        .child(icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted))
+                        .child(icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_subtle))
                         .on_press(
                             true,
                             cx.listener(move |shell, _, _, cx| {

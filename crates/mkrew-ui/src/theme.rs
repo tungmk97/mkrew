@@ -41,8 +41,8 @@ pub mod radius {
     pub const CARD: f32 = 10.0;
     /// Dialogs, palette, empty-state tile.
     pub const LARGE: f32 = 12.0;
-    /// The prompt composer card (Tern's `--r-panel`, ADR 0116).
-    pub const COMPOSER: f32 = 16.0;
+    /// The composer card and other panels (Tern's `--r-panel`, ADR 0116, ADR 0117).
+    pub const PANEL: f32 = 16.0;
     /// Pills: fully round ends.
     pub const PILL: f32 = 999.0;
 }
@@ -59,6 +59,8 @@ pub mod font_size {
     pub const BODY: Rems = rems(1.0);
     pub const CARD_TITLE: Rems = rems(15.0 / 13.0);
     pub const VIEW_TITLE: Rems = rems(20.0 / 13.0);
+    /// An empty state's title (Tern 14 px).
+    pub const EMPTY_TITLE: Rems = rems(14.0 / 13.0);
 }
 
 /// UI font weights (400/500/600 only).
@@ -141,7 +143,7 @@ pub const SESSION_TIME_WIDTH: f32 = space::XXL;
 /// A square icon-only button (theme toggle, sidebar +).
 pub const ICON_BUTTON_SIZE: f32 = 26.0;
 /// The redesign's controls: icon buttons and buttons are this tall (and icon buttons square).
-pub const CONTROL_HEIGHT: f32 = 30.0;
+pub const CONTROL_HEIGHT: f32 = 32.0;
 /// A text input (search fields), and the bordered sidebar icon buttons beside one.
 pub const INPUT_HEIGHT: f32 = 32.0;
 /// One segment of a segmented control.
@@ -163,14 +165,23 @@ pub const TAB_ICON_SIZE: f32 = 12.0;
 /// The pin before the time of a pinned session row.
 pub const PIN_ICON_SIZE: f32 = TAB_ICON_SIZE;
 /// Inset of a segmented control around its segments.
-pub const SEGMENT_PADDING: f32 = 3.0;
+pub const SEGMENT_PADDING: f32 = 2.0;
 /// The thin vertical rule before the window controls.
 pub const TITLE_RULE_HEIGHT: f32 = 18.0;
-/// The bottom edge of a key hint (a key cap look).
-pub const KBD_BOTTOM_BORDER: f32 = 2.0;
+/// A key hint's fixed height and least width.
+pub const KBD_HEIGHT: f32 = 18.0;
+pub const KBD_MIN_WIDTH: f32 = 18.0;
+/// The keyboard focus halo: a ring this wide, in the accent at this alpha, outside the 1 px border.
+pub const FOCUS_HALO_SPREAD: f32 = 3.0;
+pub const FOCUS_HALO_ALPHA: f32 = 0.18;
+/// The danger ring: `danger_bg` mixed this far toward `status_exited`, at rest and hovered.
+pub const DANGER_RING_MIX: f32 = 0.3;
+pub const DANGER_RING_HOVER_MIX: f32 = 0.6;
+/// A badge's ring is its tone at this alpha.
+pub const CHIP_RING_ALPHA: f32 = 0.22;
 /// The Jira list (Board): a row's height, the key column, the toolbar's filter input and the
 /// leading type icon (px at the default 13 px body, [`rems_px`]).
-pub const BOARD_ROW_HEIGHT: f32 = 38.0;
+pub const BOARD_ROW_HEIGHT: f32 = 32.0;
 pub const BOARD_KEY_WIDTH: f32 = 62.0;
 pub const BOARD_FILTER_WIDTH: f32 = 240.0;
 pub const BOARD_TYPE_ICON: f32 = ICON_SIZE_SMALL;
@@ -216,11 +227,16 @@ pub const ORBIT_STEPS: i64 = 8;
 /// A tab chip in the title bar (Tern: 26 px, ADR 0116).
 pub const TAB_CHIP_HEIGHT: f32 = 26.0;
 
-/// The square inside the composer's round Stop button.
-pub const STOP_GLYPH_SIZE: f32 = 10.0;
-
-/// The composer's model pill (Tern: 28 px, a ring and no fill).
-pub const COMPOSER_PILL_HEIGHT: f32 = 28.0;
+/// The composer bar's controls (Tern: 24 px): the model pill, the Send chip, the Stop button
+/// and the omp hud pill are all this tall.
+pub const COMPOSER_PILL_HEIGHT: f32 = 24.0;
+/// The Send key chip is at least this wide; its return glyph is [`SEND_GLYPH_SIZE`].
+pub const SEND_CHIP_MIN_WIDTH: f32 = 28.0;
+pub const SEND_GLYPH_SIZE: f32 = 12.0;
+/// The Stop text button: `status_exited` at these alphas as fill, ring and hover fill.
+pub const STOP_FILL_ALPHA: f32 = 0.08;
+pub const STOP_RING_ALPHA: f32 = 0.22;
+pub const STOP_HOVER_ALPHA: f32 = 0.14;
 
 /// Font family list of Mermaid diagram text (an SVG font-family value; the first installed
 /// one is used).
@@ -273,13 +289,16 @@ pub mod opacity {
     pub const DRAG_SOURCE: f32 = 0.4;
 }
 
-/// Least contrast ratio between [`Theme::pane_gap`] and [`Theme::terminal_bg`] (Tern measures
-/// about 1.07:1). A unit test holds every built-in theme to it and [`Theme::from_palette`]
-/// derives the gap to meet it.
+/// Least contrast ratio between [`Theme::pane_gap`] and [`Theme::terminal_bg`]. Tern's default
+/// tokens measure 1.02 to 1.05 (`--page` vs `--panel`); the 1.07 once quoted came from a themed
+/// screenshot. 1.06 keeps the frame visible: Mkrew Dark `050506` under `0F0F12` reads 1.065:1.
+/// A unit test holds every built-in theme to it and [`Theme::from_palette`] derives the gap to
+/// meet it.
 pub const PANE_GAP_MIN_CONTRAST: f32 = 1.06;
 
-/// Thickness of the stripe along the top edge of a pane (needs input, session color or focus
-/// among several, ADR 0108) and of an underlined tab (the Git panel's repo and section tabs).
+/// Thickness of the stripe along the top edge of a pane that needs input or has a session
+/// color (ADR 0108), and of an underlined tab (the Git panel's repo and section tabs). The
+/// focus stripe among several panes is the thinner [`BORDER_WIDTH`] (ADR 0117).
 pub const PANE_ACCENT_WIDTH: f32 = 2.0;
 /// The drag handle at the top centre of a pane in a split tab (ADR 0110): while the pointer is
 /// over the pane a slim bar shows; over the handle it becomes a chip with a six-dot grip, and
@@ -326,6 +345,17 @@ pub const BOARD_COLUMN_HEADER_HEIGHT: f32 = 28.0;
 
 /// Width of a popover menu (`render_menu`'s default).
 pub const MENU_WIDTH: f32 = 240.0;
+/// A menu row's minimum height (Tern `.sf-menu-item`); a row with a second line grows.
+pub const MENU_ROW_HEIGHT: f32 = 28.0;
+/// A tooltip's widest and shortest box.
+pub const TOOLTIP_MAX_WIDTH: f32 = 280.0;
+pub const TOOLTIP_MIN_HEIGHT: f32 = 24.0;
+/// A toast's shortest box, and the alpha of an error toast's `status_exited` ring.
+pub const TOAST_MIN_HEIGHT: f32 = 40.0;
+pub const TOAST_ERROR_RING_ALPHA: f32 = 0.4;
+/// The bar of a picked row (`with_pick`): 2 px wide, 14 px tall, centred at the left edge.
+pub const PICK_BAR_WIDTH: f32 = 2.0;
+pub const PICK_BAR_HEIGHT: f32 = 14.0;
 
 /// Width of the Run menu: a command row also holds its ports and ↻ / ■ / ▶ buttons.
 pub const RUN_MENU_WIDTH: f32 = 280.0;
@@ -336,6 +366,10 @@ pub const LAYOUT_THUMB_HEIGHT: f32 = 16.0;
 
 /// Width of the query field in a terminal's find bar.
 pub const FIND_INPUT_WIDTH: f32 = 200.0;
+/// The find bar's query well height, and the least width its match count takes (right-aligned,
+/// so the bar does not jump as the count changes).
+pub const FIND_INPUT_HEIGHT: f32 = 28.0;
+pub const FIND_COUNT_MIN_WIDTH: f32 = 72.0;
 
 /// Width of the Files editor's caret.
 pub const CARET_WIDTH: f32 = 2.0;
@@ -373,14 +407,22 @@ pub const BOARD_COLUMN_MIN_WIDTH: f32 = 200.0;
 /// Thickness of the accent line that marks where a dragged card lands.
 pub const DROP_INDICATOR_HEIGHT: f32 = 2.0;
 
-/// Width of a modal dialog (the task dialog).
-pub const DIALOG_WIDTH: f32 = 520.0;
+/// A dialog's width (the task dialog).
+pub const DIALOG_WIDTH: f32 = 560.0;
+/// A dialog head's icon tile (Tern `.mdl-ic`, 34 px rounded to the 4 px grid).
+pub const DIALOG_ICON_TILE: f32 = 32.0;
+/// The primary button of a dialog is at least this wide (room for its key hint).
+pub const DIALOG_BUTTON_MIN_WIDTH: f32 = 84.0;
 
 /// The Settings dialog (ADR 0073): its size, the page list width and the value column.
-pub const SETTINGS_DIALOG_WIDTH: f32 = 880.0;
-pub const SETTINGS_DIALOG_HEIGHT: f32 = 640.0;
-pub const SETTINGS_NAV_WIDTH: f32 = 200.0;
-pub const SETTINGS_CONTROL_WIDTH: f32 = 240.0;
+pub const SETTINGS_DIALOG_WIDTH: f32 = 960.0;
+pub const SETTINGS_DIALOG_HEIGHT: f32 = 720.0;
+pub const SETTINGS_NAV_WIDTH: f32 = 232.0;
+pub const SETTINGS_CONTROL_WIDTH: f32 = 260.0;
+/// The page column: its widest and the height of a navigation row and of a setting row.
+pub const SETTINGS_CONTENT_MAX_WIDTH: f32 = 740.0;
+pub const SETTINGS_NAV_ROW_HEIGHT: f32 = 30.0;
+pub const SETTINGS_ROW_MIN_HEIGHT: f32 = 56.0;
 /// Tallest the font pick's list grows (it scrolls past that).
 pub const SETTINGS_FONT_LIST_HEIGHT: f32 = 200.0;
 /// Settings → Prompts (spec 2026-11-04 section 7.2): the prompt list's width, how tall it grows
@@ -405,10 +447,12 @@ pub const THEME_DOT: f32 = 8.0;
 /// How long the pointer rests on a gallery card before the app shows that theme, so moving
 /// across the cards does not flash.
 pub const THEME_PREVIEW_DELAY: Duration = Duration::from_millis(120);
-/// An on/off switch: track size and the knob's inset.
-pub const SWITCH_WIDTH: f32 = 32.0;
-pub const SWITCH_HEIGHT: f32 = 18.0;
+/// An on/off switch: track size and the knob's inset (the knob is height - 2 * inset = 18).
+pub const SWITCH_WIDTH: f32 = 36.0;
+pub const SWITCH_HEIGHT: f32 = 22.0;
 pub const SWITCH_INSET: f32 = 2.0;
+/// The knob of a switch is white in every theme (a shadow lifts it).
+pub const SWITCH_KNOB: u32 = 0xFFFFFF;
 
 /// Side of the Phone access QR code (ADR 0053): px at the default 13 px body, scaled with
 /// `[ui] font_size` ([`rems_px`]). Big enough for a camera across a desk.
@@ -452,6 +496,13 @@ pub const TSP_POPOVER_MIN_HEIGHT: f32 = 120.0;
 /// The accent bar on the left of the picked row of an omp `ask` card.
 pub const TSP_ASK_BAR_WIDTH: f32 = 2.0;
 
+/// Space below every top-level row of an omp transcript that draws something (Tern's 20 px
+/// turn gap on the 4/8/12/16/24/32 scale; `tsp::row_gap`).
+pub const TSP_ROW_GAP: f32 = space::L;
+
+/// Least height of a thinking row, a tool head and the working row (Tern's 24 px heads).
+pub const TSP_HEAD_HEIGHT: f32 = space::XL;
+
 /// The ring of an omp `ask` timeout.
 pub const TSP_RING_SIZE: f32 = 24.0;
 
@@ -475,6 +526,10 @@ pub const TSP_THUMB_SIZE: f32 = 56.0;
 /// Widest share of the Chat page a prompt card takes (it sits at the right).
 pub const CHAT_PROMPT_MAX_FRACTION: f32 = 0.8;
 
+/// Widest a prompt bubble is, whatever the pane (Tern's 540 px; the bubble is also at most
+/// `CHAT_PROMPT_MAX_FRACTION` of the column).
+pub const CHAT_PROMPT_MAX_WIDTH: f32 = 540.0;
+
 /// How far one arrow key scrolls the chat list, in px.
 pub const CHAT_SCROLL_STEP: f32 = 48.0;
 
@@ -485,33 +540,46 @@ pub const COMPOSER_QUEUE_MAX_HEIGHT: f32 = 88.0;
 /// gap after each included), to decide which ones a narrow pane drops (ADR 0105). Every part
 /// of the row except the stats cell is `flex_none`, so these must not under-estimate:
 /// padding, border, icon and gap tokens plus the text of the longest usual value.
-/// The model pill: 2 x `space::S` padding, 1 px borders, `opus 5.5` / `sonnet 4.5`, a gap and
-/// the chevron.
-pub const COMPOSER_CHIP_MODEL_WIDTH: f32 = 108.0;
+/// The model pill: 2 x `space::S` padding, no border, `opus 5.5` / `sonnet 4.5`, a gap and the
+/// chevron, and the gap after it.
+pub const COMPOSER_CHIP_MODEL_WIDTH: f32 = 106.0;
 /// `medium`, `xhigh`.
 pub const COMPOSER_CHIP_EFFORT_WIDTH: f32 = 56.0;
 /// The lightning icon and `on-request`.
 pub const COMPOSER_CHIP_PERMISSION_WIDTH: f32 = 92.0;
 /// The branch chip never grows past this (icon and name; the name truncates).
 pub const COMPOSER_BRANCH_MAX_WIDTH: f32 = 160.0;
-/// One character of the terminal font at `META` size.
-pub const COMPOSER_MONO_CHAR_WIDTH: f32 = 7.2;
-/// Context tokens, `tok/s` and the elapsed time with their icons and gaps.
-pub const COMPOSER_CHIP_STATS_WIDTH: f32 = 190.0;
-/// The clock time of the last turn's end (icon and `09:44:27`).
-pub const COMPOSER_CHIP_CLOCK_WIDTH: f32 = 68.0;
+/// One character of the terminal font at `OVERLINE` (11 px) size.
+pub const COMPOSER_MONO_CHAR_WIDTH: f32 = 6.6;
+/// Context tokens (`74K`), `102 tok/s` and a short elapsed time: each with its icon, its own
+/// `px(XS)` padding ([`COMPOSER_FACT_CHROME_WIDTH`]) and the `space::XS` gap between them
+/// (about 165 to 185 px measured; the cell shrinks past that, it never clips a button).
+pub const COMPOSER_CHIP_STATS_WIDTH: f32 = 184.0;
+/// The clock time of the last turn's end (icon, `09:44:27` and the chip's padding).
+pub const COMPOSER_CHIP_CLOCK_WIDTH: f32 = 80.0;
 /// The ✦ button (2 x `space::M` padding and an icon) and its gap.
 pub const COMPOSER_ENHANCE_WIDTH: f32 = 46.0;
-/// Prompts (icon only: the same button) and the send button, with their gaps.
-pub const COMPOSER_FIXED_WIDTH: f32 = 82.0;
-/// The composer's round send and stop buttons (Tern: 32 px).
-pub const SEND_BUTTON_SIZE: f32 = 32.0;
+/// Prompts (icon only: the same button as ✦) and the Send chip, with their gaps.
+pub const COMPOSER_FIXED_WIDTH: f32 = COMPOSER_ENHANCE_WIDTH + SEND_CHIP_MIN_WIDTH + space::S;
+/// What one fact of a bar takes besides its icon and its text: `px(XS)` on both sides and the
+/// `space::XS` gap to the next one.
+pub const COMPOSER_FACT_CHROME_WIDTH: f32 = 3.0 * space::XS;
 /// The chevron of the composer's model pill (a chevron step, like the tree's).
 pub const MODEL_CHEVRON_SIZE: f32 = TREE_CHEVRON_SIZE;
 /// The thin context meter above the composer card: a hairline.
 pub const CONTEXT_METER_HEIGHT: f32 = 1.0;
 /// The box of the percent label on the context meter; it is centered on the end of the fill.
 pub const CONTEXT_LABEL_WIDTH: f32 = 32.0;
+/// How far the context meter rises above the composer card's top edge (Tern: `top: -12px`).
+pub const CONTEXT_METER_RISE: f32 = 12.0;
+/// The meter's box: the labels ([`CONTEXT_LABEL_HEIGHT`]) with the 1 px track right under them.
+/// The track therefore lies on the card's top border.
+pub const CONTEXT_METER_BOX_HEIGHT: f32 = CONTEXT_LABEL_HEIGHT + CONTEXT_METER_HEIGHT;
+/// Height of the label row of the context meter (OVERLINE text, 11 px).
+pub const CONTEXT_LABEL_HEIGHT: f32 = 11.0;
+/// Alpha of the meter's rail and of its neutral fill: `text` at these (Tern `t1` 9 % / 42 %).
+pub const METER_RAIL_ALPHA: f32 = 0.09;
+pub const METER_FILL_ALPHA: f32 = 0.42;
 
 /// The hover area of a tick on the context meter of an omp dock (a mark such as the
 /// auto-compact point; its tooltip is the mark's title). The 1 px line sits in the middle.
@@ -519,10 +587,22 @@ pub const CONTEXT_MARK_HIT_WIDTH: f32 = space::M;
 pub const CONTEXT_MARK_HIT_HEIGHT: f32 = CONTEXT_METER_HEIGHT + space::S;
 
 /// Room reckoned for the bar of an omp dock (px at 13 px UI size, like the `COMPOSER_*` ones):
-/// the round send or stop button and its gap.
-pub const TSP_BAR_FIXED_WIDTH: f32 = SEND_BUTTON_SIZE + space::S;
-/// The model pill without its name: padding, border, chevron, gaps and the gap after it.
-pub const TSP_MODEL_CHROME_WIDTH: f32 = 48.0;
+/// the Stop button (the wider of Send and Stop) and its gap.
+pub const TSP_BAR_FIXED_WIDTH: f32 = STOP_BUTTON_WIDTH + space::S;
+/// The Stop button: `px(M)` both sides and `Stop` (four UI characters at `META`).
+pub const STOP_BUTTON_WIDTH: f32 = 2.0 * space::M + 2.0 * BORDER_WIDTH + 4.0 * TSP_UI_CHAR_WIDTH;
+/// The model pill without its name: padding, chevron, gaps and the gap after it (no border).
+pub const TSP_MODEL_CHROME_WIDTH: f32 = 46.0;
+/// The omp status row (working row, hud) is this tall (Tern: 26).
+pub const TSP_STATUS_ROW_HEIGHT: f32 = 26.0;
+/// A segment of the hud pill (Tern: 20) and the pill's inner padding (2 px: a stated exception
+/// to the 4 px grid, spec 6).
+pub const TSP_HUD_SEGMENT_HEIGHT: f32 = 20.0;
+pub const TSP_HUD_PAD: f32 = 2.0;
+/// A queued text of the omp dock is a pill this tall (Tern: 26).
+pub const TSP_QUEUE_ITEM_HEIGHT: f32 = 26.0;
+/// The scroll-to-bottom button of a transcript: a quiet icon button this size (Tern: a bare chevron).
+pub const SCROLL_END_BUTTON_SIZE: f32 = 28.0;
 /// The model name never truncates below this many characters.
 pub const TSP_MODEL_MIN_CHARS: usize = 6;
 /// The effort glyph that leads the model pill (omp's four bars) and the gap after it.
@@ -566,9 +646,9 @@ pub const HISTORY_LIST_WIDTH: f32 = 280.0;
 /// Width of the Docs view's file list.
 pub const DOC_LIST_WIDTH: f32 = 240.0;
 
-/// Max width of the rendered Markdown preview: wide enough for tables and diagrams, still a
-/// readable line (≈ 120 characters of body text).
-pub const DOC_PREVIEW_MAX_WIDTH: f32 = 960.0;
+/// Max width of the Docs flavor's column (file preview, Docs view): about 75 characters of
+/// 15 px body text. Wide tables and diagrams shrink or scroll inside it.
+pub const DOC_PREVIEW_MAX_WIDTH: f32 = 720.0;
 
 /// An expanded Mermaid diagram (its dialog takes `HISTORY_DIALOG_FRACTION` of the window) is
 /// drawn at most this many times its natural size: gpui rasterizes SVGs at 2x, so it stays
@@ -577,6 +657,12 @@ pub const DIAGRAM_ZOOM_MAX: f32 = 2.0;
 
 /// Width of the bar left of a Markdown quote.
 pub const DOC_QUOTE_BAR_WIDTH: f32 = 2.0;
+
+/// Height of a code card's head row (language and Copy), Tern's 32 px.
+pub const CODE_HEAD_HEIGHT: f32 = space::XXL;
+
+/// Alpha of the accent underline under a link in a chat message.
+pub const LINK_UNDERLINE_ALPHA: f32 = 0.4;
 
 /// Width of the accent bar left of diff lines picked for a comment.
 pub const DIFF_PICK_BAR_WIDTH: f32 = 2.0;
@@ -594,7 +680,7 @@ pub const CHANGES_DIFF_HEIGHT: f32 = 420.0;
 /// Indent per folder level in the Files tree.
 pub const FILE_TREE_INDENT: f32 = space::M;
 
-/// Side of the dot on a Files tree folder holding changes.
+/// Side of the git dot of a Files tree row: a changed file's marker and a folder holding changes.
 pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 
 /// Height of a Files tree row (the tree is a uniform list: every row is this high). Dense like
@@ -625,20 +711,15 @@ pub const WORKSPACE_SWATCH_SIZE: f32 = space::L;
 /// Ring around a workspace menu color choice.
 pub const WORKSPACE_SWATCH_BORDER: f32 = 2.0;
 
-/// Floating panels (ADR 0097): how far the accent tint gradient reaches down from the top,
-/// its direction (180 = top to bottom in gpui) and color stops, and how far a panel rises
-/// while it fades in (gpui has no element scale).
-pub const GLASS_TINT_HEIGHT: f32 = 120.0;
-pub const GLASS_TINT_ANGLE: f32 = 180.0;
-pub const GLASS_TINT_FROM: f32 = 0.0;
-pub const GLASS_TINT_TO: f32 = 1.0;
+/// How far a floating panel rises while it fades in (gpui has no element scale).
 pub const PANEL_RISE: f32 = space::XS;
 /// Max height of the composer's prompt and slash pickers (they scroll past that).
 pub const PICKER_LIST_HEIGHT: f32 = 360.0;
 /// The scoped palette.
 pub const PALETTE_WIDTH: f32 = 640.0;
 pub const PALETTE_LIST_HEIGHT: f32 = 480.0;
-pub const PALETTE_SELECTED_BAR: f32 = 3.0;
+/// The palette row's accent bar: 2 px wide, inset 8 px top and bottom.
+pub const PALETTE_SELECTED_BAR: f32 = 2.0;
 pub const PALETTE_GROUP_LIMIT: usize = 5;
 /// Distance from the window's top edge to the top of the palette panel (it stays there while
 /// its list grows or shrinks between scopes).
@@ -657,9 +738,11 @@ pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
 
 /// One row of the Git changed-file list (uniform list: every row has this box; ADR 0110).
 pub const GIT_FILE_ROW_HEIGHT: f32 = 28.0;
-/// The box of the change letter (M, A, D …) of a Git file row: the letter is colored, the box
-/// has no fill (ADR 0110); it keeps the names in one column.
-pub const GIT_BADGE_SIZE: f32 = 18.0;
+/// The box of the change letter (M, A, D ...) of a Git file row: a 16 px chip with a tint of
+/// the letter's hue (an outline for `?`); it keeps the names in one column.
+pub const GIT_BADGE_SIZE: f32 = 16.0;
+/// The ring of an untracked file's chip: `status_done` at 35 %.
+pub const STATUS_RING_ALPHA: f32 = 0.35;
 
 /// The History's lane graph (SPEC §12B): one lane's width, a commit's dot, a line's width.
 pub const GIT_GRAPH_LANE_WIDTH: f32 = 12.0;
@@ -678,15 +761,37 @@ pub const DIFF_HATCH_INTERVAL: f32 = 6.0;
 pub const GIT_DIFF_OVERDRAW: f32 = 200.0;
 
 /// Git diff lines: monospace size and line height, px (a wrapped line is a multiple of it).
-pub const DIFF_FONT_SIZE: f32 = 12.5;
-pub const DIFF_LINE_HEIGHT: f32 = 24.0;
+pub const DIFF_FONT_SIZE: f32 = 12.0;
+pub const DIFF_LINE_HEIGHT: f32 = 20.0;
 /// The line-number gutter of a diff half: its width in px (it grows for 5+ digit numbers at
 /// [`DIFF_DIGIT_WIDTH`] per digit) and the sign column after it.
 pub const DIFF_GUTTER_WIDTH: f32 = 40.0;
 pub const DIFF_DIGIT_WIDTH: f32 = 8.0;
 pub const DIFF_SIGN_WIDTH: f32 = space::L;
-/// A diff hunk header bar's height.
-pub const GIT_HUNK_HEADER_HEIGHT: f32 = 34.0;
+/// A diff hunk header bar's height (one grid step above a line), the height of the Stage /
+/// Discard chips on it, the bar of the current hunk, and the alpha of the Stage chip's ring.
+pub const GIT_HUNK_HEADER_HEIGHT: f32 = 24.0;
+pub const GIT_HUNK_BUTTON_HEIGHT: f32 = 18.0;
+pub const HUNK_BAR_WIDTH: f32 = 3.0;
+pub const HUNK_RING_ALPHA: f32 = 0.18;
+/// How far the top line of a primary button goes from the accent toward `on_accent`.
+pub const ACCENT_HIGHLIGHT_MIX: f32 = 0.35;
+
+/// The diff rule (spec §10): a changed row is `DIFF_ROW_MIX` of its hue over the diff ground
+/// (`surface`); its gutter is a step on (`DIFF_GUTTER_MIX` more of the hue); the line numbers are
+/// the hue at `DIFF_NUM_MIX_*` over the gutter (60 % over a pale light gutter reads 2:1, so light
+/// themes use 75 %, Tern's own light value); the changed word is `DIFF_*_WORD_MIX` over the ground.
+const DIFF_ROW_MIX: f32 = 0.07;
+const DIFF_GUTTER_MIX: f32 = 0.08;
+const DIFF_NUM_MIX_DARK: f32 = 0.60;
+const DIFF_NUM_MIX_LIGHT: f32 = 0.75;
+/// The least contrast of a changed line's number on its gutter.
+const DIFF_NUM_MIN_CONTRAST: f32 = 2.0;
+const DIFF_ADD_WORD_MIX: f32 = 0.26;
+const DIFF_DEL_WORD_MIX: f32 = 0.25;
+/// A hunk header bar and the current one: the accent over the diff ground.
+const HUNK_MIX: f32 = 0.045;
+const HUNK_CURRENT_MIX: f32 = 0.09;
 
 /// Rough width of one char of a Git repository tab label, px: the repo strip shows every tab
 /// only when their labels fit.
@@ -706,14 +811,20 @@ pub const DOC_TASK_BOX_SIZE: f32 = space::M;
 /// Docs preview typography (SPEC §12, ADR 0021): long-form reading, a step above the UI
 /// scale.
 pub mod doc {
-    pub const BODY: f32 = 14.0;
+    pub const BODY: f32 = 15.0;
     pub const CODE: f32 = 13.0;
-    /// h1–h6.
-    pub const HEADINGS: [f32; 6] = [24.0, 20.0, 17.0, 15.0, 14.0, 14.0];
-    /// Line heights as multiples of the font size.
-    pub const LINE_HEIGHT: f32 = 1.5;
+    /// The Docs flavor's h1-h6 (SPEC §14): the title is 32, no heading is under the body.
+    pub const PAGE_HEADINGS: [f32; 6] = [32.0, 22.0, 17.0, 15.0, 15.0, 15.0];
+    /// Line height of the Docs page only (the chat has `CHAT_LINE_HEIGHT`, the UI 1.5).
+    pub const LINE_HEIGHT: f32 = 1.65;
     pub const HEADING_LINE_HEIGHT: f32 = 1.3;
-    pub const CODE_LINE_HEIGHT: f32 = 1.45;
+    /// Code blocks, Chat and Docs (ADR 0117: 1.45 to 1.6).
+    pub const CODE_LINE_HEIGHT: f32 = 1.6;
+    /// Markdown in the omp transcript and the Chat view (ADR 0117; ADR 0116's 1.5 stays for the UI).
+    pub const CHAT_LINE_HEIGHT: f32 = 1.6;
+    pub const CHAT_HEADING_LINE_HEIGHT: f32 = 1.35;
+    /// h1-h6 of a chat message: one step under the Docs sizes ([`PAGE_HEADINGS`]).
+    pub const CHAT_HEADINGS: [f32; 6] = [20.0, 17.0, 15.0, 14.0, 14.0, 14.0];
     /// The marker column of list items (bullets, numbers, check boxes line up).
     pub const MARKER_WIDTH: f32 = 20.0;
     /// The accent dot before an unnumbered list item (ADR 0105).
@@ -902,10 +1013,9 @@ pub struct Theme {
     pub surface: u32,
     /// A raised control on a surface (selected segment, selected code line).
     pub surface_raised: u32,
-    /// The workspace sidebar, a shade off `bg`.
+    /// The workspace sidebar: the page frame (`pane_gap`) in every theme.
     pub sidebar: u32,
-    /// Inputs and segmented controls on the title bar, and the sidebar of derived themes. The
-    /// title bar itself is `pane_gap`.
+    /// Inputs and segmented controls on the title bar. The sidebar is `pane_gap`.
     pub chrome: u32,
     /// Board cards and other blocks that sit on `bg`.
     pub card: u32,
@@ -924,8 +1034,10 @@ pub struct Theme {
     pub text: u32,
     /// Secondary text that is still read (row titles under a name).
     pub text_dim: u32,
+    /// t2: names, labels, inactive tabs.
     pub text_muted: u32,
-    /// Graphics only (chevrons, idle ring, guide lines); never text.
+    /// Graphics (t4: input placeholders, counts, line numbers); never body text. The composer's
+    /// placeholder is `text_subtle`.
     pub subtle: u32,
     /// Selection, primary buttons, focus.
     pub accent: u32,
@@ -948,17 +1060,27 @@ pub struct Theme {
     pub run_pill_text: u32,
     /// Alpha of a workspace color tint (avatars, [`Theme::tint`]).
     pub tint_alpha: u8,
-    /// The shade behind a modal dialog, RGBA: black at 24 % (dark) or 16 % (light), set by
-    /// [`Theme::with_glass`].
+    /// The shade behind a modal dialog, RGBA: black at 55 % (dark) or the page frame at 50 %
+    /// (light: a milky veil), set by [`Theme::with_glass`].
     pub scrim: u32,
-    /// Fill of every floating panel, RGBA: `surface` at 0.96 (dark) / 0.97 (light) or more, as
-    /// much as body text needs to keep 4.5:1 over a light or dark page behind it.
+    /// Fill of every floating panel, RGBA: `surface_raised` (dark) / `surface` (light) at 0.96 /
+    /// 0.97 or more, as much as body text needs to keep 4.5:1 over a light or dark page behind it.
     pub glass: u32,
-    /// 1 px inner border of a floating panel, RGBA: white (dark) or black (light) at 8 %.
+    /// 1 px inner border of a floating panel, RGBA: `layer[1]`.
     pub glass_border: u32,
-    /// Top of the vertical gradient over the first `GLASS_TINT_HEIGHT` px of a floating panel,
-    /// RGBA: `accent` at 5 % (dark) / 4 % (light).
-    pub glass_tint: u32,
+    /// Highlight line, RGBA: a 1 px line just inside the top edge of raised and floating
+    /// panels (`widgets::top_highlight`): white at 5 % (dark) / 100 % (light); set by
+    /// [`Theme::with_glass`]. Replaces the old accent wash (ADR 0117).
+    pub glass_hi: u32,
+    /// Tern's l1..l4 alpha ladder, RGBA: the ink (white in dark themes, `0x181A2C` in light
+    /// ones; the foreground in a derived dark theme) at 7/10/15/24 % (dark) or 6/9/14/22 %
+    /// (light). l1 hover, l2 pressed and rings, l3 strong rings and scrollbar thumbs, l4 check
+    /// box borders (ADR 0117).
+    pub layer: [u32; 4],
+    /// The sunken ground of code blocks, darker than the page (dark) or a shade off it (light).
+    pub code_bg: u32,
+    /// The composer card.
+    pub composer_fill: u32,
     /// The QR code of Phone access (SPEC §14): dark modules on a light panel in both
     /// appearances, because phone cameras read dark-on-light only; so both are set in
     /// `shared()`, not in `dark()` / `light()`.
@@ -1005,6 +1127,13 @@ pub struct Theme {
     pub diff_add_gutter: u32,
     pub diff_del_gutter: u32,
     pub diff_mod_gutter: u32,
+    /// Line numbers of added and removed lines: the hue at 60 % (75 % light) over the gutter
+    /// (the sign keeps the full `success_text` / `danger_text`).
+    pub diff_add_num: u32,
+    pub diff_del_num: u32,
+    /// A hunk header bar, and the current hunk's: the accent at 4.5 % / 9 % over `surface`.
+    pub hunk_bg: u32,
+    pub hunk_current_bg: u32,
     /// Git file status letters: modified-like (M R C T) and untracked (?).
     pub git_modified: u32,
     pub git_untracked: u32,
@@ -1015,8 +1144,8 @@ pub struct Theme {
     pub syntax_number: u32,
     pub syntax_type: u32,
     pub syntax_function: u32,
-    /// Redesign tokens (2026-10 restyle). Meta text that is still read: timestamps, counts,
-    /// placeholders (never dimmer than this).
+    /// t3: meta text (timestamps, counts, tree rows, tool details) that is still read: at least
+    /// 4.5:1 on every ground in `problems`.
     pub text_subtle: u32,
     /// In Progress: the status pill and section icon; `info_text` is its label on the tint,
     /// `info_soft` the BE area chip and JSON keys.
@@ -1037,8 +1166,6 @@ pub struct Theme {
     pub danger_text: u32,
     /// Added-line numbers.
     pub success_text: u32,
-    /// Folder icons in the Files tree.
-    pub folder: u32,
     /// Dotfiles in the Files tree; a primary button's text while it cannot be used.
     pub text_disabled: u32,
     /// The changed token inside a removed / added diff line.
@@ -1060,7 +1187,7 @@ pub struct Theme {
     pub terminal_font_size: f32,
     /// Line height of the terminal grid, as a multiple of the font size.
     pub terminal_line_height: f32,
-    /// Line height of code rows in the Files editor and preview (tighter than the terminal's).
+    /// Line height of code rows in the Files editor and the source view (tighter than the terminal's, Tern's 1.5).
     pub code_line_height: f32,
     /// Padding left and right of the terminal grid.
     pub terminal_padding_x: f32,
@@ -1073,9 +1200,6 @@ pub struct Theme {
     pub dim_blend: f32,
     /// Opacity of the overlay that dims unfocused panes among several (20 %, ADR 0109).
     pub unfocused_pane_dim: f32,
-    /// The palette from before the restyle, kept for the sidebar's session list (projects,
-    /// session rows, RUN), which the restyle leaves as it was. `None` on that palette itself.
-    pub classic: Option<std::sync::Arc<Theme>>,
 }
 
 impl gpui::Global for Theme {}
@@ -1124,10 +1248,6 @@ impl Theme {
         self.ui_font_family = fonts.ui_family.clone();
         self.terminal_font_family = fonts.terminal_family.clone();
         self.terminal_font_size = fonts.terminal_size;
-        if let Some(classic) = self.classic.take() {
-            let classic = Theme::clone(&classic).with_fonts(fonts);
-            self.classic = Some(std::sync::Arc::new(classic));
-        }
         self
     }
 
@@ -1154,70 +1274,74 @@ impl Theme {
         }
     }
 
-    /// The pre-restyle palette for the sidebar's session list (see [`Theme::classic`]).
-    pub fn classic(&self) -> &Theme {
-        self.classic.as_deref().unwrap_or(self)
-    }
-
     pub fn dark() -> Self {
-        let theme = Self {
-            bg: 0x15171B,
-            surface: 0x121418,
-            surface_raised: 0x2A2E35,
-            sidebar: 0x0F1013,
-            chrome: 0x0F1013,
-            card: 0x1C1F24,
-            // Tern's 10 % white over the bar (`pane_gap` is black).
-            tab_active: 0x1A1A1A,
-            hover: 0x1F2227,
-            selected: 0x2A2E35,
-            selected_ring: 0x3D4380,
-            border: 0x23262C,
-            divider: 0x1E2126,
-            text: 0xECEDEF,
-            text_dim: 0xD5D8DD,
-            text_muted: 0xA3A8B0,
-            subtle: 0x5D616C,
+        Self {
+            bg: 0x0F0F12,
+            surface: 0x161619,
+            surface_raised: 0x232327,
+            sidebar: 0x050506,
+            chrome: 0x19191B,
+            card: 0x161619,
+            // Tern's l2 / ink 12 % over the bar.
+            tab_active: 0x1E1E1F,
+            // l1 over `bg`.
+            hover: 0x202023,
+            selected: 0x232327,
+            // Accent halfway to `bg`.
+            selected_ring: 0x4F4E84,
+            // l2 / l1 over `bg`.
+            border: 0x27272A,
+            divider: 0x202023,
+            text: 0xEDEDED,
+            text_dim: 0xC7C7C7,
+            text_muted: 0xA1A1A1,
+            subtle: 0x55555C,
             accent: 0x8E8CF5,
             accent_text: 0xC2C1FA,
-            accent_bg: 0x26273A,
+            // `mix(bg, accent, 0.14)`.
+            accent_bg: 0x212132,
             on_accent: 0x0F1013,
             on_accent_divider: 0x0000_0040,
-            warning_bg: 0x322B23,
-            success_bg: 0x1E302B,
-            danger_bg: 0x342526,
+            warning_bg: 0x2D241B,
+            success_bg: 0x192923,
+            danger_bg: 0x2E1E1F,
             run_pill_bg: 0x18241D,
             run_pill_border: 0x2A4434,
             run_pill_text: 0xC9EED8,
             // ~14 %: chip and pill fills.
             tint_alpha: 0x24,
-            // Black: 1.07:1 under `terminal_bg` (0B0C0E), the ratio Tern measures.
-            pane_gap: 0x000000,
-            pane_focus_stripe: 0x4A528E,
-            focus_ring: 0xECEDEF,
-            terminal_selection_bg: 0x353B60,
+            // Tern's `--page` darkened to clear `PANE_GAP_MIN_CONTRAST` (1.065:1 under `bg`).
+            pane_gap: 0x050506,
+            pane_focus_stripe: 0x4F4E84,
+            focus_ring: 0xEDEDED,
+            terminal_selection_bg: 0x353556,
             terminal_match_bg: 0x3F3524,
             terminal_match_current_bg: 0x7A5A1F,
             status_working: 0x8E8CF5,
             status_needs_input: 0xE4A452,
             status_done: 0x57C78A,
             status_exited: 0xEF7B6C,
-            status_idle: 0x7D838C,
+            status_idle: 0x8A8A92,
             brand_claude: 0xD97757,
             brand_codex: 0x10A37F,
             brand_copilot: 0xA371F7,
             brand_omp: 0x56B6C2,
-            // Removed / added lines: danger / success at 9 % over the diff card (`surface`).
-            diff_add_bg: 0x182422,
+            // Spec §10, over `surface` (0x161619): hue at 7 % (row), +8 % (gutter), 60 % over the
+            // gutter (number), 26 % / 25 % (word); the hunk bars are the accent at 4.5 % / 9 %.
+            diff_add_bg: 0x1B2221,
             diff_add_text: 0x6FD39B,
-            diff_del_bg: 0x261D20,
+            diff_del_bg: 0x251D1F,
             diff_del_text: 0xEF8F82,
-            diff_mod_bg: 0x25211D,
+            diff_mod_bg: 0x24201D,
             diff_mod_text: 0xE4A452,
-            diff_hunk_header: 0x17191D,
-            diff_add_gutter: 0x1E302B,
-            diff_del_gutter: 0x342526,
-            diff_mod_gutter: 0x322B23,
+            diff_hunk_header: 0x17171A,
+            diff_add_gutter: 0x202F29,
+            diff_del_gutter: 0x352525,
+            diff_mod_gutter: 0x332B21,
+            diff_add_num: 0x418A63,
+            diff_del_num: 0xA55950,
+            hunk_bg: 0x1B1B23,
+            hunk_current_bg: 0x21212D,
             git_modified: 0xE4A452,
             git_untracked: 0xE4A452,
             syntax_keyword: 0xC2C1FA,
@@ -1225,22 +1349,24 @@ impl Theme {
             syntax_number: 0xE8B87A,
             syntax_type: 0x8FD8CC,
             syntax_function: 0x93BCF6,
-            text_subtle: 0x7D838C,
+            text_subtle: 0x8A8A92,
             info: 0x6AA6F2,
             info_text: 0x8DB9F5,
             info_soft: 0x93BCF6,
             teal: 0x74D6C4,
-            terminal_bg: 0x0B0C0E,
-            control_border: 0x262A31,
-            row_hover: 0x1A1D21,
-            well: 0x17191D,
+            terminal_bg: 0x0F0F12,
+            control_border: 0x333336,
+            row_hover: 0x202023,
+            well: 0x17171A,
             danger_text: 0xEF8F82,
             success_text: 0x6FD39B,
-            folder: 0x8FA3C0,
-            text_disabled: 0x8A9099,
-            // Danger at 30 % / success at 28 % over the diff card.
-            diff_del_word_bg: 0x543331,
-            diff_add_word_bg: 0x254638,
+            text_disabled: 0x707077,
+            layer: layers(0xFFFFFF, true),
+            code_bg: 0x0C0C0D,
+            composer_fill: 0x1D1D21,
+            // Hue at 26 % / 25 % over `surface` (the changed word of a diff line).
+            diff_del_word_bg: 0x4C2F2E,
+            diff_add_word_bg: 0x274436,
             // red → danger, green → success, yellow → attention, blue → info, magenta →
             // accent, white → text, bright black → text_subtle.
             ansi: [
@@ -1255,93 +1381,96 @@ impl Theme {
             name: "Mkrew Dark".into(),
             ..Self::shared()
         }
-        .with_glass();
-        Self {
-            classic: Some(std::sync::Arc::new(Self::classic_dark(&theme))),
-            ..theme
-        }
+        .with_glass()
     }
 
     pub fn light() -> Self {
-        let theme = Self {
-            bg: 0xFFFFFF,
-            surface: 0xFAFAFB,
-            surface_raised: 0xE6E8EC,
-            sidebar: 0xF7F7F8,
-            chrome: 0xF7F7F8,
-            card: 0xF7F8FA,
-            tab_active: 0xE6E8EC,
-            hover: 0xEEF0F3,
-            selected: 0xE6E8EC,
-            selected_ring: 0xA7ADEA,
-            border: 0xDFE1E6,
-            divider: 0xE9EBEE,
-            text: 0x1B1D22,
-            text_dim: 0x3A3E46,
-            text_muted: 0x5A606B,
-            subtle: 0xA0A4AF,
+        Self {
+            bg: 0xFBFBFA,
+            surface: 0xFFFFFF,
+            surface_raised: 0xF4F4F2,
+            sidebar: 0xEFEFEC,
+            chrome: 0xE3E3E2,
+            card: 0xFFFFFF,
+            tab_active: 0xD6D6D4,
+            hover: 0xEDEEEE,
+            selected: 0xE7E7E7,
+            selected_ring: 0xA8A7E5,
+            border: 0xE7E7E7,
+            divider: 0xEDEEEE,
+            text: 0x1B1C20,
+            text_dim: 0x383A40,
+            text_muted: 0x55575F,
+            subtle: 0xB3B5BB,
             accent: 0x5452D0,
             accent_text: 0x4A48C4,
-            accent_bg: 0xEBEBFA,
+            accent_bg: 0xE4E3F4,
             on_accent: 0xFFFFFF,
             on_accent_divider: 0xFFFF_FF59,
-            warning_bg: 0xF4EDE2,
-            success_bg: 0xE5F0EA,
-            danger_bg: 0xF8E8E6,
+            warning_bg: 0xEBE4D9,
+            success_bg: 0xDDEAE2,
+            danger_bg: 0xF3E1DE,
             run_pill_bg: 0xE1F5EC,
             run_pill_border: 0xB4DEC8,
             run_pill_text: 0x1E6B3A,
             // ~12 %: chip and pill fills.
             tint_alpha: 0x1F,
-            // 1.07:1 under `terminal_bg` (FCFCFD); 1.11:1 from `tab_active`, 1.04:1 from `hover`.
-            pane_gap: 0xF3F4F6,
-            pane_focus_stripe: 0xA7ADEA,
-            focus_ring: 0x1B1D22,
-            terminal_selection_bg: 0xCACEF2,
+            // Tern's `--page`; 1.11:1 under `terminal_bg`, 1.26:1 from `tab_active`.
+            pane_gap: 0xEFEFEC,
+            pane_focus_stripe: 0xA8A7E5,
+            focus_ring: 0x1B1C20,
+            terminal_selection_bg: 0xC9C8ED,
             terminal_match_bg: 0xF6EBCF,
             terminal_match_current_bg: 0xE9C46A,
             status_working: 0x5452D0,
             status_needs_input: 0x8B570D,
             status_done: 0x23854F,
             status_exited: 0xC2412F,
-            status_idle: 0x8A8F99,
+            status_idle: 0x6A6C74,
             brand_claude: 0xBF5B3A,
             brand_codex: 0x0B7F62,
             brand_copilot: 0x7C4DD6,
             brand_omp: 0x0E7490,
-            diff_add_bg: 0xE7EFEC,
+            diff_add_bg: 0xF0F6F3,
             diff_add_text: 0x1E6B3A,
-            diff_del_bg: 0xF5E9E9,
+            diff_del_bg: 0xFBF2F0,
             diff_del_text: 0xA61B1B,
-            diff_mod_bg: 0xFFF6DB,
+            diff_mod_bg: 0xF7F3EE,
             diff_mod_text: 0x7A5200,
-            diff_hunk_header: 0xF1F2F4,
-            diff_add_gutter: 0xC9E8D2,
-            diff_del_gutter: 0xF7D4D4,
-            diff_mod_gutter: 0xF8E6AE,
-            git_modified: 0x975A16,
-            git_untracked: 0x975A16,
+            diff_hunk_header: 0xF4F4F2,
+            diff_add_gutter: 0xE0EDE6,
+            diff_del_gutter: 0xF6E4E1,
+            diff_mod_gutter: 0xEEE7DC,
+            diff_add_num: 0x529F75,
+            diff_del_num: 0xCF6A5C,
+            hunk_bg: 0xF7F7FD,
+            hunk_current_bg: 0xF0EFFB,
+            // The old 0x975A16 read 4.48:1 on the new `selected` (rule "diff lines").
+            git_modified: 0x8F5410,
+            git_untracked: 0x8F5410,
             // Darker than the ANSI entries so code stays ≥ 4.5:1 on white.
             syntax_keyword: 0x8A3FB8,
             syntax_string: 0x276749,
             syntax_number: 0x975A16,
             syntax_type: 0x17707F,
             syntax_function: 0x3B47B8,
-            text_subtle: 0x6B717C,
+            text_subtle: 0x6A6C74,
             info: 0x2F6FC4,
             info_text: 0x2A62AD,
             info_soft: 0x2F6FC4,
             teal: 0x1A7F70,
-            terminal_bg: 0xFCFCFD,
-            control_border: 0xD9DCE1,
-            row_hover: 0xF4F5F7,
-            well: 0xF1F2F4,
+            terminal_bg: 0xFBFBFA,
+            control_border: 0xDBDCDD,
+            row_hover: 0xEDEEEE,
+            well: 0xF4F4F2,
             danger_text: 0xB4382A,
             success_text: 0x1E6B3A,
-            folder: 0x5F7590,
-            text_disabled: 0x6B717C,
-            diff_del_word_bg: 0xECCCC8,
-            diff_add_word_bg: 0xC4DDD0,
+            text_disabled: 0x8F9198,
+            layer: layers(LAYER_INK_LIGHT, false),
+            code_bg: 0xF8F8F6,
+            composer_fill: 0xFFFFFF,
+            diff_del_word_bg: 0xF0D0CB,
+            diff_add_word_bg: 0xC6DFD1,
             ansi: [
                 // "White" stays readable on the light background (≥ 3:1).
                 0x1D1E22, 0xC2412F, 0x23854F, 0xA4660F, 0x2F6FC4, 0x5B59D6, 0x1A7F70, 0x8A8C94,
@@ -1355,158 +1484,99 @@ impl Theme {
             name: "Mkrew Light".into(),
             ..Self::shared()
         }
-        .with_glass();
-        Self {
-            classic: Some(std::sync::Arc::new(Self::classic_light(&theme))),
-            ..theme
-        }
+        .with_glass()
     }
 
-    /// The pre-restyle dark palette over `base` (it keeps `base`'s fonts and new tokens).
-    fn classic_dark(base: &Self) -> Self {
+    /// Tern Dark (ADR 0117): the retuned Mkrew Dark with Tern's blue accent, status, selection
+    /// and ANSI colors.
+    pub fn tern_dark() -> Self {
         Self {
-            bg: 0x141519,
-            surface: 0x1F2127,
-            surface_raised: 0x2C2E37,
-            sidebar: 0x191A1F,
-            chrome: 0x15161A,
-            card: 0x1A1B20,
-            tab_active: 0x262A3D,
-            hover: 0x22242B,
-            selected: 0x262A3D,
-            selected_ring: 0x3D4380,
-            border: 0x2A2C33,
-            divider: 0x24262D,
-            text: 0xE4E5E9,
-            text_dim: 0xB4B7C0,
-            text_muted: 0xA0A3AD,
-            subtle: 0x5D616C,
-            accent: 0x8B91FF,
-            accent_text: 0x9A9FFF,
-            accent_bg: 0x252848,
-            // The dark accent is light: dark text keeps ≥ 3:1 on it (white would not).
-            on_accent: 0x141519,
-            on_accent_divider: 0x0000_0040,
-            warning_bg: 0x3A3020,
-            success_bg: 0x1D3A31,
-            danger_bg: 0x3A2327,
-            run_pill_bg: 0x18241D,
-            run_pill_border: 0x2A4434,
-            run_pill_text: 0xC9EED8,
-            tint_alpha: 0x2E,
-            pane_focus_stripe: 0x4A528E,
-            focus_ring: 0xE4E5E9,
-            terminal_selection_bg: 0x353B60,
-            terminal_match_bg: 0x3F3524,
-            terminal_match_current_bg: 0x7A5A1F,
-            status_working: 0x8B91FF,
-            status_needs_input: 0xF0B866,
-            status_done: 0x5FD28F,
-            status_exited: 0xF08A80,
-            status_idle: 0x8A8D97,
-            diff_add_bg: 0x1E3A2B,
-            diff_add_text: 0x7DD3A0,
-            diff_del_bg: 0x3D2226,
-            diff_del_text: 0xF2A0A4,
-            diff_mod_bg: 0x3A3320,
-            diff_mod_text: 0xE6C77A,
-            diff_hunk_header: 0x2C2E37,
-            diff_add_gutter: 0x24503A,
-            diff_del_gutter: 0x56292F,
-            diff_mod_gutter: 0x4D4326,
-            git_modified: 0x8FB3FF,
-            git_untracked: 0xF0B866,
-            syntax_keyword: 0xC28CF0,
-            syntax_string: 0x7DD3A0,
-            syntax_number: 0xF0C674,
-            syntax_type: 0x8BE0EC,
-            syntax_function: 0xA3AFFF,
+            accent: 0x5A8CFF,
+            accent_text: 0x9DBCFF,
+            accent_bg: 0x1A2133,
+            on_accent: 0x08080A,
+            selected_ring: 0x354E89,
+            pane_focus_stripe: 0x3B6CFF,
+            status_working: 0x5A8CFF,
+            status_needs_input: 0xF5A524,
+            status_done: 0x3ECF8E,
+            status_exited: 0xFF6166,
+            warning_bg: 0x2F2415,
+            success_bg: 0x162A23,
+            danger_bg: 0x311A1E,
+            run_pill_bg: 0x152621,
+            run_pill_border: 0x1F523D,
+            run_pill_text: 0x3ECF8E,
+            success_text: 0x3ECF8E,
+            danger_text: 0xFF6166,
+            terminal_selection_bg: 0x27375E,
+            terminal_match_bg: 0x5D4621,
             ansi: [
-                0x25262C, 0xE5676B, 0x4CB782, 0xE3A63E, 0x7C8CFF, 0xC28CF0, 0x5EC4D6, 0xC9CBD1,
-                0x6E7079, 0xF2A0A4, 0x7DD3A0, 0xF0C674, 0xA3AFFF, 0xD8B4FE, 0x8BE0EC, 0xF5F6F8,
+                0x50525A, 0xFF6166, 0x3ECF8E, 0xF5B13D, 0x5B8DFF, 0xB98CFF, 0x35C7E6, 0xC9CAD0,
+                0x7A7C85, 0xFF8A8E, 0x6FE3B0, 0xFFD27A, 0x8FB6FF, 0xD2B3FF, 0x7FDCF0, 0xF7F7F8,
             ],
-            workspace_colors: [
-                0xF87171, 0xFB923C, 0xFACC15, 0xA3E635, 0x4ADE80, 0x2DD4BF, 0x60A5FA, 0xC084FC,
-                0xF472B6,
-            ],
-            dark: true,
-            classic: None,
-            ..base.clone()
+            name: "Tern Dark".into(),
+            // Tern Dark
+            diff_add_bg: 0x192321,
+            diff_add_gutter: 0x1C312A,
+            diff_add_num: 0x309066,
+            diff_add_word_bg: 0x204637,
+            diff_del_bg: 0x261B1E,
+            diff_del_gutter: 0x372124,
+            diff_del_num: 0xAF474C,
+            diff_del_word_bg: 0x50292C,
+            diff_mod_bg: 0x26201A,
+            diff_mod_gutter: 0x372B1B,
+            hunk_bg: 0x191B23,
+            hunk_current_bg: 0x1C212E,
+            ..Self::dark()
         }
+        .with_glass()
     }
 
-    /// The pre-restyle light palette over `base`.
-    fn classic_light(base: &Self) -> Self {
+    /// Tern Light (ADR 0117). Tern's `#d98a0b` warn fails 4.5:1, so needs-input keeps Mkrew
+    /// Light's `8B570D`; success / danger text keep Mkrew Light's.
+    pub fn tern_light() -> Self {
         Self {
-            bg: 0xFFFFFF,
-            surface: 0xF6F7F9,
-            surface_raised: 0xEEF0F3,
-            sidebar: 0xF4F5F7,
-            chrome: 0xFFFFFF,
-            card: 0xFFFFFF,
-            tab_active: 0xE9EAFF,
-            hover: 0xEEF0F3,
-            selected: 0xE9EAFF,
-            selected_ring: 0xA7ADEA,
-            border: 0xE3E5EA,
-            divider: 0xECEEF1,
-            text: 0x1B1D22,
-            text_dim: 0x474B55,
-            text_muted: 0x5F6473,
-            subtle: 0xA0A4AF,
-            accent: 0x4F5BD5,
-            accent_text: 0x4A52D9,
-            accent_bg: 0xECEEFF,
+            accent: 0x2F63F0,
+            accent_text: 0x2448C4,
+            accent_bg: 0xDEE6F9,
             on_accent: 0xFFFFFF,
-            on_accent_divider: 0xFFFF_FF59,
-            warning_bg: 0xFDF3E1,
-            success_bg: 0xE1F5EC,
-            danger_bg: 0xFDECEC,
-            run_pill_bg: 0xE1F5EC,
-            run_pill_border: 0xB4DEC8,
-            run_pill_text: 0x1E6B3A,
-            tint_alpha: 0x24,
-            pane_focus_stripe: 0xA7ADEA,
-            focus_ring: 0x1B1D22,
-            terminal_selection_bg: 0xCACEF2,
-            terminal_match_bg: 0xF6EBCF,
-            terminal_match_current_bg: 0xE9C46A,
-            status_working: 0x4F5BD5,
-            status_needs_input: 0xB7791F,
-            status_done: 0x2F855A,
-            status_exited: 0xC53030,
-            status_idle: 0x9A9CA6,
-            diff_add_bg: 0xE6F4EA,
-            diff_add_text: 0x1E6B3A,
-            diff_del_bg: 0xFDEEEE,
-            diff_del_text: 0xA61B1B,
-            diff_mod_bg: 0xFFF6DB,
-            diff_mod_text: 0x7A5200,
-            diff_hunk_header: 0xF6F7F9,
-            diff_add_gutter: 0xC9E8D2,
-            diff_del_gutter: 0xF7D4D4,
-            diff_mod_gutter: 0xF8E6AE,
-            git_modified: 0x1D4ED8,
-            git_untracked: 0x975A16,
-            // Darker than the ANSI entries so code stays ≥ 4.5:1 on white.
-            syntax_keyword: 0x8A3FB8,
-            syntax_string: 0x276749,
-            syntax_number: 0x975A16,
-            syntax_type: 0x17707F,
-            syntax_function: 0x3B47B8,
+            selected_ring: 0x95ADF5,
+            pane_focus_stripe: 0x3B6CFF,
+            status_working: 0x2F63F0,
+            status_needs_input: 0x8B570D,
+            status_done: 0x167A4D,
+            status_exited: 0xBF3038,
+            warning_bg: 0xF6EBD9,
+            success_bg: 0xDEF0E7,
+            danger_bg: 0xF8E2E2,
+            run_pill_bg: 0xE3F2EA,
+            run_pill_border: 0xB4E0CB,
+            run_pill_text: 0x167A4D,
+            terminal_selection_bg: 0xD6E0FC,
+            terminal_match_bg: 0xF8DCAB,
             ansi: [
-                // "White" stays readable on the light background (≥ 3:1).
-                0x1D1E22, 0xC53030, 0x2F855A, 0xB7791F, 0x4F5BD5, 0x9B4DCA, 0x1F8A9E, 0x8A8C94,
-                0x6B6D76, 0xE5676B, 0x38A169, 0xD69E2E, 0x3B47B8, 0xB37FEB, 0x31A3B8, 0x55575F,
+                0x1F2126, 0xCF3A3F, 0x1D8A5A, 0xA86A00, 0x2F5FE0, 0x8A4FD8, 0x0F7F93, 0x6F727B,
+                0x80838C, 0xE5484D, 0x2FAE74, 0xC98A0B, 0x3D6FFF, 0xA86AF4, 0x16A3C4, 0x9EA1A8,
             ],
-            workspace_colors: [
-                0xDC2626, 0xD9560B, 0xA16207, 0x4D7C0F, 0x15803D, 0x0F766E, 0x2563EB, 0x9333EA,
-                0xDB2777,
-            ],
-            dark: false,
-            classic: None,
-            ..base.clone()
+            name: "Tern Light".into(),
+            // Tern Light
+            diff_add_bg: 0xEFF6F3,
+            diff_add_gutter: 0xDEECE6,
+            diff_add_num: 0x489773,
+            diff_add_word_bg: 0xC2DCD1,
+            diff_del_bg: 0xFBF1F1,
+            diff_del_gutter: 0xF6E2E2,
+            diff_del_num: 0xCD5D63,
+            diff_del_word_bg: 0xEFCBCD,
+            diff_mod_bg: 0xF7F3EE,
+            diff_mod_gutter: 0xEEE7DC,
+            hunk_bg: 0xF6F8FE,
+            hunk_current_bg: 0xECF1FE,
+            ..Self::light()
         }
+        .with_glass()
     }
 
     fn shared() -> Self {
@@ -1539,11 +1609,14 @@ impl Theme {
             run_pill_border: 0,
             run_pill_text: 0,
             tint_alpha: 0,
-            // Glass and scrim are derived from `surface` / `accent` by `with_glass`.
+            // Glass and scrim are derived from the fills by `with_glass`.
             scrim: 0,
             glass: 0,
             glass_border: 0,
-            glass_tint: 0,
+            glass_hi: 0,
+            layer: [0; 4],
+            code_bg: 0,
+            composer_fill: 0,
             // The QR code of Phone access: near-black modules on white, in both appearances.
             qr_dark: 0x101114,
             qr_light: 0xFFFFFF,
@@ -1572,6 +1645,10 @@ impl Theme {
             diff_add_gutter: 0,
             diff_del_gutter: 0,
             diff_mod_gutter: 0,
+            diff_add_num: 0,
+            diff_del_num: 0,
+            hunk_bg: 0,
+            hunk_current_bg: 0,
             git_modified: 0,
             git_untracked: 0,
             syntax_keyword: 0,
@@ -1590,7 +1667,6 @@ impl Theme {
             well: 0,
             danger_text: 0,
             success_text: 0,
-            folder: 0,
             text_disabled: 0,
             diff_del_word_bg: 0,
             diff_add_word_bg: 0,
@@ -1603,14 +1679,13 @@ impl Theme {
             terminal_font_family: pick_family(TERMINAL_FONTS, &[]).into(),
             terminal_font_size: 13.0,
             terminal_line_height: 1.75,
-            code_line_height: 1.35,
+            code_line_height: 1.5,
             terminal_padding_x: space::L,
             terminal_padding_y: space::L,
             terminal_underline_thickness: 1.0,
             terminal_cursor_width: 2.0,
             dim_blend: 0.6,
             unfocused_pane_dim: 0.2,
-            classic: None,
         }
     }
 
@@ -1646,7 +1721,7 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// The palette a theme can be written back as (the two Mkrew themes have none of their
+    /// The palette a theme can be written back as (the Mkrew and Tern themes have none of their
     /// own): its own background, chrome, surface, text, muted text, accent and ANSI colors,
     /// with the six hues taken from ANSI red to cyan.
     pub fn from_theme(theme: &Theme) -> Self {
@@ -1678,16 +1753,67 @@ pub fn mix(a: u32, b: u32, t: f32) -> u32 {
     })
 }
 
+/// The fills of one diff hue (see [`DIFF_ROW_MIX`]).
+struct DiffTone {
+    row: u32,
+    gutter: u32,
+    num: u32,
+    word: u32,
+}
+
+fn diff_tone(ground: u32, hue: u32, word_mix: f32, dark: bool) -> DiffTone {
+    let row = mix(ground, hue, DIFF_ROW_MIX);
+    let gutter = mix(row, hue, DIFF_GUTTER_MIX);
+    let number = if dark {
+        DIFF_NUM_MIX_DARK
+    } else {
+        DIFF_NUM_MIX_LIGHT
+    };
+    // A derived palette's muted hue can read under 2:1 on its gutter (Nord 1.8): the number
+    // takes more of the hue until it does not. The hand-written themes are far above it.
+    let mut num = mix(gutter, hue, number);
+    let mut more = number;
+    while contrast(num, gutter) < DIFF_NUM_MIN_CONTRAST && more < 1.0 {
+        more += 0.05;
+        num = mix(gutter, hue, more);
+    }
+    DiffTone {
+        row,
+        gutter,
+        num,
+        word: mix(ground, hue, word_mix),
+    }
+}
+
 /// `0xRRGGBB` as `0xRRGGBBAA` at `alpha` (0.0 to 1.0).
 pub fn with_alpha(color: u32, alpha: f32) -> u32 {
     (color << 8) | (alpha.clamp(0.0, 1.0) * 255.0).round() as u32
 }
 
-/// The 1 px border of a control that sits on `surface_raised` (the Chat composer's model pill
-/// and round buttons). `control_border` is a shade of `surface`, so on the raised card it
-/// vanishes; this one is `text_muted` blended 30 % into the raised fill, visible in both themes.
+/// Alphas of the l1..l4 layers (see [`Theme::layer`]).
+const LAYER_ALPHA_DARK: [f32; 4] = [0.07, 0.10, 0.15, 0.24];
+const LAYER_ALPHA_LIGHT: [f32; 4] = [0.06, 0.09, 0.14, 0.22];
+/// Ink of the light themes' layers (Tern's `24 26 44`).
+const LAYER_INK_LIGHT: u32 = 0x181A2C;
+
+/// The l1..l4 layers of `ink` for a dark or a light appearance.
+fn layers(ink: u32, dark: bool) -> [u32; 4] {
+    let alphas = if dark {
+        LAYER_ALPHA_DARK
+    } else {
+        LAYER_ALPHA_LIGHT
+    };
+    alphas.map(|alpha| with_alpha(ink, alpha))
+}
+
+/// The 1 px border of a control that sits on `surface_raised` (the Chat composer's chips):
+/// `layer[1]` flattened over the raised fill, so it is the same step on every theme.
 pub fn raised_border(theme: &Theme) -> u32 {
-    mix(theme.surface_raised, theme.text_muted, 0.3)
+    mix(
+        theme.surface_raised,
+        theme.layer[1] >> 8,
+        (theme.layer[1] & 0xFF) as f32 / 255.0,
+    )
 }
 
 /// `alpha` as the 8-bit value an RGBA color stores (so tests and `with_glass` agree).
@@ -1695,26 +1821,52 @@ fn quantize(alpha: f32) -> f32 {
     (alpha.clamp(0.0, 1.0) * 255.0).round() / 255.0
 }
 
-/// The color a floating panel shows at its top over `backdrop`: `surface` at `alpha`, then the
-/// accent tint at `tint`.
-pub fn glass_over(surface: u32, accent: u32, alpha: f32, tint: f32, backdrop: u32) -> u32 {
-    mix(mix(backdrop, surface, alpha), accent, tint)
+/// The color a floating panel shows over `backdrop`: its `fill` at `alpha`.
+pub fn glass_over(fill: u32, alpha: f32, backdrop: u32) -> u32 {
+    mix(backdrop, fill, alpha)
 }
 
-/// The tint gradient of a floating panel: its top color and the same color with no alpha.
-pub fn glass_gradient(theme: &Theme) -> (u32, u32) {
-    (theme.glass_tint, theme.glass_tint & 0xFFFF_FF00)
+fn black(alpha: f32) -> gpui::Hsla {
+    gpui::Hsla::from(gpui::rgba(with_alpha(0x000000, alpha)))
 }
 
-/// The shadow of a floating panel (palette, Settings, dialogs): two layers, half as strong in
-/// light themes.
-pub fn shadow_float(theme: &Theme) -> Vec<gpui::BoxShadow> {
-    let strength = if theme.dark { 1.0 } else { 0.5 };
-    let black = |alpha: f32| gpui::Hsla::from(gpui::rgba(with_alpha(0x000000, alpha * strength)));
-    vec![
-        gpui::BoxShadow::new(gpui::px(0.0), gpui::px(8.0), black(0.35)).blur_radius(gpui::px(24.0)),
-        gpui::BoxShadow::new(gpui::px(0.0), gpui::px(2.0), black(0.20)).blur_radius(gpui::px(6.0)),
-    ]
+/// One shadow layer: `0 y blur spread` black at `alpha` (CSS order).
+fn shadow(y: f32, blur: f32, spread: f32, alpha: f32) -> gpui::BoxShadow {
+    gpui::BoxShadow::new(gpui::px(0.0), gpui::px(y), black(alpha))
+        .blur_radius(gpui::px(blur))
+        .spread_radius(gpui::px(spread))
+}
+
+/// Menus, tooltips, the peek, toasts and the find bar (ADR 0117): `0 18 50 -12` black 30 %.
+pub fn shadow_pop(_theme: &Theme) -> Vec<gpui::BoxShadow> {
+    vec![shadow(18.0, 50.0, -12.0, 0.30)]
+}
+
+/// The switch knob's drop shadow: `0 1 3` black 25 %.
+pub fn shadow_knob() -> Vec<gpui::BoxShadow> {
+    vec![shadow(1.0, 3.0, 0.0, 0.25)]
+}
+
+/// Dialogs, the palette and Settings: dark `0 28 72 -16` black 78 %; light `0 24 64 -18`
+/// black 32 % plus a `0 2 6 -2` black 6 % contact layer.
+pub fn shadow_modal(theme: &Theme) -> Vec<gpui::BoxShadow> {
+    if theme.dark {
+        vec![shadow(28.0, 72.0, -16.0, 0.78)]
+    } else {
+        vec![
+            shadow(24.0, 64.0, -18.0, 0.32),
+            shadow(2.0, 6.0, -2.0, 0.06),
+        ]
+    }
+}
+
+/// The composer card: dark `0 12 30 -16` black 60 %; light `0 18 50 -14` black 28 %.
+pub fn shadow_composer(theme: &Theme) -> Vec<gpui::BoxShadow> {
+    if theme.dark {
+        vec![shadow(12.0, 30.0, -16.0, 0.60)]
+    } else {
+        vec![shadow(18.0, 50.0, -14.0, 0.28)]
+    }
 }
 
 /// `color` blended toward `toward` in 5 % steps until it reads at `min` on every ground.
@@ -1736,65 +1888,54 @@ fn fill(bg: u32, hue: u32, t: f32, fg: u32) -> u32 {
 }
 
 impl Theme {
-    /// Sets `scrim`, `glass`, `glass_border` and `glass_tint` from `surface` and `accent`.
-    /// The fill alpha starts at the spec value and grows by 2 % until `text` keeps 4.5:1 on the
-    /// panel over both `bg` and `text` behind it (the worst light and dark pages).
+    /// Sets `scrim`, `glass`, `glass_border` and `glass_hi` from the fills and `layer`. The
+    /// fill alpha starts at the spec value and grows by 2 % until `text` keeps 4.5:1 on the
+    /// panel over both `bg` and `text` behind it (the worst light and dark pages). Needs
+    /// `layer`, `pane_gap`, `surface` and `surface_raised` set.
     fn with_glass(self) -> Self {
-        let (base, edge, tint, scrim) = if self.dark {
-            (0.96, 0xFFFFFF, 0.05, 0.24)
+        let (fill, base, scrim, hi) = if self.dark {
+            (self.surface_raised, 0.96, with_alpha(0x000000, 0.55), 0.05)
         } else {
-            (0.97, 0x000000, 0.04, 0.16)
+            (self.surface, 0.97, with_alpha(self.pane_gap, 0.50), 1.0)
         };
-        let tint = quantize(tint);
         let worst = |alpha: f32| {
             [self.bg, self.text]
                 .into_iter()
-                .map(|backdrop| {
-                    let fill = glass_over(self.surface, self.accent, alpha, tint, backdrop);
-                    contrast(self.text, fill)
-                })
+                .map(|backdrop| contrast(self.text, glass_over(fill, alpha, backdrop)))
                 .fold(f32::MAX, f32::min)
         };
         let mut alpha = quantize(base);
-        // Ends: at alpha 1.0 the fill is `surface` plus the tint, which text reads on.
+        // Ends: at alpha 1.0 the fill is the panel color itself, which text reads on.
         while worst(alpha) < 4.5 && alpha < 1.0 {
             alpha = quantize(alpha + 0.02);
         }
         Self {
-            scrim: with_alpha(0x000000, scrim),
-            glass: with_alpha(self.surface, alpha),
-            glass_border: with_alpha(edge, 0.08),
-            glass_tint: with_alpha(self.accent, tint),
+            scrim,
+            glass: with_alpha(fill, alpha),
+            glass_border: self.layer[1],
+            glass_hi: with_alpha(0xFFFFFF, hi),
             ..self
         }
     }
 
     /// A built-in theme from its palette (ADR 0078; token table in the spec). Status, workspace
-    /// and QR colors, the classic sidebar palette, fonts and sizes stay the Mkrew base's.
+    /// and QR colors, fonts and sizes stay the Mkrew base's.
     pub fn from_palette(name: impl Into<SharedString>, p: &Palette) -> Self {
         let base = if p.dark { Self::dark() } else { Self::light() };
         let tint = |hue, t| mix(p.bg, hue, t);
         let surface_raised = mix(p.surface, p.fg, 0.10);
         let hover = mix(p.bg, p.fg, 0.06);
-        let diff = |hue| (tint(hue, 0.14), tint(hue, 0.24), tint(hue, 0.30));
-        let (add_bg, add_gutter, add_word) = diff(p.green);
-        let (del_bg, del_gutter, del_word) = diff(p.red);
-        let (mod_bg, mod_gutter, _) = diff(p.yellow);
-        let grounds = [
-            p.bg,
-            p.chrome,
-            p.surface,
-            surface_raised,
-            hover,
-            add_bg,
-            del_bg,
-            mod_bg,
-            add_gutter,
-            del_gutter,
-            mod_gutter,
-            add_word,
-            del_word,
-        ];
+        // The composer card: lifted a step in dark themes, the panel in light ones.
+        let composer_fill = if p.dark {
+            mix(p.bg, p.fg, 0.06)
+        } else {
+            p.surface
+        };
+        // The accent reads on the grounds the "code" rule checks (Tern's blue on a derived raised
+        // fill is 4.40:1); a palette whose accent already does keeps it. Everything derived from
+        // the accent below uses this one.
+        let accent = readable(p.accent, p.fg, &[p.bg, p.surface, surface_raised], 4.5);
+        let accent_bg = tint(accent, 0.14);
         // The frame is a step off `bg` (the terminal ground): toward black, so panes look
         // raised; toward `fg` when `bg` is already so dark that black is under the floor.
         let pane_gap = {
@@ -1805,12 +1946,53 @@ impl Theme {
                 mix(p.bg, p.fg, 0.10)
             }
         };
+        let add = diff_tone(p.surface, p.green, DIFF_ADD_WORD_MIX, p.dark);
+        let del = diff_tone(p.surface, p.red, DIFF_DEL_WORD_MIX, p.dark);
+        let changed = diff_tone(p.surface, p.yellow, DIFF_ADD_WORD_MIX, p.dark);
+        let hunk_bg = mix(p.surface, p.accent, HUNK_MIX);
+        let hunk_current_bg = mix(p.surface, p.accent, HUNK_CURRENT_MIX);
+        let grounds = [
+            p.bg,
+            p.chrome,
+            p.surface,
+            surface_raised,
+            hover,
+            // The sidebar is the page (`pane_gap`); the composer card; the pick fill under
+            // `accent_text`.
+            pane_gap,
+            composer_fill,
+            accent_bg,
+            add.row,
+            del.row,
+            changed.row,
+            add.gutter,
+            del.gutter,
+            changed.gutter,
+            add.word,
+            del.word,
+            hunk_bg,
+            hunk_current_bg,
+        ];
+        // Meta text (t3) reads on the grounds of the "meta text" rule only; the diff tints
+        // would pull it up onto `text_muted`.
+        let meta_grounds = [p.bg, p.surface, surface_raised, composer_fill];
         // The shown tab chip sits on the title bar, which is `pane_gap`.
         let tab_active = mix(pane_gap, p.fg, 0.12);
         // A brand logo sits on the bar and, in the shown tab, on `tab_active`.
         let brand_grounds = [pane_gap, tab_active];
+        // The sidebar is `pane_gap`, a step off `bg`: the avatar letter (`text`) must read on the
+        // workspace tints over every ground the "avatar letters" rule checks (`pane_gap`, `hover`,
+        // `surface_raised`); only a palette whose foreground is that weak changes.
+        let fills = [pane_gap, hover, surface_raised]
+            .into_iter()
+            .flat_map(|ground| {
+                base.workspace_colors
+                    .map(|c| base.avatar_colors(c, ground).1)
+            })
+            .collect::<Vec<_>>();
+        let letter = readable(p.fg, if p.dark { 0xFFFFFF } else { 0x000000 }, &fills, 4.5);
         let text = |color| readable(color, p.fg, &grounds, 4.5);
-        let on_accent = if contrast(p.bg, p.accent) >= contrast(p.fg, p.accent) {
+        let on_accent = if contrast(p.bg, accent) >= contrast(p.fg, accent) {
             p.bg
         } else {
             p.fg
@@ -1819,7 +2001,14 @@ impl Theme {
             name: name.into(),
             bg: p.bg,
             terminal_bg: p.bg,
-            sidebar: p.chrome,
+            sidebar: pane_gap,
+            composer_fill,
+            code_bg: if p.dark {
+                mix(p.bg, 0x000000, 0.25)
+            } else {
+                mix(p.bg, p.fg, 0.02)
+            },
+            layer: layers(if p.dark { p.fg } else { LAYER_INK_LIGHT }, p.dark),
             chrome: p.chrome,
             surface: p.surface,
             card: p.surface,
@@ -1833,21 +2022,21 @@ impl Theme {
             border: mix(p.bg, p.fg, 0.14),
             control_border: mix(p.bg, p.fg, 0.14),
             divider: mix(p.bg, p.fg, 0.09),
-            selected_ring: mix(p.accent, p.bg, 0.50),
-            text: p.fg,
+            selected_ring: mix(accent, p.bg, 0.50),
+            text: letter,
             text_dim: text(mix(p.fg, p.bg, 0.20)),
             text_muted: text(p.muted),
-            text_subtle: text(p.muted),
+            text_subtle: readable(mix(p.muted, p.bg, 0.25), p.fg, &meta_grounds, 4.5),
             text_disabled: text(p.muted),
-            subtle: mix(p.muted, p.bg, 0.35),
-            accent: p.accent,
-            accent_text: text(p.accent),
+            subtle: mix(p.muted, p.bg, 0.45),
+            accent,
+            accent_text: text(accent),
             info: p.blue,
             info_soft: p.blue,
             info_text: text(p.blue),
-            accent_bg: tint(p.accent, 0.14),
+            accent_bg,
             pane_gap,
-            pane_focus_stripe: mix(p.accent, p.bg, 0.50),
+            pane_focus_stripe: mix(accent, p.bg, 0.50),
             focus_ring: p.fg,
             on_accent,
             terminal_selection_bg: fill(p.bg, p.accent, 0.30, p.fg),
@@ -1859,14 +2048,18 @@ impl Theme {
             run_pill_bg: tint(p.green, 0.12),
             run_pill_border: tint(p.green, 0.35),
             run_pill_text: text(p.green),
-            diff_add_bg: add_bg,
-            diff_del_bg: del_bg,
-            diff_mod_bg: mod_bg,
-            diff_add_gutter: add_gutter,
-            diff_del_gutter: del_gutter,
-            diff_mod_gutter: mod_gutter,
-            diff_add_word_bg: add_word,
-            diff_del_word_bg: del_word,
+            diff_add_bg: add.row,
+            diff_del_bg: del.row,
+            diff_mod_bg: changed.row,
+            diff_add_gutter: add.gutter,
+            diff_del_gutter: del.gutter,
+            diff_mod_gutter: changed.gutter,
+            diff_add_num: add.num,
+            diff_del_num: del.num,
+            hunk_bg,
+            hunk_current_bg,
+            diff_add_word_bg: add.word,
+            diff_del_word_bg: del.word,
             diff_add_text: text(p.green),
             success_text: text(p.green),
             diff_del_text: text(p.red),
@@ -1880,7 +2073,6 @@ impl Theme {
             syntax_type: text(p.cyan),
             syntax_function: text(p.blue),
             teal: text(p.cyan),
-            folder: text(p.blue),
             brand_claude: readable(base.brand_claude, p.fg, &brand_grounds, 3.0),
             brand_codex: readable(base.brand_codex, p.fg, &brand_grounds, 3.0),
             brand_copilot: readable(base.brand_copilot, p.fg, &brand_grounds, 3.0),
@@ -1893,28 +2085,43 @@ impl Theme {
     }
 }
 
-/// One built-in theme (ADR 0078). The Mkrew ones have no palette: they are `Theme::dark()` /
-/// `Theme::light()` exactly.
+/// How a built-in theme is made (ADR 0078, ADR 0117).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Recipe {
+    /// `Theme::dark()` / `Theme::light()`: written token by token.
+    Mkrew,
+    /// `Theme::tern_dark()` / `Theme::tern_light()`: Mkrew with Tern's accent family.
+    Tern,
+    /// Derived from a palette by [`Theme::from_palette`].
+    Palette(Palette),
+}
+
+/// One built-in theme (ADR 0078).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThemeEntry {
     pub name: &'static str,
     pub dark: bool,
-    palette: Option<Palette>,
+    recipe: Recipe,
 }
 
 impl ThemeEntry {
     pub fn build(&self) -> Theme {
-        match (&self.palette, self.dark) {
-            (Some(palette), _) => Theme::from_palette(self.name, palette),
-            (None, true) => Theme::dark(),
-            (None, false) => Theme::light(),
+        match (&self.recipe, self.dark) {
+            (Recipe::Palette(palette), _) => Theme::from_palette(self.name, palette),
+            (Recipe::Mkrew, true) => Theme::dark(),
+            (Recipe::Mkrew, false) => Theme::light(),
+            (Recipe::Tern, true) => Theme::tern_dark(),
+            (Recipe::Tern, false) => Theme::tern_light(),
         }
     }
 
-    /// The palette the theme is derived from; `None` for the two Mkrew themes, which are
+    /// The palette the theme is derived from; `None` for the Mkrew and Tern themes, which are
     /// written token by token.
     pub fn palette(&self) -> Option<&Palette> {
-        self.palette.as_ref()
+        match &self.recipe {
+            Recipe::Palette(palette) => Some(palette),
+            Recipe::Mkrew | Recipe::Tern => None,
+        }
     }
 }
 
@@ -1922,7 +2129,7 @@ const fn dark_entry(name: &'static str, palette: Palette) -> ThemeEntry {
     ThemeEntry {
         name,
         dark: true,
-        palette: Some(palette),
+        recipe: Recipe::Palette(palette),
     }
 }
 
@@ -1930,7 +2137,7 @@ const fn light_entry(name: &'static str, palette: Palette) -> ThemeEntry {
     ThemeEntry {
         name,
         dark: false,
-        palette: Some(palette),
+        recipe: Recipe::Palette(palette),
     }
 }
 
@@ -1939,7 +2146,12 @@ pub const THEMES: &[ThemeEntry] = &[
     ThemeEntry {
         name: "Mkrew Dark",
         dark: true,
-        palette: None,
+        recipe: Recipe::Mkrew,
+    },
+    ThemeEntry {
+        name: "Tern Dark",
+        dark: true,
+        recipe: Recipe::Tern,
     },
     dark_entry(
         "One Dark",
@@ -2211,7 +2423,12 @@ pub const THEMES: &[ThemeEntry] = &[
     ThemeEntry {
         name: "Mkrew Light",
         dark: false,
-        palette: None,
+        recipe: Recipe::Mkrew,
+    },
+    ThemeEntry {
+        name: "Tern Light",
+        dark: false,
+        recipe: Recipe::Tern,
     },
     light_entry(
         "One Light",
@@ -2508,14 +2725,17 @@ pub const TAB_STRIP_HEIGHT: f32 = 44.0;
 pub const PANEL_TAB_HEIGHT: f32 = 28.0;
 /// The Git view's repository tabs (multi-repo workspaces): a tab strip.
 pub const GIT_REPO_STRIP_HEIGHT: f32 = 42.0;
-/// The Git view's Working / Vs. base / History tabs: underlined text tabs (ADR 0110).
-pub const GIT_SECTION_TAB_HEIGHT: f32 = 36.0;
 pub const WORKSPACE_ROW_HEIGHT: f32 = 30.0;
 pub const SESSION_ROW_HEIGHT: f32 = 30.0;
+/// The sidebar's filter field (spec §8): one step lower than a dialog input
+/// ([`INPUT_HEIGHT`]) so it sits quietly above the All / Working / Needs you control.
+pub const SIDEBAR_FILTER_HEIGHT: f32 = 28.0;
 /// Height of the Plan card's progress bar, and of the thin one under the selected sidebar row
 /// (ADR 0039). The track is `Theme::border`, the fill `Theme::accent` (both themes).
 pub const PLAN_BAR_HEIGHT: f32 = 4.0;
 pub const PLAN_ROW_BAR_HEIGHT: f32 = 2.0;
+/// The check glyph inside a 14 px check box (Plan card).
+pub const CHECK_MARK_SIZE: f32 = 10.0;
 /// The sidebar's footer row (Inbox, voice input, compact toggle), in px at the default font
 /// size; drawn with existing tokens.
 pub const SIDEBAR_FOOTER_HEIGHT: f32 = 32.0;
@@ -2604,12 +2824,28 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
             check("body text", fg, bg, 4.5);
         }
     }
-    // Decoded exactly as `with_glass` quantized them; the page behind is a light or a dark one.
+    // Meta text (timestamps, placeholders, counts, tree rows) reads on every ground it sits on.
+    for bg in [
+        t.bg,
+        t.surface,
+        t.card,
+        t.terminal_bg,
+        t.surface_raised,
+        t.composer_fill,
+    ] {
+        check("meta text", t.text_subtle, bg, 4.5);
+    }
+    // The selected panel icon and the picked row's label sit on `accent_bg`.
+    check("accent text", t.accent_text, t.accent_bg, 4.5);
+    // Decoded exactly as `with_glass` quantized it; the page behind is a light or a dark one.
     let alpha = (t.glass & 0xFF) as f32 / 255.0;
-    let tint = (t.glass_tint & 0xFF) as f32 / 255.0;
     for backdrop in [t.bg, t.text] {
-        let fill = glass_over(t.surface, t.accent, alpha, tint, backdrop);
-        check("text on glass", t.text, fill, 4.5);
+        check(
+            "text on glass",
+            t.text,
+            glass_over(t.glass >> 8, alpha, backdrop),
+            4.5,
+        );
     }
     check("on accent", t.on_accent, t.accent, 3.0);
     // The close button's red hover under its cross.
@@ -2628,12 +2864,18 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
         t.syntax_type,
         t.syntax_function,
     ];
-    // `surface_raised` is the Files viewer's selected line.
+    // `row_hover` is the band under the Files editor's caret row; `surface_raised` is the
+    // Docs view's selected line. On the band the accent is only the caret (a graphical
+    // object, WCAG 1.4.11), so it needs 3:1 there and 4.5:1 on the grounds that carry text.
     for fg in code.into_iter().chain([t.accent]) {
         for bg in [t.bg, t.surface, t.surface_raised] {
             check("code", fg, bg, 4.5);
         }
     }
+    for fg in code {
+        check("code", fg, t.row_hover, 4.5);
+    }
+    check("code", t.accent, t.row_hover, 3.0);
     // A toast card is `surface_raised`; its marks are the info accent, the error red and the X.
     check("toast", t.text, t.surface_raised, 4.5);
     for mark in [t.accent_text, t.status_exited, t.text_muted] {
@@ -2664,13 +2906,27 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
         (t.git_untracked, t.bg),
         (t.git_modified, t.selected),
         (t.git_untracked, t.selected),
+        // The Files tree's git-tinted names on the opened row's `accent_bg`.
+        (t.git_modified, t.accent_bg),
+        (t.diff_add_text, t.accent_bg),
+        (t.danger_text, t.accent_bg),
     ] {
         check("diff lines", fg, bg, 4.5);
     }
-    // The sidebar's session list keeps Mkrew's classic palette on this theme's sidebar.
-    let classic = t.classic();
-    for fg in [classic.text, classic.text_muted] {
-        check("sidebar text", fg, t.sidebar, 4.5);
+    // A hunk header: `@@` in `accent_text`, its section in `text_dim`, on the plain and on the
+    // current hunk's fill.
+    for bg in [t.hunk_bg, t.hunk_current_bg] {
+        for fg in [t.accent_text, t.text_dim] {
+            check("hunk header", fg, bg, 4.5);
+        }
+    }
+    // The line numbers of a changed line are dimmer than text, but not below the context
+    // numbers (`subtle`, about 2:1): a derived palette (One Dark gives 2.2) has no hand-tuned value.
+    for (num, gutter) in [
+        (t.diff_add_num, t.diff_add_gutter),
+        (t.diff_del_num, t.diff_del_gutter),
+    ] {
+        check("diff numbers", num, gutter, 2.0);
     }
     // Where a swatch or avatar sits: the dialogs, the menu, the sidebar and its row fills.
     // WCAG 1.4.11: graphical objects >= 3:1.
@@ -2709,6 +2965,42 @@ pub fn problems(theme: &Theme) -> Vec<Problem> {
             check("brand logo", t.brand_color(*logo), ground, 3.0);
         }
     }
+    found.extend(floating_problems(t));
+    found
+}
+
+/// Rules on the lift of a floating panel and of a picked row (ADR 0117).
+fn floating_problems(t: &Theme) -> Vec<Problem> {
+    let alpha = (t.glass & 0xFF) as f32 / 255.0;
+    let flat = glass_over(t.glass >> 8, alpha, t.bg);
+    let mut found = Vec::new();
+    // A floating panel is lighter than the page it covers in dark themes.
+    if t.dark && contrast(flat, 0x000000) <= contrast(t.bg, 0x000000) {
+        found.push(Problem {
+            rule: "glass lift",
+            detail: format!(
+                "the panel {flat:06X} is not lighter than the page {:06X}",
+                t.bg
+            ),
+        });
+    }
+    // A picked menu row (`accent_bg` fill plus bar) must show on the panel: some channel
+    // differs by at least 3. (`selected` equals `surface_raised` in dark themes, so it
+    // cannot carry the pick.)
+    let step = [16, 8, 0]
+        .into_iter()
+        .map(|s| (((t.accent_bg >> s) & 0xFF) as i32 - ((flat >> s) & 0xFF) as i32).abs())
+        .max()
+        .unwrap_or(0);
+    if step < 3 {
+        found.push(Problem {
+            rule: "menu pick",
+            detail: format!(
+                "accent_bg {:06X} is not apart from the panel {flat:06X}",
+                t.accent_bg
+            ),
+        });
+    }
     found
 }
 
@@ -2734,24 +3026,101 @@ mod tests {
                 .max()
                 .unwrap();
             assert!(
-                gap >= 32,
+                gap >= 16,
                 "dark={}: border {border:06x} too faint ({gap})",
                 theme.dark
             );
-            // The old token is the failure this guards against.
-            let old = [16, 8, 0]
-                .into_iter()
-                .map(|s| {
-                    (channel(theme.control_border, s) - channel(theme.surface_raised, s)).abs()
-                })
-                .max()
-                .unwrap();
-            assert!(old < 32, "control_border became visible; use it instead");
         }
     }
 
     fn all_themes() -> Vec<Theme> {
         THEMES.iter().map(ThemeEntry::build).collect()
+    }
+
+    /// Channel-wise distance between two RGB colors (sum of |a - b|).
+    fn distance(a: u32, b: u32) -> u32 {
+        [16, 8, 0]
+            .into_iter()
+            .map(|s| (((a >> s) & 0xFF) as i32 - ((b >> s) & 0xFF) as i32).unsigned_abs())
+            .sum()
+    }
+
+    #[test]
+    fn the_hand_written_diff_fills_follow_the_seven_percent_rule() {
+        // One step per channel of slack: the literals are rounded once, the rule rounds per mix.
+        let close = |a: u32, b: u32| distance(a, b) <= 3;
+        for theme in [
+            Theme::dark(),
+            Theme::light(),
+            Theme::tern_dark(),
+            Theme::tern_light(),
+        ] {
+            let name = theme.name.clone();
+            let ground = theme.surface;
+            let add = diff_tone(ground, theme.status_done, DIFF_ADD_WORD_MIX, theme.dark);
+            let del = diff_tone(ground, theme.status_exited, DIFF_DEL_WORD_MIX, theme.dark);
+            let changed = diff_tone(
+                ground,
+                theme.status_needs_input,
+                DIFF_ADD_WORD_MIX,
+                theme.dark,
+            );
+            for (what, got, want) in [
+                ("add row", theme.diff_add_bg, add.row),
+                ("add gutter", theme.diff_add_gutter, add.gutter),
+                ("add number", theme.diff_add_num, add.num),
+                ("add word", theme.diff_add_word_bg, add.word),
+                ("del row", theme.diff_del_bg, del.row),
+                ("del gutter", theme.diff_del_gutter, del.gutter),
+                ("del number", theme.diff_del_num, del.num),
+                ("del word", theme.diff_del_word_bg, del.word),
+                ("mod row", theme.diff_mod_bg, changed.row),
+                ("mod gutter", theme.diff_mod_gutter, changed.gutter),
+                ("hunk", theme.hunk_bg, mix(ground, theme.accent, HUNK_MIX)),
+                (
+                    "current hunk",
+                    theme.hunk_current_bg,
+                    mix(ground, theme.accent, HUNK_CURRENT_MIX),
+                ),
+            ] {
+                assert!(
+                    close(got, want),
+                    "{name} {what}: {got:06X}, the rule gives {want:06X}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn diff_tiers_step_away_from_the_ground_in_every_theme() {
+        for theme in all_themes() {
+            let name = &theme.name;
+            let ground = theme.surface;
+            for (what, row, gutter) in [
+                ("add", theme.diff_add_bg, theme.diff_add_gutter),
+                ("del", theme.diff_del_bg, theme.diff_del_gutter),
+                ("mod", theme.diff_mod_bg, theme.diff_mod_gutter),
+            ] {
+                assert!(
+                    distance(ground, row) < distance(ground, gutter),
+                    "{name}: the {what} gutter is not a step stronger than its row"
+                );
+            }
+            assert!(
+                distance(ground, theme.hunk_bg) < distance(ground, theme.hunk_current_bg),
+                "{name}: the current hunk is not stronger than the others"
+            );
+        }
+    }
+
+    /// The palette of the built-in theme `name` (a palette-based one).
+    fn palette_of(name: &str) -> Palette {
+        THEMES
+            .iter()
+            .find(|e| e.name == name)
+            .and_then(ThemeEntry::palette)
+            .copied()
+            .unwrap_or_else(|| panic!("{name} has a palette"))
     }
 
     #[test]
@@ -2768,6 +3137,110 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join("; ")
             );
+        }
+    }
+
+    #[test]
+    fn a_derived_palette_splits_the_text_tiers_and_keeps_meta_readable() {
+        for (name, p) in THEMES
+            .iter()
+            .filter_map(|e| e.palette().map(|p| (e.name, p)))
+        {
+            let t = Theme::from_palette(name, p);
+            // t1 > t2 > t3 > t4 in prominence: toward the page goes darker (dark) / lighter (light).
+            let (a, b, c) = (t.text_muted, t.text_subtle, t.subtle);
+            let steps = if t.dark {
+                darker(b, a) && darker(c, b)
+            } else {
+                darker(a, b) && darker(b, c)
+            };
+            assert!(steps, "{name}: tiers {a:06X} {b:06X} {c:06X}");
+            for ground in [t.bg, t.surface, t.surface_raised, t.composer_fill] {
+                assert!(
+                    contrast(t.text_subtle, ground) >= 4.5,
+                    "{name} on {ground:06X}"
+                );
+            }
+            let ink = if t.dark { p.fg } else { LAYER_INK_LIGHT };
+            assert!(
+                t.layer.iter().all(|l| l >> 8 == ink),
+                "{name}: layers use the ink"
+            );
+            if t.dark {
+                assert!(darker(t.code_bg, t.bg), "{name}: code is sunken");
+                assert!(
+                    darker(t.bg, t.composer_fill),
+                    "{name}: the composer is lifted"
+                );
+            }
+        }
+    }
+
+    /// A palette with almost no contrast must still load: either its meta text reaches 4.5:1 or
+    /// the theme shows the "Low contrast" badge (`problems` is not empty).
+    #[test]
+    fn an_edge_palette_reads_or_is_flagged() {
+        let mut p = palette_of("One Dark");
+        (p.bg, p.surface, p.chrome) = (0x101010, 0x111111, 0x121212);
+        (p.fg, p.muted) = (0x1A1A1A, 0x161616);
+        let t = Theme::from_palette("Edge", &p);
+        let reads = [t.bg, t.surface, t.surface_raised, t.composer_fill]
+            .into_iter()
+            .all(|ground| contrast(t.text_subtle, ground) >= 4.5);
+        assert!(reads || !problems(&t).is_empty());
+    }
+
+    #[test]
+    fn the_sidebar_is_the_page_in_every_built_in_theme() {
+        let mut themes = all_themes();
+        let mut edge = palette_of("One Dark");
+        edge.bg = 0x000000; // the lighter-gap branch of `from_palette`
+        themes.push(Theme::from_palette("Edge", &edge));
+        for t in themes {
+            assert_eq!(t.sidebar, t.pane_gap, "{}", t.name);
+        }
+    }
+
+    #[test]
+    fn the_mkrew_grounds_are_ordered_and_neutral() {
+        let (dark, light) = (Theme::dark(), Theme::light());
+        // Dark: the page frame < the panel < the raised fill.
+        for pair in [
+            [dark.pane_gap, dark.bg],
+            [dark.bg, dark.surface],
+            [dark.surface, dark.surface_raised],
+        ] {
+            assert!(
+                darker(pair[0], pair[1]),
+                "{:06X} < {:06X}",
+                pair[0],
+                pair[1]
+            );
+        }
+        // Light: the frame is darker than the panel, which is darker than the card.
+        assert!(darker(light.pane_gap, light.bg) && darker(light.bg, light.surface));
+        // Blue is at most 4 over red and green on every ground (Tern's grounds are +3, `232327` +4).
+        let (tern_dark, tern_light) = (Theme::tern_dark(), Theme::tern_light());
+        for t in [&dark, &light, &tern_dark, &tern_light] {
+            for g in [
+                t.pane_gap,
+                t.bg,
+                t.surface,
+                t.surface_raised,
+                t.chrome,
+                t.well,
+                t.tab_active,
+                t.hover,
+                t.divider,
+                t.border,
+                t.control_border,
+                t.selected,
+                t.code_bg,
+                t.composer_fill,
+            ] {
+                let (r, gr, b) = ((g >> 16) & 0xFF, (g >> 8) & 0xFF, g & 0xFF);
+                assert!(b <= r.max(gr) + 4, "{}: {g:06X} leans blue", t.name);
+            }
         }
     }
 
@@ -2803,7 +3276,7 @@ mod tests {
 
     #[test]
     fn a_derived_pane_gap_goes_lighter_only_when_bg_has_no_room_below_it() {
-        let base = *THEMES[1].palette().expect("One Dark has a palette");
+        let base = palette_of("One Dark");
         // (dark, bg, the gap is darker than bg)
         for (dark, bg, below) in [
             (true, 0x000000, false),
@@ -2825,7 +3298,7 @@ mod tests {
 
     #[test]
     fn a_palette_with_no_contrast_reports_the_rules_it_breaks() {
-        let mut palette = *THEMES[1].palette().expect("One Dark has a palette");
+        let mut palette = palette_of("One Dark");
         palette.fg = palette.bg;
         palette.accent = palette.bg;
         let found = problems(&Theme::from_palette("Bad", &palette));
@@ -2920,11 +3393,45 @@ mod tests {
                     ..t.clone()
                 },
             ),
-            // A built-in Mkrew theme is its own classic palette.
             (
-                "sidebar text",
+                "hunk header",
                 Theme {
-                    sidebar: t.text,
+                    accent_text: t.hunk_current_bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "diff numbers",
+                Theme {
+                    diff_add_num: t.diff_add_gutter,
+                    ..t.clone()
+                },
+            ),
+            (
+                "meta text",
+                Theme {
+                    text_subtle: t.bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "accent text",
+                Theme {
+                    accent_text: t.accent_bg,
+                    ..t.clone()
+                },
+            ),
+            (
+                "glass lift",
+                Theme {
+                    glass: with_alpha(t.bg, 1.0),
+                    ..t.clone()
+                },
+            ),
+            (
+                "menu pick",
+                Theme {
+                    accent_bg: t.surface_raised,
                     ..t.clone()
                 },
             ),
@@ -2996,12 +3503,33 @@ mod tests {
     }
 
     #[test]
-    fn glass_is_derived_from_surface_and_accent_in_every_theme() {
+    fn code_colors_are_checked_on_the_current_line_band() {
+        let t = Theme::dark();
+        // Fine on `bg`, unreadable on the band that the caret row is drawn on.
+        let broken = Theme {
+            row_hover: t.syntax_keyword,
+            ..t.clone()
+        };
+        let found = problems(&broken);
+        let want = format!("{:06X} on {:06X}", t.syntax_keyword, t.syntax_keyword);
+        assert!(
+            found
+                .iter()
+                .any(|p| p.rule == "code" && p.detail.starts_with(&want)),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn glass_is_the_raised_fill_in_dark_and_the_surface_in_light() {
         for theme in all_themes() {
-            assert_eq!(theme.glass >> 8, theme.surface, "{}", theme.name);
-            assert_eq!(theme.glass_tint >> 8, theme.accent, "{}", theme.name);
-            let edge = if theme.dark { 0xFFFFFF } else { 0x000000 };
-            assert_eq!(theme.glass_border, with_alpha(edge, 0.08), "{}", theme.name);
+            let fill = if theme.dark {
+                theme.surface_raised
+            } else {
+                theme.surface
+            };
+            assert_eq!(theme.glass >> 8, fill, "{}", theme.name);
+            assert_eq!(theme.glass_border, theme.layer[1], "{}", theme.name);
             // The base alphas of the spec; the contrast rule may only raise the fill.
             let floor = if theme.dark { 0.96_f32 } else { 0.97_f32 };
             assert!(
@@ -3013,35 +3541,28 @@ mod tests {
     }
 
     #[test]
-    fn the_scrim_is_lighter_than_before_and_lighter_in_light_themes() {
+    fn the_scrim_is_black_in_dark_and_a_milky_page_veil_in_light() {
         let (dark, light) = (Theme::dark(), Theme::light());
-        assert_eq!(dark.scrim, with_alpha(0x000000, 0.24));
-        assert_eq!(light.scrim, with_alpha(0x000000, 0.16));
-        assert!(dark.scrim & 0xFF < 0x59 && light.scrim & 0xFF < dark.scrim & 0xFF);
+        assert_eq!(dark.scrim, with_alpha(0x000000, 0.55));
+        assert_eq!(light.scrim, with_alpha(light.pane_gap, 0.50));
     }
 
     #[test]
-    fn the_tint_gradient_fades_to_the_same_color_with_no_alpha() {
-        for theme in all_themes() {
-            let (top, bottom) = glass_gradient(&theme);
-            assert_eq!(top, theme.glass_tint);
-            assert_eq!(bottom & 0xFF, 0);
-            assert_eq!(bottom >> 8, top >> 8);
-        }
-    }
-
-    #[test]
-    fn the_float_shadow_has_two_layers_and_half_the_alpha_in_light_themes() {
-        let (dark, light) = (shadow_float(&Theme::dark()), shadow_float(&Theme::light()));
-        assert_eq!(dark.len(), 2);
-        assert_eq!(light.len(), 2);
-        assert_eq!(dark[0].offset.y, gpui::px(8.0));
-        assert_eq!(dark[0].blur_radius, gpui::px(24.0));
-        assert_eq!(dark[1].offset.y, gpui::px(2.0));
-        assert_eq!(dark[1].blur_radius, gpui::px(6.0));
-        for (d, l) in dark.iter().zip(&light) {
-            assert!((d.color.a / 2.0 - l.color.a).abs() < 0.01);
-        }
+    fn the_shadows_differ_by_role_and_a_light_modal_has_a_contact_layer() {
+        let (dark, light) = (Theme::dark(), Theme::light());
+        let (d, l) = (shadow_modal(&dark), shadow_modal(&light));
+        assert_eq!((d.len(), l.len()), (1, 2));
+        assert_eq!(
+            (d[0].blur_radius, d[0].spread_radius),
+            (gpui::px(72.0), gpui::px(-16.0))
+        );
+        assert!(
+            d[0].color.a > l[0].color.a,
+            "a dark modal is the deeper one"
+        );
+        assert_eq!(shadow_pop(&dark), shadow_pop(&light));
+        assert_ne!(shadow_composer(&dark), shadow_composer(&light));
+        assert_eq!(shadow_pop(&dark).len(), 1);
     }
 
     #[test]
@@ -3062,18 +3583,18 @@ mod tests {
     }
 
     #[test]
-    fn there_are_22_built_in_themes_grouped_dark_then_light() {
-        assert_eq!(THEMES.len(), 22);
-        assert_eq!(THEMES.iter().filter(|e| e.dark).count(), 12);
+    fn there_are_24_built_in_themes_grouped_dark_then_light() {
+        assert_eq!(THEMES.len(), 24);
+        assert_eq!(THEMES.iter().filter(|e| e.dark).count(), 13);
         assert!(
-            THEMES.iter().take(12).all(|e| e.dark),
+            THEMES.iter().take(13).all(|e| e.dark),
             "picker order: dark first"
         );
-        assert!(THEMES.iter().skip(12).all(|e| !e.dark));
+        assert!(THEMES.iter().skip(13).all(|e| !e.dark));
         let mut names: Vec<&str> = THEMES.iter().map(|e| e.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 22, "names are unique");
+        assert_eq!(names.len(), 24, "names are unique");
     }
 
     #[test]
@@ -3098,6 +3619,55 @@ mod tests {
     }
 
     #[test]
+    fn the_tern_entries_build_the_tern_constructors() {
+        let build = |name: &str| {
+            THEMES
+                .iter()
+                .find(|e| e.name == name)
+                .map(ThemeEntry::build)
+        };
+        assert_eq!(build("Tern Dark"), Some(Theme::tern_dark()));
+        assert_eq!(build("Tern Light"), Some(Theme::tern_light()));
+        assert_eq!(build("Mkrew Dark"), Some(Theme::dark()));
+        for name in ["Mkrew Dark", "Tern Dark", "Mkrew Light", "Tern Light"] {
+            let entry = THEMES.iter().find(|e| e.name == name).unwrap();
+            assert!(
+                entry.palette().is_none(),
+                "{name} is written token by token"
+            );
+        }
+        assert!(palette_of("One Dark").dark);
+        assert_eq!(THEMES[1].name, "Tern Dark");
+        assert_eq!(THEMES[14].name, "Tern Light");
+    }
+
+    #[test]
+    fn tern_changes_only_the_accent_family_and_status_colors() {
+        for (tern, mkrew) in [
+            (Theme::tern_dark(), Theme::dark()),
+            (Theme::tern_light(), Theme::light()),
+        ] {
+            let grounds = |t: &Theme| {
+                (
+                    t.bg,
+                    t.surface,
+                    t.surface_raised,
+                    t.pane_gap,
+                    t.text,
+                    t.text_muted,
+                    t.text_subtle,
+                    t.layer,
+                    t.code_bg,
+                )
+            };
+            assert_eq!(grounds(&tern), grounds(&mkrew), "{}", tern.name);
+            assert_ne!(tern.accent, mkrew.accent, "{}", tern.name);
+            assert_ne!(tern.ansi, mkrew.ansi, "{}", tern.name);
+            assert_eq!(tern.dark, mkrew.dark);
+        }
+    }
+
+    #[test]
     fn mix_blends_per_channel() {
         assert_eq!(mix(0x000000, 0xFFFFFF, 0.5), 0x808080);
         assert_eq!(mix(0x102030, 0x102030, 0.7), 0x102030);
@@ -3107,7 +3677,7 @@ mod tests {
 
     #[test]
     fn derived_themes_keep_the_fixed_tokens() {
-        for entry in THEMES.iter().filter(|e| e.palette.is_some()) {
+        for entry in THEMES.iter().filter(|e| e.palette().is_some()) {
             let theme = entry.build();
             let base = if entry.dark {
                 Theme::dark()
@@ -3127,8 +3697,18 @@ mod tests {
                 )
             };
             assert_eq!(fixed(&theme), fixed(&base), "{}", entry.name);
-            assert_eq!(theme.classic(), base.classic(), "{}", entry.name);
         }
+    }
+
+    #[test]
+    fn body_text_is_checked_on_the_sidebar_itself() {
+        let t = Theme::dark();
+        let broken = Theme {
+            sidebar: t.text_muted,
+            ..t.clone()
+        };
+        let rules: Vec<&str> = problems(&broken).iter().map(|p| p.rule).collect();
+        assert!(rules.contains(&"body text"), "{rules:?}");
     }
 
     /// Debug dump of every token, minus fields that are not colors and may differ by platform or
@@ -3150,6 +3730,8 @@ mod tests {
     fn the_mkrew_themes_never_change() {
         insta::assert_snapshot!("mkrew_dark", golden(&Theme::dark()));
         insta::assert_snapshot!("mkrew_light", golden(&Theme::light()));
+        insta::assert_snapshot!("tern_dark", golden(&Theme::tern_dark()));
+        insta::assert_snapshot!("tern_light", golden(&Theme::tern_light()));
     }
 
     #[test]
@@ -3440,6 +4022,7 @@ mod tests {
             [radius::SMALL, radius::MEDIUM, radius::LARGE],
             [4.0, 8.0, 12.0]
         );
+        assert_eq!(radius::PANEL, 16.0);
         assert!(motion::FAST >= Duration::from_millis(120));
         assert!(motion::SLOW <= Duration::from_millis(180));
     }

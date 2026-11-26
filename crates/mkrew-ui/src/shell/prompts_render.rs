@@ -66,7 +66,7 @@ impl Shell {
 
         // The filled button while the library is empty, like Machines' first "Add machine…".
         let new_button = if empty {
-            button("prompt-new", "New prompt", theme, true).focus_stop(theme)
+            button("prompt-new", "New prompt", theme, true).focus_stop_filled(theme)
         } else {
             secondary_button("prompt-new", "New prompt", theme).focusable_bordered(theme)
         }
@@ -83,56 +83,59 @@ impl Shell {
             let active = selected == Some(prompt.name.as_str());
             let focused = active && on_list;
             let name = prompt.name.clone();
-            div()
-                .id(SharedString::from(format!("prompt-row-{}", prompt.name)))
-                .flex_none()
-                .flex()
-                .flex_col()
-                .gap(px(space::XS))
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::SMALL))
-                .border(px(theme::BORDER_WIDTH))
-                .border_color(gpui::transparent_black())
-                .when(active, |el| el.bg(rgb(theme.surface_raised)))
-                .when(focused, |el| el.border_color(rgb(theme.selected_ring)))
-                .pressable_unless(active, Look::Row, theme)
-                .on_press(
-                    true,
-                    cx.listener(move |shell, _, window, cx| {
-                        let name = name.clone();
-                        shell.settings_do(
-                            move |dialog, _| {
-                                dialog.focus = Focus::Prompts(Spot::List);
-                                // The open prompt: Open again would ask to save and could drop edits.
-                                if active {
-                                    Effect::None
-                                } else {
-                                    Effect::Prompts(PromptAction::Open(name))
-                                }
-                            },
-                            window,
-                            cx,
-                        );
-                    }),
-                )
-                .child(
-                    div()
+            with_pick(
+                div()
+                    .id(SharedString::from(format!("prompt-row-{}", prompt.name)))
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(gpui::transparent_black()),
+                active,
+                theme,
+            )
+            .when(focused, |el| el.border_color(rgb(theme.selected_ring)))
+            .pressable_unless(active, Look::Row, theme)
+            .on_press(
+                true,
+                cx.listener(move |shell, _, window, cx| {
+                    let name = name.clone();
+                    shell.settings_do(
+                        move |dialog, _| {
+                            dialog.focus = Focus::Prompts(Spot::List);
+                            // The open prompt: Open again would ask to save and could drop edits.
+                            if active {
+                                Effect::None
+                            } else {
+                                Effect::Prompts(PromptAction::Open(name))
+                            }
+                        },
+                        window,
+                        cx,
+                    );
+                }),
+            )
+            .child(
+                div()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(font_size::BODY)
+                    .text_color(rgb(theme.text))
+                    .child(prompt.title.clone()),
+            )
+            .when(prompt.title != prompt.name, |el| {
+                el.child(
+                    meta_line(theme, prompt.name.clone().into())
                         .overflow_hidden()
                         .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(font_size::BODY)
-                        .text_color(rgb(theme.text))
-                        .child(prompt.title.clone()),
+                        .text_ellipsis(),
                 )
-                .when(prompt.title != prompt.name, |el| {
-                    el.child(
-                        meta_line(theme, prompt.name.clone().into())
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis(),
-                    )
-                })
+            })
         });
 
         let broken = library.errors.iter().map(|error| {
@@ -147,14 +150,7 @@ impl Shell {
                 .gap(px(space::XS))
                 .px(px(space::S))
                 .py(px(space::XS))
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(space::XS))
-                        .text_size(font_size::META)
-                        .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                        .child(div().min_w_0().text_color(rgb(theme.text)).child(file)),
-                )
+                .child(error_note(file, theme))
                 .child(meta_line(theme, error.message.clone().into()))
         });
 
@@ -270,7 +266,7 @@ impl Shell {
 
         let save = if draft.is_dirty() {
             button("prompt-save", "Save", theme, true)
-                .focus_stop(theme)
+                .focus_stop_filled(theme)
                 .tooltip(tooltip(
                     theme,
                     "Save the prompt",
@@ -284,7 +280,7 @@ impl Shell {
         };
         let delete = if draft.origin.is_some() {
             danger_button("prompt-delete", "Delete", theme)
-                .focus_stop(theme)
+                .focusable_bordered(theme)
                 .tooltip(tooltip(theme, "Delete this prompt (asks first)", ""))
                 .on_click(cx.listener(|shell, _, window, cx| {
                     shell.settings_do(|_, _| Effect::Prompts(PromptAction::Delete), window, cx);

@@ -376,14 +376,7 @@ impl Shell {
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
-        let error_row = |error: String| {
-            div()
-                .flex()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                .child(div().text_color(rgb(theme.text)).child(error))
-        };
+        let error_row = |error: String| error_note(error, theme);
         // One row per file or commit: a muted mono marker, then the text (ellipsized).
         let row = |marker: Option<String>, text: String| {
             div()
@@ -533,8 +526,7 @@ impl Shell {
                     .and_then(|pick| pick.offer());
                 if let Some(offer) = offer {
                     buttons.push(
-                        danger_button("worktree-remove-others", offer, theme)
-                            .focus_stop(theme)
+                        danger_button("worktree-remove-others", offer, theme).focusable_bordered(theme)
                             .tooltip(tooltip(
                                 theme,
                                 "Delete the other agents' worktree folders (unmerged branches are kept)",
@@ -568,7 +560,7 @@ impl Shell {
                 );
                 buttons.push(if confirm.is_ok() {
                     danger_button("worktree-confirm", "Discard files", theme)
-                        .focus_stop(theme)
+                        .focusable_bordered(theme)
                         .tooltip(tooltip(theme, "Discard every file listed above", ""))
                         .on_click(confirm_listener)
                         .into_any_element()
@@ -584,7 +576,7 @@ impl Shell {
                 if !plan.discardable.is_empty() {
                     buttons.push(
                         danger_button("worktree-discard", "Discard…", theme)
-                            .focus_stop(theme)
+                            .focusable_bordered(theme)
                             .tooltip(tooltip(theme, "Choose to discard these changes", ""))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 if let Some(dialog) = shell.worktree_dialog.as_mut() {
@@ -609,12 +601,12 @@ impl Shell {
                 let ready = confirm.is_ok() && !matches!(step, Step::Loading | Step::Failed(_));
                 buttons.push(match (ready, remove) {
                     (true, true) => danger_button("worktree-confirm", text, theme)
-                        .focus_stop(theme)
+                        .focusable_bordered(theme)
                         .tooltip(tooltip(theme, "Delete the worktree folder", ""))
                         .on_click(confirm_listener)
                         .into_any_element(),
-                    (true, false) => button("worktree-confirm", text, theme, true)
-                        .focus_stop(theme)
+                    (true, false) => primary_button("worktree-confirm", text, None, theme)
+                        .focus_stop_filled(theme)
                         .tooltip(tooltip(
                             theme,
                             "Merge the commits above into your checkout",
@@ -635,48 +627,39 @@ impl Shell {
         }
         let panel = floating_panel("worktree-dialog", theme)
             .w(px(theme::UNDO_DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
                 false,
                 cx.listener(Self::dialog_guard),
                 cx.listener(Self::worktree_dialog_key_down),
-            )
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(dialog.heading()),
-            )
-            .child(
-                div()
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    .child(dialog.intro()),
-            )
-            .children(body)
-            .children(dialog.error.clone().map(error_row))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .pt(px(space::S))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(font_size::META)
-                            .text_color(rgb(theme.text_muted))
-                            .children(hint),
-                    )
-                    .children(buttons),
             );
+        let body = dialog_body()
+            .child(dialog_text(dialog.intro(), theme))
+            .children(body)
+            .children(dialog.error.clone().map(error_row));
+        let foot = dialog_foot(theme)
+            .child(dialog_hint(hint.unwrap_or_default(), theme))
+            .children(buttons);
+        let panel = dialog_frame(
+            panel,
+            DialogHead {
+                wrap: false,
+                icon: Icon::GitBranch,
+                tone: if dialog.kind == Kind::Remove {
+                    DialogTone::Danger
+                } else {
+                    DialogTone::Normal
+                },
+                title: dialog.heading().into(),
+                sub: None,
+            },
+            Some(dialog_close("worktree-close-x", theme).on_click(
+                cx.listener(|shell, _, window, cx| shell.close_worktree_dialog(window, cx)),
+            )),
+            Some(body),
+            Some(foot),
+            theme,
+        );
         Self::modal_shade("worktree-dialog-shade", panel, cx)
     }
 
@@ -702,7 +685,7 @@ impl Shell {
         let columns = compare.columns.iter().map(|column| {
             let task_id = column.task_id;
             let git = if column.checkpoint.is_some() && column.has_worktree {
-                quiet_button("compare-git", "Git view", theme, theme.border)
+                quiet_button("compare-git", "Git view", theme)
                     .focus_stop(theme)
                     .tooltip(tooltip(
                         theme,
@@ -723,7 +706,7 @@ impl Shell {
             };
             // Quiet: up to five columns would otherwise show five accent buttons.
             let pick = if column.has_worktree {
-                quiet_button("compare-pick", "Pick", theme, theme.border)
+                quiet_button("compare-pick", "Pick", theme)
                     .focus_stop(theme)
                     .tooltip(tooltip(
                         theme,
@@ -795,45 +778,47 @@ impl Shell {
         });
         let panel = floating_panel("compare-dialog", theme)
             .w(px(theme::COMPARE_DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .font_family(theme.ui_font_family.clone())
             .dialog_root(
                 &self.dialog_focus,
                 false,
                 cx.listener(Self::dialog_guard),
                 cx.listener(Self::compare_key_down),
-            )
-            .child(
-                div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Compare agents"),
-            )
-            .child(
-                div()
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
-                    .child(format!(
-                        "“{}”: changes since each run started. Pick one to merge it back into \
-                         your checkout.",
-                        compare.title
-                    )),
-            )
-            .child(div().flex().gap(px(space::M)).children(columns))
-            .child(
-                div().flex().justify_end().pt(px(space::S)).child(
-                    button("compare-close", "Close", theme, false)
-                        .focus_stop(theme)
-                        .tooltip(tooltip(theme, "Close", "Esc"))
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.close_compare(window, cx);
-                        })),
-                ),
             );
+        let body = dialog_body()
+            .child(dialog_text(
+                format!(
+                    "“{}”: changes since each run started. Pick one to merge it back into \
+                     your checkout.",
+                    compare.title
+                ),
+                theme,
+            ))
+            .child(div().flex().gap(px(space::M)).children(columns));
+        let foot = dialog_foot(theme).child(
+            button("compare-close", "Close", theme, false)
+                .focus_stop(theme)
+                .tooltip(tooltip(theme, "Close", "Esc"))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.close_compare(window, cx);
+                })),
+        );
+        let panel = dialog_frame(
+            panel,
+            DialogHead {
+                wrap: false,
+                icon: Icon::GitCompare,
+                tone: DialogTone::Normal,
+                title: "Compare agents".into(),
+                sub: None,
+            },
+            Some(
+                dialog_close("compare-close-x", theme)
+                    .on_click(cx.listener(|shell, _, window, cx| shell.close_compare(window, cx))),
+            ),
+            Some(body),
+            Some(foot),
+            theme,
+        );
         Self::modal_shade("compare-dialog-shade", panel, cx)
     }
 }

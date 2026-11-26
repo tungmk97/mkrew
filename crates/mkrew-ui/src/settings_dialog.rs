@@ -13,6 +13,7 @@ use mkrew_core::settings::Settings;
 use mkrew_core::settings_fields::{Kind, Page, SETTINGS, Setting};
 
 use crate::editor::Motion;
+use crate::icons::Icon;
 use crate::keymap::{Command, Keymap, KeymapError, Os, keys_label};
 use crate::machines::{Field, Invalid, Machine};
 use crate::palette::{self, match_ranges};
@@ -68,6 +69,48 @@ impl Tab {
             Tab::Keyboard => "Keyboard",
             Tab::Machines => "Machines",
             Tab::Prompts => "Prompts",
+        }
+    }
+
+    /// The page's icon in the navigation (Lucide, 14 px). Every page has its own.
+    pub fn icon(self) -> Icon {
+        match self {
+            Tab::Settings(Page::General) => Icon::Settings,
+            Tab::Settings(Page::Appearance) => Icon::SunMoon,
+            Tab::Settings(Page::Notifications) => Icon::Bell,
+            Tab::Settings(Page::Voice) => Icon::MessageSquare,
+            Tab::Settings(Page::Features) => Icon::Sparkles,
+            Tab::Settings(Page::Jira) => Icon::SquareKanban,
+            Tab::Settings(Page::Phone) => Icon::Smartphone,
+            Tab::Machines => Icon::Server,
+            Tab::Keyboard => Icon::CornerDownLeft,
+            Tab::Prompts => Icon::Library,
+        }
+    }
+
+    /// One sentence under the page title: what the page is for.
+    pub fn lead(self) -> &'static str {
+        match self {
+            Tab::Settings(Page::General) => {
+                "Windows, terminals, workspaces and how Mkrew behaves on this computer."
+            }
+            Tab::Settings(Page::Appearance) => "Theme, fonts, and how documents and diffs look.",
+            Tab::Settings(Page::Notifications) => {
+                "Choose when Mkrew alerts you and where the alerts go."
+            }
+            Tab::Settings(Page::Voice) => {
+                "Dictate into any field and choose how your speech is recorded and transcribed."
+            }
+            Tab::Settings(Page::Features) => {
+                "Panels and session behavior you can switch on or off."
+            }
+            Tab::Settings(Page::Jira) => {
+                "Connect your Jira site and choose which issues the board shows."
+            }
+            Tab::Settings(Page::Phone) => "Let your phone reach Mkrew over your private network.",
+            Tab::Machines => "Other computers whose agents you manage from this window.",
+            Tab::Keyboard => "Every command and its shortcut; select one to record a new key.",
+            Tab::Prompts => "Reusable prompts you can insert into the composer and tasks.",
         }
     }
 }
@@ -599,6 +642,15 @@ impl SettingsDialog {
             "Search results"
         } else {
             self.tab.title()
+        }
+    }
+
+    /// The sentence under the right side's title.
+    pub fn lead(&self) -> &'static str {
+        if self.searching() {
+            "Matches from every page; select one to change it."
+        } else {
+            self.tab.lead()
         }
     }
 
@@ -1403,6 +1455,36 @@ mod tests {
         )
     }
 
+    /// Every page opens with one plain sentence under its title, and has its own nav icon.
+    #[test]
+    fn every_page_has_a_one_sentence_lead_and_its_own_icon() {
+        let mut seen: Vec<Icon> = Vec::new();
+        for tab in Tab::all() {
+            let lead = tab.lead();
+            assert!(
+                lead.ends_with('.') && lead.matches('.').count() == 1,
+                "{tab:?}: one sentence with one full stop: {lead}"
+            );
+            assert!(
+                lead.chars().next().is_some_and(char::is_uppercase),
+                "{tab:?}: starts with a capital: {lead}"
+            );
+            assert!(lead.len() <= 90, "{tab:?}: a lead fits one line: {lead}");
+            assert!(!lead.contains(['-', '–']), "{tab:?}: no dash: {lead}");
+            assert!(!seen.contains(&tab.icon()), "{tab:?}: icon already used");
+            seen.push(tab.icon());
+        }
+    }
+
+    #[test]
+    fn a_search_leads_with_its_own_sentence() {
+        let mut d = dialog();
+        let page = d.lead();
+        d.find.insert("theme");
+        assert_ne!(d.lead(), page);
+        assert!(d.lead().ends_with('.'));
+    }
+
     fn setting(id: &str) -> &'static Setting {
         SETTINGS.iter().find(|s| s.id() == id).unwrap()
     }
@@ -1568,11 +1650,11 @@ mod tests {
         to_gallery(&mut d, &keymap);
         assert_eq!(previewing(&d).as_deref(), Some("Mkrew Dark"), "no delay");
         d.key(&key("right"), None, &keymap);
-        assert_eq!(previewing(&d).as_deref(), Some("One Dark"));
+        assert_eq!(previewing(&d).as_deref(), Some("Tern Dark"));
         assert_eq!(
             d.key(&key("enter"), None, &keymap),
             Effect::KeepTheme {
-                name: "One Dark".into(),
+                name: "Tern Dark".into(),
                 dark: true
             }
         );
@@ -1581,7 +1663,7 @@ mod tests {
         assert_eq!(
             d.key(&typed(" "), None, &keymap),
             Effect::KeepTheme {
-                name: "Dracula".into(),
+                name: "One Dark".into(),
                 dark: true
             },
             "Space acts like Enter"

@@ -272,6 +272,7 @@ pub enum ThemeMode {
 /// The UI's `theme::THEMES` lists the same names (tested there).
 pub const THEME_NAMES: &[&str] = &[
     "Mkrew Dark",
+    "Tern Dark",
     "One Dark",
     "Dracula",
     "Catppuccin Mocha",
@@ -284,6 +285,7 @@ pub const THEME_NAMES: &[&str] = &[
     "Kanagawa",
     "Everforest Dark",
     "Mkrew Light",
+    "Tern Light",
     "One Light",
     "GitHub Light",
     "Catppuccin Latte",
@@ -879,10 +881,12 @@ mod tests {
         // Unknown names parse; the UI falls back (ADR 0078).
         assert_eq!(ui("[ui]\nlight_theme = \"nope\"").light_theme, "nope");
         assert_eq!(THEME_NAMES[0], DEFAULT_DARK_THEME);
+        assert_eq!(THEME_NAMES[1], "Tern Dark");
         assert_eq!(
-            THEME_NAMES[12], DEFAULT_LIGHT_THEME,
-            "the light ones follow the 12 dark ones"
+            THEME_NAMES[13], DEFAULT_LIGHT_THEME,
+            "the light ones follow the 13 dark ones"
         );
+        assert_eq!(THEME_NAMES[14], "Tern Light");
     }
 
     #[test]

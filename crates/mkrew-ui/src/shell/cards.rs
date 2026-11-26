@@ -188,7 +188,6 @@ pub(crate) fn task_card(
     let conflict_paths = cards.conflicts.for_task(task_id);
     let selected = cards.selected == Some(task_id);
     let group = SharedString::from(format!("card-{task_id}"));
-    let edit_hover = theme.border;
     let preview_style = PopupStyle::of(theme);
     let workspace = (cards.workspaces)
         .and_then(|projects| projects.iter().find(|p| p.id == card.project_id))
@@ -235,14 +234,14 @@ pub(crate) fn task_card(
         .flex_col()
         .gap(px(space::XS))
         .p(px(space::M))
-        .rounded(px(radius::MEDIUM))
-        .bg(rgb(theme.surface_raised))
-        // Always bordered, so selecting a card does not shift its content.
+        .rounded(px(radius::CARD))
+        .bg(rgb(theme.card))
+        // Always ringed (divider at rest, accent when selected), so neither shifts the content.
         .border(px(theme::BORDER_WIDTH))
         .border_color(rgb(if selected {
-            theme.pane_focus_stripe
+            theme.accent
         } else {
-            theme.surface_raised
+            theme.divider
         }))
         .map(|el| card_press(el, selected, theme))
         .group(group.clone())
@@ -418,7 +417,6 @@ pub(crate) fn task_card(
                         "card-undo",
                         icon_text(Icon::Undo2, "Undo", theme.text_muted),
                         theme,
-                        edit_hover,
                     )
                     .opacity(opacity::HIDDEN)
                     .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
@@ -437,7 +435,6 @@ pub(crate) fn task_card(
                         "card-changes",
                         icon_text(Icon::FileDiff, "Changes", theme.text_muted),
                         theme,
-                        edit_hover,
                     )
                     .opacity(opacity::HIDDEN)
                     .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
@@ -468,7 +465,7 @@ pub(crate) fn task_card(
                         ),
                     ]
                     .map(|(id, text, tip, what)| {
-                        quiet_button(id, text, theme, edit_hover)
+                        quiet_button(id, text, theme)
                             .opacity(opacity::HIDDEN)
                             .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
                             .tooltip(tooltip(theme, tip, ""))
@@ -505,7 +502,6 @@ pub(crate) fn task_card(
                             "card-compare",
                             icon_text(Icon::GitCompare, "Compare", theme.text_muted),
                             theme,
-                            edit_hover,
                         )
                     };
                     compare
@@ -552,12 +548,11 @@ pub(crate) fn run_with_button(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::Div {
     let menu = cards.run_with.filter(|menu| menu.task_id == task_id);
-    // One step above the card's own `surface_raised`, like its other quiet buttons.
+    // One step above the card, like its other quiet buttons.
     let button = quiet_button(
         "card-run-with",
         icon_text(Icon::Play, "Run with…", theme.text_muted),
         theme,
-        theme.border,
     )
     .when(menu.is_none(), |el| {
         el.opacity(opacity::HIDDEN)
@@ -615,7 +610,6 @@ pub(crate) fn fan_out_button(
         "card-fan-out",
         icon_text(Icon::Users, "Several agents…", theme.text_muted),
         theme,
-        theme.border,
     )
     .when(menu.is_none(), |el| {
         el.opacity(opacity::HIDDEN)
@@ -774,11 +768,11 @@ pub(crate) fn card_action(
     if cards.starting.contains(&task_id) {
         return disabled_button(id, "Starting…", theme, primary);
     }
-    // A quiet button's surface hover would vanish on the raised card: one step above it.
+    // A quiet button's surface hover would vanish on the card: one step above it.
     let action_button = if primary {
         button(id, label, theme, true)
     } else {
-        quiet_button(id, label, theme, theme.border)
+        quiet_button(id, label, theme)
     };
     action_button
         .tooltip(tooltip(theme, tip, keys))
@@ -880,8 +874,8 @@ impl Render for CardPreview {
             .p(px(space::M))
             .rounded(px(radius::MEDIUM))
             .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface_raised))
+            .border_color(gpui::rgba(theme.ring))
+            .bg(gpui::rgba(theme.fill))
             .shadow_sm()
             .opacity(opacity::DRAGGING)
             .font_family(theme.ui_font_family.clone())

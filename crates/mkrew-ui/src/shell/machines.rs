@@ -287,7 +287,7 @@ impl Shell {
             None => {
                 let first = machines.list.is_empty();
                 let add = if first {
-                    button("machine-add", "Add machine…", theme, true).focus_stop(theme)
+                    button("machine-add", "Add machine…", theme, true).focus_stop_filled(theme)
                 } else {
                     secondary_button("machine-add", "Add machine…", theme).focusable_bordered(theme)
                 };
@@ -314,26 +314,9 @@ impl Shell {
         page
     }
 
-    /// A page's error line (the Machines page's broken file, the Prompts page's failed write): a
-    /// red ✕ and the text on a raised row.
+    /// A page's error line (the Machines page's broken file, the Prompts page's failed write).
     pub(crate) fn error_line(&self, text: String, theme: &Theme) -> gpui::AnyElement {
-        div()
-            .flex()
-            .items_center()
-            .gap(px(space::S))
-            .p(px(space::S))
-            .rounded(px(radius::MEDIUM))
-            .bg(rgb(theme.surface_raised))
-            .text_size(font_size::META)
-            .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_color(rgb(theme.text))
-                    .child(text),
-            )
-            .into_any_element()
+        error_note(text, theme).into_any_element()
     }
 
     /// One machine: name, host (and `mk`), state with its dot, Open and Remove.
@@ -396,7 +379,7 @@ impl Shell {
             )
             .child(
                 danger_button("machine-remove", "Remove", theme)
-                    .focus_stop(theme)
+                    .focusable_bordered(theme)
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.ask_remove_machine(remove_name.clone(), window, cx);
                     })),
@@ -484,7 +467,7 @@ impl Shell {
                     .gap(px(space::S))
                     .child(
                         button("machine-save", "Save", theme, true)
-                            .focus_stop(theme)
+                            .focus_stop_filled(theme)
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.settings_do(|d, _| d.submit_add(), window, cx);
                             })),
