@@ -31,6 +31,8 @@ Decided here: omp 19 sends no theme palette over TSP, so headings and bullets ar
 - [ ] **Other sheets:** `/resume` (cards), the session tree, `/copy` (timeline), history search, the agent hub (hud agents pill) and logout each open as a sheet and can be used with the mouse; a delete asks in the red confirm bar.
 - [ ] **Light theme:** the same sheets in light read well (rail, selection, chips, slider).
 - [ ] **Markdown color:** headings and list bullets are the accent in an omp pane, the Chat view of Claude and Codex, and the Docs preview.
+- [ ] **Image in the transcript:** ask omp to read a wide screenshot (e.g. 1600 px): the image shows whole, scaled to the transcript's column (alone and among several panes); a small image keeps its own size.
+- [ ] **Files row on the omp composer:** drag a file and a folder from the Files tree onto the composer card (full and compact): the card rings in accent, the pane does not light half; the drop types `@path ` / `@dir/ ` and omp keeps it (send it); a drop on the transcript still splits. Screenshots `docs/screenshots/omp-composer-drop-<hover|after>-<dark|light>.png`. With omp's vim mode or one of its modals on, the text goes to the PTY instead.
 
 ### To verify - 2026-11-26 Tern polish (ADR 0117, spec docs/superpowers/specs/2026-11-25-tern-polish-design.md)
 

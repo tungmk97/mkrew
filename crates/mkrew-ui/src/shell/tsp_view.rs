@@ -796,6 +796,34 @@ impl Shell {
         local
     }
 
+    /// Types `text` into the omp composer field Mkrew edits (a Files row dropped on it): omp gets
+    /// the edit. `false` (nothing typed) when the session exited or omp edits its own field
+    /// (its focus is elsewhere, a modal is open, vim mode).
+    pub(crate) fn tsp_type_in_field(
+        &mut self,
+        session: Ulid,
+        text: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        if self.is_exited(session) {
+            return false;
+        }
+        let Some(ui) = self.tsps.get_mut(&session) else {
+            return false;
+        };
+        let local = (ui.mirror.as_ref().and_then(Mirror::shown))
+            .and_then(|(_, doc)| tsp::local_editor_node(doc))
+            .map(|node| node.id.clone());
+        let Some(field) = (ui.editor.as_mut()).filter(|field| local.as_ref() == Some(&field.node))
+        else {
+            return false;
+        };
+        if let Some(edit) = field.type_text(text) {
+            self.tsp_emit(session, edit, cx);
+        }
+        true
+    }
+
     /// A press or drag in the composer field Mkrew edits: the caret goes to byte `at` (omp gets
     /// it with the next edit or key).
     fn tsp_caret(&mut self, session: Ulid, caret: mkrew_ui::field::Caret) {
@@ -982,6 +1010,9 @@ struct Paint<'a> {
     /// The pane's width in px (a picker hides fact columns that do not fit); unbounded for a
     /// row of the page list, which is laid out without it.
     width: f32,
+    /// The px the transcript's column leaves its content ([`tsp::column_px`]): an image is at
+    /// most this wide.
+    column: f32,
 }
 
 impl Paint<'_> {
@@ -1010,9 +1041,6 @@ fn cell_width(text_system: &gpui::TextSystem, theme: &Theme) -> Pixels {
         width
     })
 }
-    /// The px the transcript's column leaves its content ([`tsp::column_px`]): an image is at
-    /// most this wide.
-    column: f32,
 
 fn str_prop<'a>(node: &'a Node, key: &str) -> Option<&'a str> {
     node.props.get(key).and_then(Value::as_str)
@@ -1210,6 +1238,7 @@ impl Shell {
         // (ADR 0114).
         let fonts = cx.global::<theme::Fonts>();
         let max = tsp::column_max(several);
+        let column = tsp::column_px(width, several);
         let stale = (ui.measured.borrow().as_ref())
             .is_none_or(|(t, f, m)| t != theme || f != fonts || *m != max);
         if stale {
@@ -1234,11 +1263,11 @@ impl Shell {
             bounded: false,
             compact: stacked && !is_focused,
             width,
+            column,
         };
         let layer_paint = Paint {
             in_layer: true,
             bounded: true,
-        let column = tsp::column_px(width, several);
             ..paint
         };
         // A `screen` surface of one card (the Agent Hub) is bounded by the pane, not scrolled; any
@@ -1263,7 +1292,6 @@ impl Shell {
                 .collect()
         } else {
             Vec::new()
-            column,
         };
         // The dock as the Chat composer when omp sent its composer roles. With the ask card or a
         // note editor where the editor stood, the status row stays Tern's and the card sits where
@@ -1337,6 +1365,7 @@ impl Shell {
                                             is_focused,
                                             compact,
                                             max,
+                                            column,
                                             now,
                                             &row_theme,
                                             cx,
@@ -1365,7 +1394,6 @@ impl Shell {
                         .absolute()
                         .size_0(),
                     )
-                                            column,
                 })
                 .when(!ui.rows.is_following_tail() && !screen, |el| {
                     el.child(
@@ -1444,6 +1472,7 @@ impl Shell {
         focused: bool,
         compact: bool,
         max: Option<f32>,
+        column: f32,
         now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -1470,9 +1499,9 @@ impl Shell {
             bounded: false,
             compact,
             width: f32::INFINITY,
+            column,
         };
         let plan = ui.thoughts.get(&node.id);
-        column: f32,
         let el = match plan {
             // Folded into the lead's head: the row draws nothing.
             Some(tsp::RowPlan::Folded) => return div().into_any_element(),
@@ -1499,7 +1528,6 @@ impl Shell {
             None => self.tsp_node(&paint, node, cx),
         };
         let gap = tsp::row_gap(tsp::row_kind(doc, node), plan);
-            column,
         page_column(el, max, false).pb(px(gap)).into_any_element()
     }
 
@@ -3098,6 +3126,13 @@ impl Shell {
     }
 }
 
+/// An `image` blob decoded for drawing, and its natural size in px (`None`: an unread header).
+#[derive(Clone)]
+struct TspImage {
+    data: Arc<gpui::Image>,
+    size: Option<(u32, u32)>,
+}
+
 /// A pasted image as a small square tile (the composer's attachments, a sent prompt's images):
 /// cropped to fill, rounded, with a faint border.
 fn thumbnail(image: Arc<gpui::Image>, theme: &Theme) -> Div {
@@ -3126,13 +3161,6 @@ fn parent_is(p: &Paint<'_>, node: &Node, want: fn(&Node) -> bool) -> bool {
 
 /// An `ansi` or `rows` body of a tool row (command output, a diff): `code_bg` with a `layer[0]`
 /// ring, `radius::MEDIUM`, 8 by 12 padding. A `code` node is a code card already.
-/// An `image` blob decoded for drawing, and its natural size in px (`None`: an unread header).
-#[derive(Clone)]
-struct TspImage {
-    data: Arc<gpui::Image>,
-    size: Option<(u32, u32)>,
-}
-
 fn tool_well(body: AnyElement, theme: &Theme) -> AnyElement {
     div()
         .min_w_0()
@@ -3658,7 +3686,9 @@ impl Shell {
             .text_color(rgb(theme.text))
             .children(line);
         if p.compact {
-            return composer_card_frame(theme).child(field).into_any_element();
+            let card = composer_card_frame(theme).child(field);
+            return Self::composer_drops(card, p.session, theme::radius::PANEL, theme, cx)
+                .into_any_element();
         }
         let status = self.tsp_dock_status(p, &m.status, cx);
         let meter = m.context.as_ref().map(|c| {
@@ -3696,6 +3726,8 @@ impl Shell {
             })
             .child(field)
             .child(self.tsp_dock_bar(p, m, column, cx));
+        // A Files row dropped on the card types its `@path` into the field (ADR 0081).
+        let card = Self::composer_drops(card, p.session, theme::radius::PANEL, theme, cx);
         div()
             .flex()
             .flex_col()

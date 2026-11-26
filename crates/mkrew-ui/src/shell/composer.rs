@@ -911,7 +911,8 @@ impl Shell {
 
     /// A Files tree row, file or folder, dropped on `session`'s composer (§20B.5, ADR 0081):
     /// `composer.file_ref` on an agent, the bare relative path on a shell, a folder ending in
-    /// `/`, typed into the draft with no Enter.
+    /// `/`, typed into the draft with no Enter. On an omp pane's composer card the field Mkrew
+    /// edits takes it (omp gets the edit), else the PTY while omp edits its own field.
     /// This was the pane's drop; a pane now opens the file, so only a composer that is shown
     /// takes the row.
     pub(crate) fn drop_tree_on_composer(
@@ -923,7 +924,9 @@ impl Shell {
     ) {
         let in_workspace = (self.tab_of_session(session))
             .is_some_and(|(project_id, _)| project_id == dragged.project_id);
-        if self.modal_open() || !in_workspace || self.composers.shown(session).is_none() {
+        let docked = self.composers.shown(session).is_some();
+        let omp = !docked && self.tsps.contains_key(&session);
+        if self.modal_open() || !in_workspace || !(docked || omp) {
             return;
         }
         let agent = (self.sidebar.sessions().iter())
@@ -934,8 +937,14 @@ impl Shell {
             .composer
             .file_ref;
         let text = composer::dropped_ref(&template, &dragged.path, dragged.is_dir, agent);
+        if omp && !self.tsp_type_in_field(session, &text, cx) {
+            self.type_into_pane(session, &text, window, cx);
+            return;
+        }
         self.focus_session_pane(session);
-        self.prompt_typed(composer::Target::Composer(session), &text, window, cx);
+        if docked {
+            self.prompt_typed(composer::Target::Composer(session), &text, window, cx);
+        }
         cx.notify();
     }
 
@@ -943,7 +952,7 @@ impl Shell {
     /// tree row: an accent ring while one hovers it, and the pane's edge half is put out
     /// while the pointer is over the composer, because the drop lands here and not as a split.
     /// The frame's drag-move runs first (capture phase, parent before child), this one clears.
-    fn composer_drops<E: gpui::InteractiveElement + gpui::ParentElement>(
+    pub(super) fn composer_drops<E: gpui::InteractiveElement + gpui::ParentElement>(
         el: E,
         session: Ulid,
         corner: f32,

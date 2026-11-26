@@ -170,6 +170,12 @@ impl LocalEditor {
         self.told = (text.to_owned(), cursor);
         Some(event)
     }
+
+    /// Types `text` at the caret (over the selection): the `edit` event omp gets for it.
+    pub fn type_text(&mut self, text: &str) -> Option<Value> {
+        self.input.insert(text);
+        self.edit()
+    }
 }
 
 /// The `edit` event (reference 5) turning `old` into `new`: the changed middle as one splice,
@@ -327,6 +333,24 @@ mod tests {
             (&moved["from"], &moved["to"], &moved["cursor"]),
             (&json!(3), &json!(3), &json!(1))
         );
+    }
+
+    #[test]
+    fn a_dropped_file_ref_is_typed_at_the_caret_and_sent_as_one_edit() {
+        use crate::composer::dropped_ref;
+        let mut ed = LocalEditor::default();
+        ed.sync("n", "fix ", None);
+        let file = dropped_ref("@{path}", "docs/my notes.md", false, true);
+        let sent = ed.type_text(&file).expect("an edit");
+        assert_eq!(ed.input.as_str(), "fix @\"docs/my notes.md\" ");
+        assert_eq!(
+            (&sent["from"], &sent["to"], &sent["text"]),
+            (&json!(4), &json!(4), &json!("@\"docs/my notes.md\" "))
+        );
+        let dir = dropped_ref("@{path}", "src/", true, true);
+        let sent = ed.type_text(&dir).expect("an edit");
+        assert_eq!(sent["text"], json!("@src/ "), "a folder ends with /");
+        assert!(!ed.input.as_str().contains('\n'), "never an Enter");
     }
 
     #[test]
