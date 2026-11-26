@@ -22,12 +22,13 @@ ADR 0117 drew Markdown headings in `text` and bullets in `text_subtle`; the user
 - **Item patches.** omp sends `items` once and patches it with `itemsAdd` (upsert by id) and `itemsDel`; `Document::set` folds them into `items` of a `picker` node and does not keep them as props.
 - **Markdown color.** Headings and list bullets are `accent` in the Chat view, the omp pane and the Docs preview (ADR 0105's look, undoing that part of ADR 0117).
 - Icon names omp uses in its sheets map to Lucide icons in `tsp::icon`; a `provider:<id>` mark draws its initials.
+- **Images.** An `image` in the transcript is drawn whole at its own size, scaled down to the transcript's column when wider (`tsp::image_size`, the size read from the blob's header); before, it was cut at 256 px.
 
 ## Consequences
 
 - The model switcher, `/agents` and omp's other sheets can be used with the mouse.
 - The sheet has no animation (Tern's sliding selection bar, blinking caret, heated level track): the status loop would have to redraw the window while one is open (ADR 0086).
-- Fact columns are all shown; Tern hides low-`priority` ones on narrow sheets.
+- Fact columns that do not fit beside a 200 px label hide lowest `priority` first, as in Tern; the label is cut only after the detail.
 - An `elapsed` fact shows its age when omp sent it and does not count up.
 - Rows have one height per layout and density.
 

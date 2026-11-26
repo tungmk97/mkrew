@@ -40,7 +40,8 @@ pub(crate) struct TspUi {
     pub(crate) mirror: Option<Mirror>,
     /// Markdown and code parsed once per text (the preview parse is slow).
     md: RefCell<TextCache<docs::Shown>>,
-    images: RefCell<HashMap<String, Arc<gpui::Image>>>,
+    /// Decoded `image` blobs by id, with their size in px when the header could be read.
+    images: RefCell<HashMap<String, TspImage>>,
     /// `elapsed` nodes: id -> (the `age` last seen, `now` when it was first seen).
     elapsed_seen: RefCell<HashMap<String, (u64, i64)>>,
     missing_icons: RefCell<HashSet<String>>,
@@ -1009,6 +1010,9 @@ fn cell_width(text_system: &gpui::TextSystem, theme: &Theme) -> Pixels {
         width
     })
 }
+    /// The px the transcript's column leaves its content ([`tsp::column_px`]): an image is at
+    /// most this wide.
+    column: f32,
 
 fn str_prop<'a>(node: &'a Node, key: &str) -> Option<&'a str> {
     node.props.get(key).and_then(Value::as_str)
@@ -1234,6 +1238,7 @@ impl Shell {
         let layer_paint = Paint {
             in_layer: true,
             bounded: true,
+        let column = tsp::column_px(width, several);
             ..paint
         };
         // A `screen` surface of one card (the Agent Hub) is bounded by the pane, not scrolled; any
@@ -1258,6 +1263,7 @@ impl Shell {
                 .collect()
         } else {
             Vec::new()
+            column,
         };
         // The dock as the Chat composer when omp sent its composer roles. With the ask card or a
         // note editor where the editor stood, the status row stays Tern's and the card sits where
@@ -1359,6 +1365,7 @@ impl Shell {
                         .absolute()
                         .size_0(),
                     )
+                                            column,
                 })
                 .when(!ui.rows.is_following_tail() && !screen, |el| {
                     el.child(
@@ -1465,6 +1472,7 @@ impl Shell {
             width: f32::INFINITY,
         };
         let plan = ui.thoughts.get(&node.id);
+        column: f32,
         let el = match plan {
             // Folded into the lead's head: the row draws nothing.
             Some(tsp::RowPlan::Folded) => return div().into_any_element(),
@@ -1491,6 +1499,7 @@ impl Shell {
             None => self.tsp_node(&paint, node, cx),
         };
         let gap = tsp::row_gap(tsp::row_kind(doc, node), plan);
+            column,
         page_column(el, max, false).pb(px(gap)).into_any_element()
     }
 
@@ -3034,10 +3043,15 @@ impl Shell {
             .and_then(tsp::role_of)
             == Some("omp.user.images");
         let el = match (self.tsp_image_data(p, node), str_prop(node, "alt")) {
-            (Some(image), _) if in_prompt => div().child(thumbnail(image, theme)),
-            (Some(image), _) => div()
-                .max_w(px(theme::TSP_IMAGE_MAX_WIDTH))
-                .child(gpui::img(image)),
+            (Some(image), _) if in_prompt => div().child(thumbnail(image.data, theme)),
+            // As wide as the image, at most the column (scaled down whole, never cropped).
+            (Some(image), _) => match image.size {
+                Some(natural) => {
+                    let (w, h) = tsp::image_size(natural, p.column);
+                    div().child(gpui::img(image.data).w(px(w)).h(px(h)).max_w_full())
+                }
+                None => div().max_w_full().child(gpui::img(image.data).max_w_full()),
+            },
             (None, Some(alt)) if str_prop(node, "builtin").is_none() => div()
                 .text_color(rgb(theme.text_muted))
                 .child(alt.to_owned()),
@@ -3047,16 +3061,23 @@ impl Shell {
     }
 
     /// The decoded image of an `image` node's blob, cached per blob.
-    fn tsp_image_data(&self, p: &Paint<'_>, node: &Node) -> Option<Arc<gpui::Image>> {
+    fn tsp_image_data(&self, p: &Paint<'_>, node: &Node) -> Option<TspImage> {
         let blob = str_prop(node, "blob").and_then(|id| p.mirror.blob(id))?;
         let mut cache = p.ui.images.borrow_mut();
         if let Some(image) = cache.get(&blob.id) {
             return Some(image.clone());
         }
-        let image = Arc::new(gpui::Image::from_bytes(
-            image_format(&blob.mime)?,
-            blob.data.clone(),
-        ));
+        let size = image::ImageReader::new(std::io::Cursor::new(&blob.data[..]))
+            .with_guessed_format()
+            .ok()
+            .and_then(|reader| reader.into_dimensions().ok());
+        let image = TspImage {
+            data: Arc::new(gpui::Image::from_bytes(
+                image_format(&blob.mime)?,
+                blob.data.clone(),
+            )),
+            size,
+        };
         cache.insert(blob.id.clone(), image.clone());
         Some(image)
     }
@@ -3105,6 +3126,13 @@ fn parent_is(p: &Paint<'_>, node: &Node, want: fn(&Node) -> bool) -> bool {
 
 /// An `ansi` or `rows` body of a tool row (command output, a diff): `code_bg` with a `layer[0]`
 /// ring, `radius::MEDIUM`, 8 by 12 padding. A `code` node is a code card already.
+/// An `image` blob decoded for drawing, and its natural size in px (`None`: an unread header).
+#[derive(Clone)]
+struct TspImage {
+    data: Arc<gpui::Image>,
+    size: Option<(u32, u32)>,
+}
+
 fn tool_well(body: AnyElement, theme: &Theme) -> AnyElement {
     div()
         .min_w_0()
@@ -3693,7 +3721,8 @@ impl Shell {
         let key = SharedString::from(format!("tsp-attach-{}-{}", p.session, node.id));
         let image = (p.doc.children(&node.id))
             .find(|child| child.kind == "image")
-            .and_then(|child| self.tsp_image_data(p, child));
+            .and_then(|child| self.tsp_image_data(p, child))
+            .map(|image| image.data);
         let filled = image.is_none();
         let chip = div().id(key.clone());
         let chip = match image {

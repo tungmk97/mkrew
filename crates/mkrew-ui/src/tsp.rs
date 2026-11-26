@@ -1237,6 +1237,18 @@ pub fn column_px(pane_width: f32, several: bool) -> f32 {
         - 2.0 * theme::CHAT_COLUMN_PADDING
 }
 
+/// The size an `image` of `natural` px is drawn at: as is, or scaled down whole to `column` px
+/// wide (never cropped, never enlarged).
+pub fn image_size((w, h): (u32, u32), column: f32) -> (f32, f32) {
+    let (w, h) = (w as f32, h as f32);
+    let scale = if w > column && w > 0.0 {
+        column.max(0.0) / w
+    } else {
+        1.0
+    };
+    (w * scale, h * scale)
+}
+
 /// The PTY columns for a pane `pane_width` wide; `None` while the width is unknown (not laid out
 /// yet, or no room for one cell): the PTY keeps its size then, it is never sized to a guess.
 pub fn fit_width(pane_width: f32, cell_px: f32, several: bool) -> Option<u16> {
@@ -3147,6 +3159,17 @@ mod tests {
         assert_eq!(column_px(400.0, false), 400.0 - pad);
         assert_eq!(column_px(5000.0, false), theme::CHAT_COLUMN_WIDTH - pad);
         assert_eq!(column_px(5000.0, true), 5000.0 - pad);
+    }
+
+    #[test]
+    fn an_image_wider_than_the_column_is_scaled_down_whole() {
+        assert_eq!(
+            image_size((200, 100), 600.0),
+            (200.0, 100.0),
+            "never enlarged"
+        );
+        assert_eq!(image_size((1200, 800), 600.0), (600.0, 400.0));
+        assert_eq!(image_size((0, 0), 600.0), (0.0, 0.0));
     }
 
     #[test]

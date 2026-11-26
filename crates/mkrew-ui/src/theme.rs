@@ -517,9 +517,6 @@ pub const TSP_KEY_WIDTH: f32 = 96.0;
 pub const TSP_OVERLAY_SM_WIDTH: f32 = 384.0;
 pub const TSP_OVERLAY_MD_WIDTH: f32 = 576.0;
 
-/// Widest an inline TSP `image` is.
-pub const TSP_IMAGE_MAX_WIDTH: f32 = 256.0;
-
 /// Side of a pasted image's square thumbnail (the composer's attachments, a sent prompt's images).
 pub const TSP_THUMB_SIZE: f32 = 56.0;
 
