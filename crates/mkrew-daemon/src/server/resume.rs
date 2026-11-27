@@ -1,20 +1,23 @@
 //! Startup resume (SPEC §8): tasks the last daemon left running/needs_input, and agent panes
 //! without a task that a tab still showed when the daemon stopped, get their agent
 //! conversation back. A task that cannot resume is flagged for the user to run again. A
-//! fan-out's original task is left alone.
+//! fan-out's original task is left alone. Also `session.resume` (History) and
+//! `session.relaunch` (an omp pane switching between TSP and omp's own terminal UI).
 
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use mkrew_protocol::{
-    ErrorCode, Event, Outcome, Session, SessionKind, SessionResumeParams, SessionSpawnResult,
-    SessionState, Task, TaskStatus,
+    ErrorCode, Event, Outcome, Session, SessionKind, SessionRelaunchParams, SessionResumeParams,
+    SessionSpawnResult, SessionState, Task, TaskStatus,
 };
 use serde_json::Value;
 use ulid::Ulid;
 
+use super::run::RESTART_WAIT;
 use super::{Daemon, Start, ok, store_outcome, task_dir};
+use crate::session::Command;
 
 impl Daemon {
     /// For each running/needs_input task: relaunch its last session with the profile's
@@ -152,11 +155,68 @@ impl Daemon {
         }
     }
 
-    /// Spawns `last`'s resume command as a new session (of `task`, if any) in `last`'s pane slot.
-    async fn resume(&self, last: &Session, task: Option<&Task>) -> Result<Ulid, Outcome> {
+    /// `session.relaunch` (ADR 0121): stops the live session and resumes its conversation in
+    /// the same pane with TSP on or off, saved on the pane (`"tsp"` on its layout leaf) so every
+    /// later resume keeps it. Refused before anything stops while the agent works (the turn
+    /// would be cut off) or when the session could not resume.
+    pub(super) async fn session_relaunch(&self, params: SessionRelaunchParams) -> Outcome {
+        let found = {
+            let store = self.store();
+            store.get_session(params.session_id).and_then(|last| {
+                let task = last.task_id.map(|id| store.get_task(id)).transpose()?;
+                Ok((last, task))
+            })
+        };
+        let (last, task) = match found {
+            Ok(found) => found,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        let refused = if last.kind != SessionKind::Agent {
+            Some("only an agent session can relaunch")
+        } else if last.state == SessionState::Exited {
+            Some("the session has exited; resume it from History")
+        } else if last.state == SessionState::Working {
+            Some("the agent is working; wait until it is idle")
+        } else {
+            None
+        };
+        if let Some(reason) = refused {
+            return Outcome::error(ErrorCode::InvalidState, reason);
+        }
+        if let Err(outcome) = self.resume_profile(&last) {
+            return outcome;
+        }
+        let (project_id, id, tsp) = (last.project_id, last.id, params.tsp);
+        if let Err(e) = (self.hub).edit_tabs(project_id, |l| set_pane_tsp(l, id, tsp)) {
+            tracing::warn!(session_id = %id, "pane TSP choice not saved: {e}");
+        }
+        self.hub.keep_pane(id);
+        self.hub.command(id, Command::Kill { force: false });
+        if !self.wait_exited(&[id], RESTART_WAIT).await {
+            self.hub.take_kept_pane(id);
+            tracing::warn!(session_id = %id, "session did not stop for the relaunch");
+            return Outcome::error(ErrorCode::Timeout, "the session did not stop within 10 s");
+        }
+        // Exited now, maybe with a newer native id than before the stop.
+        let last = match self.store().get_session(id) {
+            Ok(last) => last,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        match self.resume(&last, task.as_ref()).await {
+            Ok(session_id) => ok(&SessionSpawnResult { session_id }),
+            Err(outcome) => {
+                // Nothing came back: the exited session's pane goes, as after any exit.
+                self.hub.leave_tabs(project_id, id);
+                outcome
+            }
+        }
+    }
+
+    /// The profile that resumes `last`'s conversation, with TSP as its pane saved it.
+    fn resume_profile(&self, last: &Session) -> Result<mkrew_core::AgentProfile, Outcome> {
         let native = (last.native_session_id.as_deref())
             .ok_or_else(|| no_resume("the agent never reported its session id"))?;
-        let profile = self
+        let mut profile = self
             .load_profile(&last.agent_profile)?
             .resumed(native)
             .ok_or_else(|| {
@@ -165,6 +225,16 @@ impl Daemon {
                     last.agent_profile
                 ))
             })?;
+        if let Some(tsp) = self.pane_tsp(last) {
+            profile.tsp = tsp;
+        }
+        Ok(profile)
+    }
+
+    /// Spawns `last`'s resume command as a new session (of `task`, if any) in `last`'s pane slot.
+    async fn resume(&self, last: &Session, task: Option<&Task>) -> Result<Ulid, Outcome> {
+        let profile = self.resume_profile(last)?;
+        let native = last.native_session_id.clone();
         let project = self
             .store()
             .get_project(last.project_id)
@@ -198,14 +268,14 @@ impl Daemon {
             rows: last.rows,
             typed: None,
             // Resumable again even if the daemon stops before the agent's next hook.
-            native_session_id: Some(native.to_owned()),
+            native_session_id: native.clone(),
             dir,
             banner: None,
             env: Vec::new(),
             plan_path: last.plan_path.clone(),
         };
         let new_id = self.start_session(start)?;
-        tracing::info!(session_id = %last.id, %new_id, native, "session resumed");
+        tracing::info!(session_id = %last.id, %new_id, ?native, "session resumed");
         self.replace_in_tabs(project_id, last.id, new_id);
         Ok(new_id)
     }
@@ -231,6 +301,13 @@ impl Daemon {
         {
             tracing::warn!(%project_id, "resumed session not placed in its tab: {e}");
         }
+    }
+
+    /// The TSP choice saved on `session`'s pane, if a tab shows it with one.
+    fn pane_tsp(&self, session: &Session) -> Option<bool> {
+        let tabs = self.store().list_tabs(session.project_id).ok()?;
+        tabs.iter()
+            .find_map(|tab| leaf_tsp(&tab.layout, session.id))
     }
 
     /// Whether a tab of `session`'s project still shows it (the user did not close or hide it).
@@ -285,6 +362,38 @@ pub(crate) fn replace_session(layout: &Value, old: Ulid, new: Ulid) -> Option<Va
     }
     let mut layout = layout.clone();
     walk(&mut layout, &old.to_string(), &new.to_string()).then_some(layout)
+}
+
+/// The `"tsp"` flag of `session`'s leaf in `layout`.
+fn leaf_tsp(layout: &Value, session: Ulid) -> Option<bool> {
+    fn walk(value: &Value, id: &str) -> Option<bool> {
+        match value {
+            Value::Object(map) if map.get("session").and_then(Value::as_str) == Some(id) => {
+                map.get("tsp").and_then(Value::as_bool)
+            }
+            Value::Object(map) => map.values().find_map(|child| walk(child, id)),
+            Value::Array(items) => items.iter().find_map(|item| walk(item, id)),
+            _ => None,
+        }
+    }
+    walk(layout, &session.to_string())
+}
+
+/// `layout` with `"tsp": tsp` on `session`'s leaf; `None` if `session` is not in it.
+fn set_pane_tsp(layout: &Value, session: Ulid, tsp: bool) -> Option<Value> {
+    fn walk(value: &mut Value, id: &str, tsp: bool) -> bool {
+        match value {
+            Value::Object(map) if map.get("session").and_then(Value::as_str) == Some(id) => {
+                map.insert("tsp".to_owned(), Value::Bool(tsp));
+                true
+            }
+            Value::Object(map) => map.values_mut().any(|child| walk(child, id, tsp)),
+            Value::Array(items) => items.iter_mut().any(|item| walk(item, id, tsp)),
+            _ => false,
+        }
+    }
+    let mut layout = layout.clone();
+    walk(&mut layout, &session.to_string(), tsp).then_some(layout)
 }
 
 #[cfg(test)]
@@ -371,5 +480,28 @@ mod tests {
             json!({"session": new.to_string(), "chat": true})
         );
         assert_eq!(replaced["children"][1], layout["children"][1]);
+    }
+
+    #[test]
+    fn the_pane_tsp_choice_is_saved_on_its_leaf_and_read_back() {
+        let (a, b) = (Ulid::new(), Ulid::new());
+        let layout = json!({"split": "vertical", "ratio": 0.5, "children": [
+            {"session": a.to_string(), "chat": false},
+            {"session": b.to_string()}
+        ]});
+        assert_eq!(leaf_tsp(&layout, b), None);
+        let saved = set_pane_tsp(&layout, b, false).unwrap();
+        assert_eq!(
+            saved["children"][1],
+            json!({"session": b.to_string(), "tsp": false})
+        );
+        assert_eq!(saved["children"][0], layout["children"][0]);
+        assert_eq!(leaf_tsp(&saved, b), Some(false));
+        assert_eq!(leaf_tsp(&saved, a), None);
+        // A resume puts the new session in the leaf and the choice stays with the pane.
+        let new = Ulid::new();
+        let resumed = replace_session(&saved, b, new).unwrap();
+        assert_eq!(leaf_tsp(&resumed, new), Some(false));
+        assert_eq!(set_pane_tsp(&layout, Ulid::new(), true), None);
     }
 }

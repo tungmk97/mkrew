@@ -273,6 +273,11 @@ impl Tabs {
         self.tab_of(session)?.layout.as_ref()?.chat_of(session)
     }
 
+    /// The omp view saved for `session`'s pane (see [`Node::tsp_of`]).
+    pub fn tsp_of(&self, session: Ulid) -> Option<bool> {
+        self.tab_of(session)?.layout.as_ref()?.tsp_of(session)
+    }
+
     /// Saves `chat` on `session`'s pane: the write to send, `None` when nothing changed or no
     /// tab holds it.
     pub fn set_chat(&mut self, session: Ulid, chat: Option<bool>) -> Option<TabSetLayoutParams> {
@@ -569,7 +574,11 @@ impl Tabs {
             return None;
         }
         let tab = self.active_mut()?;
-        let leaf = Node::Leaf(Leaf::Session { session: new, chat });
+        let leaf = Node::Leaf(Leaf::Session {
+            session: new,
+            chat,
+            tsp: None,
+        });
         match (&mut tab.layout, &tab.focused) {
             (Some(node), Some(target)) => {
                 if !node.split_with(target, axis, leaf) {

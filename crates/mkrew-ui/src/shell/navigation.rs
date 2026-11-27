@@ -379,7 +379,7 @@ impl Shell {
             }),
             chat: focused_info
                 .as_ref()
-                .is_some_and(|info| self.chat_available(info)),
+                .is_some_and(|info| self.chat_available(info) || self.view_switch(info).is_some()),
             surface: focused_info
                 .as_ref()
                 .is_some_and(|info| self.tsp_pane_view(info) != mkrew_ui::tsp::PaneView::Terminal),

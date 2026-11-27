@@ -415,6 +415,7 @@ impl Shell {
             follow_up_focus,
             follow_up_scroll: ScrollHandle::new(),
             composers: Composers::default(),
+            relaunching: HashSet::new(),
             drop_hover: None,
             pane_drop: None,
             composer_focus: cx.focus_handle(),

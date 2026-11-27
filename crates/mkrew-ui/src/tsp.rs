@@ -408,6 +408,17 @@ pub fn pane_view(state: TspState, exited: bool, has_surface: bool) -> PaneView {
     }
 }
 
+/// What the pane's Terminal | Chat switch relaunches omp with (ADR 0121): TSP off while it is
+/// on (waiting, live or fallback), back on for a pane the switch turned off (`saved`, the
+/// pane's `tsp` flag). `None`: the pane has no such switch (TSP off by its profile).
+pub fn view_switch(state: TspState, saved: Option<bool>) -> Option<bool> {
+    if state != TspState::Off {
+        Some(false)
+    } else {
+        (saved == Some(false)).then_some(true)
+    }
+}
+
 /// Whether a session went from waiting for, or showing, a surface to drawing as text.
 pub fn enters_fallback(before: Option<TspState>, after: TspState) -> bool {
     matches!(before, Some(TspState::Waiting | TspState::Live)) && after == TspState::Fallback
@@ -2021,6 +2032,17 @@ mod tests {
         );
         assert_eq!(color("strong", &t), None, "a modifier is not a color");
         assert_eq!(color("", &t), None);
+    }
+
+    #[test]
+    fn the_view_switch_turns_tsp_off_while_on_and_back_on_only_where_it_was_turned_off() {
+        for state in [TspState::Waiting, TspState::Live, TspState::Fallback] {
+            assert_eq!(view_switch(state, None), Some(false), "{state:?}");
+        }
+        assert_eq!(view_switch(TspState::Off, Some(false)), Some(true));
+        // A profile with `tsp = false` (or Claude, Codex): no switch, its Chat view stays.
+        assert_eq!(view_switch(TspState::Off, None), None);
+        assert_eq!(view_switch(TspState::Off, Some(true)), None);
     }
 
     #[test]

@@ -499,7 +499,7 @@ impl Shell {
             Command::OpenComposer => self.open_composer(window, cx),
             Command::ToggleChat => {
                 if let Some(session) = self.focused_agent(window) {
-                    self.toggle_chat(session, window, cx);
+                    self.toggle_view(session, window, cx);
                 }
             }
             Command::SendSelection => self.open_selection_dialog(window, cx),

@@ -171,6 +171,11 @@ pub enum Request {
     /// with the profile's `resume` command, as a new session (ADR 0055).
     #[serde(rename = "session.resume")]
     SessionResume(SessionResumeParams),
+    /// Returns [`SessionSpawnResult`]: stops a live omp session and resumes its conversation
+    /// in the same pane with TSP on (omp's native surface) or off (omp's own terminal UI);
+    /// the pane keeps that choice (ADR 0121).
+    #[serde(rename = "session.relaunch")]
+    SessionRelaunch(SessionRelaunchParams),
     /// Returns [`SessionReadResult`]; live sessions only (SPEC §20A).
     #[serde(rename = "session.read")]
     SessionRead(SessionReadParams),
@@ -1210,6 +1215,13 @@ pub struct SessionResumeParams {
     /// The tab the pane goes into when that tab has no panes (like `session.spawn`).
     #[serde(default)]
     pub tab_id: Option<Ulid>,
+}
+
+/// `session.relaunch`: the live omp session to restart and whether TSP is on after it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionRelaunchParams {
+    pub session_id: Ulid,
+    pub tsp: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
