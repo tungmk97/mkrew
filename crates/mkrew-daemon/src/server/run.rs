@@ -18,7 +18,7 @@ use crate::session::Command;
 
 /// How long `project.run_restart` waits for the stopped sessions to exit (each one is
 /// force-killed after its own 5 s grace).
-const RESTART_WAIT: Duration = Duration::from_secs(10);
+pub(super) const RESTART_WAIT: Duration = Duration::from_secs(10);
 
 impl Daemon {
     /// Starts the targeted commands that are not running; answers with all targets.
@@ -202,7 +202,7 @@ impl Daemon {
     /// Waits until every one of `ids` is `exited` in the store; `false` after `limit`. The
     /// store, not the live map: `finish` leaves the live map before it writes `exited`, so a
     /// start right after could otherwise still see the old session as running.
-    async fn wait_exited(&self, ids: &[Ulid], limit: Duration) -> bool {
+    pub(super) async fn wait_exited(&self, ids: &[Ulid], limit: Duration) -> bool {
         // Subscribed before the first check, so an exit in between is not missed.
         let mut events = self.hub.events.subscribe();
         let deadline = tokio::time::Instant::now() + limit;

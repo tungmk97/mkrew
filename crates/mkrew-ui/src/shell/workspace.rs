@@ -409,7 +409,12 @@ impl Shell {
         if tabs.tab_of(session).is_some() {
             return;
         }
-        let write = tabs.insert_leaf(tab_id, Some(target), edge, Leaf::Session { session, chat });
+        let leaf = Leaf::Session {
+            session,
+            chat,
+            tsp: None,
+        };
+        let write = tabs.insert_leaf(tab_id, Some(target), edge, leaf);
         match write {
             Some(write) => self.save_layout(project_id, write, window, cx),
             None => self.place_session(

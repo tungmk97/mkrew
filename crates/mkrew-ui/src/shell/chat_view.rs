@@ -104,10 +104,75 @@ impl Shell {
             .collect()
     }
 
-    /// `info`'s pane can show Chat.
+    /// `info`'s pane can show Chat. Never on a pane with the omp view switch: there the
+    /// Terminal | Chat switch relaunches omp instead ([`Shell::view_switch`]).
     pub(crate) fn chat_available(&self, info: &Session) -> bool {
         let has_transcript = (self.usages.get(info.id)).is_some_and(|u| u.transcript.is_some());
         chat::available(info.kind, &info.agent_profile, has_transcript, info.tsp)
+            && self.view_switch(info).is_none()
+    }
+
+    /// The TSP state the pane's Terminal | Chat switch relaunches omp with (ADR 0120), for a
+    /// live agent that reported its conversation id; `None`: no such switch.
+    pub(crate) fn view_switch(&self, info: &Session) -> Option<bool> {
+        if info.kind != SessionKind::Agent
+            || info.native_session_id.is_none()
+            || self.is_exited(info.id)
+        {
+            return None;
+        }
+        let saved = self.tabs.values().find_map(|tabs| tabs.tsp_of(info.id));
+        mkrew_ui::tsp::view_switch(info.tsp, saved)
+    }
+
+    /// Restarts omp in `session`'s pane with TSP `tsp` (`session.relaunch`, ADR 0120): the
+    /// same conversation, in the same pane, which keeps the choice.
+    fn relaunch(
+        &mut self,
+        session: Ulid,
+        tsp: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connected_or_toast(cx) else {
+            return;
+        };
+        if !self.relaunching.insert(session) {
+            return;
+        }
+        self.toast_info(
+            if tsp {
+                "Restarting omp in the chat view…"
+            } else {
+                "Restarting omp in its terminal view…"
+            },
+            cx,
+        );
+        let relaunched = connection.call::<SessionSpawnResult>(Request::SessionRelaunch(
+            SessionRelaunchParams {
+                session_id: session,
+                tsp,
+            },
+        ));
+        cx.spawn_in(window, async move |this, cx| {
+            let relaunched = relaunched.await;
+            let _ = Shell::answer(&this, cx, |shell, window, cx| {
+                shell.relaunching.remove(&session);
+                match relaunched {
+                    // The daemon put the new session in the old pane.
+                    Ok(new) => {
+                        shell.focus_session_pane(new.session_id);
+                        shell.focus_pane(window, cx);
+                    }
+                    Err(error) => {
+                        tracing::warn!(%session, "session.relaunch failed: {error:#}");
+                        shell.toast_error(format!("Cannot restart omp: {error:#}"), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// `info`'s pane shows Chat: its saved mode (the layout leaf), else `[ui] chat_default`.
@@ -260,18 +325,25 @@ impl Shell {
         }
     }
 
-    /// Chat <-> Terminal for `session`'s pane, when it can show Chat.
-    pub(crate) fn toggle_chat(
+    /// The pane's Terminal | Chat switch (the title bar, Ctrl+Alt+T, the palette): relaunches
+    /// omp in the other view on a pane with the omp view switch, else Chat <-> Terminal when it
+    /// can show Chat.
+    pub(crate) fn toggle_view(
         &mut self,
         session: Ulid,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let on = (self.sidebar.sessions().iter())
-            .find(|s| s.id == session && self.chat_available(s))
-            .map(|info| self.chat_on(info));
-        if let Some(on) = on {
-            self.pick_chat(session, !on, window, cx);
+        let found = (self.sidebar.sessions().iter())
+            .find(|s| s.id == session)
+            .map(|info| {
+                let chat = self.chat_available(info).then(|| self.chat_on(info));
+                (self.view_switch(info), chat)
+            });
+        match found {
+            Some((Some(tsp), _)) => self.relaunch(session, tsp, window, cx),
+            Some((None, Some(on))) => self.pick_chat(session, !on, window, cx),
+            _ => {}
         }
     }
 

@@ -36,12 +36,12 @@ use mkrew_protocol::{
     RemoveWorktreeResult, Request, RunStartParams, RunStarted, RunStopParams, Session,
     SessionAttachResult, SessionFiles, SessionKillParams, SessionKind, SessionLinkPlanParams,
     SessionListParams, SessionLogTail, SessionLogTailParams, SessionMoveParams, SessionPinParams,
-    SessionPlanEvent, SessionPortsEvent, SessionReadResult, SessionRef, SessionResumeParams,
-    SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState, SessionTranscript,
-    SessionTranscriptParams, SessionUnqueueParams, SessionUsageEvent, SlashListResult, StateSource,
-    TabCreateParams, TabListParams, TabPinParams, TabRef, TabSetLayoutParams, Task,
-    TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn,
-    UndoPreview, ViewedFile,
+    SessionPlanEvent, SessionPortsEvent, SessionReadResult, SessionRef, SessionRelaunchParams,
+    SessionResumeParams, SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState,
+    SessionTranscript, SessionTranscriptParams, SessionUnqueueParams, SessionUsageEvent,
+    SlashListResult, StateSource, TabCreateParams, TabListParams, TabPinParams, TabRef,
+    TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef,
+    TaskStatus, TerminalTab, Turn, UndoPreview, ViewedFile,
 };
 use mkrew_ui::ask::{self, Ask};
 use mkrew_ui::attention::{self, Tracker};
@@ -738,6 +738,8 @@ struct Shell {
     follow_up_scroll: ScrollHandle,
     /// The prompt composer draft of every agent session (§20B.1).
     composers: Composers,
+    /// Sessions whose `session.relaunch` is in flight (ADR 0120): the switch waits for it.
+    relaunching: HashSet<Ulid>,
     /// What is under an OS file drag (§20B.5): a pane, or the task dialog's Prompt box. Tracked
     /// without GPUI's hover check: gpui-pre 0.3.7 keeps keyboard modality during OLE drags, so
     /// `on_drop` misses drops after typing.

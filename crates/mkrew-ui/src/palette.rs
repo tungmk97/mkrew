@@ -83,7 +83,8 @@ pub struct Context {
     pub live_session: bool,
     /// The focused agent pane's session has a transcript file.
     pub transcript: bool,
-    /// The focused agent pane can show Chat (a readable transcript format).
+    /// The focused agent pane has the Terminal | Chat switch: it can show Chat (a readable
+    /// transcript format), or it is an omp pane that relaunches in the other view (ADR 0120).
     pub chat: bool,
     /// The focused agent pane shows a TSP surface (or its starting state): no terminal grid.
     pub surface: bool,

@@ -111,6 +111,9 @@ pub struct Hub {
     /// The TSP state of every TSP session (`waiting`, `live`, `fallback`); memory only. An exited
     /// session keeps its last state for the UI until it is removed (`session.remove`).
     pub tsp_states: Mutex<HashMap<Ulid, TspState>>,
+    /// Sessions a `session.relaunch` stops: their pane stays at the exit, for the resumed
+    /// session to take over (ADR 0120). Memory only.
+    kept_panes: Mutex<HashSet<Ulid>>,
     /// Linked plans of live sessions, each with its file watcher (ADR 0039).
     pub plans: crate::plan::Plans,
     /// The newest limits of each agent (spec 2026-11-22 section 5.1); memory only.
@@ -363,6 +366,7 @@ impl Hub {
             ports: Mutex::default(),
             terminal_titles: Mutex::default(),
             tsp_states: Mutex::default(),
+            kept_panes: Mutex::default(),
             plans: crate::plan::Plans::default(),
             limits: Mutex::default(),
         }
@@ -391,6 +395,16 @@ impl Hub {
     /// Drops the TSP state of a removed session (see `tsp_states`).
     pub fn forget_tsp(&self, id: Ulid) {
         lock(&self.tsp_states).remove(&id);
+    }
+
+    /// Keeps `id`'s pane in its tab when it exits (see `kept_panes`).
+    pub fn keep_pane(&self, id: Ulid) {
+        lock(&self.kept_panes).insert(id);
+    }
+
+    /// Whether `id`'s pane was kept; it is not any more.
+    pub fn take_kept_pane(&self, id: Ulid) -> bool {
+        lock(&self.kept_panes).remove(&id)
     }
 
     /// The newest limits each agent reported, for `limits.get`.
@@ -1879,8 +1893,9 @@ impl Actor {
         // the tab (ADR 0033; its output stays in History). After `Exited` is stored, so
         // `show_run_tab`, which lists live sessions only, cannot write a run pane back. Never
         // while the daemon stops: the pane must stay for the resume at the next start
-        // (SPEC §8, ADR 0017).
-        if !stopping {
+        // (SPEC §8, ADR 0017); nor for a relaunch, whose resumed session takes it (ADR 0120).
+        let kept = self.hub.take_kept_pane(self.session.id);
+        if !stopping && !kept {
             self.hub
                 .leave_tabs(self.session.project_id, self.session.id);
         }

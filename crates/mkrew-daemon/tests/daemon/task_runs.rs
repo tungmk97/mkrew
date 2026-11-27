@@ -840,6 +840,89 @@ fn an_exited_agent_session_resumes_on_request() {
     client.stop();
 }
 
+/// ADR 0120: `session.relaunch` stops a live omp session and resumes its conversation in the
+/// same pane with TSP off, then on again; the pane keeps the choice on its leaf. Refused while
+/// the agent works, before anything stops.
+#[test]
+fn an_omp_pane_relaunches_with_tsp_off_and_back_on_in_the_same_pane() {
+    use mkrew_protocol::TspState;
+
+    let env = Env::new();
+    let fake = built_bin("mkrew-fakeagent");
+    let scenario = env.dir.path().join("omp.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"hook\"\nevent = \"busy\"\nsession_id = \"native-5\"\n\
+         [[step]]\naction = \"sleep\"\nms = 1500\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    env.write_fake_profile_as("omp", &format!("['--scenario', '{}']", scenario.display()));
+    let path = env.dir.path().join("config/agents/omp.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let resume = format!(
+        "resume = '\"{}\" --resume {{session_id}}'\n",
+        fake.display()
+    );
+    let text = (text.replace("[state]", &format!("{resume}\n[state]"))).replace(
+        "prompt_mode = \"none\"",
+        "prompt_mode = \"none\"\ntsp = true",
+    );
+    std::fs::write(&path, text).unwrap();
+    let relaunch = |client: &mut Client, session_id: Ulid, tsp: bool| {
+        client.call(Request::SessionRelaunch(SessionRelaunchParams {
+            session_id,
+            tsp,
+        }))
+    };
+    let leaf = |session: Ulid, tsp: bool| json!({"session": session.to_string(), "tsp": tsp});
+
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let first: SessionSpawnResult = client.spawn(&project, "omp").into_result().unwrap();
+    let tab: TerminalTab = client
+        .call(create_tab(&project, "omp"))
+        .into_result()
+        .unwrap();
+    client
+        .call(Request::TabSetLayout(TabSetLayoutParams {
+            tab_id: tab.id,
+            layout: json!({"session": first.session_id.to_string()}),
+        }))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_state(first.session_id, SessionState::Working);
+    assert_eq!(
+        error_code(relaunch(&mut client, first.session_id, false)),
+        ErrorCode::InvalidState,
+        "the agent works"
+    );
+    client.wait_state(first.session_id, SessionState::NeedsInput);
+    assert_ne!(client.session(first.session_id).tsp, TspState::Off);
+
+    let terminal: SessionSpawnResult = relaunch(&mut client, first.session_id, false)
+        .into_result()
+        .unwrap();
+    let session = client.session(terminal.session_id);
+    assert_eq!(
+        (
+            session.agent_profile.as_str(),
+            session.native_session_id.as_deref(),
+            session.tsp
+        ),
+        ("omp", Some("native-5"), TspState::Off)
+    );
+    assert_eq!(client.session(first.session_id).state, SessionState::Exited);
+    wait_layout(&mut client, &project, &leaf(terminal.session_id, false));
+
+    let native: SessionSpawnResult = relaunch(&mut client, terminal.session_id, true)
+        .into_result()
+        .unwrap();
+    assert_ne!(client.session(native.session_id).tsp, TspState::Off);
+    wait_layout(&mut client, &project, &leaf(native.session_id, true));
+    client.stop();
+}
+
 /// ADR 0033: a session that exits while the daemon runs leaves its tab (shell or agent
 /// alike, the sibling takes its place). What a daemon stop cuts off is cleared at the next
 /// start instead (ADR 0093, `restart_clears_the_panes_it_cannot_bring_back`).

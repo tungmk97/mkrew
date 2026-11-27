@@ -1003,8 +1003,31 @@ impl Shell {
         };
         let session = info.id;
         let mut toggles = Vec::new();
-        if self.chat_available(info) {
-            let chat = self.chat_on(info);
+        // Terminal | Chat; on an omp pane with the view switch it restarts omp in the other
+        // view (ADR 0120). Accent while the chat view shows.
+        let switch = match self.view_switch(info) {
+            Some(to_tsp) => Some((
+                !to_tsp,
+                if to_tsp {
+                    "omp's terminal view. Click to restart omp in the chat view"
+                } else {
+                    "Chat view: on. Click to restart omp in its terminal view"
+                },
+            )),
+            None if self.chat_available(info) => {
+                let chat = self.chat_on(info);
+                Some((
+                    chat,
+                    if chat {
+                        "Chat view: on. Click to show the terminal"
+                    } else {
+                        "Terminal view. Click to show the conversation as a chat"
+                    },
+                ))
+            }
+            None => None,
+        };
+        if let Some((chat, tip)) = switch {
             toggles.push(
                 icon_button_in(
                     SharedString::from(format!("pane-chat-{session}")),
@@ -1012,17 +1035,9 @@ impl Shell {
                     if chat { theme.accent } else { theme.text_muted },
                     theme,
                 )
-                .tooltip(tooltip(
-                    theme,
-                    if chat {
-                        "Chat view: on. Click to show the terminal"
-                    } else {
-                        "Terminal view. Click to show the conversation as a chat"
-                    },
-                    self.keymap.label(Command::ToggleChat),
-                ))
+                .tooltip(tooltip(theme, tip, self.keymap.label(Command::ToggleChat)))
                 .on_click(cx.listener(move |shell, _, window, cx| {
-                    shell.toggle_chat(session, window, cx);
+                    shell.toggle_view(session, window, cx);
                 }))
                 .into_any_element(),
             );

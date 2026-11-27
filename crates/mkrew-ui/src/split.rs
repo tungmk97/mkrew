@@ -77,11 +77,15 @@ impl PaneKey {
 #[serde(untagged)]
 pub enum Leaf {
     /// A pane showing one session. `chat` is the pane's saved mode (ADR 0104): `Some(true)`
-    /// Chat, `Some(false)` Terminal, absent = not set (`[ui] chat_default` decides).
+    /// Chat, `Some(false)` Terminal, absent = not set (`[ui] chat_default` decides). `tsp` is
+    /// the omp view the daemon saved for it (ADR 0120): `Some(false)` omp's own terminal UI,
+    /// absent = the profile's.
     Session {
         session: Ulid,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         chat: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tsp: Option<bool>,
     },
     /// A file of the workspace: its path relative to the root with `/` separators (an
     /// absolute path for a note in a notes folder outside it). `task` is the task worktree it
@@ -109,6 +113,7 @@ impl Leaf {
         Leaf::Session {
             session: id,
             chat: None,
+            tsp: None,
         }
     }
 
@@ -509,6 +514,14 @@ impl Node {
     pub fn chat_of(&self, session: Ulid) -> Option<bool> {
         match self.leaf_of(&PaneKey::Session(session))? {
             Leaf::Session { chat, .. } => *chat,
+            Leaf::File { .. } | Leaf::Diff { .. } | Leaf::Web { .. } => None,
+        }
+    }
+
+    /// The omp view saved on the pane of `session` (see [`Leaf::Session`]).
+    pub fn tsp_of(&self, session: Ulid) -> Option<bool> {
+        match self.leaf_of(&PaneKey::Session(session))? {
+            Leaf::Session { tsp, .. } => *tsp,
             Leaf::File { .. } | Leaf::Diff { .. } | Leaf::Web { .. } => None,
         }
     }
@@ -1571,6 +1584,7 @@ mod tests {
                 Node::leaf(Leaf::Session {
                     session: a,
                     chat: Some(false),
+                    tsp: None,
                 }),
                 Node::Split {
                     split: Axis::Horizontal,
@@ -1580,6 +1594,7 @@ mod tests {
                         Node::leaf(Leaf::Session {
                             session: c,
                             chat: Some(true),
+                            tsp: None,
                         }),
                     ]),
                 },

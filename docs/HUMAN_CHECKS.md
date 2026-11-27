@@ -21,6 +21,15 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-11-27 omp view switch (ADR 0120)
+
+- [ ] On an omp pane opened from `+` (TSP view), press `Ctrl+Alt+T`: a toast "Restarting omp in its terminal view…", then the same pane shows omp's own terminal UI with the same conversation; the `MessageSquare` toggle turns gray.
+- [ ] Press `Ctrl+Alt+T` again (or click the toggle): omp restarts in the TSP view, same conversation, toggle in the accent color.
+- [ ] Switch to the terminal view, restart the daemon: the pane comes back in omp's terminal UI.
+- [ ] While omp is working, the switch shows the toast "Cannot restart omp: ... the agent is working; wait until it is idle" and nothing stops.
+- [ ] Claude Code and Codex panes keep their Terminal | Chat toggle as before.
+- [ ] Check the toggle tooltip visually (dark/light).
+
 ### To verify - 2026-11-26 omp picker and Markdown accent (ADR 0119, spec docs/superpowers/specs/2026-11-26-tsp-picker-design.md)
 
 Screenshots: `docs/screenshots/tsp-picker-<model|model-filter|agents>-dark.png`, taken in the smoke sandbox with a real omp 19.2.1.
