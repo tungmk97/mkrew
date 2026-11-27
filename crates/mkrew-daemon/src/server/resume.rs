@@ -155,7 +155,7 @@ impl Daemon {
         }
     }
 
-    /// `session.relaunch` (ADR 0120): stops the live session and resumes its conversation in
+    /// `session.relaunch` (ADR 0121): stops the live session and resumes its conversation in
     /// the same pane with TSP on or off, saved on the pane (`"tsp"` on its layout leaf) so every
     /// later resume keeps it. Refused before anything stops while the agent works (the turn
     /// would be cut off) or when the session could not resume.

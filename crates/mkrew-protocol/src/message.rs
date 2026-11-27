@@ -173,7 +173,7 @@ pub enum Request {
     SessionResume(SessionResumeParams),
     /// Returns [`SessionSpawnResult`]: stops a live omp session and resumes its conversation
     /// in the same pane with TSP on (omp's native surface) or off (omp's own terminal UI);
-    /// the pane keeps that choice (ADR 0120).
+    /// the pane keeps that choice (ADR 0121).
     #[serde(rename = "session.relaunch")]
     SessionRelaunch(SessionRelaunchParams),
     /// Returns [`SessionReadResult`]; live sessions only (SPEC §20A).

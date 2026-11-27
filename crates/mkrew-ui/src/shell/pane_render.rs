@@ -1004,7 +1004,7 @@ impl Shell {
         let session = info.id;
         let mut toggles = Vec::new();
         // Terminal | Chat; on an omp pane with the view switch it restarts omp in the other
-        // view (ADR 0120). Accent while the chat view shows.
+        // view (ADR 0121). Accent while the chat view shows.
         let switch = match self.view_switch(info) {
             Some(to_tsp) => Some((
                 !to_tsp,

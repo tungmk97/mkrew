@@ -408,7 +408,7 @@ pub fn pane_view(state: TspState, exited: bool, has_surface: bool) -> PaneView {
     }
 }
 
-/// What the pane's Terminal | Chat switch relaunches omp with (ADR 0120): TSP off while it is
+/// What the pane's Terminal | Chat switch relaunches omp with (ADR 0121): TSP off while it is
 /// on (waiting, live or fallback), back on for a pane the switch turned off (`saved`, the
 /// pane's `tsp` flag). `None`: the pane has no such switch (TSP off by its profile).
 pub fn view_switch(state: TspState, saved: Option<bool>) -> Option<bool> {

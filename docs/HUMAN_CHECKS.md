@@ -21,7 +21,7 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
-### To verify - 2026-11-27 omp view switch (ADR 0120)
+### To verify - 2026-11-27 omp view switch (ADR 0121)
 
 - [ ] On an omp pane opened from `+` (TSP view), press `Ctrl+Alt+T`: a toast "Restarting omp in its terminal view…", then the same pane shows omp's own terminal UI with the same conversation; the `MessageSquare` toggle turns gray.
 - [ ] Press `Ctrl+Alt+T` again (or click the toggle): omp restarts in the TSP view, same conversation, toggle in the accent color.

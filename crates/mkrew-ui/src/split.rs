@@ -78,7 +78,7 @@ impl PaneKey {
 pub enum Leaf {
     /// A pane showing one session. `chat` is the pane's saved mode (ADR 0104): `Some(true)`
     /// Chat, `Some(false)` Terminal, absent = not set (`[ui] chat_default` decides). `tsp` is
-    /// the omp view the daemon saved for it (ADR 0120): `Some(false)` omp's own terminal UI,
+    /// the omp view the daemon saved for it (ADR 0121): `Some(false)` omp's own terminal UI,
     /// absent = the profile's.
     Session {
         session: Ulid,

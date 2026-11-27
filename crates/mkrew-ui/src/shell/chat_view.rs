@@ -112,7 +112,7 @@ impl Shell {
             && self.view_switch(info).is_none()
     }
 
-    /// The TSP state the pane's Terminal | Chat switch relaunches omp with (ADR 0120), for a
+    /// The TSP state the pane's Terminal | Chat switch relaunches omp with (ADR 0121), for a
     /// live agent that reported its conversation id; `None`: no such switch.
     pub(crate) fn view_switch(&self, info: &Session) -> Option<bool> {
         if info.kind != SessionKind::Agent
@@ -125,7 +125,7 @@ impl Shell {
         mkrew_ui::tsp::view_switch(info.tsp, saved)
     }
 
-    /// Restarts omp in `session`'s pane with TSP `tsp` (`session.relaunch`, ADR 0120): the
+    /// Restarts omp in `session`'s pane with TSP `tsp` (`session.relaunch`, ADR 0121): the
     /// same conversation, in the same pane, which keeps the choice.
     fn relaunch(
         &mut self,

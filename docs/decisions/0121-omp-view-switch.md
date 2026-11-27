@@ -1,4 +1,4 @@
-# 0120 - Switch an omp pane between TSP and omp's terminal UI
+# 0121 - Switch an omp pane between TSP and omp's terminal UI
 
 - Date: 2026-11-27
 - Status: accepted (amends ADR 0107; SPEC §7, §10, §11)

@@ -840,7 +840,7 @@ fn an_exited_agent_session_resumes_on_request() {
     client.stop();
 }
 
-/// ADR 0120: `session.relaunch` stops a live omp session and resumes its conversation in the
+/// ADR 0121: `session.relaunch` stops a live omp session and resumes its conversation in the
 /// same pane with TSP off, then on again; the pane keeps the choice on its leaf. Refused while
 /// the agent works, before anything stops.
 #[test]

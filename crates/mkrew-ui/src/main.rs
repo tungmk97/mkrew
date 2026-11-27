@@ -738,7 +738,7 @@ struct Shell {
     follow_up_scroll: ScrollHandle,
     /// The prompt composer draft of every agent session (§20B.1).
     composers: Composers,
-    /// Sessions whose `session.relaunch` is in flight (ADR 0120): the switch waits for it.
+    /// Sessions whose `session.relaunch` is in flight (ADR 0121): the switch waits for it.
     relaunching: HashSet<Ulid>,
     /// What is under an OS file drag (§20B.5): a pane, or the task dialog's Prompt box. Tracked
     /// without GPUI's hover check: gpui-pre 0.3.7 keeps keyboard modality during OLE drags, so

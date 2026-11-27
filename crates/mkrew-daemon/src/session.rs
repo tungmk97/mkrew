@@ -112,7 +112,7 @@ pub struct Hub {
     /// session keeps its last state for the UI until it is removed (`session.remove`).
     pub tsp_states: Mutex<HashMap<Ulid, TspState>>,
     /// Sessions a `session.relaunch` stops: their pane stays at the exit, for the resumed
-    /// session to take over (ADR 0120). Memory only.
+    /// session to take over (ADR 0121). Memory only.
     kept_panes: Mutex<HashSet<Ulid>>,
     /// Linked plans of live sessions, each with its file watcher (ADR 0039).
     pub plans: crate::plan::Plans,
@@ -1893,7 +1893,7 @@ impl Actor {
         // the tab (ADR 0033; its output stays in History). After `Exited` is stored, so
         // `show_run_tab`, which lists live sessions only, cannot write a run pane back. Never
         // while the daemon stops: the pane must stay for the resume at the next start
-        // (SPEC §8, ADR 0017); nor for a relaunch, whose resumed session takes it (ADR 0120).
+        // (SPEC §8, ADR 0017); nor for a relaunch, whose resumed session takes it (ADR 0121).
         let kept = self.hub.take_kept_pane(self.session.id);
         if !stopping && !kept {
             self.hub
